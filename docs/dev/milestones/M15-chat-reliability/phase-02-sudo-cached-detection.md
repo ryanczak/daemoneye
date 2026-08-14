@@ -1,7 +1,7 @@
 # Phase 02: sudo cached-credential detection — sentinel-exact prompt detection
 
 **Milestone:** M15 — Chat Reliability & Dialog UX
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -358,6 +358,22 @@ out of the 41-test run); all four were run explicitly and pass:
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1247 filtered out; finished in 0.00s
 ```
 (run: `cargo test --lib -- sudo_sentinel_bracket_disambiguates with_sudo_sentinel_prefixes_sudo_command stale_prompt_text_does_not_match_sentinel command_echo_password_word_does_not_match_sentinel`)
+
+### Review verdict — 2026-08-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.8-27B-FP8 (first phase on this model; 74 turns)
+- **Scope deviations:** none — the `use`-import instead of fully-qualified
+  paths was explicitly authorized by Spec task 2.
+- **Calibration:** independent re-run confirmed all gates and the
+  must-not-remain grep (extended to all of `src/daemon/`: no broad
+  substring prompt checks anywhere). Executor's E2E entry was mechanically
+  captured, honestly noted its own `tail`-window clipping, and supplemented
+  with an explicit run of the four new tests. Strong first data point.
+- **Live verification:** cached/uncached sudo through a real chat session
+  is deferred to milestone close alongside phase-01's live re-check (needs
+  daemon reinstall + attached client + interactive sudo auth).
 
 ### Update — ts=1786739354744 (complete, server-authored)
 
