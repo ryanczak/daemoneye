@@ -1,7 +1,7 @@
 # Phase 05: sudo credential panel — themed masked-input dialog
 
 **Milestone:** M15 — Chat Reliability & Dialog UX
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (reuses its panel design and span idioms)
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -447,3 +447,19 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f532ad34bb53f6970778fb7bf5b7ceea15a04080
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.8-27B-FP8 (59 turns)
+- **Scope deviations:** none — mirrored the in-tree `draw_approval_panel`
+  body as the spec directed.
+- **Calibration:** independent re-run confirmed all gates, 4/4 new tests,
+  and the awk-scoped must-not grep (0 `draw_prompt` calls in the credential
+  flow). Minor: the executor's review notes claimed the spec sketch used
+  symbols (`Block::bordered()`, `palette_red()`) it does not contain — a
+  small confabulation in the *notes*, with zero effect on the work. Four
+  for four on Qwen3.8 (3× approved_first_try + this).
+- **Live verification:** themed credential dialog through a real uncached
+  sudo run deferred to milestone close.
