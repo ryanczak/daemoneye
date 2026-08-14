@@ -1,7 +1,7 @@
 # Phase 04: command-approval panel — themed in-viewport dialog
 
 **Milestone:** M15 — Chat Reliability & Dialog UX
-**Status:** review
+**Status:** done
 **Depends on:** none (phase-05 depends on this phase's panel)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -512,3 +512,20 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e2a631acb8329526eec86ffec562afc80b4bb8bb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.8-27B-FP8 (76 turns)
+- **Scope deviations:** none — the two adaptations (Terminal::draw closure
+  idiom; keeping `session_label` at the call site) were correct readings of
+  the actual code against the spec's sketch.
+- **Calibration:** executor self-flagged a suspected truncation-width
+  mismatch in its notes; review confirmed it is a non-issue (the block's
+  inner width is exactly `width − 2`, and its own `…│` test proves it).
+  Good instinct, wrong arithmetic — no action. Independent re-run: all
+  gates, 5 new tests, legacy path intact at `stream.rs:820`. Three
+  consecutive approved_first_try for Qwen3.8.
+- **Live verification:** themed-panel approval round trip (Y/A/N/redirect)
+  deferred to milestone close with phases 01–03.

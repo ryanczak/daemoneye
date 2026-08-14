@@ -42,7 +42,7 @@ ratatui panels.
 | 01 | read-pane-grep-null ([phase-01-read-pane-grep-null.md](phase-01-read-pane-grep-null.md)) | done (escalated) |
 | 02 | sudo-cached-detection ([phase-02-sudo-cached-detection.md](phase-02-sudo-cached-detection.md)) | done |
 | 03 | resize-border-corruption ([phase-03-resize-border-corruption.md](phase-03-resize-border-corruption.md)) | done |
-| 04 | approval-panel ([phase-04-approval-panel.md](phase-04-approval-panel.md)) | review      |
+| 04 | approval-panel ([phase-04-approval-panel.md](phase-04-approval-panel.md)) | done |
 | 05 | sudo-credential-panel        | todo   |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; rows gain
