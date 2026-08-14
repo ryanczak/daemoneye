@@ -8,7 +8,8 @@ use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe, with_sessions};
 use crate::daemon::utils::{
     command_has_sudo, extract_command_output, fingerprint_pam_configured, interactive_destination,
     is_fingerprint_prompt, is_interactive_command, log_command, normalize_output, shell_escape_arg,
-    sudo_auth_failed, sudo_credentials_cached, wait_for_sudo_prompt_and_inject,
+    sudo_auth_failed, sudo_credentials_cached, sudo_sentinel, wait_for_sudo_prompt_and_inject,
+    with_sudo_sentinel,
 };
 use crate::ipc::{Request, Response};
 use crate::tmux;
@@ -352,6 +353,7 @@ where
     let current_exe =
         std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
     let hook_idx = FG_HOOK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let sudo_sentinel = sudo_sentinel(hook_idx);
     let hook_name = format!("pane-title-changed[@de_fg_{}]", hook_idx);
     let notify_cmd = format!(
         "run-shell -b '{} notify activity {} 0 \"{}\"'",
@@ -388,7 +390,12 @@ where
     .await;
 
     let target_str_keys = target_str.to_string();
-    let send_cmd_keys = send_cmd.to_string();
+    let send_cmd_final = if command_has_sudo(send_cmd) {
+        with_sudo_sentinel(send_cmd, &sudo_sentinel)
+    } else {
+        send_cmd.to_string()
+    };
+    let send_cmd_keys = send_cmd_final;
     let send_keys_res = tmux::off_runtime("send-keys", move || {
         tmux::send_keys(&target_str_keys, &send_cmd_keys)
     })
@@ -452,68 +459,29 @@ where
                         .and_then(|r| r.ok())
                         .unwrap_or_default();
 
+                        // Every iteration: the nonce'd sentinel appears in the
+                        // pane only when this invocation's sudo actually
+                        // prompts. Checked regardless of `cur` because remote
+                        // panes report `ssh`/`mosh`, never `sudo`.
+                        let target_str_snap = target_str.to_string();
+                        let snap = tmux::off_runtime("capture-pane", move || {
+                            tmux::capture_pane(&target_str_snap, 10)
+                        })
+                        .await
+                        .and_then(|r| r.ok())
+                        .unwrap_or_default();
+                        if snap.contains(&sudo_sentinel) {
+                            result = SudoAuth::Password;
+                            break 'detect;
+                        }
+
                         if cur == "sudo" {
-                            // sudo is the foreground process; inspect the pane
-                            // output *now* to determine what it is waiting for.
-                            // Checking while "sudo" is confirmed current prevents
-                            // stale scrollback from triggering a false positive.
-                            let target_str_snap = target_str.to_string();
-                            let snap = tmux::off_runtime("capture-pane", move || {
-                                tmux::capture_pane(&target_str_snap, 10)
-                            })
-                            .await
-                            .and_then(|r| r.ok())
-                            .unwrap_or_default();
+                            // PAM fingerprint text cannot be nonce'd, so the
+                            // liveness gate stays on `pane_current_command`.
                             if is_fingerprint_prompt(&snap) {
                                 result = SudoAuth::Fingerprint;
                                 break 'detect;
                             }
-                            if snap.contains("[sudo]")
-                                || snap.contains("password")
-                                || snap.contains("Password")
-                                || snap.contains("[de-sudo-prompt]")
-                            {
-                                result = SudoAuth::Password;
-                                break 'detect;
-                            }
-                            // sudo is running but hasn't printed a prompt yet.
-                            // Remote panes: sudo stays "sudo" only when blocked on
-                            // stdin — treat as password needed.
-                            // Local panes: a fast cached-credential run can be
-                            // observed transiently as "sudo" — do one confirmation
-                            // poll before concluding it is blocked.
-                            if is_remote_pane {
-                                result = SudoAuth::Password;
-                                break 'detect;
-                            }
-                            tokio::time::sleep(SUDO_POLL_INTERVAL).await;
-                            waited += SUDO_POLL_INTERVAL;
-                            let target_str_cur2 = target_str.to_string();
-                            let cur2 = tmux::off_runtime("pane-current-command-2", move || {
-                                tmux::pane_current_command(&target_str_cur2)
-                            })
-                            .await
-                            .and_then(|r| r.ok())
-                            .unwrap_or_default();
-                            if cur2 == "sudo" {
-                                // Persisted for two consecutive polls: blocked on
-                                // input.  Re-check the pane in case the prompt just
-                                // rendered between polls.
-                                let target_str_snap2 = target_str.to_string();
-                                let snap2 = tmux::off_runtime("capture-pane-2", move || {
-                                    tmux::capture_pane(&target_str_snap2, 10)
-                                })
-                                .await
-                                .and_then(|r| r.ok())
-                                .unwrap_or_default();
-                                if is_fingerprint_prompt(&snap2) {
-                                    result = SudoAuth::Fingerprint;
-                                } else {
-                                    result = SudoAuth::Password;
-                                }
-                                break 'detect;
-                            }
-                            // "sudo" transitioned away — credentials were cached.
                         } else if idle_pid != 0 && {
                             let t = target_str.to_string();
                             tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t))
@@ -618,7 +586,13 @@ where
                                     sudo_fail = Some(SudoFail::Cancelled);
                                     break 'sudo;
                                 };
-                                if !wait_for_sudo_prompt_and_inject(target_str, &cred).await {
+                                if !wait_for_sudo_prompt_and_inject(
+                                    target_str,
+                                    &cred,
+                                    &sudo_sentinel,
+                                )
+                                .await
+                                {
                                     break 'sudo; // prompt not found; credentials may be cached
                                 }
                                 if sudo_auth_failed(target_str).await {

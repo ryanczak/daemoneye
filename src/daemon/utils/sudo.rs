@@ -55,14 +55,31 @@ pub async fn sudo_credentials_cached() -> bool {
         .unwrap_or(false)
 }
 
+/// Per-invocation sudo prompt sentinel. The closing bracket makes the match
+/// exact: `[de-sudo-prompt-3]` is not a substring of `[de-sudo-prompt-33]`.
+pub fn sudo_sentinel(idx: usize) -> String {
+    format!("[de-sudo-prompt-{idx}]")
+}
+
+/// Prefix `cmd` so sudo prints `sentinel` instead of its default password
+/// prompt. Same shape as the background-window form in
+/// `background/run.rs` (`SUDO_PROMPT='[de-sudo-prompt]' {cmd}`).
+pub fn with_sudo_sentinel(cmd: &str, sentinel: &str) -> String {
+    format!("SUDO_PROMPT='{sentinel}' {cmd}")
+}
+
 /// Poll `pane_id` until a sudo password prompt appears in the scrollback, then
 /// inject `credential` via `send-keys`.  Returns `true` if injection happened,
 /// `false` if the prompt never appeared within the timeout.
 ///
-/// Detects the locale-independent `[de-sudo-prompt]` sentinel (set by
-/// `background.rs` for background windows) as well as the standard English
-/// prompt strings for foreground panes.
-pub async fn wait_for_sudo_prompt_and_inject(pane_id: &str, credential: &str) -> bool {
+/// Matches only the locale-independent `sentinel` (set by the caller via
+/// `with_sudo_sentinel` / the background-window form) — stale `[sudo]` or
+/// "password" text from earlier commands must not trigger injection.
+pub async fn wait_for_sudo_prompt_and_inject(
+    pane_id: &str,
+    credential: &str,
+    sentinel: &str,
+) -> bool {
     const POLL: std::time::Duration = std::time::Duration::from_millis(200);
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
     let mut waited = std::time::Duration::ZERO;
@@ -80,11 +97,7 @@ pub async fn wait_for_sudo_prompt_and_inject(pane_id: &str, credential: &str) ->
         if is_fingerprint_prompt(&snap) {
             return false;
         }
-        if snap.contains("[de-sudo-prompt]")
-            || snap.contains("[sudo]")
-            || snap.contains("password")
-            || snap.contains("Password")
-        {
+        if snap.contains(sentinel) {
             let p = pane_id.to_string();
             let c = credential.to_string();
             let _ =
@@ -158,5 +171,35 @@ mod tests {
     #[test]
     fn command_has_sudo_no_sudo() {
         assert!(!command_has_sudo("ls -la /home"));
+    }
+
+    #[test]
+    fn sudo_sentinel_bracket_disambiguates() {
+        let snap = "[de-sudo-prompt-33]";
+        assert!(
+            !snap.contains(&sudo_sentinel(3)),
+            "nonce 3 must not match a longer nonce 33"
+        );
+        assert!(snap.contains(&sudo_sentinel(33)));
+    }
+
+    #[test]
+    fn with_sudo_sentinel_prefixes_sudo_command() {
+        assert_eq!(
+            with_sudo_sentinel("sudo pacman -Syu", "[de-sudo-prompt-4]"),
+            "SUDO_PROMPT='[de-sudo-prompt-4]' sudo pacman -Syu"
+        );
+    }
+
+    #[test]
+    fn stale_prompt_text_does_not_match_sentinel() {
+        let snap = "$ sudo systemctl restart nginx\n[sudo] password for matt:\n$ sudo journalctl -u nginx\n";
+        assert!(!snap.contains(&sudo_sentinel(7)));
+    }
+
+    #[test]
+    fn command_echo_password_word_does_not_match_sentinel() {
+        let snap = "$ sudo grep password /etc/shadow\n";
+        assert!(!snap.contains(&sudo_sentinel(7)));
     }
 }

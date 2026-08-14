@@ -223,7 +223,7 @@ pub async fn run_background_in_window(
     // P3: detect auth failure and log a warning — the failed exit code propagates
     // through the completion monitor and will be visible to the AI.
     if let Some(cred) = credential {
-        if wait_for_sudo_prompt_and_inject(&pane_id, cred).await {
+        if wait_for_sudo_prompt_and_inject(&pane_id, cred, "[de-sudo-prompt]").await {
             if sudo_auth_failed(&pane_id).await {
                 log::warn!(
                     "sudo authentication failed for background command in {}: {}",
