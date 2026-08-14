@@ -253,20 +253,43 @@ pub enum PendingCall {
     },
 }
 
+/// Serialize a tool-call argument object, omitting entries whose value is
+/// JSON `null`. Optional parameters the model did not pass must not be
+/// echoed back into conversation history: models imitate `"grep": null`
+/// as the string `"null"` on later calls, which then filters pane reads
+/// to lines containing "null".
+fn args_to_string(mut v: serde_json::Value) -> String {
+    if let serde_json::Value::Object(map) = &mut v {
+        map.retain(|_, val| !val.is_null());
+    }
+    v.to_string()
+}
+
 impl PendingCall {
     pub fn to_tool_call(&self) -> ToolCall {
         match self {
-            PendingCall::Foreground { id, thought_signature, cmd, target } => ToolCall {
+            PendingCall::Foreground {
+                id,
+                thought_signature,
+                cmd,
+                target,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "run_terminal_command".to_string(),
-                arguments: serde_json::json!({
+                arguments: args_to_string(serde_json::json!({
                     "command": cmd,
                     "background": false,
                     "target_pane": target
-                }).to_string(),
+                })),
             },
-            PendingCall::Background { id, thought_signature, cmd, retry_pane, .. } => ToolCall {
+            PendingCall::Background {
+                id,
+                thought_signature,
+                cmd,
+                retry_pane,
+                ..
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "run_terminal_command".to_string(),
@@ -275,122 +298,231 @@ impl PendingCall {
                     if let Some(rp) = retry_pane {
                         a["retry_in_pane"] = serde_json::json!(rp);
                     }
-                    a.to_string()
+                    args_to_string(a)
                 },
             },
-            PendingCall::ScheduleCommand { id, thought_signature, name, command, is_script, run_at, interval, runbook, ghost_runbook, cron } => ToolCall {
+            PendingCall::ScheduleCommand {
+                id,
+                thought_signature,
+                name,
+                command,
+                is_script,
+                run_at,
+                interval,
+                runbook,
+                ghost_runbook,
+                cron,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "schedule_command".to_string(),
-                arguments: serde_json::json!({
+                arguments: args_to_string(serde_json::json!({
                     "name": name, "command": command,
                     "is_script": is_script,
                     "run_at": run_at, "interval": interval, "runbook": runbook,
                     "ghost_runbook": ghost_runbook,
                     "cron": cron
-                }).to_string(),
+                })),
             },
-            PendingCall::ListSchedules { id, thought_signature } => ToolCall {
+            PendingCall::ListSchedules {
+                id,
+                thought_signature,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "list_schedules".to_string(),
                 arguments: "{}".to_string(),
             },
-            PendingCall::LoadTools { id, thought_signature, groups } => ToolCall {
+            PendingCall::LoadTools {
+                id,
+                thought_signature,
+                groups,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "load_tools".to_string(),
-                arguments: serde_json::json!({"groups": groups}).to_string(),
+                arguments: args_to_string(serde_json::json!({"groups": groups})),
             },
-            PendingCall::CancelSchedule { id, thought_signature, job_id } => ToolCall {
+            PendingCall::CancelSchedule {
+                id,
+                thought_signature,
+                job_id,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "cancel_schedule".to_string(),
-                arguments: serde_json::json!({"id": job_id}).to_string(),
+                arguments: args_to_string(serde_json::json!({"id": job_id})),
             },
-            PendingCall::DeleteSchedule { id, thought_signature, job_id } => ToolCall {
+            PendingCall::DeleteSchedule {
+                id,
+                thought_signature,
+                job_id,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "delete_schedule".to_string(),
-                arguments: serde_json::json!({"id": job_id}).to_string(),
+                arguments: args_to_string(serde_json::json!({"id": job_id})),
             },
-            PendingCall::WriteScript { id, thought_signature, script_name, content } => ToolCall {
+            PendingCall::WriteScript {
+                id,
+                thought_signature,
+                script_name,
+                content,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "write_script".to_string(),
-                arguments: serde_json::json!({"script_name": script_name, "content": content}).to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"script_name": script_name, "content": content}),
+                ),
             },
-            PendingCall::ListScripts { id, thought_signature } => ToolCall {
+            PendingCall::ListScripts {
+                id,
+                thought_signature,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "list_scripts".to_string(),
                 arguments: "{}".to_string(),
             },
-            PendingCall::ReadScript { id, thought_signature, script_name } => ToolCall {
+            PendingCall::ReadScript {
+                id,
+                thought_signature,
+                script_name,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "read_script".to_string(),
-                arguments: serde_json::json!({"script_name": script_name}).to_string(),
+                arguments: args_to_string(serde_json::json!({"script_name": script_name})),
             },
-            PendingCall::DeleteScript { id, thought_signature, script_name } => ToolCall {
+            PendingCall::DeleteScript {
+                id,
+                thought_signature,
+                script_name,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "delete_script".to_string(),
-                arguments: serde_json::json!({"script_name": script_name}).to_string(),
+                arguments: args_to_string(serde_json::json!({"script_name": script_name})),
             },
-            PendingCall::WatchPane { id, thought_signature, pane_id, timeout_secs, pattern } => ToolCall {
+            PendingCall::WatchPane {
+                id,
+                thought_signature,
+                pane_id,
+                timeout_secs,
+                pattern,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "watch_pane".to_string(),
-                arguments: serde_json::json!({"pane_id": pane_id, "timeout_secs": timeout_secs, "pattern": pattern}).to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"pane_id": pane_id, "timeout_secs": timeout_secs, "pattern": pattern}),
+                ),
             },
-            PendingCall::ReadFile { id, thought_signature, path, offset, limit, pattern, target_pane } => ToolCall {
+            PendingCall::ReadFile {
+                id,
+                thought_signature,
+                path,
+                offset,
+                limit,
+                pattern,
+                target_pane,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "read_file".to_string(),
-                arguments: serde_json::json!({"path": path, "offset": offset, "limit": limit, "pattern": pattern, "target_pane": target_pane}).to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"path": path, "offset": offset, "limit": limit, "pattern": pattern, "target_pane": target_pane}),
+                ),
             },
-            PendingCall::EditFile { id, thought_signature, path, operation, old_string, new_string, content, dest_path, target_pane } => ToolCall {
+            PendingCall::EditFile {
+                id,
+                thought_signature,
+                path,
+                operation,
+                old_string,
+                new_string,
+                content,
+                dest_path,
+                target_pane,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "edit_file".to_string(),
-                arguments: serde_json::json!({"path": path, "operation": operation, "old_string": old_string, "new_string": new_string, "content": content, "dest_path": dest_path, "target_pane": target_pane}).to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"path": path, "operation": operation, "old_string": old_string, "new_string": new_string, "content": content, "dest_path": dest_path, "target_pane": target_pane}),
+                ),
             },
-            PendingCall::WriteRunbook { id, thought_signature, name, content } => ToolCall {
+            PendingCall::WriteRunbook {
+                id,
+                thought_signature,
+                name,
+                content,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "write_runbook".to_string(),
-                arguments: serde_json::json!({"name": name, "content": content}).to_string(),
+                arguments: args_to_string(serde_json::json!({"name": name, "content": content})),
             },
-            PendingCall::DeleteRunbook { id, thought_signature, name } => ToolCall {
+            PendingCall::DeleteRunbook {
+                id,
+                thought_signature,
+                name,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "delete_runbook".to_string(),
-                arguments: serde_json::json!({"name": name}).to_string(),
+                arguments: args_to_string(serde_json::json!({"name": name})),
             },
-            PendingCall::ReadRunbook { id, thought_signature, name } => ToolCall {
+            PendingCall::ReadRunbook {
+                id,
+                thought_signature,
+                name,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "read_runbook".to_string(),
-                arguments: serde_json::json!({"name": name}).to_string(),
+                arguments: args_to_string(serde_json::json!({"name": name})),
             },
-            PendingCall::ListRunbooks { id, thought_signature } => ToolCall {
+            PendingCall::ListRunbooks {
+                id,
+                thought_signature,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "list_runbooks".to_string(),
                 arguments: "{}".to_string(),
             },
-            PendingCall::AddMemory { id, thought_signature, key, value, category } => ToolCall {
+            PendingCall::AddMemory {
+                id,
+                thought_signature,
+                key,
+                value,
+                category,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "add_memory".to_string(),
-                arguments: serde_json::json!({"key": key, "value": value, "category": category}).to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"key": key, "value": value, "category": category}),
+                ),
             },
-            PendingCall::UpdateMemory { id, thought_signature, key, category, body, append, tags, summary, relates_to, expires } => ToolCall {
+            PendingCall::UpdateMemory {
+                id,
+                thought_signature,
+                key,
+                category,
+                body,
+                append,
+                tags,
+                summary,
+                relates_to,
+                expires,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "update_memory".to_string(),
-                arguments: serde_json::json!({
+                arguments: args_to_string(serde_json::json!({
                     "key": key,
                     "category": category,
                     "body": body,
@@ -399,119 +531,216 @@ impl PendingCall {
                     "summary": summary,
                     "relates_to": relates_to,
                     "expires": expires,
-                }).to_string(),
+                })),
             },
-            PendingCall::DeleteMemory { id, thought_signature, key, category } => ToolCall {
+            PendingCall::DeleteMemory {
+                id,
+                thought_signature,
+                key,
+                category,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "delete_memory".to_string(),
-                arguments: serde_json::json!({"key": key, "category": category}).to_string(),
+                arguments: args_to_string(serde_json::json!({"key": key, "category": category})),
             },
-            PendingCall::ReadMemory { id, thought_signature, key, category } => ToolCall {
+            PendingCall::ReadMemory {
+                id,
+                thought_signature,
+                key,
+                category,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "read_memory".to_string(),
-                arguments: serde_json::json!({"key": key, "category": category}).to_string(),
+                arguments: args_to_string(serde_json::json!({"key": key, "category": category})),
             },
-            PendingCall::ListMemories { id, thought_signature, category } => ToolCall {
+            PendingCall::ListMemories {
+                id,
+                thought_signature,
+                category,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "list_memories".to_string(),
-                arguments: serde_json::json!({"category": category}).to_string(),
+                arguments: args_to_string(serde_json::json!({"category": category})),
             },
-            PendingCall::SearchRepository { id, thought_signature, query, kind } => ToolCall {
+            PendingCall::SearchRepository {
+                id,
+                thought_signature,
+                query,
+                kind,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "search_repository".to_string(),
-                arguments: serde_json::json!({"query": query, "kind": kind}).to_string(),
+                arguments: args_to_string(serde_json::json!({"query": query, "kind": kind})),
             },
-            PendingCall::RecallContext { id, thought_signature, query, turn_start, turn_end, scope } => ToolCall {
+            PendingCall::RecallContext {
+                id,
+                thought_signature,
+                query,
+                turn_start,
+                turn_end,
+                scope,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "recall_context".to_string(),
-                arguments: serde_json::json!({"query": query, "turn_start": turn_start, "turn_end": turn_end, "scope": scope}).to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"query": query, "turn_start": turn_start, "turn_end": turn_end, "scope": scope}),
+                ),
             },
-            PendingCall::GetTerminalContext { id, thought_signature, scope } => ToolCall {
+            PendingCall::GetTerminalContext {
+                id,
+                thought_signature,
+                scope,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "get_terminal_context".to_string(),
-                arguments: serde_json::json!({"scope": scope}).to_string(),
+                arguments: args_to_string(serde_json::json!({"scope": scope})),
             },
-            PendingCall::ListPanes { id, thought_signature } => ToolCall {
+            PendingCall::ListPanes {
+                id,
+                thought_signature,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "list_panes".to_string(),
                 arguments: "{}".to_string(),
             },
-            PendingCall::CloseBackgroundWindow { id, thought_signature, pane_id } => ToolCall {
+            PendingCall::CloseBackgroundWindow {
+                id,
+                thought_signature,
+                pane_id,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "close_background_window".to_string(),
-                arguments: serde_json::json!({"pane_id": pane_id}).to_string(),
+                arguments: args_to_string(serde_json::json!({"pane_id": pane_id})),
             },
-            PendingCall::SpawnGhost { id, thought_signature, runbook, message, agent } => ToolCall {
+            PendingCall::SpawnGhost {
+                id,
+                thought_signature,
+                runbook,
+                message,
+                agent,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "spawn_ghost_shell".to_string(),
-                arguments: serde_json::json!({"runbook": runbook, "message": message, "agent": agent}).to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"runbook": runbook, "message": message, "agent": agent}),
+                ),
             },
-            PendingCall::CreateAgent { id, thought_signature, name, description, prompt, model, memory_namespace, max_turns, auto_approve_read_only, auto_approve_scripts } => ToolCall {
+            PendingCall::CreateAgent {
+                id,
+                thought_signature,
+                name,
+                description,
+                prompt,
+                model,
+                memory_namespace,
+                max_turns,
+                auto_approve_read_only,
+                auto_approve_scripts,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "create_agent".to_string(),
-                arguments: serde_json::json!({
+                arguments: args_to_string(serde_json::json!({
                     "name": name, "description": description, "prompt": prompt,
                     "model": model, "memory_namespace": memory_namespace,
                     "max_turns": max_turns, "auto_approve_read_only": auto_approve_read_only,
                     "auto_approve_scripts": auto_approve_scripts
-                }).to_string(),
+                })),
             },
-            PendingCall::ReadAgent { id, thought_signature, name } => ToolCall {
+            PendingCall::ReadAgent {
+                id,
+                thought_signature,
+                name,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "read_agent".to_string(),
-                arguments: serde_json::json!({"name": name}).to_string(),
+                arguments: args_to_string(serde_json::json!({"name": name})),
             },
-            PendingCall::ListAgents { id, thought_signature } => ToolCall {
+            PendingCall::ListAgents {
+                id,
+                thought_signature,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "list_agents".to_string(),
                 arguments: "{}".to_string(),
             },
-            PendingCall::DeleteAgent { id, thought_signature, name } => ToolCall {
+            PendingCall::DeleteAgent {
+                id,
+                thought_signature,
+                name,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "delete_agent".to_string(),
-                arguments: serde_json::json!({"name": name}).to_string(),
+                arguments: args_to_string(serde_json::json!({"name": name})),
             },
-            PendingCall::AwaitAgentResult { id, thought_signature, job_id, agent_name, timeout_secs } => ToolCall {
+            PendingCall::AwaitAgentResult {
+                id,
+                thought_signature,
+                job_id,
+                agent_name,
+                timeout_secs,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "await_agent_result".to_string(),
-                arguments: serde_json::json!({"job_id": job_id, "agent_name": agent_name, "timeout_secs": timeout_secs}).to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"job_id": job_id, "agent_name": agent_name, "timeout_secs": timeout_secs}),
+                ),
             },
-            PendingCall::ReadPane { id, thought_signature, pane_id, lines, grep } => ToolCall {
+            PendingCall::ReadPane {
+                id,
+                thought_signature,
+                pane_id,
+                lines,
+                grep,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "read_pane".to_string(),
-                arguments: serde_json::json!({"pane_id": pane_id, "lines": lines, "grep": grep}).to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"pane_id": pane_id, "lines": lines, "grep": grep}),
+                ),
             },
-            PendingCall::FindInPanes { id, thought_signature, pattern, scope } => ToolCall {
+            PendingCall::FindInPanes {
+                id,
+                thought_signature,
+                pattern,
+                scope,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "find_in_panes".to_string(),
-                arguments: serde_json::json!({"pattern": pattern, "scope": scope}).to_string(),
+                arguments: args_to_string(serde_json::json!({"pattern": pattern, "scope": scope})),
             },
-            PendingCall::TmuxControl { id, thought_signature, action, pane_id, name, direction } => ToolCall {
+            PendingCall::TmuxControl {
+                id,
+                thought_signature,
+                action,
+                pane_id,
+                name,
+                direction,
+            } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "tmux_control".to_string(),
-                arguments: serde_json::json!({
+                arguments: args_to_string(serde_json::json!({
                     "action": action,
                     "pane_id": pane_id,
                     "name": name,
                     "direction": direction,
-                }).to_string(),
+                })),
             },
         }
     }
@@ -1025,5 +1254,318 @@ mod tests {
             scope: None,
         };
         assert!(call.summary().is_empty());
+    }
+
+    fn mk_read_pane(lines: Option<u64>, grep: Option<String>) -> PendingCall {
+        PendingCall::ReadPane {
+            id: "x".to_string(),
+            thought_signature: None,
+            pane_id: "%3".to_string(),
+            lines,
+            grep,
+        }
+    }
+
+    fn parsed_args(call: &PendingCall) -> serde_json::Value {
+        serde_json::from_str(&call.to_tool_call().arguments).unwrap()
+    }
+
+    #[test]
+    fn to_tool_call_read_pane_omits_none_options() {
+        let args = parsed_args(&mk_read_pane(None, None));
+        let obj = args.as_object().unwrap();
+        assert_eq!(obj.len(), 1);
+        assert_eq!(obj["pane_id"], "%3");
+        assert!(!obj.contains_key("grep"));
+        assert!(!obj.contains_key("lines"));
+    }
+
+    #[test]
+    fn to_tool_call_read_pane_preserves_string_null_grep() {
+        // A user may legitimately grep for the word "null" — the helper
+        // strips JSON nulls, never strings.
+        let args = parsed_args(&mk_read_pane(None, Some("null".to_string())));
+        assert_eq!(args["grep"], "null");
+    }
+
+    #[test]
+    fn to_tool_call_read_file_omits_none_options() {
+        let args = parsed_args(&mk_read_file("/etc/hosts"));
+        let obj = args.as_object().unwrap();
+        assert_eq!(obj.len(), 1);
+        assert_eq!(obj["path"], "/etc/hosts");
+    }
+
+    #[test]
+    fn to_tool_call_preserves_present_options() {
+        let find = PendingCall::FindInPanes {
+            id: "x".to_string(),
+            thought_signature: None,
+            pattern: "error".to_string(),
+            scope: Some("all".to_string()),
+        };
+        assert_eq!(parsed_args(&find)["scope"], "all");
+
+        let args = parsed_args(&mk_read_pane(Some(200), None));
+        assert_eq!(args["lines"], 200);
+    }
+
+    #[test]
+    fn to_tool_call_background_retry_pane_roundtrip() {
+        let mk = |retry_pane: Option<String>| PendingCall::Background {
+            id: "x".to_string(),
+            thought_signature: None,
+            cmd: "ls".to_string(),
+            _credential: None,
+            retry_pane,
+        };
+        let with = parsed_args(&mk(Some("%5".to_string())));
+        assert_eq!(with["retry_in_pane"], "%5");
+        let without = parsed_args(&mk(None));
+        assert!(!without.as_object().unwrap().contains_key("retry_in_pane"));
+    }
+
+    #[test]
+    fn to_tool_call_never_serializes_null() {
+        // One instance of every variant, all Option fields None: no arm may
+        // serialize a JSON null argument value — models imitate echoed nulls
+        // as the string "null" on later calls.
+        let x = || "x".to_string();
+        let all: Vec<PendingCall> = vec![
+            PendingCall::Foreground {
+                id: x(),
+                thought_signature: None,
+                cmd: "ls".to_string(),
+                target: None,
+            },
+            PendingCall::Background {
+                id: x(),
+                thought_signature: None,
+                cmd: "ls".to_string(),
+                _credential: None,
+                retry_pane: None,
+            },
+            PendingCall::ScheduleCommand {
+                id: x(),
+                thought_signature: None,
+                name: "n".to_string(),
+                command: "c".to_string(),
+                is_script: false,
+                run_at: None,
+                interval: None,
+                runbook: None,
+                ghost_runbook: None,
+                cron: None,
+            },
+            PendingCall::LoadTools {
+                id: x(),
+                groups: vec!["memory".to_string()],
+                thought_signature: None,
+            },
+            PendingCall::ListSchedules {
+                id: x(),
+                thought_signature: None,
+            },
+            PendingCall::CancelSchedule {
+                id: x(),
+                thought_signature: None,
+                job_id: "j".to_string(),
+            },
+            PendingCall::DeleteSchedule {
+                id: x(),
+                thought_signature: None,
+                job_id: "j".to_string(),
+            },
+            PendingCall::WriteScript {
+                id: x(),
+                thought_signature: None,
+                script_name: "s.sh".to_string(),
+                content: "#!/bin/sh".to_string(),
+            },
+            PendingCall::ListScripts {
+                id: x(),
+                thought_signature: None,
+            },
+            PendingCall::ReadScript {
+                id: x(),
+                thought_signature: None,
+                script_name: "s.sh".to_string(),
+            },
+            PendingCall::DeleteScript {
+                id: x(),
+                thought_signature: None,
+                script_name: "s.sh".to_string(),
+            },
+            PendingCall::WatchPane {
+                id: x(),
+                thought_signature: None,
+                pane_id: "%1".to_string(),
+                timeout_secs: 30,
+                pattern: None,
+            },
+            mk_read_file("/etc/hosts"),
+            PendingCall::EditFile {
+                id: x(),
+                thought_signature: None,
+                path: "/tmp/f".to_string(),
+                operation: "edit".to_string(),
+                old_string: None,
+                new_string: None,
+                content: None,
+                dest_path: None,
+                target_pane: None,
+            },
+            PendingCall::WriteRunbook {
+                id: x(),
+                thought_signature: None,
+                name: "rb".to_string(),
+                content: "# RB".to_string(),
+            },
+            PendingCall::DeleteRunbook {
+                id: x(),
+                thought_signature: None,
+                name: "rb".to_string(),
+            },
+            PendingCall::ReadRunbook {
+                id: x(),
+                thought_signature: None,
+                name: "rb".to_string(),
+            },
+            PendingCall::ListRunbooks {
+                id: x(),
+                thought_signature: None,
+            },
+            PendingCall::AddMemory {
+                id: x(),
+                thought_signature: None,
+                key: "k".to_string(),
+                value: "v".to_string(),
+                category: "knowledge".to_string(),
+            },
+            PendingCall::UpdateMemory {
+                id: x(),
+                thought_signature: None,
+                key: "k".to_string(),
+                category: "knowledge".to_string(),
+                body: None,
+                append: false,
+                tags: None,
+                summary: None,
+                relates_to: None,
+                expires: None,
+            },
+            PendingCall::DeleteMemory {
+                id: x(),
+                thought_signature: None,
+                key: "k".to_string(),
+                category: "knowledge".to_string(),
+            },
+            PendingCall::ReadMemory {
+                id: x(),
+                thought_signature: None,
+                key: "k".to_string(),
+                category: "knowledge".to_string(),
+            },
+            PendingCall::ListMemories {
+                id: x(),
+                thought_signature: None,
+                category: None,
+            },
+            PendingCall::SearchRepository {
+                id: x(),
+                thought_signature: None,
+                query: "q".to_string(),
+                kind: "all".to_string(),
+            },
+            PendingCall::RecallContext {
+                id: x(),
+                thought_signature: None,
+                query: None,
+                turn_start: None,
+                turn_end: None,
+                scope: None,
+            },
+            PendingCall::GetTerminalContext {
+                id: x(),
+                thought_signature: None,
+                scope: None,
+            },
+            PendingCall::ListPanes {
+                id: x(),
+                thought_signature: None,
+            },
+            PendingCall::CloseBackgroundWindow {
+                id: x(),
+                thought_signature: None,
+                pane_id: "%1".to_string(),
+            },
+            PendingCall::SpawnGhost {
+                id: x(),
+                thought_signature: None,
+                runbook: "rb".to_string(),
+                message: "m".to_string(),
+                agent: None,
+            },
+            PendingCall::CreateAgent {
+                id: x(),
+                thought_signature: None,
+                name: "a".to_string(),
+                description: "d".to_string(),
+                prompt: "p".to_string(),
+                model: None,
+                memory_namespace: "ns".to_string(),
+                max_turns: None,
+                auto_approve_read_only: false,
+                auto_approve_scripts: vec![],
+            },
+            PendingCall::ReadAgent {
+                id: x(),
+                thought_signature: None,
+                name: "a".to_string(),
+            },
+            PendingCall::ListAgents {
+                id: x(),
+                thought_signature: None,
+            },
+            PendingCall::DeleteAgent {
+                id: x(),
+                thought_signature: None,
+                name: "a".to_string(),
+            },
+            PendingCall::AwaitAgentResult {
+                id: x(),
+                thought_signature: None,
+                job_id: "j".to_string(),
+                agent_name: "a".to_string(),
+                timeout_secs: 30,
+            },
+            mk_read_pane(None, None),
+            PendingCall::FindInPanes {
+                id: x(),
+                thought_signature: None,
+                pattern: "p".to_string(),
+                scope: None,
+            },
+            PendingCall::TmuxControl {
+                id: x(),
+                thought_signature: None,
+                action: "focus".to_string(),
+                pane_id: "%1".to_string(),
+                name: None,
+                direction: None,
+            },
+        ];
+        for call in &all {
+            let args: serde_json::Value =
+                serde_json::from_str(&call.to_tool_call().arguments).unwrap();
+            for (key, val) in args.as_object().unwrap() {
+                assert!(
+                    !val.is_null(),
+                    "{} serializes null for key '{}'",
+                    call.tool_name(),
+                    key
+                );
+            }
+        }
     }
 }

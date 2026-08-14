@@ -1,6 +1,42 @@
 # NEXT
 
-## Active phase: none — M14 signed off 2026-08-11; next milestone not yet named
+## Active milestone: M15 — Chat Reliability & Dialog UX (opened 2026-08-14)
+
+**phase-01 — read-pane-grep-null: done (escalated) 2026-08-14.** Two
+NoProgressStall hard-fails from the Nemotron executor (fresh dispatch +
+briefing-seeded resume, both 60 read-only calls, tree non-compiling twice) →
+architect takeover. Fix landed: `args_to_string` null-stripping helper in
+`src/ai/types/pending.rs`, 32 arms wrapped, 6 tests, all gates green. Live
+chat re-check deferred to milestone close. Executor model switched to
+`Qwen/Qwen3.8-27B-FP8` (new 3.8 release) in `rexymcp.toml` (PE decision
+2026-08-14); confirmed served by brain via `executor_health`. Fresh model —
+no calibration history yet; prior Qwen3.6 findings are the starting prior.
+
+Remaining phases: 02 sudo-cached-detection, 03 resize-border-corruption,
+04 approval-panel, 05 sudo-credential-panel (04 → 05 hard dependency).
+Design decision on record: approval/sudo prompts become themed **in-viewport
+ratatui panels** (no alternate screen, no floating overlay). Milestone README:
+`docs/dev/milestones/M15-chat-reliability/README.md`.
+
+*(Note: this section was re-applied 2026-08-14 — the original M15 NEXT.md
+update was reverted on disk during the phase-01 executor runs.)*
+
+**Active phase: phase-02 — sudo-cached-detection** (`docs/dev/milestones/
+M15-chat-reliability/phase-02-sudo-cached-detection.md`, status: todo,
+drafted 2026-08-14). Root cause code-verified in the foreground detection
+loop (`foreground.rs:408–530`): `pane_current_command == "sudo"` is true for
+a wrapped command's whole runtime, broad substring prompt matching hits
+stale scrollback, and the two-poll fallback misclassifies every cached-cred
+run. Fix: per-invocation `SUDO_PROMPT` sentinel (nonce'd
+`[de-sudo-prompt-<n>]`), exact-match detection, generalizing
+`background/run.rs:161`. Live verify architect-side at review. First
+dispatch on the new Qwen3.8-27B-FP8 executor.
+
+**Next action:** `/rexymcp:dispatch phase-02-sudo-cached-detection`.
+
+---
+
+## Historical: M14 milestone boundary (M14 signed off 2026-08-11)
 
 **PE sign-off landed 2026-08-11.** Calibration decisions: folds 1+2 (last-entry
 PASTE MATCH anchor; no-unpastable-bytes/strip-ANSI-at-generation) are in
