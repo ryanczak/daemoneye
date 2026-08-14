@@ -453,6 +453,86 @@ impl<B: Backend> RatatuiRenderer<B> {
         Ok(())
     }
 
+    /// Draw the live region as a themed approval dialog: a rounded blood-red
+    /// bordered panel (yellow title) holding the command summary, the
+    /// multicolor Y/A/N options line, and the editable input line; the status
+    /// bar keeps the bottom row. Transient — leaves no residue in scrollback.
+    pub fn draw_approval_panel(
+        &mut self,
+        title: &str,
+        summary: &str,
+        session_label: &str,
+        input: &InputLine,
+        status: &StatusBarState<'_>,
+    ) -> Result<(), B::Error> {
+        let area = self.terminal.get_frame().area();
+        if area.height < 6 {
+            // Too short for the panel — fall back to the plain prompt shape.
+            return self.draw_prompt("Approve? [Y]es [A]pprove [N]o › ", input, status);
+        }
+
+        let input_text = input.as_str();
+        let session_id = status.session_id.to_string();
+        let model = status.model.to_string();
+        let start_time = self.start_time;
+        let title_owned = title.to_string();
+        let summary_owned = summary.to_string();
+        let session_label_owned = session_label.to_string();
+
+        self.terminal.draw(|frame| {
+            let area = frame.area();
+            let chunks = Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(area);
+
+            let red = self.palette.red();
+            let yellow = self.palette.yellow();
+
+            let panel = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(red))
+                .title(Span::styled(
+                    format!(" {title_owned} "),
+                    Style::default().fg(yellow).add_modifier(Modifier::BOLD),
+                ));
+
+            let inner_width = area.width.saturating_sub(2) as usize;
+            let content = Paragraph::new(vec![
+                Line::from(Span::styled(
+                    truncate_with_ellipsis(&summary_owned, inner_width),
+                    Style::default().fg(Color::Gray),
+                )),
+                approval_options_line(&session_label_owned, red, yellow),
+                Line::from(vec![
+                    Span::styled("› ", Style::default().fg(yellow)),
+                    Span::raw(input_text),
+                ]),
+            ])
+            .block(panel);
+            frame.render_widget(content, chunks[0]);
+
+            let uptime = fmt_uptime(start_time.elapsed());
+            let status_text = format!(
+                " session:{} · {} · up {} ",
+                short_session(&session_id),
+                model,
+                uptime,
+            );
+            let status_block = Block::default().borders(Borders::NONE).style(
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM),
+            );
+            let status_para =
+                Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
+            frame.render_widget(status_para, chunks[1]);
+        })?;
+
+        Ok(())
+    }
+
     /// Commit a styled bordered panel into scrollback above the inline viewport.
     ///
     /// Renders a top border with a title, body lines (optionally dimmed and
@@ -633,6 +713,39 @@ fn render_live_region(
     );
     let status_para = Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
     frame.render_widget(status_para, chunks[1]);
+}
+
+/// The approval options line: bright-yellow key letters in blood-red
+/// brackets, dim redirect affordance. `session_label` is "session" or
+/// "sudo session".
+fn approval_options_line(session_label: &str, red: Color, yellow: Color) -> Line<'static> {
+    let key =
+        |c: &'static str| Span::styled(c, Style::default().fg(yellow).add_modifier(Modifier::BOLD));
+    let br = |s: &'static str| Span::styled(s, Style::default().fg(red));
+    let word = |s: String| Span::styled(s, Style::default().fg(red));
+    Line::from(vec![
+        br("["),
+        key("Y"),
+        br("]"),
+        word("es".to_string()),
+        Span::raw("  "),
+        br("["),
+        key("A"),
+        br("]"),
+        word(format!("pprove for {session_label}")),
+        Span::raw("  "),
+        br("["),
+        key("N"),
+        br("]"),
+        word("o".to_string()),
+        Span::raw("  "),
+        Span::styled(
+            "or type to redirect",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ),
+    ])
 }
 
 /// Render the live region with a prompt above the input box.
@@ -2245,5 +2358,275 @@ mod tests {
             .commit_styled(&[Line::from("line1"), Line::from("line2")])
             .unwrap();
         assert_eq!(renderer.inserted_rows, 9);
+    }
+
+    /// Build the default test status bar state.
+    fn approval_test_status() -> StatusBarState<'static> {
+        StatusBarState {
+            session_id: "test-session",
+            approval_hint: "",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: false,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        }
+    }
+
+    /// Draw the approval panel on a fresh 80-col test renderer.
+    fn draw_approval_panel_test(
+        renderer: &mut RatatuiRenderer<TestBackend>,
+        summary: &str,
+        session_label: &str,
+        input: &InputLine,
+    ) {
+        renderer
+            .draw_approval_panel(
+                "approve command",
+                summary,
+                session_label,
+                input,
+                &approval_test_status(),
+            )
+            .unwrap();
+    }
+
+    /// Collect the rendered rows of the live buffer as strings (80 cols wide).
+    fn buffer_rows(renderer: &RatatuiRenderer<TestBackend>) -> Vec<String> {
+        let buf = renderer.terminal.backend().buffer();
+        let symbols: Vec<String> = buf.content.iter().map(|c| c.symbol().to_string()).collect();
+        (0..symbols.len())
+            .step_by(80)
+            .map(|i| symbols[i..std::cmp::min(i + 80, symbols.len())].join(""))
+            .collect()
+    }
+
+    #[test]
+    fn approval_panel_options_multicolor() {
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+            origin_row: 0,
+            inserted_rows: 0,
+            last_width: 0,
+        };
+
+        let input = InputLine::new();
+        draw_approval_panel_test(&mut renderer, "$ ls -la", "session", &input);
+
+        let rows = buffer_rows(&renderer);
+        let options_row = rows
+            .iter()
+            .find(|r| r.contains("[Y]es"))
+            .expect("options row with [Y]es should be rendered");
+        assert!(
+            options_row.contains("[A]pprove for session"),
+            "options row should read [A]pprove for session, got: {}",
+            options_row
+        );
+        assert!(
+            options_row.contains("[N]o"),
+            "options row should read [N]o, got: {}",
+            options_row
+        );
+
+        // Key letters Y/A/N are bright yellow (bold); corners are blood red.
+        let yellow = Color::Rgb(220, 160, 0);
+        let red = Color::Rgb(180, 0, 0);
+        let buf = renderer.terminal.backend().buffer();
+        for (glyph, color) in [('Y', yellow), ('A', yellow), ('N', yellow)] {
+            let cells: Vec<_> = buf
+                .content
+                .iter()
+                .filter(|c| c.symbol() == glyph.to_string())
+                .collect();
+            assert!(
+                !cells.is_empty(),
+                "key letter '{}' should be rendered",
+                glyph
+            );
+            for cell in &cells {
+                assert_eq!(
+                    cell.style().fg,
+                    Some(color),
+                    "key letter '{}' should have yellow fg, got {:?}",
+                    glyph,
+                    cell.style().fg
+                );
+            }
+        }
+        for corner in ['╭', '╮', '╰', '╯'] {
+            let cells: Vec<_> = buf
+                .content
+                .iter()
+                .filter(|c| c.symbol() == corner.to_string())
+                .collect();
+            assert!(!cells.is_empty(), "corner '{}' should be rendered", corner);
+            for cell in &cells {
+                assert_eq!(
+                    cell.style().fg,
+                    Some(red),
+                    "corner '{}' should have blood-red fg, got {:?}",
+                    corner,
+                    cell.style().fg
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn approval_panel_sudo_session_label() {
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+            origin_row: 0,
+            inserted_rows: 0,
+            last_width: 0,
+        };
+
+        let input = InputLine::new();
+        draw_approval_panel_test(&mut renderer, "$ sudo apt install", "sudo session", &input);
+
+        let rows = buffer_rows(&renderer);
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("[A]pprove for sudo session")),
+            "options row should read [A]pprove for sudo session, got: {:?}",
+            rows
+        );
+    }
+
+    #[test]
+    fn approval_panel_truncates_long_summary() {
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+            origin_row: 0,
+            inserted_rows: 0,
+            last_width: 0,
+        };
+
+        let input = InputLine::new();
+        let long_summary = format!("$ {}", "x".repeat(300));
+        draw_approval_panel_test(&mut renderer, &long_summary, "session", &input);
+
+        let rows = buffer_rows(&renderer);
+        let summary_row = rows
+            .iter()
+            .find(|r| r.contains('$'))
+            .expect("summary row should be rendered");
+        // The row is `│<summary>…│` — the ellipsis is the last content glyph
+        // before the right border.
+        assert!(
+            summary_row.ends_with("…│"),
+            "summary row should end with ellipsis before the border, got: {:?}",
+            summary_row
+        );
+    }
+
+    #[test]
+    fn approval_panel_shows_typed_input() {
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+            origin_row: 0,
+            inserted_rows: 0,
+            last_width: 0,
+        };
+
+        let mut input = InputLine::new();
+        input.insert_str("why");
+        draw_approval_panel_test(&mut renderer, "$ ls", "session", &input);
+
+        let rows = buffer_rows(&renderer);
+        let input_row = rows
+            .iter()
+            .find(|r| r.contains('›'))
+            .expect("input row with prompt glyph should be rendered");
+        assert!(
+            input_row.contains("why"),
+            "input row should contain typed text 'why', got: {}",
+            input_row
+        );
+    }
+
+    #[test]
+    fn approval_panel_short_region_falls_back() {
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(3),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+            origin_row: 0,
+            inserted_rows: 0,
+            last_width: 0,
+        };
+
+        let input = InputLine::new();
+        // Must not panic — falls back to the plain prompt shape.
+        renderer
+            .draw_approval_panel(
+                "approve command",
+                "$ ls",
+                "session",
+                &input,
+                &approval_test_status(),
+            )
+            .unwrap();
     }
 }

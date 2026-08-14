@@ -881,6 +881,86 @@ async fn read_approval_input(
     }
 }
 
+/// `read_approval_input`, panel edition: identical key semantics, but every
+/// redraw renders the themed approval panel instead of the plain prompt.
+async fn read_approval_input_panel(
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    stdin: &AsyncStdin,
+    title: &str,
+    summary: &str,
+    session_label: &str,
+    status: &crate::cli::render::StatusBarState<'_>,
+) -> String {
+    use crate::cli::input::InputLine;
+
+    // Initial draw with empty input.
+    let mut line = InputLine::new();
+    let _ = renderer.draw_approval_panel(title, summary, session_label, &line, status);
+
+    // Read the first byte to decide: single-key shortcut vs. full line edit.
+    if let Some(first) = stdin.read_byte().await {
+        let ch = first as char;
+        match ch.to_ascii_lowercase() {
+            'y' | 'n' | 'a' => {
+                // Show the key the user pressed in the input box, then return.
+                line.insert(ch);
+                let _ = renderer.draw_approval_panel(title, summary, session_label, &line, status);
+                ch.to_string()
+            }
+            '\r' | '\n' => {
+                // Empty input (Enter pressed immediately)
+                String::new()
+            }
+            _ => {
+                // Start of a typed message — use the input editor.
+                line.insert(ch);
+                let _ = renderer.draw_approval_panel(title, summary, session_label, &line, status);
+
+                loop {
+                    match stdin.read_byte().await {
+                        Some(b'\r' | b'\n') => {
+                            return line.as_str();
+                        }
+                        Some(b'\x7f' | b'\x08') => {
+                            line.backspace();
+                            let _ = renderer.draw_approval_panel(
+                                title,
+                                summary,
+                                session_label,
+                                &line,
+                                status,
+                            );
+                        }
+                        Some(b'\x03') => {
+                            // Ctrl+C — cancel, return empty
+                            return String::new();
+                        }
+                        Some(b'\x1b') => {
+                            // Escape — cancel, return empty
+                            return String::new();
+                        }
+                        Some(b) => {
+                            if b >= 0x20 {
+                                line.insert(b as char);
+                                let _ = renderer.draw_approval_panel(
+                                    title,
+                                    summary,
+                                    session_label,
+                                    &line,
+                                    status,
+                                );
+                            }
+                        }
+                        None => return line.as_str(),
+                    }
+                }
+            }
+        }
+    } else {
+        String::new()
+    }
+}
+
 /// Display info text and prompt Y/N/A with typed-message support.
 /// Returns `(approved, is_approve_session, user_message)`.
 async fn prompt_with_session_approve(
@@ -937,9 +1017,17 @@ pub(super) async fn prompt_tool_call_ratatui(
     }
 
     let session_label = if is_sudo { "sudo session" } else { "session" };
-    let prompt_text = build_approval_prompt(session_label, true);
-    let (approved, is_session, user_msg) =
-        prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
+    let summary = format!("$ {}", command);
+    let input = read_approval_input_panel(
+        renderer,
+        stdin,
+        "approve command",
+        &summary,
+        session_label,
+        status,
+    )
+    .await;
+    let (approved, is_session, user_msg) = parse_approval_response(&input);
 
     if approved {
         if is_session {

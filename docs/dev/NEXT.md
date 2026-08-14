@@ -25,16 +25,22 @@ update was reverted on disk during the phase-01 executor runs.)*
 commit `851de1d`; Qwen3.8-27B-FP8's first phase, 74 turns, clean. Live
 cached/uncached sudo check deferred to milestone close with phase-01's.
 
-**Active phase: phase-03 — resize-border-corruption** (`docs/dev/milestones/
-M15-chat-reliability/phase-03-resize-border-corruption.md`, status: todo,
-drafted 2026-08-14). Implements the fix shape documented in this file's
-M13 RESOLVED block for the taped `w=255` width-flip ghost generator:
-width-change-aware clear band in `reanchor` (`ghost_band_rows` =
-ceil(VIEWPORT_ROWS × old_w / new_w), capped 4×; new `last_width` field;
-trace extended with `old_w`/`band`/`clear_from`). `repin_rows` untouched.
-Live verify (trace + scripted window switches) architect-side at review.
+**phase-03 — resize-border-corruption: done (approved_first_try)
+2026-08-14**, commit `46972e3` + approval `86b00e1`. Width-change-aware
+clear band in `reanchor` per the M13 RESOLVED fix shape; live trace check
+deferred to milestone close. Qwen3.8: two for two, both 74 turns.
 
-**Next action:** `/rexymcp:dispatch phase-03-resize-border-corruption`.
+**Active phase: phase-04 — approval-panel** (`docs/dev/milestones/
+M15-chat-reliability/phase-04-approval-panel.md`, status: todo, drafted
+2026-08-14). Themed multicolor approval dialog (blood-red rounded border,
+yellow key letters) rendered **within** the existing 6-row inline viewport —
+no Terminal rebuild (deliberate: avoids the reanchor risk class phase-03
+fixed). New `approval_options_line` + `draw_approval_panel` +
+`read_approval_input_panel`; `prompt_tool_call_ratatui` rewired; legacy
+prompt path (`read_approval_input` et al.) preserved for the other approval
+flows. Y/A/N + redirect semantics byte-identical. Phase-05 reuses the panel.
+
+**Next action:** `/rexymcp:dispatch phase-04-approval-panel`.
 
 ---
 
