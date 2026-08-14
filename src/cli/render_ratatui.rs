@@ -166,6 +166,21 @@ fn repin_rows(old_top: u16, content_end: u16, height: u16) -> (u16, u16) {
     (old_top.min(content_end).min(park), park)
 }
 
+/// Rows the old live region occupies after tmux rewraps it at a new pane
+/// width: ceil(VIEWPORT_ROWS × old_w / new_w). These rows sit at the bottom
+/// of the screen, below committed content — guaranteed non-history — so a
+/// reanchor after a width change may clear them freely. Returns 0 when the
+/// width did not change or either width is 0 (no band; the width-blind wipe
+/// is already correct). Capped at 4 × VIEWPORT_ROWS so a pathological
+/// old_w/new_w ratio cannot wipe most of the screen.
+fn ghost_band_rows(old_w: u16, new_w: u16) -> u16 {
+    if old_w == new_w || old_w == 0 || new_w == 0 {
+        return 0;
+    }
+    let band = (u32::from(VIEWPORT_ROWS) * u32::from(old_w)).div_ceil(u32::from(new_w));
+    (band.min(4 * u32::from(VIEWPORT_ROWS))) as u16
+}
+
 /// Ratatui-based inline-viewport renderer.
 ///
 /// Owns a `Terminal<B>` with an inline viewport.  The viewport holds only the
@@ -184,6 +199,10 @@ pub struct RatatuiRenderer<B: Backend> {
     /// inserted_rows = the row just past real content, until the screen
     /// fills and the clamp in `repin_rows` takes over.
     inserted_rows: u16,
+    /// Pane width at the last construction or reanchor. A change between
+    /// reanchors means tmux rewrapped the old live region — see
+    /// `ghost_band_rows`.
+    last_width: u16,
 }
 
 // Type alias for the production backend.
@@ -216,12 +235,14 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             },
         )?;
         let origin_row = terminal.get_frame().area().y;
+        let last_width = terminal.size().map(|s| s.width).unwrap_or(0);
         Ok(Self {
             terminal,
             start_time,
             palette: crate::cli::palette::Palette::from_env(),
             origin_row,
             inserted_rows: 0,
+            last_width,
         })
     }
 
@@ -243,6 +264,10 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
         let old_top = self.terminal.get_frame().area().y;
         let content_end = self.origin_row.saturating_add(self.inserted_rows);
         let (clear_from, park) = repin_rows(old_top, content_end, size.height);
+        let old_w = self.last_width;
+        let band = ghost_band_rows(old_w, size.width);
+        self.last_width = size.width;
+        let clear_from = clear_from.min(size.height.saturating_sub(band));
         if std::env::var("DAEMONEYE_REANCHOR_TRACE").is_ok()
             && let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true)
@@ -252,8 +277,8 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             use std::io::Write as _;
             let _ = writeln!(
                 f,
-                "reanchor old_top={old_top} content_end={content_end} park={park} w={} h={}",
-                size.width, size.height
+                "reanchor old_top={old_top} content_end={content_end} park={park} w={} h={} old_w={} band={band} clear_from={clear_from}",
+                size.width, size.height, old_w
             );
         }
         let mut out = std::io::stdout();
@@ -787,6 +812,7 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            last_width: 0,
         }
     }
 
@@ -1353,6 +1379,7 @@ mod tests {
             palette: Palette::for_depth(ColorDepth::Xterm256),
             origin_row: 0,
             inserted_rows: 0,
+            last_width: 0,
         };
 
         let input = InputLine::new();
@@ -1430,6 +1457,7 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            last_width: 0,
         };
 
         let long_line = "x".repeat(100);
@@ -1492,6 +1520,7 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            last_width: 0,
         };
 
         let body = vec!["short line".to_string()];
@@ -1564,6 +1593,7 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            last_width: 0,
         };
 
         let body = vec!["short".to_string()];
@@ -1843,6 +1873,7 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            last_width: 0,
         };
 
         let status = StatusBarState {
@@ -1899,6 +1930,7 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            last_width: 0,
         };
 
         let status = StatusBarState {
@@ -2115,6 +2147,39 @@ mod tests {
     }
 
     #[test]
+    fn ghost_band_rows_zero_when_width_unchanged() {
+        assert_eq!(ghost_band_rows(127, 127), 0);
+        assert_eq!(ghost_band_rows(255, 255), 0);
+    }
+
+    #[test]
+    fn ghost_band_rows_narrowing_ceils() {
+        assert_eq!(ghost_band_rows(254, 127), 12);
+        assert_eq!(ghost_band_rows(255, 127), 13);
+    }
+
+    #[test]
+    fn ghost_band_rows_widening_small_band() {
+        assert_eq!(ghost_band_rows(127, 255), 3);
+        // The band never raises the clear row above the park on a widening.
+        let h: u16 = 61;
+        let park = h.saturating_sub(VIEWPORT_ROWS);
+        assert_eq!(park, 55);
+        assert_eq!(park.min(h.saturating_sub(ghost_band_rows(127, 255))), 55);
+    }
+
+    #[test]
+    fn ghost_band_rows_zero_width_guard() {
+        assert_eq!(ghost_band_rows(0, 127), 0);
+        assert_eq!(ghost_band_rows(127, 0), 0);
+    }
+
+    #[test]
+    fn ghost_band_rows_capped() {
+        assert_eq!(ghost_band_rows(u16::MAX, 1), 4 * VIEWPORT_ROWS);
+    }
+
+    #[test]
     fn repin_rows_clears_from_old_top_when_higher() {
         // Old viewport higher → clear from it. content_end >= park so not binding.
         assert_eq!(repin_rows(3, 18, 24), (3, 18));
@@ -2161,6 +2226,7 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            last_width: 0,
         };
 
         // commit("a\nb\nc") → 3 lines

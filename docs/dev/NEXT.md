@@ -21,18 +21,20 @@ ratatui panels** (no alternate screen, no floating overlay). Milestone README:
 *(Note: this section was re-applied 2026-08-14 — the original M15 NEXT.md
 update was reverted on disk during the phase-01 executor runs.)*
 
-**Active phase: phase-02 — sudo-cached-detection** (`docs/dev/milestones/
-M15-chat-reliability/phase-02-sudo-cached-detection.md`, status: todo,
-drafted 2026-08-14). Root cause code-verified in the foreground detection
-loop (`foreground.rs:408–530`): `pane_current_command == "sudo"` is true for
-a wrapped command's whole runtime, broad substring prompt matching hits
-stale scrollback, and the two-poll fallback misclassifies every cached-cred
-run. Fix: per-invocation `SUDO_PROMPT` sentinel (nonce'd
-`[de-sudo-prompt-<n>]`), exact-match detection, generalizing
-`background/run.rs:161`. Live verify architect-side at review. First
-dispatch on the new Qwen3.8-27B-FP8 executor.
+**phase-02 — sudo-cached-detection: done (approved_first_try) 2026-08-14**,
+commit `851de1d`; Qwen3.8-27B-FP8's first phase, 74 turns, clean. Live
+cached/uncached sudo check deferred to milestone close with phase-01's.
 
-**Next action:** `/rexymcp:dispatch phase-02-sudo-cached-detection`.
+**Active phase: phase-03 — resize-border-corruption** (`docs/dev/milestones/
+M15-chat-reliability/phase-03-resize-border-corruption.md`, status: todo,
+drafted 2026-08-14). Implements the fix shape documented in this file's
+M13 RESOLVED block for the taped `w=255` width-flip ghost generator:
+width-change-aware clear band in `reanchor` (`ghost_band_rows` =
+ceil(VIEWPORT_ROWS × old_w / new_w), capped 4×; new `last_width` field;
+trace extended with `old_w`/`band`/`clear_from`). `repin_rows` untouched.
+Live verify (trace + scripted window switches) architect-side at review.
+
+**Next action:** `/rexymcp:dispatch phase-03-resize-border-corruption`.
 
 ---
 
