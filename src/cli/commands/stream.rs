@@ -1067,7 +1067,7 @@ pub(super) async fn prompt_credential_ratatui(
     let prompt_text = "  Password: ";
     let mut cred_real = String::new();
     let mut cred_display = crate::cli::input::InputLine::new();
-    let _ = renderer.draw_prompt(prompt_text, &cred_display, status);
+    let _ = renderer.draw_credential_panel("sudo password", prompt, &cred_display, status);
 
     while let Some(b) = stdin.read_byte().await {
         match b {
@@ -1075,7 +1075,8 @@ pub(super) async fn prompt_credential_ratatui(
             b'\x7f' | b'\x08' => {
                 cred_real.pop();
                 cred_display.backspace();
-                let _ = renderer.draw_prompt(prompt_text, &cred_display, status);
+                let _ =
+                    renderer.draw_credential_panel("sudo password", prompt, &cred_display, status);
             }
             b'\x03' | b'\x1b' => {
                 cred_real.clear();
@@ -1084,7 +1085,8 @@ pub(super) async fn prompt_credential_ratatui(
             c if c >= 0x20 => {
                 cred_real.push(c as char);
                 cred_display.insert('•');
-                let _ = renderer.draw_prompt(prompt_text, &cred_display, status);
+                let _ =
+                    renderer.draw_credential_panel("sudo password", prompt, &cred_display, status);
             }
             _ => {}
         }

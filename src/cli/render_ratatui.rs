@@ -533,6 +533,84 @@ impl<B: Backend> RatatuiRenderer<B> {
         Ok(())
     }
 
+    /// Draw the live region as a themed credential dialog: the phase-04 panel
+    /// shape with the daemon's prompt text as the detail row, the Enter/Esc
+    /// hint row, and the masked input row. The caller passes the bullet
+    /// display buffer — the real credential never reaches the renderer.
+    pub fn draw_credential_panel(
+        &mut self,
+        title: &str,
+        detail: &str,
+        input: &InputLine,
+        status: &StatusBarState<'_>,
+    ) -> Result<(), B::Error> {
+        let area = self.terminal.get_frame().area();
+        if area.height < 6 {
+            // Too short for the panel — fall back to the plain prompt shape.
+            return self.draw_prompt("  Password: ", input, status);
+        }
+
+        let input_text = input.as_str();
+        let session_id = status.session_id.to_string();
+        let model = status.model.to_string();
+        let start_time = self.start_time;
+        let title_owned = title.to_string();
+        let detail_owned = detail.to_string();
+
+        self.terminal.draw(|frame| {
+            let area = frame.area();
+            let chunks = Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(area);
+
+            let red = self.palette.red();
+            let yellow = self.palette.yellow();
+
+            let panel = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(red))
+                .title(Span::styled(
+                    format!(" {title_owned} "),
+                    Style::default().fg(yellow).add_modifier(Modifier::BOLD),
+                ));
+
+            let inner_width = area.width.saturating_sub(2) as usize;
+            let content = Paragraph::new(vec![
+                Line::from(Span::styled(
+                    truncate_with_ellipsis(&detail_owned, inner_width),
+                    Style::default().fg(Color::Gray),
+                )),
+                credential_hint_line(red, yellow),
+                Line::from(vec![
+                    Span::styled("› ", Style::default().fg(yellow)),
+                    Span::raw(input_text),
+                ]),
+            ])
+            .block(panel);
+            frame.render_widget(content, chunks[0]);
+
+            let uptime = fmt_uptime(start_time.elapsed());
+            let status_text = format!(
+                " session:{} · {} · up {} ",
+                short_session(&session_id),
+                model,
+                uptime,
+            );
+            let status_block = Block::default().borders(Borders::NONE).style(
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM),
+            );
+            let status_para =
+                Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
+            frame.render_widget(status_para, chunks[1]);
+        })?;
+
+        Ok(())
+    }
+
     /// Commit a styled bordered panel into scrollback above the inline viewport.
     ///
     /// Renders a top border with a title, body lines (optionally dimmed and
@@ -745,6 +823,25 @@ fn approval_options_line(session_label: &str, red: Color, yellow: Color) -> Line
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM),
         ),
+    ])
+}
+
+/// The credential-dialog hint line: `[Enter] submit  [Esc] cancel`,
+/// yellow key words in blood-red brackets, dim tail.
+fn credential_hint_line(red: Color, yellow: Color) -> Line<'static> {
+    let key =
+        |c: &'static str| Span::styled(c, Style::default().fg(yellow).add_modifier(Modifier::BOLD));
+    let br = |s: &'static str| Span::styled(s, Style::default().fg(red));
+    Line::from(vec![
+        br("["),
+        key("Enter"),
+        br("]"),
+        Span::styled(" submit", Style::default().fg(red)),
+        Span::raw("  "),
+        br("["),
+        key("Esc"),
+        br("]"),
+        Span::styled(" cancel", Style::default().fg(red)),
     ])
 }
 
@@ -2624,6 +2721,194 @@ mod tests {
                 "approve command",
                 "$ ls",
                 "session",
+                &input,
+                &approval_test_status(),
+            )
+            .unwrap();
+    }
+
+    fn draw_credential_panel_test(
+        renderer: &mut RatatuiRenderer<TestBackend>,
+        title: &str,
+        detail: &str,
+        input: &InputLine,
+    ) {
+        renderer
+            .draw_credential_panel(title, detail, input, &approval_test_status())
+            .unwrap();
+    }
+
+    #[test]
+    fn credential_panel_title_and_hint() {
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(6),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+            origin_row: 0,
+            inserted_rows: 0,
+            last_width: 0,
+        };
+
+        let input = InputLine::new();
+        draw_credential_panel_test(
+            &mut renderer,
+            "sudo password",
+            "[sudo] password required for: /usr/bin/apt",
+            &input,
+        );
+
+        let rows = buffer_rows(&renderer);
+        let title_row = rows
+            .iter()
+            .find(|r| r.contains("sudo password"))
+            .expect("title row should be rendered");
+        assert!(
+            title_row.contains('╭') && title_row.contains('╮'),
+            "top border row should have rounded corners, got: {}",
+            title_row
+        );
+
+        let buf = renderer.terminal.backend().buffer();
+        let corner = buf
+            .content
+            .iter()
+            .find(|c| c.symbol() == "╭")
+            .expect("top-left corner cell should be rendered");
+        assert_eq!(
+            corner.fg,
+            renderer.palette.red(),
+            "corner should be palette red"
+        );
+
+        let hint_row = rows
+            .iter()
+            .find(|r| r.contains("[Enter] submit"))
+            .expect("hint row with [Enter] submit should be rendered");
+        assert!(
+            hint_row.contains("[Esc] cancel"),
+            "hint row should contain [Esc] cancel, got: {}",
+            hint_row
+        );
+    }
+
+    #[test]
+    fn credential_panel_shows_bullets() {
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(6),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+            origin_row: 0,
+            inserted_rows: 0,
+            last_width: 0,
+        };
+
+        let mut input = InputLine::new();
+        input.insert('•');
+        input.insert('•');
+        input.insert('•');
+        draw_credential_panel_test(
+            &mut renderer,
+            "sudo password",
+            "[sudo] password required for: /usr/bin/apt",
+            &input,
+        );
+
+        let rows = buffer_rows(&renderer);
+        let input_row = rows
+            .iter()
+            .find(|r| r.contains('›'))
+            .expect("input row with prompt glyph should be rendered");
+        assert!(
+            input_row.contains("•••"),
+            "input row should contain three bullets, got: {}",
+            input_row
+        );
+    }
+
+    #[test]
+    fn credential_panel_truncates_long_detail() {
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(6),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+            origin_row: 0,
+            inserted_rows: 0,
+            last_width: 0,
+        };
+
+        let input = InputLine::new();
+        let long_detail = format!("[sudo] password required for: {}", "x".repeat(300));
+        draw_credential_panel_test(&mut renderer, "sudo password", &long_detail, &input);
+
+        let rows = buffer_rows(&renderer);
+        let detail_row = rows
+            .iter()
+            .find(|r| r.contains("password required for"))
+            .expect("detail row should be rendered");
+        assert!(
+            detail_row.ends_with("…│") || detail_row.trim_end().ends_with('…'),
+            "detail row should be truncated with ellipsis before the right border, got: {}",
+            detail_row
+        );
+    }
+
+    #[test]
+    fn credential_panel_short_region_falls_back() {
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(3),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+            origin_row: 0,
+            inserted_rows: 0,
+            last_width: 0,
+        };
+
+        let input = InputLine::new();
+        // Must not panic — falls back to the plain prompt shape.
+        renderer
+            .draw_credential_panel(
+                "sudo password",
+                "[sudo] password required for: /usr/bin/apt",
                 &input,
                 &approval_test_status(),
             )

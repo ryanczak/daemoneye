@@ -30,17 +30,21 @@ cached/uncached sudo check deferred to milestone close with phase-01's.
 clear band in `reanchor` per the M13 RESOLVED fix shape; live trace check
 deferred to milestone close. Qwen3.8: two for two, both 74 turns.
 
-**Active phase: phase-04 — approval-panel** (`docs/dev/milestones/
-M15-chat-reliability/phase-04-approval-panel.md`, status: todo, drafted
-2026-08-14). Themed multicolor approval dialog (blood-red rounded border,
-yellow key letters) rendered **within** the existing 6-row inline viewport —
-no Terminal rebuild (deliberate: avoids the reanchor risk class phase-03
-fixed). New `approval_options_line` + `draw_approval_panel` +
-`read_approval_input_panel`; `prompt_tool_call_ratatui` rewired; legacy
-prompt path (`read_approval_input` et al.) preserved for the other approval
-flows. Y/A/N + redirect semantics byte-identical. Phase-05 reuses the panel.
+**phase-04 — approval-panel: done (approved_first_try) 2026-08-14**, commit
+`e2a631a` + approval `f3c1038`. Themed in-viewport approval dialog; legacy
+prompt path preserved for the other flows. Qwen3.8: three for three.
 
-**Next action:** `/rexymcp:dispatch phase-04-approval-panel`.
+**Active phase: phase-05 — sudo-credential-panel** (`docs/dev/milestones/
+M15-chat-reliability/phase-05-sudo-credential-panel.md`, status: todo,
+drafted 2026-08-14; hard-depends on phase-04's panel, now in-tree). Mirrors
+`draw_approval_panel` for the credential prompt: `credential_hint_line`
+(`[Enter] submit  [Esc] cancel`) + `draw_credential_panel` + three-call
+rewire in `prompt_credential_ratatui`. Security invariants pinned: renderer
+only ever sees the bullet display buffer; Esc clears `cred_real`; both
+scrollback commits byte-identical. Last M15 phase — milestone close (live
+verification sweep of 01–05 + retrospective) follows its approval.
+
+**Next action:** `/rexymcp:dispatch phase-05-sudo-credential-panel`.
 
 ---
 
