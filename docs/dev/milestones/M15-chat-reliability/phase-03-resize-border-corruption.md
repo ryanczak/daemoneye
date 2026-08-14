@@ -1,7 +1,7 @@
 # Phase 03: width-flip ghost borders — width-change-aware clear band in reanchor
 
 **Milestone:** M15 — Chat Reliability & Dialog UX
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -475,3 +475,19 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 46972e3514fa3926c1f601e83becec9fb765b5f9
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.8-27B-FP8 (74 turns)
+- **Scope deviations:** none — executor caught 4 additional test
+  constructors beyond the spec's enumerated sites (compiler-forced,
+  correct).
+- **Calibration:** independent re-run confirmed all gates, the 5
+  `ghost_band_rows_*` tests, the untouched `repin_rows_*` tests, and the
+  extended trace line at `render_ratatui.rs:280`. Second consecutive clean
+  74-turn run for Qwen3.8.
+- **Live verification:** scripted window-switch/resize under
+  `DAEMONEYE_REANCHOR_TRACE=1` (band engaging on width flips, no fresh
+  scrollback ghosts) deferred to milestone close with phases 01/02.
