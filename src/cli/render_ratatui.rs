@@ -166,19 +166,30 @@ fn repin_rows(old_top: u16, content_end: u16, height: u16) -> (u16, u16) {
     (old_top.min(content_end).min(park), park)
 }
 
-/// Rows the old live region occupies after tmux rewraps it at a new pane
-/// width: ceil(VIEWPORT_ROWS × old_w / new_w). These rows sit at the bottom
-/// of the screen, below committed content — guaranteed non-history — so a
-/// reanchor after a width change may clear them freely. Returns 0 when the
-/// width did not change or either width is 0 (no band; the width-blind wipe
-/// is already correct). Capped at 4 × VIEWPORT_ROWS so a pathological
-/// old_w/new_w ratio cannot wipe most of the screen.
-fn ghost_band_rows(old_w: u16, new_w: u16) -> u16 {
-    if old_w == new_w || old_w == 0 || new_w == 0 {
-        return 0;
-    }
-    let band = (u32::from(VIEWPORT_ROWS) * u32::from(old_w)).div_ceil(u32::from(new_w));
-    (band.min(4 * u32::from(VIEWPORT_ROWS))) as u16
+/// Cap on the committed-line history ring used for reanchor repaints. Only
+/// the last screenful ever gets repainted, so this just needs to exceed any
+/// realistic pane height.
+const MAX_REPAINT_HISTORY: usize = 2048;
+
+/// Repaint plan for a reanchor once the screen has scrolled: where to start
+/// clearing, where to paint the history tail, and how many rows of it.
+///
+/// Once any `insert_before` has scrolled the screen, absolute row arithmetic
+/// (`origin_row + inserted_rows`) no longer describes reality — tmux may have
+/// shifted the grid by amounts the application cannot observe (screen scroll,
+/// height-shrink reflow, bottom-park gaps being consumed). The only safe
+/// recovery is to clear everything that could hold committed content or live
+/// -region debris and repaint the transcript tail from the history ring,
+/// bottom-anchored against the future viewport top (`park`).
+///
+/// `content_top` is the highest row that may still hold committed content:
+/// `origin_row - rows_scrolled` (everything above it is pre-renderer shell
+/// output that only ever moves into scrollback, never into our region).
+/// Returns `(clear_from, paint_top, paint_rows)`.
+fn scrolled_repaint_plan(content_top: u16, history_rows: u16, park: u16) -> (u16, u16, u16) {
+    let clear_from = content_top.min(park);
+    let paint_rows = history_rows.min(park - clear_from);
+    (clear_from, park - paint_rows, paint_rows)
 }
 
 /// Ratatui-based inline-viewport renderer.
@@ -200,9 +211,22 @@ pub struct RatatuiRenderer<B: Backend> {
     /// fills and the clamp in `repin_rows` takes over.
     inserted_rows: u16,
     /// Pane width at the last construction or reanchor. A change between
-    /// reanchors means tmux rewrapped the old live region — see
-    /// `ghost_band_rows`.
+    /// reanchors means tmux reflowed the grid — `reanchor` then takes the
+    /// repaint path instead of trusting row arithmetic.
     last_width: u16,
+    /// Pane height at the last reanchor (0 until the first one). A change
+    /// means tmux shifted the grid vertically by an unobservable amount.
+    last_height: u16,
+    /// Rows scrolled off the top of the screen by `insert_before` since the
+    /// last reanchor normalization: the shortfall between rows inserted and
+    /// how far the viewport actually moved down. Zero means the screen has
+    /// never scrolled and absolute row arithmetic is still exact; non-zero
+    /// switches `reanchor` to the repaint-from-history path.
+    rows_scrolled: u16,
+    /// Ring of committed transcript rows (one `Line` per screen row), used to
+    /// repaint the visible tail deterministically on reanchor. Capped at
+    /// `MAX_REPAINT_HISTORY`.
+    history: std::collections::VecDeque<Line<'static>>,
 }
 
 // Type alias for the production backend.
@@ -235,7 +259,10 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             },
         )?;
         let origin_row = terminal.get_frame().area().y;
-        let last_width = terminal.size().map(|s| s.width).unwrap_or(0);
+        let (last_width, last_height) = terminal
+            .size()
+            .map(|s| (s.width, s.height))
+            .unwrap_or((0, 0));
         Ok(Self {
             terminal,
             start_time,
@@ -243,6 +270,9 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             origin_row,
             inserted_rows: 0,
             last_width,
+            last_height,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
         })
     }
 
@@ -262,12 +292,45 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             return;
         };
         let old_top = self.terminal.get_frame().area().y;
-        let content_end = self.origin_row.saturating_add(self.inserted_rows);
-        let (clear_from, park) = repin_rows(old_top, content_end, size.height);
+        let park = size.height.saturating_sub(VIEWPORT_ROWS);
         let old_w = self.last_width;
-        let band = ghost_band_rows(old_w, size.width);
+        let old_h = self.last_height;
         self.last_width = size.width;
-        let clear_from = clear_from.min(size.height.saturating_sub(band));
+        self.last_height = size.height;
+
+        // A pane resize reflows/shifts the grid by amounts we cannot observe,
+        // so even a never-scrolled layout stops being trustworthy: force the
+        // repaint path whenever the size changed.
+        let resized = old_h != size.height || old_w != size.width;
+
+        let (clear_from, paint_top, paint_rows) = if self.rows_scrolled == 0 && !resized {
+            // Exact regime: nothing has ever scrolled and the pane size is
+            // unchanged, so every committed row is still on screen where we
+            // put it and `origin_row + inserted_rows` is the true end of
+            // committed content. Clear from the highest trustworthy marker;
+            // nothing needs repainting.
+            let content_end = self.origin_row.saturating_add(self.inserted_rows);
+            let (clear_from, _park) = repin_rows(old_top, content_end, size.height);
+            (clear_from, 0, 0)
+        } else {
+            // Repaint regime: the screen scrolled and/or the pane was
+            // resized, so absolute arithmetic is stale. Clear everything that
+            // may hold committed content or live-region debris and repaint
+            // the transcript tail from the history ring. A height shrink can
+            // additionally shift the grid up by as much as the height delta;
+            // a width change reflows unpredictably, so clear the whole
+            // region in that case.
+            let content_top = if old_w != size.width {
+                0
+            } else {
+                self.origin_row
+                    .saturating_sub(self.rows_scrolled)
+                    .saturating_sub(old_h.saturating_sub(size.height))
+            };
+            let history_rows = u16::try_from(self.history.len()).unwrap_or(u16::MAX);
+            scrolled_repaint_plan(content_top, history_rows, park)
+        };
+
         if std::env::var("DAEMONEYE_REANCHOR_TRACE").is_ok()
             && let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true)
@@ -277,19 +340,42 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             use std::io::Write as _;
             let _ = writeln!(
                 f,
-                "reanchor old_top={old_top} content_end={content_end} park={park} w={} h={} old_w={} band={band} clear_from={clear_from}",
-                size.width, size.height, old_w
+                "reanchor old_top={old_top} inserted={} scrolled={} park={park} w={} h={} old_w={old_w} clear_from={clear_from} paint_top={paint_top} paint_rows={paint_rows}",
+                self.inserted_rows, self.rows_scrolled, size.width, size.height
             );
         }
+
         let mut out = std::io::stdout();
-        if execute!(
-            out,
-            MoveTo(0, clear_from),
-            Clear(ClearType::FromCursorDown),
-            MoveTo(0, park)
-        )
-        .is_err()
-        {
+        if execute!(out, MoveTo(0, clear_from), Clear(ClearType::FromCursorDown)).is_err() {
+            return;
+        }
+        if paint_rows > 0 {
+            let tail: Vec<Line<'static>> = self
+                .history
+                .iter()
+                .skip(self.history.len().saturating_sub(paint_rows as usize))
+                .cloned()
+                .collect();
+            let area = Rect {
+                x: 0,
+                y: paint_top,
+                width: size.width,
+                height: paint_rows,
+            };
+            let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
+            if let Ok(mut fixed) = Terminal::with_options(
+                backend,
+                ratatui::TerminalOptions {
+                    viewport: ratatui::Viewport::Fixed(area),
+                },
+            ) {
+                let _ = fixed.draw(|frame| {
+                    let text: ratatui::text::Text<'static> = tail.into();
+                    frame.render_widget(Paragraph::new(text), frame.area());
+                });
+            }
+        }
+        if execute!(out, MoveTo(0, park)).is_err() {
             return;
         }
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
@@ -300,17 +386,50 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             },
         ) {
             self.terminal = terminal;
+            if self.rows_scrolled > 0 {
+                // Normalize back into the exact regime: committed content now
+                // provably ends at `park` (the repainted tail), so absolute
+                // arithmetic is trustworthy again until the next scroll.
+                self.origin_row = paint_top;
+                self.inserted_rows = paint_rows;
+                self.rows_scrolled = 0;
+            }
         }
     }
 }
 
 impl<B: Backend> RatatuiRenderer<B> {
+    /// Record committed rows in the repaint history ring and account for any
+    /// screen scrolling the insert caused. Call with the viewport top row as
+    /// it was before the `insert_before`: the shortfall between rows inserted
+    /// and how far the viewport actually moved down is exactly how many rows
+    /// scrolled off the top of the region.
+    fn record_committed_rows(&mut self, rows: Vec<Line<'static>>, viewport_top_before: u16) {
+        let row_count = rows.len() as u16;
+        for line in rows {
+            if self.history.len() >= MAX_REPAINT_HISTORY {
+                self.history.pop_front();
+            }
+            self.history.push_back(line);
+        }
+        let moved = self
+            .terminal
+            .get_frame()
+            .area()
+            .y
+            .saturating_sub(viewport_top_before);
+        self.rows_scrolled = self
+            .rows_scrolled
+            .saturating_add(row_count.saturating_sub(moved));
+    }
+
     /// Commit one or more finished transcript lines into scrollback above
     /// the inline viewport.  Plain text, no styling.
     pub fn commit(&mut self, lines: &str) -> Result<(), B::Error> {
         let row_count = lines.matches('\n').count() + 1;
         self.inserted_rows = self.inserted_rows.saturating_add(row_count as u16);
-        self.terminal.insert_before(row_count as u16, |buf| {
+        let viewport_top = self.terminal.get_frame().area().y;
+        let result = self.terminal.insert_before(row_count as u16, |buf| {
             let area = buf.area;
             for (i, line) in lines.split('\n').enumerate() {
                 let y = i as u16;
@@ -320,7 +439,13 @@ impl<B: Backend> RatatuiRenderer<B> {
                 let text = truncate_with_ellipsis(line, area.width as usize);
                 buf.set_string(area.x, area.y + y, &text, Style::default());
             }
-        })
+        });
+        let rows: Vec<Line<'static>> = lines
+            .split('\n')
+            .map(|l| Line::from(Span::raw(l.to_string())))
+            .collect();
+        self.record_committed_rows(rows, viewport_top);
+        result
     }
 
     /// Commit already-styled lines into scrollback above the inline viewport.
@@ -331,11 +456,18 @@ impl<B: Backend> RatatuiRenderer<B> {
     pub fn commit_styled(&mut self, lines: &[Line<'static>]) -> Result<(), B::Error> {
         let row_count = lines.len().max(1);
         self.inserted_rows = self.inserted_rows.saturating_add(row_count as u16);
-        self.terminal.insert_before(row_count as u16, |buf| {
+        let viewport_top = self.terminal.get_frame().area().y;
+        let result = self.terminal.insert_before(row_count as u16, |buf| {
             let text: ratatui::text::Text<'static> = lines.to_vec().into();
             let para = Paragraph::new(text);
             para.render(buf.area, buf);
-        })
+        });
+        let mut rows = lines.to_vec();
+        if rows.is_empty() {
+            rows.push(Line::default());
+        }
+        self.record_committed_rows(rows, viewport_top);
+        result
     }
 
     /// Draw the live region: input box and status bar.
@@ -691,12 +823,16 @@ impl<B: Backend> RatatuiRenderer<B> {
 
         let row_count = lines.len();
         self.inserted_rows = self.inserted_rows.saturating_add(row_count as u16);
-        self.terminal.insert_before(row_count as u16, |buf| {
+        let viewport_top = self.terminal.get_frame().area().y;
+        let history_rows = lines.clone();
+        let result = self.terminal.insert_before(row_count as u16, |buf| {
             Clear.render(buf.area, buf);
             let text: ratatui::text::Text<'static> = lines.into();
             let para = Paragraph::new(text);
             para.render(buf.area, buf);
-        })
+        });
+        self.record_committed_rows(history_rows, viewport_top);
+        result
     }
 
     /// Re-pin the inline viewport to the bottom of the terminal.
@@ -1016,7 +1152,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         }
     }
 
@@ -1583,7 +1722,10 @@ mod tests {
             palette: Palette::for_depth(ColorDepth::Xterm256),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let input = InputLine::new();
@@ -1661,7 +1803,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let long_line = "x".repeat(100);
@@ -1724,7 +1869,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let body = vec!["short line".to_string()];
@@ -1797,7 +1945,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let body = vec!["short".to_string()];
@@ -2077,7 +2228,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let status = StatusBarState {
@@ -2134,7 +2288,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let status = StatusBarState {
@@ -2351,36 +2508,64 @@ mod tests {
     }
 
     #[test]
-    fn ghost_band_rows_zero_when_width_unchanged() {
-        assert_eq!(ghost_band_rows(127, 127), 0);
-        assert_eq!(ghost_band_rows(255, 255), 0);
+    fn scrolled_repaint_plan_full_screen() {
+        // Whole region is committed content: clear it all and repaint a full
+        // screenful of history, bottom-anchored at the park row.
+        assert_eq!(scrolled_repaint_plan(0, 100, 39), (0, 0, 39));
     }
 
     #[test]
-    fn ghost_band_rows_narrowing_ceils() {
-        assert_eq!(ghost_band_rows(254, 127), 12);
-        assert_eq!(ghost_band_rows(255, 127), 13);
+    fn scrolled_repaint_plan_short_history_bottom_anchors() {
+        // Less history than region: paint the tail directly above the park.
+        assert_eq!(scrolled_repaint_plan(0, 10, 39), (0, 29, 10));
     }
 
     #[test]
-    fn ghost_band_rows_widening_small_band() {
-        assert_eq!(ghost_band_rows(127, 255), 3);
-        // The band never raises the clear row above the park on a widening.
-        let h: u16 = 61;
-        let park = h.saturating_sub(VIEWPORT_ROWS);
-        assert_eq!(park, 55);
-        assert_eq!(park.min(h.saturating_sub(ghost_band_rows(127, 255))), 55);
+    fn scrolled_repaint_plan_preserves_shell_prefix() {
+        // Content starts mid-screen: rows above content_top are untouched
+        // pre-renderer output, and the repaint never rises above the clear.
+        assert_eq!(scrolled_repaint_plan(20, 100, 39), (20, 20, 19));
     }
 
     #[test]
-    fn ghost_band_rows_zero_width_guard() {
-        assert_eq!(ghost_band_rows(0, 127), 0);
-        assert_eq!(ghost_band_rows(127, 0), 0);
+    fn scrolled_repaint_plan_content_top_past_park_clamps() {
+        assert_eq!(scrolled_repaint_plan(50, 5, 39), (39, 39, 0));
     }
 
     #[test]
-    fn ghost_band_rows_capped() {
-        assert_eq!(ghost_band_rows(u16::MAX, 1), 4 * VIEWPORT_ROWS);
+    fn commit_tracks_rows_scrolled_once_viewport_hits_bottom() {
+        let mut renderer = make_test_renderer();
+        // 60x10 backend, 6-row viewport anchored at row 0: the viewport can
+        // move down 4 rows before the region starts scrolling.
+        renderer.commit("a\nb\nc\nd").unwrap();
+        assert_eq!(renderer.rows_scrolled, 0);
+        renderer.commit("e\nf\ng").unwrap();
+        assert_eq!(renderer.rows_scrolled, 3);
+    }
+
+    #[test]
+    fn commit_methods_record_history_rows() {
+        let mut renderer = make_test_renderer();
+        renderer.commit("one\ntwo").unwrap();
+        renderer.commit_styled(&[]).unwrap(); // empty slice still inserts one row
+        renderer
+            .commit_panel("t", &["body".to_string()], false)
+            .unwrap();
+        // panel = top border + 1 body + bottom border + trailing blank = 4
+        assert_eq!(renderer.history.len(), 2 + 1 + 4);
+        assert_eq!(renderer.inserted_rows, 7);
+    }
+
+    #[test]
+    fn history_ring_caps_at_max() {
+        let mut renderer = make_test_renderer();
+        for i in 0..(MAX_REPAINT_HISTORY + 50) {
+            renderer.commit(&format!("line {i}")).unwrap();
+        }
+        assert_eq!(renderer.history.len(), MAX_REPAINT_HISTORY);
+        // The tail must hold the newest lines.
+        let last = renderer.history.back().unwrap().to_string();
+        assert_eq!(last, format!("line {}", MAX_REPAINT_HISTORY + 49));
     }
 
     #[test]
@@ -2430,7 +2615,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         // commit("a\nb\nc") → 3 lines
@@ -2510,7 +2698,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let input = InputLine::new();
@@ -2594,7 +2785,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let input = InputLine::new();
@@ -2627,7 +2821,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let input = InputLine::new();
@@ -2658,7 +2855,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let mut input = InputLine::new();
@@ -2695,7 +2895,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let input = InputLine::new();
@@ -2739,7 +2942,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let input = InputLine::new();
@@ -2802,7 +3008,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let mut input = InputLine::new();
@@ -2846,7 +3055,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let input = InputLine::new();
@@ -2883,7 +3095,10 @@ mod tests {
             ),
             origin_row: 0,
             inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
             last_width: 0,
+            last_height: 0,
         };
 
         let input = InputLine::new();
