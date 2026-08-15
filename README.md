@@ -231,7 +231,7 @@ The agent sees your whole tmux world, not just the pane you are typing in.
 The chat client is built on a `ratatui` inline viewport that treats your terminal the way a good CLI tool should.
 
 - **Real scrollback** — The conversation transcript is committed to your terminal's native scrollback. Scroll up in tmux copy-mode and the whole history is there, clean and selectable; only the input box and status bar occupy a small fixed region at the bottom.
-- **Survives window switches** — Switching tmux windows away from and back to the chat pane mid-conversation leaves the transcript and chrome intact. (Earlier versions used a DECSTBM scroll region that a no-resize pane repaint would reset, dragging the status bar up into the history; that path is gone.)
+- **Survives window switches and resizes** — Switching tmux windows away from and back to the chat pane, or resizing it, leaves the transcript and chrome intact. The renderer keeps a history of every committed line; when tmux shifts the grid in ways the client can't observe (screen scrolls, height reflows), the re-anchor clears the stale region and repaints the transcript tail from that history instead of trusting row arithmetic — no orphaned borders, no eaten lines.
 - **Multi-line input editor** — Visible cursor, word-wrap, multi-line editing, and multi-line paste. A pasted block lands whole instead of submitting at its first newline.
 - **Two-press interrupt** — While the agent is streaming, press ESC or Ctrl+C once to warn, twice to abort the turn.
 - **Color-coded panels** — Committed command-output panels use a blood-red border and deep-yellow title so executed actions stand out in the scrollback.
