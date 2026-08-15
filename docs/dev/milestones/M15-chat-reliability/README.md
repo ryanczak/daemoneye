@@ -48,7 +48,7 @@ ratatui panels.
 | 03 | resize-border-corruption ([phase-03-resize-border-corruption.md](phase-03-resize-border-corruption.md)) | done |
 | 04 | approval-panel ([phase-04-approval-panel.md](phase-04-approval-panel.md)) | done |
 | 05 | sudo-credential-panel ([phase-05-sudo-credential-panel.md](phase-05-sudo-credential-panel.md)) | done |
-| 06 | dedup-approval-dialogs ([phase-06-dedup-approval-dialogs.md](phase-06-dedup-approval-dialogs.md)) | review      |
+| 06 | dedup-approval-dialogs ([phase-06-dedup-approval-dialogs.md](phase-06-dedup-approval-dialogs.md)) | done |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; rows gain
 links as docs land.

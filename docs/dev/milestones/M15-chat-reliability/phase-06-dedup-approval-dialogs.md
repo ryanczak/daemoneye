@@ -1,7 +1,7 @@
 # Phase 06: dedup approval dialogs — no command copy inside the panels
 
 **Milestone:** M15 — Chat Reliability & Dialog UX
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (approval panel), phase-05 (credential panel) — both in-tree
 **Estimated diff:** ~180 lines (mostly tests)
 **Tags:** language=rust, kind=refactor, size=s
@@ -388,7 +388,7 @@ test cli::render_ratatui::tests::approval_panel_has_no_command_row ... ok
 test cli::render_ratatui::tests::approval_panel_shows_typed_input ... ok
 test cli::render_ratatui::tests::approval_panel_options_multicolor ... ok
 
-test result: ok. 5 passed; 0 failed; 0 ignored; 1262 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1262 filtered out; finished in 0.00s
 
 exit=0
      Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
@@ -397,7 +397,7 @@ running 2 tests
 test daemon::utils::sudo::tests::sudo_password_prompt_first_attempt_omits_command ... ok
 test daemon::utils::sudo::tests::sudo_password_prompt_retry_names_attempt ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 1265 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1265 filtered out; finished in 0.00s
 
 exit=0
 0
@@ -559,3 +559,26 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 1d53673d8034e5d5c6b57b4f6ea408251ffe7915
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.8-27B-FP8 (93 turns)
+- **Scope deviations:** none — four authorized source files only; the
+  commit also swept in the architect's uncommitted phase-doc/NEXT.md
+  drafts (declared, same pattern as phase-05).
+- **Calibration:** the retyped-transcript pattern recurred, mildly: two
+  `test result` lines in the pasted E2E block dropped the literal
+  `0 measured; ` field vs the mechanical capture (`/tmp/m15p6-e2e.txt`).
+  No value was falsified — passed/failed/filtered counts byte-identical,
+  and every claim was independently re-run green at review — so repaired
+  in place rather than bounced; the repaired block now diffs empty against
+  the artifact. Data point for milestone close: this phase's E2E block
+  (like phase-05's) carried no PASTE MATCH self-check command; phase-05
+  came back byte-identical anyway, this one did not — the fold's
+  self-check clause earns its place even in single-round phases.
+  Independent review re-runs: all four gates green (1267 lib tests), all
+  three mechanical criteria at target (0 / 0 / 1), and the
+  `approval_panel_has_no_command_row` guard mutation-verified in both
+  directions (seeded `$ ls -la` row → FAILED; restored → ok).

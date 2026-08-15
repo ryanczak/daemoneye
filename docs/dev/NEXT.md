@@ -51,7 +51,16 @@ All four mechanical acceptance criteria validated failing against the
 current tree. New last M15 phase — milestone close (live verification
 sweep of 01–06 + retrospective) follows its approval.
 
-**Next action:** `/rexymcp:dispatch phase-06-dedup-approval-dialogs`.
+**phase-06 — dedup-approval-dialogs: done (approved_first_try) 2026-08-14**,
+commit `1d53673`; Qwen3.8: five for five, 93 turns. Review calibration: two
+retyped `test result` lines in the pasted E2E block (dropped `0 measured; `,
+no values falsified) — repaired at review to byte-match the capture; the
+PASTE MATCH self-check clause was absent from this phase's block, data
+point for close. All M15 phases are now `done`.
+
+**Next action:** PE signals milestone close — `/rexymcp:architect` to run
+the live verification sweep (phases 01–06), write the M15 retrospective,
+and update this file.
 
 ---
 
