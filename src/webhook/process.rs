@@ -274,10 +274,12 @@ pub(crate) fn parse_ghost_trigger(response: &str) -> Option<bool> {
 
 /// Evaluate a watchdog AI response to determine whether action should be taken.
 ///
-/// Returns `(should_act, trigger_reason)`.  Prefers the structured
-/// `GHOST_TRIGGER: YES/NO` field; falls back to the legacy `ALERT` keyword for
-/// responses that predate the structured format.  Pass `api_error=true` when the
-/// API call itself failed so the reason string is informative.
+/// Returns `(should_act, trigger_reason)`.  Only the structured
+/// `GHOST_TRIGGER: YES/NO` field can trigger action; anything without it is a
+/// hard no (the legacy `ALERT` keyword heuristic was removed in H3 because a
+/// model remarking "no ALERT condition" could spuriously launch a ghost).
+/// Pass `api_error=true` when the API call itself failed so the reason string
+/// is informative.
 pub(crate) fn evaluate_watchdog_response(response: &str, api_error: bool) -> (bool, &'static str) {
     if api_error && response.is_empty() {
         (false, "api_error — response empty")
@@ -287,16 +289,10 @@ pub(crate) fn evaluate_watchdog_response(response: &str, api_error: bool) -> (bo
         match parse_ghost_trigger(response) {
             Some(true) => (true, "GHOST_TRIGGER: YES"),
             Some(false) => (false, "GHOST_TRIGGER: NO"),
-            None => {
-                if response.to_uppercase().contains("ALERT") {
-                    (true, "legacy ALERT keyword (no GHOST_TRIGGER line found)")
-                } else {
-                    (
-                        false,
-                        "no GHOST_TRIGGER line and no ALERT keyword in response",
-                    )
-                }
-            }
+            None => (
+                false,
+                "no GHOST_TRIGGER line — refusing to act (strict mode)",
+            ),
         }
     }
 }
@@ -641,20 +637,20 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_legacy_alert_keyword() {
+    fn evaluate_alert_keyword_alone_does_not_act() {
+        // The legacy ALERT-keyword heuristic is gone (H3): a model remarking
+        // "…no ALERT condition…" must not launch a ghost.  Without an explicit
+        // final GHOST_TRIGGER: YES line, nothing happens — strict mode.
         let (act, reason) = evaluate_watchdog_response("ALERT: disk is full", false);
-        assert!(act);
-        assert_eq!(reason, "legacy ALERT keyword (no GHOST_TRIGGER line found)");
+        assert!(!act);
+        assert_eq!(reason, "no GHOST_TRIGGER line — refusing to act (strict mode)");
     }
 
     #[test]
     fn evaluate_no_trigger_no_alert() {
         let (act, reason) = evaluate_watchdog_response("OK: everything looks fine", false);
         assert!(!act);
-        assert_eq!(
-            reason,
-            "no GHOST_TRIGGER line and no ALERT keyword in response"
-        );
+        assert_eq!(reason, "no GHOST_TRIGGER line — refusing to act (strict mode)");
     }
 
     #[test]
