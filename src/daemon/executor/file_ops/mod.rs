@@ -14,8 +14,19 @@ fn to_hex(s: &str) -> String {
 }
 
 /// Shell-escape a single-quoted argument by replacing `'` with `'\''`.
+/// Note: a single-quoted argument may legitimately span lines, so newlines
+/// do NOT break out of the quotes — `'` was the only character needing
+/// escaping in POSIX sh.
 fn sq_escape(s: &str) -> String {
     s.replace('\'', "'\\''")
+}
+
+/// True when `s` contains any control character or DEL (U+0000..U+001F,
+/// U+007F..U+009F). Used by path/pattern guards so hostile file names or
+/// grep patterns cannot reach shell strings or downstream tools with
+/// unexpected bytes (M2 defense-in-depth).
+fn contains_control(s: &str) -> bool {
+    s.chars().any(char::is_control)
 }
 
 /// Resolve a path for security-guard checks, following symlinks even when the

@@ -592,8 +592,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         .unwrap_or_else(|_| "daemoneye".to_string());
 
     // pane-died is a global hook — install it so it fires for all sessions.
+    // M3: every tmux format placeholder is wrapped in single quotes so tmux's
+    // runtime expansion of #{session_name} (unknown at install time for global
+    // hooks) cannot execute shell metacharacters. "$()`, `$", backticks, and
+    // spaces stay inert inside the quotes.
     let global_notify_cmd = format!(
-        "run-shell -b '{} notify activity #{{pane_id}} 0 #{{session_name}}'",
+        "run-shell -b '{} notify activity #{{pane_id}} 0 '#{{session_name}}''",
         hook_exe_path,
     );
     let c = global_notify_cmd.clone();
@@ -611,7 +615,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // after-new-session (N14): auto-install per-session hooks for any new tmux session,
     // so monitoring works immediately without requiring a first `daemoneye chat` invocation.
     let session_created_cmd = format!(
-        "run-shell -b '{} notify session-created #{{session_name}}'",
+        "run-shell -b '{} notify session-created '#{{session_name}}''",
         hook_exe_path,
     );
     let c = session_created_cmd.clone();
@@ -632,7 +636,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // client-attached (N15): notify daemon when a terminal client re-attaches so it
     // can clear pending detach state and suppress the catch-up brief.
     let client_attached_cmd = format!(
-        "run-shell -b '{} notify client-attached #{{session_name}}'",
+        "run-shell -b '{} notify client-attached '#{{session_name}}''",
         hook_exe_path,
     );
     let c = client_attached_cmd.clone();
@@ -650,7 +654,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // client-detached (N15): notify daemon when the terminal client detaches so it
     // can record the time and generate a catch-up brief on the next Ask.
     let client_detached_cmd = format!(
-        "run-shell -b '{} notify client-detached #{{session_name}}'",
+        "run-shell -b '{} notify client-detached '#{{session_name}}''",
         hook_exe_path,
     );
     let c = client_detached_cmd.clone();

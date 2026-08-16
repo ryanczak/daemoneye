@@ -98,6 +98,16 @@ pub async fn run_read_file(
             "Error: path must not contain '..'.".to_string(),
         ));
     }
+    if super::contains_control(path) {
+        return Ok(ToolCallOutcome::Result(
+            "Error: path must not contain control characters.".to_string(),
+        ));
+    }
+    if pattern.is_some_and(super::contains_control) {
+        return Ok(ToolCallOutcome::Result(
+            "Error: grep pattern must not contain control characters.".to_string(),
+        ));
+    }
     if !std::path::Path::new(path).is_absolute() {
         return Ok(ToolCallOutcome::Result(
             "Error: path must be absolute (e.g. /var/log/syslog).".to_string(),
@@ -388,6 +398,41 @@ mod tests {
             panic!()
         };
         assert!(s.contains("no lines matched"));
+    }
+
+    #[tokio::test]
+    async fn read_file_rejects_control_chars_in_path() {
+        let (tmp, path) = simulate_read_file(&["line1"]);
+        with_home(&tmp, || {});
+        let evil = format!("{}\n; touch /tmp/pwned; echo", path.display());
+        let result = super::run_read_file(&evil, None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("control characters"), "got: {s}");
+        assert!(!std::path::Path::new("/tmp/pwned").exists());
+    }
+
+    #[tokio::test]
+    async fn read_file_rejects_control_chars_in_pattern() {
+        let (tmp, path) = simulate_read_file(&["line1"]);
+        with_home(&tmp, || {});
+        let result = super::run_read_file(
+            path.to_str().unwrap(),
+            None,
+            None,
+            Some("banana\n; touch /tmp/pwned2; echo"),
+            None,
+        )
+        .await
+        .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("control characters"), "got: {s}");
+        assert!(!std::path::Path::new("/tmp/pwned2").exists());
     }
 
     #[tokio::test]

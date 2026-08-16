@@ -45,6 +45,13 @@ where
             "Error: path must not contain '..'.".to_string(),
         ));
     }
+    if super::contains_control(path)
+        || dest_path.is_some_and(super::contains_control)
+    {
+        return Ok(ToolCallOutcome::Result(
+            "Error: path must not contain control characters.".to_string(),
+        ));
+    }
     if !std::path::Path::new(path).is_absolute() {
         return Ok(ToolCallOutcome::Result(
             "Error: path must be absolute.".to_string(),
