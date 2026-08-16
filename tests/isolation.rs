@@ -394,6 +394,7 @@ max_ghost_turns: 1
         schedule_store,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
     // Severity-less payload — this is the defect-1 regression.

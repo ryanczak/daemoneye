@@ -722,6 +722,7 @@ fn webhook_alert_to_event_log() {
         schedule_store,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -796,6 +797,7 @@ fn webhook_alert_no_severity_passes_gate() {
         schedule_store,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -866,6 +868,7 @@ fn webhook_alert_unrankable_severity_passes_gate() {
         schedule_store,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -939,6 +942,7 @@ fn webhook_alert_below_threshold_discarded() {
         schedule_store,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
     let rt = tokio::runtime::Builder::new_current_thread()
