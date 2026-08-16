@@ -23,6 +23,69 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 
+// ---------------------------------------------------------------------------
+// IPC peer authentication (C1)
+// ---------------------------------------------------------------------------
+// The daemon trusts only connections from the same local user.  There is no
+// token or key exchanged over the socket — identity is derived from the
+// kernel via SO_PEERCRED, which cannot be forged by a userspace attacker.
+
+/// Return the effective UID of the process on the far end of `sock`, or `None`
+/// if the kernel would not/could not answer (closed connection, non-Linux,
+/// etc.).  The caller treats `None` as "reject".
+fn peer_euid<S: std::os::fd::AsRawFd>(sock: &S) -> Option<u32> {
+    let fd = sock.as_raw_fd();
+    // SAFETY: `cred` is a plain C struct; getsockopt writes at most its own size.
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: pointer points to a valid, writable libc::ucred of the right size.
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut cred as *mut libc::ucred as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    if rc == 0 && len >= std::mem::size_of::<libc::ucred>() as libc::socklen_t {
+        Some(cred.uid)
+    } else if rc == 0 {
+        // Kernel gave less than a full ucred — treat as unknown.
+        log::warn!(
+            "SO_PEERCRED returned a truncated credential ({} bytes)",
+            len
+        );
+        None
+    } else {
+        let err = std::io::Error::last_os_error();
+        log::warn!("SO_PEERCRED failed on fd {}: {}", fd, err);
+        None
+    }
+}
+
+/// Reject connections whose peer euid differs from the daemon's euid.
+/// Returns `Err` (caller should drop the connection) when identity cannot be
+/// established or the peer is not our own user.
+fn check_peer_identity<S: std::os::fd::AsRawFd>(stream: &S) -> anyhow::Result<()> {
+    let daemon_euid = unsafe { libc::geteuid() };
+    match peer_euid(stream) {
+        Some(uid) if uid == daemon_euid => Ok(()),
+        Some(uid) => {
+            log::warn!(
+                "Rejecting IPC connection from uid {} (daemon euid {}): not the owning user",
+                uid,
+                daemon_euid
+            );
+            anyhow::bail!("IPC peer uid {} is not the daemon user", uid)
+        }
+        None => {
+            log::warn!("Rejecting IPC connection: could not determine peer credentials");
+            anyhow::bail!("could not determine IPC peer credentials")
+        }
+    }
+}
+
 /// Handle one client connection end-to-end.
 ///
 /// ## Request routing
@@ -54,6 +117,11 @@ pub async fn handle_client(
     bg_session: Arc<std::sync::Mutex<String>>,
     managed_session: Arc<Option<String>>,
 ) -> Result<()> {
+    // C1: refuse connections from any process not owned by the daemon user.
+    // Must happen before parsing a single byte so a foreign attacker cannot
+    // even reach the approval gate (which trusts whatever is on the other end).
+    check_peer_identity(&stream)?;
+
     let config = Config::load().unwrap_or_else(|_| {
         log::warn!("Failed to load config, using defaults");
         Config::default()
@@ -245,4 +313,47 @@ pub async fn handle_client(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixStream as StdUnixStream;
+    use tokio::net::UnixListener;
+
+    fn tmp_socket_path(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "daemoneye-peer-test-{}-{}",
+            std::process::id(),
+            tag
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("s.sock")
+    }
+
+    #[tokio::test]
+    async fn peer_euid_matches_own_process() {
+        let path = tmp_socket_path("same-euid");
+        let connect_to = path.clone();
+        let listener = UnixListener::bind(&path).unwrap();
+
+        // Connect from the same process (hence same euid as the daemon).
+        let client = std::thread::spawn(move || {
+            let s = StdUnixStream::connect(&connect_to).unwrap();
+            assert_eq!(peer_euid(&s), Some(unsafe { libc::geteuid() }));
+            check_peer_identity(&s).unwrap(); // tokio UnixStream not needed here
+        });
+
+        let (accepted, _) = listener.accept().await.unwrap();
+        drop(accepted);
+        client.join().unwrap();
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn peer_euid_none_on_invalid_fd() {
+        // An fd that is no longer a socket must return None (reject) rather than panic.
+        let stdin_lock = std::io::stdin().lock();
+        assert_eq!(peer_euid(&stdin_lock), None);
+    }
 }
