@@ -261,6 +261,13 @@ enum SchedCommands {
 // (only the calling thread survives in the child but mutex state from other
 // threads may be inconsistent).
 fn main() -> anyhow::Result<()> {
+    // Ensure everything this daemon/CLI creates from here on is private:
+    // 0600 files, 0700 dirs, even with a permissive shell umask (022).
+    // The forked daemon inherits this umask, so logs, session transcripts,
+    // db indexes, pane logs, the pid file, and the IPC socket all default
+    // to owner-only access (H1).
+    unsafe { libc::umask(0o077) };
+
     config::Config::ensure_dirs()
         .map_err(|e| anyhow::anyhow!("Failed to initialise config directory: {}", e))?;
 

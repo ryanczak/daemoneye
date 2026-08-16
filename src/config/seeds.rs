@@ -1,13 +1,30 @@
 use anyhow::{Context, Result};
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 use super::load::*;
 use super::types::Config;
+
+/// Best-effort: set `path` to `mode`. Logs and continues on failure so an
+/// unsupported filesystem never breaks startup. Never touches the target of a
+/// symlink (callers only pass paths resolved by `file_type().is_dir()/is_file()`).
+fn set_private_mode(path: &Path, mode: u32) {
+    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)) {
+        log::warn!("Failed to set {:o} on {}: {}", mode, path.display(), e);
+    }
+}
 
 impl Config {
     /// Ensure the config directory tree and default files exist.
     pub fn ensure_dirs() -> Result<()> {
         let dir = config_dir();
         std::fs::create_dir_all(&dir)?;
+        // Make everything under ~/.daemoneye private up front: dirs 0700,
+        // files 0600.  This both fixes up trees created by older versions
+        // (default umask 022 ⇒ world-readable config with API keys, session
+        // transcripts, logs, and memory indexes) and protects files written
+        // after this point by the restrictive umask in main().
+        lockdown_permissions(&dir);
         // FHS-inspired subtree
         std::fs::create_dir_all(etc_dir())?;
         std::fs::create_dir_all(var_run_dir())?;
@@ -60,6 +77,44 @@ impl Config {
 
         Ok(())
     }
+}
+
+/// Make every directory under `root` 0700 and every file 0600 (owner-execute
+/// preserved for files that were already owner-executable, i.e. scripts which
+/// must remain runnable via `execve`). Symlinks are skipped so we never chmod
+/// through them, and neither the group nor other bit survives.
+pub fn lockdown_permissions(root: &Path) {
+    fn private_file_mode(path: &Path) -> u32 {
+        // 0o100 == S_IXUSR (owner-execute). Keep it if already set so scripts
+        // stay runnable; drop group/other entirely.
+        0o600
+            | (std::fs::metadata(path)
+                .map(|m| m.permissions().mode() & 0o100)
+                .unwrap_or(0))
+    }
+    fn walk(dir: &Path) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let Ok(ft) = entry.file_type() else { continue };
+            let path = entry.path();
+            if ft.is_symlink() {
+                // Never traverse nor chmod through a symlink.
+                continue;
+            }
+            if ft.is_dir() {
+                set_private_mode(&path, 0o700);
+                walk(&path);
+            } else if ft.is_file() {
+                set_private_mode(&path, private_file_mode(&path));
+            }
+            // Other types (sockets, fifos) are left alone — the socket's mode
+            // is managed by the daemon (and peer-auth now guards it).
+        }
+    }
+    set_private_mode(root, 0o700);
+    walk(root);
 }
 
 /// Write a knowledge memory file only if it does not already exist.
@@ -206,3 +261,58 @@ const UNICODE_DECORATION_PREF_MEMORY: &str =
 const AGENT_ARCHITECT: &str = include_str!("../../assets/agents/architect/config.toml");
 const AGENT_RESEARCHER: &str = include_str!("../../assets/agents/researcher/config.toml");
 const AGENT_SYSADMIN: &str = include_str!("../../assets/agents/sysadmin/config.toml");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    fn temp_root(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("de-lock-{}-{}", std::process::id(), tag));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn mode(p: &Path) -> u32 {
+        std::fs::metadata(p).unwrap().permissions().mode()
+    }
+
+    #[test]
+    fn lockdown_private_tree() {
+        let root = temp_root("tree");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("file.txt"), "x").unwrap();
+        std::fs::write(root.join("script.sh"), "#!/bin/bash\necho hi").unwrap();
+        std::fs::set_permissions(
+            root.join("script.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        std::fs::write(root.join("sub").join("nested.txt"), "y").unwrap();
+        std::os::unix::fs::symlink(root.join("file.txt"), root.join("link.txt")).unwrap();
+
+        lockdown_permissions(&root);
+
+        assert_eq!(mode(&root) & 0o777, 0o700);
+        assert_eq!(mode(&root.join("sub")) & 0o777, 0o700);
+        assert_eq!(mode(&root.join("file.txt")) & 0o777, 0o600);
+        assert_eq!(mode(&root.join("sub/nested.txt")) & 0o777, 0o600);
+        // owner-exec preserved for scripts, group/other stripped
+        assert_eq!(mode(&root.join("script.sh")) & 0o777, 0o700);
+        // plain file unaffected by the owner-exec preservation
+        assert_eq!(mode(&root.join("file.txt")) & 0o777, 0o600);
+        // symlink was skipped: it still links to file.txt and the target was
+        // not modified by traversal
+        assert!(
+            std::fs::symlink_metadata(root.join("link.txt"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(mode(&root.join("link.txt")) & 0o777, 0o600); // target mode
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
