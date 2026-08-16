@@ -562,3 +562,17 @@ coordinator (depth 0)
    - The execution record is appended to `~/.daemoneye/var/log/events.jsonl`.
 9. The LLM receives the tool result and continues its response. This loop repeats until the LLM produces a final answer with no further tool calls.
 10. The daemon sends `Ok` to signal completion. The conversation history is stored under the session ID for the next turn.
+
+---
+
+## Security model
+
+See [`security.md`](security.md) for the full threat model, boundary
+annotations, and per-guard details. In short: IPC is authenticated by
+`SO_PEERCRED` peer-UID (not socket perms), `~/.daemoneye/` is a private tree
+(`0700` dirs / `0600` files), the webhook refuses non-loopback binds without a
+secret and rate-limits per IP, ghost triggers require a literal
+`GHOST_TRIGGER: YES` line, and all shell strings to remote panes go through
+single-quoting + `sq_escape`. Masking protects AI egress and `events.jsonl`
+only — session transcripts and daemon.log are private but unmasked. None of
+these guards is a sandbox; the daemon runs with your privileges.

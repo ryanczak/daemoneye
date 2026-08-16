@@ -18,6 +18,7 @@ CI runs `cargo build --locked`, `cargo test --locked`, `cargo fmt --check`, `car
 - **`main()` is synchronous** — `libc::fork()` happens before the tokio runtime starts. Never move the fork into async. (`src/main.rs:206`)
 - **Linux only** — uses `fork(2)`, Unix domain sockets, Linux-specific tmux hooks. Will not build on macOS/Windows.
 - **Poisoned locks** — all `Mutex` lock sites use `.unwrap_or_log()` from `src/util.rs`. Never change to `.unwrap()`.
+- **IPC trust boundary is peer identity, not the socket perms** — `src/daemon/server/mod.rs` verifies `SO_PEERCRED` before reading a byte from a client. This works even on multi-user machines where Unix socket perms are advisory. Never move/weaken it; socket chmod 0700 is defense-in-depth only.
 
 ## Architecture at a glance
 
@@ -79,7 +80,7 @@ Prefixes are used for GC filtering. The pane number uniquely identifies the tmux
 ## Config & paths
 
 - Config: `~/.daemoneye/etc/config.toml`
-- Socket: `~/.daemoneye/run/daemoneye.sock`
+- Socket: `~/.daemoneye/run/daemoneye.sock` (SO_PEERCRED-authenticated; see docs/security.md)
 - Daemon log: `~/.daemoneye/var/log/daemon.log`
 - Events: `~/.daemoneye/var/log/events.jsonl`
 - Sessions: `~/.daemoneye/var/sessions/<name>/` (named) vs `var/log/sessions/<id>.jsonl` (ephemeral)

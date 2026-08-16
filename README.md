@@ -1089,6 +1089,17 @@ tmux list-windows -a | grep de-gs-
 
 ## Security
 
+### Trust model & full hardening details
+
+[`docs/security.md`](docs/security.md) is the canonical reference for the
+threat model and every guard: SO_PEERCRED IPC authentication (only your own
+processes can drive the daemon), the `~/.daemoneye/` filesystem lockdown
+(`0700` dirs / `0600` files, covering API keys, transcripts, and logs),
+webhook fail-closed startup, per-IP webhook rate limiting, strict
+`GHOST_TRIGGER: YES` parsing, temp-file hardening, and shell-string hygiene.
+It also spells out which protections are *not* boundaries — the approval gate,
+path guards, and masking all assume your own account is trusted.
+
 ### Sensitive-data redaction
 
 Before sending terminal context to an AI provider, DaemonEye applies a regex-based filter that masks:

@@ -182,11 +182,12 @@ prompt = "sre"
 # [webhook]
 # enabled = false
 # port = 9393
-# secret = ""            # Bearer token; empty = no auth
+# secret = ""            # Bearer token; empty = no auth (allowed loopback only)
 # auto_analyze = true
 # severity_threshold = "warning"   # "info" | "warning" | "critical"
 # dedup_window_secs = 300
-# bind_addr = "127.0.0.1"          # "0.0.0.0" to accept from all interfaces
+# bind_addr = "127.0.0.1"          # non-loopback + empty secret -> daemon refuses to start
+# (per-IP rate limit: 30 req per 60 s window, constants in src/webhook/server.rs)
 
 # ── Limits ───────────────────────────────────────────────────────────────────
 
