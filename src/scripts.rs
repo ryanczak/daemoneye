@@ -1,4 +1,6 @@
 use anyhow::{Context, Result, bail};
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
 /// Metadata about a script in `~/.daemoneye/scripts/`.
@@ -227,17 +229,31 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
 
     let rule = sudoers_rule(&user, &abs_path_str);
 
-    // Write rule to a temp file.
-    let tmp_path = format!("/tmp/daemoneye-sudoers-{}", std::process::id());
-    std::fs::write(&tmp_path, &rule)
-        .with_context(|| format!("writing temp sudoers file '{}'", tmp_path))?;
+    // Write the rule to a private temp file (M1): placed inside ~/.daemoneye
+    // (already 0700) with O_EXCL + mode 0600, so another local user cannot
+    // race us by pre-creating a symlink or swapping content at a predictable
+    // /tmp path between write and install. sudo install reads it from here.
+    let tmp_path = crate::config::var_run_dir().join(format!("sudoers-{}.tmp", std::process::id()));
+    let write_result = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp_path)
+        .and_then(|mut f| f.write_all(rule.as_bytes()))
+        .with_context(|| format!("writing temp sudoers file '{}'", tmp_path.display()));
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
 
-    // Install the temp file with correct permissions.
-    let install_status = std::process::Command::new("sudo")
-        .args(["install", "-m", "0440", &tmp_path, &sudoers_file])
-        .status()
-        .context("running 'sudo install'")?;
+    // Install the temp file with correct permissions.  Cleanup of the temp
+    // file happens regardless of install success/failure.
+    let tmp_str = tmp_path.to_str().context("rendering temp sudoers path")?;
+    let install_result = std::process::Command::new("sudo")
+        .args(["install", "-m", "0440", tmp_str, &sudoers_file])
+        .status();
     let _ = std::fs::remove_file(&tmp_path);
+    let install_status = install_result.context("running 'sudo install'")?;
     if !install_status.success() {
         bail!("sudo install failed with status {}", install_status);
     }
