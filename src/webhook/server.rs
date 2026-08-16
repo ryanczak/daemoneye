@@ -173,8 +173,7 @@ pub async fn bind(config: &Config) -> anyhow::Result<tokio::net::TcpListener> {
         .bind_addr
         .parse()
         .unwrap_or_else(|_| std::net::Ipv4Addr::LOCALHOST.into());
-    validate_webhook_bind(&bind_ip, &config.webhook.secret)
-        .map_err(anyhow::Error::msg)?;
+    validate_webhook_bind(&bind_ip, &config.webhook.secret).map_err(anyhow::Error::msg)?;
     if config.webhook.enabled && config.webhook.secret.trim().is_empty() {
         log::warn!(
             "webhook listener on {bind_ip}:{port} requires NO auth — set webhook.secret \

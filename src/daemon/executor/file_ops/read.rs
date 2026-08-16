@@ -114,6 +114,15 @@ pub async fn run_read_file(
         ));
     }
 
+    if super::is_blocked_secret_path(path) {
+        return Ok(ToolCallOutcome::Result(
+            "Error: read_file cannot access well-known credential files \
+             (~/.ssh, .env, private keys). This is not a security boundary — \
+             use run_terminal_command only if you truly need to inspect one."
+                .to_string(),
+        ));
+    }
+
     {
         let de_dir = crate::config::config_dir();
         let candidate = super::resolve_path_for_guard(path);
@@ -433,6 +442,58 @@ mod tests {
         };
         assert!(s.contains("control characters"), "got: {s}");
         assert!(!std::path::Path::new("/tmp/pwned2").exists());
+    }
+
+    #[tokio::test]
+    async fn read_file_rejects_credential_paths() {
+        let _guard = crate::test_home_guard();
+        let tmp = TmpHome::new();
+        unsafe { env::set_var("HOME", &tmp.0) };
+        let home = crate::config::config_dir().parent().unwrap().to_path_buf();
+
+        // $HOME/.ssh (every file under it, including pubkeys/known_hosts)
+        let ssh = home.join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        for f in ["id_ed25519", "id_rsa.pub", "config", "known_hosts"] {
+            let p = ssh.join(f);
+            std::fs::write(&p, "secret").unwrap();
+            let result = super::run_read_file(p.to_str().unwrap(), None, None, None, None)
+                .await
+                .unwrap();
+            let ToolCallOutcome::Result(s) = result else {
+                panic!()
+            };
+            assert!(
+                s.contains("credential"),
+                "expected credential-block error for {f}, got: {s}"
+            );
+        }
+        // .env file anywhere
+        let env_file = tmp.0.join(".env");
+        std::fs::write(&env_file, "SECRET=1").unwrap();
+        let result = super::run_read_file(env_file.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("credential"), "got: {s}");
+    }
+
+    #[tokio::test]
+    async fn read_file_allows_normal_dotfiles() {
+        let _guard = crate::test_home_guard();
+        let tmp = TmpHome::new();
+        unsafe { env::set_var("HOME", &tmp.0) };
+        let ok = tmp.0.join(".bashrc");
+        std::fs::write(&ok, "alias a=b").unwrap();
+        let result = super::run_read_file(ok.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("alias a=b"), "got: {s}");
     }
 
     #[tokio::test]

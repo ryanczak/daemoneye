@@ -643,14 +643,20 @@ mod tests {
         // final GHOST_TRIGGER: YES line, nothing happens — strict mode.
         let (act, reason) = evaluate_watchdog_response("ALERT: disk is full", false);
         assert!(!act);
-        assert_eq!(reason, "no GHOST_TRIGGER line — refusing to act (strict mode)");
+        assert_eq!(
+            reason,
+            "no GHOST_TRIGGER line — refusing to act (strict mode)"
+        );
     }
 
     #[test]
     fn evaluate_no_trigger_no_alert() {
         let (act, reason) = evaluate_watchdog_response("OK: everything looks fine", false);
         assert!(!act);
-        assert_eq!(reason, "no GHOST_TRIGGER line — refusing to act (strict mode)");
+        assert_eq!(
+            reason,
+            "no GHOST_TRIGGER line — refusing to act (strict mode)"
+        );
     }
 
     #[test]

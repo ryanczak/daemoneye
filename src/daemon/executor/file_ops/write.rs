@@ -45,11 +45,16 @@ where
             "Error: path must not contain '..'.".to_string(),
         ));
     }
-    if super::contains_control(path)
-        || dest_path.is_some_and(super::contains_control)
-    {
+    if super::contains_control(path) || dest_path.is_some_and(super::contains_control) {
         return Ok(ToolCallOutcome::Result(
             "Error: path must not contain control characters.".to_string(),
+        ));
+    }
+    if super::is_blocked_secret_path(path) || dest_path.is_some_and(super::is_blocked_secret_path) {
+        return Ok(ToolCallOutcome::Result(
+            "Error: edit_file cannot access well-known credential files \
+             (~/.ssh, .env, private keys)."
+                .to_string(),
         ));
     }
     if !std::path::Path::new(path).is_absolute() {

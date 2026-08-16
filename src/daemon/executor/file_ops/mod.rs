@@ -29,6 +29,45 @@ fn contains_control(s: &str) -> bool {
     s.chars().any(char::is_control)
 }
 
+/// Well-known credential locations that read_file/edit_file never disclose,
+/// even though they pass every other check (M4).   Private-key material under
+/// `~/.ssh`, `.env`-style environment files, and shell/netrc/pgp credential
+/// files.  This is not a security boundary — the AI can still reach these via
+/// `run_terminal_command` — it removes the silent easy channel so a confused,
+/// malicious, or prompt-injected model can't casually dump keys into session
+/// output.
+fn is_blocked_secret_path(path: &str) -> bool {
+    let p = std::path::Path::new(path);
+    // $HOME/.ssh (and everything beneath it).
+    if let Ok(home) = std::env::var("HOME") {
+        let home_ssh = std::path::Path::new(&home).join(".ssh");
+        if p.starts_with(&home_ssh) {
+            return true;
+        }
+    }
+    let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let base = name.strip_suffix(".pub").unwrap_or(name);
+    if matches!(
+        base,
+        ".env" | ".envrc" | ".netrc" | ".pgpass" | ".npmrc" | ".pypirc"
+    ) || name.starts_with(".env.")
+    {
+        return true;
+    }
+    matches!(
+        base,
+        "id_rsa"
+            | "id_ecdsa"
+            | "id_ed25519"
+            | "id_dsa"
+            | "id_xmss"
+            | "id_ecdsa_sk"
+            | "id_ed25519_sk"
+    )
+}
+
 /// Resolve a path for security-guard checks, following symlinks even when the
 /// leaf does not yet exist.  Canonicalizes the full path if it exists; otherwise
 /// canonicalizes the parent directory and rejoins the final component.  Falls
