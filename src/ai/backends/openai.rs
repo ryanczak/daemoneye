@@ -30,6 +30,54 @@ pub(crate) fn parse_openai_usage(u: &serde_json::Map<String, Value>) -> TokenBre
     }
 }
 
+/// Accumulator for one streamed tool call. OpenAI streams tool calls as a
+/// sequence of fragments keyed by `index`: `id` and `name` arrive on the
+/// first fragment, `arguments` concatenate across fragments, and fragments
+/// for different calls may interleave when the model calls tools in parallel.
+#[derive(Default)]
+pub(crate) struct ToolCallAcc {
+    pub id: String,
+    pub name: String,
+    pub args: String,
+}
+
+/// Apply one `delta.tool_calls[i]` fragment to the accumulated calls.
+/// Keyed by the fragment's `index` field; nonconforming servers that omit
+/// `index` start a new call when a fresh `id` appears and otherwise extend
+/// the most recent call.
+pub(crate) fn apply_tool_call_delta(calls: &mut Vec<ToolCallAcc>, tc: &Value) {
+    let frag_id = tc
+        .get("id")
+        .and_then(|i| i.as_str())
+        .filter(|s| !s.is_empty());
+    let idx = match tc.get("index").and_then(|i| i.as_u64()) {
+        Some(i) => i as usize,
+        None => match (frag_id, calls.last()) {
+            (Some(id), Some(last)) if last.id == id => calls.len() - 1,
+            (Some(_), _) => calls.len(),
+            (None, Some(_)) => calls.len() - 1,
+            (None, None) => 0,
+        },
+    };
+    while calls.len() <= idx {
+        calls.push(ToolCallAcc::default());
+    }
+    let acc = &mut calls[idx];
+    if let Some(id) = frag_id {
+        acc.id = id.to_string();
+    }
+    if let Some(f) = tc.get("function") {
+        if let Some(n) = f.get("name").and_then(|n| n.as_str())
+            && !n.is_empty()
+        {
+            acc.name.push_str(n);
+        }
+        if let Some(a) = f.get("arguments").and_then(|a| a.as_str()) {
+            acc.args.push_str(a);
+        }
+    }
+}
+
 /// OpenAI-compatible API backend (GPT family, or any OpenAI-compatible endpoint).
 /// Supports Ollama, LM Studio, vLLM, and any other OpenAI-API-compatible server
 /// by passing the appropriate `base_url` (e.g. `http://localhost:11434/v1`).
@@ -112,16 +160,25 @@ impl AiClient for OpenAiClient {
 
         let mut body = json!({
             "model": self.model,
-            "max_tokens": 4096,
             "stream": true,
             "stream_options": { "include_usage": true },
             "messages": full_messages,
         });
+        // api.openai.com rejects the legacy `max_tokens` on reasoning models
+        // and expects `max_completion_tokens`; local OpenAI-compatible servers
+        // (Ollama, LM Studio, vLLM) predate the new name, so pick by host.
+        let max_tokens_key = if self.base_url.starts_with("https://api.openai.com") {
+            "max_completion_tokens"
+        } else {
+            "max_tokens"
+        };
+        body[max_tokens_key] = json!(4096);
         if use_tools {
             body["tools"] = json!(get_openai_tool_definition(&loaded_tools));
-        } else {
-            body["tool_choice"] = json!("none");
         }
+        // With no `tools` in the body the model cannot call any; sending
+        // `tool_choice` without `tools` is a 400 on api.openai.com, so the
+        // use_tools=false case simply omits both.
 
         let response = send_with_retry(|| {
             http()
@@ -132,9 +189,7 @@ impl AiClient for OpenAiClient {
         .await?;
 
         let mut stream = response.bytes_stream();
-        let mut tool_id = String::new();
-        let mut tool_name = String::new();
-        let mut tool_args = String::new();
+        let mut calls: Vec<ToolCallAcc> = Vec::new();
         let mut leftover = String::new();
         let mut usage = TokenBreakdown::default();
 
@@ -158,11 +213,25 @@ impl AiClient for OpenAiClient {
                 let line = leftover[..pos].trim().to_string();
                 leftover = leftover[pos + 1..].to_string();
 
-                if let Some(data) = line.strip_prefix("data: ") {
+                // SSE permits `data:` with no space after the colon; some
+                // OpenAI-compatible servers emit that form.
+                if let Some(rest) = line.strip_prefix("data:") {
+                    let data = rest.trim_start();
                     if data == "[DONE]" {
                         break 'outer;
                     }
                     if let Ok(v) = serde_json::from_str::<Value>(data) {
+                        // Providers can report failures as an in-stream error
+                        // payload after the 200; dropping it would surface as
+                        // a silent empty response.
+                        if let Some(err) = v.get("error") {
+                            let msg = err
+                                .get("message")
+                                .and_then(|m| m.as_str())
+                                .map(str::to_string)
+                                .unwrap_or_else(|| err.to_string());
+                            anyhow::bail!("AI stream returned an error: {msg}");
+                        }
                         if let Some(delta) =
                             v["choices"].get(0).and_then(|c| c["delta"].as_object())
                         {
@@ -173,33 +242,27 @@ impl AiClient for OpenAiClient {
                             }
                             if let Some(tool_calls) =
                                 delta.get("tool_calls").and_then(|t| t.as_array())
-                                && let Some(tc) = tool_calls.first()
                             {
-                                if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
-                                    if !tool_id.is_empty() && tool_id != id {
-                                        // Flush previous tool call
-                                        if let Ok(args) = serde_json::from_str::<Value>(&tool_args)
-                                            && let Some(ev) = dispatch_tool_event(
-                                                &tool_id, &tool_name, &args, None,
-                                            )
-                                        {
-                                            let _ = tx.send(ev);
-                                        }
-                                    }
-                                    tool_id = id.to_string();
-                                    tool_args.clear();
+                                for tc in tool_calls {
+                                    apply_tool_call_delta(&mut calls, tc);
                                 }
-                                if let Some(f) = tc.get("function") {
-                                    if let Some(n) = f.get("name").and_then(|n| n.as_str())
-                                        && !n.is_empty()
-                                    {
-                                        tool_name = n.to_string();
-                                    }
-                                    if let Some(args) = f.get("arguments").and_then(|a| a.as_str())
-                                    {
-                                        tool_args.push_str(args);
-                                    }
-                                }
+                            }
+                        }
+                        if let Some(reason) = v["choices"]
+                            .get(0)
+                            .and_then(|c| c["finish_reason"].as_str())
+                        {
+                            match reason {
+                                "length" => log::warn!(
+                                    "OpenAI response truncated: finish_reason=length \
+                                     (max_tokens reached) for model {}",
+                                    self.model
+                                ),
+                                "content_filter" => log::warn!(
+                                    "OpenAI response stopped by content filter for model {}",
+                                    self.model
+                                ),
+                                _ => {}
                             }
                         }
                         if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
@@ -210,12 +273,45 @@ impl AiClient for OpenAiClient {
             }
         }
 
-        // Final flush of any buffered tool call
-        if !tool_id.is_empty()
-            && let Ok(args) = serde_json::from_str::<Value>(&tool_args)
-            && let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, None)
-        {
-            let _ = tx.send(ev);
+        // Dispatch all accumulated tool calls in emission order. Deltas only
+        // ever append to a call's fragments, so nothing is complete until the
+        // stream ends and flushing here loses no mid-stream information.
+        for acc in calls {
+            if acc.name.is_empty() {
+                continue;
+            }
+            let id = if acc.id.is_empty() {
+                // Compat servers may omit ids; results still need one to correlate.
+                crate::ai::next_tool_id()
+            } else {
+                acc.id
+            };
+            // A tool that takes no arguments may arrive with an empty string
+            // rather than "{}" from some compat servers.
+            let args_str = if acc.args.trim().is_empty() {
+                "{}"
+            } else {
+                acc.args.as_str()
+            };
+            match serde_json::from_str::<Value>(args_str) {
+                Ok(args) => {
+                    if let Some(ev) = dispatch_tool_event(&id, &acc.name, &args, None) {
+                        let _ = tx.send(ev);
+                    } else {
+                        log::warn!("model called unknown tool '{}' — call dropped", acc.name);
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "model emitted malformed JSON arguments for tool '{}': {e}",
+                        acc.name
+                    );
+                    let _ = tx.send(AiEvent::Error(format!(
+                        "model emitted malformed arguments for tool '{}': {e}",
+                        acc.name
+                    )));
+                }
+            }
         }
 
         let _ = tx.send(AiEvent::Done(usage));
@@ -225,7 +321,74 @@ impl AiClient for OpenAiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_openai_usage;
+    use super::{ToolCallAcc, apply_tool_call_delta, parse_openai_usage};
+    use serde_json::json;
+
+    fn apply_all(fragments: &[serde_json::Value]) -> Vec<ToolCallAcc> {
+        let mut calls = Vec::new();
+        for f in fragments {
+            apply_tool_call_delta(&mut calls, f);
+        }
+        calls
+    }
+
+    #[test]
+    fn accumulates_fragmented_arguments_for_one_call() {
+        let calls = apply_all(&[
+            json!({"index": 0, "id": "call_1",
+                   "function": {"name": "read_file", "arguments": ""}}),
+            json!({"index": 0, "function": {"arguments": "{\"path\":"}}),
+            json!({"index": 0, "function": {"arguments": "\"/etc/hosts\"}"}}),
+        ]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(calls[0].args, "{\"path\":\"/etc/hosts\"}");
+    }
+
+    #[test]
+    fn parallel_tool_calls_accumulate_independently_by_index() {
+        let calls = apply_all(&[
+            json!({"index": 0, "id": "call_a",
+                   "function": {"name": "list_panes", "arguments": "{}"}}),
+            json!({"index": 1, "id": "call_b",
+                   "function": {"name": "read_pane", "arguments": "{\"pane"}}),
+            json!({"index": 1, "function": {"arguments": "_id\":\"%3\"}"}}),
+        ]);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id, "call_a");
+        assert_eq!(calls[0].name, "list_panes");
+        assert_eq!(calls[1].id, "call_b");
+        assert_eq!(calls[1].name, "read_pane");
+        assert_eq!(calls[1].args, "{\"pane_id\":\"%3\"}");
+    }
+
+    #[test]
+    fn two_entries_in_one_delta_array_both_land() {
+        let mut calls = Vec::new();
+        for tc in [
+            json!({"index": 0, "id": "call_a",
+                   "function": {"name": "list_panes", "arguments": "{}"}}),
+            json!({"index": 1, "id": "call_b",
+                   "function": {"name": "list_scripts", "arguments": "{}"}}),
+        ] {
+            apply_tool_call_delta(&mut calls, &tc);
+        }
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1].name, "list_scripts");
+    }
+
+    #[test]
+    fn missing_index_falls_back_to_id_change_detection() {
+        let calls = apply_all(&[
+            json!({"id": "call_a", "function": {"name": "t1", "arguments": "{\"a\":"}}),
+            json!({"function": {"arguments": "1}"}}),
+            json!({"id": "call_b", "function": {"name": "t2", "arguments": "{}"}}),
+        ]);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].args, "{\"a\":1}");
+        assert_eq!(calls[1].name, "t2");
+    }
 
     #[test]
     fn openai_parses_cached_tokens_from_details() {
