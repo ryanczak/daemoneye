@@ -68,7 +68,7 @@ the user's door, session JSONL as the evidence anchor).
 |----|-------|--------|
 | 01 | transport-scaffolding ([phase-01-transport-scaffolding.md](phase-01-transport-scaffolding.md)) | done |
 | 02 | openai-two-phase ([phase-02-openai-two-phase.md](phase-02-openai-two-phase.md)) | done |
-| 03 | anthropic-gemini-two-phase ([phase-03-anthropic-gemini-two-phase.md](phase-03-anthropic-gemini-two-phase.md)) | review                                               |
+| 03 | anthropic-gemini-two-phase ([phase-03-anthropic-gemini-two-phase.md](phase-03-anthropic-gemini-two-phase.md)) | in-progress (bounced ×2 — [bug-03-2](bugs/bug-03-2.md); code approved, evidence entry outstanding) |
 | 04 | daemon-keepalive ([phase-04-daemon-keepalive.md](phase-04-daemon-keepalive.md)) | todo |
 | 05 | turn-loop-hardening ([phase-05-turn-loop-hardening.md](phase-05-turn-loop-hardening.md)) | todo |
 | 06 | client-liveness ([phase-06-client-liveness.md](phase-06-client-liveness.md)) | todo |

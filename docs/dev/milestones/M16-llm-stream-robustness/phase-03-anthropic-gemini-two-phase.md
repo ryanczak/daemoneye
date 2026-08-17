@@ -1,9 +1,9 @@
 # Phase 03: Anthropic + Gemini two-phase timeouts; retire `stream_chunk`; connect-timeout-only client
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** review
-`bugs/bug-03-1.md`; Tasks 1–5 and 7 are landed and approved, only the Gemini
-half of Task 6 is outstanding)
+**Status:** in-progress (bounced 2026-08-17 — see `bugs/bug-03-2.md`. All code
+is landed and approved; the outstanding work is correcting a false evidence
+entry in this Update Log. `bugs/bug-03-1.md` is resolved.)
 **Depends on:** phase-02
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -257,13 +257,47 @@ round has to change.
       production-module helper with no production caller is `dead_code` under
       `-D warnings`, so this is what proves the drain loop calls it rather
       than the test alone.
-- [ ] **Mutation evidence in the Update Log.** Break the shipped rule
+- [ ] ~~**Mutation evidence in the Update Log.** Break the shipped rule
       (delete the `first_token_seen = true` assignment at the text-emission
       site), run
       `cargo test finish_reason_only_frame_is_not_a_token 2>&1 | grep -E "^test "`
       and paste the **failing** output; restore the code and paste the
       passing run of the same command. Both halves are required — a test that
-      passes in both has not fixed the bug.
+      passes in both has not fixed the bug.~~
+      **WITHDRAWN 2026-08-17 — this criterion was unsatisfiable.** The
+      extract-a-predicate design that Task 6 sanctions puts the test on the
+      predicate, not on the call site, so no call-site mutation can make that
+      test fail. Verified by the architect: both named mutations leave it
+      `... ok`, exit 0. Do not attempt to satisfy it. Its replacement is the
+      first bullet of the bug-03-2 round below.
+
+### Added at the second bounce — 2026-08-17 (bug-03-2)
+
+Everything above is **met** and every line of code is approved — the four
+gates are green, `part_counts_as_token` is production code at
+`gemini.rs:14`, wired at `gemini.rs:278`, tested via `super::`, with the
+unknown-tool divergence closed. **No code change is expected this round**
+beyond the last bullet. The outstanding work is that the Update Log entry
+headed `19:13 (end-to-end verification — bug-03-1 mutation evidence)` pastes
+two `FAILED` transcripts for mutations that in fact leave the test green.
+
+- [ ] The `19:13` entry is corrected in place — the two `FAILED` transcripts
+      struck, the real result stated, the entry retained rather than deleted.
+- [ ] It carries the mutation that **does** discriminate: with the
+      `part_counts_as_token(&v)` call at `gemini.rs:278-280` deleted,
+      `cargo clippy --all-targets --all-features -- -D warnings` fails with
+      `function part_counts_as_token is never used` (measured: exit 101);
+      restored, it passes. Both halves pasted mechanically.
+- [ ] One sentence stating the honest limit: the unit test guards the
+      predicate's logic; the lint gate guards the call site.
+- [ ] The `&call["args"]` / `json!({})` divergence at `gemini.rs:33` vs
+      `gemini.rs:348-352` is resolved per bug-03-2's DoD — run it, don't
+      assert it.
+- [ ] All four gates green.
+
+Full symptom, measured counter-evidence, root cause and constraints:
+`bugs/bug-03-2.md`. **Read its "What should happen" first** — it opens with
+the architect's retraction of the withdrawn criterion above.
 
 Full symptom, root cause and constraints: `bugs/bug-03-1.md`. The root cause
 is an architect-side spec defect (this doc's Task 6 named the extraction for
@@ -825,3 +859,54 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 545379e94a4b5c3c25ce41b5bffec1fbb37de191
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-17 (round 2)
+
+- **Verdict:** bounced (bug-03-2)
+- **Bounces:** 2
+- **Executor:** DeepSeek V4 Flash 0731
+- **Scope deviations:** the run added a frame-level predicate call at
+  `gemini.rs:278` while leaving the three inline `first_token_seen`
+  assignments in place, and self-reported it. Reviewed and **accepted**: the
+  predicate returns `false` for a `MALFORMED_FUNCTION_CALL` frame (no
+  `content.parts`), so that inline site is genuinely load-bearing; the two
+  content-site assignments are redundant with the predicate but the flag is
+  monotone, so the redundancy is harmless. No change requested.
+- **Calibration:** two entries, one per side.
+  1. **Architect — recurrence.** bug-03-1's mutation criterion was
+     unsatisfiable under the design the phase doc itself sanctions. This is
+     the **second occurrence** of "a criterion validated against the
+     pre-phase tree but never against the tree the phase would produce" on
+     this phase alone (phase-02's AC3 `grep -c` was the first; the round-1
+     verdict logged the near-miss variant). WORKFLOW § Calibration: two is a
+     trend. Holding for a third before folding, but the shape is now
+     specific enough to name — *a criterion that pins a test's verdict must
+     be run against a deliberately broken tree before it ships, not only
+     against the current one.*
+  2. **Executor — first occurrence, serious.** Faced with an unsatisfiable
+     gate, the run produced transcripts in the shape the gate demanded
+     rather than filing the blocker STANDARDS §1 and §7 require. Same
+     precondition as phase-01's `tmux kill-server` incident: a gate with no
+     honest passing state. Recorded as `false_completion`.
+
+Independent architect re-run of the gate set, 2026-08-17 (separate
+invocations; build and lint forced to recompile via `touch` so warnings could
+not be masked by a warm cache):
+
+- `cargo fmt --all` — clean.
+- `cargo build` — `Compiling daemoneye v0.9.9`, `Finished`, zero warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` — exit 0.
+- `cargo test` — `1310 passed; 0 failed` (lib) + 6 / 8 / 30 / 9 integration,
+  `0 failed` throughout, exit 0.
+
+bug-03-1 is **resolved** and verified: `grep -c "super::part_counts_as_token"
+src/ai/backends/gemini.rs` prints `5`; the predicate is production code at
+`gemini.rs:14` called at `:278`; deleting that call makes the lint gate fail
+`function part_counts_as_token is never used` (exit 101), which is the real
+proof of wiring; the unknown-tool divergence is closed via
+`dispatch_tool_event(...).is_some()` and pinned by a `not_a_tool` assertion.
+
+bug-03-2 is filed against the evidence, not the code. Both mutations the
+Update Log claims produced `FAILED` were re-run on the delivered tree and
+both print `... ok`, exit 0; under the second, the full suite stays green.
+The tree was restored to `545379e` after each (`git status` clean).
