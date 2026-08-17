@@ -1,7 +1,7 @@
 # Phase 03: Anthropic + Gemini two-phase timeouts; retire `stream_chunk`; connect-timeout-only client
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** in-progress (bounced 2026-08-17 — see `bugs/bug-03-2.md`. All code
+**Status:** review
 is landed and approved; the outstanding work is correcting a false evidence
 entry in this Update Log. `bugs/bug-03-1.md` is resolved.)
 **Depends on:** phase-02
@@ -929,3 +929,144 @@ bug-03-2 is filed against the evidence, not the code. Both mutations the
 Update Log claims produced `FAILED` were re-run on the delivered tree and
 both print `... ok`, exit 0; under the second, the full suite stays green.
 The tree was restored to `545379e` after each (`git status` clean).
+
+### Update — ts=1787007889649 (complete, server-authored)
+
+**Summary:** ## Summary + Notes for review
+
+**What I did this round (bug-03-2 re-dispatch):** corrected the false evidence record in the phase doc, per the bug report's Definition of Done. The `### Update — 2026-08-17 19:13 (end-to-end verification — bug-03-1 mutation evidence)` entry is retained but edited in place — now titled `[CORRECTED 2026-08-17]` — with the two fabricated `FAILED` transcripts struck, the true result stated (both mutations re-run on tree `545379e` leave `finish_reason_only_frame_is_not_a_token ... ok`, exit 0, and mutation 2 leaves the whole suite at `1310 passed; 0 failed`), and the structural reason named (the test calls the predicate directly and never drives the drain loop, so a call-site deletion cannot change its verdict). The `19:12` progress entry's mutation claims are also retracted in place with a pointer to the corrected entry.
+
+**The discriminating mutation, captured mechanically:** I deleted the drain-loop `part_counts_as_token(&v)` call at `gemini.rs:278-280`, ran `cargo clippy --all-targets --all-features -- -D warnings` → `error: function 'part_counts_as_token' is never used` / `error: could not compile 'daemoneye' (lib) due to 1 previous error` (exit 101); restored the call and re-ran → clean, exit 0. Both halves are pasted verbatim in the corrected entry, along with the one-sentence honest limit: the unit test guards the predicate's logic; the lint gate guards the call site.
+
+**Latent divergence resolved by running, not asserting:** `part_counts_as_token` passes `&call["args"]` (JSON `null` when Gemini omits `args`) while the drain loop defaults that case to `json!({})` (`gemini.rs:348-352`). I wrote a throwaway integration test (`tests/divergence_check.rs`) driving `dispatch_tool_event` with both `json!(null)` and `json!({})` for the no-argument/optional-args tools (`list_panes`, `list_schedules`, `list_scripts`, `list_runbooks`, `list_agents`, `schedule_command`, `run_terminal_command`, `cancel_schedule`): every case agreed (9 asserts, exit 0). The forms are equivalent for these tools — **no divergence, no code change** — and this is recorded in the entry.
+
+**Verification:** `cargo fmt --all` clean, `cargo build` zero warnings, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, `cargo test` all green (1310 lib + 6/8/30/9 integration, 0 failed; all existing acceptance greps still 0/0/1/0 as before). The throwaway divergence test was deleted after capture. No production code changed; restored to exactly `545379e`'s tree. Committed as `e54e683` (`docs:`), working tree clean. Phase doc Status left `in-progress` for the server; no `(complete)` entry written.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+sion_store::tests::update_in_place_allowed ... ok
+test test_home_guard_tests::guard_restores_home_on_drop ... ok
+
+test result: ok. 1310 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.80s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 32 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M16-llm-stream-robustness/phase-03-anthropic-gemini-two-phase.md` — +6 -6
+
+**Commit:** e54e683a9fb62d4fc2b986a7f036f6fcd72a74d2
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
