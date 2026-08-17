@@ -403,3 +403,11 @@ exit=0
 
 PASTE MATCH
 
+### Update — 2026-08-17 (blocker)
+
+**Blocked on:** completion gate bounces on the documented pre-existing `hooks_land_on_private_server` failure, despite the phase doc amending the test gate to `cargo test --lib`.
+
+**What I tried:** All Spec tasks 1–8 are implemented, verified, and committed (`d3ad2c0`, tree clean). The § End-to-end block ran verbatim; `cargo test --lib` is green (1306 passed), both stall tests pass, `ai_timeout_keys_parse_and_default` passes, clippy `-D warnings` is clean, and the E2E entry ends with `PASTE MATCH`. I re-emitted the completion signal twice; each time the loop's gate ran the *full* `cargo test` suite and hard-failed on `hooks_land_on_private_server` (panics at `tests/isolation.rs:114`, "private server pane-died hook does not contain daemoneye notify"). To prove it is not mine, I built the repo at `HEAD~1` (`5d23353`, pre-phase) in a throwaway worktree and ran `cargo test --test isolation hooks_land_on_private_server` there — same failure, same message.
+
+**What I need:** The gate command for this phase must be the phase-doc-amended `cargo test --lib` (or exclude the documented pre-existing failure). I am explicitly forbidden from fixing that test in this phase, so the gate/harness needs to be aligned with the amended acceptance criterion before completion can be recorded.
+
