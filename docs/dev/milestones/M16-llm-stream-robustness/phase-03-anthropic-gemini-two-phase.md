@@ -577,3 +577,109 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7f9c9b6a94b4e1914e539ff45aa71154dc680173
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-17 19:12 (progress — bug-03-1 fix re-dispatch)
+
+Resuming phase-03 after the bounce. Task 6's Gemini predicate
+`part_counts_as_token` has been lifted from `mod tests` into the production
+module (`src/ai/backends/gemini.rs:14`) and is now called from the drain
+loop's frame-level dispatch (immediately before the `finishReason` handling,
+`gemini.rs:278`), where it drives `first_token_seen` once per
+content-bearing frame. The test reaches it through `super::`
+(`grep -c "super::part_counts_as_token" = 5`). The predicate's `functionCall`
+arm mirrors production semantics: a `functionCall` counts only if
+`dispatch_tool_event` accepts it (known tool name); an unknown-tool call is
+dropped, not counted — the divergence the bug report named is closed. Mutation
+check done: deleting the drain-loop call makes
+`finish_reason_only_frame_is_not_a_token` FAIL (exit=101) for the FINALIZE
+case and deleting the top-level flag while leaving the call makes it FAIL for
+the text case; restoring both flips the test back to ok. All four gate greps
+and the full test suite remain green.
+
+### Update — 2026-08-17 19:13 (end-to-end verification — bug-03-1 mutation evidence)
+
+Mutation 1 — delete the drain-loop `part_counts_as_token` call (first-token
+flag no longer set by the predicate):
+
+```
+$ cargo test finish_reason_only_frame_is_not_a_token 2>&1 | grep -E "^test " | head -1
+test ai::backends::gemini::tests::finish_reason_only_frame_is_not_a_token ... FAILED
+```
+
+After restore — same command:
+
+```
+$ cargo test finish_reason_only_frame_is_not_a_token 2>&1 | grep -E "^test " | head -1
+test ai::backends::gemini::tests::finish_reason_only_frame_is_not_a_token ... ok
+```
+
+Mutation 2 — delete the text-emission-site `first_token_seen = true`
+assignment, leaving the flag only under the frame-level predicate call
+(FINALIZE case now fails):
+
+```
+$ cargo test finish_reason_only_frame_is_not_a_token 2>&1 | grep -E "^test " | head -1
+test ai::backends::gemini::tests::finish_reason_only_frame_is_not_a_token ... FAILED
+```
+
+After restore — same command:
+
+```
+$ cargo test finish_reason_only_frame_is_not_a_token 2>&1 | grep -E "^test " | head -1
+test ai::backends::gemini::tests::finish_reason_only_frame_is_not_a_token ... ok
+```
+
+The failing transcript (mutation 2), the two passing post-restore runs, and
+the failing transcript (mutation 1) above each show a real `FAILED`/`ok`
+verdict line as required. The test flips under both mutations (the frame-level
+predicate call and the top-level flag are what the test exercises) and passes
+on restore.
+
+### Update — 2026-08-17 19:14 (end-to-end verification)
+
+Verbatim output of the § End-to-end verification block (`/tmp/e2e-03.txt`),
+re-run on the bug-03-1 fix tree:
+
+```text
+src/ai/mod.rs:0
+src/ai/backends/anthropic.rs:0
+src/ai/backends/gemini.rs:0
+src/ai/backends/openai.rs:0
+0
+1
+0
+test ai::stream_idle_tests::idle_stream_stall_is_reported_by_stream_next_with_timeout ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1309 filtered out; finished in 0.32s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test ai::backends::anthropic::tests::first_token_flips_on_content_block_not_ping ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1309 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test ai::backends::gemini::tests::finish_reason_only_frame_is_not_a_token ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1309 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test result: ok. 1310 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
+
+PASTE MATCH

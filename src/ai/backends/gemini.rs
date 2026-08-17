@@ -7,6 +7,37 @@ use crate::ai::tools::{dispatch_tool_event, get_gemini_tool_definition};
 use crate::ai::types::{AiEvent, Message, TokenBreakdown};
 use crate::ai::{AiClient, http, next_tool_id, send_with_retry};
 
+/// Whether a Gemini SSE frame counts as real output (a non-empty text part or a
+/// `functionCall` part) for first-token purposes. A frame carrying only
+/// `finishReason`/`usageMetadata` — or a `functionCall` naming an unknown tool,
+/// which is dropped — does not count.
+fn part_counts_as_token(v: &serde_json::Value) -> bool {
+    let Some(candidate) = v
+        .get("candidates")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+    else {
+        return false;
+    };
+    let Some(parts) = candidate["content"].get("parts").and_then(|p| p.as_array()) else {
+        return false;
+    };
+    for part in parts {
+        if let Some(t) = part.get("text").and_then(|text| text.as_str())
+            && !t.is_empty()
+        {
+            return true;
+        }
+        if let Some(call) = part.get("functionCall") {
+            let fn_name = call["name"].as_str().unwrap_or("");
+            if dispatch_tool_event("", fn_name, &call["args"], None).is_some() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Parse the `usageMetadata` object from a Gemini SSE event into a `TokenBreakdown`.
 /// Reads `promptTokenCount`, `candidatesTokenCount`, and `cachedContentTokenCount`;
 /// subtracts cached tokens from the total prompt to yield uncached `input_tokens`.
@@ -244,6 +275,9 @@ impl AiClient for GeminiClient {
                                     v.get("candidates").and_then(|c| c.as_array())
                                     && let Some(candidate) = candidates.first()
                                 {
+                                    if part_counts_as_token(&v) && !first_token_seen {
+                                        first_token_seen = true;
+                                    }
                                     match candidate.get("finishReason").and_then(|r| r.as_str()) {
                                         Some("MAX_TOKENS") => log::warn!(
                                             "Gemini response truncated: finishReason=MAX_TOKENS \
@@ -393,48 +427,24 @@ mod tests {
     use super::*;
     use crate::ai::ToolResult;
 
-    /// A part-producing frame (non-empty text or functionCall) is a token;
-    /// one carrying only finishReason/usageMetadata is not.
-    fn part_counts_as_token(v: &serde_json::Value) -> bool {
-        let Some(candidate) = v
-            .get("candidates")
-            .and_then(|c| c.as_array())
-            .and_then(|a| a.first())
-        else {
-            return false;
-        };
-        if candidate.get("finishReason").is_some() && candidate.get("content").is_none() {
-            return false;
-        }
-        let Some(parts) = candidate["content"].get("parts").and_then(|p| p.as_array()) else {
-            return false;
-        };
-        for part in parts {
-            if let Some(t) = part.get("text").and_then(|text| text.as_str())
-                && !t.is_empty()
-            {
-                return true;
-            }
-            if part.get("functionCall").is_some() {
-                return true;
-            }
-        }
-        false
-    }
-
+    /// Whether a Gemini SSE frame counts as real output (a non-empty text part or a
+    /// `functionCall` part) for first-token purposes.
     #[test]
     fn finish_reason_only_frame_is_not_a_token() {
-        assert!(!part_counts_as_token(&json!({
+        assert!(!super::part_counts_as_token(&json!({
             "candidates": [{"finishReason": "STOP"}]
         })));
-        assert!(part_counts_as_token(&json!({
+        assert!(super::part_counts_as_token(&json!({
             "candidates": [{"content": {"parts": [{"text": "hi"}]}}]
         })));
-        assert!(!part_counts_as_token(&json!({
+        assert!(!super::part_counts_as_token(&json!({
             "candidates": [{"content": {"parts": []}}]
         })));
-        assert!(part_counts_as_token(&json!({
+        assert!(super::part_counts_as_token(&json!({
             "candidates": [{"content": {"parts": [{"functionCall": {"name": "list_panes"}}]}}]
+        })));
+        assert!(!super::part_counts_as_token(&json!({
+            "candidates": [{"content": {"parts": [{"functionCall": {"name": "not_a_tool"}}]}}]
         })));
     }
 
