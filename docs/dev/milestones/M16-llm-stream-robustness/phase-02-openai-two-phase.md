@@ -1,7 +1,7 @@
 # Phase 02: OpenAI backend — two-phase stream timeouts and bounded pre-first-token retry
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -263,3 +263,29 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-17 15:19 (progress)
+
+Started phase-02 (OpenAI two-phase stream timeouts + bounded retry). Flipped status todo → in-progress. Implementing the attempt-loop restructure of `OpenAiClient::chat` per the phase-01 helper surface (`stream_next_with_timeout`, `select_timeout`, `stream_retry_backoff`, `is_retriable_transport`, `record_stream_*`), the `delta_carries_token` port, and the two unit tests. Working tree was clean at start; phase-01 helpers confirmed present (`stream_next_with_timeout` count = 1).
+
+### Update — 2026-08-17 15:26 (end-to-end verification)
+
+Verbatim output of the § End-to-end verification block (`/tmp/e2e-02.txt`):
+
+```text
+0
+1
+3
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+exit=0
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+exit=0
+```
+
+PASTE MATCH

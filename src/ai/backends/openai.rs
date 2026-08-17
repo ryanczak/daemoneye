@@ -1,6 +1,5 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -39,6 +38,24 @@ pub(crate) struct ToolCallAcc {
     pub id: String,
     pub name: String,
     pub args: String,
+}
+
+/// Whether a delta carries a real token (non-empty content, reasoning, or tool calls).
+fn delta_carries_token(delta: &serde_json::Map<String, Value>) -> bool {
+    let has_content = delta
+        .get("content")
+        .and_then(|c| c.as_str())
+        .is_some_and(|c| !c.is_empty());
+    let has_reasoning = delta
+        .get("reasoning")
+        .or_else(|| delta.get("reasoning_content"))
+        .and_then(|r| r.as_str())
+        .is_some_and(|r| !r.is_empty());
+    let has_tool_calls = delta
+        .get("tool_calls")
+        .and_then(|t| t.as_array())
+        .is_some_and(|t| !t.is_empty());
+    has_content || has_reasoning || has_tool_calls
 }
 
 /// Apply one `delta.tool_calls[i]` fragment to the accumulated calls.
@@ -182,125 +199,180 @@ impl AiClient for OpenAiClient {
         // `tool_choice` without `tools` is a 400 on api.openai.com, so the
         // use_tools=false case simply omits both.
 
-        let response = send_with_retry(|| {
-            http()
-                .post(format!("{}/chat/completions", self.base_url))
-                .bearer_auth(&self.api_key)
-                .json(&body)
-        })
-        .await?;
+        const MAX_FIRST_TOKEN_RETRIES: u32 = 2;
+        const MAX_STREAM_RETRIES: u32 = 3;
+        let mut first_token_seen = false;
+        let mut stall_retries: u32 = 0;
+        let mut transport_retries: u32 = 0;
 
-        let mut stream = response.bytes_stream();
-        let mut calls: Vec<ToolCallAcc> = Vec::new();
-        let mut sse = crate::ai::SseBuffer::new();
-        let mut usage = TokenBreakdown::default();
+        'attempt: loop {
+            let response = send_with_retry(|| {
+                http()
+                    .post(format!("{}/chat/completions", self.base_url))
+                    .bearer_auth(&self.api_key)
+                    .json(&body)
+            })
+            .await?;
 
-        'outer: while let Some(chunk) = stream.next().await {
-            let bytes = crate::ai::stream_chunk(chunk)?;
-            sse.push(&bytes)?;
+            let mut stream = response.bytes_stream();
+            let mut calls: Vec<ToolCallAcc> = Vec::new();
+            let mut sse = crate::ai::SseBuffer::new();
+            let mut usage = TokenBreakdown::default();
 
-            while let Some(data) = sse.next_data() {
-                if data == "[DONE]" {
-                    break 'outer;
-                }
-                if let Ok(v) = serde_json::from_str::<Value>(&data) {
-                    // Providers can report failures as an in-stream error
-                    // payload after the 200; dropping it would surface as
-                    // a silent empty response.
-                    if let Some(err) = v.get("error") {
-                        let msg = err
-                            .get("message")
-                            .and_then(|m| m.as_str())
-                            .map(str::to_string)
-                            .unwrap_or_else(|| err.to_string());
-                        anyhow::bail!("AI stream returned an error: {msg}");
-                    }
-                    if let Some(delta) = v["choices"].get(0).and_then(|c| c["delta"].as_object()) {
-                        if let Some(content) = delta.get("content").and_then(|c| c.as_str())
-                            && !content.is_empty()
-                        {
-                            let _ = tx.send(AiEvent::Token(content.to_string()));
+            let drain: anyhow::Result<()> = 'drain: loop {
+                let timeout =
+                    crate::ai::select_timeout(first_token_seen, crate::ai::stream_timeouts());
+                match crate::ai::stream_next_with_timeout(&mut stream, timeout, first_token_seen)
+                    .await
+                {
+                    Some(Ok(bytes)) => {
+                        if let Err(e) = sse.push(&bytes) {
+                            break 'drain Err(e);
                         }
-                        if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array())
-                        {
-                            for tc in tool_calls {
-                                apply_tool_call_delta(&mut calls, tc);
+                        while let Some(data) = sse.next_data() {
+                            if data == "[DONE]" {
+                                break 'drain Ok(());
+                            }
+                            if let Ok(v) = serde_json::from_str::<Value>(&data) {
+                                // Providers can report failures as an in-stream error
+                                // payload after the 200; dropping it would surface as
+                                // a silent empty response.
+                                if let Some(err) = v.get("error") {
+                                    let msg = err
+                                        .get("message")
+                                        .and_then(|m| m.as_str())
+                                        .map(str::to_string)
+                                        .unwrap_or_else(|| err.to_string());
+                                    break 'drain Err(anyhow::anyhow!(
+                                        "AI stream returned an error: {msg}"
+                                    ));
+                                }
+                                if let Some(delta) =
+                                    v["choices"].get(0).and_then(|c| c["delta"].as_object())
+                                {
+                                    if !first_token_seen && delta_carries_token(delta) {
+                                        first_token_seen = true;
+                                    }
+                                    if let Some(content) =
+                                        delta.get("content").and_then(|c| c.as_str())
+                                        && !content.is_empty()
+                                    {
+                                        let _ = tx.send(AiEvent::Token(content.to_string()));
+                                    }
+                                    if let Some(tool_calls) =
+                                        delta.get("tool_calls").and_then(|t| t.as_array())
+                                    {
+                                        for tc in tool_calls {
+                                            apply_tool_call_delta(&mut calls, tc);
+                                        }
+                                    }
+                                }
+                                if let Some(reason) = v["choices"]
+                                    .get(0)
+                                    .and_then(|c| c["finish_reason"].as_str())
+                                {
+                                    match reason {
+                                        "length" => log::warn!(
+                                            "OpenAI response truncated: finish_reason=length \
+                                             (max_tokens reached) for model {}",
+                                            self.model
+                                        ),
+                                        "content_filter" => log::warn!(
+                                            "OpenAI response stopped by content filter for model {}",
+                                            self.model
+                                        ),
+                                        _ => {}
+                                    }
+                                }
+                                if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
+                                    usage = parse_openai_usage(u);
+                                }
                             }
                         }
                     }
-                    if let Some(reason) = v["choices"]
-                        .get(0)
-                        .and_then(|c| c["finish_reason"].as_str())
-                    {
-                        match reason {
-                            "length" => log::warn!(
-                                "OpenAI response truncated: finish_reason=length \
-                                 (max_tokens reached) for model {}",
-                                self.model
-                            ),
-                            "content_filter" => log::warn!(
-                                "OpenAI response stopped by content filter for model {}",
-                                self.model
-                            ),
-                            _ => {}
+                    Some(Err(e)) => break 'drain Err(e),
+                    None => break 'drain Ok(()),
+                }
+            };
+
+            match drain {
+                Ok(()) => {
+                    crate::ai::record_stream_success();
+                    for acc in calls {
+                        if acc.name.is_empty() {
+                            continue;
+                        }
+                        let id = if acc.id.is_empty() {
+                            // Compat servers may omit ids; results still need one to correlate.
+                            crate::ai::next_tool_id()
+                        } else {
+                            acc.id
+                        };
+                        // A tool that takes no arguments may arrive with an empty string
+                        // rather than "{}" from some compat servers.
+                        let args_str = if acc.args.trim().is_empty() {
+                            "{}"
+                        } else {
+                            acc.args.as_str()
+                        };
+                        match serde_json::from_str::<Value>(args_str) {
+                            Ok(args) => {
+                                if let Some(ev) = dispatch_tool_event(&id, &acc.name, &args, None) {
+                                    let _ = tx.send(ev);
+                                } else {
+                                    log::warn!(
+                                        "model called unknown tool '{}' — call dropped",
+                                        acc.name
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "model emitted malformed JSON arguments for tool '{}': {e}",
+                                    acc.name
+                                );
+                                let _ = tx.send(AiEvent::Error(format!(
+                                    "model emitted malformed arguments for tool '{}': {e}",
+                                    acc.name
+                                )));
+                            }
                         }
                     }
-                    if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
-                        usage = parse_openai_usage(u);
-                    }
-                }
-            }
-        }
-
-        // Dispatch all accumulated tool calls in emission order. Deltas only
-        // ever append to a call's fragments, so nothing is complete until the
-        // stream ends and flushing here loses no mid-stream information.
-        for acc in calls {
-            if acc.name.is_empty() {
-                continue;
-            }
-            let id = if acc.id.is_empty() {
-                // Compat servers may omit ids; results still need one to correlate.
-                crate::ai::next_tool_id()
-            } else {
-                acc.id
-            };
-            // A tool that takes no arguments may arrive with an empty string
-            // rather than "{}" from some compat servers.
-            let args_str = if acc.args.trim().is_empty() {
-                "{}"
-            } else {
-                acc.args.as_str()
-            };
-            match serde_json::from_str::<Value>(args_str) {
-                Ok(args) => {
-                    if let Some(ev) = dispatch_tool_event(&id, &acc.name, &args, None) {
-                        let _ = tx.send(ev);
-                    } else {
-                        log::warn!("model called unknown tool '{}' — call dropped", acc.name);
-                    }
+                    let _ = tx.send(AiEvent::Done(usage));
+                    return Ok(());
                 }
                 Err(e) => {
-                    log::warn!(
-                        "model emitted malformed JSON arguments for tool '{}': {e}",
-                        acc.name
-                    );
-                    let _ = tx.send(AiEvent::Error(format!(
-                        "model emitted malformed arguments for tool '{}': {e}",
-                        acc.name
-                    )));
+                    if !first_token_seen {
+                        if crate::ai::is_retriable_transport(&e)
+                            && transport_retries < MAX_STREAM_RETRIES
+                        {
+                            transport_retries += 1;
+                            log::warn!(
+                                "AI stream transport error before first token (attempt {transport_retries}/{MAX_STREAM_RETRIES}): {e}"
+                            );
+                            tokio::time::sleep(crate::ai::stream_retry_backoff(transport_retries))
+                                .await;
+                            continue 'attempt;
+                        }
+                        if stall_retries < MAX_FIRST_TOKEN_RETRIES {
+                            stall_retries += 1;
+                            log::warn!(
+                                "AI stream failed before first token (attempt {stall_retries}/{MAX_FIRST_TOKEN_RETRIES}): {e}"
+                            );
+                            continue 'attempt;
+                        }
+                    }
+                    crate::ai::record_stream_failure();
+                    return Err(e);
                 }
             }
         }
-
-        let _ = tx.send(AiEvent::Done(usage));
-        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ToolCallAcc, apply_tool_call_delta, parse_openai_usage};
+    use super::{ToolCallAcc, apply_tool_call_delta, delta_carries_token, parse_openai_usage};
     use serde_json::json;
 
     fn apply_all(fragments: &[serde_json::Value]) -> Vec<ToolCallAcc> {
@@ -406,5 +478,29 @@ mod tests {
         assert_eq!(usage.input_tokens, 1000);
         assert_eq!(usage.cache_read_tokens, 0);
         assert_eq!(usage.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn delta_carries_token_ignores_empty_keepalive() {
+        assert!(!delta_carries_token(
+            json!({"content": ""}).as_object().unwrap()
+        ));
+        assert!(!delta_carries_token(json!({}).as_object().unwrap()));
+        assert!(delta_carries_token(
+            json!({"content": "x"}).as_object().unwrap()
+        ));
+        assert!(delta_carries_token(
+            json!({"reasoning_content": "r"}).as_object().unwrap()
+        ));
+        assert!(delta_carries_token(
+            json!({"tool_calls": [{}]}).as_object().unwrap()
+        ));
+    }
+
+    #[test]
+    fn delta_carries_token_ignores_role_only_delta() {
+        assert!(!delta_carries_token(
+            json!({"role": "assistant"}).as_object().unwrap()
+        ));
     }
 }

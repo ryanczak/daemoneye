@@ -187,7 +187,6 @@ pub fn stream_timeouts() -> StreamTimeouts {
 
 /// Select which timeout bounds the next stream read: the (long) first-token
 /// budget before any real token has arrived, the (shorter) idle budget after.
-#[cfg_attr(not(test), expect(dead_code))] // phase-02/03 start consuming these helpers
 pub(crate) fn select_timeout(first_token_seen: bool, t: StreamTimeouts) -> std::time::Duration {
     if first_token_seen {
         t.stream_idle
@@ -198,7 +197,6 @@ pub(crate) fn select_timeout(first_token_seen: bool, t: StreamTimeouts) -> std::
 
 /// Read the next stream item under a timeout, converting a stall into an
 /// explicit, phase-accurate error instead of an unbounded await.
-#[cfg_attr(not(test), expect(dead_code))] // phase-02/03 start consuming these helpers
 pub(crate) async fn stream_next_with_timeout<B>(
     stream: &mut (impl futures_util::Stream<Item = reqwest::Result<B>> + Unpin),
     timeout: Duration,
@@ -228,14 +226,12 @@ pub(crate) async fn stream_next_with_timeout<B>(
 /// A stream error worth retrying: a transport/body failure (connection dropped
 /// mid-stream), as opposed to a stall timeout or a runaway-buffer abort, which
 /// are synthetic `anyhow` errors that don't downcast to `reqwest::Error`.
-#[cfg_attr(not(test), expect(dead_code))] // phase-02/03 start consuming these helpers
 pub(crate) fn is_retriable_transport(e: &anyhow::Error) -> bool {
     e.downcast_ref::<reqwest::Error>().is_some()
 }
 
 /// Bounded exponential backoff for mid-stream transport retries:
 /// 250 ms, 500 ms, 1 s, capped at 2 s.
-#[cfg_attr(not(test), expect(dead_code))] // phase-02/03 start consuming these helpers
 pub(crate) fn stream_retry_backoff(attempt: u32) -> Duration {
     let ms = (250 * 2u64.pow(attempt.saturating_sub(1))).min(2000);
     Duration::from_millis(ms)
@@ -398,13 +394,11 @@ pub async fn send_with_retry(
 /// Record a mid-stream failure against the circuit breaker. `send_with_retry`
 /// only accounts for the header exchange; backends call this when the stream
 /// itself fails after a 200.
-#[expect(dead_code)] // phase-02/03 start consuming these helpers
 pub(crate) fn record_stream_failure() {
     circuit().record_failure();
 }
 
 /// Record a stream that reached its natural end.
-#[expect(dead_code)] // phase-02/03 start consuming these helpers
 pub(crate) fn record_stream_success() {
     circuit().record_success();
 }
