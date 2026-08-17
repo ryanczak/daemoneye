@@ -857,16 +857,42 @@ pub struct AiConfig {
     /// Defaults to `"sre"`.
     #[serde(default = "default_prompt")]
     pub prompt: String,
+    /// Max wait in seconds for the first real token of a response. Covers slow
+    /// prefill on long prompts. Defaults to 600.
+    #[serde(default = "default_first_token_timeout_secs")]
+    pub first_token_timeout_secs: u64,
+    /// Max gap in seconds between chunks once the stream has produced a token.
+    /// Defaults to 240.
+    #[serde(default = "default_stream_idle_timeout_secs")]
+    pub stream_idle_timeout_secs: u64,
+    /// TCP/TLS connect budget in seconds. Defaults to 30.
+    #[serde(default = "default_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
 }
 
 fn default_prompt() -> String {
     "sre".to_string()
 }
 
+fn default_first_token_timeout_secs() -> u64 {
+    600
+}
+
+fn default_stream_idle_timeout_secs() -> u64 {
+    240
+}
+
+fn default_connect_timeout_secs() -> u64 {
+    30
+}
+
 impl Default for AiConfig {
     fn default() -> Self {
         AiConfig {
             prompt: default_prompt(),
+            first_token_timeout_secs: default_first_token_timeout_secs(),
+            stream_idle_timeout_secs: default_stream_idle_timeout_secs(),
+            connect_timeout_secs: default_connect_timeout_secs(),
         }
     }
 }

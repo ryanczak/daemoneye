@@ -471,6 +471,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // Initialise the masking filter with built-in patterns + any user-defined extras.
     crate::ai::filter::init_masking(&startup_config.masking.extra_patterns);
 
+    // Initialise the two-phase stream-timeout budgets from `[ai]` config.
+    crate::ai::init_stream_timeouts(&startup_config.ai);
+
     // G2: migrate any legacy memory files to include namespace frontmatter.
     if let Err(e) = crate::memory::migrate_namespace() {
         log::warn!("Memory namespace migration failed: {e}");

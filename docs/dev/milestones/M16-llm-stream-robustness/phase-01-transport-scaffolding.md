@@ -372,3 +372,34 @@ Constraints that prevent a repeat of the round-1 kill:
 - The full `cargo test` (non `--lib`) shows one pre-existing failure
   (`hooks_land_on_private_server`) that is NOT yours — the gate for this
   phase is `cargo test --lib`, per the amended acceptance criterion.
+
+### Update — 2026-08-17 (end-to-end verification)
+
+Verbatim output of the § End-to-end verification block (`/tmp/e2e-01.txt`):
+
+```text
+1
+1
+1
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+exit=0
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+exit=0
+
+test result: ok. 1306 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.13s
+
+exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+exit=0
+```
+
+PASTE MATCH
+

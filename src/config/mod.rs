@@ -101,6 +101,23 @@ mod tests {
     }
 
     #[test]
+    fn ai_timeout_keys_parse_and_default() {
+        let toml = r#"
+            [ai]
+            first_token_timeout_secs = 10
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.ai.first_token_timeout_secs, 10);
+        assert_eq!(cfg.ai.stream_idle_timeout_secs, 240);
+        assert_eq!(cfg.ai.connect_timeout_secs, 30);
+
+        let def = AiConfig::default();
+        assert_eq!(def.first_token_timeout_secs, 600);
+        assert_eq!(def.stream_idle_timeout_secs, 240);
+        assert_eq!(def.connect_timeout_secs, 30);
+    }
+
+    #[test]
     fn resolve_model_unknown_name_falls_back_to_default() {
         let cfg = Config::default();
         let entry = cfg.resolve_model(Some("nonexistent"));

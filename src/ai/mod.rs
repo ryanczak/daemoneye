@@ -150,6 +150,97 @@ pub fn stream_chunk<T>(chunk: reqwest::Result<T>) -> Result<T> {
 /// that sends data without newlines would otherwise grow it without bound.
 const MAX_SSE_BUFFER_BYTES: usize = 1 << 20;
 
+// ── Stream timeouts (two-phase budgets) ─────────────────────────────────────
+
+/// Stream-timeout budgets, set once at daemon start from `[ai]` config.
+#[derive(Debug, Clone, Copy)]
+pub struct StreamTimeouts {
+    pub first_token: Duration,
+    pub stream_idle: Duration,
+    pub connect: Duration,
+}
+
+impl Default for StreamTimeouts {
+    fn default() -> Self {
+        StreamTimeouts {
+            first_token: Duration::from_secs(600),
+            stream_idle: Duration::from_secs(240),
+            connect: Duration::from_secs(30),
+        }
+    }
+}
+
+static STREAM_TIMEOUTS: OnceLock<StreamTimeouts> = OnceLock::new();
+
+/// Install the configured budgets. Later calls are ignored (OnceLock).
+pub fn init_stream_timeouts(cfg: &crate::config::AiConfig) {
+    let _ = STREAM_TIMEOUTS.set(StreamTimeouts {
+        first_token: Duration::from_secs(cfg.first_token_timeout_secs),
+        stream_idle: Duration::from_secs(cfg.stream_idle_timeout_secs),
+        connect: Duration::from_secs(cfg.connect_timeout_secs),
+    });
+}
+
+pub fn stream_timeouts() -> StreamTimeouts {
+    STREAM_TIMEOUTS.get().copied().unwrap_or_default()
+}
+
+/// Select which timeout bounds the next stream read: the (long) first-token
+/// budget before any real token has arrived, the (shorter) idle budget after.
+#[cfg_attr(not(test), expect(dead_code))] // phase-02/03 start consuming these helpers
+pub(crate) fn select_timeout(first_token_seen: bool, t: StreamTimeouts) -> std::time::Duration {
+    if first_token_seen {
+        t.stream_idle
+    } else {
+        t.first_token
+    }
+}
+
+/// Read the next stream item under a timeout, converting a stall into an
+/// explicit, phase-accurate error instead of an unbounded await.
+#[cfg_attr(not(test), expect(dead_code))] // phase-02/03 start consuming these helpers
+pub(crate) async fn stream_next_with_timeout<B>(
+    stream: &mut (impl futures_util::Stream<Item = reqwest::Result<B>> + Unpin),
+    timeout: Duration,
+    first_token_seen: bool,
+) -> Option<anyhow::Result<B>> {
+    use futures_util::StreamExt;
+    match tokio::time::timeout(timeout, stream.next()).await {
+        Ok(Some(Ok(bytes))) => Some(Ok(bytes)),
+        Ok(Some(Err(e))) => Some(Err(e.into())),
+        Ok(None) => None,
+        Err(_elapsed) => Some(Err(if first_token_seen {
+            anyhow::anyhow!(
+                "AI stream went idle mid-response: no data for {}s after output began \
+                 (provider or network dropped the stream)",
+                timeout.as_secs()
+            )
+        } else {
+            anyhow::anyhow!(
+                "AI produced no output for {}s before the first token \
+                 (provider accepted the request then went silent)",
+                timeout.as_secs()
+            )
+        })),
+    }
+}
+
+/// A stream error worth retrying: a transport/body failure (connection dropped
+/// mid-stream), as opposed to a stall timeout or a runaway-buffer abort, which
+/// are synthetic `anyhow` errors that don't downcast to `reqwest::Error`.
+#[cfg_attr(not(test), expect(dead_code))] // phase-02/03 start consuming these helpers
+pub(crate) fn is_retriable_transport(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<reqwest::Error>().is_some()
+}
+
+/// Bounded exponential backoff for mid-stream transport retries:
+/// 250 ms, 500 ms, 1 s, capped at 2 s.
+#[cfg_attr(not(test), expect(dead_code))] // phase-02/03 start consuming these helpers
+pub(crate) fn stream_retry_backoff(attempt: u32) -> Duration {
+    let ms = (250 * 2u64.pow(attempt.saturating_sub(1))).min(2000);
+    Duration::from_millis(ms)
+}
+
 /// Incremental SSE line reassembler shared by all streaming backends.
 ///
 /// Network chunks split SSE frames at arbitrary byte positions; this buffers
@@ -304,6 +395,20 @@ pub async fn send_with_retry(
     }
 }
 
+/// Record a mid-stream failure against the circuit breaker. `send_with_retry`
+/// only accounts for the header exchange; backends call this when the stream
+/// itself fails after a 200.
+#[expect(dead_code)] // phase-02/03 start consuming these helpers
+pub(crate) fn record_stream_failure() {
+    circuit().record_failure();
+}
+
+/// Record a stream that reached its natural end.
+#[expect(dead_code)] // phase-02/03 start consuming these helpers
+pub(crate) fn record_stream_success() {
+    circuit().record_success();
+}
+
 /// Construct an [`AiClient`] for the given provider name.
 /// `base_url` is used by the OpenAI-compatible backend; pass an empty string
 /// for providers that ignore it (Anthropic, Gemini).
@@ -422,6 +527,60 @@ mod tests {
             "http://localhost:1234/v1".to_string(),
             4096,
         );
+    }
+
+    #[test]
+    fn select_timeout_uses_first_token_budget_before_first_token() {
+        let t = StreamTimeouts {
+            first_token: Duration::from_secs(600),
+            stream_idle: Duration::from_secs(240),
+            ..StreamTimeouts::default()
+        };
+        assert_eq!(select_timeout(false, t), Duration::from_secs(600));
+        assert_eq!(select_timeout(true, t), Duration::from_secs(240));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stream_next_timeout_reports_first_token_stall() {
+        let mut stream = futures_util::stream::pending::<reqwest::Result<Vec<u8>>>();
+        let res = super::stream_next_with_timeout(&mut stream, Duration::from_millis(100), false)
+            .await
+            .expect("stall must produce a result, not None");
+        let err = res.expect_err("stall must produce an Err");
+        let msg = err.to_string();
+        assert!(msg.contains("before the first token"), "got: {msg}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stream_next_timeout_reports_mid_stream_idle() {
+        let mut stream = futures_util::stream::pending::<reqwest::Result<Vec<u8>>>();
+        let res = super::stream_next_with_timeout(&mut stream, Duration::from_millis(100), true)
+            .await
+            .expect("stall must produce a result, not None");
+        let err = res.expect_err("stall must produce an Err");
+        let msg = err.to_string();
+        assert!(msg.contains("idle mid-response"), "got: {msg}");
+    }
+
+    #[test]
+    fn stream_retry_backoff_is_bounded() {
+        assert_eq!(stream_retry_backoff(1), Duration::from_millis(250));
+        assert_eq!(stream_retry_backoff(2), Duration::from_millis(500));
+        assert_eq!(stream_retry_backoff(3), Duration::from_millis(1000));
+        assert_eq!(stream_retry_backoff(10), Duration::from_millis(2000));
+    }
+
+    #[test]
+    fn synthetic_stall_error_is_not_retriable_transport() {
+        assert!(!is_retriable_transport(&anyhow::anyhow!("stall")));
+    }
+
+    #[test]
+    fn stream_timeouts_defaults_without_init() {
+        let t = stream_timeouts();
+        assert_eq!(t.first_token, Duration::from_secs(600));
+        assert_eq!(t.stream_idle, Duration::from_secs(240));
+        assert_eq!(t.connect, Duration::from_secs(30));
     }
 }
 
