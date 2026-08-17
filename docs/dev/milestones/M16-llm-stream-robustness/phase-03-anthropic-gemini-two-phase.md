@@ -59,7 +59,7 @@ Read before starting:
 - `src/ai/mod.rs` — `STREAM_IDLE_TIMEOUT` (line ~123) and `stream_chunk`
   (~130–147) will have **zero remaining callers** once both backends convert
   (`grep -rn "stream_chunk" src/ --include=*.rs` then shows only the
-  definition and its tests). The shared client (~197–206):
+  definition and its tests). The shared client (~284–293):
 
 ```rust
 pub fn http() -> &'static reqwest::Client {
@@ -74,7 +74,7 @@ pub fn http() -> &'static reqwest::Client {
 }
 ```
 
-- `mod stream_idle_tests` (~src/ai/mod.rs:499–553) holds
+- `mod stream_idle_tests` (~src/ai/mod.rs:653–706) holds
   `silent_after_first_chunk()` — a hermetic TCP listener that serves one SSE
   chunk then goes silent — and a test asserting the **old** `.read_timeout` +
   `stream_chunk` mechanism. The listener helper is kept; the test is
@@ -189,13 +189,42 @@ paste the resulting `/tmp/e2e-03.txt` into a new Update Log entry headed
       openai — the openai count drops to `0` when phase-02 lands, before
       this phase runs).
 - [ ] `grep -c "STREAM_IDLE_TIMEOUT" src/ai/mod.rs` prints `0` (currently 4).
-- [ ] `grep -c "connect_timeout" src/ai/mod.rs` prints `1` (currently `0`).
+- [ ] `grep -c "\.connect_timeout(" src/ai/mod.rs` prints `1` (currently
+      `0`) — i.e. the rebuilt `http()` builder carries exactly one
+      `.connect_timeout(...)` call. **Corrected at pre-dispatch re-derive
+      2026-08-17:** the criterion was drafted as the unanchored
+      `grep -c "connect_timeout" src/ai/mod.rs` printing `1` "(currently
+      `0`)". That was wrong twice over — phase-01 already put
+      `connect: Duration::from_secs(cfg.connect_timeout_secs)` at
+      `src/ai/mod.rs:180`, so the unanchored count is **already `1`** and the
+      criterion passes without this phase doing anything; and once the
+      builder call lands the count becomes `2`, so it would then fail despite
+      the work being correct. The `.connect_timeout(` form is `0` now and `1`
+      after, which is the property actually being checked.
 - [ ] `grep -c "read_timeout" src/ai/mod.rs` prints `0` (currently `2`; Task
       5's rewritten test uses a plain client with no `read_timeout`, so both
       occurrences go away).
-- [ ] `cargo test idle_stream_stall_is_reported_by_stream_next_with_timeout`
-      passes.
-- [ ] `cargo test first_token` passes (the new predicate tests).
+- [ ] `cargo test idle_stream_stall_is_reported_by_stream_next_with_timeout 2>&1 | grep -c '\.\.\. ok$'`
+      prints `1` (currently `0`).
+- [ ] `cargo test first_token_flips_on_content_block_not_ping 2>&1 | grep -c '\.\.\. ok$'`
+      prints `1` (currently `0`).
+- [ ] `cargo test finish_reason_only_frame_is_not_a_token 2>&1 | grep -c '\.\.\. ok$'`
+      prints `1` (currently `0`).
+
+> **Corrected at pre-dispatch re-derive 2026-08-17.** These three were
+> drafted as "`cargo test <filter>` passes", with the two new predicate tests
+> collapsed into one `cargo test first_token` criterion. Three problems, all
+> verified against this tree: (1) **`cargo test <filter>` exits 0 when the
+> filter matches nothing** — measured — so "passes" is satisfied by a test
+> that was never written; (2) `first_token` **already matches two phase-01
+> tests** (`select_timeout_uses_first_token_budget_before_first_token`,
+> `stream_next_timeout_reports_first_token_stall`), so the criterion passes
+> today, before this phase does anything; and (3) it would **never** match
+> Task 5's Gemini test `finish_reason_only_frame_is_not_a_token`, leaving
+> that test unguarded. The `grep -c '\.\.\. ok$'` form counts only individual
+> passing-test lines — never the per-binary `test result: ok.` summary lines —
+> and was measured at `0` for a nonexistent test, `1` for one existing test
+> and `2` for a two-test filter.
 - [ ] All four gates green.
 - [ ] The end-to-end entry ends with `PASTE MATCH`.
 
@@ -213,9 +242,11 @@ real TCP stream through the real helper). Capture:
 A=/tmp/e2e-03.txt; : > "$A"
 grep -rc "stream_chunk" src/ai/mod.rs src/ai/backends/anthropic.rs src/ai/backends/gemini.rs src/ai/backends/openai.rs >> "$A"
 grep -c "STREAM_IDLE_TIMEOUT" src/ai/mod.rs >> "$A"
-grep -c "connect_timeout" src/ai/mod.rs >> "$A"
+grep -c "\.connect_timeout(" src/ai/mod.rs >> "$A"
 grep -c "read_timeout" src/ai/mod.rs >> "$A"
 cargo test idle_stream_stall_is_reported_by_stream_next_with_timeout 2>&1 | grep -E "^test " >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test first_token_flips_on_content_block_not_ping 2>&1 | grep -E "^test " >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test finish_reason_only_frame_is_not_a_token 2>&1 | grep -E "^test " >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
 cargo test 2>&1 | grep -E "^test result:" >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
 ```
 
