@@ -260,8 +260,19 @@ paste the resulting `/tmp/e2e-05.txt` into a new Update Log entry headed
       (currently `1`).
 - [ ] `grep -c "pub turn_timeout_secs" src/config/types.rs` prints `1`
       (currently `0`).
-- [ ] `cargo test panicking_chat_task_is_classified` passes.
-- [ ] `cargo test turn_timeout_secs_parses_and_defaults_to_zero` passes.
+- [ ] `cargo test panicking_chat_task_is_classified 2>&1 | grep -c '\.\.\. ok$'`
+      prints `1` (currently `0`).
+- [ ] `cargo test turn_timeout_secs_parses_and_defaults_to_zero 2>&1 | grep -c '\.\.\. ok$'`
+      prints `1` (currently `0`).
+
+      **Corrected at the phase-04 staging sweep, 2026-08-17.** The
+      criterion was drafted as a bare `cargo test <filter>` "passes".
+      Measured on this tree: `cargo test` **exits 0 when the filter
+      matches nothing**, so that form is satisfied by a test that was
+      never written. The `grep -c '\.\.\. ok$'` form counts individual
+      passing-test lines and never the per-binary `test result: ok.`
+      summaries. Same defect class as phase-02's AC3 and phase-03's
+      withdrawn criterion; see phase-04 § Gotchas.
 - [ ] All four gates green.
 - [ ] The end-to-end entry ends with `PASTE MATCH`.
 

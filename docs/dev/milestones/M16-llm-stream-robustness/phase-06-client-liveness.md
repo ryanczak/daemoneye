@@ -180,8 +180,19 @@ paste the resulting `/tmp/e2e-06.txt` into a new Update Log entry headed
       arm(s); currently `0`).
 - [ ] `grep -c "Daemon stopped responding" src/cli/commands/stream.rs src/cli/commands/ask.rs`
       prints `0` for both files (currently `1` each).
-- [ ] `cargo test silence` reports both Task 5 tests passing (the shared
-      `silence` substring in their names is what the filter matches).
+- [ ] `cargo test silence 2>&1 | grep -c '\.\.\. ok$'` prints `2` — the two
+      Task 5 tests `silence_budget_phase1_is_90s` and
+      `silence_budget_phase2_is_120s` (currently `0`; the `silence`
+      substring matches nothing on this tree, measured).
+
+      **Corrected at the phase-04 staging sweep, 2026-08-17.** The
+      criterion was drafted as a bare `cargo test <filter>` "passes".
+      Measured on this tree: `cargo test` **exits 0 when the filter
+      matches nothing**, so that form is satisfied by a test that was
+      never written. The `grep -c '\.\.\. ok$'` form counts individual
+      passing-test lines and never the per-binary `test result: ok.`
+      summaries. Same defect class as phase-02's AC3 and phase-03's
+      withdrawn criterion; see phase-04 § Gotchas.
 - [ ] All four gates green.
 - [ ] The end-to-end entry ends with `PASTE MATCH`.
 

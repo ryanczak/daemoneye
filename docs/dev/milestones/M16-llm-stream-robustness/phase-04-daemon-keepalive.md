@@ -33,12 +33,42 @@ Read before starting:
 3. Read this entire phase doc before touching any code.
 4. Confirm the repo is on a clean branch with no uncommitted changes.
 
+## Gotchas — read before Task 7 and before writing any Update Log entry
+
+Phase-03 bounced three times. Not once on its stream logic, which was right
+from the first run — every time on a **verification that could only return
+one answer**, read as confirmation:
+
+- A test asserting a predicate defined inside `mod tests` could not fail when
+  the production call site was deleted.
+- A mutation of a call site could not fail a test that calls the function
+  directly.
+- A sample of eight tools could not disagree, because none of the eight
+  deserialized the argument under test.
+
+Two of those three were the architect's spec defects, not the executor's. The
+rule that would have caught all three, and the one this phase is held to:
+
+> **Run every check once in the state where it is expected to fail.** A check
+> that has never produced its own negative is not evidence, however green it
+> is.
+
+Concretely, for this phase: before you paste a passing test run, break the
+thing the test guards and capture the failing run too. And if a criterion in
+this doc turns out to be unsatisfiable or already-passing, **say so and stop**
+— report it as a blocker in the Update Log. Do not produce output shaped like
+what the criterion asked for. A wrong criterion is the architect's defect to
+fix, and reporting it is the fastest path to a correct phase.
+
 ## Current state
 
-(Current as of 2026-08-16; re-derive with the greps shown.)
+(Re-derived 2026-08-17 immediately before staging — the line numbers below
+are from that run, not from the 2026-08-16 drafting pass. Phases 01–03
+touched only `src/ai/`, so the daemon-side facts moved by a few lines at
+most. Re-run the greps if anything reads stale.)
 
 - `Response::KeepAlive` is `src/ipc.rs:504`. Its sole emitter is
-  `src/daemon/stream.rs` (~lines 137–148):
+  `src/daemon/stream.rs:138-147` (re-derived 2026-08-17):
 
 ```rust
 let event = match tokio::time::timeout(std::time::Duration::from_secs(30), ai_rx.recv())
@@ -57,7 +87,7 @@ let event = match tokio::time::timeout(std::time::Duration::from_secs(30), ai_rx
 
 - `send_response_split` (`src/daemon/utils/response.rs:12-20`) is generic
   over `W: tokio::io::AsyncWriteExt + Unpin + ?Sized`.
-- `await_agent_result` call site: `src/daemon/executor/mod.rs:849` inside
+- `await_agent_result` call site: `src/daemon/executor/mod.rs:843` inside
   `execute_tool_call<W, R>` (where `tx: &mut W` is in scope):
 
 ```rust
@@ -72,10 +102,10 @@ PendingCall::AwaitAgentResult {
 }
 ```
 
-  The callee (`src/daemon/executor/knowledge/agents.rs:250-285`) polls the
+  The callee (`src/daemon/executor/knowledge/agents.rs:250-257`) polls the
   mailbox every 2 s under a `tokio::time::timeout` of up to
   `MAX_TIMEOUT_SECS = 3600` and borrows neither `tx` nor `rx`.
-- Auto-name call site: `src/daemon/stream.rs` ~line 822:
+- Auto-name call site: `src/daemon/stream.rs:824` (re-derived 2026-08-17):
 
 ```rust
 if should_suggest
@@ -95,10 +125,13 @@ if should_suggest
 - Foreground execution poll loops in `src/daemon/executor/foreground.rs`
   (`tx` is in scope in all of them; find with
   `grep -n "tokio::time::sleep" src/daemon/executor/foreground.rs`):
-  the sudo fingerprint-detect loop (~:450), the interactive connect loop
-  (~:656/:679), the interactive settle loop (~:699), the remote
-  output-stability loop (~:721/:730), and the local child poll loops
-  (~:799, ~:845). Each can run for minutes sending nothing.
+  the six poll loops whose `tokio::time::sleep` calls re-derived 2026-08-17 to
+  **:451** (sudo fingerprint detect), **:679** (interactive connect,
+  `select!` arm), **:703** (interactive settle), **:730** (remote
+  output-stability, `select!` arm), **:799** and **:845** (local child poll).
+  Each can run for minutes sending nothing. A seventh sleep at **:859** is
+  `POST_CMD_CAPTURE_DELAY` — a one-shot delay, **not** a poll loop; it is
+  deliberately excluded and must not get a `maybe_keepalive` call.
 
 ## Spec
 
@@ -172,7 +205,7 @@ only `tick.tick()` is cancelled, which is explicitly cancel-safe.
 
 ### Task 2 — Wrap `await_agent_result`
 
-At `src/daemon/executor/mod.rs:849`, the arm becomes:
+At `src/daemon/executor/mod.rs:843`, the arm becomes:
 
 ```rust
 PendingCall::AwaitAgentResult {
@@ -195,7 +228,7 @@ here; the `.await?` unwraps the keepalive layer and the arm yields the inner
 
 ### Task 3 — Wrap the auto-name call
 
-In `src/daemon/stream.rs` (~line 822), restructure the `&& let` chain so the
+In `src/daemon/stream.rs:824`, restructure the `&& let` chain so the
 call is wrapped (the suggestion future borrows `messages`/`config`, not
 `tx`):
 
@@ -231,8 +264,7 @@ dialog during this wait, not in the streaming loop.)
 ### Task 5 — Keepalive the foreground poll loops
 
 In `src/daemon/executor/foreground.rs`, in each polling loop listed in
-Current state (sudo detect ~:450, interactive connect ~:656, interactive
-settle ~:699, remote stability ~:721, local child ~:799 and ~:845): declare
+Current state (sleeps at :451, :679, :703, :730, :799, :845 — **not** :859): declare
 `let mut last_ka = std::time::Instant::now();` before the loop and call
 `crate::daemon::utils::keepalive::maybe_keepalive(tx, &mut last_ka).await?;`
 once per iteration, next to the existing sleep. Where a loop is inside a
@@ -241,7 +273,7 @@ instead. Do not restructure the loops otherwise.
 
 ### Task 6 — Unify the streaming keepalive period
 
-In `src/daemon/stream.rs` (~line 138), replace the literal
+In `src/daemon/stream.rs:138`, replace the literal
 `Duration::from_secs(30)` with
 `Duration::from_secs(crate::daemon::utils::keepalive::KEEPALIVE_PERIOD_SECS)`
 and update the comment (the 30 s value predates the turn-wide contract).
@@ -296,7 +328,31 @@ paste the resulting `/tmp/e2e-04.txt` into a new Update Log entry headed
       (currently `1`).
 - [ ] `grep -c "USER_PROMPT_TIMEOUT, rx.read_line(&mut pane_line)" src/daemon/executor/mod.rs`
       prints `1` (currently `0`).
-- [ ] `cargo test keepalive` passes (all Task 7 tests).
+- [ ] `cargo test keepalive_ 2>&1 | grep -c '\.\.\. ok$'` prints `4` — one
+      per Task 7 test (currently `0`).
+
+      **Corrected at pre-dispatch re-derive 2026-08-17.** This was drafted as
+      "`cargo test keepalive` passes (all Task 7 tests)". Measured: that
+      command **passes today**, before this phase does anything, because the
+      filter matches phase-02's
+      `delta_carries_token_ignores_empty_keepalive` — and `cargo test <filter>`
+      exits 0 even when the filter matches nothing, so "passes" was never
+      going to discriminate. The trailing underscore in `keepalive_` excludes
+      that test (measured `0` today), and `grep -c '\.\.\. ok$'` counts
+      individual passing-test lines, never the per-binary `test result: ok.`
+      summaries. Each of the four names was also measured individually at `0`.
+- [ ] Each Task 7 test passes by name — `keepalive_ticks_while_future_pends`,
+      `keepalive_returns_future_output`, `keepalive_write_failure_aborts`,
+      `maybe_keepalive_respects_period` (each `grep -c '\.\.\. ok$'` = `1`;
+      all four currently `0`).
+- [ ] **At least one Task 7 test was run in a state where it fails.** Before
+      pasting the passing run, break the thing the test guards — e.g. change
+      `KEEPALIVE_PERIOD_SECS` to a value larger than the window
+      `keepalive_ticks_while_future_pends` advances through — capture the
+      `FAILED` line, restore, and capture the passing line. Paste both.
+      **A test that has never produced its own negative is not evidence** (see
+      Gotchas above). If a test cannot be made to fail, say so and stop — that
+      is a blocker worth reporting, not a step to improvise past.
 - [ ] All four gates green.
 - [ ] The end-to-end entry ends with `PASTE MATCH`.
 

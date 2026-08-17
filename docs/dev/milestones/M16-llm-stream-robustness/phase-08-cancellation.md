@@ -330,8 +330,24 @@ paste the resulting `/tmp/e2e-08.txt` into a new Update Log entry headed
       (currently `0`).
 - [ ] `grep -c "send_cancel" src/cli/commands/stream.rs` prints ≥ `2`
       (definition + call; currently `0`).
-- [ ] `cargo test cancel` passes (module tests + registry tests +
-      `cancel_request_roundtrip`).
+- [ ] `cargo test cancel_request_roundtrip 2>&1 | grep -c '\.\.\. ok$'`
+      prints `1` (currently `0`).
+- [ ] `cargo test cancel 2>&1 | grep -c '\.\.\. ok$'` prints **more than
+      `1`** — the tree already has one match, `scheduler::tests::store_add_list_cancel`
+      (measured `1` today), so the bare filter cannot show this phase added
+      anything. **At this phase's own staging pass, enumerate the Task 1 and
+      Task 2 unit tests by name and replace this criterion with per-name
+      counts** — they are not named in the Spec, which is a drafting gap to
+      close before dispatch, not something to resolve mid-run.
+
+      **Corrected at the phase-04 staging sweep, 2026-08-17.** The
+      criterion was drafted as a bare `cargo test <filter>` "passes".
+      Measured on this tree: `cargo test` **exits 0 when the filter
+      matches nothing**, so that form is satisfied by a test that was
+      never written. The `grep -c '\.\.\. ok$'` form counts individual
+      passing-test lines and never the per-binary `test result: ok.`
+      summaries. Same defect class as phase-02's AC3 and phase-03's
+      withdrawn criterion; see phase-04 § Gotchas.
 - [ ] All four gates green.
 - [ ] The end-to-end entry ends with `PASTE MATCH`.
 

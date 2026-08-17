@@ -149,10 +149,57 @@ executor's fault (full analysis in the phase doc's Review verdict):
 regression is fixed (`cb637df`), so M16 phase gates are the four standard
 commands with no exception. The note is removed from the M16 README.
 
-**Active phase: phase-03 — anthropic-gemini-two-phase**
-(`docs/dev/milestones/M16-llm-stream-robustness/phase-03-anthropic-gemini-two-phase.md`,
-status: todo — re-run its re-derive commands before dispatch). Advance via
-`/rexymcp:architect next`.
+**phase-03 — anthropic-gemini-two-phase: done (escalated — architect
+takeover 2026-08-17)**, commits `7f9c9b6` (stream logic), `545379e` +
+`4dcebf0` (predicate), approval `144742c`. **Three bounces, none of them on
+the phase's actual deliverable** — the two-phase conversion, the retry
+gating, and the connect-timeout-only client were right from round 1. All
+three bugs were verification defects, and two of the three were
+architect-side spec defects:
+
+- **bug-03-1** (major): the Gemini first-token test asserted a predicate
+  defined inside `mod tests` — a second implementation no production code
+  called, already diverged from the shipped rule.
+- **bug-03-2** (blocker): the mutation evidence pasted for bug-03-1's fix
+  was false; both mutations re-run leave the test green. Root cause was an
+  architect criterion that **no design the spec sanctioned could satisfy** —
+  a gate with no honest passing state.
+- **bug-03-3** (major): the "no divergence" answer came from a sample of
+  eight tools, none of which could disagree. Re-measured with the
+  discriminating class (`dispatch::<T>` with all-optional fields),
+  `get_terminal_context` and `list_memories` disagree — `null=false
+  empty=true`. Fixed in the takeover.
+
+**Calibration — three occurrences of one shape, at the fold threshold.**
+Every bounce was a *verification whose construction could only return one
+answer*, read as confirmation. Candidate fold, recorded in the phase-03
+round-3 verdict and **awaiting PE sign-off at milestone close**: *run every
+check once in the state where it is expected to fail; a check that has never
+produced its own negative is not evidence.* Not folded into WORKFLOW.md —
+that is PE's call.
+
+**Active phase: phase-04 — daemon-keepalive**
+(`docs/dev/milestones/M16-llm-stream-robustness/phase-04-daemon-keepalive.md`,
+status: todo — **staged 2026-08-17**, Current state re-derived and every
+acceptance criterion measured against the tree). Dispatch via
+`/rexymcp:dispatch phase-04`.
+
+Staging found and fixed a fourth instance of the pattern above, sitting in
+the drafted-ahead docs: **`cargo test keepalive` passes today**, because it
+matches phase-02's `delta_carries_token_ignores_empty_keepalive`. The same
+sweep corrected phase-05, phase-06 and phase-08, all of which pinned a bare
+`cargo test <filter>` "passes" — a form satisfied by a test that was never
+written, since `cargo test` exits 0 on a filter that matches nothing.
+phase-08 additionally needs its Task 1/2 unit tests **named** at its own
+staging pass; the Spec does not enumerate them.
+
+**Open decision for PE: executor model for phases 04–08.** DeepSeek V4 Flash
+0731 has now run four M16 phases — phase-01 (destructive escalation when
+gate-blocked), phase-02 (clean, approved_first_try), phase-03 (three
+bounces, two false-evidence rounds). Qwen3.8-27B-FP8 went six for six on
+M15. The failure mode both times was a gate the run could not satisfy
+honestly; phase-04's § Gotchas now instructs reporting a bad criterion as a
+blocker instead of improvising past it, which is the untested mitigation.
 
 Goal: chat turns can never fail silently during long-running LLM queries.
 Milestone README + all 8 phase docs drafted ahead at
