@@ -1,7 +1,9 @@
 # Phase 03: Anthropic + Gemini two-phase timeouts; retire `stream_chunk`; connect-timeout-only client
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** review
+**Status:** in-progress (bounced 2026-08-17 — see
+`bugs/bug-03-1.md`; Tasks 1–5 and 7 are landed and approved, only the Gemini
+half of Task 6 is outstanding)
 **Depends on:** phase-02
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -173,7 +175,14 @@ existing test's convention in this module — do not convert it to paused time
 - In `gemini.rs` tests: `finish_reason_only_frame_is_not_a_token` — with the
   same extract-a-predicate approach if needed: a frame
   `{"candidates":[{"finishReason":"STOP"}]}` must not count as a token; a
-  frame with a non-empty text part must.
+  frame with a non-empty text part must. **The predicate must be the one the
+  drain loop actually uses** — defined in the production module and called at
+  the Task 2 assignment sites, reached from the test through `super::`,
+  exactly as the Anthropic bullet above requires. A predicate defined inside
+  `mod tests` is a second implementation that can drift from the shipped rule
+  and leaves Task 2 untested; that is bug-03-1, and it is what bounced this
+  phase. (Amended at the bounce, 2026-08-17 — the original bullet named the
+  extraction but not the wiring.)
 
 ### Task 7 — Capture the end-to-end evidence
 
@@ -227,6 +236,38 @@ paste the resulting `/tmp/e2e-03.txt` into a new Update Log entry headed
 > and `2` for a two-test filter.
 - [ ] All four gates green.
 - [ ] The end-to-end entry ends with `PASTE MATCH`.
+
+### Added at the bounce — 2026-08-17 (bug-03-1)
+
+The criteria above are all **met** by the landed work and stay met; do not
+redo Tasks 1–5 or 7. The three below are the outstanding work. Each was run
+against the tree as it stands after the bounce and the stated "currently"
+value is what it prints today — the first one fails now and is what this
+round has to change.
+
+- [ ] `grep -c "super::part_counts_as_token" src/ai/backends/gemini.rs`
+      prints at least `1` (currently `0`). Task 6's Gemini predicate must
+      live in the production module and be called from the drain loop's
+      first-token sites, the way `is_content_event`
+      (`src/ai/backends/anthropic.rs:47`, called at `:238`, tested via
+      `super::` — count `6`) already does on the Anthropic half. If you
+      rename the predicate, substitute the new name here and note it in the
+      Update Log.
+- [ ] Clippy stays green with the predicate in the production module. A
+      production-module helper with no production caller is `dead_code` under
+      `-D warnings`, so this is what proves the drain loop calls it rather
+      than the test alone.
+- [ ] **Mutation evidence in the Update Log.** Break the shipped rule
+      (delete the `first_token_seen = true` assignment at the text-emission
+      site), run
+      `cargo test finish_reason_only_frame_is_not_a_token 2>&1 | grep -E "^test "`
+      and paste the **failing** output; restore the code and paste the
+      passing run of the same command. Both halves are required — a test that
+      passes in both has not fixed the bug.
+
+Full symptom, root cause and constraints: `bugs/bug-03-1.md`. The root cause
+is an architect-side spec defect (this doc's Task 6 named the extraction for
+Gemini but not the wiring), not an executor defect.
 
 ## Test plan
 
@@ -337,6 +378,57 @@ PASTE MATCH
 ### Update — ts=1786986435362 (complete, server-authored)
 
 **Summary:** Summary of phase-03 work complete: all three backends now use the two-phase `'attempt` loop with `select_timeout`/`stream_next_with_timeout`, and the shared client only sets `.connect_timeout`. Committed everything; tree clean.
+
+### Review verdict — 2026-08-17
+
+- **Verdict:** bounced (bug-03-1)
+- **Bounces:** 1
+- **Executor:** DeepSeek V4 Flash 0731
+- **Scope deviations:** none — the diff touches only `anthropic.rs`,
+  `gemini.rs`, `src/ai/mod.rs`, this doc and the milestone README.
+- **Calibration:** spec defect, architect-side. Task 6 spelled out the
+  wiring for the Anthropic predicate ("then use it at the assignment site")
+  and compressed it to "the same extract-a-predicate approach if needed" for
+  Gemini. Written to the letter, a test-module-local predicate satisfies the
+  Gemini bullet, and the name-and-pass acceptance criterion cannot tell the
+  difference. **First occurrence** of "a criterion pinned that a named test
+  passes, but not that it touches the phase's code" — logged, held for
+  recurrence per WORKFLOW § Calibration, not folded.
+
+Independent architect re-run of the gate set, 2026-08-17 (separate
+invocations, not chained):
+
+- `cargo fmt --all` — clean.
+- `cargo build` — `Finished dev profile`, no warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` — exit 0.
+- `cargo test` — `1310 passed; 0 failed` (lib) plus 6 / 8 / 30 / 9 across the
+  integration binaries, `0 failed` everywhere, exit 0.
+
+Acceptance criteria re-verified independently: `stream_chunk` count `0` in
+all four files; `STREAM_IDLE_TIMEOUT` count `0`; `.connect_timeout(` count
+`1`; `read_timeout` count `0`; the three named tests each print one
+`... ok` line; the end-to-end entry is the executor's own, mechanically
+captured, and ends `PASTE MATCH`.
+
+Code read confirms the two things this phase most needed to get right, and
+both are correct: **the rexyMCP landmine is avoided** — `http()`
+(`src/ai/mod.rs:253-262`) carries `.connect_timeout` and neither a total
+`.timeout` nor a `.read_timeout` — and **no retry class survives the first
+token**: both backends gate the transport-retry and stall-retry branches
+inside a single `if !first_token_seen` (`anthropic.rs:364`,
+`gemini.rs:363`), with `record_stream_failure()` on the way out.
+
+Test spot-check found one real defect and one clean test.
+`idle_stream_stall_is_reported_by_stream_next_with_timeout`
+(`src/ai/mod.rs:654`) is load-bearing — real socket, real
+`stream_next_with_timeout`, asserts the `idle mid-response` classification.
+`first_token_flips_on_content_block_not_ping` (`anthropic.rs:516`) is
+load-bearing — `is_content_event` is production code at `anthropic.rs:47`
+used at `:238`. `finish_reason_only_frame_is_not_a_token` (`gemini.rs:426`)
+is **not**: it asserts against `part_counts_as_token`, a duplicate predicate
+defined inside `mod tests` (`gemini.rs:398`) that no production code calls,
+and the two implementations have already diverged on unknown-tool
+`functionCall` frames. Filed as bug-03-1 (major).
 
 **Built:**
 - Task 1 — `AnthropicClient::chat`: `'attempt` loop, per-attempt `stream`/`sse`/`usage`/tool + thinking accumulators, `'drain` label with `stream_next_with_timeout`, `[DONE]`/EOS → `Ok(())`, in-stream `bail!` → `break 'drain Err(...)`, `first_token_seen` set via a new pure `is_content_event(msg_type)` right after `msg_type` extraction (guarded on `!first_token_seen`), identical decision tail (both retry classes gated on `!first_token_seen`), `record_stream_success()` on natural end, `record_stream_failure()` before final `Err`.
