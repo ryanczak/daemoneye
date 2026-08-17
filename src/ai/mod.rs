@@ -102,7 +102,7 @@ pub trait AiClient: Send + Sync {
     /// analysis) where the model must not emit tool/function calls.  Backends
     /// use provider-specific mechanisms to enforce this:
     /// - Gemini: `toolConfig.functionCallingConfig.mode = "NONE"`
-    /// - OpenAI: `tool_choice = "none"` (tools omitted from body)
+    /// - OpenAI: `tools` and `tool_choice` both omitted from body
     /// - Anthropic: tool list omitted from body
     async fn chat(
         &self,
@@ -212,6 +212,28 @@ pub fn next_tool_id() -> String {
     )
 }
 
+/// Ceiling on how long a single retry may sleep, even when the provider's
+/// `Retry-After` header asks for more — a turn should fail fast rather than
+/// stall for minutes.
+const MAX_RETRY_DELAY_SECS: u64 = 60;
+
+/// Delay requested by a `Retry-After` response header, if present and
+/// parseable.  Accepts both forms: delta-seconds and HTTP-date.
+fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    let raw = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    if let Ok(secs) = raw.parse::<u64>() {
+        return Some(secs);
+    }
+    let when = chrono::DateTime::parse_from_rfc2822(raw).ok()?;
+    let delta = when.signed_duration_since(chrono::Utc::now()).num_seconds();
+    // A past date means "retry now"; the caller's backoff floor still applies.
+    u64::try_from(delta).ok()
+}
+
 async fn send_with_retry_inner(
     make_req: impl Fn() -> reqwest::RequestBuilder,
 ) -> Result<reqwest::Response> {
@@ -230,7 +252,13 @@ async fn send_with_retry_inner(
                         let text = String::from_utf8_lossy(&bytes);
                         anyhow::bail!("API error {}: {}", status, text);
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(2 << retries)).await;
+                    // Honour the provider's Retry-After when it sends one,
+                    // capped so a turn cannot stall for minutes; fall back to
+                    // exponential backoff (2 s, 4 s) otherwise.
+                    let delay = retry_after_secs(resp.headers())
+                        .unwrap_or(2 << retries)
+                        .clamp(1, MAX_RETRY_DELAY_SECS);
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                     retries += 1;
                     continue;
                 }
@@ -394,6 +422,36 @@ mod tests {
             "http://localhost:1234/v1".to_string(),
             4096,
         );
+    }
+}
+
+#[cfg(test)]
+mod retry_after_tests {
+    use super::retry_after_secs;
+    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+
+    fn headers_with(value: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(RETRY_AFTER, HeaderValue::from_str(value).unwrap());
+        h
+    }
+
+    #[test]
+    fn parses_delta_seconds() {
+        assert_eq!(retry_after_secs(&headers_with("17")), Some(17));
+    }
+
+    #[test]
+    fn parses_http_date_in_the_future() {
+        let when = chrono::Utc::now() + chrono::Duration::seconds(30);
+        let secs = retry_after_secs(&headers_with(&when.to_rfc2822())).expect("parseable date");
+        assert!((28..=30).contains(&secs), "got {secs}");
+    }
+
+    #[test]
+    fn ignores_garbage_and_missing_header() {
+        assert_eq!(retry_after_secs(&headers_with("soon-ish")), None);
+        assert_eq!(retry_after_secs(&HeaderMap::new()), None);
     }
 }
 

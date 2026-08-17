@@ -214,9 +214,32 @@ impl AiClient for GeminiClient {
 
             while let Some(data) = sse.next_data() {
                 if let Ok(v) = serde_json::from_str::<Value>(&data) {
+                    // Gemini reports failures as an in-stream error payload
+                    // after the 200; dropping it would surface as a silent
+                    // empty response.
+                    if let Some(err) = v.get("error") {
+                        let msg = err
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| err.to_string());
+                        anyhow::bail!("AI stream returned an error: {msg}");
+                    }
                     if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array())
                         && let Some(candidate) = candidates.first()
                     {
+                        match candidate.get("finishReason").and_then(|r| r.as_str()) {
+                            Some("MAX_TOKENS") => log::warn!(
+                                "Gemini response truncated: finishReason=MAX_TOKENS \
+                                 for model {}",
+                                self.model
+                            ),
+                            Some("SAFETY") => log::warn!(
+                                "Gemini response stopped by safety filter for model {}",
+                                self.model
+                            ),
+                            _ => {}
+                        }
                         // Gemini 2.5 Flash (thinking model) sometimes produces a
                         // Python-style function call string instead of a structured
                         // functionCall block.  The API signals this with finishReason
@@ -260,17 +283,24 @@ impl AiClient for GeminiClient {
                                 }
                                 if let Some(call) = part.get("functionCall") {
                                     let fn_name = call["name"].as_str().unwrap_or("");
-                                    if let Some(args) = call.get("args") {
-                                        let id = next_tool_id();
-                                        let thought_sig = part
-                                            .get("thoughtSignature")
-                                            .and_then(|v| v.as_str())
-                                            .map(String::from);
-                                        if let Some(ev) =
-                                            dispatch_tool_event(&id, fn_name, args, thought_sig)
-                                        {
-                                            let _ = tx.send(ev);
-                                        }
+                                    // Gemini omits `args` entirely for calls
+                                    // that take no arguments.
+                                    let args =
+                                        call.get("args").cloned().unwrap_or_else(|| json!({}));
+                                    let id = next_tool_id();
+                                    let thought_sig = part
+                                        .get("thoughtSignature")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from);
+                                    if let Some(ev) =
+                                        dispatch_tool_event(&id, fn_name, &args, thought_sig)
+                                    {
+                                        let _ = tx.send(ev);
+                                    } else {
+                                        log::warn!(
+                                            "model called unknown tool '{fn_name}' — \
+                                             call dropped"
+                                        );
                                     }
                                 }
                             }

@@ -42,6 +42,38 @@ pub(crate) fn apply_anthropic_output_tokens(
     usage.output_tokens = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
 }
 
+/// Dispatch one completed `tool_use` block, surfacing malformed argument
+/// JSON as a visible error instead of silently dropping the call.
+fn flush_tool_call(
+    tx: &UnboundedSender<AiEvent>,
+    tool_id: &str,
+    tool_name: &str,
+    tool_args: &str,
+    thought_sig: Option<String>,
+) {
+    // A tool that takes no arguments streams no input_json_delta at all.
+    let args_str = if tool_args.trim().is_empty() {
+        "{}"
+    } else {
+        tool_args
+    };
+    match serde_json::from_str::<Value>(args_str) {
+        Ok(args) => {
+            if let Some(ev) = dispatch_tool_event(tool_id, tool_name, &args, thought_sig) {
+                let _ = tx.send(ev);
+            } else {
+                log::warn!("model called unknown tool '{tool_name}' — call dropped");
+            }
+        }
+        Err(e) => {
+            log::warn!("model emitted malformed JSON arguments for tool '{tool_name}': {e}");
+            let _ = tx.send(AiEvent::Error(format!(
+                "model emitted malformed arguments for tool '{tool_name}': {e}"
+            )));
+        }
+    }
+}
+
 /// Anthropic API backend (Claude family).
 pub struct AnthropicClient {
     api_key: String,
@@ -185,6 +217,17 @@ impl AiClient for AnthropicClient {
                 if let Ok(v) = serde_json::from_str::<Value>(&data) {
                     let msg_type = v["type"].as_str().unwrap_or("");
 
+                    // Anthropic reports failures (overloaded, invalid request
+                    // discovered mid-stream) as an in-stream error event after
+                    // the 200; dropping it would surface as a silent empty
+                    // response.
+                    if msg_type == "error" {
+                        let msg = v["error"]["message"]
+                            .as_str()
+                            .unwrap_or("unknown provider error");
+                        anyhow::bail!("AI stream returned an error: {msg}");
+                    }
+
                     if msg_type == "content_block_start" {
                         if v["content_block"]["type"] == "tool_use" {
                             if let Some(id) = v["content_block"]["id"].as_str() {
@@ -235,16 +278,13 @@ impl AiClient for AnthropicClient {
                             }
                             in_thinking = false;
                         } else if !tool_id.is_empty() {
-                            if let Ok(args) = serde_json::from_str::<Value>(&tool_args)
-                                && let Some(ev) = dispatch_tool_event(
-                                    &tool_id,
-                                    &tool_name,
-                                    &args,
-                                    pending_thought_sig.take(),
-                                )
-                            {
-                                let _ = tx.send(ev);
-                            }
+                            flush_tool_call(
+                                &tx,
+                                &tool_id,
+                                &tool_name,
+                                &tool_args,
+                                pending_thought_sig.take(),
+                            );
                             tool_id.clear();
                             tool_name.clear();
                             tool_args.clear();
@@ -253,22 +293,37 @@ impl AiClient for AnthropicClient {
                         if let Some(u) = v["message"]["usage"].as_object() {
                             usage = parse_anthropic_start_usage(u);
                         }
-                    } else if msg_type == "message_delta"
-                        && let Some(u) = v["usage"].as_object()
-                    {
-                        apply_anthropic_output_tokens(&mut usage, u);
+                    } else if msg_type == "message_delta" {
+                        match v["delta"]["stop_reason"].as_str() {
+                            Some("max_tokens") => log::warn!(
+                                "Anthropic response truncated: stop_reason=max_tokens \
+                                 for model {}",
+                                self.model
+                            ),
+                            Some("refusal") => log::warn!(
+                                "Anthropic response stopped: stop_reason=refusal \
+                                 for model {}",
+                                self.model
+                            ),
+                            _ => {}
+                        }
+                        if let Some(u) = v["usage"].as_object() {
+                            apply_anthropic_output_tokens(&mut usage, u);
+                        }
                     }
                 }
             }
         }
         // Flush any buffered tool call that ended without a content_block_stop event
         // (e.g. network disconnect mid-stream).
-        if !tool_id.is_empty()
-            && let Ok(args) = serde_json::from_str::<Value>(&tool_args)
-            && let Some(ev) =
-                dispatch_tool_event(&tool_id, &tool_name, &args, pending_thought_sig.take())
-        {
-            let _ = tx.send(ev);
+        if !tool_id.is_empty() {
+            flush_tool_call(
+                &tx,
+                &tool_id,
+                &tool_name,
+                &tool_args,
+                pending_thought_sig.take(),
+            );
         }
         let _ = tx.send(AiEvent::Done(usage));
         Ok(())
@@ -382,6 +437,37 @@ mod tests {
         assert_eq!(content[0]["type"], "tool_result");
         assert_eq!(content[0]["tool_use_id"], "tc_1");
         assert_eq!(content[0]["content"], "output here");
+    }
+
+    // ── flush_tool_call ──────────────────────────────────────────────────
+
+    #[test]
+    fn flush_malformed_args_sends_visible_error() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        super::flush_tool_call(&tx, "tc_1", "list_panes", "{\"broken\":", None);
+        match rx.try_recv().expect("an event must be sent") {
+            crate::ai::AiEvent::Error(msg) => {
+                assert!(msg.contains("list_panes"), "got: {msg}");
+            }
+            other => panic!("expected Error event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flush_empty_args_dispatches_as_empty_object() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        super::flush_tool_call(&tx, "tc_2", "list_panes", "", None);
+        match rx.try_recv().expect("an event must be sent") {
+            crate::ai::AiEvent::ListPanes { id, .. } => assert_eq!(id, "tc_2"),
+            other => panic!("expected ListPanes event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flush_unknown_tool_sends_nothing() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        super::flush_tool_call(&tx, "tc_3", "not_a_real_tool", "{}", None);
+        assert!(rx.try_recv().is_err(), "unknown tool must not send events");
     }
 
     // ── TokenBreakdown parsing from Anthropic SSE events ────────────────
