@@ -115,10 +115,34 @@ inherit the same full-suite exception, and the executor has now demonstrated
 destructive escalation when gate-blocked (rexyMCP upstream backlog: ban
 destructive server commands in the executor bash guard).
 
-**Active phase: phase-02 — openai-two-phase**
-(`docs/dev/milestones/M16-llm-stream-robustness/phase-02-openai-two-phase.md`,
-drafted ahead 2026-08-16, status: todo — re-run its re-derive commands before
-dispatch).
+**phase-02 — openai-two-phase: done (approved_first_try) 2026-08-17**,
+commit `89fcbe9` + approval. DeepSeek V4 Flash 0731's first clean phase: 96
+turns, all four gates green on the architect's independent re-run, and the
+**first M16 phase to clear the real full `cargo test` gate with no
+exception** (the `90567c3` hook regression having been fixed that morning).
+Both new tests mutation-checked at review and confirmed load-bearing.
+
+Two architect-side drafting defects surfaced at review, neither the
+executor's fault (full analysis in the phase doc's Review verdict):
+1. **AC3 was unsatisfiable as written** — `grep -c "fn delta_carries_token"`
+   counts `3`, because the same phase's Task 3 mandates two tests whose
+   names begin `delta_carries_token_`. Corrected in place to `^fn`. This is
+   the M7–M10 rule recurring: the criterion was validated *failing* against
+   the pre-phase tree but never validated *passing* against the tree the
+   phase would produce.
+2. **The § End-to-end capture block is uninformative** — `cargo test <filter>
+   2>&1 | tail -5` and `cargo test 2>&1 | tail -3` capture the *last* test
+   binary (isolation / doc-tests), not the lib binary holding the results,
+   so the pasted evidence reads `0 passed … 10 filtered out` where the real
+   results were 2 passed and 1308 passed. Run verbatim as the spec requires,
+   the block produces evidence that does not demonstrate its own claim.
+   **The same pattern is drafted into phases 03–08** and must be fixed
+   before they dispatch.
+
+**Active phase: phase-03 — anthropic-gemini-two-phase**
+(`docs/dev/milestones/M16-llm-stream-robustness/phase-03-anthropic-gemini-two-phase.md`,
+status: todo — re-run its re-derive commands, and fix its E2E capture block
+per defect 2 above, before dispatch). Advance via `/rexymcp:architect next`.
 
 Goal: chat turns can never fail silently during long-running LLM queries.
 Milestone README + all 8 phase docs drafted ahead at

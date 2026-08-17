@@ -1,7 +1,7 @@
 # Phase 02: OpenAI backend — two-phase stream timeouts and bounded pre-first-token retry
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** review
+**Status:** done
 **Depends on:** phase-01
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -205,8 +205,13 @@ paste the resulting `/tmp/e2e-02.txt` into a new Update Log entry headed
       (currently `1`).
 - [ ] `grep -c "stream_next_with_timeout" src/ai/backends/openai.rs` prints
       `1` (currently `0`).
-- [ ] `grep -c "fn delta_carries_token" src/ai/backends/openai.rs` prints `1`
-      (currently `0`).
+- [ ] `grep -c "^fn delta_carries_token" src/ai/backends/openai.rs` prints `1`
+      (currently `0`). **Corrected at review 2026-08-17:** the criterion was
+      drafted unanchored (`grep -c "fn delta_carries_token"`), which counts
+      `3` once Task 3's two tests exist — their names (`fn
+      delta_carries_token_ignores_*`) match the same pattern. The criterion
+      was unsatisfiable without violating Task 3; the `^` anchor expresses
+      the intent actually being checked (exactly one function definition).
 - [ ] `cargo test delta_carries_token` passes (both tests).
 - [ ] All four gates green.
 - [ ] The end-to-end entry ends with `PASTE MATCH`.
@@ -431,3 +436,13 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 89fcbe943bd88b74ded037c238ce85478333fb07
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-17
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (bugs: none)
+- **Executor:** DeepSeek V4 Flash 0731
+- **Scope deviations:** none. The four `expect(dead_code)` suppressions dropped from `src/ai/mod.rs` were *required* by this phase — `#[expect]` fires when its expectation goes unfulfilled, so consuming phase-01's helpers without removing them would have failed the `-D warnings` gate. `stream_chunk` and `http()` were left untouched as specified (`stream_chunk` still has its two callers in `anthropic.rs:210` / `gemini.rs:212`).
+- **Calibration:** two architect-side drafting defects, both found at review, neither the executor's fault. (1) **AC3 was unsatisfiable as written** — `grep -c "fn delta_carries_token"` counts `3` because Task 3 *mandates* two tests whose names begin `delta_carries_token_`; the phase could not satisfy the criterion and the spec simultaneously. Corrected in place to `^fn`. This is the M7–M10 rule recurring: a criterion validated *failing* against the pre-phase tree was never validated *passing* against the tree the phase would produce. (2) **The § End-to-end capture block is uninformative** — `cargo test <filter> 2>&1 | tail -5` and `cargo test 2>&1 | tail -3` capture the *last* test binary (isolation / doc-tests), not the lib binary where the results live, so the pasted evidence reads `0 passed … 10 filtered out` and `0 passed` while the real results were 2 passed and 1308 passed. Run verbatim as required, the block produced evidence that does not demonstrate its own claim. The same pattern is in phases 03–08.
+
+Review re-ran all four gates independently (`cargo fmt --all --check`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`) with the changed files touched first so the build/lint were not cache no-ops: all green, zero warnings, full suite 1308 lib + 9 isolation + 44 integration/doc-truth/bug-tracker, 0 failed. Acceptance criteria verified independently: `stream_chunk` 0 ✓, `stream_next_with_timeout` 1 ✓, `^fn delta_carries_token` 1 ✓, both `delta_carries_token` tests pass ✓, E2E entry is executor-authored and ends with `PASTE MATCH` ✓. Both new tests were mutation-checked: forcing the helper to `true` fails both, forcing it to `false` fails the keepalive test — they are load-bearing, not vacuous. No `unwrap`/`expect`/`panic!` in production paths (the two `unwrap()`s in the file are pre-existing, inside `mod tests` at :373). No `#[allow]`, `#[ignore]`, `unsafe`, `TODO`, `dbg!` or commented-out code. Both retry arms confirmed gated behind `if !first_token_seen`, so the no-mid-stream-retry rule holds.
