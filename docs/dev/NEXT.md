@@ -78,13 +78,20 @@ half deferred to a PE spot-check), retrospective in the M15 README.
   `evil'$(…)` session name) + a `log_hook_install_result` helper that checks
   exit status and logs stderr. Isolation suite 9 passed / 0 failed. The M16
   full-suite gate exception is gone.
-- **`labeled_context_window_scope_excludes_other_windows` is not hermetic**
-  (found 2026-08-17, pre-existing): the fake-cache test's active-pane path
-  live-captures pane `%1` from the operator's real tmux server when one
-  exists (`get_labeled_context_scoped` → pipe log / `capture_pane_with_escapes`),
-  so `cargo test --lib` fails or passes depending on the operator's window
-  layout. Needs a capture seam or a guaranteed-nonexistent pane id. Until
-  fixed, full-suite gates can flake on hosts with a live tmux server.
+- ~~**`labeled_context_window_scope_excludes_other_windows` is not
+  hermetic**~~ — **RESOLVED 2026-08-17** (architect hotfix, same day as
+  found): the fake-cache tests' active-pane path live-captured pane `%1`
+  from the operator's real tmux server when one existed
+  (`get_labeled_context_scoped` → pipe log / `capture_pane_with_escapes`),
+  so lib tests failed or passed depending on the operator's window layout —
+  and every fake-cache test passing an invented active pane id (`%1`, `%5`)
+  was latently exposed, not just the one that fired. Fix: the live-capture
+  block extracted to `active_pane_content()` (`src/tmux/cache.rs`) with a
+  `cfg!(test)` early return of `"(pane unavailable)"` — unit tests now
+  behave exactly like a host with no tmux server, hermetic by construction
+  (`cfg!`, not `#[cfg]`, so the live path stays compiled in test builds and
+  its callees don't trip the dead_code lint). Full `cargo test` verified
+  green with a live server and a real pane `%1` present.
 
 ---
 
