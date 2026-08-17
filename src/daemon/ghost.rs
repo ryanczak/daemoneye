@@ -427,6 +427,7 @@ async fn do_ghost_turn(
         model_entry.resolve_api_key(),
         model_entry.model.clone(),
         model_entry.effective_base_url(),
+        model_entry.effective_max_tokens(),
     ));
 
     const GHOST_TURN_TIMEOUT_SECS: u64 = 300;

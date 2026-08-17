@@ -105,12 +105,17 @@ fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
 pub struct GeminiClient {
     api_key: String,
     model: String,
+    max_tokens: u32,
 }
 
 impl GeminiClient {
     /// Create a new Gemini client.
-    pub fn new(api_key: String, model: String) -> Self {
-        GeminiClient { api_key, model }
+    pub fn new(api_key: String, model: String, max_tokens: u32) -> Self {
+        GeminiClient {
+            api_key,
+            model,
+            max_tokens,
+        }
     }
 
     fn convert_messages(&self, messages: Vec<Message>) -> Vec<Value> {
@@ -184,6 +189,7 @@ impl AiClient for GeminiClient {
         let mut body = json!({
             "system_instruction": {"parts": [{"text": system}]},
             "contents": converted,
+            "generationConfig": {"maxOutputTokens": self.max_tokens},
         });
         if use_tools {
             body["tools"] =
@@ -199,20 +205,15 @@ impl AiClient for GeminiClient {
         let response = send_with_retry(|| http().post(&url).json(&body)).await?;
 
         let mut stream = response.bytes_stream();
-        let mut leftover = String::new();
+        let mut sse = crate::ai::SseBuffer::new();
         let mut usage = TokenBreakdown::default();
 
         while let Some(chunk) = stream.next().await {
             let bytes = crate::ai::stream_chunk(chunk)?;
-            leftover.push_str(&String::from_utf8_lossy(&bytes));
+            sse.push(&bytes)?;
 
-            while let Some(pos) = leftover.find('\n') {
-                let line = leftover[..pos].trim().to_string();
-                leftover = leftover[pos + 1..].to_string();
-
-                if let Some(data) = line.strip_prefix("data: ")
-                    && let Ok(v) = serde_json::from_str::<Value>(data)
-                {
+            while let Some(data) = sse.next_data() {
+                if let Ok(v) = serde_json::from_str::<Value>(&data) {
                     if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array())
                         && let Some(candidate) = candidates.first()
                     {
@@ -306,7 +307,7 @@ mod tests {
             tool_results: Some(vec![tr]),
             turn: None,
         };
-        let gemini = GeminiClient::new("key".to_string(), "gemini-2.0-flash".to_string());
+        let gemini = GeminiClient::new("key".to_string(), "gemini-2.0-flash".to_string(), 4096);
         let out = gemini.convert_messages(vec![msg]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["role"], "user");

@@ -363,6 +363,7 @@ pub async fn run_scheduled_job(
             model_entry.resolve_api_key(),
             model_entry.model.clone(),
             model_entry.effective_base_url(),
+            model_entry.effective_max_tokens(),
         );
         let system = runbook::watchdog_system_prompt(&rb);
         let msgs = vec![Message {

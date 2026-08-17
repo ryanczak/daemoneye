@@ -85,13 +85,14 @@ pub struct OpenAiClient {
     api_key: String,
     model: String,
     base_url: String,
+    max_tokens: u32,
 }
 
 impl OpenAiClient {
     /// Create a new OpenAI-compatible client.
     /// `base_url` should be the full base URL including `/v1`, e.g.
     /// `https://api.openai.com/v1` or `http://localhost:11434/v1`.
-    pub fn new(api_key: String, model: String, base_url: String) -> Self {
+    pub fn new(api_key: String, model: String, base_url: String, max_tokens: u32) -> Self {
         let resolved_url = if base_url.is_empty() {
             "https://api.openai.com/v1".to_string()
         } else {
@@ -101,6 +102,7 @@ impl OpenAiClient {
             api_key,
             model,
             base_url: resolved_url,
+            max_tokens,
         }
     }
 
@@ -172,7 +174,7 @@ impl AiClient for OpenAiClient {
         } else {
             "max_tokens"
         };
-        body[max_tokens_key] = json!(4096);
+        body[max_tokens_key] = json!(self.max_tokens);
         if use_tools {
             body["tools"] = json!(get_openai_tool_definition(&loaded_tools));
         }
@@ -190,84 +192,61 @@ impl AiClient for OpenAiClient {
 
         let mut stream = response.bytes_stream();
         let mut calls: Vec<ToolCallAcc> = Vec::new();
-        let mut leftover = String::new();
+        let mut sse = crate::ai::SseBuffer::new();
         let mut usage = TokenBreakdown::default();
-
-        /// Maximum size of the SSE leftover buffer (1 MiB). A misbehaving
-        /// proxy that sends data without newlines would otherwise grow it
-        /// without bound.
-        const MAX_LEFTOVER_BYTES: usize = 1 << 20;
 
         'outer: while let Some(chunk) = stream.next().await {
             let bytes = crate::ai::stream_chunk(chunk)?;
-            leftover.push_str(&String::from_utf8_lossy(&bytes));
-            if leftover.len() > MAX_LEFTOVER_BYTES {
-                return Err(anyhow::anyhow!(
-                    "SSE stream leftover buffer exceeded {} bytes without a newline; \
-                     aborting to prevent memory exhaustion",
-                    MAX_LEFTOVER_BYTES
-                ));
-            }
+            sse.push(&bytes)?;
 
-            while let Some(pos) = leftover.find('\n') {
-                let line = leftover[..pos].trim().to_string();
-                leftover = leftover[pos + 1..].to_string();
-
-                // SSE permits `data:` with no space after the colon; some
-                // OpenAI-compatible servers emit that form.
-                if let Some(rest) = line.strip_prefix("data:") {
-                    let data = rest.trim_start();
-                    if data == "[DONE]" {
-                        break 'outer;
+            while let Some(data) = sse.next_data() {
+                if data == "[DONE]" {
+                    break 'outer;
+                }
+                if let Ok(v) = serde_json::from_str::<Value>(&data) {
+                    // Providers can report failures as an in-stream error
+                    // payload after the 200; dropping it would surface as
+                    // a silent empty response.
+                    if let Some(err) = v.get("error") {
+                        let msg = err
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| err.to_string());
+                        anyhow::bail!("AI stream returned an error: {msg}");
                     }
-                    if let Ok(v) = serde_json::from_str::<Value>(data) {
-                        // Providers can report failures as an in-stream error
-                        // payload after the 200; dropping it would surface as
-                        // a silent empty response.
-                        if let Some(err) = v.get("error") {
-                            let msg = err
-                                .get("message")
-                                .and_then(|m| m.as_str())
-                                .map(str::to_string)
-                                .unwrap_or_else(|| err.to_string());
-                            anyhow::bail!("AI stream returned an error: {msg}");
-                        }
-                        if let Some(delta) =
-                            v["choices"].get(0).and_then(|c| c["delta"].as_object())
+                    if let Some(delta) = v["choices"].get(0).and_then(|c| c["delta"].as_object()) {
+                        if let Some(content) = delta.get("content").and_then(|c| c.as_str())
+                            && !content.is_empty()
                         {
-                            if let Some(content) = delta.get("content").and_then(|c| c.as_str())
-                                && !content.is_empty()
-                            {
-                                let _ = tx.send(AiEvent::Token(content.to_string()));
-                            }
-                            if let Some(tool_calls) =
-                                delta.get("tool_calls").and_then(|t| t.as_array())
-                            {
-                                for tc in tool_calls {
-                                    apply_tool_call_delta(&mut calls, tc);
-                                }
-                            }
+                            let _ = tx.send(AiEvent::Token(content.to_string()));
                         }
-                        if let Some(reason) = v["choices"]
-                            .get(0)
-                            .and_then(|c| c["finish_reason"].as_str())
+                        if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array())
                         {
-                            match reason {
-                                "length" => log::warn!(
-                                    "OpenAI response truncated: finish_reason=length \
-                                     (max_tokens reached) for model {}",
-                                    self.model
-                                ),
-                                "content_filter" => log::warn!(
-                                    "OpenAI response stopped by content filter for model {}",
-                                    self.model
-                                ),
-                                _ => {}
+                            for tc in tool_calls {
+                                apply_tool_call_delta(&mut calls, tc);
                             }
                         }
-                        if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
-                            usage = parse_openai_usage(u);
+                    }
+                    if let Some(reason) = v["choices"]
+                        .get(0)
+                        .and_then(|c| c["finish_reason"].as_str())
+                    {
+                        match reason {
+                            "length" => log::warn!(
+                                "OpenAI response truncated: finish_reason=length \
+                                 (max_tokens reached) for model {}",
+                                self.model
+                            ),
+                            "content_filter" => log::warn!(
+                                "OpenAI response stopped by content filter for model {}",
+                                self.model
+                            ),
+                            _ => {}
                         }
+                    }
+                    if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
+                        usage = parse_openai_usage(u);
                     }
                 }
             }

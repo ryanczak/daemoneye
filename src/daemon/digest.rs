@@ -167,6 +167,7 @@ pub async fn summarize_once(
         model_entry.resolve_api_key(),
         model_entry.model.clone(),
         model_entry.effective_base_url(),
+        model_entry.effective_max_tokens(),
     );
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<crate::ai::AiEvent>();

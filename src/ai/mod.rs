@@ -146,6 +146,54 @@ pub fn stream_chunk<T>(chunk: reqwest::Result<T>) -> Result<T> {
     })
 }
 
+/// Maximum size of the SSE reassembly buffer (1 MiB). A misbehaving proxy
+/// that sends data without newlines would otherwise grow it without bound.
+const MAX_SSE_BUFFER_BYTES: usize = 1 << 20;
+
+/// Incremental SSE line reassembler shared by all streaming backends.
+///
+/// Network chunks split SSE frames at arbitrary byte positions; this buffers
+/// the tail until a full line arrives.  [`SseBuffer::next_data`] yields only
+/// `data:` payloads (with or without a space after the colon, both spec-legal)
+/// and skips `event:` lines, comments, and blanks.
+pub(crate) struct SseBuffer {
+    leftover: String,
+}
+
+impl SseBuffer {
+    pub fn new() -> Self {
+        SseBuffer {
+            leftover: String::new(),
+        }
+    }
+
+    /// Append one network chunk.  Errors if the buffer exceeds
+    /// [`MAX_SSE_BUFFER_BYTES`] without a newline.
+    pub fn push(&mut self, bytes: &[u8]) -> Result<()> {
+        self.leftover.push_str(&String::from_utf8_lossy(bytes));
+        if self.leftover.len() > MAX_SSE_BUFFER_BYTES {
+            anyhow::bail!(
+                "SSE stream buffer exceeded {} bytes without a newline; \
+                 aborting to prevent memory exhaustion",
+                MAX_SSE_BUFFER_BYTES
+            );
+        }
+        Ok(())
+    }
+
+    /// Next complete `data:` payload, or `None` until more bytes arrive.
+    pub fn next_data(&mut self) -> Option<String> {
+        while let Some(pos) = self.leftover.find('\n') {
+            let line: String = self.leftover.drain(..=pos).collect();
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("data:") {
+                return Some(rest.trim_start().to_string());
+            }
+        }
+        None
+    }
+}
+
 pub fn http() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
@@ -231,17 +279,22 @@ pub async fn send_with_retry(
 /// Construct an [`AiClient`] for the given provider name.
 /// `base_url` is used by the OpenAI-compatible backend; pass an empty string
 /// for providers that ignore it (Anthropic, Gemini).
+/// `max_tokens` caps the tokens generated per response
+/// (`ModelEntry::effective_max_tokens()` at daemon call sites).
 /// Defaults to Anthropic for any unrecognised provider string.
 pub fn make_client(
     provider: &str,
     api_key: String,
     model: String,
     base_url: String,
+    max_tokens: u32,
 ) -> Box<dyn AiClient> {
     match provider {
-        "openai" | "ollama" | "lmstudio" => Box::new(OpenAiClient::new(api_key, model, base_url)),
-        "gemini" => Box::new(GeminiClient::new(api_key, model)),
-        _ => Box::new(AnthropicClient::new(api_key, model)),
+        "openai" | "ollama" | "lmstudio" => {
+            Box::new(OpenAiClient::new(api_key, model, base_url, max_tokens))
+        }
+        "gemini" => Box::new(GeminiClient::new(api_key, model, max_tokens)),
+        _ => Box::new(AnthropicClient::new(api_key, model, max_tokens)),
     }
 }
 
@@ -295,6 +348,7 @@ mod tests {
             "key".to_string(),
             "model".to_string(),
             String::new(),
+            4096,
         );
     }
 
@@ -305,6 +359,7 @@ mod tests {
             "key".to_string(),
             "gpt-4o".to_string(),
             String::new(),
+            4096,
         );
     }
 
@@ -315,6 +370,7 @@ mod tests {
             "key".to_string(),
             "gemini-2.0-flash".to_string(),
             String::new(),
+            4096,
         );
     }
 
@@ -325,6 +381,7 @@ mod tests {
             "local".to_string(),
             "llama3.2".to_string(),
             "http://localhost:11434/v1".to_string(),
+            4096,
         );
     }
 
@@ -335,7 +392,49 @@ mod tests {
             "local".to_string(),
             "some-model".to_string(),
             "http://localhost:1234/v1".to_string(),
+            4096,
         );
+    }
+}
+
+#[cfg(test)]
+mod sse_buffer_tests {
+    use super::SseBuffer;
+
+    #[test]
+    fn reassembles_lines_split_across_chunks() {
+        let mut sse = SseBuffer::new();
+        sse.push(b"data: {\"a\":").unwrap();
+        assert!(sse.next_data().is_none(), "incomplete line must buffer");
+        sse.push(b"1}\ndata: [DONE]\n").unwrap();
+        assert_eq!(sse.next_data().as_deref(), Some("{\"a\":1}"));
+        assert_eq!(sse.next_data().as_deref(), Some("[DONE]"));
+        assert!(sse.next_data().is_none());
+    }
+
+    #[test]
+    fn accepts_data_prefix_without_space_and_crlf() {
+        let mut sse = SseBuffer::new();
+        sse.push(b"data:{\"x\":2}\r\n").unwrap();
+        assert_eq!(sse.next_data().as_deref(), Some("{\"x\":2}"));
+    }
+
+    #[test]
+    fn skips_event_lines_comments_and_blanks() {
+        let mut sse = SseBuffer::new();
+        sse.push(b"event: message_start\n: keep-alive\n\ndata: {}\n")
+            .unwrap();
+        assert_eq!(sse.next_data().as_deref(), Some("{}"));
+        assert!(sse.next_data().is_none());
+    }
+
+    #[test]
+    fn errors_when_buffer_grows_without_newline() {
+        let mut sse = SseBuffer::new();
+        let chunk = vec![b'x'; 600 * 1024];
+        sse.push(&chunk).unwrap();
+        let err = sse.push(&chunk).unwrap_err().to_string();
+        assert!(err.contains("exceeded"), "got: {err}");
     }
 }
 

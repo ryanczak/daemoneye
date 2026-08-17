@@ -151,6 +151,9 @@ cache_write_cost_per_mtok = 3.75
 # model    = "qwen3-27b"
 # context_window_tokens = 32768
 
+# Any model entry may also set the per-response generation cap (default 4096):
+# max_tokens = 8192
+
 # ── AI prompt ────────────────────────────────────────────────────────────────
 
 [ai]

@@ -358,6 +358,7 @@ async fn maybe_analyze_alert(
         model_entry.resolve_api_key(),
         model_entry.model.clone(),
         model_entry.effective_base_url(),
+        model_entry.effective_max_tokens(),
     );
 
     let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();

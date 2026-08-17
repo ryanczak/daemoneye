@@ -98,6 +98,7 @@ where
             active_entry.resolve_api_key(),
             active_entry.model.clone(),
             active_entry.effective_base_url(),
+            active_entry.effective_max_tokens(),
         );
         let sys_prompt_turn = sys_prompt.clone();
         let messages_clone = messages.clone();

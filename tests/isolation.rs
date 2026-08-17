@@ -241,6 +241,7 @@ async fn stub_returns_canned_response_via_make_client() {
         "test-key".to_string(),
         "test-model".to_string(),
         env.stub_base_url(),
+        4096,
     );
 
     let system = "You are a watchdog.";
@@ -381,6 +382,7 @@ max_ghost_turns: 1
             cache_read_cost_per_mtok: Some(0.3),
             cache_write_cost_per_mtok: Some(3.75),
             context_window_tokens: None,
+            max_tokens: None,
         },
     );
 

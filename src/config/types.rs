@@ -650,6 +650,11 @@ pub struct ModelEntry {
     /// Set this for local models where the automatic lookup is wrong.
     #[serde(default)]
     pub context_window_tokens: Option<u32>,
+    /// Maximum tokens the model may generate per response.
+    /// Defaults to 4096; raise it for long-form answers or models whose
+    /// reasoning tokens count against the output budget.
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
     /// Per-1M-token input cost in USD. None = unknown (will log warning).
     /// Local providers (lmstudio, ollama) should set this to Some(0.0).
     #[serde(default)]
@@ -681,6 +686,7 @@ impl Default for ModelEntry {
             model: default_model(),
             base_url: None,
             context_window_tokens: None,
+            max_tokens: None,
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
             cache_read_cost_per_mtok: None,
@@ -731,6 +737,12 @@ impl ModelEntry {
                 .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
             _ => String::new(),
         }
+    }
+
+    /// Maximum tokens the model may generate per response.
+    /// `max_tokens` from the config wins; otherwise 4096.
+    pub fn effective_max_tokens(&self) -> u32 {
+        self.max_tokens.unwrap_or(4096)
     }
 
     /// Context-window size in tokens.  `context_window_tokens` wins; otherwise
