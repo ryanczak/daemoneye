@@ -1,7 +1,7 @@
 # Phase 03: Anthropic + Gemini two-phase timeouts; retire `stream_chunk`; connect-timeout-only client
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -276,3 +276,60 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-17 16:31 (progress)
+
+Started phase-03 (Anthropic + Gemini two-phase timeouts; retire
+`stream_chunk`/`STREAM_IDLE_TIMEOUT`; connect-timeout-only client). Flipped
+status todo → in-progress and the README phase-table row to match. Working
+tree was clean at start; phase-02 confirmed landed (`stream_next_with_timeout`
+count = 1 in `openai.rs`). Implementing the phase-02 attempt-loop shape in
+both backends, the `http()` rebuild, and the silent-socket test rewrite.
+
+### Update — 2026-08-17 16:40 (end-to-end verification)
+
+Verbatim output of the § End-to-end verification block (`/tmp/e2e-03.txt`):
+
+```text
+src/ai/mod.rs:0
+src/ai/backends/anthropic.rs:0
+src/ai/backends/gemini.rs:0
+src/ai/backends/openai.rs:0
+0
+1
+0
+test ai::stream_idle_tests::idle_stream_stall_is_reported_by_stream_next_with_timeout ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1309 filtered out; finished in 0.32s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test ai::backends::anthropic::tests::first_token_flips_on_content_block_not_ping ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1309 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test ai::backends::gemini::tests::finish_reason_only_frame_is_not_a_token ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1309 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test result: ok. 1310 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.44s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
+
+PASTE MATCH

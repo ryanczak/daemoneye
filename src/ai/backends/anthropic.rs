@@ -1,6 +1,5 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
@@ -40,6 +39,13 @@ pub(crate) fn apply_anthropic_output_tokens(
     u: &serde_json::Map<String, Value>,
 ) {
     usage.output_tokens = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+}
+
+/// Whether an Anthropic SSE `type` counts as real output (text, thinking,
+/// or tool-call content) for first-token purposes. `message_start` carries
+/// only usage and `ping` events are keepalives — neither counts.
+fn is_content_event(msg_type: &str) -> bool {
+    matches!(msg_type, "content_block_start" | "content_block_delta")
 }
 
 /// Dispatch one completed `tool_use` block, surfacing malformed argument
@@ -183,150 +189,203 @@ impl AiClient for AnthropicClient {
             body["tools"] = json!(get_tool_definition(&loaded_tools));
         }
 
-        let response = send_with_retry(|| {
-            http()
-                .post("https://api.anthropic.com/v1/messages")
-                .headers(headers.clone())
-                .json(&body)
-        })
-        .await?;
+        const MAX_FIRST_TOKEN_RETRIES: u32 = 2;
+        const MAX_STREAM_RETRIES: u32 = 3;
+        let mut first_token_seen = false;
+        let mut stall_retries: u32 = 0;
+        let mut transport_retries: u32 = 0;
 
-        let mut stream = response.bytes_stream();
-        let mut tool_id = String::new();
-        let mut tool_name = String::new();
-        let mut tool_args = String::new();
-        // Extended thinking support: collect thinking text + signature so they can be
-        // echoed back in subsequent turns (Anthropic requires the full thinking block).
-        let mut in_thinking = false;
-        let mut thinking_text = String::new();
-        let mut thinking_sig = String::new();
-        // Holds the JSON-encoded thinking block from the most recent thinking content
-        // block; passed to the next tool call dispatched in this response.
-        let mut pending_thought_sig: Option<String> = None;
-        let mut sse = crate::ai::SseBuffer::new();
-        let mut usage = TokenBreakdown::default();
+        'attempt: loop {
+            let response = send_with_retry(|| {
+                http()
+                    .post("https://api.anthropic.com/v1/messages")
+                    .headers(headers.clone())
+                    .json(&body)
+            })
+            .await?;
 
-        'outer: while let Some(chunk) = stream.next().await {
-            let bytes = crate::ai::stream_chunk(chunk)?;
-            sse.push(&bytes)?;
+            let mut stream = response.bytes_stream();
+            let mut tool_id = String::new();
+            let mut tool_name = String::new();
+            let mut tool_args = String::new();
+            // Extended thinking support: collect thinking text + signature so they can be
+            // echoed back in subsequent turns (Anthropic requires the full thinking block).
+            let mut in_thinking = false;
+            let mut thinking_text = String::new();
+            let mut thinking_sig = String::new();
+            // Holds the JSON-encoded thinking block from the most recent thinking content
+            // block; passed to the next tool call dispatched in this response.
+            let mut pending_thought_sig: Option<String> = None;
+            let mut sse = crate::ai::SseBuffer::new();
+            let mut usage = TokenBreakdown::default();
 
-            while let Some(data) = sse.next_data() {
-                if data == "[DONE]" {
-                    break 'outer;
+            let drain: anyhow::Result<()> = 'drain: loop {
+                let timeout =
+                    crate::ai::select_timeout(first_token_seen, crate::ai::stream_timeouts());
+                match crate::ai::stream_next_with_timeout(&mut stream, timeout, first_token_seen)
+                    .await
+                {
+                    Some(Ok(bytes)) => {
+                        if let Err(e) = sse.push(&bytes) {
+                            break 'drain Err(e);
+                        }
+                        while let Some(data) = sse.next_data() {
+                            if data == "[DONE]" {
+                                break 'drain Ok(());
+                            }
+                            if let Ok(v) = serde_json::from_str::<Value>(&data) {
+                                let msg_type = v["type"].as_str().unwrap_or("");
+                                if !first_token_seen && is_content_event(msg_type) {
+                                    first_token_seen = true;
+                                }
+
+                                // Anthropic reports failures (overloaded, invalid request
+                                // discovered mid-stream) as an in-stream error event after
+                                // the 200; dropping it would surface as a silent empty
+                                // response.
+                                if msg_type == "error" {
+                                    let msg = v["error"]["message"]
+                                        .as_str()
+                                        .unwrap_or("unknown provider error");
+                                    break 'drain Err(anyhow::anyhow!(
+                                        "AI stream returned an error: {msg}"
+                                    ));
+                                }
+
+                                if msg_type == "content_block_start" {
+                                    if v["content_block"]["type"] == "tool_use" {
+                                        if let Some(id) = v["content_block"]["id"].as_str() {
+                                            tool_id = id.to_string();
+                                            tool_name = v["content_block"]["name"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string();
+                                            tool_args.clear();
+                                        }
+                                    } else if v["content_block"]["type"] == "thinking" {
+                                        in_thinking = true;
+                                        thinking_text.clear();
+                                        thinking_sig.clear();
+                                    }
+                                } else if msg_type == "content_block_delta" {
+                                    if v["delta"]["type"] == "text_delta" {
+                                        if let Some(t) = v["delta"]["text"].as_str()
+                                            && !t.is_empty()
+                                        {
+                                            let _ = tx.send(AiEvent::Token(t.to_string()));
+                                        }
+                                    } else if v["delta"]["type"] == "input_json_delta" {
+                                        if let Some(partial) = v["delta"]["partial_json"].as_str() {
+                                            tool_args.push_str(partial);
+                                        }
+                                    } else if v["delta"]["type"] == "thinking_delta" {
+                                        if let Some(t) = v["delta"]["thinking"].as_str() {
+                                            thinking_text.push_str(t);
+                                        }
+                                    } else if v["delta"]["type"] == "signature_delta"
+                                        && let Some(s) = v["delta"]["signature"].as_str()
+                                    {
+                                        thinking_sig.push_str(s);
+                                    }
+                                } else if msg_type == "content_block_stop" {
+                                    if in_thinking {
+                                        // Encode both fields so convert_messages can reconstruct
+                                        // the full thinking block for the round-trip.
+                                        if !thinking_sig.is_empty() {
+                                            pending_thought_sig = Some(
+                                                json!({
+                                                    "thinking": thinking_text,
+                                                    "signature": thinking_sig
+                                                })
+                                                .to_string(),
+                                            );
+                                        }
+                                        in_thinking = false;
+                                    } else if !tool_id.is_empty() {
+                                        flush_tool_call(
+                                            &tx,
+                                            &tool_id,
+                                            &tool_name,
+                                            &tool_args,
+                                            pending_thought_sig.take(),
+                                        );
+                                        tool_id.clear();
+                                        tool_name.clear();
+                                        tool_args.clear();
+                                    }
+                                } else if msg_type == "message_start" {
+                                    if let Some(u) = v["message"]["usage"].as_object() {
+                                        usage = parse_anthropic_start_usage(u);
+                                    }
+                                } else if msg_type == "message_delta" {
+                                    match v["delta"]["stop_reason"].as_str() {
+                                        Some("max_tokens") => log::warn!(
+                                            "Anthropic response truncated: stop_reason=max_tokens \
+                                             for model {}",
+                                            self.model
+                                        ),
+                                        Some("refusal") => log::warn!(
+                                            "Anthropic response stopped: stop_reason=refusal \
+                                             for model {}",
+                                            self.model
+                                        ),
+                                        _ => {}
+                                    }
+                                    if let Some(u) = v["usage"].as_object() {
+                                        apply_anthropic_output_tokens(&mut usage, u);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(Err(e)) => break 'drain Err(e),
+                    None => break 'drain Ok(()),
                 }
-                if let Ok(v) = serde_json::from_str::<Value>(&data) {
-                    let msg_type = v["type"].as_str().unwrap_or("");
+            };
 
-                    // Anthropic reports failures (overloaded, invalid request
-                    // discovered mid-stream) as an in-stream error event after
-                    // the 200; dropping it would surface as a silent empty
-                    // response.
-                    if msg_type == "error" {
-                        let msg = v["error"]["message"]
-                            .as_str()
-                            .unwrap_or("unknown provider error");
-                        anyhow::bail!("AI stream returned an error: {msg}");
+            match drain {
+                Ok(()) => {
+                    crate::ai::record_stream_success();
+                    // Flush any buffered tool call that ended without a
+                    // content_block_stop event (e.g. network disconnect mid-stream).
+                    if !tool_id.is_empty() {
+                        flush_tool_call(
+                            &tx,
+                            &tool_id,
+                            &tool_name,
+                            &tool_args,
+                            pending_thought_sig.take(),
+                        );
                     }
-
-                    if msg_type == "content_block_start" {
-                        if v["content_block"]["type"] == "tool_use" {
-                            if let Some(id) = v["content_block"]["id"].as_str() {
-                                tool_id = id.to_string();
-                                tool_name = v["content_block"]["name"]
-                                    .as_str()
-                                    .unwrap_or("")
-                                    .to_string();
-                                tool_args.clear();
-                            }
-                        } else if v["content_block"]["type"] == "thinking" {
-                            in_thinking = true;
-                            thinking_text.clear();
-                            thinking_sig.clear();
-                        }
-                    } else if msg_type == "content_block_delta" {
-                        if v["delta"]["type"] == "text_delta" {
-                            if let Some(t) = v["delta"]["text"].as_str()
-                                && !t.is_empty()
-                            {
-                                let _ = tx.send(AiEvent::Token(t.to_string()));
-                            }
-                        } else if v["delta"]["type"] == "input_json_delta" {
-                            if let Some(partial) = v["delta"]["partial_json"].as_str() {
-                                tool_args.push_str(partial);
-                            }
-                        } else if v["delta"]["type"] == "thinking_delta" {
-                            if let Some(t) = v["delta"]["thinking"].as_str() {
-                                thinking_text.push_str(t);
-                            }
-                        } else if v["delta"]["type"] == "signature_delta"
-                            && let Some(s) = v["delta"]["signature"].as_str()
+                    let _ = tx.send(AiEvent::Done(usage));
+                    return Ok(());
+                }
+                Err(e) => {
+                    if !first_token_seen {
+                        if crate::ai::is_retriable_transport(&e)
+                            && transport_retries < MAX_STREAM_RETRIES
                         {
-                            thinking_sig.push_str(s);
-                        }
-                    } else if msg_type == "content_block_stop" {
-                        if in_thinking {
-                            // Encode both fields so convert_messages can reconstruct
-                            // the full thinking block for the round-trip.
-                            if !thinking_sig.is_empty() {
-                                pending_thought_sig = Some(
-                                    json!({
-                                        "thinking": thinking_text,
-                                        "signature": thinking_sig
-                                    })
-                                    .to_string(),
-                                );
-                            }
-                            in_thinking = false;
-                        } else if !tool_id.is_empty() {
-                            flush_tool_call(
-                                &tx,
-                                &tool_id,
-                                &tool_name,
-                                &tool_args,
-                                pending_thought_sig.take(),
+                            transport_retries += 1;
+                            log::warn!(
+                                "AI stream transport error before first token (attempt {transport_retries}/{MAX_STREAM_RETRIES}): {e}"
                             );
-                            tool_id.clear();
-                            tool_name.clear();
-                            tool_args.clear();
+                            tokio::time::sleep(crate::ai::stream_retry_backoff(transport_retries))
+                                .await;
+                            continue 'attempt;
                         }
-                    } else if msg_type == "message_start" {
-                        if let Some(u) = v["message"]["usage"].as_object() {
-                            usage = parse_anthropic_start_usage(u);
-                        }
-                    } else if msg_type == "message_delta" {
-                        match v["delta"]["stop_reason"].as_str() {
-                            Some("max_tokens") => log::warn!(
-                                "Anthropic response truncated: stop_reason=max_tokens \
-                                 for model {}",
-                                self.model
-                            ),
-                            Some("refusal") => log::warn!(
-                                "Anthropic response stopped: stop_reason=refusal \
-                                 for model {}",
-                                self.model
-                            ),
-                            _ => {}
-                        }
-                        if let Some(u) = v["usage"].as_object() {
-                            apply_anthropic_output_tokens(&mut usage, u);
+                        if stall_retries < MAX_FIRST_TOKEN_RETRIES {
+                            stall_retries += 1;
+                            log::warn!(
+                                "AI stream failed before first token (attempt {stall_retries}/{MAX_FIRST_TOKEN_RETRIES}): {e}"
+                            );
+                            continue 'attempt;
                         }
                     }
+                    crate::ai::record_stream_failure();
+                    return Err(e);
                 }
             }
         }
-        // Flush any buffered tool call that ended without a content_block_stop event
-        // (e.g. network disconnect mid-stream).
-        if !tool_id.is_empty() {
-            flush_tool_call(
-                &tx,
-                &tool_id,
-                &tool_name,
-                &tool_args,
-                pending_thought_sig.take(),
-            );
-        }
-        let _ = tx.send(AiEvent::Done(usage));
-        Ok(())
     }
 }
 
@@ -451,6 +510,16 @@ mod tests {
             }
             other => panic!("expected Error event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn first_token_flips_on_content_block_not_ping() {
+        assert!(super::is_content_event("content_block_delta"));
+        assert!(super::is_content_event("content_block_start"));
+        assert!(!super::is_content_event("ping"));
+        assert!(!super::is_content_event("message_start"));
+        assert!(!super::is_content_event("message_delta"));
+        assert!(!super::is_content_event(""));
     }
 
     #[test]

@@ -114,38 +114,6 @@ pub trait AiClient: Send + Sync {
     ) -> Result<()>;
 }
 
-/// Idle ceiling for a single read from an in-flight AI response stream.
-///
-/// `Client::timeout` bounds the *whole* request; it cannot tell a slow-but-alive
-/// provider from one that accepted the connection and went silent. Without a
-/// per-read bound, a quiet provider freezes the turn for the full total timeout
-/// with no diagnostic — `docs/design/daemon-stalls.md` § 1.5 (mechanism C).
-pub const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-
-/// Normalise one chunk of an AI response stream, converting an idle-read
-/// timeout into a diagnosable error and logging it.
-///
-/// Generic over the chunk payload so the `bytes` crate need not be a direct
-/// dependency.
-pub fn stream_chunk<T>(chunk: reqwest::Result<T>) -> Result<T> {
-    chunk.map_err(|e| {
-        if e.is_timeout() {
-            log::error!(
-                "AI stream stalled: no data for {}s — provider accepted the \
-                 connection then went silent (mechanism C)",
-                STREAM_IDLE_TIMEOUT.as_secs()
-            );
-            anyhow::anyhow!(
-                "AI stream stalled: the provider sent no data for {}s",
-                STREAM_IDLE_TIMEOUT.as_secs()
-            )
-        } else {
-            log::error!("AI stream read failed: {e}");
-            anyhow::anyhow!("AI stream read failed: {e}")
-        }
-    })
-}
-
 /// Maximum size of the SSE reassembly buffer (1 MiB). A misbehaving proxy
 /// that sends data without newlines would otherwise grow it without bound.
 const MAX_SSE_BUFFER_BYTES: usize = 1 << 20;
@@ -284,8 +252,13 @@ impl SseBuffer {
 pub fn http() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .read_timeout(STREAM_IDLE_TIMEOUT)
+            // No total `.timeout` and no client read timeout: a streamed
+            // generation may legitimately run for many minutes, and every
+            // backend now bounds its own reads via stream_next_with_timeout
+            // (first-token / idle budgets from `[ai]` config). A client-level
+            // total timeout would kill long streams mid-response and
+            // misreport them as transport errors.
+            .connect_timeout(crate::ai::stream_timeouts().connect)
             .build()
             // INVARIANT: default reqwest client config is always valid
             .unwrap()
@@ -651,7 +624,7 @@ mod sse_buffer_tests {
 
 #[cfg(test)]
 mod stream_idle_tests {
-    use futures_util::StreamExt;
+    use std::time::Duration;
 
     /// Serve HTTP 200 + one SSE chunk, then go silent without closing the
     /// socket — the exact mechanism-C shape. Returns the bound address.
@@ -679,28 +652,28 @@ mod stream_idle_tests {
     }
 
     #[tokio::test]
-    async fn idle_stream_times_out_and_reports_a_stall() {
+    async fn idle_stream_stall_is_reported_by_stream_next_with_timeout() {
         let url = silent_after_first_chunk().await;
-        let client = reqwest::Client::builder()
-            .read_timeout(std::time::Duration::from_millis(300))
-            .build()
-            .unwrap();
+        let client = reqwest::Client::new();
         let resp = client.get(&url).send().await.unwrap();
         let mut stream = resp.bytes_stream();
 
-        let first = stream.next().await.expect("first chunk");
-        assert!(
-            super::stream_chunk(first).is_ok(),
-            "first chunk must arrive"
-        );
+        let first =
+            crate::ai::stream_next_with_timeout(&mut stream, Duration::from_millis(500), false)
+                .await
+                .expect("a stream item")
+                .expect("first chunk");
+        assert!(!first.is_empty(), "first chunk must be hello");
 
-        let second = stream.next().await.expect("a second stream item");
-        assert!(second.is_err(), "second read must time out, not succeed");
-        let err = super::stream_chunk(second).unwrap_err();
-        let msg = err.to_string();
+        let second =
+            crate::ai::stream_next_with_timeout(&mut stream, Duration::from_millis(300), true)
+                .await
+                .expect("a second stream item")
+                .expect_err("second read must time out, not succeed");
+        let msg = second.to_string();
         assert!(
-            msg.contains("stalled"),
-            "idle timeout must be reported as a stall, got: {msg}"
+            msg.contains("idle mid-response"),
+            "idle timeout must be reported as a mid-response stall, got: {msg}"
         );
     }
 }

@@ -1,6 +1,5 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -202,118 +201,190 @@ impl AiClient for GeminiClient {
             });
         }
 
-        let response = send_with_retry(|| http().post(&url).json(&body)).await?;
+        const MAX_FIRST_TOKEN_RETRIES: u32 = 2;
+        const MAX_STREAM_RETRIES: u32 = 3;
+        let mut first_token_seen = false;
+        let mut stall_retries: u32 = 0;
+        let mut transport_retries: u32 = 0;
 
-        let mut stream = response.bytes_stream();
-        let mut sse = crate::ai::SseBuffer::new();
-        let mut usage = TokenBreakdown::default();
+        'attempt: loop {
+            let response = send_with_retry(|| http().post(&url).json(&body)).await?;
 
-        while let Some(chunk) = stream.next().await {
-            let bytes = crate::ai::stream_chunk(chunk)?;
-            sse.push(&bytes)?;
+            let mut stream = response.bytes_stream();
+            let mut sse = crate::ai::SseBuffer::new();
+            let mut usage = TokenBreakdown::default();
 
-            while let Some(data) = sse.next_data() {
-                if let Ok(v) = serde_json::from_str::<Value>(&data) {
-                    // Gemini reports failures as an in-stream error payload
-                    // after the 200; dropping it would surface as a silent
-                    // empty response.
-                    if let Some(err) = v.get("error") {
-                        let msg = err
-                            .get("message")
-                            .and_then(|m| m.as_str())
-                            .map(str::to_string)
-                            .unwrap_or_else(|| err.to_string());
-                        anyhow::bail!("AI stream returned an error: {msg}");
-                    }
-                    if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array())
-                        && let Some(candidate) = candidates.first()
-                    {
-                        match candidate.get("finishReason").and_then(|r| r.as_str()) {
-                            Some("MAX_TOKENS") => log::warn!(
-                                "Gemini response truncated: finishReason=MAX_TOKENS \
-                                 for model {}",
-                                self.model
-                            ),
-                            Some("SAFETY") => log::warn!(
-                                "Gemini response stopped by safety filter for model {}",
-                                self.model
-                            ),
-                            _ => {}
+            let drain: anyhow::Result<()> = 'drain: loop {
+                let timeout =
+                    crate::ai::select_timeout(first_token_seen, crate::ai::stream_timeouts());
+                match crate::ai::stream_next_with_timeout(&mut stream, timeout, first_token_seen)
+                    .await
+                {
+                    Some(Ok(bytes)) => {
+                        if let Err(e) = sse.push(&bytes) {
+                            break 'drain Err(e);
                         }
-                        // Gemini 2.5 Flash (thinking model) sometimes produces a
-                        // Python-style function call string instead of a structured
-                        // functionCall block.  The API signals this with finishReason
-                        // "MALFORMED_FUNCTION_CALL" and a finishMessage containing
-                        // the raw call text.  Recover by parsing the finishMessage.
-                        if candidate.get("finishReason").and_then(|r| r.as_str())
-                            == Some("MALFORMED_FUNCTION_CALL")
-                        {
-                            if let Some(msg) =
-                                candidate.get("finishMessage").and_then(|m| m.as_str())
-                            {
-                                if let Some((cmd, bg)) = parse_malformed_gemini_call(msg) {
-                                    let _ = tx.send(AiEvent::ToolCall(
-                                        next_tool_id(),
-                                        cmd,
-                                        bg,
-                                        None,
-                                        None,
-                                        None,
+
+                        while let Some(data) = sse.next_data() {
+                            if let Ok(v) = serde_json::from_str::<Value>(&data) {
+                                // Gemini reports failures as an in-stream error payload
+                                // after the 200; dropping it would surface as a silent
+                                // empty response.
+                                if let Some(err) = v.get("error") {
+                                    let msg = err
+                                        .get("message")
+                                        .and_then(|m| m.as_str())
+                                        .map(str::to_string)
+                                        .unwrap_or_else(|| err.to_string());
+                                    break 'drain Err(anyhow::anyhow!(
+                                        "AI stream returned an error: {msg}"
                                     ));
-                                } else {
-                                    let _ = tx.send(AiEvent::Error(format!(
-                                        "Gemini produced a malformed function call \
+                                }
+                                if let Some(candidates) =
+                                    v.get("candidates").and_then(|c| c.as_array())
+                                    && let Some(candidate) = candidates.first()
+                                {
+                                    match candidate.get("finishReason").and_then(|r| r.as_str()) {
+                                        Some("MAX_TOKENS") => log::warn!(
+                                            "Gemini response truncated: finishReason=MAX_TOKENS \
+                                 for model {}",
+                                            self.model
+                                        ),
+                                        Some("SAFETY") => log::warn!(
+                                            "Gemini response stopped by safety filter for model {}",
+                                            self.model
+                                        ),
+                                        _ => {}
+                                    }
+                                    // Gemini 2.5 Flash (thinking model) sometimes produces a
+                                    // Python-style function call string instead of a structured
+                                    // functionCall block.  The API signals this with finishReason
+                                    // "MALFORMED_FUNCTION_CALL" and a finishMessage containing
+                                    // the raw call text.  Recover by parsing the finishMessage.
+                                    if candidate.get("finishReason").and_then(|r| r.as_str())
+                                        == Some("MALFORMED_FUNCTION_CALL")
+                                    {
+                                        if let Some(msg) =
+                                            candidate.get("finishMessage").and_then(|m| m.as_str())
+                                        {
+                                            if let Some((cmd, bg)) =
+                                                parse_malformed_gemini_call(msg)
+                                            {
+                                                if !first_token_seen {
+                                                    first_token_seen = true;
+                                                }
+                                                let _ = tx.send(AiEvent::ToolCall(
+                                                    next_tool_id(),
+                                                    cmd,
+                                                    bg,
+                                                    None,
+                                                    None,
+                                                    None,
+                                                ));
+                                            } else {
+                                                let _ = tx.send(AiEvent::Error(format!(
+                                                    "Gemini produced a malformed function call \
                                                  that could not be recovered.\n\
                                                  Raw: {msg}"
-                                    )));
-                                    return Ok(());
-                                }
-                            }
-                            continue;
-                        }
+                                                )));
+                                                break 'drain Err(anyhow::anyhow!(
+                                                    "unrecoverable malformed function call"
+                                                ));
+                                            }
+                                        }
+                                        continue;
+                                    }
 
-                        if let Some(parts) =
-                            candidate["content"].get("parts").and_then(|p| p.as_array())
-                        {
-                            for part in parts {
-                                if let Some(t) = part.get("text").and_then(|text| text.as_str())
-                                    && !t.is_empty()
-                                {
-                                    let _ = tx.send(AiEvent::Token(t.to_string()));
-                                }
-                                if let Some(call) = part.get("functionCall") {
-                                    let fn_name = call["name"].as_str().unwrap_or("");
-                                    // Gemini omits `args` entirely for calls
-                                    // that take no arguments.
-                                    let args =
-                                        call.get("args").cloned().unwrap_or_else(|| json!({}));
-                                    let id = next_tool_id();
-                                    let thought_sig = part
-                                        .get("thoughtSignature")
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from);
-                                    if let Some(ev) =
-                                        dispatch_tool_event(&id, fn_name, &args, thought_sig)
+                                    if let Some(parts) =
+                                        candidate["content"].get("parts").and_then(|p| p.as_array())
                                     {
-                                        let _ = tx.send(ev);
-                                    } else {
-                                        log::warn!(
-                                            "model called unknown tool '{fn_name}' — \
+                                        for part in parts {
+                                            if let Some(t) =
+                                                part.get("text").and_then(|text| text.as_str())
+                                                && !t.is_empty()
+                                            {
+                                                if !first_token_seen {
+                                                    first_token_seen = true;
+                                                }
+                                                let _ = tx.send(AiEvent::Token(t.to_string()));
+                                            }
+                                            if let Some(call) = part.get("functionCall") {
+                                                let fn_name = call["name"].as_str().unwrap_or("");
+                                                // Gemini omits `args` entirely for calls
+                                                // that take no arguments.
+                                                let args = call
+                                                    .get("args")
+                                                    .cloned()
+                                                    .unwrap_or_else(|| json!({}));
+                                                let id = next_tool_id();
+                                                let thought_sig = part
+                                                    .get("thoughtSignature")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(String::from);
+                                                if let Some(ev) = dispatch_tool_event(
+                                                    &id,
+                                                    fn_name,
+                                                    &args,
+                                                    thought_sig,
+                                                ) {
+                                                    if !first_token_seen {
+                                                        first_token_seen = true;
+                                                    }
+                                                    let _ = tx.send(ev);
+                                                } else {
+                                                    log::warn!(
+                                                        "model called unknown tool '{fn_name}' — \
                                              call dropped"
-                                        );
+                                                    );
+                                                }
+                                            }
+                                        }
                                     }
                                 }
+                                if let Some(u) = v.get("usageMetadata").and_then(|m| m.as_object())
+                                {
+                                    usage = parse_gemini_usage(u);
+                                }
                             }
                         }
                     }
-                    if let Some(u) = v.get("usageMetadata").and_then(|m| m.as_object()) {
-                        usage = parse_gemini_usage(u);
+                    Some(Err(e)) => break 'drain Err(e),
+                    None => break 'drain Ok(()),
+                }
+            };
+
+            match drain {
+                Ok(()) => {
+                    crate::ai::record_stream_success();
+                    let _ = tx.send(AiEvent::Done(usage));
+                    return Ok(());
+                }
+                Err(e) => {
+                    if !first_token_seen {
+                        if crate::ai::is_retriable_transport(&e)
+                            && transport_retries < MAX_STREAM_RETRIES
+                        {
+                            transport_retries += 1;
+                            log::warn!(
+                                "AI stream transport error before first token (attempt {transport_retries}/{MAX_STREAM_RETRIES}): {e}"
+                            );
+                            tokio::time::sleep(crate::ai::stream_retry_backoff(transport_retries))
+                                .await;
+                            continue 'attempt;
+                        }
+                        if stall_retries < MAX_FIRST_TOKEN_RETRIES {
+                            stall_retries += 1;
+                            log::warn!(
+                                "AI stream failed before first token (attempt {stall_retries}/{MAX_FIRST_TOKEN_RETRIES}): {e}"
+                            );
+                            continue 'attempt;
+                        }
                     }
+                    crate::ai::record_stream_failure();
+                    return Err(e);
                 }
             }
         }
-        let _ = tx.send(AiEvent::Done(usage));
-        Ok(())
     }
 }
 
@@ -321,6 +392,51 @@ impl AiClient for GeminiClient {
 mod tests {
     use super::*;
     use crate::ai::ToolResult;
+
+    /// A part-producing frame (non-empty text or functionCall) is a token;
+    /// one carrying only finishReason/usageMetadata is not.
+    fn part_counts_as_token(v: &serde_json::Value) -> bool {
+        let Some(candidate) = v
+            .get("candidates")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+        else {
+            return false;
+        };
+        if candidate.get("finishReason").is_some() && candidate.get("content").is_none() {
+            return false;
+        }
+        let Some(parts) = candidate["content"].get("parts").and_then(|p| p.as_array()) else {
+            return false;
+        };
+        for part in parts {
+            if let Some(t) = part.get("text").and_then(|text| text.as_str())
+                && !t.is_empty()
+            {
+                return true;
+            }
+            if part.get("functionCall").is_some() {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn finish_reason_only_frame_is_not_a_token() {
+        assert!(!part_counts_as_token(&json!({
+            "candidates": [{"finishReason": "STOP"}]
+        })));
+        assert!(part_counts_as_token(&json!({
+            "candidates": [{"content": {"parts": [{"text": "hi"}]}}]
+        })));
+        assert!(!part_counts_as_token(&json!({
+            "candidates": [{"content": {"parts": []}}]
+        })));
+        assert!(part_counts_as_token(&json!({
+            "candidates": [{"content": {"parts": [{"functionCall": {"name": "list_panes"}}]}}]
+        })));
+    }
 
     #[test]
     fn gemini_convert_tool_results_uses_correct_function_name() {
