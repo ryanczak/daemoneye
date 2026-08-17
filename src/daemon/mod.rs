@@ -365,6 +365,25 @@ pub async fn daemon_liveness() -> DaemonLiveness {
     }
 }
 
+/// Log the outcome of a global tmux hook installation.
+///
+/// A `set-hook` that tmux rejects (e.g. a syntax error in the hook value)
+/// still returns `Ok(output)` from the spawn — only the exit status and
+/// stderr reveal the failure. Checking just the `io::Result` let the
+/// `90567c3` quoting regression pass silently, so both halves are checked
+/// here.
+fn log_hook_install_result(hook: &str, res: std::io::Result<std::process::Output>) {
+    match res {
+        Err(e) => log::error!("Failed to register global tmux {hook} hook: {e}"),
+        Ok(out) if !out.status.success() => log::error!(
+            "Failed to register global tmux {hook} hook ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+        Ok(_) => {}
+    }
+}
+
 /// Start the daemon process.
 ///
 /// Lifecycle:
@@ -595,12 +614,14 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         .unwrap_or_else(|_| "daemoneye".to_string());
 
     // pane-died is a global hook — install it so it fires for all sessions.
-    // M3: every tmux format placeholder is wrapped in single quotes so tmux's
-    // runtime expansion of #{session_name} (unknown at install time for global
-    // hooks) cannot execute shell metacharacters. "$()`, `$", backticks, and
-    // spaces stay inert inside the quotes.
+    // M3: `#{q:session_name}` makes tmux shell-quote the expansion, so a
+    // session name is inert in the run-shell body ("$()`, backticks, spaces,
+    // even a literal ') — the name is unknown at install time for global
+    // hooks, so it cannot be pre-escaped in Rust. Do NOT wrap the placeholder
+    // in extra quotes: nested quotes are a tmux syntax error that makes
+    // set-hook fail and leaves the hook unset.
     let global_notify_cmd = format!(
-        "run-shell -b '{} notify activity #{{pane_id}} 0 '#{{session_name}}''",
+        "run-shell -b '{} notify activity #{{pane_id}} 0 #{{q:session_name}}'",
         hook_exe_path,
     );
     let c = global_notify_cmd.clone();
@@ -611,14 +632,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     })
     .await
     .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
-    if let Err(e) = res {
-        log::error!("Failed to register global tmux pane-died hook: {}", e);
-    }
+    log_hook_install_result("pane-died", res);
 
     // after-new-session (N14): auto-install per-session hooks for any new tmux session,
     // so monitoring works immediately without requiring a first `daemoneye chat` invocation.
     let session_created_cmd = format!(
-        "run-shell -b '{} notify session-created '#{{session_name}}''",
+        "run-shell -b '{} notify session-created #{{q:session_name}}'",
         hook_exe_path,
     );
     let c = session_created_cmd.clone();
@@ -629,17 +648,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     })
     .await
     .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
-    if let Err(e) = res {
-        log::error!(
-            "Failed to register global tmux after-new-session hook: {}",
-            e
-        );
-    }
+    log_hook_install_result("after-new-session", res);
 
     // client-attached (N15): notify daemon when a terminal client re-attaches so it
     // can clear pending detach state and suppress the catch-up brief.
     let client_attached_cmd = format!(
-        "run-shell -b '{} notify client-attached '#{{session_name}}''",
+        "run-shell -b '{} notify client-attached #{{q:session_name}}'",
         hook_exe_path,
     );
     let c = client_attached_cmd.clone();
@@ -650,14 +664,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     })
     .await
     .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
-    if let Err(e) = res {
-        log::error!("Failed to register global tmux client-attached hook: {}", e);
-    }
+    log_hook_install_result("client-attached", res);
 
     // client-detached (N15): notify daemon when the terminal client detaches so it
     // can record the time and generate a catch-up brief on the next Ask.
     let client_detached_cmd = format!(
-        "run-shell -b '{} notify client-detached '#{{session_name}}''",
+        "run-shell -b '{} notify client-detached #{{q:session_name}}'",
         hook_exe_path,
     );
     let c = client_detached_cmd.clone();
@@ -668,9 +680,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     })
     .await
     .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
-    if let Err(e) = res {
-        log::error!("Failed to register global tmux client-detached hook: {}", e);
-    }
+    log_hook_install_result("client-detached", res);
 
     // Install per-session hooks if we already know the session.
     if let Some(ref sn) = initial_session {

@@ -66,11 +66,25 @@ half deferred to a PE spot-check), retrospective in the M15 README.
 - **bug-05-1** (M15, closed-as-deferred per the bug-tracker invariant): Esc
   in the sudo credential panel submits an empty password — protocol gap,
   unfixed. Full analysis in `M15-chat-reliability/bugs/bug-05-1.md`.
-- **`hooks_land_on_private_server` fails at HEAD** — post-M15 regression
-  bisected to `90567c3` ("security: reject control chars in file
-  paths/patterns", the parallel LLM-API-client work stream). Until fixed,
-  every full `cargo test` run carries this one named pre-existing failure —
-  M16 reviews treat it as a documented exception, not a phase defect.
+- ~~**`hooks_land_on_private_server` fails at HEAD**~~ — **RESOLVED
+  2026-08-17** (architect hotfix). Root cause: `90567c3`'s M3 hardening
+  wrapped `#{session_name}` in nested single quotes in the four global hook
+  commands — a tmux syntax error that made `set-hook -g` fail and leave
+  `pane-died` / `after-new-session` / `client-attached` / `client-detached`
+  unset (a live production regression, not just a test failure). The failure
+  was invisible in `daemon.log` because only the spawn `io::Result` was
+  checked, never tmux's exit status. Fix: `#{q:session_name}` (tmux's
+  shell-quote format modifier — verified inert against a hostile
+  `evil'$(…)` session name) + a `log_hook_install_result` helper that checks
+  exit status and logs stderr. Isolation suite 9 passed / 0 failed. The M16
+  full-suite gate exception is gone.
+- **`labeled_context_window_scope_excludes_other_windows` is not hermetic**
+  (found 2026-08-17, pre-existing): the fake-cache test's active-pane path
+  live-captures pane `%1` from the operator's real tmux server when one
+  exists (`get_labeled_context_scoped` → pipe log / `capture_pane_with_escapes`),
+  so `cargo test --lib` fails or passes depending on the operator's window
+  layout. Needs a capture seam or a guaranteed-nonexistent pane id. Until
+  fixed, full-suite gates can flake on hosts with a live tmux server.
 
 ---
 
