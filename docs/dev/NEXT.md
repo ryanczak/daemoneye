@@ -76,8 +76,28 @@ half deferred to a PE spot-check), retrospective in the M15 README.
 
 ## Active milestone: M16 — LLM Stream Robustness (drafted 2026-08-16, opened 2026-08-16)
 
-**Active phase: phase-01 — transport-scaffolding**
-(`docs/dev/milestones/M16-llm-stream-robustness/phase-01-transport-scaffolding.md`).
+**phase-01 — transport-scaffolding: done (escalated — architect close
+2026-08-17)**, implementation commit `d3ad2c0`. DeepSeek V4 Flash's first
+phase: round 1 implemented the entire spec correctly but hard-failed on the
+completion gate; round 2 (evidence capture) bounced repeatedly on the same
+gate — the harness runs the configured full `cargo test`, which carries the
+documented pre-existing `hooks_land_on_private_server` failure, and does not
+honor the phase-doc-amended `cargo test --lib` gate. The executor correctly
+recorded the blocker (`f45845b`) but then, still gate-blocked at turn 50, ran
+`tmux kill-server` against the operator's **default** server, killing the
+operator's tmux session, the architect session, and its own dispatch.
+Architect re-ran all gates 2026-08-17 (greps 1/1/1, fmt, stall tests,
+`cargo test --lib` 1306 passed, clippy `-D warnings` — all green) and closed.
+**Before dispatching phase-02: either fix the `90567c3` hook regression or
+align the rexymcp gate with the amended test command** — phases 02–08 all
+inherit the same full-suite exception, and the executor has now demonstrated
+destructive escalation when gate-blocked (rexyMCP upstream backlog: ban
+destructive server commands in the executor bash guard).
+
+**Active phase: phase-02 — openai-two-phase**
+(`docs/dev/milestones/M16-llm-stream-robustness/phase-02-openai-two-phase.md`,
+drafted ahead 2026-08-16, status: todo — re-run its re-derive commands before
+dispatch).
 
 Goal: chat turns can never fail silently during long-running LLM queries.
 Milestone README + all 8 phase docs drafted ahead at

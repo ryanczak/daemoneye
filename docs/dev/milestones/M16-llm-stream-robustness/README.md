@@ -66,7 +66,7 @@ the user's door, session JSONL as the evidence anchor).
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | transport-scaffolding ([phase-01-transport-scaffolding.md](phase-01-transport-scaffolding.md)) | in-progress |
+| 01 | transport-scaffolding ([phase-01-transport-scaffolding.md](phase-01-transport-scaffolding.md)) | done |
 | 02 | openai-two-phase ([phase-02-openai-two-phase.md](phase-02-openai-two-phase.md)) | todo |
 | 03 | anthropic-gemini-two-phase ([phase-03-anthropic-gemini-two-phase.md](phase-03-anthropic-gemini-two-phase.md)) | todo |
 | 04 | daemon-keepalive ([phase-04-daemon-keepalive.md](phase-04-daemon-keepalive.md)) | todo |

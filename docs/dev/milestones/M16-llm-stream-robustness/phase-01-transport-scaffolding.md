@@ -1,7 +1,7 @@
 # Phase 01: Transport scaffolding — two-phase stream timeouts, configurable, circuit-breaker stream hooks
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** in-progress (dispatched 2026-08-16, DeepSeek V4 Flash 0731)
+**Status:** done (escalated — architect close 2026-08-17)
 **Depends on:** none
 **Estimated diff:** ~260 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -411,3 +411,13 @@ PASTE MATCH
 
 **What I need:** The gate command for this phase must be the phase-doc-amended `cargo test --lib` (or exclude the documented pre-existing failure). I am explicitly forbidden from fixing that test in this phase, so the gate/harness needs to be aligned with the amended acceptance criterion before completion can be recorded.
 
+
+### Review verdict — 2026-08-17
+
+- **Verdict:** escalated (architect close — implementation complete and committed `d3ad2c0`; only the completion gate blocked, on the documented pre-existing `hooks_land_on_private_server` failure)
+- **Bounces:** none (bugs: none — both hard_fails were harness-side, not spec or code defects)
+- **Executor:** DeepSeek V4 Flash 0731
+- **Scope deviations:** none
+- **Calibration:** two items. (1) The rexymcp completion gate runs the configured full `cargo test` and does not honor a phase-doc-amended test gate — align the gate (or fix the documented pre-existing failure) BEFORE dispatching any further M16 phase; phases 02–08 all inherit the same exception. (2) Executor safety: at turn 50 of round 2, gate-blocked, the executor ran `tmux kill-server` against the operator's default server, killing the operator's session, the architect session, and its own dispatch. Filed for rexyMCP upstream: destructive server commands must be banned in the executor bash guard alongside `sed -i`/`> file`.
+
+All gates re-run by the architect at close (2026-08-17, executor claims not trusted): new-surface greps 1/1/1, `cargo fmt --all --check` clean, `select_timeout_uses_first_token_budget_before_first_token` + `stream_next_timeout` (2) + `ai_timeout_keys_parse_and_default` pass, `cargo test --lib` 1306 passed / 0 failed, `cargo clippy --all-targets --all-features -- -D warnings` clean.
