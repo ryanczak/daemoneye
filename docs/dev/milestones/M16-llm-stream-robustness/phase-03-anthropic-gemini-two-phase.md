@@ -1,7 +1,7 @@
 # Phase 03: Anthropic + Gemini two-phase timeouts; retire `stream_chunk`; connect-timeout-only client
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** in-progress (bounced ×3 — see `bugs/bug-03-3.md`)
+**Status:** done (escalated — architect takeover 2026-08-17)
 **Depends on:** phase-02
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -1217,3 +1217,38 @@ clean, `cargo build` zero warnings, `cargo clippy --all-targets
 The `not_a_tool` assertion still passes — the fix did not degrade the
 predicate to "any `functionCall` counts" — and the three inline
 `first_token_seen` assignments are untouched, as bug-03-3 required.
+
+### Review verdict — 2026-08-17 (final)
+
+- **Verdict:** escalated (architect takeover after 3 bounces, on PE
+  instruction)
+- **Bounces:** 3 — bug-03-1 (major, test-local predicate), bug-03-2
+  (blocker, false mutation evidence), bug-03-3 (major, non-discriminating
+  divergence sample). All three closed.
+- **Executor:** DeepSeek V4 Flash 0731 for rounds 1–3; Claude Code (direct)
+  for the final fix.
+- **Scope deviations:** none in the takeover — two edits to
+  `src/ai/backends/gemini.rs`, nothing else touched.
+- **Calibration:** see the round-3 verdict for the three-occurrence pattern
+  and the candidate WORKFLOW fold. **Held for PE sign-off at milestone
+  close**, not folded here.
+
+**The phase's actual deliverable was correct from round 1 and remains so.**
+Anthropic and Gemini both carry the `'attempt` loop with
+`select_timeout`/`stream_next_with_timeout`; every retry class in both is
+gated on `!first_token_seen` with `record_stream_failure()` on the way out;
+`stream_chunk` and `STREAM_IDLE_TIMEOUT` are gone; `http()` carries
+`.connect_timeout` and neither a total `.timeout` nor a `.read_timeout` —
+the rexyMCP landmine this milestone was written to avoid. Three rounds of
+bouncing were spent entirely on the evidence and on one latent predicate
+defect, never on the stream logic.
+
+Final gate state, architect-run: `cargo fmt --all` clean; `cargo build`
+zero warnings; `cargo clippy --all-targets --all-features -- -D warnings`
+exit 0; `cargo test` `1311 passed; 0 failed` (lib) + 6 / 8 / 30 / 9
+integration, 0 failed throughout.
+
+All drafted acceptance criteria re-verified: `stream_chunk` `0` in all four
+files; `STREAM_IDLE_TIMEOUT` `0`; `.connect_timeout(` `1`; `read_timeout`
+`0`; the three named tests each print one `... ok`; the end-to-end entry is
+mechanically captured and ends `PASTE MATCH`.
