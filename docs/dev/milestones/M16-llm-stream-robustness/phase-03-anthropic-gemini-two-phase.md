@@ -694,18 +694,33 @@ frames); the *call site* — that the drain loop actually consults the
 predicate before retrying — is not exercised by that test and is instead
 guarded by the lint gate above, which errors with `function part_counts_as_token is never used` when the call is deleted.
 
-Also verified in this round: the bug-03-2 latent divergence between the
-predicate's `&call["args"]` (`gemini.rs:33`, JSON `null` when Gemini omits
-`args`) and the drain loop's `unwrap_or_else(|| json!({}))`
-(`gemini.rs:348-352`) is **not** a divergence. For every tool whose args are
-not required, `dispatch_tool_event` accepts `json!(null)` and `json!({})`
-identically — verified by a throwaway integration test
-(`tests/divergence_check.rs`, run and deleted after capture) covering
-`list_panes`, `list_schedules`, `list_scripts`, `list_runbooks`,
-`list_agents`, `schedule_command`, `run_terminal_command`,
-`cancel_schedule` with both arg forms: every case agreed, 9 asserts passed,
-exit 0. No behavior change needed; the predicate's `&call["args"]` matches
-the drain loop's effective handling for no-argument calls.
+~~Also verified in this round: the bug-03-2 latent divergence … is **not** a
+divergence. For every tool whose args are not required, `dispatch_tool_event`
+accepts `json!(null)` and `json!({})` identically — verified by a throwaway
+integration test (`tests/divergence_check.rs`, run and deleted after capture)
+covering `list_panes`, `list_schedules`, `list_scripts`, `list_runbooks`,
+`list_agents`, `schedule_command`, `run_terminal_command`, `cancel_schedule`:
+every case agreed, 9 asserts passed, exit 0. No behavior change needed.~~
+
+**STRUCK 2026-08-17 (bug-03-3) — the divergence is real.** All eight tools in
+that sample are non-discriminating: five (`list_panes`, `list_schedules`,
+`list_scripts`, `list_runbooks`, `list_agents`) return `Some` unconditionally
+in `dispatch_tool_event` and never deserialize args, so both forms agree at
+`true`; three (`run_terminal_command`, `schedule_command`, `cancel_schedule`)
+have required fields, so both forms fail and agree at `false`. Agreement was
+guaranteed before the test ran. The discriminating class is `dispatch::<T>`
+with all-optional fields, and no member of it was sampled:
+
+```
+get_terminal_context: null=false empty=true
+list_memories:        null=false empty=true
+list_panes:           null=true  empty=true
+list_schedules:       null=true  empty=true
+run_terminal_command: null=false empty=false
+```
+
+Serde rejects a bare `null` for a struct even when every field is optional.
+Fixed in the takeover below.
 
 ### Update — 2026-08-17 19:14 (end-to-end verification)
 
@@ -1136,3 +1151,69 @@ run_terminal_command: null=false empty=false
 
 The first two are the discriminating class — `dispatch::<T>` with all-optional
 fields — and neither appeared in the round's sample.
+
+### Update — 2026-08-17 (architect takeover — bug-03-3)
+
+PE instruction after the third bounce: take it over rather than dispatch a
+fourth time. Two edits to `src/ai/backends/gemini.rs`, no other file:
+
+1. `part_counts_as_token` now defaults a missing `args` to `json!({})`, the
+   same default the drain loop applies twelve lines below it, with a comment
+   naming why (`serde` rejects a bare `null` for a struct even when every
+   field is optional).
+2. Two test changes: `finish_reason_only_frame_is_not_a_token` gains an
+   assertion that a no-argument `get_terminal_context` call **does** count,
+   and a new `dispatch_treats_null_args_and_empty_object_differently` pins the
+   underlying `dispatch_tool_event` behavior — including the fact that
+   `list_panes` agrees under both forms, which is what made the earlier sample
+   unable to detect anything.
+
+**The new assertion was run in the state where it must fail**, per the fold
+this phase is proposing. With the predicate reverted to
+`unwrap_or(Value::Null)`:
+
+```
+test ai::backends::gemini::tests::finish_reason_only_frame_is_not_a_token ... FAILED
+thread '...' panicked at src/ai/backends/gemini.rs:459:9:
+assertion failed: super::part_counts_as_token(&json!({
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1310 filtered out
+exit=101
+```
+
+Restored to `unwrap_or_else(|| json!({}))`, verbatim from
+`e2e-03-takeover.txt`:
+
+```text
+test ai::backends::gemini::tests::finish_reason_only_frame_is_not_a_token ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1310 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test ai::backends::gemini::tests::dispatch_treats_null_args_and_empty_object_differently ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1310 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test result: ok. 1311 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.94s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
+
+Lib test count 1310 → 1311 (the one new test). Gates: `cargo fmt --all`
+clean, `cargo build` zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings` exit 0.
+
+The `not_a_tool` assertion still passes — the fix did not degrade the
+predicate to "any `functionCall` counts" — and the three inline
+`first_token_seen` assignments are untouched, as bug-03-3 required.

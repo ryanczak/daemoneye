@@ -30,7 +30,13 @@ fn part_counts_as_token(v: &serde_json::Value) -> bool {
         }
         if let Some(call) = part.get("functionCall") {
             let fn_name = call["name"].as_str().unwrap_or("");
-            if dispatch_tool_event("", fn_name, &call["args"], None).is_some() {
+            // Same `args` default as the drain loop below: Gemini omits `args`
+            // entirely for calls that take no arguments, and serde rejects a
+            // bare `null` for a struct even when every field is optional. Using
+            // `&call["args"]` here would make this predicate answer `false` for
+            // a no-argument call the drain loop goes on to emit.
+            let args = call.get("args").cloned().unwrap_or_else(|| json!({}));
+            if dispatch_tool_event("", fn_name, &args, None).is_some() {
                 return true;
             }
         }
@@ -446,6 +452,34 @@ mod tests {
         assert!(!super::part_counts_as_token(&json!({
             "candidates": [{"content": {"parts": [{"functionCall": {"name": "not_a_tool"}}]}}]
         })));
+        // A known tool called with no `args` at all — the form Gemini actually
+        // sends for zero-argument tools. This is the case that separates the
+        // predicate's `args` handling from the drain loop's: passing the bare
+        // `null` here answers `false` while the drain loop emits the call.
+        assert!(super::part_counts_as_token(&json!({
+            "candidates": [{"content": {"parts": [
+                {"functionCall": {"name": "get_terminal_context"}}
+            ]}}]
+        })));
+    }
+
+    /// Pins the reason the predicate defaults missing `args` to `{}`:
+    /// `dispatch_tool_event` accepts the two forms differently for a tool whose
+    /// arguments are all optional, so the predicate and the drain loop must
+    /// agree on which form they pass.
+    #[test]
+    fn dispatch_treats_null_args_and_empty_object_differently() {
+        use crate::ai::tools::dispatch_tool_event;
+
+        // All-optional args (`dispatch::<GetTerminalContextArgs>`): serde
+        // rejects `null` for the struct but accepts `{}`.
+        assert!(dispatch_tool_event("id", "get_terminal_context", &json!(null), None).is_none());
+        assert!(dispatch_tool_event("id", "get_terminal_context", &json!({}), None).is_some());
+
+        // Unconditional-Some tools never deserialize args, so both forms agree
+        // — which is why a sample drawn only from these cannot detect the above.
+        assert!(dispatch_tool_event("id", "list_panes", &json!(null), None).is_some());
+        assert!(dispatch_tool_event("id", "list_panes", &json!({}), None).is_some());
     }
 
     #[test]
