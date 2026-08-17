@@ -5,7 +5,7 @@ corruption on resize/window-switch, false sudo password prompts) and rebuild the
 two interactive prompts (command approval, sudo credential) as themed in-viewport
 ratatui panels.
 
-**Status:** planning
+**Status:** done (closed 2026-08-16 — live sweep + retrospective below)
 
 **Depends on:** M14 (live-verification practices carry forward)
 
@@ -86,3 +86,56 @@ links as docs land.
   04 → 05 is a hard dependency.
 - Phases 01–03 are independent bugfixes; 04/05 are UX. Order bugs first so the
   live-verification of 04/05 isn't confounded by known defects.
+
+### M15 retrospective (closed 2026-08-16)
+
+**Verdicts:** 6 phases — phase-01 escalated (2× Nemotron NoProgressStall →
+architect takeover; executor switched to Qwen3.8-27B-FP8), phases 02–06 all
+approved_first_try on Qwen3.8 (five for five, 59–93 turns). Zero bounces,
+one bug filed at close (below).
+
+**Close live sweep (2026-08-16, evidence in session scratchpad `m15-close/`,
+sessions `8ae14171`/`30f6529d`, binary at post-M15 HEAD `5d8cdcb`):**
+
+- **read_pane grep (01) — PASS.** `read_pane` with no grep returned all 3
+  seeded lines unfiltered; session-JSONL tool_calls show
+  `{"pane_id":"%82"}` — no `grep` key at all, zero `grep:null` matches.
+- **sudo cached/uncached (02) — uncached half PASS; cached half not
+  exercisable by the sweep.** Uncached tty → credential panel appeared as
+  required. The cached case needs the user's password to establish a sudo
+  timestamp; PE should spot-check once interactively (run `sudo -v` in a
+  pane, then have the AI run a sudo command targeting that pane).
+- **resize/border (03) — PASS on the owned corruption class.** 10 width
+  flips + 2 window switches during and between streaming turns: zero
+  unclosed/over-wide border rows; all `┌`/`└` pairs width-matched in a
+  460-line scrollback trace. The phase's documented accepted residual
+  (full old-width live-region blocks when a flip lands without a reanchor)
+  was observed 4× under the rapid-flip stress — cosmetic, complete boxes.
+  Note post-M15 commit `9e9c680` (repaint-from-history) further reworked
+  this area; the sweep therefore certifies the shipped HEAD behavior.
+- **approval panel (04) + dedup (06) — PASS.** Themed in-viewport bordered
+  panel, `[Y]es [A]pprove for sudo session [N]o or type to redirect`,
+  ANSI-colored; the command text appears only in the scrollback panel
+  above, not inside the dialog. Non-sudo commands auto-approved via
+  `[approvals] commands = true` (configured intent, not a regression).
+- **credential panel (05) + dedup (06) — render PASS, one defect found.**
+  Panel renders with masked input and no command suffix. **bug-05-1
+  (major, open):** `[Esc] cancel` actually submits an empty password —
+  three Escs burned all three sudo attempts. Root cause is a pre-existing
+  protocol gap (`CredentialResponse` cannot express cancel) surfaced by
+  the panel's new help text; filed for PE scheduling, does not invalidate
+  the milestone's written exit criteria.
+- **Gates:** `cargo fmt --all --check` and clippy `-D warnings` green at
+  HEAD. `cargo test` green except `hooks_land_on_private_server` — a
+  **post-M15 regression**, bisected to `90567c3` ("security: reject
+  control chars in file paths/patterns", the parallel LLM-API-client work
+  stream): test passes at M15's close commit `1d53673` and at `feef5ad`,
+  fails from `90567c3` on. Reported to PE; not M15's defect.
+
+**Calibration:** one data point, no new folds — phase-06's E2E block omitted
+the PASTE MATCH self-check clause and the paste came back with two retyped
+lines (repaired at review). The fold already exists in WORKFLOW.md § E2E;
+this was an architect application miss when drafting, not a doc gap. Second
+occurrence of omitting the clause should trigger a pre-dispatch checklist
+item. Qwen3.8-27B-FP8 scorecard: 5/5 approved_first_try on mechanical and
+UX phases with front-loaded specs.

@@ -1,6 +1,6 @@
 # NEXT
 
-## Active milestone: M15 — Chat Reliability & Dialog UX (opened 2026-08-14)
+## M15 — Chat Reliability & Dialog UX (opened 2026-08-14, **closed 2026-08-16**)
 
 **phase-01 — read-pane-grep-null: done (escalated) 2026-08-14.** Two
 NoProgressStall hard-fails from the Nemotron executor (fresh dispatch +
@@ -58,9 +58,44 @@ no values falsified) — repaired at review to byte-match the capture; the
 PASTE MATCH self-check clause was absent from this phase's block, data
 point for close. All M15 phases are now `done`.
 
-**Next action:** PE signals milestone close — `/rexymcp:architect` to run
-the live verification sweep (phases 01–06), write the M15 retrospective,
-and update this file.
+**Closed 2026-08-16 on PE direction.** Live sweep run (read_pane grep,
+resize/border, approval + credential panels + dedup all PASS; sudo cached
+half deferred to a PE spot-check), retrospective in the M15 README.
+
+**Deferred follow-ups (PE to schedule):**
+- **bug-05-1** (M15, closed-as-deferred per the bug-tracker invariant): Esc
+  in the sudo credential panel submits an empty password — protocol gap,
+  unfixed. Full analysis in `M15-chat-reliability/bugs/bug-05-1.md`.
+- **`hooks_land_on_private_server` fails at HEAD** — post-M15 regression
+  bisected to `90567c3` ("security: reject control chars in file
+  paths/patterns", the parallel LLM-API-client work stream). Until fixed,
+  every full `cargo test` run carries this one named pre-existing failure —
+  M16 reviews treat it as a documented exception, not a phase defect.
+
+---
+
+## Active milestone: M16 — LLM Stream Robustness (drafted 2026-08-16, opened 2026-08-16)
+
+**Active phase: phase-01 — transport-scaffolding**
+(`docs/dev/milestones/M16-llm-stream-robustness/phase-01-transport-scaffolding.md`).
+
+Goal: chat turns can never fail silently during long-running LLM queries.
+Milestone README + all 8 phase docs drafted ahead at
+`docs/dev/milestones/M16-llm-stream-robustness/` (PE-approved plan,
+2026-08-16). Ports proven mechanisms from rexyMCP's own LLM client
+(two-phase stream timeouts, heartbeat keepalive contract, CancelSignal);
+the ported code is quoted verbatim in the phase docs — the executor never
+needs the rexyMCP tree. Ordering: 01→02→03 (transport), 04→05→06
+(daemon/client liveness), 07 (surface silent conditions, after 03), 08
+(cancellation, after 05). **Line numbers/counts in the phase docs are
+current-as-of-drafting — re-run each phase's re-derive commands before
+dispatching it** (M4 precedent). All drafted acceptance criteria were
+validated failing against the 2026-08-16 tree.
+
+Executor model note: PE states the executor is now **DeepSeek V4 Flash
+0731** (2026-08-16) — supersedes the Qwen3.8 note above; verify
+`rexymcp.toml` + `executor_health` before the first M16 dispatch. Fresh
+model, no calibration history.
 
 ---
 
