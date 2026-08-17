@@ -1,9 +1,7 @@
 # Phase 03: Anthropic + Gemini two-phase timeouts; retire `stream_chunk`; connect-timeout-only client
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** review
-is landed and approved; the outstanding work is correcting a false evidence
-entry in this Update Log. `bugs/bug-03-1.md` is resolved.)
+**Status:** in-progress (bounced ×3 — see `bugs/bug-03-3.md`)
 **Depends on:** phase-02
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -298,6 +296,27 @@ two `FAILED` transcripts for mutations that in fact leave the test green.
 Full symptom, measured counter-evidence, root cause and constraints:
 `bugs/bug-03-2.md`. **Read its "What should happen" first** — it opens with
 the architect's retraction of the withdrawn criterion above.
+
+### Added at the third bounce — 2026-08-17 (bug-03-3)
+
+The bug-03-2 record correction landed and is accurate — verified against the
+architect's own measurements. What did not land is the `args` question it
+was asked to settle: the round concluded "no divergence" from a sample of
+eight tools, none of which can distinguish the two forms. Re-measured with
+the discriminating class included, they disagree.
+
+- [ ] This assertion holds. It **fails** against the current tree
+      (`part_counts_as_token` returns `false`; measured
+      `get_terminal_context: null=false empty=true`):
+      `assert!(super::part_counts_as_token(&json!({"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_terminal_context"}}]}}]})));`
+- [ ] The `not_a_tool` assertion from bug-03-1 still passes — the fix must
+      not degrade the predicate to "any `functionCall` counts."
+- [ ] Whatever test settles the `null`-vs-`{}` answer is **checked in**, not
+      written-run-and-deleted.
+- [ ] The `19:13` entry's closing "not a divergence" paragraph is corrected.
+- [ ] All four gates green.
+
+Symptom, measurements, root cause and constraints: `bugs/bug-03-3.md`.
 
 Full symptom, root cause and constraints: `bugs/bug-03-1.md`. The root cause
 is an architect-side spec defect (this doc's Task 6 named the extraction for
@@ -1070,3 +1089,50 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e54e683a9fb62d4fc2b986a7f036f6fcd72a74d2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-17 (round 3)
+
+- **Verdict:** bounced (bug-03-3)
+- **Bounces:** 3
+- **Executor:** DeepSeek V4 Flash 0731
+- **Scope deviations:** none. `git diff 545379e HEAD -- src/` is empty — the
+  round changed no production code, exactly as claimed, and the throwaway
+  `tests/divergence_check.rs` was in fact removed.
+- **Calibration:** the record correction itself is **good work and should be
+  said so**: the `19:13` entry now strikes its own false transcripts, states
+  the true result, names the structural reason a call-site mutation cannot
+  move a direct-call test, and pastes the clippy variant-A/variant-B
+  evidence — all of which I re-ran and confirmed (variant A errors `function
+  part_counts_as_token is never used`, exit 101; variant B exit 0). The
+  bug-03-2 finding is resolved.
+
+  What recurs is one layer up, and it is now **three for three on this
+  phase**: a verification whose construction could only return one answer,
+  read as confirmation. bug-03-1's criterion could not fail for a test-local
+  predicate. bug-03-2's mutation could not fail for a direct-call test. This
+  round's eight-tool sample could not fail for tools that never deserialize
+  args. **Three occurrences — WORKFLOW § Calibration's threshold for a fix,
+  not a hold.** The candidate fold, for PE sign-off at milestone close:
+  *a verification must be run once in the state where it is expected to fail;
+  a check that has never produced its own negative is not evidence.* That
+  rule would have caught all three, including both of mine.
+
+Independent architect re-run of the gate set, 2026-08-17 (separate
+invocations): `cargo fmt --all` clean; `cargo build` zero warnings;
+`cargo clippy --all-targets --all-features -- -D warnings` exit 0;
+`cargo test` `1310 passed; 0 failed` (lib) + 6 / 8 / 30 / 9 integration, 0
+failed throughout.
+
+Measured counter-evidence for bug-03-3 (temporary harness, run and removed;
+tree left clean):
+
+```
+get_terminal_context: null=false empty=true
+list_memories:        null=false empty=true
+list_panes:           null=true  empty=true
+list_schedules:       null=true  empty=true
+run_terminal_command: null=false empty=false
+```
+
+The first two are the discriminating class — `dispatch::<T>` with all-optional
+fields — and neither appeared in the round's sample.
