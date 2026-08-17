@@ -181,7 +181,7 @@ grep -c "AiEvent::Notice" src/daemon/stream.rs >> "$A"
 grep -c "AiEvent::Notice" src/ai/backends/anthropic.rs src/ai/backends/gemini.rs src/ai/backends/openai.rs >> "$A"
 grep -rc "if let Ok(v) = serde_json::from_str" src/ai/backends/anthropic.rs src/ai/backends/gemini.rs src/ai/backends/openai.rs >> "$A"
 grep -c "The model returned an empty reply" src/daemon/stream.rs >> "$A"
-cargo test 2>&1 | tail -3 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test 2>&1 | grep -E "^test result:" >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
 ```
 
 Paste-fidelity self-check (append the verdict line to the entry):

@@ -136,13 +136,23 @@ executor's fault (full analysis in the phase doc's Review verdict):
    so the pasted evidence reads `0 passed … 10 filtered out` where the real
    results were 2 passed and 1308 passed. Run verbatim as the spec requires,
    the block produces evidence that does not demonstrate its own claim.
-   **The same pattern is drafted into phases 03–08** and must be fixed
-   before they dispatch.
+   **The same pattern was drafted into phases 03–08** — **all six corrected
+   2026-08-17** to `cargo test <filter> 2>&1 | grep -E "^test "` (filtered)
+   and `cargo test 2>&1 | grep -E "^test result:"` (full), both verified to
+   produce the real results before being written into the specs. The
+   convention is recorded in the M16 README § Notes. Phase-01's and
+   phase-02's own blocks were deliberately **left as-drafted**: those phases
+   are `done` and their blocks are the historical record of what actually
+   produced their pasted evidence — rewriting them would falsify that trail.
+
+**Gate exception lifted 2026-08-17.** The `hooks_land_on_private_server`
+regression is fixed (`cb637df`), so M16 phase gates are the four standard
+commands with no exception. The note is removed from the M16 README.
 
 **Active phase: phase-03 — anthropic-gemini-two-phase**
 (`docs/dev/milestones/M16-llm-stream-robustness/phase-03-anthropic-gemini-two-phase.md`,
-status: todo — re-run its re-derive commands, and fix its E2E capture block
-per defect 2 above, before dispatch). Advance via `/rexymcp:architect next`.
+status: todo — re-run its re-derive commands before dispatch). Advance via
+`/rexymcp:architect next`.
 
 Goal: chat turns can never fail silently during long-running LLM queries.
 Milestone README + all 8 phase docs drafted ahead at

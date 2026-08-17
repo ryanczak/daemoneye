@@ -215,8 +215,8 @@ grep -rc "stream_chunk" src/ai/mod.rs src/ai/backends/anthropic.rs src/ai/backen
 grep -c "STREAM_IDLE_TIMEOUT" src/ai/mod.rs >> "$A"
 grep -c "connect_timeout" src/ai/mod.rs >> "$A"
 grep -c "read_timeout" src/ai/mod.rs >> "$A"
-cargo test idle_stream_stall_is_reported_by_stream_next_with_timeout 2>&1 | tail -5 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
-cargo test 2>&1 | tail -3 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test idle_stream_stall_is_reported_by_stream_next_with_timeout 2>&1 | grep -E "^test " >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test 2>&1 | grep -E "^test result:" >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
 ```
 
 Paste-fidelity self-check (append the verdict line to the entry):

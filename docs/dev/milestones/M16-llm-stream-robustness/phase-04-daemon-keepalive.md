@@ -317,8 +317,8 @@ grep -c "with_keepalive" src/daemon/executor/mod.rs >> "$A"
 grep -c "with_keepalive" src/daemon/stream.rs >> "$A"
 grep -c "maybe_keepalive" src/daemon/executor/foreground.rs >> "$A"
 grep -c "from_secs(30)" src/daemon/stream.rs >> "$A"
-cargo test keepalive 2>&1 | tail -5 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
-cargo test 2>&1 | tail -3 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test keepalive 2>&1 | grep -E "^test " >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test 2>&1 | grep -E "^test result:" >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
 ```
 
 Paste-fidelity self-check (append the verdict line to the entry):

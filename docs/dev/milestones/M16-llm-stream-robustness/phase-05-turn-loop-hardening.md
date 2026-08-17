@@ -281,8 +281,8 @@ grep -c "struct ChatTaskGuard" src/daemon/stream.rs >> "$A"
 grep -c "MAX_CHANNEL_CLOSED_RETRIES" src/daemon/stream.rs >> "$A"
 grep -c "Ok(None) => break," src/daemon/stream.rs >> "$A"
 grep -c "pub turn_timeout_secs" src/config/types.rs >> "$A"
-cargo test panicking_chat_task_is_classified 2>&1 | tail -5 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
-cargo test 2>&1 | tail -3 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test panicking_chat_task_is_classified 2>&1 | grep -E "^test " >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test 2>&1 | grep -E "^test result:" >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
 ```
 
 Paste-fidelity self-check (append the verdict line to the entry):

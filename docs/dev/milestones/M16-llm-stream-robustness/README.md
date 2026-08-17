@@ -88,14 +88,28 @@ the M4 precedent and WORKFLOW § "Run every count criterion".
 
 ## Notes
 
-**Gate exception (2026-08-16, until lifted):** the full `cargo test` suite
-carries one pre-existing failure, `hooks_land_on_private_server` — a
-post-M15 regression from `90567c3` in the parallel LLM-API-client work
-stream (see NEXT.md "Deferred follow-ups"). M16 phase gates use
-`cargo test --lib` plus the phase's own targeted test filters; reviews
-treat that single named failure as a documented exception, never as a phase
-defect, and no M16 phase may "fix" it. Remove this note (and restore plain
-`cargo test` in the remaining phase docs) once the regression is fixed
-upstream.
+**Gate exception — lifted 2026-08-17.** The exception covered one
+pre-existing full-suite failure, `hooks_land_on_private_server`, bisected to
+`90567c3`. Root cause turned out to be a live production regression, not a
+test defect: that commit's hardening wrapped `#{session_name}` in nested
+single quotes in the four **global** hook commands, which tmux rejects as a
+syntax error, so `set-hook -g` failed and left `pane-died`,
+`after-new-session`, `client-attached` and `client-detached` unset. The
+failure was invisible in `daemon.log` because only the spawn `io::Result`
+was checked, never tmux's exit status. Fixed in `cb637df` (architect hotfix:
+`#{q:session_name}`, tmux's shell-quote format modifier, plus a
+`log_hook_install_result` helper that checks exit status and logs stderr).
+Phase-02 was the first phase to clear the plain `cargo test` gate with no
+exception. **M16 phase gates are the four standard commands — no
+exception applies.**
+
+**E2E capture shape (added 2026-08-17, from phase-02's review).** Capture
+test evidence with `cargo test <filter> 2>&1 | grep -E "^test "` (filtered
+runs) and `cargo test 2>&1 | grep -E "^test result:"` (full runs) — **never
+`tail -N`**. `tail` captures the *last* test binary (isolation, or
+doc-tests), not the lib binary where the results are, so a passing run
+pastes as `0 passed … N filtered out` and the evidence fails to demonstrate
+its own claim. Phase-02 shipped that way before the pattern was caught; the
+blocks in phases 03–08 were corrected in the same pass.
 
 (retrospective at close)

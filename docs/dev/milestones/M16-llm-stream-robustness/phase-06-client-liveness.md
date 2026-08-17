@@ -199,8 +199,8 @@ is run by the architect at milestone close. Hermetic evidence:
 A=/tmp/e2e-06.txt; : > "$A"
 grep -c "PHASE1_SILENCE_TIMEOUT_SECS" src/cli/commands/stream.rs >> "$A"
 grep -c "Daemon stopped responding" src/cli/commands/stream.rs src/cli/commands/ask.rs >> "$A"
-cargo test silence 2>&1 | tail -5 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
-cargo test 2>&1 | tail -3 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test silence 2>&1 | grep -E "^test " >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test 2>&1 | grep -E "^test result:" >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
 ```
 
 Paste-fidelity self-check (append the verdict line to the entry):

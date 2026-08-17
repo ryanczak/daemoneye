@@ -348,8 +348,8 @@ grep -c "Cancel { session_id" src/ipc.rs >> "$A"
 grep -c "cancel_turn" src/daemon/server/mod.rs >> "$A"
 grep -c "register_turn" src/daemon/stream.rs >> "$A"
 grep -c "send_cancel" src/cli/commands/stream.rs >> "$A"
-cargo test cancel 2>&1 | tail -5 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
-cargo test 2>&1 | tail -3 >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test cancel 2>&1 | grep -E "^test " >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
+cargo test 2>&1 | grep -E "^test result:" >> "$A"; echo "exit=${PIPESTATUS[0]}" >> "$A"
 ```
 
 Paste-fidelity self-check (append the verdict line to the entry):
