@@ -243,4 +243,8 @@ pub enum AiEvent {
     },
     Done(TokenBreakdown),
     Error(String),
+    /// Non-terminal advisory the user should see (truncation, refusal,
+    /// dropped/unknown tool call, malformed provider frames). Forwarded to the
+    /// chat client as a SystemMsg; log-and-ignore in non-interactive consumers.
+    Notice(String),
 }

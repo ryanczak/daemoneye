@@ -1,7 +1,7 @@
 # Phase 07: Surface silent conditions — truncation, refusal, unknown tools, malformed frames, empty replies
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03
 **Estimated diff:** ~260 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -259,3 +259,57 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-18 07:46 (progress)
+
+Started phase 07. Flipped phase doc + milestone README to `in-progress`.
+Adding `AiEvent::Notice(String)` and letting the compiler drive the match-arm
+additions.
+
+### Update — 2026-08-18 08:02 (progress)
+
+All six code tasks landed: `AiEvent::Notice(String)` with its stream.rs
+SystemMsg arm and log-and-ignore arms in the remaining consumers; truncation/
+refusal/unknown-tool notices in all three backends (unknown-tool notice emitted
+only at the real emission sites — anthropic `flush_tool_call`, gemini :382 else
+branch, openai dispatch else); malformed-frame counting with a single
+end-of-stream notice; empty-reply guard in `stream.rs` Done arm. Renamed
+`flush_unknown_tool_sends_nothing` → `flush_unknown_tool_sends_notice` and
+asserted the Notice payload (that test had to change: the unknown-tool path now
+*does* emit). Full gate run pending fmt.
+
+### Update — 2026-08-18 08:05 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim and unmodified into
+`/tmp/e2e-07.txt`. Full transcript, mechanically captured (`cat
+/tmp/e2e-07.txt`):
+
+```text
+1
+1
+src/ai/backends/anthropic.rs:5
+src/ai/backends/gemini.rs:4
+src/ai/backends/openai.rs:4
+src/ai/backends/anthropic.rs:0
+src/ai/backends/gemini.rs:0
+src/ai/backends/openai.rs:0
+1
+test result: ok. 1321 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
+exit=0
+```
+
+Paste-fidelity check (phase doc § End-to-end verification, run verbatim):
+the fenced block above diffs cleanly against `/tmp/e2e-07.txt` → PASTE MATCH.

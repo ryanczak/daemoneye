@@ -707,6 +707,9 @@ where
                     send_response_split(tx, Response::Error(e)).await?;
                     return Ok(());
                 }
+                AiEvent::Notice(n) => {
+                    send_response_split(tx, Response::SystemMsg(format!("⚠ {n}"))).await?;
+                }
                 AiEvent::Done(usage) => {
                     // Token pressure is the sole driver of context compaction now
                     // that the message-count cap has been removed. A provider that
@@ -724,7 +727,15 @@ where
                     }
                     if pending_calls.is_empty() {
                         // No tool calls — this is the final answer.
-                        if !full_response.is_empty() {
+                        if full_response.is_empty() {
+                            send_response_split(
+                                tx,
+                                Response::SystemMsg(
+                                    "The model returned an empty reply.".to_string(),
+                                ),
+                            )
+                            .await?;
+                        } else {
                             messages.push(Message {
                                 role: "assistant".to_string(),
                                 content: full_response.clone(),

@@ -218,6 +218,7 @@ impl AiClient for OpenAiClient {
             let mut calls: Vec<ToolCallAcc> = Vec::new();
             let mut sse = crate::ai::SseBuffer::new();
             let mut usage = TokenBreakdown::default();
+            let mut malformed_frames: u32 = 0;
 
             let drain: anyhow::Result<()> = 'drain: loop {
                 let timeout =
@@ -233,59 +234,76 @@ impl AiClient for OpenAiClient {
                             if data == "[DONE]" {
                                 break 'drain Ok(());
                             }
-                            if let Ok(v) = serde_json::from_str::<Value>(&data) {
+                            match serde_json::from_str::<Value>(&data) {
                                 // Providers can report failures as an in-stream error
                                 // payload after the 200; dropping it would surface as
                                 // a silent empty response.
-                                if let Some(err) = v.get("error") {
-                                    let msg = err
-                                        .get("message")
-                                        .and_then(|m| m.as_str())
-                                        .map(str::to_string)
-                                        .unwrap_or_else(|| err.to_string());
-                                    break 'drain Err(anyhow::anyhow!(
-                                        "AI stream returned an error: {msg}"
-                                    ));
-                                }
-                                if let Some(delta) =
-                                    v["choices"].get(0).and_then(|c| c["delta"].as_object())
-                                {
-                                    if !first_token_seen && delta_carries_token(delta) {
-                                        first_token_seen = true;
+                                Ok(v) => {
+                                    if let Some(err) = v.get("error") {
+                                        let msg = err
+                                            .get("message")
+                                            .and_then(|m| m.as_str())
+                                            .map(str::to_string)
+                                            .unwrap_or_else(|| err.to_string());
+                                        break 'drain Err(anyhow::anyhow!(
+                                            "AI stream returned an error: {msg}"
+                                        ));
                                     }
-                                    if let Some(content) =
-                                        delta.get("content").and_then(|c| c.as_str())
-                                        && !content.is_empty()
+                                    if let Some(delta) =
+                                        v["choices"].get(0).and_then(|c| c["delta"].as_object())
                                     {
-                                        let _ = tx.send(AiEvent::Token(content.to_string()));
-                                    }
-                                    if let Some(tool_calls) =
-                                        delta.get("tool_calls").and_then(|t| t.as_array())
-                                    {
-                                        for tc in tool_calls {
-                                            apply_tool_call_delta(&mut calls, tc);
+                                        if !first_token_seen && delta_carries_token(delta) {
+                                            first_token_seen = true;
+                                        }
+                                        if let Some(content) =
+                                            delta.get("content").and_then(|c| c.as_str())
+                                            && !content.is_empty()
+                                        {
+                                            let _ = tx.send(AiEvent::Token(content.to_string()));
+                                        }
+                                        if let Some(tool_calls) =
+                                            delta.get("tool_calls").and_then(|t| t.as_array())
+                                        {
+                                            for tc in tool_calls {
+                                                apply_tool_call_delta(&mut calls, tc);
+                                            }
                                         }
                                     }
-                                }
-                                if let Some(reason) = v["choices"]
-                                    .get(0)
-                                    .and_then(|c| c["finish_reason"].as_str())
-                                {
-                                    match reason {
-                                        "length" => log::warn!(
-                                            "OpenAI response truncated: finish_reason=length \
-                                             (max_tokens reached) for model {}",
-                                            self.model
-                                        ),
-                                        "content_filter" => log::warn!(
-                                            "OpenAI response stopped by content filter for model {}",
-                                            self.model
-                                        ),
-                                        _ => {}
+                                    if let Some(reason) = v["choices"]
+                                        .get(0)
+                                        .and_then(|c| c["finish_reason"].as_str())
+                                    {
+                                        match reason {
+                                            "length" => {
+                                                log::warn!(
+                                                    "OpenAI response truncated: finish_reason=length \
+                                                     (max_tokens reached) for model {}",
+                                                    self.model
+                                                );
+                                                let _ = tx.send(AiEvent::Notice("response truncated: the model hit its max_tokens limit — the answer may be incomplete".to_string()));
+                                            }
+                                            "content_filter" => {
+                                                log::warn!(
+                                                    "OpenAI response stopped by content filter for model {}",
+                                                    self.model
+                                                );
+                                                let _ = tx.send(AiEvent::Notice("the provider stopped this response (content_filter)".to_string()));
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
+                                        usage = parse_openai_usage(u);
                                     }
                                 }
-                                if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
-                                    usage = parse_openai_usage(u);
+                                Err(_e) => {
+                                    malformed_frames += 1;
+                                    if malformed_frames == 1 {
+                                        log::warn!(
+                                            "malformed SSE frame from OpenAI: {}",
+                                            &data[..data.len().min(120)]
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -298,6 +316,11 @@ impl AiClient for OpenAiClient {
             match drain {
                 Ok(()) => {
                     crate::ai::record_stream_success();
+                    if malformed_frames > 0 {
+                        let _ = tx.send(AiEvent::Notice(format!(
+                            "provider sent {malformed_frames} malformed stream frame(s) — the response may be incomplete"
+                        )));
+                    }
                     for acc in calls {
                         if acc.name.is_empty() {
                             continue;
@@ -324,6 +347,10 @@ impl AiClient for OpenAiClient {
                                         "model called unknown tool '{}' — call dropped",
                                         acc.name
                                     );
+                                    let _ = tx.send(AiEvent::Notice(format!(
+                                        "the model called unknown tool '{}' — the call was dropped",
+                                        acc.name
+                                    )));
                                 }
                             }
                             Err(e) => {
