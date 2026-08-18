@@ -242,13 +242,32 @@ prohibition #5. Both supporting evidence and cost data are above.
 
 ### Outstanding before close
 
-1. **Five live exit criteria, unrun.** Long generation > 5 min; `kill -STOP`
-   the daemon mid-turn → client error ≤ 90 s; `await_agent_result` ≥ 300 s
-   with `KeepAlive` frames throughout; unknown-tool-only response → visible
-   `SystemMsg`; Esc mid-stream → clean cancel with `⊘ cancelled` and no EPIPE.
+1. **Five live exit criteria.** Three verified 2026-08-18; two still pending.
+   - **D3 (`await_agent_result` ≥ 300 s with KeepAlive): PASS** — a
+     `host-health-check` ghost ran ~45 min across 14 data-gathering rounds and
+     completed without client disconnect (session JSONL
+     `ghost-host-health-check-5d62751fbf4545fa9922d6fc5cecac40`).
+   - **D4 (unknown-tool-only → visible SystemMsg): PASS** — `daemon.log`
+     2026-08-18T21:27:38Z `WARN model called unknown tool 'list_all_ssh_private_keys'
+     — call dropped`, and all three backends
+     (`openai.rs`/`anthropic.rs`/`gemini.rs`) send `AiEvent::Notice` on the
+     same path, so a `SystemMsg` was produced. (Ghost writeup `/tmp/unknown-tool-m16.md`
+     is stale: it was written before the real attempt and never updated.)
+   - **D5 (Esc mid-stream → clean cancel): PASS** — `daemon.log`
+     `21:31:33Z INFO cancel request for session b6443ba842634d05: found=true`;
+     turn aborted cleanly, session continued. Log noise noted in item 4 below.
+   - **D1 (long generation > 5 min): PENDING.**
+   - **D2 (`kill -STOP` daemon mid-turn → client error ≤ 90 s): PENDING** —
+     freezes the interactive session during the test; run last.
    These touch the live daemon and the operator's tmux server, so they are
    **not** run unprompted — see the phase-01 incident.
-2. **`CLAUDE.md`** — the `src/daemon/utils/` row enumerates that directory's
-   files and does not list the new `keepalive.rs`. Not gated by
-   `tests/doc_truth.rs`.
+2. **`CLAUDE.md`** — *fixed 2026-08-18*: added the `keepalive.rs` row to the
+   `src/daemon/utils/` list.
 3. **The fold decision** above.
+4. **Log noise on clean cancel (2026-08-18)** — a successful ESC cancel emits
+   two `ERROR Error handling client: Broken pipe (os error 32)` lines. Root
+   cause: the client drops the request socket before the daemon replies `Ok`
+   on it from the out-of-band cancel handler (`server/mod.rs` send_response_split
+   on a closed peer). Benign (daemon survives; criterion met), but noisy on
+   every interrupt. Candidate fix: ignore `Broken pipe`/`ConnectionReset` on
+   that reply. See incident memory `m16-d5-epipe-after-cancel`.
