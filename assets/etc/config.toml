@@ -20,6 +20,7 @@ input_cost_per_mtok       = 3.00
 output_cost_per_mtok      = 15.00
 cache_read_cost_per_mtok  = 0.30
 cache_write_cost_per_mtok = 3.75
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.opus]
 # provider = "anthropic"
@@ -29,6 +30,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 75.00
 # cache_read_cost_per_mtok  = 1.50
 # cache_write_cost_per_mtok = 18.75
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.haiku]
 # provider = "anthropic"
@@ -38,6 +40,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 4.00
 # cache_read_cost_per_mtok  = 0.08
 # cache_write_cost_per_mtok = 1.00
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # ── OpenAI ───────────────────────────────────────────────────────────────────
 
@@ -49,6 +52,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 10.00
 # cache_read_cost_per_mtok  = 1.25
 # cache_write_cost_per_mtok = 0.0
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.gpt4o-mini]
 # provider = "openai"
@@ -58,6 +62,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 0.60
 # cache_read_cost_per_mtok  = 0.075
 # cache_write_cost_per_mtok = 0.0
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.o1]
 # provider = "openai"
@@ -67,6 +72,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 60.00
 # cache_read_cost_per_mtok  = 7.50
 # cache_write_cost_per_mtok = 0.0
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.o3-mini]
 # provider = "openai"
@@ -76,6 +82,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 4.40
 # cache_read_cost_per_mtok  = 0.55
 # cache_write_cost_per_mtok = 0.0
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # ── Google Gemini ─────────────────────────────────────────────────────────────
 # cache_write_cost_per_mtok = 0.0 for all Gemini models: Google charges
@@ -92,6 +99,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 12.00
 # cache_read_cost_per_mtok  = 0.50
 # cache_write_cost_per_mtok = 0.0
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.gemini31-flash-lite]
 # provider = "gemini"
@@ -101,6 +109,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 1.50
 # cache_read_cost_per_mtok  = 0.025
 # cache_write_cost_per_mtok = 0.0
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.gemini3-flash]
 # provider = "gemini"
@@ -110,6 +119,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 3.00
 # cache_read_cost_per_mtok  = 0.125
 # cache_write_cost_per_mtok = 0.0
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.gemini25-pro]
 # provider = "gemini"
@@ -119,6 +129,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 10.00
 # cache_read_cost_per_mtok  = 0.125
 # cache_write_cost_per_mtok = 0.0
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.gemini25-flash]
 # provider = "gemini"
@@ -128,6 +139,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 2.50
 # cache_read_cost_per_mtok  = 0.03
 # cache_write_cost_per_mtok = 0.0
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.gemini25-flash-lite]
 # provider = "gemini"
@@ -137,6 +149,7 @@ cache_write_cost_per_mtok = 3.75
 # output_cost_per_mtok      = 0.40
 # cache_read_cost_per_mtok  = 0.01
 # cache_write_cost_per_mtok = 0.0
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # ── Local (no API key required, always $0) ───────────────────────────────────
 
@@ -145,14 +158,13 @@ cache_write_cost_per_mtok = 3.75
 # model     = "llama3.2"
 # base_url  = "http://localhost:11434/v1"
 # context_window_tokens = 8192
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # [models.lmstudio]
 # provider = "lmstudio"
 # model    = "qwen3-27b"
 # context_window_tokens = 32768
-
-# Any model entry may also set the per-response generation cap (default 4096):
-# max_tokens = 8192
+# max_tokens = 8192   # per-response generation cap (default 8192)
 
 # ── AI prompt ────────────────────────────────────────────────────────────────
 

@@ -623,7 +623,7 @@ Each named model is a separate TOML table. `[models.default]` is required and us
 | `model` | string | `"claude-sonnet-4-6"` | Model name passed to the provider API. |
 | `base_url` | string | *(provider default)* | Override the API base URL. Useful for pointing at a remote Ollama host, LM Studio instance, or any OpenAI-compatible proxy. |
 | `context_window_tokens` | integer | *(model lookup)* | Override the context-window size in tokens. Set this for local models where the automatic lookup is inaccurate. |
-| `max_tokens` | integer | `4096` | Maximum tokens the model may generate per response. Raise it for long-form answers or models whose reasoning tokens count against the output budget. |
+| `max_tokens` | integer | `8192` | Maximum tokens the model may generate per response. Raise it for long-form answers or models whose reasoning tokens count against the output budget. |
 | `input_cost_per_mtok` | float | *(built-in default)* | Override input cost in USD per million tokens. |
 | `output_cost_per_mtok` | float | *(built-in default)* | Override output cost in USD per million tokens. |
 | `cache_read_cost_per_mtok` | float | *(built-in default)* | Override cache-read cost in USD per million tokens. |

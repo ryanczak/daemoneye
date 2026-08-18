@@ -659,7 +659,7 @@ pub struct ModelEntry {
     #[serde(default)]
     pub context_window_tokens: Option<u32>,
     /// Maximum tokens the model may generate per response.
-    /// Defaults to 4096; raise it for long-form answers or models whose
+    /// Defaults to 8192; raise it for long-form answers or models whose
     /// reasoning tokens count against the output budget.
     #[serde(default)]
     pub max_tokens: Option<u32>,
@@ -748,9 +748,9 @@ impl ModelEntry {
     }
 
     /// Maximum tokens the model may generate per response.
-    /// `max_tokens` from the config wins; otherwise 4096.
+    /// `max_tokens` from the config wins; otherwise 8192.
     pub fn effective_max_tokens(&self) -> u32 {
-        self.max_tokens.unwrap_or(4096)
+        self.max_tokens.unwrap_or(8192)
     }
 
     /// Context-window size in tokens.  `context_window_tokens` wins; otherwise
