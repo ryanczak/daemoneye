@@ -265,12 +265,50 @@ swap. Review confirmed the backend diffs are pure reindentation around
 `first_token_seen`, `record_stream_success()` and the `'attempt` loops —
 nothing out of scope.
 
-**Active phase: phase-08 — cancellation**
-(`docs/dev/milestones/M16-llm-stream-robustness/phase-08-cancellation.md`,
-status: todo — **staged 2026-08-18**). The **last in-scope M16 phase**; the
-loop stops at the boundary after it regardless of outcome.
+**phase-08 — cancellation: done (escalated) 2026-08-18**, commit `883e6ed` +
+approval `276bc5b`. Two dispatches: the first hard-failed with a
+`NoProgressStall` on an unsatisfiable architect criterion (`grep -c "Cancel {
+session_id"`, impossible once `cargo fmt` renders the variant multi-line);
+criterion fixed in `d87b139` and measured in **both** directions, then the
+refined re-dispatch completed 7/7 in 132 turns. Review verified the lock
+invariant (`.unwrap_or_log()`, no `.unwrap()`), distinct registry session-ids
+per test, `never()` not ported, and that `send_cancel` opens its own
+`UnixStream` rather than touching the streaming reader. Lib count 1327.
 
-Staging re-derived Current state (`Request` enum `ipc.rs:139`, dispatch match
+---
+
+## Active phase: **none** — M16 is at its milestone boundary
+
+All eight M16 phases are `done`. **The milestone is not closed**: five live
+exit criteria are unrun and one calibration fold awaits a PE decision. Full
+retrospective in
+`docs/dev/milestones/M16-llm-stream-robustness/README.md` § Retrospective.
+
+**Awaiting PE:**
+
+1. **Five live exit criteria**, architect-run at close per the M14/M15
+   convention, **not yet run** — they touch the live daemon and the
+   operator's tmux server, and the phase-01 incident (an executor running
+   `tmux kill-server` on the default server) is why they are not run
+   unprompted. They are: a > 5 min generation surviving without a client-side
+   kill; `kill -STOP` the daemon mid-turn → client error naming the hang
+   within 90 s; `await_agent_result` ≥ 300 s with `KeepAlive` frames
+   throughout; an unknown-tool-only response yielding a visible `SystemMsg`;
+   and Esc mid-stream cancelling cleanly with a `⊘ cancelled` marker and no
+   EPIPE in `daemon.log`.
+2. **The calibration fold** — five occurrences of one shape (a criterion
+   validated in only one direction). Proposed WORKFLOW.md text is in the
+   retrospective; **not applied**, per the architect skill's prohibition #5.
+3. **Go/no-go on the next milestone.**
+
+**Also outstanding (minor):** `CLAUDE.md`'s `src/daemon/utils/` row does not
+list the new `keepalive.rs`. Not gated by `tests/doc_truth.rs`.
+
+---
+
+## Historical: M16 phase staging records
+
+**phase-08 staging:** re-derived Current state (`Request` enum `ipc.rs:139`, dispatch match
 `server/mod.rs:172`+ with 25 arms, `StreamOutcome::Interrupted` moved to
 `stream.rs:216` by phase-06's `Deadline` insertion, client `session_id` at
 `:88`/`:130`, `daemon/mod.rs` module list alphabetical at `:27-46`).
