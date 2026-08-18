@@ -738,21 +738,28 @@ mod tests {
         let events_dir = crate::config::events_dir();
         std::fs::create_dir_all(&events_dir).unwrap();
 
-        let seg_path_old = events_dir.join("events-20260101.jsonl");
+        // Relative dates keep the test independent of the wall clock: `old`
+        // is > retention and `new` is recent, so only `old` is swept no
+        // matter what the machine's date is.
+        let today = chrono::Utc::now().date_naive();
+        let old = (today - chrono::Duration::days(100)).format("%Y%m%d");
+        let new = (today - chrono::Duration::days(2)).format("%Y%m%d");
+
+        let seg_path_old = events_dir.join(format!("events-{old}.jsonl"));
         write_event(
             &seg_path_old,
             "old segment alpha event",
             "2026-01-01T00:00:00Z",
         );
-        crate::memory::index::index_event_segment("events-20260101").unwrap();
+        crate::memory::index::index_event_segment(&format!("events-{old}")).unwrap();
 
-        let seg_path_new = events_dir.join("events-20260803.jsonl");
+        let seg_path_new = events_dir.join(format!("events-{new}.jsonl"));
         write_event(
             &seg_path_new,
             "new segment beta event",
             "2026-08-03T00:00:00Z",
         );
-        crate::memory::index::index_event_segment("events-20260803").unwrap();
+        crate::memory::index::index_event_segment(&format!("events-{new}")).unwrap();
 
         sweep_event_segments(14);
 
@@ -779,8 +786,8 @@ mod tests {
 
         let new_map: i64 = conn
             .query_row(
-                "SELECT count(*) FROM events_map WHERE segment = 'events-20260803'",
-                [],
+                "SELECT count(*) FROM events_map WHERE segment = ?1",
+                (format!("events-{new}"),),
                 |r| r.get(0),
             )
             .unwrap();

@@ -463,11 +463,13 @@ runs mean:
 - `cargo test keepalive` prints all four Task-7 tests `ok` (plus the
   phase-02 `delta_carries_token_ignores_empty_keepalive`, which the phase's
   `keepalive_` filter excludes).
-- The full-suite `cargo test` shows `1314 passed; 1 failed`. The single
-  failure (`event_log::tests::sweeping_a_segment_leaves_other_segments_indexed`)
-  reproduces on a clean tree at `8557a75` with this phase's changes stashed —
-  it is pre-existing and unrelated to this phase (the four M16 phase gates are
-  the standard commands; this failure predates phase-04).
+- Pre-gate full-suite run: `1314 passed; 1 failed` — the single failure
+  (`event_log::tests::sweeping_a_segment_leaves_other_segments_indexed`)
+  was diagnosed as a wall-clock date bug in that M11 test (its fixed
+  `2026-08-03` "new" fixture fell inside the 14-day retention once the real
+  clock passed 2026-08-04) and fixed by making the fixture dates relative;
+  the post-fix full suite is `1315 passed; 0 failed` (see pre-completion
+  gate; more in the follow-up Update Log entry).
 
 Repro evidence — the required negative run, captured before the passing run:
 
@@ -503,6 +505,28 @@ live capture. It was run from the repo root; result:
 PASTE MATCH
 ```
 )
+
+### Update — 2026-08-18 00:55 (progress)
+
+Pre-completion gate forced a resolution of the one full-suite failure. Root
+cause: `event_log::tests::sweeping_a_segment_leaves_other_segments_indexed`
+(fixed-file M11 test) is a wall-clock date bug, not a phase-04 defect. Its
+"new" fixture was `events-20260803.jsonl`; with the real clock now past
+2026-08-04, `sweep_event_segments(14)` considers `2026-08-03` inside the
+14-day retention window (verified: today 2026-08-18 → cutoff 2026-08-04,
+2026-08-03 < cutoff) and deletes it, so the `new segment should survive`
+assert failed on the *production* sweep path. The test was date-anchored to
+"14 days before the drafting date (2026-08-17)" and only ever passed because
+no real run happened after the fixture went stale.
+
+Fix (minimal, out-of-contract but gated by the gate): the test now builds
+its fixtures relative to the real clock — `old = today - 100 days`,
+`new = today - 2 days` — so `old` is always swept and `new` always survives
+under the 14-day retention regardless of the machine's date. Same assertions,
+same structure; no production code changed. Post-fix gates: `cargo fmt`,
+`cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`
+all clean; `cargo test` full suite `1315 passed; 0 failed`; the four
+phase-04 keepalive tests still `ok`.
 
 
 
