@@ -341,6 +341,16 @@ mod tests {
     }
 
     #[test]
+    fn turn_timeout_secs_parses_and_defaults_to_zero() {
+        let toml = "[limits]\nturn_timeout_secs = 10\n";
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.limits.turn_timeout_secs, 10);
+
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.limits.turn_timeout_secs, 0);
+    }
+
+    #[test]
     fn cap_u32_sentinel() {
         assert_eq!(LimitsConfig::cap_u32(0), None);
         assert_eq!(LimitsConfig::cap_u32(1), Some(1));

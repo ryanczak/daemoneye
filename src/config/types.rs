@@ -438,6 +438,13 @@ pub struct LimitsConfig {
     /// Example: `read_file = 200` raises the cap for that tool only.
     #[serde(default)]
     pub per_tool: std::collections::HashMap<String, u32>,
+
+    /// Maximum wall-clock seconds for a single interactive assistant turn,
+    /// including tool execution. On expiry the turn ends with a visible
+    /// error. Ghost shells have their own fixed 300 s per-turn budget.
+    /// Default: 0 (no limit). Recommended when enabled: 3600.
+    #[serde(default)]
+    pub turn_timeout_secs: u64,
 }
 
 fn default_per_tool_batch() -> u32 {
@@ -456,6 +463,7 @@ impl Default for LimitsConfig {
             max_turns: 0,
             max_tool_calls_per_session: 0,
             per_tool: std::collections::HashMap::new(),
+            turn_timeout_secs: 0,
         }
     }
 }

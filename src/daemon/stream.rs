@@ -82,12 +82,23 @@ where
         cost_attribution,
     } = ctx;
 
+    let turn_deadline = (config.limits.turn_timeout_secs > 0).then(|| {
+        tokio::time::Instant::now()
+            + std::time::Duration::from_secs(config.limits.turn_timeout_secs)
+    });
+
     // Per-turn tool-call loop guard — spans every batch cycle in this turn.
     // Declared outside the batch loop so sequential single-call batches
     // accumulate (the 2026-08-11 per-batch cap bug). Approval-gated tools
     // are always exempt — the user's per-call approval prompt is the gate.
     let mut tool_call_counts: HashMap<&str, u32> = HashMap::new();
     let mut total_turn_call_count: u32 = 0;
+
+    // Bounded re-issue when the chat task dies without a terminal event
+    // (panic / backend bug). Without the bound this was an infinite silent
+    // retry loop — the user saw only KeepAlives while API calls burned.
+    const MAX_CHANNEL_CLOSED_RETRIES: u32 = 2;
+    let mut channel_closed_retries: u32 = 0;
 
     loop {
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
@@ -116,7 +127,7 @@ where
             })
             .unwrap_or_default();
 
-        tokio::spawn(async move {
+        let mut chat_task = ChatTaskGuard::new(tokio::spawn(async move {
             if let Err(e) = client_instance
                 .chat(
                     &sys_prompt_turn,
@@ -129,12 +140,25 @@ where
             {
                 let _ = ai_tx.send(AiEvent::Error(e.to_string()));
             }
-        });
+        }));
 
         let mut full_response = String::new();
         let mut pending_calls: Vec<PendingCall> = Vec::new();
 
         loop {
+            if let Some(deadline) = turn_deadline
+                && tokio::time::Instant::now() >= deadline
+            {
+                send_response_split(
+                    tx,
+                    Response::Error(format!(
+                        "Turn exceeded [limits] turn_timeout_secs ({}s) — aborting.",
+                        config.limits.turn_timeout_secs
+                    )),
+                )
+                .await?;
+                return Ok(());
+            }
             let event = match tokio::time::timeout(
                 std::time::Duration::from_secs(crate::daemon::utils::KEEPALIVE_PERIOD_SECS),
                 ai_rx.recv(),
@@ -142,7 +166,32 @@ where
             .await
             {
                 Ok(Some(ev)) => ev,
-                Ok(None) => break,
+                Ok(None) => {
+                    let cause = chat_task.describe_end().await;
+                    channel_closed_retries += 1;
+                    if channel_closed_retries > MAX_CHANNEL_CLOSED_RETRIES {
+                        log::error!(
+                            "AI event channel closed without Done/Error, giving up after \
+                             {MAX_CHANNEL_CLOSED_RETRIES} retries: {cause}"
+                        );
+                        send_response_split(
+                            tx,
+                            Response::Error(format!(
+                                "AI backend ended the stream without completing \
+                                 (after {} attempts): {cause}",
+                                channel_closed_retries
+                            )),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                    log::warn!(
+                        "AI event channel closed without Done/Error (attempt \
+                         {channel_closed_retries}/{MAX_CHANNEL_CLOSED_RETRIES}), \
+                         re-issuing the AI call: {cause}"
+                    );
+                    break;
+                }
                 Err(_timeout) => {
                     // No token in 15 s — send a keep-alive so the client doesn't
                     // hit its per-token deadline (slow local LLMs can stall longer).
@@ -1206,6 +1255,55 @@ fn truncate_tool_results(
         .collect()
 }
 
+/// Abort the in-flight provider stream when the turn ends early for any
+/// reason (error return, client gone, deadline). Without this the spawned
+/// chat task keeps consuming (and billing) the provider stream with nobody
+/// listening.
+struct ChatTaskGuard(Option<tokio::task::JoinHandle<()>>);
+
+impl ChatTaskGuard {
+    fn new(handle: tokio::task::JoinHandle<()>) -> Self {
+        ChatTaskGuard(Some(handle))
+    }
+
+    /// Reap the task and describe how it ended — used when the event channel
+    /// closed without a terminal `Done`/`Error` event.
+    async fn describe_end(&mut self) -> String {
+        match self.0.take() {
+            Some(handle) => match handle.await {
+                Ok(()) => "backend returned without sending Done or Error \
+                           (backend bug)"
+                    .to_string(),
+                Err(e) if e.is_panic() => {
+                    format!("chat task panicked: {}", panic_message(e))
+                }
+                Err(e) => format!("chat task was cancelled: {e}"),
+            },
+            None => "chat task already reaped".to_string(),
+        }
+    }
+}
+
+impl Drop for ChatTaskGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
+/// Extract the payload string from a panicked task's JoinError.
+fn panic_message(e: tokio::task::JoinError) -> String {
+    match e.try_into_panic() {
+        Ok(payload) => payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_string()),
+        Err(e) => e.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1278,5 +1376,44 @@ mod tests {
         let truncated = truncate_tool_results(results, None);
         assert_eq!(truncated.len(), 1);
         assert_eq!(truncated[0].content.len(), 200);
+    }
+
+    #[tokio::test]
+    async fn panicking_chat_task_is_classified() {
+        let handle = tokio::spawn(async { panic!("boom") });
+        let mut guard = ChatTaskGuard::new(handle);
+        let description = guard.describe_end().await;
+        assert!(
+            description.contains("panicked"),
+            "expected panic classification, got: {description}"
+        );
+        assert!(
+            description.contains("boom"),
+            "expected panic payload, got: {description}"
+        );
+    }
+
+    #[tokio::test]
+    async fn clean_return_without_done_is_named_backend_bug() {
+        let handle = tokio::spawn(async {});
+        let mut guard = ChatTaskGuard::new(handle);
+        let description = guard.describe_end().await;
+        assert!(
+            description.contains("without sending Done"),
+            "expected backend-bug classification, got: {description}"
+        );
+    }
+
+    #[tokio::test]
+    async fn guard_drop_aborts_task() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let handle = tokio::spawn(async move {
+            let _tx = tx;
+            std::future::pending::<()>().await;
+        });
+        let guard = ChatTaskGuard::new(handle);
+        drop(guard);
+        tokio::task::yield_now().await;
+        assert!(rx.await.is_err(), "oneshot should be dropped by the abort");
     }
 }

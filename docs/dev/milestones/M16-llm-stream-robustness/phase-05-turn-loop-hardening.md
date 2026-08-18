@@ -1,7 +1,7 @@
 # Phase 05: Turn-loop hardening — reap the chat task, bound the silent retry, optional turn deadline
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -288,9 +288,11 @@ paste the resulting `/tmp/e2e-05.txt` into a new Update Log entry headed
 
 - [ ] `grep -c "struct ChatTaskGuard" src/daemon/stream.rs` prints `1`
       (currently `0`).
-- [ ] `grep -c "MAX_CHANNEL_CLOSED_RETRIES" src/daemon/stream.rs` prints `3`
-      (currently `0`; const + two uses in the quoted arm — re-pin if your
-      final shape differs, before running the E2E block).
+- [ ] `grep -c "MAX_CHANNEL_CLOSED_RETRIES" src/daemon/stream.rs` prints `4`
+      (currently `0`; const + three uses in the quoted arm — const, the
+      comparison in `> MAX_CHANNEL_CLOSED_RETRIES`, and both log format
+      strings embed the constant, so the quoted arm yields 4, re-pinned from
+      the draft's 3 before the E2E run).
 - [ ] `grep -c "Ok(None) => break," src/daemon/stream.rs` prints `0`
       (currently `1`).
 - [ ] `grep -c "pub turn_timeout_secs" src/config/types.rs` prints `1`
@@ -354,6 +356,42 @@ None.
 
 ## Update Log
 
-(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+### Update — 2026-08-18 02:31 (started)
+
+Executor: turn-loop-hardening run. Status flipped `todo` → `in-progress`; milestone README row updated to match.
+
+Task 1: `ChatTaskGuard` + `panic_message` added above `mod tests`; spawn at stream.rs:125 wrapped in `let mut chat_task = ChatTaskGuard::new(tokio::spawn(...))` (task body unchanged; guard is per-outer-iteration and shadow-rebind aborts the prior attempt).
+Task 2: `MAX_CHANNEL_CLOSED_RETRIES = 2` const + `channel_closed_retries` counter added next to `total_turn_call_count`; `Ok(None) => break` replaced with the bounded re-issue arm (reap via `describe_end().await`, `Response::Error` + `return Ok(())` on exhaustion, warn + `break` on retry).
+Task 3: `[limits] turn_timeout_secs: u64` added to `LimitsConfig` (serde-default idiom, doc comment matches the phase text); `turn_deadline` computed at `run_conversation_loop` entry; the inner-loop deadline check sends `Response::Error("Turn exceeded [limits] turn_timeout_secs ({}s) — aborting.")` and returns, dropping the guard so `Drop` aborts the provider stream. `LimitsConfig::default()` initializer gained `turn_timeout_secs: 0` — the new field made the struct-literal default fail without it (compile error fixed).
+Task 4: four new tests — `panicking_chat_task_is_classified`, `clean_return_without_done_is_named_backend_bug`, `guard_drop_aborts_task` (stream.rs), `turn_timeout_secs_parses_and_defaults_to_zero` (src/config/mod.rs).
+Task 5: E2E block captured below.
+
+One acceptance-criterion adjustment, made **before** running the E2E block: `MAX_CHANNEL_CLOSED_RETRIES` greps to **4**, not the draft's 3 — the quoted Task-2 arm embeds the constant in the `> MAX...` comparison *and* in both `log::error!`/`log::warn!` format strings, so the per-file count is const + three uses. Re-pinned in the criterion with the rationale; the E2E transcript quotes the actual `4` from the real file.
 
 <!-- entries appended below this line -->
+### Update — 2026-08-18 02:30 (end-to-end verification)
+
+```sh
+1
+4
+0
+1
+test daemon::stream::tests::panicking_chat_task_is_classified ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1318 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test result: ok. 1319 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.94s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
+
+PASTE MATCH
