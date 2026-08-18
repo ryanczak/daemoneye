@@ -30,10 +30,55 @@ Read before starting:
 3. Read this entire phase doc before touching any code.
 4. Confirm the repo is on a clean branch with no uncommitted changes.
 
+## Gotchas — read before Task 2 and before writing any Update Log entry
+
+**1. Gemini calls `dispatch_tool_event` TWICE per `functionCall`, and only one
+of them is an emission site.** Phase-03 added `part_counts_as_token`
+(`gemini.rs:14`), a first-token predicate that calls
+`dispatch_tool_event("", fn_name, &args, None).is_some()` at **`gemini.rs:39`**
+purely to ask "would this tool dispatch?". The real emission site is
+**`gemini.rs:364`**. If you emit the unknown-tool `Notice` from wherever
+`dispatch_tool_event` returns `None`, you will fire it **from the predicate
+too** — once per frame, before the drain loop even decides to emit, and again
+at :376. Emit the notice **only** at the `:364` emission site's `else` branch
+(where `log::warn!("model called unknown tool …")` already sits at
+**`:376`**). Do **not** touch `part_counts_as_token`; it is a pure predicate
+and must stay silent.
+
+**2. Anthropic's unknown-tool site is in a helper, not the drain loop.** It is
+`flush_tool_call` at **`anthropic.rs:71`** — which does take
+`tx: &UnboundedSender<AiEvent>`, so it can emit a notice directly. Do not go
+looking for it in the drain loop; it is not there.
+
+**3. This phase is compiler-driven by design.** Adding `AiEvent::Notice`
+breaks every exhaustive `match` on `AiEvent` until each gains an arm. `cargo
+build` failing right after Task 1 is the mechanism working, **not** a blocker
+— add the arms the compiler names and continue. The consumer files that
+reference `AiEvent` today are: `src/daemon/stream.rs`, `ghost.rs`,
+`briefing.rs`, `auto_name.rs`, `digest.rs`, `scheduled.rs`, `session.rs`,
+`src/webhook/process.rs`, `src/cost.rs`, plus the three backends and
+`src/ai/tools/dispatch.rs` / `args.rs` (the last two construct events rather
+than matching them, so they may need nothing). **Let the compiler be the
+authority on which files need an arm — do not add arms speculatively.**
+
+**4. The verification discipline this milestone runs on** — phases 04, 05 and
+06 all followed it and were approved first try:
+
+> **Run every check once in the state where it is expected to fail.** A check
+> that has never produced its own negative is not evidence, however green it
+> is.
+
+If a criterion here turns out unsatisfiable or already-passing, **say so and
+stop** — report it as a blocker in the Update Log rather than producing output
+shaped like what it asked for. Every criterion below was measured in its
+failing state during staging.
+
 ## Current state
 
-(Current as of 2026-08-16; re-derive with
-`grep -rn "log::warn" src/ai/backends/ | grep -i "truncat\|refus\|filter\|unknown"`.)
+(**Re-derived 2026-08-18 immediately before staging.** The drafted line
+numbers were stale — phases 03 and 05 moved this code substantially. Every
+number below is from that re-run; prefer them over anything the Spec text
+still says.)
 
 - `AiEvent` is `src/ai/types/events.rs`; its only non-tool variants are
   `Token`, `Error(String)` (terminal), `Done(TokenBreakdown)` (terminal),
@@ -43,26 +88,29 @@ Read before starting:
   `src/daemon/briefing.rs`, `src/daemon/auto_name.rs`,
   `src/daemon/digest.rs`, `src/daemon/scheduled.rs`,
   `src/daemon/session.rs`, `src/webhook/process.rs`, `src/cost.rs`.
-- Log-only sites (all three backends), with their messages:
-  - `src/ai/backends/anthropic.rs` ~296–309 — `stop_reason` `"max_tokens"` /
-    `"refusal"` (`message_delta` handling).
-  - `src/ai/backends/gemini.rs` ~231–242 — `finishReason` `"MAX_TOKENS"` /
-    `"SAFETY"`.
-  - `src/ai/backends/openai.rs` ~231–247 — `finish_reason` `"length"` /
-    `"content_filter"`.
-  - Unknown-tool drops: `anthropic.rs` ~290–296 and `openai.rs` ~277–281,
-    both `log::warn!("model called unknown tool '{...}' — call dropped")`;
-    gemini's equivalent is near its `dispatch_tool_event` call
-    (`grep -n "unknown tool" src/ai/backends/gemini.rs`).
-  - Malformed SSE frames: all three backends parse each `data:` payload with
-    `if let Ok(v) = serde_json::from_str::<Value>(&data)` — a malformed
-    frame is silently skipped (`grep -n "if let Ok(v) = serde_json::from_str" src/ai/backends/*.rs`).
+- Log-only sites (all three backends), **line numbers re-derived 2026-08-18**:
+  - `src/ai/backends/anthropic.rs:321-330` — `match v["delta"]["stop_reason"]`
+    with `"max_tokens"` (`:323`) / `"refusal"` (`:328`).
+  - `src/ai/backends/gemini.rs:288-296` — `finishReason` `"MAX_TOKENS"`
+    (`:288`) / `"SAFETY"` (`:293`).
+  - `src/ai/backends/openai.rs:275-284` — `finish_reason` `"length"` (`:275`)
+    / `"content_filter"` (`:280`).
+  - Unknown-tool drops, all three `log::warn!("model called unknown tool
+    '{...}' — call dropped")`: **`anthropic.rs:71`** (inside `flush_tool_call`,
+    *not* the drain loop — see § Gotchas 2), **`openai.rs:324`**, and
+    **`gemini.rs:376`** (the `else` of the `dispatch_tool_event` call at
+    `:364` — see § Gotchas 1 for the predicate at `:39` you must NOT touch).
+  - Malformed SSE frames: each backend parses its `data:` payload with
+    `if let Ok(v) = serde_json::from_str::<Value>(&data)` — **`anthropic.rs:236`,
+    `gemini.rs:266`, `openai.rs:236`** — so a malformed frame is silently
+    skipped.
 - The empty-reply path: `src/daemon/stream.rs` `AiEvent::Done` arm — when
   `pending_calls.is_empty()`, the daemon pushes the assistant message only
-  `if !full_response.is_empty()` (~line 675), then sends `UsageUpdate` +
-  `Response::Ok` (~843–853). Nothing tells the user the reply was empty.
-- `Response::SystemMsg` already renders in the chat client (used for
-  auto-name hints and catch-up briefs) — no CLI change needed.
+  `if !full_response.is_empty()` at **`:727`**, then sends `UsageUpdate` +
+  `Response::Ok` at **`:909`**. Nothing tells the user the reply was empty.
+- `Response::SystemMsg` is `src/ipc.rs:390` and already renders in the chat
+  client (used for auto-name hints and catch-up briefs) — no CLI change
+  needed.
 
 ## Spec
 

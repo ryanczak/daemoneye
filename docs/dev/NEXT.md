@@ -222,25 +222,49 @@ this time with the sharpest negative available for a `Drop` impl (removing
 `.abort()` makes `guard_drop_aborts_task` hang to timeout). Two data points
 now; if 06–08 hold, the phase-03 fold has independent evidence at close.
 
-**Active phase: phase-06 — client-liveness**
-(`docs/dev/milestones/M16-llm-stream-robustness/phase-06-client-liveness.md`,
-status: todo — **staged 2026-08-17**). Dispatch via
-`/rexymcp:dispatch phase-06`.
+**phase-06 — client-liveness: done (approved_first_try) 2026-08-18**, commit
+`2d781b9` + approval `f741b62`. `PHASE1_SILENCE_TIMEOUT_SECS = 90` /
+`PHASE2_SILENCE_TIMEOUT_SECS = 120`, both phases now carry a deadline
+measured from `last_msg_at`, `StreamOutcome::Deadline` with phase-accurate
+messages, `ask.rs` reworded. Lib count 1321. **First phase run under
+`/rexymcp:auto`** — dispatch and review both delegated to `claude-sonnet-5`
+subagents.
 
-Staging re-derived every Current-state fact (selection `:176-183`,
-`last_msg_at` `:167` reset at `:259`, expiry `:729` inside `select_stream`
-`:701`, `ask.rs:96-98`, `StreamOutcome` `:21-33`). All four acceptance
-criteria measured in their failing state. Two additions the drafted doc
-lacked:
+Both staging gotchas paid off. The `Deadline` arm **returns**
+(`stream.rs:239`), clearing the second `match outcome { _ => unreachable!() }`
+at `:291` — a fall-through there would have panicked the client in production
+with every gate still green. And `silence_budget` is genuinely wired: the
+review proved it by replacing the call site with an inline copy and watching
+clippy fail `function silence_budget is never used`. The executor's own note
+records that its first attempt left an inline `if !response_started`
+*alongside* the helper and the verifier rejected it.
 
-1. **`outcome` is matched twice**, and the second match
-   (`stream.rs:253-256`) ends in `_ => unreachable!()`. The new `Deadline`
-   arm **must return**; a `continue` or fall-through panics the client in a
-   production path. Now the first § Gotchas item.
-2. `stream.rs` already has test modules at `:1266` and `:1361`, so Task 5's
-   "create one if absent" is moot — and Task 5's helper must be **used** at
-   the Task 2 site, with the `dead_code` lint as the wiring proof. That is
-   the phase-03 bug-03-1 shape and is now called out explicitly.
+The review also caught its own dead-end mutation — swapping the constants'
+literal values changes nothing, because the tests assert against the symbolic
+constants — and switched to swapping the branches inside `silence_budget`,
+which failed both tests as required. That is the § Gotchas discipline applied
+to the reviewer's own work.
+
+**Active phase: phase-07 — surface-silent-conditions**
+(`docs/dev/milestones/M16-llm-stream-robustness/phase-07-surface-silent-conditions.md`,
+status: todo — **staged 2026-08-18**).
+
+Staging found the drafted line numbers badly stale (phases 03 and 05 moved
+this code) and re-derived all of them: anthropic `stop_reason` `:321-330`,
+gemini `finishReason` `:288-296`, openai `finish_reason` `:275-284`,
+unknown-tool drops at `anthropic.rs:71` / `openai.rs:324` / `gemini.rs:376`,
+SSE parse sites `:236` / `:266` / `:236`, empty-reply path `stream.rs:727`
+and `:909`, `Response::SystemMsg` `ipc.rs:390`. All five acceptance criteria
+measured in their failing state.
+
+**One trap phase-03 created and this phase would walk into:** gemini now
+calls `dispatch_tool_event` **twice** per `functionCall` — once at
+`gemini.rs:39` inside `part_counts_as_token` purely as a first-token
+predicate, and once at `:364` as the real emission site. Emitting the
+unknown-tool notice "wherever `dispatch_tool_event` returns `None`" would
+fire it from the predicate, once per frame. The notice belongs only at the
+`:376` `else` branch; `part_counts_as_token` must stay silent. Now § Gotchas
+item 1.
 
 **Doc follow-up for milestone close (recorded, not blocking):** `CLAUDE.md`'s
 `src/daemon/utils/` row enumerates that directory's files and does not list
