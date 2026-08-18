@@ -1,7 +1,7 @@
 # Phase 06: Client liveness contract — no infinite spinner, phase-accurate timeout errors
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04
 **Estimated diff:** ~130 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -341,3 +341,152 @@ exit=0
 
 Paste-fidelity check (phase doc § End-to-end verification, run verbatim):
 the fenced block above diffs cleanly against `/tmp/e2e-06.txt` → PASTE MATCH.
+
+### Update — ts=1787063848694 (complete, server-authored)
+
+**Summary:** ## Summary
+
+Implemented all six tasks of phase 06 (client liveness contract). Tasks 1–5:
+
+- **Task 1:** Added `PHASE1_SILENCE_TIMEOUT_SECS = 90` and `PHASE2_SILENCE_TIMEOUT_SECS = 120` constants near the top of `stream.rs` (with the phase doc's doc comment).
+- **Task 2:** Replaced the two-phase selection so both phases carry a deadline measured from `last_msg_at`, routing through the `silence_budget(false/true)` helper (used at this site — the `dead_code` lint is the wiring proof), and updated the now-stale comment.
+- **Task 3:** Added `StreamOutcome::Deadline`; the `select_stream` expiry returns `StreamOutcome::Deadline`, and the caller's match gains a phase-accurate arm that **returns** before the second `match outcome { _ => unreachable!() }` (the gotcha-1 trap — verified the second match exists at :291).
+- **Task 4:** Reworded the `ask.rs` timeout per spec (flat recv shape unchanged).
+- **Task 5:** Added `silence_budget` helper + the two tests in the existing first test module.
+- **Task 6:** Ran the § End-to-end verification block verbatim into `/tmp/e2e-06.txt`, pasted the mechanical transcript, and the paste-fidelity self-check prints **PASTE MATCH**.
+
+No deviations from spec; no blockers. One adaptation note: my first edit attempt at the Task 2 site used an inline `if !response_started` alongside the helper, which the compiler/intermediate verifier correctly rejected — I simplified to call `silence_budget(response_started)` unconditionally so the helper is the single source of truth (also cleaner for the dead_code wiring proof).
+
+**Verification:** `cargo fmt --all`, `cargo build` (clean), `cargo clippy --all-targets --all-features -- -D warnings` (clean), `cargo test` (1321 + 6 + 8 + 30 + 9 ... all pass). Acceptance criteria: `PHASE1_SILENCE_TIMEOUT_SECS` count 5, `Deadline` count 4, `Daemon stopped responding` = 0 in both files, `cargo test silence | grep -c '\.\.\. ok$'` = 2, all four gates green, E2E entry ends with PASTE MATCH. Committed as `feat: bound phase-1 client silence at 90s with phase-accurate timeout errors`; working tree clean; phase doc status left at `in-progress` for the server's completion pass.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+cludes_other_windows ... ok
+test tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child ... ok
+
+test result: ok. 1321 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_strips_trailing_prose ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 8 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 32 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M16-llm-stream-robustness/README.md` — +1 -1
+- `docs/dev/milestones/M16-llm-stream-robustness/phase-06-client-liveness.md` — +49 -1
+- `src/cli/commands/ask.rs` — +1 -1
+- `src/cli/commands/stream.rs` — +65 -10
+
+**Commit:** 2d781b9fa1d77a9222022871fb94a89dba3ef898
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
