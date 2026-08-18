@@ -1,7 +1,7 @@
 # Phase 06: Client liveness contract — no infinite spinner, phase-accurate timeout errors
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** review
+**Status:** done
 **Depends on:** phase-04
 **Estimated diff:** ~130 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -490,3 +490,34 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 2d781b9fa1d77a9222022871fb94a89dba3ef898
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none
+- **Calibration:** none
+
+Independent re-verification (architect): all four gates re-run clean after
+`touch src/cli/commands/stream.rs` (fmt, `cargo build`, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test` — 1321 lib tests,
+0 failed). All four acceptance-criterion greps re-run and match exactly:
+`PHASE1_SILENCE_TIMEOUT_SECS` = 5, `Deadline` = 4, `Daemon stopped
+responding` = 0/0, `cargo test silence | grep -c '... ok$'` = 2. Read the
+`StreamOutcome::Deadline` arm directly (`stream.rs:224-240`): it ends with
+`return Err(anyhow::anyhow!(...))`, exiting before the second `match outcome
+{ _ => unreachable!() }` at `stream.rs:291-294` — the Gotchas-1 trap was
+avoided. Mutation spot-check: swapped the two branches inside
+`silence_budget` (own choice, not a re-run of the executor's); both
+`silence_budget_phase1_is_90s` and `silence_budget_phase2_is_120s` failed
+under the mutation, then passed again after `git checkout HEAD --
+src/cli/commands/stream.rs` restored the file (tree confirmed clean).
+Production wiring proof: replaced the Task 2 call site with an inline
+copy of the same logic (removing the only call to `silence_budget`) —
+`cargo clippy --all-targets --all-features -- -D warnings` failed with
+`error: function \`silence_budget\` is never used` / `-D dead-code`,
+confirming the helper is genuinely called in production, not just tested
+in isolation. DoD grep for new `unwrap()`/`expect()`/`panic!()`,
+`#[allow]`, `#[ignore]`, TODO/FIXME, `dbg!`/`println!` in the added lines
+of `stream.rs`/`ask.rs`: none found.
