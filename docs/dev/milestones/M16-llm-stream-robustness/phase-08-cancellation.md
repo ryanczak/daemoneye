@@ -1,7 +1,7 @@
 # Phase 08: Cancellation — Esc aborts the provider stream through `Request::Cancel`
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -63,6 +63,21 @@ connection**, not the streaming socket — that is what keeps the streaming
 connection's `rx` uncontended. If you find yourself reaching for the
 streaming socket's reader to receive a cancel, stop: that is the design this
 phase explicitly avoids.
+
+**0. Re-dispatch note (2026-08-18).** The first dispatch of this phase
+hard-failed with a `NoProgressStall` (60 consecutive read-only calls) — **not
+your defect, and not a code problem.** Tasks 1–6 landed correctly; the run
+then spent 60 calls trying to satisfy an acceptance criterion that `cargo
+fmt` makes impossible (see the corrected first bullet under § Acceptance
+criteria). The criterion is fixed. **Your partial work from that run is still
+in the working tree, uncommitted** — verify it, finish Task 7, and commit;
+do not start over. Run `git status --short` first to see what is there.
+
+That stall is also the lesson for item 5 below: when a criterion cannot be
+satisfied honestly, **the correct move is to stop and write a blocker into
+the Update Log**, which ends the run in seconds instead of 60 calls. The
+previous run stopped without fabricating anything — good — but never filed
+the blocker, which is what would have surfaced the bad criterion immediately.
 
 **5. The verification discipline this milestone runs on** — phases 04–07 all
 followed it and were approved first try:
@@ -370,7 +385,19 @@ paste the resulting `/tmp/e2e-08.txt` into a new Update Log entry headed
 
 ## Acceptance criteria
 
-- [ ] `grep -c "Cancel { session_id" src/ipc.rs` prints `1` (currently `0`).
+- [ ] `grep -c "^    Cancel {$" src/ipc.rs` prints `1`.
+
+      **Corrected 2026-08-18 after the first dispatch hard-failed on it.**
+      The criterion was `grep -c "Cancel { session_id" src/ipc.rs` prints `1`.
+      That is **unsatisfiable on a formatted tree**: `cargo fmt` renders every
+      struct variant in this enum multi-line, so the variant lands as
+      `    Cancel {` / `        session_id: String,` / `    },` — compare
+      `RenameSavedSession` at `ipc.rs:348`. The single-line form the grep
+      wanted cannot survive the format gate, so the phase could pass `cargo
+      fmt` or that grep but never both. Architect defect: it was validated at
+      `0` against the pre-phase tree and never against the tree the phase
+      would produce. The replacement was measured in **both** states —
+      `1` on the produced tree, `0` on `HEAD:src/ipc.rs`.
 - [ ] `grep -c "pub mod cancel" src/daemon/mod.rs` prints `1` (currently `0`).
 - [ ] `grep -c "cancel_turn" src/daemon/server/mod.rs` prints `1`
       (currently `0`).
@@ -422,7 +449,7 @@ persisted) is an architect-run milestone-close check via session JSONL.
 
 ```sh
 A=/tmp/e2e-08.txt; : > "$A"
-grep -c "Cancel { session_id" src/ipc.rs >> "$A"
+grep -c "^    Cancel {$" src/ipc.rs >> "$A"
 grep -c "cancel_turn" src/daemon/server/mod.rs >> "$A"
 grep -c "register_turn" src/daemon/stream.rs >> "$A"
 grep -c "send_cancel" src/cli/commands/stream.rs >> "$A"
@@ -460,3 +487,8 @@ tokio features.)
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+### Update — 2026-08-18 15:21 (started)
+
+Executor: cancellation run. Status flipped `todo` → `in-progress`; milestone README row updated to match.
+
+Task 1: `src/daemon/cancel.rs` created with ported `CancelHandle`/`CancelSignal` (no `never()` — no caller here) + `pub mod cancel;` registered in alphabetical module list.
