@@ -32,16 +32,47 @@ Read before starting:
 3. Read this entire phase doc before touching any code.
 4. Confirm the repo is on a clean branch with no uncommitted changes.
 
+## Gotchas — read before Task 4 and before writing any Update Log entry
+
+Carried forward from phase-04, where it worked first time. Phase-03 bounced
+three times, never on its stream logic — every bounce was a **verification
+whose construction could only return one answer**, read as confirmation (a
+test asserting a predicate that no production code called; a call-site
+mutation against a test that calls the function directly; a sample of eight
+tools none of which could disagree). Two of the three were architect spec
+defects.
+
+> **Run every check once in the state where it is expected to fail.** A check
+> that has never produced its own negative is not evidence, however green it
+> is.
+
+Before you paste a passing test run, break the thing the test guards and
+capture the failing run too — phase-04 did exactly this (bumped the constant,
+captured `FAILED`, restored, captured `ok`) and was approved first try.
+
+And if a criterion in this doc turns out unsatisfiable or already-passing,
+**say so and stop** — report it as a blocker in the Update Log. Do not produce
+output shaped like what the criterion asked for. A wrong criterion is the
+architect's defect to fix; reporting it is the fastest path to a correct
+phase. Every criterion below was measured in its failing state during staging,
+so they should all be honestly reachable.
+
+**One disambiguation for Task 1:** `src/daemon/stream.rs` contains **two**
+`tokio::spawn` calls. The one this phase wraps is at **:119**, the chat-task
+spawn inside the outer per-AI-call loop. The one at **:1096** spawns a ghost
+shell and is **out of scope** — do not touch it.
+
 ## Current state
 
-(Current as of 2026-08-16; re-derive with
-`grep -n "tokio::spawn\|Ok(None)" src/daemon/stream.rs | head`.)
+(Re-derived 2026-08-17 immediately before staging, after phase-04 landed.
+Every fact below was re-confirmed at the line numbers shown; phase-04
+reshaped the recv arm without shifting them.)
 
 `src/daemon/stream.rs` — the outer per-AI-call loop starts at ~line 92; the
 per-turn counters that survive across outer iterations are declared just
-above it (~lines 89–90, `tool_call_counts` / `total_turn_call_count` — the
-idiom Task 2's counter copies). The spawn (~119–132) **drops the
-JoinHandle**:
+above it at **:89–90** (`tool_call_counts` / `total_turn_call_count` — the
+idiom Task 2's counter copies, both re-confirmed 2026-08-17). The chat-task
+spawn at **:119** (not the ghost spawn at :1096) **drops the JoinHandle**:
 
 ```rust
 tokio::spawn(async move {
@@ -61,16 +92,20 @@ tokio::spawn(async move {
 ```
 
 A panic inside `chat` unwinds the task: nothing is sent, `ai_tx` is dropped,
-and the event loop's recv arm (~137–148, reshaped by phase-04 Task 6) hits:
+and the event loop's recv arm (reshaped by phase-04 Task 6 onto
+`KEEPALIVE_PERIOD_SECS`; the `Ok(None)` arm is at **:145**) hits:
 
 ```rust
 Ok(Some(ev)) => ev,
 Ok(None) => break,   // ← breaks the INNER loop only; outer loop re-spawns
 ```
 
-`AiEvent::Error` is forwarded as `Response::Error` and ends the turn
-(~654–657). `LimitsConfig` is at `src/config/types.rs:400` (serde-default
-idiom per field; it already has `max_turns`, `per_tool_batch`, etc.).
+`AiEvent::Error` is forwarded as `Response::Error` and ends the turn at
+**:657**. `LimitsConfig` is at **`src/config/types.rs:400`** (serde-default
+idiom per field; it already has `max_turns`, `per_tool_batch`, etc.). The
+ghost-turn deadline precedent is **`src/daemon/ghost.rs:433`**
+(`GHOST_TURN_TIMEOUT_SECS = 300`, used at :544). All re-confirmed
+2026-08-17.
 
 ## Spec
 

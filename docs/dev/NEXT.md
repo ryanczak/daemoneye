@@ -178,11 +178,51 @@ check once in the state where it is expected to fail; a check that has never
 produced its own negative is not evidence.* Not folded into WORKFLOW.md —
 that is PE's call.
 
-**Active phase: phase-04 — daemon-keepalive**
-(`docs/dev/milestones/M16-llm-stream-robustness/phase-04-daemon-keepalive.md`,
-status: todo — **staged 2026-08-17**, Current state re-derived and every
-acceptance criterion measured against the tree). Dispatch via
-`/rexymcp:dispatch phase-04`.
+**phase-04 — daemon-keepalive: done (approved_first_try) 2026-08-17**,
+commits `3b04d05` (feat) + `278e5ed` (event-log fixture) + approval
+`0fe3d27`. Turn-wide keepalive contract: `KEEPALIVE_PERIOD_SECS = 15`,
+`with_keepalive` around `await_agent_result` and auto-name, `maybe_keepalive`
+in all six foreground poll loops, bounded pane-select read, streaming literal
+unified onto the constant. Four paused-clock duplex tests; lib count
+1311 → 1315.
+
+**The § Gotchas block added at staging worked on its first outing.** The run
+captured a negative before claiming coverage (period → 999 s,
+`keepalive_ticks_while_future_pends` FAILED, restored, passing — both pasted)
+and reported the full-suite failure honestly rather than routing around it.
+Review spot-checked with a *different* mutation (`Response::KeepAlive` →
+`Response::Error`) and confirmed the test discriminates on the protocol frame.
+One data point, not a trend — watch it across 05–08 before crediting the
+instruction.
+
+One declared scope deviation, verified before acceptance: `278e5ed` fixes an
+M11 `event_log` test whose fixture date (`events-20260803.jsonl`) fell outside
+the 14-day sweep cutoff once **UTC** passed 2026-08-04 — note local is
+2026-08-17 PDT while UTC is 2026-08-18, and the code uses `Utc::now()`.
+Reproduced independently: the pre-fix file fails today, exit 101 at
+`event_log.rs:770`. Fix is date-relative with assertions unchanged.
+
+**Active phase: phase-05 — turn-loop-hardening**
+(`docs/dev/milestones/M16-llm-stream-robustness/phase-05-turn-loop-hardening.md`,
+status: todo — **staged 2026-08-17**). Dispatch via
+`/rexymcp:dispatch phase-05`.
+
+Staging: every Current-state fact re-confirmed unchanged after phase-04
+(counters `:89-90`, chat spawn `:119`, `Ok(None) => break` `:145`,
+`AiEvent::Error` `:657`, `LimitsConfig` `types.rs:400`, ghost precedent
+`ghost.rs:433`). All six acceptance criteria measured in their failing state —
+each returns the drafted "currently" value, so all six discriminate. Added the
+phase-04 § Gotchas block and one disambiguation the drafted doc lacked:
+`stream.rs` holds **two** `tokio::spawn` calls, and Task 1 targets `:119`
+(chat task), not `:1096` (ghost shell, out of scope).
+
+Phase-05 closes the milestone's worst silent-failure hole — the chat task
+dying without `Done`/`Error` currently re-issues the whole AI call forever
+while the user sees only KeepAlives.
+
+**Doc follow-up for milestone close (recorded, not blocking):** `CLAUDE.md`'s
+`src/daemon/utils/` row enumerates that directory's files and does not list
+the new `keepalive.rs`. Not gated by `tests/doc_truth.rs`.
 
 Staging found and fixed a fourth instance of the pattern above, sitting in
 the drafted-ahead docs: **`cargo test keepalive` passes today**, because it
