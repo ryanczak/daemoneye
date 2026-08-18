@@ -1,7 +1,7 @@
 # Phase 04: Daemon turn-wide keepalive — the client hears from the daemon at least every 15 s
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** review
+**Status:** done
 **Depends on:** phase-03
 **Estimated diff:** ~280 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -673,3 +673,67 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 278e5ed7650b50f3c7313e2f37109190f7790d36
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-17
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** DeepSeek V4 Flash 0731
+- **Scope deviations:** one, declared and verified — commit `278e5ed`
+  touches `src/daemon/utils/event_log.rs`, an M11 test, which is outside this
+  phase's scope. **Reproduced independently before accepting it:** checking
+  out the pre-fix file and running the test yields
+  `sweeping_a_segment_leaves_other_segments_indexed ... FAILED`, exit 101,
+  panicking at `event_log.rs:770` — a genuine pre-existing failure unrelated
+  to keepalive work. The fixture pinned `events-20260803.jsonl` as its
+  "recent" segment; once the wall clock passed 2026-08-04 that date fell
+  outside `sweep_event_segments(14)`'s cutoff and the production sweep
+  deleted it. (The clock check confirms the run's reasoning: local time is
+  2026-08-17 PDT, **UTC is 2026-08-18**, and the code uses `Utc::now()`.) The
+  fix moves both fixtures to relative dates with the assertions unchanged.
+  Correct, minimal, forced by the gate, and declared rather than buried —
+  accepted.
+- **Calibration:** none. **The § Gotchas mitigation added at staging worked
+  on its first outing.** This phase captured a negative before claiming
+  coverage — period bumped to 999 s → `keepalive_ticks_while_future_pends
+  ... FAILED (got 0)`, restored → passing, both pasted — and it reported the
+  full-suite failure honestly (`1314 passed; 1 failed`) instead of routing
+  around it. That is the discipline three phase-03 bounces were spent on,
+  followed unprompted here. One data point, not a trend; worth watching
+  across 05–08 before concluding the instruction is what did it.
+
+Independent architect re-run of the gate set (separate invocations; build and
+lint forced to recompile via `touch` so a warm cache could not mask
+warnings): `cargo fmt --all` clean; `cargo build` zero warnings;
+`cargo clippy --all-targets --all-features -- -D warnings` exit 0;
+`cargo test` `1315 passed; 0 failed` (lib) + 6 / 8 / 30 / 9 integration, 0
+failed throughout.
+
+Every acceptance criterion re-verified by hand: `KEEPALIVE_PERIOD_SECS`
+const `1`; `with_keepalive` `1` in `executor/mod.rs` and `1` in `stream.rs`;
+`maybe_keepalive` `6` in `foreground.rs`; `from_secs(30)` `0` in
+`stream.rs`; the bounded pane-select read `1`; `cargo test keepalive_` four
+`... ok` lines. The E2E entry is mechanically captured and ends
+`PASTE MATCH`.
+
+The six `maybe_keepalive` insertions were checked against the diff hunks and
+land in the six poll loops named in Current state — sudo detect, interactive
+connect, interactive settle, remote stability, and both local-child loops.
+`POST_CMD_CAPTURE_DELAY` (now `foreground.rs:870`) is correctly **not**
+instrumented, which was the trap in that criterion's count of 6.
+
+Test spot-check used a **different mutation than the run's** to avoid
+confirming its own evidence: replacing `Response::KeepAlive` with
+`Response::Error` in `with_keepalive` makes
+`keepalive_ticks_while_future_pends` FAIL at `keepalive.rs:92` while the
+other three still pass — so the test discriminates on the actual protocol
+frame, not merely on traffic existing. Tree restored to `HEAD` afterwards,
+`git status` clean. Production code in `keepalive.rs` carries no
+`unwrap`/`expect`/`panic!`; the `expect`s in the diff are all inside
+`mod tests`.
+
+**Follow-up for the milestone-close doc pass (not a bug, not blocking):**
+`CLAUDE.md`'s `src/daemon/utils/` row enumerates that directory's files one
+by one and does not yet list `keepalive.rs`. The phase did not require a
+`CLAUDE.md` update and `tests/doc_truth.rs` does not gate this table, so it
+is correctly out of scope here — but the list is now incomplete.
