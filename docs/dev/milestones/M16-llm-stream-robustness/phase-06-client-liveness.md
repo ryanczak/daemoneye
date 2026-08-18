@@ -1,7 +1,7 @@
 # Phase 06: Client liveness contract — no infinite spinner, phase-accurate timeout errors
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04
 **Estimated diff:** ~130 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -293,3 +293,51 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-18 14:40 (started)
+
+**Who:** executor (Claude)
+
+Tasks 1–5 implemented: constants `PHASE1_SILENCE_TIMEOUT_SECS` (90) and
+`PHASE2_SILENCE_TIMEOUT_SECS` (120) added; phase 1 now carries a deadline via
+the `silence_budget(true/false)` helper (used at the Task 2 site — the
+`dead_code` lint proves the wiring); `StreamOutcome::Deadline` variant added
+with a `return`-ing arm in the caller's `match` (phase-accurate message, exits
+before the `_ => unreachable!()` second match); `ask.rs` timeout reworded. Two
+`silence_budget_*` tests added to stream.rs's first test module. Verification
+commands pass; end-to-end evidence captured next.
+
+### Update — 2026-08-18 14:45 (end-to-end verification)
+
+Run verbatim from the phase doc's § End-to-end verification:
+### Update — 2026-08-18 14:46 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim and unmodified into
+`/tmp/e2e-06.txt`. Full transcript, mechanically captured (`cat
+/tmp/e2e-06.txt`):
+
+```text
+5
+src/cli/commands/stream.rs:0
+src/cli/commands/ask.rs:0
+test cli::commands::stream::tests::silence_budget_phase1_is_90s ... ok
+test cli::commands::stream::tests::silence_budget_phase2_is_120s ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1319 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test result: ok. 1321 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
+
+Paste-fidelity check (phase doc § End-to-end verification, run verbatim):
+the fenced block above diffs cleanly against `/tmp/e2e-06.txt` → PASTE MATCH.

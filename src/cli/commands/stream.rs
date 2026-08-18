@@ -16,6 +16,14 @@ use super::approval::SessionApproval;
 use super::interrupt::{InterruptAction, InterruptState};
 use super::ipc_client::{connect, send_request};
 
+/// Client-side silence bounds, derived from the daemon's
+/// `KEEPALIVE_PERIOD_SECS` (15 s) with >= 6x margin: while a turn is in
+/// flight the daemon sends *something* at least every 15 s, so 90 s of
+/// total silence before the first content means the daemon is hung, not
+/// slow. Phase 2 keeps the pre-existing 120 s.
+const PHASE1_SILENCE_TIMEOUT_SECS: u64 = 90;
+const PHASE2_SILENCE_TIMEOUT_SECS: u64 = 120;
+
 /// Outcome of the inner streaming loop (daemon message or user interrupt).
 #[derive(Debug)]
 enum StreamOutcome {
@@ -31,6 +39,16 @@ enum StreamOutcome {
     Reanchor,
     /// Daemon error (EOF, parse failure, timeout).
     Error(String),
+    /// Deadline expired before a daemon message (phase-accurate timeout).
+    Deadline,
+}
+
+fn silence_budget(response_started: bool) -> std::time::Duration {
+    std::time::Duration::from_secs(if response_started {
+        PHASE2_SILENCE_TIMEOUT_SECS
+    } else {
+        PHASE1_SILENCE_TIMEOUT_SECS
+    })
 }
 
 // ── AI conversation ─────────────────────────────────────────────────────────
@@ -171,15 +189,17 @@ pub(super) async fn ask_with_session_ratatui(
 
     loop {
         // Both phases animate a spinner on an 80 ms tick so a mid-stream pause
-        // (e.g. a tool round-trip or a slow model) never looks frozen. Phase 1
-        // (before the first content) has no overall timeout; phase 2 keeps a
-        // 120 s deadline measured from the last message via `last_msg_at`.
-        let (tick_interval, overall_timeout) = if !response_started {
-            (std::time::Duration::from_millis(80), None)
-        } else {
-            let remaining =
-                std::time::Duration::from_secs(120).saturating_sub(last_msg_at.elapsed());
-            (std::time::Duration::from_millis(80), Some(remaining))
+        // (e.g. a tool round-trip or a slow model) never looks frozen. Both
+        // phases carry a deadline measured from `last_msg_at`: phase 1 bounds
+        // the pre-content silence at `PHASE1_SILENCE_TIMEOUT_SECS` (90 s — the
+        // daemon signals liveness every 15 s, so 90 s of silence means it is
+        // hung, not slow), phase 2 keeps the pre-existing 120 s deadline.
+        let (tick_interval, overall_timeout) = {
+            let budget = silence_budget(response_started);
+            (
+                std::time::Duration::from_millis(80),
+                Some(budget.saturating_sub(last_msg_at.elapsed())),
+            )
         };
         let outcome = select_stream(
             stdin,
@@ -200,6 +220,23 @@ pub(super) async fn ask_with_session_ratatui(
             }
             StreamOutcome::Error(e) => {
                 return Err(anyhow::anyhow!("Connection error: {}", e));
+            }
+            StreamOutcome::Deadline => {
+                let msg = if !response_started {
+                    format!(
+                        "No response from the daemon for {PHASE1_SILENCE_TIMEOUT_SECS}s — \
+                         it appears hung (a healthy daemon signals liveness every 15s \
+                         even while the AI is thinking). Try `daemoneye status`, or check \
+                         ~/.daemoneye/var/log/daemon.log."
+                    )
+                } else {
+                    format!(
+                        "Daemon went silent mid-response (no data or keep-alive for \
+                         {PHASE2_SILENCE_TIMEOUT_SECS}s). Abandoning the connection; the \
+                         daemon may still be running — check `daemoneye status`."
+                    )
+                };
+                return Err(anyhow::anyhow!("Connection error: {}", msg));
             }
             StreamOutcome::Tick => {
                 // Spinner tick — animate (phase 1 only).
@@ -726,7 +763,7 @@ async fn select_stream(
                     };
                 }
                 _ = to => {
-                    return StreamOutcome::Error("Daemon stopped responding (120 s timeout)".to_string());
+                    return StreamOutcome::Deadline;
                 }
                 _ = tokio::time::sleep(tick_interval), if tick_interval != std::time::Duration::MAX => {
                     return StreamOutcome::Tick;
@@ -1354,6 +1391,24 @@ mod tests {
         assert_eq!(
             build_approval_prompt("session", false),
             "  Approve? [Y]es  [A]pprove for session  [N]o  › "
+        );
+    }
+
+    // ── silence_budget ─────────────────────────────────────────────────
+
+    #[test]
+    fn silence_budget_phase1_is_90s() {
+        assert_eq!(
+            silence_budget(false),
+            std::time::Duration::from_secs(PHASE1_SILENCE_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn silence_budget_phase2_is_120s() {
+        assert_eq!(
+            silence_budget(true),
+            std::time::Duration::from_secs(PHASE2_SILENCE_TIMEOUT_SECS)
         );
     }
 }

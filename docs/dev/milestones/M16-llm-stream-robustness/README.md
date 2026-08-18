@@ -71,7 +71,7 @@ the user's door, session JSONL as the evidence anchor).
 | 03 | anthropic-gemini-two-phase ([phase-03-anthropic-gemini-two-phase.md](phase-03-anthropic-gemini-two-phase.md)) | done (escalated) |
 | 04 | daemon-keepalive ([phase-04-daemon-keepalive.md](phase-04-daemon-keepalive.md)) | done |
 | 05 | turn-loop-hardening ([phase-05-turn-loop-hardening.md](phase-05-turn-loop-hardening.md)) | done |
-| 06 | client-liveness ([phase-06-client-liveness.md](phase-06-client-liveness.md)) | todo |
+| 06 | client-liveness ([phase-06-client-liveness.md](phase-06-client-liveness.md)) | in-progress |
 | 07 | surface-silent-conditions ([phase-07-surface-silent-conditions.md](phase-07-surface-silent-conditions.md)) | todo |
 | 08 | cancellation ([phase-08-cancellation.md](phase-08-cancellation.md)) | todo |
 

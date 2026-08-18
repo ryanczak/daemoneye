@@ -95,7 +95,7 @@ async fn run_ask_raw(query: String) -> Result<()> {
     loop {
         let msg = tokio::time::timeout(Duration::from_secs(120), recv(&mut rx))
             .await
-            .map_err(|_| anyhow::anyhow!("Daemon stopped responding (120 s timeout)"))?
+            .map_err(|_| anyhow::anyhow!("Daemon went silent for 120s (no data or keep-alive) — it appears hung. Try `daemoneye status`."))?
             .map_err(|e| anyhow::anyhow!("Connection error: {}", e))?;
 
         match msg {
