@@ -27,6 +27,7 @@ pub fn daemon_uptime_secs() -> u64 {
 pub mod auto_name;
 pub mod background;
 pub mod briefing;
+pub mod cancel;
 pub mod context;
 pub mod digest;
 pub mod executor;

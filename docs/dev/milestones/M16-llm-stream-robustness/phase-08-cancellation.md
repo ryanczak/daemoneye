@@ -492,3 +492,43 @@ tokio features.)
 Executor: cancellation run. Status flipped `todo` → `in-progress`; milestone README row updated to match.
 
 Task 1: `src/daemon/cancel.rs` created with ported `CancelHandle`/`CancelSignal` (no `never()` — no caller here) + `pub mod cancel;` registered in alphabetical module list.
+
+### Update — 2026-08-18 15:44 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim; output pasted below. All four
+grep criteria confirmed (Cancel variant, cancel_turn, register_turn, send_cancel).
+`cargo test cancel` shows all six expected `... ok` lines (five named
+cancel tests + `scheduler::tests::store_add_list_cancel`). `cargo test` shows
+full pass: 1327 + 6 + 8 + 31 + 9 lib/integration tests, exit 0 everywhere.
+
+```sh
+1
+1
+1
+2
+test daemon::cancel::tests::cancel_flips_signal ... ok
+test daemon::cancel::tests::cancel_unknown_session_is_false ... ok
+test daemon::cancel::tests::clone_observes_flip ... ok
+test daemon::cancel::tests::register_cancel_roundtrip ... ok
+test daemon::cancel::tests::guard_drop_deregisters ... ok
+test scheduler::tests::store_add_list_cancel ... ok
+test daemon::cancel::tests::dropped_handle_does_not_cancel ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1320 filtered out; finished in 0.05s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test cancel_request_roundtrip ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test result: ok. 1327 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.92s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
+
+PASTE MATCH

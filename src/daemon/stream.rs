@@ -82,6 +82,20 @@ where
         cost_attribution,
     } = ctx;
 
+    // Register this turn's cancel signal with the session registry. When
+    // there is no session id (ghost), the handle is dropped immediately, so
+    // `cancelled()` parks forever and the cancel branch below never fires.
+    let (_cancel_guard, mut cancel_signal) = match session_id.as_deref() {
+        Some(sid) => {
+            let (guard, signal) = crate::daemon::cancel::register_turn(sid);
+            (Some(guard), signal)
+        }
+        None => {
+            let (_h, signal) = crate::daemon::cancel::CancelSignal::new();
+            (None, signal) // handle dropped => signal can never fire
+        }
+    };
+
     let turn_deadline = (config.limits.turn_timeout_secs > 0).then(|| {
         tokio::time::Instant::now()
             + std::time::Duration::from_secs(config.limits.turn_timeout_secs)
@@ -159,45 +173,73 @@ where
                 .await?;
                 return Ok(());
             }
-            let event = match tokio::time::timeout(
-                std::time::Duration::from_secs(crate::daemon::utils::KEEPALIVE_PERIOD_SECS),
-                ai_rx.recv(),
-            )
-            .await
-            {
-                Ok(Some(ev)) => ev,
-                Ok(None) => {
-                    let cause = chat_task.describe_end().await;
-                    channel_closed_retries += 1;
-                    if channel_closed_retries > MAX_CHANNEL_CLOSED_RETRIES {
-                        log::error!(
-                            "AI event channel closed without Done/Error, giving up after \
-                             {MAX_CHANNEL_CLOSED_RETRIES} retries: {cause}"
-                        );
-                        send_response_split(
-                            tx,
-                            Response::Error(format!(
-                                "AI backend ended the stream without completing \
-                                 (after {} attempts): {cause}",
-                                channel_closed_retries
-                            )),
-                        )
-                        .await?;
-                        return Ok(());
+            let event = tokio::select! {
+                biased;
+                _ = cancel_signal.cancelled() => {
+                    if !full_response.is_empty() {
+                        messages.push(Message {
+                            role: "assistant".to_string(),
+                            content: format!("{full_response}\n\n[⊘ cancelled by user]"),
+                            tool_calls: None,
+                            tool_results: None,
+                            turn: Some(this_turn_count),
+                        });
                     }
-                    log::warn!(
-                        "AI event channel closed without Done/Error (attempt \
-                         {channel_closed_retries}/{MAX_CHANNEL_CLOSED_RETRIES}), \
-                         re-issuing the AI call: {cause}"
-                    );
-                    break;
+                    // Persist the partial response so the interrupted turn leaves
+                    // a trace in the session history on disk.
+                    if let Some(ref id) = session_id {
+                        with_sessions(&sessions, |store| {
+                            if let Some(entry) = store.get_mut(id) {
+                                entry.messages = messages.clone();
+                                entry.dirty = true;
+                            }
+                        });
+                        for msg in &messages[post_trim_len..] {
+                            append_session_message(id, msg);
+                        }
+                    }
+                    send_response_split(tx, Response::SystemMsg("⊘ cancelled".to_string())).await?;
+                    send_response_split(tx, Response::Ok).await?;
+                    return Ok(());
                 }
-                Err(_timeout) => {
-                    // No token in 15 s — send a keep-alive so the client doesn't
-                    // hit its per-token deadline (slow local LLMs can stall longer).
-                    send_response_split(tx, Response::KeepAlive).await?;
-                    continue;
-                }
+                recv = tokio::time::timeout(
+                    std::time::Duration::from_secs(crate::daemon::utils::KEEPALIVE_PERIOD_SECS),
+                    ai_rx.recv(),
+                ) => match recv {
+                    Ok(Some(ev)) => ev,
+                    Ok(None) => {
+                        let cause = chat_task.describe_end().await;
+                        channel_closed_retries += 1;
+                        if channel_closed_retries > MAX_CHANNEL_CLOSED_RETRIES {
+                            log::error!(
+                                "AI event channel closed without Done/Error, giving up after \
+                                 {MAX_CHANNEL_CLOSED_RETRIES} retries: {cause}"
+                            );
+                            send_response_split(
+                                tx,
+                                Response::Error(format!(
+                                    "AI backend ended the stream without completing \
+                                     (after {} attempts): {cause}",
+                                    channel_closed_retries
+                                )),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                        log::warn!(
+                            "AI event channel closed without Done/Error (attempt \
+                             {channel_closed_retries}/{MAX_CHANNEL_CLOSED_RETRIES}), \
+                             re-issuing the AI call: {cause}"
+                        );
+                        break;
+                    }
+                    Err(_timeout) => {
+                        // No token in 15 s — send a keep-alive so the client doesn't
+                        // hit its per-token deadline (slow local LLMs can stall longer).
+                        send_response_split(tx, Response::KeepAlive).await?;
+                        continue;
+                    }
+                },
             };
             match event {
                 AiEvent::Token(t) => {

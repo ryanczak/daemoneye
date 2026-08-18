@@ -349,6 +349,12 @@ pub enum Request {
         old_name: String,
         new_name: String,
     },
+    /// Cancel the in-flight turn of a session. Sent on a fresh connection
+    /// (out-of-band) by the chat client when the user interrupts, so the
+    /// streaming connection's reader is never contended.
+    Cancel {
+        session_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

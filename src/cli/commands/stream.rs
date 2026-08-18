@@ -51,6 +51,29 @@ fn silence_budget(response_started: bool) -> std::time::Duration {
     })
 }
 
+/// Fire an out-of-band cancel at the daemon on a fresh connection, so the
+/// streaming connection's reader is never touched. Best-effort: on failure
+/// (daemon gone, timeout) the daemon still ends the turn via EPIPE as today.
+async fn send_cancel(session_id: &str) {
+    let fut = async {
+        let mut stream =
+            tokio::net::UnixStream::connect(crate::config::default_socket_path()).await?;
+        let mut data = serde_json::to_vec(&crate::ipc::Request::Cancel {
+            session_id: session_id.to_string(),
+        })?;
+        data.push(b'\n');
+        use tokio::io::AsyncWriteExt;
+        stream.write_all(&data).await?;
+        anyhow::Ok(())
+    };
+    if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(2), fut)
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("cancel send timed out")))
+    {
+        log::warn!("failed to deliver cancel: {e}");
+    }
+}
+
 // ── AI conversation ─────────────────────────────────────────────────────────
 
 pub(super) struct QueryArgs<'a> {
@@ -214,6 +237,9 @@ pub(super) async fn ask_with_session_ratatui(
 
         match outcome {
             StreamOutcome::Interrupted => {
+                if let Some(sid) = session_id {
+                    send_cancel(sid).await;
+                }
                 let _ = renderer.commit_panel("result", &["⊘ interrupted".to_string()], true);
                 interrupt_state.reset();
                 break;

@@ -130,6 +130,25 @@ fn ipc_tool_call_response_round_trip() {
     }
 }
 
+/// Verify that a Cancel request survives round-trip with its session id
+/// intact, using the production `Request` type from `daemoneye::ipc`.
+#[test]
+fn cancel_request_roundtrip() {
+    let req = Request::Cancel {
+        session_id: "s1".to_string(),
+    };
+
+    let json = serde_json::to_string(&req).expect("serialize Cancel");
+    let back: Request = serde_json::from_str(&json).expect("deserialize Cancel");
+
+    match back {
+        Request::Cancel { session_id } => {
+            assert_eq!(session_id, "s1");
+        }
+        _ => panic!("expected Cancel variant"),
+    }
+}
+
 /// Verify that a SessionInfo response survives round-trip using the production `Response` type.
 #[test]
 fn ipc_session_info_round_trip() {
