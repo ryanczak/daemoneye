@@ -233,7 +233,9 @@ The chat client is built on a `ratatui` inline viewport that treats your termina
 - **Real scrollback** — The conversation transcript is committed to your terminal's native scrollback. Scroll up in tmux copy-mode and the whole history is there, clean and selectable; only the input box and status bar occupy a small fixed region at the bottom.
 - **Survives window switches and resizes** — Switching tmux windows away from and back to the chat pane, or resizing it, leaves the transcript and chrome intact. The renderer keeps a history of every committed line; when tmux shifts the grid in ways the client can't observe (screen scrolls, height reflows), the re-anchor clears the stale region and repaints the transcript tail from that history instead of trusting row arithmetic — no orphaned borders, no eaten lines.
 - **Multi-line input editor** — Visible cursor, word-wrap, multi-line editing, and multi-line paste. A pasted block lands whole instead of submitting at its first newline.
-- **Two-press interrupt** — While the agent is streaming, press ESC or Ctrl+C once to warn, twice to abort the turn.
+- **Two-press interrupt that actually stops the work** — While the agent is streaming, press ESC or Ctrl+C once to warn, twice to abort. The second press sends a cancel to the daemon over a fresh connection, so the daemon aborts the in-flight provider stream instead of billing it to completion; the partial response is kept in history with a `⊘ cancelled` marker.
+- **No infinite spinner** — The daemon signals liveness at least every 15 s for the whole turn, including during long tool runs. The client holds it to that: 90 s of silence before any output, or 120 s mid-response, ends the wait with an error that says which happened and what to check, rather than spinning forever against a wedged daemon.
+- **Silent conditions are surfaced** — Response truncation at `max_tokens`, a provider refusal or content filter, a dropped unknown-tool call, malformed provider frames, and an entirely empty reply each produce a visible `⚠` notice. Previously these only reached `daemon.log` while the chat showed a short or blank answer.
 - **Color-coded panels** — Committed command-output panels use a blood-red border and deep-yellow title so executed actions stand out in the scrollback.
 
 ---
@@ -557,6 +559,12 @@ model    = "claude-sonnet-4-6"
 # provider = "openai"
 # model    = "gpt-4o"
 
+# [ai]
+# prompt                   = "sre"  # prompt file in ~/.daemoneye/etc/prompts/ (without .toml)
+# first_token_timeout_secs = 600     # max wait for the first token (retried, bounded)
+# stream_idle_timeout_secs = 240     # max gap between chunks mid-stream (never retried)
+# connect_timeout_secs     = 30      # TCP/TLS connect budget; there is no total request timeout
+
 # [masking]
 # extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
 
@@ -570,6 +578,7 @@ model    = "claude-sonnet-4-6"
 # tool_result_chars         = 16000  # max chars fed back to the AI per tool result (0 = unlimited)
 # max_turns                 = 0      # max AI turns per chat session (0 = unlimited; ghosts use max_ghost_turns)
 # max_tool_calls_per_session = 0     # cumulative non-approval tool calls per session (0 = unlimited)
+# turn_timeout_secs         = 0      # wall-clock ceiling on one chat turn incl. tools (0 = no deadline)
 
 # [limits.per_tool]
 # read_file         = 200   # override per_tool_batch for this tool only (0 = unlimited for this tool)
@@ -638,6 +647,15 @@ For `lmstudio`, start the local server from the LM Studio app and load a model.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `prompt` | string | `"sre"` | Name of a prompt file in `~/.daemoneye/etc/prompts/` (without `.toml`). |
+| `first_token_timeout_secs` | integer | `600` | Max wait for the **first** token of a response. Covers slow prefill on long prompts and cold local models. A stall here is retried a bounded number of times, because no output has reached you yet. |
+| `stream_idle_timeout_secs` | integer | `240` | Max gap between chunks **once the stream has produced a token**. A stall here is never retried — tokens already reached you, and a re-issue would duplicate output. |
+| `connect_timeout_secs` | integer | `30` | TCP/TLS connect budget. This is the **only** timeout on the shared HTTP client: there is deliberately no total request timeout, so a long generation is never killed for taking a long time. |
+
+These are two-phase stream bounds, and the split matters: a generation may run
+for as long as it likes provided tokens keep arriving. Only a genuine stall —
+no first token within `first_token_timeout_secs`, or no data for
+`stream_idle_timeout_secs` mid-stream — ends it, and the error names which of
+the two happened.
 
 ### `[masking]` section
 
@@ -712,6 +730,7 @@ Controls how many tool calls the AI can make per turn and per session, and how m
 | `tool_result_chars` | integer | `16000` | Maximum characters of output fed back to the AI per tool result. Longer results are truncated. `0` = unlimited. |
 | `max_turns` | integer | `0` | Maximum AI turns per interactive chat session. Ghost shells use `ghost.max_ghost_turns` instead. `0` = unlimited. |
 | `max_tool_calls_per_session` | integer | `0` | Cumulative cap on non-approval tool calls across the entire session. `0` = unlimited. Reset with `/limits reset` in chat. |
+| `turn_timeout_secs` | integer | `0` | Wall-clock ceiling on a single chat turn, including tool execution. On expiry the turn aborts with a visible error naming the limit. `0` = no deadline. Ghost shells use their own 300 s per-turn bound instead. |
 
 Per-tool overrides via `[limits.per_tool]` let you raise or lower `per_tool_batch` for specific tools:
 
