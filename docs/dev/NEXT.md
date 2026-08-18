@@ -245,11 +245,48 @@ constants — and switched to swapping the branches inside `silence_budget`,
 which failed both tests as required. That is the § Gotchas discipline applied
 to the reviewer's own work.
 
-**Active phase: phase-07 — surface-silent-conditions**
-(`docs/dev/milestones/M16-llm-stream-robustness/phase-07-surface-silent-conditions.md`,
-status: todo — **staged 2026-08-18**).
+**phase-07 — surface-silent-conditions: done (approved_first_try)
+2026-08-18**, commit `e0a0ffb` + approval `e033b23`. 213 turns, the
+milestone's longest run. `AiEvent::Notice(String)` plumbed through all three
+backends and forwarded as `Response::SystemMsg`; truncation / refusal /
+unknown-tool / malformed-frame notices; empty-reply guard. Lib count stays
+1321 because the existing `flush_unknown_tool_sends_nothing` was **renamed
+and inverted** to `flush_unknown_tool_sends_notice` — the behaviour it
+guarded genuinely changed.
 
-Staging found the drafted line numbers badly stale (phases 03 and 05 moved
+**The staged trap did not recur:** `part_counts_as_token` (`gemini.rs:14-44`)
+is confirmed pure — no `tx`, no `AiEvent::Notice`, no send. Emitting from
+there would have spammed one notice per frame, invisible to every gate. The
+three unknown-tool notices land at their real drop sites
+(`anthropic.rs:71-74` inside `flush_tool_call`, `openai.rs:~345`,
+`gemini.rs:~388`). Task 3's malformed-frame counting is a real
+`match Ok/Err` with a counter and a single end-of-drain notice, not a string
+swap. Review confirmed the backend diffs are pure reindentation around
+`first_token_seen`, `record_stream_success()` and the `'attempt` loops —
+nothing out of scope.
+
+**Active phase: phase-08 — cancellation**
+(`docs/dev/milestones/M16-llm-stream-robustness/phase-08-cancellation.md`,
+status: todo — **staged 2026-08-18**). The **last in-scope M16 phase**; the
+loop stops at the boundary after it regardless of outcome.
+
+Staging re-derived Current state (`Request` enum `ipc.rs:139`, dispatch match
+`server/mod.rs:172`+ with 25 arms, `StreamOutcome::Interrupted` moved to
+`stream.rs:216` by phase-06's `Deadline` insertion, client `session_id` at
+`:88`/`:130`, `daemon/mod.rs` module list alphabetical at `:27-46`).
+`ChatTaskGuard` confirmed present, so the phase-05 dependency holds.
+
+**Correction to an earlier note:** phase-08's Task 1/2 tests were said to be
+unnamed in the Spec and needing enumeration. That was wrong — the Spec names
+all six. The criteria are now pinned per name, all seven new tests measured
+at `0` today, plus `cargo test cancel` pinned at `6` (five new names
+containing "cancel" plus the pre-existing `store_add_list_cancel`, measured
+`1`). Also fixed an internal contradiction: Task 1 said "copy verbatim,
+including its five tests" while naming three — the other two belong to
+`never()`, which the same task says to omit.
+
+**phase-07 staging record (historical):** Staging found the drafted line
+numbers badly stale (phases 03 and 05 moved
 this code) and re-derived all of them: anthropic `stop_reason` `:321-330`,
 gemini `finishReason` `:288-296`, openai `finish_reason` `:275-284`,
 unknown-tool drops at `anthropic.rs:71` / `openai.rs:324` / `gemini.rs:376`,

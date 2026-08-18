@@ -34,25 +34,69 @@ Read before starting:
 3. Read this entire phase doc before touching any code.
 4. Confirm the repo is on a clean branch with no uncommitted changes.
 5. Confirm phase-05 landed:
-   `grep -c "struct ChatTaskGuard" src/daemon/stream.rs` must print `1`;
-   otherwise stop and file a blocker.
+   `grep -c "struct ChatTaskGuard" src/daemon/stream.rs` must print `1`
+   (**verified `1` at staging, 2026-08-18**); otherwise stop and file a
+   blocker.
+
+## Gotchas — read before Task 2 and before writing any Update Log entry
+
+**1. The registry is process-global and tests run concurrently.** Task 2's
+`REGISTRY` is a `OnceLock<Mutex<HashMap<..>>>` shared by every test in the
+binary. Use a **distinct session-id string per test** (the Spec says so; it
+is the difference between three passing tests and three that pass alone and
+flake together). Do not add a "clear the registry" helper to make them
+share an id — that is a test-only mutator on production state.
+
+**2. `.unwrap_or_log()`, never `.unwrap()`, on every lock.** This is a
+CLAUDE.md invariant, not a preference: `UnpoisonExt` (`src/util.rs`) logs an
+ERROR and recovers from a poisoned lock. The quoted Task 2 code already uses
+it — keep it that way in anything you add. A `.unwrap()` on a lock is an
+automatic bounce under STANDARDS § 2.1.
+
+**3. Do not port `never()`.** The rexyMCP original has it; this codebase has
+no caller. STANDARDS § 2.2 forbids porting unused API, and an unused `pub fn`
+in a private module also trips `dead_code` under the lint gate. Drop it and
+its tests, as Task 1 says.
+
+**4. The cancel request is out-of-band by design.** It arrives on a **fresh
+connection**, not the streaming socket — that is what keeps the streaming
+connection's `rx` uncontended. If you find yourself reaching for the
+streaming socket's reader to receive a cancel, stop: that is the design this
+phase explicitly avoids.
+
+**5. The verification discipline this milestone runs on** — phases 04–07 all
+followed it and were approved first try:
+
+> **Run every check once in the state where it is expected to fail.** A check
+> that has never produced its own negative is not evidence, however green it
+> is.
+
+Before pasting a passing test run, break the thing the test guards and
+capture the failing run too. If a criterion here turns out unsatisfiable or
+already-passing, **say so and stop** — report it as a blocker in the Update
+Log rather than producing output shaped like what it asked for. Every
+criterion below was measured in its failing state on 2026-08-18.
 
 ## Current state
 
-(Current as of 2026-08-16; re-derive with the greps shown.)
+(**Re-derived 2026-08-18 immediately before staging**, after phases 05–07
+landed. Numbers below are from that run.)
 
-- `src/ipc.rs:139` — `pub enum Request`; variants are serde-tagged and the
-  daemon dispatch is a flat match in `src/daemon/server/mod.rs` (~lines
-  172–281, one arm per request; follow that arm style).
-- Esc handling: `src/cli/commands/stream.rs` — `StreamOutcome::Interrupted`
-  arm (~196–200) commits `⊘ interrupted` and `break`s, dropping the socket.
+- **`src/ipc.rs:139`** — `pub enum Request`; variants are serde-tagged and
+  the daemon dispatch is a flat match in `src/daemon/server/mod.rs` starting
+  at **:172** (`Request::Ping`, `:175` `Shutdown`, `:179` `Refresh`, … 25
+  `Request::` arms in that file). Follow that arm style.
+- Esc handling: `src/cli/commands/stream.rs` — the `StreamOutcome::Interrupted`
+  arm at **:216** commits `⊘ interrupted` and `break`s, dropping the socket.
+  (It moved from ~:196 when phase-06 inserted the `Deadline` arm above it.)
   `src/cli/commands/interrupt.rs` holds `InterruptState` (double-press
   logic). The daemon never learns about the interrupt except via EPIPE.
 - The daemon event loop's recv site is the phase-04/05 shape in
   `src/daemon/stream.rs` (the `tokio::time::timeout(..., ai_rx.recv())`
   match); `session_id: Option<String>` is in scope throughout
-  `run_conversation_loop`, and the client knows its session id
-  (`src/cli/commands/stream.rs:70,112`).
+  `run_conversation_loop`, and the client knows its session id — the
+  `session_id: Option<&str>` parameter at **`src/cli/commands/stream.rs:88`**,
+  threaded to the request at **:130**.
 - The rexyMCP cancel module this phase ports is quoted in full in Task 1 —
   the executor does not need the rexyMCP tree.
 - Mutex sites in this codebase use `.unwrap_or_log()` (`UnpoisonExt`,
@@ -63,8 +107,12 @@ Read before starting:
 ### Task 1 — Port the cancel module
 
 Create `src/daemon/cancel.rs` (register `pub mod cancel;` in
-`src/daemon/mod.rs` alongside the other modules) with the ported code —
-copy verbatim, including its five tests:
+`src/daemon/mod.rs` — the module list is alphabetical at **:27-46**, so it
+goes between `pub mod briefing;` and `pub mod context;`) with the ported
+code — copy the module body verbatim, and port **three** tests (see the note
+after the block; the drafted text said "five", counting the two `never()`
+tests that are dropped along with `never()` itself — corrected at staging
+2026-08-18):
 
 ```rust
 //! Cooperative cancellation for in-flight interactive turns.
@@ -330,15 +378,29 @@ paste the resulting `/tmp/e2e-08.txt` into a new Update Log entry headed
       (currently `0`).
 - [ ] `grep -c "send_cancel" src/cli/commands/stream.rs` prints ≥ `2`
       (definition + call; currently `0`).
-- [ ] `cargo test cancel_request_roundtrip 2>&1 | grep -c '\.\.\. ok$'`
-      prints `1` (currently `0`).
-- [ ] `cargo test cancel 2>&1 | grep -c '\.\.\. ok$'` prints **more than
-      `1`** — the tree already has one match, `scheduler::tests::store_add_list_cancel`
-      (measured `1` today), so the bare filter cannot show this phase added
-      anything. **At this phase's own staging pass, enumerate the Task 1 and
-      Task 2 unit tests by name and replace this criterion with per-name
-      counts** — they are not named in the Spec, which is a drafting gap to
-      close before dispatch, not something to resolve mid-run.
+- [ ] **Each of the seven new tests passes by name.** Every one was measured
+      at `0` on 2026-08-18; each `cargo test <name> 2>&1 | grep -c '\.\.\. ok$'`
+      must print `1`:
+      `cancel_flips_signal`, `clone_observes_flip`,
+      `dropped_handle_does_not_cancel` (Task 1);
+      `register_cancel_roundtrip`, `cancel_unknown_session_is_false`,
+      `guard_drop_deregisters` (Task 2); `cancel_request_roundtrip` (Task 6).
+- [ ] `cargo test cancel 2>&1 | grep -c '\.\.\. ok$'` prints `6` — the five
+      new test names containing "cancel" (`cancel_flips_signal`,
+      `dropped_handle_does_not_cancel`, `register_cancel_roundtrip`,
+      `cancel_unknown_session_is_false`, `cancel_request_roundtrip`) plus the
+      pre-existing `scheduler::tests::store_add_list_cancel`. **Measured `1`
+      today** — that lone pre-existing match is why the bare "`cargo test
+      cancel` passes" form this replaces could never have shown the phase
+      added anything. (`clone_observes_flip` and `guard_drop_deregisters` do
+      not contain the substring and are covered by the per-name criterion
+      above.)
+
+      **Corrected at the phase-08 staging pass, 2026-08-18.** An earlier note
+      claimed the Task 1/2 tests were unnamed in the Spec and had to be
+      enumerated here. That was wrong — **the Spec names all six** (Task 1's
+      three in its closing paragraph, Task 2's three under "Tests:"). No
+      enumeration was needed; the criteria are simply pinned to those names.
 
       **Corrected at the phase-04 staging sweep, 2026-08-17.** The
       criterion was drafted as a bare `cargo test <filter>` "passes".
