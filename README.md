@@ -599,8 +599,7 @@ model    = "claude-sonnet-4-6"
 # retention_days = 90       # delete dated event segments older than this (0 = keep forever)
 
 # [daemon]
-# tmux_session = "daemoneye"   # session the daemon creates/owns at startup
-# auto_create_session = true   # create the session if it doesn't exist (default: true)
+# tmux_session = "daemoneye"   # session the daemon creates/adopts when launched outside tmux
 
 # [webhook]
 # enabled = false
@@ -783,8 +782,7 @@ Controls daemon startup and session ownership. Use this when running DaemonEye a
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `tmux_session` | string | `""` | Name of the tmux session the daemon creates (or adopts, if it already exists) at startup. Empty = legacy behaviour: the daemon borrows whatever session the first `daemoneye chat` client connects from. |
-| `auto_create_session` | bool | `true` | Create the session with `tmux new-session -d` if it does not already exist. Only applies when `tmux_session` is set. If the session is killed, the daemon recreates it automatically. |
+| `tmux_session` | string | `"daemoneye"` | Name of the tmux session the daemon creates (or adopts, if it already exists) when launched **outside** tmux — e.g. as a systemd service — so ghost shells, scheduled jobs and webhook automation are available immediately. When the daemon is launched from *inside* an active tmux session it adopts that session and this setting is ignored. |
 
 When `tmux_session` is set, `daemoneye chat` invoked **outside** of tmux will open a new chat window inside the managed session and exec-attach to it, dropping the user straight into the right place.
 

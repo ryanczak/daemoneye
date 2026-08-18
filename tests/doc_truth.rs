@@ -490,3 +490,163 @@ fn approval_gated_tools_all_exist() {
          renamed or removed?"
     );
 }
+
+// ── Seeded config template ───────────────────────────────────────────────────
+//
+// `assets/etc/config.toml` is what `daemoneye setup` writes to
+// `~/.daemoneye/etc/config.toml`, and it is the surface users actually edit —
+// so a knob missing there is effectively undiscoverable, and a knob documented
+// there that no longer exists is worse than silence: `Config` sets no
+// `deny_unknown_fields`, so setting it fails quiet. Both directions are gated.
+
+const CONFIG_TYPES: &str = "src/config/types.rs";
+const CONFIG_TEMPLATE: &str = "assets/etc/config.toml";
+
+/// Body of `pub struct <name> { ... }` in `src/config/types.rs`.
+fn struct_body<'a>(src: &'a str, name: &str) -> Option<&'a str> {
+    let start = src.find(&format!("pub struct {name} {{"))?;
+    let open = src[start..].find('{')? + start + 1;
+    let close = src[open..].find("\n}")? + open;
+    Some(&src[open..close])
+}
+
+/// `pub <field>:` names declared directly in a struct body.
+fn struct_fields(body: &str) -> Vec<String> {
+    body.lines()
+        .filter_map(|l| l.trim().strip_prefix("pub "))
+        .filter_map(|rest| rest.split(':').next())
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
+/// `(toml section, struct name)` for each field of the top-level `Config`,
+/// derived from the struct itself so new sections are picked up automatically.
+fn config_sections(src: &str) -> Vec<(String, String)> {
+    let body = struct_body(src, "Config").expect("Config struct");
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let Some(rest) = line.trim().strip_prefix("pub ") else {
+            continue;
+        };
+        let Some((name, ty)) = rest.split_once(':') else {
+            continue;
+        };
+        let ty = ty.trim().trim_end_matches(',');
+        // `models` is a map of named tables; its value type is the struct.
+        let ty = ty
+            .rsplit_once('<')
+            .map_or(ty, |(_, inner)| inner.trim_end_matches('>'))
+            .rsplit(',')
+            .next()
+            .unwrap_or(ty)
+            .trim();
+        if ty.ends_with("Config") || ty.ends_with("Entry") {
+            out.push((name.trim().to_string(), ty.to_string()));
+        }
+    }
+    out
+}
+
+/// Every `key =` in the template, with the `[section]` it sits under.
+/// Commented lines count — they are examples, which is the point.
+fn template_keys(template: &str) -> Vec<(String, String)> {
+    let mut section = String::new();
+    let mut out = Vec::new();
+    for raw in template.lines() {
+        let line = raw.trim_start().trim_start_matches('#').trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            section = name.to_string();
+            continue;
+        }
+        let Some((key, _)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            out.push((section.clone(), key.to_string()));
+        }
+    }
+    out
+}
+
+#[test]
+fn seeded_config_template_documents_every_config_field() {
+    let src = std::fs::read_to_string(CONFIG_TYPES).expect("read config types");
+    let template = std::fs::read_to_string(CONFIG_TEMPLATE).expect("read config template");
+    let present: std::collections::BTreeSet<String> = template_keys(&template)
+        .into_iter()
+        .map(|(_, k)| k)
+        .collect();
+    // Free-form maps are rendered as their own `[section.key]` table.
+    let subtables: std::collections::BTreeSet<String> = template
+        .lines()
+        .filter_map(|l| {
+            let t = l.trim_start().trim_start_matches('#').trim();
+            t.strip_prefix('[')?.strip_suffix(']')?.rsplit('.').next()
+        })
+        .map(str::to_string)
+        .collect();
+
+    let mut missing = Vec::new();
+    for (section, ty) in config_sections(&src) {
+        let body = struct_body(&src, &ty).unwrap_or_else(|| panic!("struct {ty} not found"));
+        for field in struct_fields(body) {
+            if !present.contains(&field) && !subtables.contains(&field) {
+                missing.push(format!("[{section}] {field}"));
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "config fields with no example in {CONFIG_TEMPLATE}: {missing:#?}\n\
+         Every knob a user can set must appear there — commented is fine — or it \
+         is undiscoverable in the file they actually edit."
+    );
+}
+
+#[test]
+fn seeded_config_template_has_no_phantom_keys() {
+    let src = std::fs::read_to_string(CONFIG_TYPES).expect("read config types");
+    let template = std::fs::read_to_string(CONFIG_TEMPLATE).expect("read config template");
+
+    let sections = config_sections(&src);
+    let mut known: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for (section, ty) in &sections {
+        let body = struct_body(&src, ty).unwrap_or_else(|| panic!("struct {ty} not found"));
+        known.insert(section.clone(), struct_fields(body).into_iter().collect());
+    }
+
+    let mut phantom = Vec::new();
+    for (section, key) in template_keys(&template) {
+        // `[models.<name>]` fields belong to the entry struct; `[x.y]` free-form
+        // maps (e.g. `[limits.per_tool]`) have user-chosen keys.
+        let base = section.split('.').next().unwrap_or("").to_string();
+        let lookup = if section.starts_with("models") {
+            "models"
+        } else if section.contains('.') {
+            continue;
+        } else {
+            base.as_str()
+        };
+        let Some(fields) = known.get(lookup) else {
+            continue;
+        };
+        if !fields.contains(&key) {
+            phantom.push(format!("[{section}] {key}"));
+        }
+    }
+
+    assert!(
+        phantom.is_empty(),
+        "{CONFIG_TEMPLATE} documents keys that do not exist in Config: {phantom:#?}\n\
+         Config has no deny_unknown_fields, so a user who copies these gets silence, \
+         not an error. Remove them or add the field."
+    );
+}

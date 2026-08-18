@@ -170,6 +170,15 @@ cache_write_cost_per_mtok = 3.75
 
 [ai]
 prompt = "sre"
+# Two-phase stream bounds.  A generation may run arbitrarily long as long as
+# tokens keep arriving; only a genuine stall ends it.  A stall before the first
+# token is retried (nothing reached you yet); a mid-stream stall never is (a
+# re-issue would duplicate output).
+# first_token_timeout_secs = 600   # max wait for the first token (default: 600)
+# stream_idle_timeout_secs = 240   # max gap between chunks mid-stream (default: 240)
+# connect_timeout_secs     = 30    # TCP/TLS connect budget (default: 30).  This is the
+#                                  # only timeout on the shared HTTP client — there is
+#                                  # deliberately no total request timeout.
 
 # ── Context ──────────────────────────────────────────────────────────────────
 
@@ -212,6 +221,8 @@ prompt = "sre"
 # tool_result_chars         = 16000  # max chars fed back to the AI per tool result (0 = unlimited)
 # max_turns                 = 0      # max AI turns per chat session (0 = unlimited; ghosts use max_ghost_turns)
 # max_tool_calls_per_session = 0     # cumulative non-approval tool calls per session (0 = unlimited)
+# turn_timeout_secs         = 0      # wall-clock ceiling on one chat turn incl. tool execution
+#                                    # (0 = no deadline; ghosts use their own 300 s bound)
 
 # [limits.per_tool]
 # read_file         = 200   # override per_tool_batch for this tool only (0 = unlimited for this tool)
@@ -220,7 +231,8 @@ prompt = "sre"
 # ── Ghost shells ─────────────────────────────────────────────────────────────
 
 # [ghost]
-# max_ghost_turns = 20   # hard ceiling; individual runbooks may set lower
+# max_ghost_turns = 20        # hard ceiling; individual runbooks may set lower
+# max_concurrent_ghosts = 3   # ghost shells that may run at once (0 = unlimited; default: 3)
 
 # ── Daemon ───────────────────────────────────────────────────────────────────
 
@@ -247,6 +259,8 @@ prompt = "sre"
 # auto_name_enabled = true         # propose a name after N turns (default: true)
 # auto_name_turn_threshold = 10    # turns before auto-name suggestion fires (default: 10)
 # load_recent_turns = 10           # messages loaded when resuming (0 = all; default: 10)
+# archive_retention_days = 0       # delete archived session data older than this
+#                                  # (0 = keep forever; default: 0)
 
 # ── Approvals ────────────────────────────────────────────────────────────────
 
@@ -264,3 +278,39 @@ prompt = "sre"
 # file_edits    = false  # all edit_file calls (default: false)
 # ghost_commands = false # ghost shell non-sudo commands without auto_approve_scripts
 #                        # (can also be set per-runbook: auto_approve_commands: true)
+
+# ── Compaction ───────────────────────────────────────────────────────────────
+
+# [compaction]
+# Token-pressure context management.  All values are percentages of the active
+# model's context window, so they scale with whichever model the session uses.
+# elide_at_pct     = 50     # elide oversized old tool results at this % (default: 50)
+# compact_at_pct   = 60     # build an epoch and cut the working set at this % (default: 60)
+# target_pct       = 40     # post-compaction working-set target (default: 40)
+# emergency_pct    = 85     # synchronous, model-call-free backstop (default: 85)
+# rollup_after     = 10     # fold the oldest 5 epochs into a chapter past this
+#                           # many uncovered epochs (default: 10)
+# extract_memories = false  # opt-in: extract durable facts to memory on each
+#                           # epoch build (default: false)
+
+# ── Events ───────────────────────────────────────────────────────────────────
+
+# [events]
+# retention_days = 90   # delete dated events.jsonl segments older than this
+#                       # (0 = keep forever; default: 90)
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+
+# [logging]
+# Rotation for ~/.daemoneye/var/log/daemon.log.
+# log_max_bytes  = 5242880   # rotate once the log exceeds this size (default: 5 MiB)
+# log_keep_count = 5         # rotated files to keep (default: 5)
+
+# ── Retention ────────────────────────────────────────────────────────────────
+
+# [retention]
+# Sweeps for the two directories that grow without bound.
+# pane_log_retention_days = 7   # delete captured pane logs older than this
+#                               # (0 = keep forever; default: 7)
+# mailbox_retention_days  = 7   # delete agent mailbox results older than this
+#                               # (0 = keep forever; default: 7)
