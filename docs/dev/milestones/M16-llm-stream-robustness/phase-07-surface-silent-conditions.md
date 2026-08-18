@@ -1,7 +1,7 @@
 # Phase 07: Surface silent conditions — truncation, refusal, unknown tools, malformed frames, empty replies
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** review
+**Status:** done
 **Depends on:** phase-03
 **Estimated diff:** ~260 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -467,3 +467,27 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e0a0ffb58fc0e0400e0c0875d4e608de2b434868
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none
+- **Calibration:** none
+
+Independent re-run: all four gates green after `touch src/ai/backends/gemini.rs`
+(fmt/build/clippy/test separate invocations); `cargo test` 1321+0+6+8+30+9+0,
+0 failed, matching the executor's self-report. All five acceptance-criterion
+greps re-run and matched. `part_counts_as_token` (`gemini.rs:14-44`) confirmed
+pure — no `tx`, no emission — the double-dispatch trap did not recur. All
+three unknown-tool notice sites confirmed at the real emission points
+(`anthropic.rs` `flush_tool_call` :71-74, `openai.rs` ~:345-351, `gemini.rs`
+~:388-395), not the `:39` predicate. Malformed-frame counting verified as a
+real `match`/counter/end-of-stream-notice in all three backends, not just a
+string-pattern swap. Mutated `flush_tool_call`'s Notice send and confirmed
+`flush_unknown_tool_sends_notice` fails, then reverted (tree left clean).
+`first_token_seen`/`record_stream_success`/`'attempt` retry-loop diff hunks
+are pure reindentation (wrapping `if let Ok(v)` into `match`), no logic
+change. No new `unwrap`/`expect`/`#[allow]`/`#[ignore]`/TODO/dbg!/println!
+in production paths; the one new `panic!` is inside test code.
