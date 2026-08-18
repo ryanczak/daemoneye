@@ -257,8 +257,18 @@ prohibition #5. Both supporting evidence and cost data are above.
      `21:31:33Z INFO cancel request for session b6443ba842634d05: found=true`;
      turn aborted cleanly, session continued. Log noise noted in item 4 below.
    - **D1 (long generation > 5 min): PENDING.**
-   - **D2 (`kill -STOP` daemon mid-turn → client error ≤ 90 s): PENDING** —
-     freezes the interactive session during the test; run last.
+   - **D2 (`kill -STOP` daemon mid-turn → client error ≤ 90 s): PARTIALLY
+     VERIFIED 2026-08-18.** The daemon froze on STOP (`State: T`), resumed via
+     watchdog CONT (`State: S`), survived multiple cycles (PID 545867, no
+     restart, no panic) and recovered cleanly. The *client-visible* 90 s error
+     message was not directly captured: the interactive ratatui `chat` client
+     cannot be driven headlessly via `send-keys`, and `ask` (the non-interactive
+     path) uses a 120 s catch-all timeout rather than the 90 s phase-1 bound, so
+     it is not the targeted client. The phase-06 90 s bound has unit-test
+     coverage (`silence_budget_phase1_is_90s`, `select_stream_*`); live visual
+     proof needs a real TTY manual run. Recommended: manual `chat` test in a
+     spare pane — run a long prompt, `kill -STOP $(pidof daemoneye)`, expect
+     `Daemon stopped responding` within 90 s, then `kill -CONT`.
    These touch the live daemon and the operator's tmux server, so they are
    **not** run unprompted — see the phase-01 incident.
 2. **`CLAUDE.md`** — *fixed 2026-08-18*: added the `keepalive.rs` row to the
