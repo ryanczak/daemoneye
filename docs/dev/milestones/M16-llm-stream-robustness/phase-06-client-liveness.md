@@ -32,13 +32,58 @@ Read before starting:
    `grep -c "KEEPALIVE_PERIOD_SECS" src/daemon/utils/keepalive.rs` must be
    ≥ 1; if the file is absent, stop and file a blocker.
 
+## Gotchas — read before Task 3 and before writing any Update Log entry
+
+**1. `outcome` is matched TWICE, and the second match has an
+`unreachable!()`.** This is the trap in Task 3. After the main
+`match outcome { … }` (`stream.rs:195-251`, exhaustive, no wildcard — adding
+`Deadline` forces a new arm there, which is what Task 3 asks for), the very
+next statement is:
+
+```rust
+let msg = match outcome {
+    StreamOutcome::Msg(m) => *m,
+    _ => unreachable!(),
+};
+```
+
+(`stream.rs:253-256`). Your new `Deadline` arm **must exit** — `return`,
+as Task 3's quoted arm does. If it `continue`s or falls through, control
+reaches that `unreachable!()` and the client panics in a production path
+instead of printing the timeout message. Compare the neighbouring arms:
+`Interrupted` breaks, `Error` returns, `Tick`/`Reanchor`/`Warn` continue,
+`Msg(_)` deliberately falls through. Yours belongs in the `Error` group.
+
+**2. The Task 5 tests are pure-predicate tests, and that is fine here —
+but know what they do and don't prove.** `silence_budget_phase1_is_90s`
+asserts the helper returns the right `Duration`; it does **not** prove Task 2
+calls the helper. What proves the wiring is the lint gate: `silence_budget`
+with no production caller is `dead_code`, and
+`cargo clippy --all-targets --all-features -- -D warnings` fails on it. This
+exact distinction cost phase-03 three bounces — a predicate tested in
+isolation while production kept its own inline copy. Use the helper at the
+Task 2 site; do not leave the inline `if !response_started` there.
+
+**3. The verification discipline this milestone runs on** — phases 04 and 05
+both followed it and were approved first try:
+
+> **Run every check once in the state where it is expected to fail.** A check
+> that has never produced its own negative is not evidence, however green it
+> is.
+
+Before pasting a passing test run, break the thing the test guards and
+capture the failing run too. And if a criterion here turns out unsatisfiable
+or already-passing, **say so and stop** — report it as a blocker in the
+Update Log rather than producing output shaped like what it asked for. Every
+criterion below was measured in its failing state during staging.
+
 ## Current state
 
-(Current as of 2026-08-16; re-derive with
-`grep -n "overall_timeout\|last_msg_at\|Daemon stopped responding" src/cli/commands/stream.rs`.)
+(Re-derived 2026-08-17 immediately before staging, after phases 04 and 05
+landed. Line numbers below are from that run.)
 
 `src/cli/commands/stream.rs`, `ask_with_session_ratatui` — the two-phase
-timeout selection (~lines 172–183):
+timeout selection at **:176-183** (`last_msg_at` is declared at **:167**):
 
 ```rust
 // Both phases animate a spinner on an 80 ms tick so a mid-stream pause
@@ -54,8 +99,9 @@ let (tick_interval, overall_timeout) = if !response_started {
 };
 ```
 
-`last_msg_at` is reset on **every** daemon message including `KeepAlive`
-(~line 259). The deadline expiry lives inside `select_stream` (~line 729):
+`last_msg_at` is reset on **every** daemon message including `KeepAlive`, at
+**:259**. The deadline expiry lives inside `select_stream` at **:729**
+(`select_stream` itself starts at **:701**):
 
 ```rust
 return StreamOutcome::Error("Daemon stopped responding (120 s timeout)".to_string());
@@ -66,8 +112,14 @@ fires in phase 1 at all (`overall_timeout = None`), which is the infinite
 spinner. `StreamOutcome::Error` is otherwise used for genuine connection
 errors (EOF → `"Daemon closed connection unexpectedly."`, ~line 675 region).
 
-`src/cli/commands/ask.rs` (~lines 95–99) already bounds every recv at 120 s
+`src/cli/commands/ask.rs` at **:96-98** already bounds every recv at 120 s
 (KeepAlives reset it via `continue`) — it needs only the reworded error.
+
+`StreamOutcome` is declared at **:21-33**; its variants today are `Msg`,
+`Tick`, `Warn`, `Interrupted`, `Reanchor`, `Error`. `stream.rs` already has
+test modules at **:1266** and **:1361**, so Task 5 does **not** need to
+create one — add the two tests to an existing module. All re-confirmed
+2026-08-17.
 
 ## Spec
 
@@ -110,7 +162,7 @@ sentence is no longer true).
 ### Task 3 — Phase-accurate expiry outcome
 
 Add a `Deadline` variant to `StreamOutcome` (no payload) and change the
-expiry site inside `select_stream` (~line 729) to
+expiry site inside `select_stream` at **:729** to
 `return StreamOutcome::Deadline;`. In the caller's outcome `match`, add:
 
 ```rust
@@ -134,11 +186,12 @@ StreamOutcome::Deadline => {
 ```
 
 (Match the surrounding arms' style for how errors are surfaced/returned —
-follow the existing `StreamOutcome::Error` arm at ~line 201.)
+follow the existing `StreamOutcome::Error` arm at **:201-203**. **The arm
+must `return`** — see § Gotchas item 1 for why falling through panics.)
 
 ### Task 4 — Reword the `ask.rs` timeout
 
-In `src/cli/commands/ask.rs` (~line 98), replace the message
+In `src/cli/commands/ask.rs` at **:98**, replace the message
 `"Daemon stopped responding (120 s timeout)"` with
 `"Daemon went silent for 120s (no data or keep-alive) — it appears hung. Try `daemoneye status`."`
 (keep the flat per-recv timeout shape unchanged).
@@ -157,8 +210,9 @@ fn silence_budget(response_started: bool) -> std::time::Duration {
 }
 ```
 
-(use it in Task 2), and add tests in this file's test module (create one if
-absent):
+(**use it at the Task 2 site** — see § Gotchas item 2; an unused helper fails
+the lint gate as `dead_code`, which is also what proves the wiring). Add the
+two tests to one of the existing test modules (`stream.rs:1266` or `:1361`):
 
 - `silence_budget_phase1_is_90s` — asserts
   `silence_budget(false) == Duration::from_secs(90)`.

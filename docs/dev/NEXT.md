@@ -202,23 +202,54 @@ the 14-day sweep cutoff once **UTC** passed 2026-08-04 — note local is
 Reproduced independently: the pre-fix file fails today, exit 101 at
 `event_log.rs:770`. Fix is date-relative with assertions unchanged.
 
-**Active phase: phase-05 — turn-loop-hardening**
-(`docs/dev/milestones/M16-llm-stream-robustness/phase-05-turn-loop-hardening.md`,
+**phase-05 — turn-loop-hardening: done (approved_first_try) 2026-08-17**,
+commit `b86649c` + approval `1e4771f`. `ChatTaskGuard` with drop-abort, the
+channel-closed re-issue bounded at 2 with a named cause and a real
+`Response::Error` on exhaustion, and `[limits] turn_timeout_secs`. Lib count
+1315 → 1319.
+
+The `MAX_CHANNEL_CLOSED_RETRIES` criterion was re-pinned 3 → 4 by the run;
+**verified by diff, not grep** — all four occurrences are the quoted Task-2
+shape (const `:100`, comparison `:172`, two log format strings `:175`/`:190`).
+The drafted `3` was the architect's miscount. Structure confirmed: guard bound
+inside the outer loop so re-issue aborts the prior attempt, both early returns
+drop it, `describe_end` cannot hang (only reachable once every sender is
+dropped), and the staging disambiguation held — chat spawn wrapped, ghost
+spawn untouched.
+
+**Second consecutive phase to run the § Gotchas discipline unprompted**,
+this time with the sharpest negative available for a `Drop` impl (removing
+`.abort()` makes `guard_drop_aborts_task` hang to timeout). Two data points
+now; if 06–08 hold, the phase-03 fold has independent evidence at close.
+
+**Active phase: phase-06 — client-liveness**
+(`docs/dev/milestones/M16-llm-stream-robustness/phase-06-client-liveness.md`,
 status: todo — **staged 2026-08-17**). Dispatch via
-`/rexymcp:dispatch phase-05`.
+`/rexymcp:dispatch phase-06`.
 
-Staging: every Current-state fact re-confirmed unchanged after phase-04
-(counters `:89-90`, chat spawn `:119`, `Ok(None) => break` `:145`,
-`AiEvent::Error` `:657`, `LimitsConfig` `types.rs:400`, ghost precedent
-`ghost.rs:433`). All six acceptance criteria measured in their failing state —
-each returns the drafted "currently" value, so all six discriminate. Added the
-phase-04 § Gotchas block and one disambiguation the drafted doc lacked:
-`stream.rs` holds **two** `tokio::spawn` calls, and Task 1 targets `:119`
-(chat task), not `:1096` (ghost shell, out of scope).
+Staging re-derived every Current-state fact (selection `:176-183`,
+`last_msg_at` `:167` reset at `:259`, expiry `:729` inside `select_stream`
+`:701`, `ask.rs:96-98`, `StreamOutcome` `:21-33`). All four acceptance
+criteria measured in their failing state. Two additions the drafted doc
+lacked:
 
-Phase-05 closes the milestone's worst silent-failure hole — the chat task
-dying without `Done`/`Error` currently re-issues the whole AI call forever
-while the user sees only KeepAlives.
+1. **`outcome` is matched twice**, and the second match
+   (`stream.rs:253-256`) ends in `_ => unreachable!()`. The new `Deadline`
+   arm **must return**; a `continue` or fall-through panics the client in a
+   production path. Now the first § Gotchas item.
+2. `stream.rs` already has test modules at `:1266` and `:1361`, so Task 5's
+   "create one if absent" is moot — and Task 5's helper must be **used** at
+   the Task 2 site, with the `dead_code` lint as the wiring proof. That is
+   the phase-03 bug-03-1 shape and is now called out explicitly.
+
+**Doc follow-up for milestone close (recorded, not blocking):** `CLAUDE.md`'s
+`src/daemon/utils/` row enumerates that directory's files and does not list
+the new `keepalive.rs`. Not gated by `tests/doc_truth.rs`.
+
+**Remaining after 06:** phase-07 (surface-silent-conditions, depends on 01
+only — could run before or alongside 06) and phase-08 (cancellation, depends
+on 05, now unblocked). phase-08 additionally needs its Task 1/2 unit tests
+**named** at its own staging pass; the Spec does not enumerate them.
 
 **Doc follow-up for milestone close (recorded, not blocking):** `CLAUDE.md`'s
 `src/daemon/utils/` row enumerates that directory's files and does not list
