@@ -73,7 +73,7 @@ the user's door, session JSONL as the evidence anchor).
 | 05 | turn-loop-hardening ([phase-05-turn-loop-hardening.md](phase-05-turn-loop-hardening.md)) | done |
 | 06 | client-liveness ([phase-06-client-liveness.md](phase-06-client-liveness.md)) | done        |
 | 07 | surface-silent-conditions ([phase-07-surface-silent-conditions.md](phase-07-surface-silent-conditions.md)) | done        |
-| 08 | cancellation ([phase-08-cancellation.md](phase-08-cancellation.md)) | review      |
+| 08 | cancellation ([phase-08-cancellation.md](phase-08-cancellation.md)) | done        |
 
 Ordering: 01 → 02 → 03 is a hard chain (scaffolding → template backend →
 pattern backends + client flip). 04 → 05 → 06 is a hard chain (keepalive →

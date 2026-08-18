@@ -1,7 +1,7 @@
 # Phase 08: Cancellation — Esc aborts the provider stream through `Request::Cancel`
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** review
+**Status:** done
 **Depends on:** phase-05
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -679,3 +679,69 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 883e6ed31504547aa4b641ca5523ca112cf271ed
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-18
+
+- **Verdict:** escalated
+- **Bounces:** 0
+- **Executor:** deepseek-v4-flash-0731 (architect assist on the first-dispatch
+  `NoProgressStall` — AC1's grep pattern was unsatisfiable against a
+  `cargo fmt`-formatted tree; fixed pre-re-dispatch in `d87b139`)
+- **Scope deviations:** none. Diff (`883e6ed`) is confined to
+  `src/daemon/cancel.rs` (new), `src/daemon/mod.rs`, `src/daemon/server/mod.rs`,
+  `src/daemon/stream.rs`, `src/cli/commands/stream.rs`, `src/ipc.rs`,
+  `tests/integration.rs`. Retry gating, `http()`, keepalive, and the
+  `Deadline`/silence-timeout work from phases 04-06 are untouched — the
+  `stream.rs` change only wraps the existing `tokio::time::timeout(...,
+  ai_rx.recv())` in a `select! { biased; ... }` without altering its three
+  existing arms.
+- **Calibration:** Independently re-derived acceptance criterion
+  `cargo test cancel 2>&1 | grep -c '\.\.\. ok$'` = 6 is **wrong as measured**:
+  the actual count is **8**. `cargo test <filter>` matches on the
+  fully-qualified test path, and five of the six new Task-1/Task-2 tests live
+  in the `daemon::cancel` module, so `clone_observes_flip` and
+  `guard_drop_deregisters` also match the `cancel` filter via their module
+  path even though their own names don't contain the substring — the
+  criterion's authors excluded them on a name-only reading. All 8 matches are
+  genuine passing tests (6 in `daemon::cancel::tests` + pre-existing
+  `scheduler::tests::store_add_list_cancel` + `cancel_request_roundtrip` in
+  `tests/integration.rs`); nothing is missing or spurious. This is a second
+  architect-side spec-measurement defect on the same phase doc (same class as
+  the AC1 fix in `d87b139`) — not a code defect, so it is noted here rather
+  than bounced. Every other acceptance criterion, including the corrected
+  AC1, was re-run independently and matched exactly.
+
+**Independent re-verification (2026-08-18, all commands re-run from a clean
+tree, `touch src/daemon/cancel.rs` before each gate):**
+
+- Four gates, separate invocations: `cargo fmt --all -- --check` exit 0;
+  `cargo build` exit 0, no warnings; `cargo clippy --all-targets
+  --all-features -- -D warnings` exit 0; `cargo test` exit 0 (1327 lib +
+  0 doc + 6 bug_tracker + 8 doc_truth + 31 integration (2 ignored) + 9
+  isolation (1 ignored)).
+- `grep -n "\.unwrap()" src/daemon/cancel.rs` — zero matches. Both
+  `register_turn` and `cancel_turn` lock via `.lock().unwrap_or_log()`.
+- Registry test session ids, confirmed distinct: `register_cancel_roundtrip`
+  uses `"register-cancel-roundtrip"`, `cancel_unknown_session_is_false` uses
+  `"no-such-session"`, `guard_drop_deregisters` uses
+  `"guard-drop-deregisters"`.
+- `grep -c "fn never" src/daemon/cancel.rs` = 0 — not ported, per spec.
+- `send_cancel` (`src/cli/commands/stream.rs`) opens
+  `tokio::net::UnixStream::connect(crate::config::default_socket_path())` —
+  a fresh connection, confirmed out-of-band; it never touches the streaming
+  socket's `rx`.
+- Mutation spot-check: replaced `cancel_turn`'s body with `let _ =
+  session_id; false`; `cargo test register_cancel_roundtrip` then FAILED at
+  `assertion failed: cancel_turn(session_id)` (src/daemon/cancel.rs:136).
+  Restored via `git checkout HEAD -- src/daemon/cancel.rs`; re-ran green;
+  `git status --porcelain` confirmed clean before and after.
+- All seven per-name test criteria re-run individually: `cancel_flips_signal`,
+  `clone_observes_flip`, `dropped_handle_does_not_cancel`,
+  `register_cancel_roundtrip`, `cancel_unknown_session_is_false`,
+  `guard_drop_deregisters`, `cancel_request_roundtrip` — each prints `1` for
+  `grep -c '\.\.\. ok$'`.
+- AC1 re-measured in both states: `1` on the produced tree, `0` on
+  `HEAD~3:src/ipc.rs` (pre-phase).
+- DoD walk: no new `unwrap()`/`expect()`/`panic!()` in the diff (grepped the
+  full `883e6ed~1..883e6ed` diff on `src/`), no `#[allow(...)]`, no
+  `#[ignore]`, no TODO/FIXME, no `dbg!`/`println!`, no new `unsafe`.
