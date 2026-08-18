@@ -1,7 +1,7 @@
 # Phase 05: Turn-loop hardening — reap the chat task, bound the silent retry, optional turn deadline
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** review
+**Status:** done
 **Depends on:** phase-04
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -557,3 +557,64 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b86649c7bc528dd5c7eabb6f2a8c525b08fae73a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-17
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** DeepSeek V4 Flash 0731
+- **Scope deviations:** none. The one count re-pin (below) is the criterion
+  authorising it, not a deviation; `src/config/mod.rs`'s +10 lines are the
+  Task 4 config test, and `types.rs`'s +8 are the field plus the
+  `LimitsConfig::default()` initializer the compiler forces.
+- **Calibration:** none. **Second consecutive phase to run the § Gotchas
+  discipline unprompted** — each guard test was verified in its failing state
+  (`guard_drop_aborts_task` hangs to timeout with `.abort()` removed, which
+  is the sharpest negative available for a Drop impl). Phase-04 was the
+  first. Two data points now; if 06–08 hold, the fold that phase-03 put at
+  the threshold has independent evidence behind it at milestone close.
+
+**The count re-pin was checked by diff, not by grep** — a criterion edited to
+match the code is exactly how a wrong count would launder itself into a green
+gate. `MAX_CHANNEL_CLOSED_RETRIES` occurs 4×, and all four are the quoted
+Task-2 shape: the `const` at `stream.rs:100`, the comparison at `:172`, and
+the two log format strings at `:175` and `:190`. The draft's `3` was the
+architect's miscount (predicted const + 2 uses); `4` is correct, and the
+re-pin note in § Acceptance criteria states the reason. No code was bent to
+fit a number.
+
+Independent architect re-run of the gate set (separate invocations; build and
+lint forced to recompile via `touch`): `cargo fmt --all` clean; `cargo build`
+zero warnings; `cargo clippy --all-targets --all-features -- -D warnings`
+exit 0; `cargo test` `1319 passed; 0 failed` (lib) + 6 / 8 / 30 / 9
+integration, 0 failed. Lib count 1315 → 1319 accounts exactly for the four
+new tests.
+
+Every acceptance criterion re-verified by hand: `ChatTaskGuard` `1`,
+`MAX_CHANNEL_CLOSED_RETRIES` `4`, `Ok(None) => break,` `0`,
+`pub turn_timeout_secs` `1`, both named tests one `... ok` line each. The E2E
+entry is mechanically captured and ends `PASTE MATCH`.
+
+Code read confirms the three things this phase had to get structurally right:
+
+1. **The guard is per-outer-iteration.** `let mut chat_task =
+   ChatTaskGuard::new(tokio::spawn(...))` sits inside the outer `loop` at
+   `:130`, so each re-issue binds a fresh guard and the previous one drops —
+   the abort-on-rebind the Spec's self-correcting sentence describes. Both
+   early returns (`:160` deadline, `:186` retry exhaustion) drop the guard in
+   scope and abort the in-flight provider stream.
+2. **`describe_end` cannot hang.** It `await`s the `JoinHandle`, but is only
+   reachable from `Ok(None)` — the channel closes only once every `ai_tx`
+   sender is dropped, i.e. the task has already ended or panicked.
+3. **The right spawn was wrapped.** The staging disambiguation held: `:130`
+   (chat task) is guarded, and the ghost-shell spawn further down the file is
+   untouched.
+
+Test spot-check used a mutation of the architect's own choosing rather than
+re-running the executor's: narrowing `panic_message`'s downcast to `String`
+only makes `panicking_chat_task_is_classified` FAIL at `stream.rs:1389` with
+`expected panic payload, got: chat task panicked: non-string panic payload`.
+So the test discriminates on the recovered payload, not merely on the word
+"panicked". Tree restored to `HEAD`, `git status` clean. Production paths
+carry no new `unwrap`/`expect`/`panic!`; the three matches in the diff are
+all test code.
