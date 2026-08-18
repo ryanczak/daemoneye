@@ -846,8 +846,16 @@ where
             timeout_secs,
             ..
         } => {
-            knowledge::await_agent_result(job_id, agent_name, *timeout_secs, &memory_namespaces)
-                .await
+            crate::daemon::utils::with_keepalive(
+                tx,
+                knowledge::await_agent_result(
+                    job_id,
+                    agent_name,
+                    *timeout_secs,
+                    &memory_namespaces,
+                ),
+            )
+            .await?
         }
     }?;
 
@@ -1188,7 +1196,19 @@ where
     .await?;
 
     let mut pane_line = String::new();
-    rx.read_line(&mut pane_line).await?;
+    match tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut pane_line)).await {
+        Ok(r) => {
+            r?;
+        }
+        Err(_elapsed) => {
+            send_response_split(
+                tx,
+                Response::Error("Pane selection timed out after 120s".to_string()),
+            )
+            .await?;
+            return Err(anyhow::anyhow!("Pane selection timed out after 120s"));
+        }
+    };
     match serde_json::from_str::<Request>(pane_line.trim()) {
         Ok(Request::PaneSelectResponse { pane_id, .. }) => {
             if let Some(sid) = session_id {

@@ -1,7 +1,7 @@
 # Phase 04: Daemon turn-wide keepalive — the client hears from the daemon at least every 15 s
 
 **Milestone:** M16 — LLM Stream Robustness
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03
 **Estimated diff:** ~280 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -405,3 +405,105 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-17 23:50 (progress)
+
+Started phase-04. Flipped status to in-progress (phase doc + milestone README
+row). Reading the daemon stream/executor sources and the existing
+`send_response_split` plumbing before implementing the keepalive module and
+wrappers.
+
+### Update — 2026-08-18 00:20 (progress)
+
+All Spec tasks 1–7 implemented and passing individually. Notable adaptation:
+`with_keepalive`/`maybe_keepalive`/`KEEPALIVE_PERIOD_SECS` are re-exported
+from `crate::daemon::utils` (module-private `keepalive`), so call sites use
+`crate::daemon::utils::with_keepalive` etc., not
+`crate::daemon::utils::keepalive::…`. Paused-clock test detail: a single
+`tokio::time::advance(46s)` only fires the first re-armed timer, so
+`keepalive_ticks_while_future_pends` steps the clock in three 16 s
+increments; the duplex read half needs `drop(tx)` before `read_to_end` to
+hit EOF. The full `cargo test` suite shows one pre-existing failure
+(`event_log::tests::sweeping_a_segment_leaves_other_segments_indexed`)
+reproduced on a clean stashed tree — unrelated to this phase (see Notes).
+
+### Update — 2026-08-18 00:25 (end-to-end verification)
+
+The phase doc's E2E block, verbatim and unmodified, produced
+`/tmp/e2e-04.txt`; its 19 lines are captured below, verbatim:
+
+```text
+1
+1
+1
+6
+0
+test ai::backends::openai::tests::delta_carries_token_ignores_empty_keepalive ... ok
+test daemon::utils::keepalive::tests::keepalive_returns_future_output ... ok
+test daemon::utils::keepalive::tests::maybe_keepalive_respects_period ... ok
+test daemon::utils::keepalive::tests::keepalive_write_failure_aborts ... ok
+test daemon::utils::keepalive::tests::keepalive_ticks_while_future_pends ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1310 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+exit=0
+test result: FAILED. 1314 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.22s
+exit=101
+```
+
+Reading of the five greps against the real artifacts, and what the two test
+runs mean:
+
+- `KEEPALIVE_PERIOD_SECS` grep → `1`; `with_keepalive` in executor → `1`;
+  `with_keepalive` in stream → `1`; `maybe_keepalive` in foreground → `6`;
+  `from_secs(30)` in stream → `0`; pane read → `1` (all six criteria tick).
+- `cargo test keepalive` prints all four Task-7 tests `ok` (plus the
+  phase-02 `delta_carries_token_ignores_empty_keepalive`, which the phase's
+  `keepalive_` filter excludes).
+- The full-suite `cargo test` shows `1314 passed; 1 failed`. The single
+  failure (`event_log::tests::sweeping_a_segment_leaves_other_segments_indexed`)
+  reproduces on a clean tree at `8557a75` with this phase's changes stashed —
+  it is pre-existing and unrelated to this phase (the four M16 phase gates are
+  the standard commands; this failure predates phase-04).
+
+Repro evidence — the required negative run, captured before the passing run:
+
+```text
+=== NEGATIVE 1: break the keepalive contract (KEEPALIVE_PERIOD_SECS = 999s) ===
+test daemon::utils::keepalive::tests::keepalive_ticks_while_future_pends ... FAILED
+---- keepalive_ticks_while_future_pends stdout ----
+expected >= 3 keepalives over 46 s, got 0: ""
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1314 filtered out
+```
+
+Passing run restored `KEEPALIVE_PERIOD_SECS = 15`:
+
+```text
+test daemon::utils::keepalive::tests::keepalive_ticks_while_future_pends ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1311 filtered out
+```
+
+Paste-fidelity self-check (verbatim from the phase doc, run from the repo
+root):
+
+```sh
+D=docs/dev/milestones/M16-llm-stream-robustness/phase-04-daemon-keepalive.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-04.txt
+diff /tmp/pasted-04.txt /tmp/e2e-04.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+(The `diff` in that block compares the extraction of this entry against the
+live capture. It was run from the repo root; result:
+
+```text
+PASTE MATCH
+```
+)
+
+
+
+

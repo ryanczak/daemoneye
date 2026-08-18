@@ -135,13 +135,16 @@ where
         let mut pending_calls: Vec<PendingCall> = Vec::new();
 
         loop {
-            let event = match tokio::time::timeout(std::time::Duration::from_secs(30), ai_rx.recv())
-                .await
+            let event = match tokio::time::timeout(
+                std::time::Duration::from_secs(crate::daemon::utils::KEEPALIVE_PERIOD_SECS),
+                ai_rx.recv(),
+            )
+            .await
             {
                 Ok(Some(ev)) => ev,
                 Ok(None) => break,
                 Err(_timeout) => {
-                    // No token in 30 s — send a keep-alive so the client doesn't
+                    // No token in 15 s — send a keep-alive so the client doesn't
                     // hit its per-token deadline (slow local LLMs can stall longer).
                     send_response_split(tx, Response::KeepAlive).await?;
                     continue;
@@ -819,24 +822,29 @@ where
                                     false
                                 }
                             });
-                            if should_suggest
-                                && let Some((name, desc)) =
-                                    auto_name::suggest_session_name(&messages, config).await
-                            {
-                                let hint = if desc.is_empty() {
-                                    format!(
-                                        "💡 Save this session as '{}'? \
-                                         Run `/session save {}`",
-                                        name, name
+                            if should_suggest {
+                                let suggestion: Option<(String, String)> =
+                                    crate::daemon::utils::with_keepalive(
+                                        tx,
+                                        auto_name::suggest_session_name(&messages, config),
                                     )
-                                } else {
-                                    format!(
-                                        "💡 Save this session as '{}'? \
-                                         Run `/session save {} {}`",
-                                        name, name, desc
-                                    )
-                                };
-                                send_response_split(tx, Response::SystemMsg(hint)).await?;
+                                    .await?;
+                                if let Some((name, desc)) = suggestion {
+                                    let hint = if desc.is_empty() {
+                                        format!(
+                                            "💡 Save this session as '{}'? \
+                                             Run `/session save {}`",
+                                            name, name
+                                        )
+                                    } else {
+                                        format!(
+                                            "💡 Save this session as '{}'? \
+                                             Run `/session save {} {}`",
+                                            name, name, desc
+                                        )
+                                    };
+                                    send_response_split(tx, Response::SystemMsg(hint)).await?;
+                                }
                             }
                         }
 

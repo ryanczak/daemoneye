@@ -2,6 +2,7 @@ pub use crate::util::UnpoisonExt;
 
 mod event_log;
 mod host;
+mod keepalive;
 mod log_rotation;
 mod output;
 mod response;
@@ -11,6 +12,7 @@ mod warnings;
 
 pub use event_log::*;
 pub use host::*;
+pub use keepalive::*;
 pub use log_rotation::*;
 pub use output::*;
 pub use response::*;

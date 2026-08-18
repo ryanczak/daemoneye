@@ -446,10 +446,12 @@ where
                 let auth = {
                     let mut waited = Duration::ZERO;
                     let mut result = SudoAuth::None;
+                    let mut last_ka = std::time::Instant::now();
 
                     'detect: loop {
                         tokio::time::sleep(SUDO_POLL_INTERVAL).await;
                         waited += SUDO_POLL_INTERVAL;
+                        crate::daemon::utils::maybe_keepalive(tx, &mut last_ka).await?;
 
                         let target_str_cur = target_str.to_string();
                         let cur = tmux::off_runtime("pane-current-command", move || {
@@ -652,11 +654,13 @@ where
                 is_interactive = true;
                 let deadline = tokio::time::Instant::now() + INTERACTIVE_CONNECT_TIMEOUT;
                 let mut prompt_found = false;
+                let mut last_ka = std::time::Instant::now();
 
                 'connect: loop {
                     if tokio::time::Instant::now() >= deadline {
                         break;
                     }
+                    crate::daemon::utils::maybe_keepalive(tx, &mut last_ka).await?;
                     tokio::select! {
                         result = fg_rx.recv() => {
                             if let Ok(notified_pane) = result
@@ -696,11 +700,13 @@ where
                 if !prompt_found {
                     let stable_deadline = tokio::time::Instant::now() + INTERACTIVE_STABLE_WINDOW;
                     let mut prev = String::new();
+                    let mut last_ka = std::time::Instant::now();
                     loop {
                         if tokio::time::Instant::now() >= stable_deadline {
                             break;
                         }
                         tokio::time::sleep(INTERACTIVE_POLL_INTERVAL).await;
+                        crate::daemon::utils::maybe_keepalive(tx, &mut last_ka).await?;
                         let t = target_str.to_string();
                         let snap =
                             tmux::off_runtime("capture-pane", move || tmux::capture_pane(&t, 20))
@@ -717,11 +723,13 @@ where
                 let mut prev_snap = String::new();
                 let mut stable_ticks = 0u32;
                 let deadline = tokio::time::Instant::now() + REMOTE_CMD_TIMEOUT;
+                let mut last_ka = std::time::Instant::now();
 
                 loop {
                     if tokio::time::Instant::now() >= deadline {
                         break;
                     }
+                    crate::daemon::utils::maybe_keepalive(tx, &mut last_ka).await?;
                     tokio::select! {
                         result = fg_rx.recv() => {
                             if let Ok(notified_pane) = result
@@ -773,6 +781,7 @@ where
                 fg_hook_guard.add_silence(silence_hook_name.clone());
 
                 let deadline = tokio::time::Instant::now() + LOCAL_CMD_TIMEOUT;
+                let mut last_ka = std::time::Instant::now();
 
                 // Phase 1 — within the start window, detect either the child
                 // appearing (PID diverges from idle) or a fast command having
@@ -797,6 +806,7 @@ where
                             break;
                         }
                         tokio::time::sleep(LOCAL_CHILD_POLL).await;
+                        crate::daemon::utils::maybe_keepalive(tx, &mut last_ka).await?;
                         let t2 = target_str.to_string();
                         let pid = tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t2))
                             .await
@@ -820,6 +830,7 @@ where
                         if tokio::time::Instant::now() >= deadline {
                             break;
                         }
+                        crate::daemon::utils::maybe_keepalive(tx, &mut last_ka).await?;
                         let t = target_str.to_string();
                         let latch = tmux::off_runtime("read-pane-exit-status", move || {
                             tmux::read_pane_exit_status(&t)
