@@ -366,8 +366,31 @@ mechanisms instead of behaviour and were caught by reading. This one was
 invisible until the code the test claimed to protect was mutated. **Mutate every
 new guard, not only the one the spec names.**
 
-**Active phase: none** — phase-04 (search) is an intent, not yet drafted. Draft
-it with `/rexymcp:architect next`.
+**Active phase: phase-04 — search** (`docs/dev/milestones/
+M17-transcript-view/phase-04-search.md`, status `todo`, drafted 2026-08-19).
+Dispatch with `/rexymcp:dispatch phase-04`.
+
+Phase-04 staging notes (verified against the tree at draft time):
+
+- **The phase makes key handling a pure function** (`key_action(key,
+  searching) -> ViewerAction`) specifically so the mode-sensitive behaviour is
+  testable headlessly. Without it, "while searching, `q` types a letter instead
+  of quitting" is only checkable by driving a real terminal — and M17's history
+  says an untestable obligation is one that silently breaks. The acceptance
+  criteria assert the decode for all six colliding characters in **both** modes.
+- **The phase also removes a duplicate rather than adding one:** the
+  scroll-into-view arithmetic currently inline at `viewer.rs:421-431` becomes
+  `scroll_to_row`, used by both focus movement and match navigation. Criterion:
+  `grep -c "row_idx >= scroll + body_height"` prints 0 (currently 1 — verified).
+- **Negative behaviour is pinned, not left implicit:** search runs over rendered
+  rows, so a collapsed block's body is not searchable. The test asserts both
+  halves — 0 matches collapsed, non-zero expanded — so a typo cannot
+  masquerade as the feature.
+- The `find_matches_is_case_insensitive` test must assert a **non-zero** count
+  as well as index equality, or "both sides empty" would pass it. That is the
+  phase-03 wrapper-tautology lesson applied forward.
+- Mutation grep form `grep -c 'let needle = query.to_string();'` checked against
+  the tree: 0 now, 1 once the normalisation is broken.
 
 Round 1 (`9f57131`) landed all 12 tasks with four green gates, a byte-exact
 E2E artifact and a mutation pair that the reviewer re-ran independently
