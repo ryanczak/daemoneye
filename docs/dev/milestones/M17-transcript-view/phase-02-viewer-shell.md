@@ -1,7 +1,7 @@
 # Phase 02: Viewer Shell
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** in-progress (bounced twice — see bugs/bug-phase-02-2.md)
 **Depends on:** phase-01 (transcript-model, `done`)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -366,6 +366,27 @@ an injectable teardown action the test can count, and production passes the
 action that leaves the alternate screen. Keep the existing negative criterion
 intact: no `try_restore` / `disable_raw_mode` / `.restore()` in `viewer.rs`.
 
+### Task 10b — Make the teardown run on the normal exit path too (round 3, bug-phase-02-2)
+
+Read `docs/dev/milestones/M17-transcript-view/bugs/bug-phase-02-2.md` first.
+
+Round 2's guard is correct on the error path and disabled on the normal one:
+`guard.disarm()` at `src/cli/viewer.rs:297` runs before the `break` path
+returns, and the only executable `LeaveAlternateScreen` lives inside the
+teardown the disarm just switched off. Pressing `esc` therefore leaves the user
+on the alternate screen.
+
+The teardown must run **exactly once on every exit path**. Remove `disarm()`
+entirely rather than calling it in fewer places — as long as it exists, a later
+edit can switch the teardown off again. If the fullscreen `Terminal` must drop
+before the screen is left, get that from scoping (the `Terminal` in an inner
+block that ends before the guard drops), not from disabling the guard.
+
+Do not weaken anything the earlier rounds established: the `Drop` still holds
+the only teardown, `viewer.rs` still contains no `try_restore` /
+`disable_raw_mode` / `.restore()`, and the call site still does not propagate
+the error out of the input loop.
+
 ### Task 11 — Capture the end-to-end evidence
 
 Run the block in § End-to-end verification **verbatim and unmodified**, then
@@ -428,6 +449,21 @@ run against the round-1 tree and FAILS there:**
       ends the chat session. (Round 1: `1`.)
 - [ ] Test `alt_screen_guard_runs_teardown_on_drop` passes, asserting the
       guard's teardown runs exactly once when the guarded scope exits early.
+
+**Added 2026-08-19 after round 2 (bug-phase-02-2). Each was run against the
+round-2 tree and FAILS there. Round 2 satisfied every criterion above while
+`esc` still never left the alternate screen — the criteria asserted the guard
+*exists*, never that its teardown *runs* on the normal path:**
+
+- [ ] `grep -c "disarm" src/cli/viewer.rs` prints `0` — the guard has no
+      disable path. (Round 2: `5`.)
+- [ ] `grep -c "fn viewer_loop" src/cli/viewer.rs` prints at least `1` — the
+      fallible body is a helper, so `run_transcript_viewer` is "enter, arm,
+      run helper, return its result" and every path leaves through one drop.
+      (Round 2: `0`.)
+- [ ] Test `alt_screen_guard_runs_teardown_on_normal_exit` passes: a guarded
+      scope returning **normally** ran the teardown **exactly once** (assert
+      `== 1`, not `>= 1`). (Round 2: absent.)
 
 ## Test plan
 
@@ -500,6 +536,9 @@ echo "teardown grep exit=$?  (1 = none found, which is the pass)" >> "$A"
 echo "== SCOPE GUARD (round 2) ==" >> "$A"
 awk '/impl Drop for/{f=1} f&&/LeaveAlternateScreen/{print "GUARD OK"; exit}' src/cli/viewer.rs >> "$A"
 grep -c "impl Drop" src/cli/viewer.rs >> "$A"
+echo "== NO DISABLE PATH (round 3) ==" >> "$A"
+grep -c "disarm" src/cli/viewer.rs >> "$A"
+grep -c "fn viewer_loop" src/cli/viewer.rs >> "$A"
 echo "== CALL SITE DOES NOT PROPAGATE ==" >> "$A"
 grep -A2 "run_transcript_viewer" src/cli/commands/chat.rs | grep -c "await?" >> "$A"
 echo "== KEY WIRING ==" >> "$A"
