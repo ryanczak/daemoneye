@@ -1,7 +1,7 @@
 # Phase 02: Viewer Shell
 
 **Milestone:** M17 — Transcript View
-**Status:** in-progress (bounced twice — see bugs/bug-phase-02-2.md)
+**Status:** review
 **Depends on:** phase-01 (transcript-model, `done`)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1035,5 +1035,154 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - `src/cli/viewer.rs` — +42 -17
 
 **Commit:** ea7ebe4da2b9eb67e9d7749a310e9aff45c40785
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — ts=1787151082751 (complete, server-authored)
+
+**Summary:** ## Summary + Notes for review
+
+Fixed **bug-phase-02-2** (round 3) on the phase-02 viewer shell:
+
+- **Removed `disarm()` entirely** from `AltScreenGuard` in `src/cli/viewer.rs` (was armed/teardown now unconditional in `Drop`), so there is no path that can switch the teardown off — `grep -c "disarm"` = 0 (was 5).
+- **Factored the fallible body into `viewer_loop()`** so `run_transcript_viewer` is now "enter alternate screen → arm guard → `viewer_loop().await?` → return result", and *every* exit path (the `break` on esc/q/ctrl+o, all seven `?` early returns, and `Ok(())`) leaves through the same `Drop`. The fullscreen `Terminal` lives inside the helper and drops when it returns — before the guard's teardown — so buffer-clearing order is preserved without disabling anything.
+- **`alt_screen_guard_runs_teardown_on_normal_exit`** replaces the old `…disarmed_skips…` test, asserting `== 1` (exactly once, not merely non-zero); `alt_screen_guard_runs_teardown_on_drop` still covers the early-return shape. Neither needs a real terminal (injectable teardown closure).
+- The guard's `Drop` still holds the only `LeaveAlternateScreen` (+ `Show` cursor + `renderer.reanchor()`), no `try_restore`/`disable_raw_mode`/`.restore()` anywhere in `viewer.rs`, and the chat call site still handles the viewer error without propagating — `grep -A2 "run_transcript_viewer" | grep -c "await?"` = 0.
+
+**End-to-end verification:** script run verbatim; `/tmp/e2e-02.txt` shows `== M1 APPLIED ==` (grep=1, failing run — both clamp tests fail, exit 101) then `== M1 RESTORED ==` (grep=0, passing run, exit 0), all gates green (fmt=0, clippy=0, test=0; 1343 lib tests, 10 viewer, 6 transcript), ALT-SCREEN CONTRACT greps present, round-3 checks `disarm`=0 / `fn viewer_loop`=1, KEY WIRING pinned. Pasted verbatim into the `(end-to-end verification)` Update Log entry (same `03:20` heading, retitled "Round 3"), and the PASTE MATCH self-check `diff` returns `PASTE MATCH`, with the literal line below the fence.
+
+All acceptance criteria pass: fmt clean, build clean, clippy -D warnings exits 0, full `cargo test` green, all structural greps green. Status left `in-progress`; single conventional commit `7cebf08`, working tree clean.
+
+**Notes for review:** (1) The E2E artifact's runner line for the M1 APPLIED capture shows `pre=1`/`post=1` plus `exit=101` (run fails as required) and RESTORED shows `pre=0`/`post=0`/`exit=0` — matching the round-3 mutation pair; `edit` of the `_height`→`height` rename plus `saturating_sub` are mine from restoring, not part of the applied mutation. (2) No source outside `viewer.rs` changed this round (round-2 chat.rs/stream.rs/transcript.rs/tty.rs edits were already committed in `ea7ebe4`). (3) I used the appply/paste excise carefully; the final `PASTE MATCH` entry ends with exactly one literal `PASTE MATCH` line under the fence as the task requires.
+
+**Executor:** deepseek-v4-flash-0731 — **Gates:** format=run, build=run, lint=run, test=run
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 3.95s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test config_pricing_round_trip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test event_log_append_read ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M17-transcript-view/phase-02-viewer-shell.md` — +29 -27
+- `src/cli/viewer.rs` — +22 -22
+
+**Commit:** 7cebf0853a5050bf424fba82f78bc3010c7bb7ef
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
