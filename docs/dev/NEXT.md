@@ -344,31 +344,30 @@ fold threshold.
 Cleared, not a defect: the round-2 `eprintln!` at `chat.rs:746` matches
 existing convention in the same loop (`chat.rs:370-372`, `chat.rs:572`).
 
-**Active phase: phase-03 — expand-collapse** (`docs/dev/milestones/
-M17-transcript-view/phase-03-expand-collapse.md`, status `todo`, drafted
-2026-08-19). Dispatch with `/rexymcp:dispatch phase-03`.
+**phase-03 — expand-collapse: done (approved_first_try) 2026-08-19**, commit
+`803940b` + approval. Clean run: 11 tasks, four green gates, 1352 lib tests
+(+9), byte-exact E2E artifact, mutation pair produced first try. The 9 `ViewRow`
+literals were updated in place rather than worked around, and the phase-02
+guard contract still holds (`disarm` 0, teardown grep exits 1) — the E2E block's
+own re-check, re-run by the reviewer.
 
-Phase-03 staging notes (verified against the tree at draft time):
+**Calibration (architect-side, one occurrence, held not folded): do not pair
+"implement B as a wrapper over A" with "assert B equals A".** The spec asked
+for `layout_blocks` to be a thin wrapper over `layout_blocks_with`, and also
+asked for a test asserting the two are equal — so the test compares a function
+with the function it delegates to and cannot fail. Reviewer mutation Mb
+(`full.lines()` → `.take(3)`, breaking the full-output guarantee) moved both
+sides identically: that test passed while `layout_blocks_renders_full_output`
+and `collapsed_output_lays_out_as_exactly_one_row` both caught it. Harmless —
+the guarantee is really guarded — but dead weight, and spec-caused.
 
-- **Every acceptance criterion asserts an observed count or value**, not the
-  presence of a mechanism — written that way deliberately after phase-02's two
-  bounces, where structural criteria passed while the behaviour was broken.
-  Examples: a collapsed 300-line block contributes **exactly 1** row; collapse-
-  all over 5 blocks yields **exactly 2** members; `output_footer(300, 9)` equals
-  `"… 291 more lines · ctrl+o"` exactly.
-- **Three gotchas pre-injected**, all verified: adding a field to `ViewRow`
-  breaks **9** struct literals in the existing tests (counted, and updating them
-  is task 2, not a surprise); Tab (`0x09`) is swallowed by the `<0x20` catch-all
-  at `tty.rs:247` exactly as ctrl+O was, so this phase uses printable keys only
-  and touches no `tty.rs`; and `q`/`esc`/`ctrl+o` already exit the viewer, so
-  nothing new may bind to them.
-- **`layout_blocks_with` is additive** — `layout_blocks` stays as a wrapper, so
-  no phase-02 caller or test changes shape.
-- **Out of scope explicitly re-asserts the phase-02 contract** (no `disarm`, no
-  raw-mode teardown, no error propagation at the call site) and the E2E block
-  re-checks all three, so the next round cannot quietly undo it.
-- The mutation grep form `grep -c 'focus + 1$'` was checked against the current
-  tree: 0 now, 1 once the wrap is broken.
+Note the difference from M17's three earlier criterion defects: those asserted
+mechanisms instead of behaviour and were caught by reading. This one was
+invisible until the code the test claimed to protect was mutated. **Mutate every
+new guard, not only the one the spec names.**
+
+**Active phase: none** — phase-04 (search) is an intent, not yet drafted. Draft
+it with `/rexymcp:architect next`.
 
 Round 1 (`9f57131`) landed all 12 tasks with four green gates, a byte-exact
 E2E artifact and a mutation pair that the reviewer re-ran independently

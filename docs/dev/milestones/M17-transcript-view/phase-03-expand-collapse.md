@@ -1,7 +1,7 @@
 # Phase 03: Expand / Collapse
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** done
 **Depends on:** phase-02 (viewer-shell, `done`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -687,3 +687,63 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 803940bca8ca48dda676c36231984235d37f3a4b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-19
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none. The 9 `ViewRow` literals were updated in place
+  with `block: 0` as task 2 required — no parallel row type, no workaround.
+- **Calibration:** one architect-side item, below. Not a defect in the work.
+
+**Independent verification (re-run, not read):**
+
+- Four gates re-run as separate invocations: all exit 0. 1352 lib tests, up 9
+  from 1343 — exactly the 8 new viewer tests plus `output_footer_names_ctrl_o`.
+- All 11 named tests present and passing.
+- Round E2E artifact re-extracted from the last end-to-end entry and diffed
+  against `/tmp/e2e-03.txt`: `PASTE MATCH`. The entry is this dispatch's own
+  (2026-08-19 20:05).
+- The artifact's own re-checks of the phase-02 contract hold: `disarm` count 0,
+  raw-mode teardown grep exits 1, `ctrl+o` named 3× in `stream.rs` and 1× in
+  `chat.rs`.
+- DoD greps over the diff: the only `.unwrap()` additions are at
+  `viewer.rs:748,751`, inside `mod tests` (line 442). No `#[ignore]`,
+  `#[allow]`, `TODO`, `dbg!`, `unsafe` added.
+
+**Mutation characterisation, both run by the reviewer:**
+
+- **Ma** — `(focus + 1) % len` → `focus + 1`: `focus_next_wraps_at_last_block`
+  fails, 17 others pass. The wrap guard is real and precisely targeted.
+- **Mb** — `full.lines()` → `full.lines().take(3)` inside `layout_blocks_with`,
+  which breaks the full-output guarantee: **two** tests fail —
+  `layout_blocks_renders_full_output` (phase-02's) and
+  `collapsed_output_lays_out_as_exactly_one_row` (via its `before == 301`
+  assertion). The guarantee is genuinely guarded.
+
+### Calibration — a test the spec made incapable of failing
+
+`expanded_layout_is_unchanged_by_the_new_path` asserts
+`layout_blocks(b, w) == layout_blocks_with(b, w, &empty)`. Task 1 of this spec
+also required `layout_blocks` to be *a thin wrapper that calls
+`layout_blocks_with` with an empty set* — which the executor implemented
+exactly (`viewer.rs`, `layout_blocks` is one line). The test therefore compares
+a function with the function it delegates to, using the same arguments. It
+cannot fail.
+
+Mutation Mb proves it: breaking the layout inside `layout_blocks_with` moved
+**both** sides of the equality identically, and this test passed while two
+others caught the regression.
+
+It is harmless — phase-02's `layout_blocks_renders_full_output` is the real
+guard on the full-output guarantee and it fired immediately — but it is dead
+weight in the suite, and the fault is the spec's: **do not pair "implement B as
+a wrapper over A" with "assert B equals A".** One occurrence; held for
+recurrence, not folded.
+
+This is a different failure than M17's earlier three criterion defects (which
+asserted mechanisms rather than behaviour). Those were caught by review; this
+one was caught only by mutating the code the test claimed to protect — which is
+the argument for running a mutation against every new guard, not only against
+the one the spec names.
