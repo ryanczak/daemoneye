@@ -84,7 +84,7 @@ Phase-01 is drafted; 02–07 are intents only until drafted.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | transcript-model ([phase-01-transcript-model.md](phase-01-transcript-model.md)) | in-progress |
+| 01 | transcript-model ([phase-01-transcript-model.md](phase-01-transcript-model.md)) | review      |
 | 02 | viewer-shell | todo |
 | 03 | expand-collapse | todo |
 | 04 | search | todo |

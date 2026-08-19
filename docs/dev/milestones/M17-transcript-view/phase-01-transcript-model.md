@@ -1,7 +1,7 @@
 # Phase 01: Transcript Model
 
 **Milestone:** M17 — Transcript View
-**Status:** in-progress
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -683,3 +683,163 @@ wire exit=0
 ```
 
 PASTE MATCH
+
+### Update — ts=1787106458236 (complete, server-authored)
+
+**Summary:** ## Summary
+
+Phase-01 is implemented and committed (`a49ebca`, working tree clean).
+
+**What was built:**
+- `src/cli/transcript.rs` — `Block` enum (`UserTurn`, `Assistant`, `ToolPanel`, `Output`, `System`), `byte_len()`, `MAX_BLOCKS`/`MAX_BYTES` with the **exact** spec-pinned `evict` loop shape, and a bounded `Transcript` (`push`/`blocks`/`len`/`is_empty`/`evicted`/`append_assistant` with coalescing and correct byte accounting).
+- Registered `pub mod transcript;` in `src/cli/mod.rs` after `status` (task 2).
+- `Response::ToolResult` converted to a struct variant with `tool_call_id` + `output` in `src/ipc.rs`; name arm updated.
+- All 12 daemon send sites (10 in `foreground.rs` via `id.to_string()`, 2 in `executor/mod.rs` via `call.id().to_string()`) converted to the struct form; no tuple-form sites remain (negative grep exits 1).
+- Stream loop: `RatatuiQueryCtx` gained `transcript`; the render body of the `ToolResult` arm is **byte-identical** (same 10-line cap, `… N more lines`, `(no output)` fallback, `commit_panel("output", …)`) plus `Block::Output` recording; `Token` calls `append_assistant` before the markdown renderer; `SystemMsg` and `ToolFinished` push `System` / `ToolPanel` blocks.
+- Chat loop owns a `Transcript`, pushes `UserTurn` at the echo site with the raw typed query, and passes `&mut transcript` at both call sites; `ask.rs` passes a throwaway `Transcript` and its skip arm is now `ToolResult { .. }`.
+- `src/ipc_tests.rs` `response_tool_result_roundtrip` rewritten for the struct form with both-field assertion plus a `tool_call_id`-substring serialisation guard.
+
+**Mutation M1 & E2E:** applied (grep=1, run **fails** on `transcript_push_evicts_oldest_over_block_cap`), restored (grep=0, run passes). The full 101-line `/tmp/e2e-01.txt` artifact (mutation pair + gates + protocol + transcript units + negative greps) is pasted in the phase doc's `(end-to-end verification)` Update Log entry, and the Task-13 diff prints `PASTE MATCH`.
+
+**Verification:** `cargo fmt --check` exit 0, `cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, `cargo test` green (ignored count unchanged at 2: pre-existing `webhook_ghost_e2e_http` + `tests/isolation.rs`).
+
+**Notes for review:** the `(end-to-end verification)` entry's fenced transcript is a byte-exact diff-match of `/tmp/e2e-01.txt` (the PASTE MATCH line is literally in the doc). One deviation from the spec's verbatim mutation commands: I had to run the mutation block several times before the artifact captured the required failing→passing sequence cleanly (an early capture run was lost to a shell quoting/`${PIPESTATUS}`-scroll issue); the final artifact — the only one pasted — shows exactly `== M1 APPLIED ==` with grep `1` + failing run, then `== M1 RESTORED ==` with grep `0` + passing run, as the acceptance criterion demands. Status left `in-progress`; the README phase-table row matches; no `(complete)` entry authored.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 3.94s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_strips_trailing_prose ... ok
+test header_status_reads_bare_word ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M17-transcript-view/README.md` — +1 -1
+- `docs/dev/milestones/M17-transcript-view/phase-01-transcript-model.md` — +123 -1
+- `src/cli/commands/ask.rs` — +3 -1
+- `src/cli/commands/chat.rs` — +7 -0
+- `src/cli/commands/stream.rs` — +20 -1
+- `src/cli/mod.rs` — +1 -0
+- `src/cli/transcript.rs` — +214 -0
+- `src/daemon/executor/foreground.rs` — +80 -10
+- `src/daemon/executor/mod.rs` — +16 -2
+- `src/ipc.rs` — +7 -2
+- `src/ipc_tests.rs` — +16 -2
+
+**Commit:** a49ebca44013133634d301694217889cefdf501b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
