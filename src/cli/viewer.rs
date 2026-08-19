@@ -52,6 +52,7 @@ pub enum ViewerAction {
     SearchCancel,
     MatchNext,
     MatchPrev,
+    Copy,
     Quit,
     Ignore,
 }
@@ -80,8 +81,52 @@ pub fn key_action(key: &crate::cli::input::Key, searching: bool) -> ViewerAction
         (false, crate::cli::input::Key::Char('/')) => ViewerAction::SearchOpen,
         (false, crate::cli::input::Key::Char('n')) => ViewerAction::MatchNext,
         (false, crate::cli::input::Key::Char('N')) => ViewerAction::MatchPrev,
+        (false, crate::cli::input::Key::Char('y')) => ViewerAction::Copy,
         _ => ViewerAction::Ignore,
     }
+}
+
+/// The text a block yields when copied — its real content, with none of the
+/// viewer's decoration and independent of whether it is collapsed.
+pub fn copy_text(block: &crate::cli::transcript::Block) -> String {
+    match block {
+        crate::cli::transcript::Block::UserTurn { text, .. } => text.clone(),
+        crate::cli::transcript::Block::Assistant { text } => text.clone(),
+        crate::cli::transcript::Block::System { text } => text.clone(),
+        crate::cli::transcript::Block::Output { full, .. } => full.clone(),
+        crate::cli::transcript::Block::ToolPanel {
+            tool,
+            summary,
+            label,
+        } => match label {
+            Some(l) => format!("{tool} — {l}\n{summary}"),
+            None => format!("{tool}\n{summary}"),
+        },
+    }
+}
+
+/// Load `text` into a tmux buffer, and into the system clipboard where the
+/// terminal supports it (`-w` uses OSC 52; tmux >= 3.2).
+fn copy_to_tmux_buffer(text: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("tmux")
+        .args(["load-buffer", "-w", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("tmux load-buffer: no stdin"))?
+        .write_all(text.as_bytes())?;
+    let status = child.wait()?;
+    if !status.success() {
+        anyhow::bail!("tmux load-buffer exited with {status}");
+    }
+    Ok(())
 }
 
 /// Row indices whose text contains `query`, case-insensitively.
@@ -303,6 +348,7 @@ pub fn render_transcript(
     focus: usize,
     search: &SearchState,
     evicted: usize,
+    note: Option<&str>,
 ) {
     let area = f.area();
     let body_height = area.height.saturating_sub(1);
@@ -353,6 +399,9 @@ pub fn render_transcript(
             search.matches.len(),
             search.query
         );
+    }
+    if let Some(note_text) = note {
+        status = format!("{status} · {note_text}");
     }
     status.push_str(" · [ ] focus · enter collapse · c/a all");
     if !search.matches.is_empty() {
@@ -501,6 +550,7 @@ async fn viewer_loop(
 
     let mut scroll: usize;
     let mut matches: Vec<usize>;
+    let mut note: Option<String> = None;
     {
         let size = terminal.size()?;
         let width = size.width as usize;
@@ -521,6 +571,7 @@ async fn viewer_loop(
                     current,
                 },
                 transcript.evicted(),
+                note.as_deref(),
             );
         })?;
     }
@@ -548,6 +599,7 @@ async fn viewer_loop(
                             current,
                         },
                         transcript.evicted(),
+                        note.as_deref(),
                     );
                 })?;
                 continue;
@@ -560,7 +612,11 @@ async fn viewer_loop(
         let rows = layout_blocks(transcript.blocks(), width);
         let body_height = size.height.saturating_sub(1) as usize;
         let mut focus_changed = false;
-        match key_action(&key, searching) {
+        let action = key_action(&key, searching);
+        if !matches!(action, ViewerAction::Ignore) {
+            note = None;
+        }
+        match action {
             ViewerAction::ScrollUp => {
                 scroll = scroll.saturating_sub(1);
             }
@@ -651,6 +707,20 @@ async fn viewer_loop(
                     scroll = scroll_to_row(m, scroll, body_height);
                 }
             }
+            ViewerAction::Copy => {
+                if let Some(block) = transcript.blocks().get(focus) {
+                    let text = copy_text(block);
+                    match copy_to_tmux_buffer(&text) {
+                        Ok(()) => {
+                            note = Some(format!(
+                                "copied {} lines to tmux buffer",
+                                text.lines().count()
+                            ))
+                        }
+                        Err(e) => note = Some(format!("copy failed: {e}")),
+                    }
+                }
+            }
             ViewerAction::Ignore => {}
         }
         if focus_changed
@@ -674,6 +744,7 @@ async fn viewer_loop(
                     current,
                 },
                 transcript.evicted(),
+                note.as_deref(),
             );
         })?;
     }
@@ -803,6 +874,7 @@ mod tests {
                         current: 0,
                     },
                     0,
+                    None,
                 )
             })
             .unwrap();
@@ -856,6 +928,7 @@ mod tests {
                         current: 0,
                     },
                     1,
+                    None,
                 )
             })
             .unwrap();
@@ -1030,6 +1103,7 @@ mod tests {
                         current: 0,
                     },
                     0,
+                    None,
                 )
             })
             .unwrap();
@@ -1218,6 +1292,7 @@ mod tests {
                         current: 0,
                     },
                     0,
+                    None,
                 )
             })
             .unwrap();
@@ -1267,6 +1342,79 @@ mod tests {
             teardown_runs.get(),
             1,
             "a normally-returning guarded scope must run teardown exactly once"
+        );
+    }
+
+    #[test]
+    fn copy_text_copies_full_output_not_the_elided_view() {
+        let mut full = String::new();
+        for i in 0..300 {
+            full.push_str(&format!("line {i}\n"));
+        }
+        let block = Block::Output {
+            tool_call_id: "toolu_abc".to_string(),
+            shown: 9,
+            full: full.clone(),
+        };
+        let text = copy_text(&block);
+        assert_eq!(text.lines().count(), 300);
+        assert_eq!(text, full);
+    }
+
+    #[test]
+    fn copy_text_of_collapsed_block_is_unchanged() {
+        let full = "alpha\nbeta\ngamma\n";
+        let block = Block::Output {
+            tool_call_id: "toolu_x".to_string(),
+            full: full.to_string(),
+            shown: 3,
+        };
+        let collapsed = std::collections::HashSet::from([0usize]);
+        let rows = layout_blocks_with(std::slice::from_ref(&block), 60, &collapsed);
+        let _ = rows;
+        assert_eq!(copy_text(&block), full);
+    }
+
+    #[test]
+    fn copy_text_omits_viewer_decoration() {
+        let sys = Block::System {
+            text: "done".to_string(),
+        };
+        let copied_sys = copy_text(&sys);
+        assert!(!copied_sys.starts_with('⚙'), "copied: {copied_sys}");
+        let user = Block::UserTurn {
+            label: "me".to_string(),
+            text: "hello world".to_string(),
+        };
+        let copied_user = copy_text(&user);
+        assert!(!copied_user.contains("me"), "copied: {copied_user}");
+    }
+
+    #[test]
+    fn copy_text_tool_panel_composes_header_and_summary() {
+        let labeled = Block::ToolPanel {
+            tool: "cargo build".to_string(),
+            summary: "compiling…".to_string(),
+            label: Some("2.1s".to_string()),
+        };
+        assert_eq!(copy_text(&labeled), "cargo build — 2.1s\ncompiling…");
+        let unlabeled = Block::ToolPanel {
+            tool: "cargo build".to_string(),
+            summary: "compiling…".to_string(),
+            label: None,
+        };
+        assert_eq!(copy_text(&unlabeled), "cargo build\ncompiling…");
+    }
+
+    #[test]
+    fn key_action_y_copies_only_when_not_searching() {
+        assert_eq!(
+            key_action(&crate::cli::input::Key::Char('y'), false),
+            ViewerAction::Copy
+        );
+        assert_eq!(
+            key_action(&crate::cli::input::Key::Char('y'), true),
+            ViewerAction::SearchType('y')
         );
     }
 }
