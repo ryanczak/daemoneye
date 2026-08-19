@@ -1,0 +1,404 @@
+# Phase 03: Expand / Collapse
+
+**Milestone:** M17 — Transcript View
+**Status:** todo
+**Depends on:** phase-02 (viewer-shell, `done`)
+**Estimated diff:** ~400 lines
+**Tags:** language=rust, kind=feature, size=m
+
+## Goal
+
+Make a long transcript navigable: focus a block, collapse it to its header,
+expand it again — and tell the user the viewer exists by naming `ctrl+o` in the
+inline `… N more lines` footer.
+
+## Architecture references
+
+Read before starting:
+
+- `docs/design/transcript-view.md` — §"What this unlocks beyond expansion".
+- `docs/dev/milestones/M17-transcript-view/README.md` — exit criteria.
+- `src/cli/viewer.rs` — the phase-02 viewer this extends. Read it in full
+  before editing; it is 491 lines.
+
+## Pre-flight
+
+1. Read `docs/dev/STANDARDS.md` top to bottom.
+2. Read the architecture references above.
+3. Read this entire phase doc before touching any code.
+4. Confirm the repo is on a clean branch with no uncommitted changes.
+
+## Current state
+
+**The viewer renders every block in full and has no notion of focus.**
+`src/cli/viewer.rs:31-43`:
+
+```rust
+pub fn layout_blocks(blocks: &[Block], width: usize) -> Vec<ViewRow> {
+    let mut rows: Vec<ViewRow> = Vec::new();
+    for (i, block) in blocks.iter().enumerate() {
+        if i > 0 && !rows.is_empty() {
+            rows.push(ViewRow {
+                text: String::new(),
+                kind: RowKind::Blank,
+            });
+        }
+        layout_block(block, width, &mut rows);
+    }
+    rows
+}
+```
+
+`ViewRow` today (`viewer.rs:23-27`) carries no link back to the block it came
+from, which is what focus and collapse both need:
+
+```rust
+pub struct ViewRow {
+    pub text: String,
+    pub kind: RowKind,
+}
+```
+
+`render_transcript(f, rows, scroll, evicted)` (`viewer.rs:126`) styles by
+`RowKind` and writes a status line ending
+`" · ↑↓ PgUp/PgDn Home/End · esc to close"`.
+
+`viewer_loop` (`viewer.rs:235`) owns `scroll` and matches on keys; `Up`/`Down`/
+`PageUp`/`PageDown`/`Home`/`End` scroll, and
+`Key::Char('\x1b') | Key::Char('q') | Key::CtrlO` breaks.
+
+**The inline footer** is built in `src/cli/commands/stream.rs:707`:
+
+```rust
+                    body.push(format!("… {} more lines", total - shown));
+```
+
+and the help text at `src/cli/commands/chat.rs:27` describes it:
+
+```
+Tool output is capped at 10 lines on screen (… N more lines); full output is kept in history.
+```
+
+### Three gotchas, each verified against the tree
+
+1. **Adding a field to `ViewRow` breaks 9 struct literals in the existing
+   tests** (`viewer.rs`, all after `mod tests` at line 306 — counted: 9). They
+   look like this (`viewer.rs:378-381`):
+
+   ```rust
+            ViewRow {
+                text: "alpha".to_string(),
+                kind: RowKind::Header,
+            },
+   ```
+
+   Updating them is part of the work, not a surprise — task 2 says so
+   explicitly. Do **not** work around it by adding a second row type.
+
+2. **Tab is not available as a key.** `c if c < 0x20 => Key::Char('\0')`
+   (`src/cli/input/tty.rs:247`) swallows `0x09` before any arm sees it, exactly
+   as it did for ctrl+O in phase-02. This phase uses **printable** keys only —
+   no new `tty.rs` arms are needed or wanted.
+
+3. **`q`, `esc` and `ctrl+o` already exit the viewer** (`viewer.rs`, the break
+   arm). Do not bind any new behaviour to them.
+
+## Spec
+
+### Task 1 — Collapse-aware layout
+
+In `src/cli/viewer.rs`, add:
+
+```rust
+/// Lay out with a set of collapsed block indices. `layout_blocks` is this with
+/// an empty set.
+pub fn layout_blocks_with(
+    blocks: &[Block],
+    width: usize,
+    collapsed: &std::collections::HashSet<usize>,
+) -> Vec<ViewRow>
+```
+
+Keep `layout_blocks(blocks, width)` as a thin wrapper that calls it with an
+empty set, so every phase-02 caller and test keeps working unchanged.
+
+A **collapsed** block renders as **exactly one row**: its header, with a
+suffix ` [collapsed, {n} lines]` where `{n}` is the number of rows that block
+would occupy when expanded, excluding the header. A block with no header of its
+own (`Assistant`, `System`) uses its first laid-out row as the header row for
+this purpose. The blank separator row between blocks is unchanged.
+
+### Task 2 — Tie rows to their source block
+
+Add `pub block: usize` to `ViewRow` (`viewer.rs:24-27`), set by `layout_blocks_with`
+to the index of the block the row came from. The blank separator row before
+block `i` carries `block: i`.
+
+Then update the **9** `ViewRow` literals in the test module (all after line
+306) to include the new field. Use `block: 0` where the test does not care —
+none of the existing tests assert on it.
+
+### Task 3 — Viewer state: focus and collapsed set
+
+In `viewer_loop`, add alongside `scroll`:
+
+- `focus: usize` — the index of the focused **block**, starting at the last
+  block (the viewer opens at the bottom, so the last block is what the user is
+  looking at). Clamp to `blocks.len().saturating_sub(1)`; `0` when empty.
+- `collapsed: std::collections::HashSet<usize>` — starts **empty**. Every block
+  is expanded on open; phase-02's guarantee that the viewer shows output the
+  inline panel elided must not regress.
+
+### Task 4 — Keys
+
+Add to `viewer_loop`'s key match, using printable keys only (see gotcha 2):
+
+- `Key::Char(']')` — focus the next block, wrapping to `0` past the last.
+- `Key::Char('[')` — focus the previous block, wrapping to the last from `0`.
+- `Key::Enter` — toggle `collapsed` membership for the focused block.
+- `Key::Char('c')` — collapse **every `Block::Output`**, leaving all other
+  blocks expanded.
+- `Key::Char('a')` — expand everything (clear the set).
+
+After any focus change, scroll so the focused block's header row is visible:
+if it is above the viewport, scroll to it; if below, scroll so it is the last
+visible row. Re-clamp with `clamp_scroll` as the existing arms do.
+
+Write the focus arithmetic as two small pure functions so they can be tested
+without a terminal — task 8's mutation targets the first verbatim:
+
+```rust
+/// Next focused block index, wrapping. `len == 0` yields 0.
+pub fn focus_next(focus: usize, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (focus + 1) % len
+}
+
+/// Previous focused block index, wrapping. `len == 0` yields 0.
+pub fn focus_prev(focus: usize, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (focus + len - 1) % len
+}
+```
+
+### Task 5 — Render focus and collapse state
+
+`render_transcript` gains a `focus: usize` parameter (after `scroll`). Rows
+whose `block == focus` render with an emphasised style — pick it from the
+existing `Palette`; **nothing about the colour is pinned**.
+
+Each block's header row gains a state marker as its first characters: `▾ ` when
+expanded, `▸ ` when collapsed. This replaces the `▸ ` prefix `layout_block`
+currently hard-codes for `UserTurn` and `ToolPanel` headers — do not end up
+with `▸ ▸ `.
+
+Append ` · [ ] focus · enter collapse · c/a all` to the status line's existing
+key hints.
+
+### Task 6 — Name `ctrl+o` in the inline footer
+
+In `src/cli/commands/stream.rs`, extract the footer into a pure function so it
+is testable, and call it from the `Response::ToolResult` arm at line 707:
+
+```rust
+/// Footer shown on an elided inline tool-output panel.
+fn output_footer(total: usize, shown: usize) -> String {
+    format!("… {} more lines · ctrl+o", total - shown)
+}
+```
+
+The line count and its wording stay as they are — only the ` · ctrl+o` suffix
+is added. Update the help text at `src/cli/commands/chat.rs:27` to match:
+
+```
+Tool output is capped at 10 lines on screen (… N more lines · ctrl+o opens the full transcript).
+```
+
+### Task 7 — Tests
+
+Write the tests named in § Test plan. They are pure — no terminal, no `HOME`
+manipulation, no tmux.
+
+### Task 8 — Mutation M1: apply
+
+Use the `patch` tool on `src/cli/viewer.rs`.
+
+- `old_str`: `    (focus + 1) % len`
+- `new_str`: `    focus + 1`
+
+Then run, appending to the evidence artifact:
+
+```sh
+A=/tmp/e2e-03.txt
+echo "== M1 APPLIED ==" >> "$A"
+grep -c 'focus + 1$' src/cli/viewer.rs >> "$A"
+cargo test --lib cli::viewer 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tail -20 >> "$A"
+echo "exit=${PIPESTATUS[0]}" >> "$A"
+```
+
+The run **must fail** — `focus_next_wraps_at_last_block` is what proves the
+wrap is real. A green run means the test is vacuous; stop and file a blocker.
+
+### Task 9 — Mutation M1: restore
+
+`patch` the same line back, then:
+
+```sh
+A=/tmp/e2e-03.txt
+echo "== M1 RESTORED ==" >> "$A"
+grep -c 'focus + 1$' src/cli/viewer.rs >> "$A"
+cargo test --lib cli::viewer 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tail -20 >> "$A"
+echo "exit=${PIPESTATUS[0]}" >> "$A"
+```
+
+`grep -c` must print `1` after task 8 and `0` after task 9. Do **not** use
+`git checkout` to restore — the file holds this round's uncommitted work.
+
+### Task 10 — Capture the end-to-end evidence
+
+Run the block in § End-to-end verification **verbatim and unmodified**, then
+paste the resulting `/tmp/e2e-03.txt` into a new Update Log entry headed
+`### Update — <date> (end-to-end verification)`. The server-authored
+`(complete)` entry does not satisfy this.
+
+### Task 11 — PASTE MATCH self-check
+
+After pasting, run:
+
+```sh
+D=docs/dev/milestones/M17-transcript-view/phase-03-expand-collapse.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-03.txt
+diff /tmp/pasted-03.txt /tmp/e2e-03.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Append the literal verdict line into that same Update Log entry, below the
+fence.
+
+## Acceptance criteria
+
+Every criterion below asserts an **observed count or value**, not the presence
+of a mechanism — a phase-02 lesson (see that phase's § "Criterion design").
+
+- [ ] `cargo fmt --all` leaves the tree unchanged.
+- [ ] `cargo build` succeeds.
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` exits 0.
+- [ ] `cargo test` passes.
+- [ ] Test `collapsed_output_lays_out_as_exactly_one_row` passes — a collapsed
+      300-line `Output` block contributes **exactly 1** row (asserted `== 1`),
+      and that row contains `[collapsed, 300 lines]`.
+- [ ] Test `expanded_layout_is_unchanged_by_the_new_path` passes —
+      `layout_blocks(b, w)` and `layout_blocks_with(b, w, &empty)` return
+      **equal** `Vec<ViewRow>`s. Phase-02's full-output guarantee is intact.
+- [ ] Test `collapse_toggle_is_involutive` passes — collapsing then expanding
+      the same block reproduces the original `Vec<ViewRow>` exactly.
+- [ ] Test `collapse_all_outputs_collapses_only_outputs` passes — over a
+      transcript with 2 `Output` blocks and 3 non-`Output` blocks, the computed
+      set has **exactly 2** members, and both index `Output` blocks.
+- [ ] Tests `focus_next_wraps_at_last_block` and `focus_prev_wraps_at_first`
+      pass, each asserting the exact wrapped index.
+- [ ] Test `rows_carry_their_source_block_index` passes — for a 3-block
+      transcript, every row's `block` is the index of the block it came from.
+- [ ] Test `output_footer_names_ctrl_o` passes — `output_footer(300, 9)` equals
+      `"… 291 more lines · ctrl+o"` exactly.
+- [ ] `grep -c "ctrl+o" src/cli/commands/chat.rs` prints at least 1 — the help
+      text names it too.
+- [ ] `/tmp/e2e-03.txt` shows `== M1 APPLIED ==` with a **failing** run and
+      `grep -c` = 1, then `== M1 RESTORED ==` with a passing run and
+      `grep -c` = 0.
+- [ ] The Update Log's newest entry is headed
+      `### Update — <date> (end-to-end verification)`, contains the pasted
+      artifact, and ends with the literal line `PASTE MATCH`.
+
+## Test plan
+
+In `src/cli/viewer.rs` (`#[cfg(test)] mod tests`):
+
+- `collapsed_output_lays_out_as_exactly_one_row` — 300-line `Output`, collapsed;
+  assert the block contributes exactly 1 row and its text contains
+  `[collapsed, 300 lines]`.
+- `expanded_layout_is_unchanged_by_the_new_path` — equality of the two layout
+  entry points over a mixed transcript.
+- `collapse_toggle_is_involutive` — layout, collapse block 1, expand block 1,
+  assert the final `Vec<ViewRow>` equals the first.
+- `collapse_all_outputs_collapses_only_outputs` — exactly 2 of 5 blocks, and
+  they are the `Output` ones.
+- `focus_next_wraps_at_last_block` — `focus_next(2, 3) == 0`, `focus_next(0, 3)
+  == 1`, `focus_next(0, 0) == 0`.
+- `focus_prev_wraps_at_first` — `focus_prev(0, 3) == 2`, `focus_prev(2, 3) ==
+  1`, `focus_prev(0, 0) == 0`.
+- `rows_carry_their_source_block_index` — 3 blocks; assert each row's `block`
+  matches its source, including the blank separator rows.
+- `render_transcript_marks_collapsed_and_focused` — `TestBackend::new(60, 10)`;
+  a collapsed focused block draws a row containing `▸` and the status line
+  contains `enter collapse`.
+
+In `src/cli/commands/stream.rs`:
+
+- `output_footer_names_ctrl_o` — exact string equality, including the count.
+
+## End-to-end verification
+
+Focus and collapse are keyboard behaviours inside the alternate screen, so
+their real check is live and is architect-run at milestone close (the
+milestone's exit criteria carry it). What the executor verifies here is the
+pure layout and focus arithmetic, a `TestBackend` draw, and the footer string
+the inline surface will actually print.
+
+Tasks 8 and 9 append the mutation pair to the **same** artifact before this
+block runs; do not truncate `/tmp/e2e-03.txt` here.
+
+```sh
+A=/tmp/e2e-03.txt
+echo "== GATES ==" >> "$A"
+cargo fmt --all -- --check 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tail -5 >> "$A"
+echo "fmt exit=${PIPESTATUS[0]}" >> "$A"
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tail -5 >> "$A"
+echo "clippy exit=${PIPESTATUS[0]}" >> "$A"
+cargo test 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tail -25 >> "$A"
+echo "test exit=${PIPESTATUS[0]}" >> "$A"
+echo "== VIEWER UNITS ==" >> "$A"
+cargo test --lib cli::viewer 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tail -25 >> "$A"
+echo "units exit=${PIPESTATUS[0]}" >> "$A"
+echo "== FOOTER UNIT ==" >> "$A"
+cargo test --lib output_footer 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tail -10 >> "$A"
+echo "footer exit=${PIPESTATUS[0]}" >> "$A"
+echo "== CTRL+O IS NAMED ==" >> "$A"
+grep -c "ctrl+o" src/cli/commands/stream.rs >> "$A"
+grep -c "ctrl+o" src/cli/commands/chat.rs >> "$A"
+echo "== PHASE-02 CONTRACT STILL HOLDS ==" >> "$A"
+grep -c "disarm" src/cli/viewer.rs >> "$A"
+grep -nE "try_restore|disable_raw_mode|\.restore\(\)" src/cli/viewer.rs >> "$A"
+echo "teardown grep exit=$?  (1 = none found, which is the pass)" >> "$A"
+```
+
+## Authorizations
+
+- [ ] May edit `src/cli/viewer.rs`, `src/cli/commands/stream.rs`, and the help
+      text in `src/cli/commands/chat.rs`.
+
+No new dependencies. `docs/architecture.md` is **not** authorized.
+
+## Out of scope
+
+- **Search** (phase-04), **copy** (phase-05), **rehydration** (phase-06),
+  **mouse** (phase-07).
+- **`src/cli/input/tty.rs`.** This phase adds no new key parsing — printable
+  keys only.
+- **Undoing anything phase-02 established.** `AltScreenGuard` keeps its
+  unconditional `Drop`, `viewer.rs` gains no `disarm` and no `try_restore` /
+  `disable_raw_mode` / `.restore()`, and the call site still does not propagate
+  the viewer's error. The E2E block re-checks all three.
+- **Collapsing anything by default.** The viewer opens fully expanded.
+- **Changing the inline 10-line cap** or the `… N more lines` wording ahead of
+  the new ` · ctrl+o` suffix.
+
+## Update Log
+
+(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+
+<!-- entries appended below this line -->

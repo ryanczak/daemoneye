@@ -344,8 +344,31 @@ fold threshold.
 Cleared, not a defect: the round-2 `eprintln!` at `chat.rs:746` matches
 existing convention in the same loop (`chat.rs:370-372`, `chat.rs:572`).
 
-**Active phase: none** — phase-03 (expand-collapse) is an intent, not yet
-drafted. Draft it with `/rexymcp:architect next`.
+**Active phase: phase-03 — expand-collapse** (`docs/dev/milestones/
+M17-transcript-view/phase-03-expand-collapse.md`, status `todo`, drafted
+2026-08-19). Dispatch with `/rexymcp:dispatch phase-03`.
+
+Phase-03 staging notes (verified against the tree at draft time):
+
+- **Every acceptance criterion asserts an observed count or value**, not the
+  presence of a mechanism — written that way deliberately after phase-02's two
+  bounces, where structural criteria passed while the behaviour was broken.
+  Examples: a collapsed 300-line block contributes **exactly 1** row; collapse-
+  all over 5 blocks yields **exactly 2** members; `output_footer(300, 9)` equals
+  `"… 291 more lines · ctrl+o"` exactly.
+- **Three gotchas pre-injected**, all verified: adding a field to `ViewRow`
+  breaks **9** struct literals in the existing tests (counted, and updating them
+  is task 2, not a surprise); Tab (`0x09`) is swallowed by the `<0x20` catch-all
+  at `tty.rs:247` exactly as ctrl+O was, so this phase uses printable keys only
+  and touches no `tty.rs`; and `q`/`esc`/`ctrl+o` already exit the viewer, so
+  nothing new may bind to them.
+- **`layout_blocks_with` is additive** — `layout_blocks` stays as a wrapper, so
+  no phase-02 caller or test changes shape.
+- **Out of scope explicitly re-asserts the phase-02 contract** (no `disarm`, no
+  raw-mode teardown, no error propagation at the call site) and the E2E block
+  re-checks all three, so the next round cannot quietly undo it.
+- The mutation grep form `grep -c 'focus + 1$'` was checked against the current
+  tree: 0 now, 1 once the wrap is broken.
 
 Round 1 (`9f57131`) landed all 12 tasks with four green gates, a byte-exact
 E2E artifact and a mutation pair that the reviewer re-ran independently
