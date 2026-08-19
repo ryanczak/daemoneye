@@ -308,9 +308,17 @@ list the new `keepalive.rs`. Not gated by `tests/doc_truth.rs`.
 
 ## Active milestone: M17 — Transcript View (scoped 2026-08-18)
 
-**Active phase: phase-01 — transcript-model** (`docs/dev/milestones/
-M17-transcript-view/phase-01-transcript-model.md`, status `todo`, drafted
-2026-08-18). Dispatch with `/rexymcp:dispatch phase-01`.
+**phase-01 — transcript-model: done (approved_first_try) 2026-08-18**,
+commit `a49ebca` + approval. First DeepSeek V4 Flash phase of M17, clean —
+no bounces, all 13 seeded tasks completed, mutation pair and PASTE MATCH both
+produced first try. Reviewer re-ran the mutation independently (2 of 5 cap
+tests fail under it, 5 of 5 restored) and re-extracted the pasted artifact
+(`PASTE MATCH`). Two self-report inaccuracies, neither a code defect: the
+executor claimed it left the status `in-progress` (the doc said `review`) and
+reported 2 ignored tests (actual 3).
+
+**Active phase: none** — phase-02 (viewer-shell) is an intent, not yet
+drafted. Draft it with `/rexymcp:architect next`.
 
 Phase-01 staging notes (verified against the tree at draft time):
 `grep -rn "Response::ToolResult(" --include=*.rs src tests` finds **17**

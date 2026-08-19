@@ -1,7 +1,7 @@
 # Phase 01: Transcript Model
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -843,3 +843,61 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** a49ebca44013133634d301694217889cefdf501b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none affecting the spec. The executor's completion
+  summary reported two things the tree contradicts — it claimed the status was
+  left `in-progress` (the doc says `review`) and reported the suite's ignored
+  count as 2 (actual: 3 across two test binaries). Neither is a code defect;
+  both are self-report inaccuracies of the kind M11 recorded, and both were
+  caught by re-running rather than reading.
+- **Calibration:** the acceptance criterion "no ignored-test count change
+  beyond the existing 1" was **architect-side imprecise** — it copied
+  `CLAUDE.md`'s stale "+ 1 ignored" claim, while the suite actually has 3
+  ignored tests (2 in `tests/integration.rs`, 1 in `tests/isolation.rs`). The
+  criterion was still satisfiable in substance (the diff adds no `#[ignore]`),
+  but a count criterion must be run before it is written, not copied from a
+  doc. One occurrence; hold for recurrence.
+
+**Independent verification performed (not read from the executor's report):**
+
+- All four gates re-run as separate invocations: `cargo fmt --all -- --check`
+  exit 0, `cargo build` exit 0, `cargo clippy --all-targets --all-features --
+  -D warnings` exit 0, `cargo test` exit 0 (1332 lib tests, up 5 from the 1327
+  baseline).
+- **Mutation M1 re-applied by the reviewer.** With
+  `self.max_blocks + 1000` in place, `cargo test --lib cli::transcript` failed
+  2 of 5 (`transcript_push_evicts_oldest_over_block_cap`,
+  `transcript_push_evicts_over_byte_cap`); restored, 5 of 5 pass. The cap
+  guards are not vacuous.
+- **Paste fidelity re-checked by the reviewer**, extracting from the last
+  end-to-end entry and diffing against the surviving `/tmp/e2e-01.txt`:
+  `PASTE MATCH`.
+- Acceptance greps re-run: `grep -rn "Response::ToolResult(" --include=*.rs
+  src tests` exits 1 (no tuple-form site survives); `tool_call_id` present in
+  `src/ipc.rs`.
+- Diff read for render-identity: the `Response::ToolResult` arm's rendering
+  body in `src/cli/commands/stream.rs` is unchanged — same 10-line cap, same
+  `… N more lines`, same `(no output)` fallback, same `commit_panel` call —
+  with recording appended after it.
+- DoD greps over the diff: no added `#[ignore]`, `#[allow]`, `TODO`/`FIXME`,
+  `dbg!`, `println!`, `unsafe`. The only `panic!`/`expect` additions are inside
+  `#[cfg(test)]` modules.
+
+**Two gaps carried to phase-02 as spec inputs (neither is a phase-01 defect —
+its spec asked for neither):**
+
+1. `Transcript::append_assistant` bypasses `evict()` on the coalescing path, so
+   the byte cap is not enforced while a single assistant turn streams. It is
+   re-enforced on the next `push`, and a turn is bounded by `max_tokens`, so
+   the overflow window is one turn — but the "bounded store" contract has this
+   hole in it.
+2. Two panels reach scrollback without reaching the transcript: the
+   `ToolFinished` arm's `None` branch (the bare `result` panel) and the
+   end-of-turn flush of a started-but-never-finished tool
+   (`src/cli/commands/stream.rs:712`). The phase-02 viewer will be missing
+   both.

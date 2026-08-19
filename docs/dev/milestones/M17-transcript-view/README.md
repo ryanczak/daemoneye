@@ -84,7 +84,7 @@ Phase-01 is drafted; 02–07 are intents only until drafted.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | transcript-model ([phase-01-transcript-model.md](phase-01-transcript-model.md)) | review      |
+| 01 | transcript-model ([phase-01-transcript-model.md](phase-01-transcript-model.md)) | done |
 | 02 | viewer-shell | todo |
 | 03 | expand-collapse | todo |
 | 04 | search | todo |
@@ -119,6 +119,17 @@ Phase intents:
   click-to-expand. Enabled on entry, disabled on exit.
 
 ## Notes
+
+**Carried into phase-02 (from phase-01 review, 2026-08-18):**
+
+- `Transcript::append_assistant` bypasses `evict()` on the coalescing path, so
+  the byte cap is unenforced while one assistant turn streams (re-enforced on
+  the next `push`; bounded by `max_tokens`). Close it when the viewer starts
+  depending on the store's size guarantee.
+- Two panels reach scrollback but not the transcript: the `ToolFinished` arm's
+  `None` branch, and the end-of-turn flush of a started-but-never-finished tool
+  (`src/cli/commands/stream.rs:712`). The viewer will show a gap where the
+  inline surface shows a panel.
 
 Freeform notes, dead ends and calibration observations accumulate here during
 the milestone; the retrospective is written at close.
