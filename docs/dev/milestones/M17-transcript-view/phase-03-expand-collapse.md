@@ -1,7 +1,7 @@
 # Phase 03: Expand / Collapse
 
 **Milestone:** M17 — Transcript View
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02 (viewer-shell, `done`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -402,3 +402,136 @@ No new dependencies. `docs/architecture.md` is **not** authorized.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-19 19:30 (started)
+
+Beginning phase-03: implementing collapse-aware layout, row-to-block linking,
+focus/collapse viewer state, printable-only keys, ctrl+o footer naming, and the
+pure test suite with the M1 mutation pair.
+
+
+### Update — 2026-08-19 20:05 (end-to-end verification)
+
+```
+== M1 APPLIED ==
+1
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+
+failures:
+
+---- cli::viewer::tests::focus_next_wraps_at_last_block stdout ----
+
+thread 'cli::viewer::tests::focus_next_wraps_at_last_block' (2069988) panicked at src/cli/viewer.rs:695:9:
+assertion `left == right` failed
+  left: 3
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    cli::viewer::tests::focus_next_wraps_at_last_block
+
+test result: FAILED. 17 passed; 1 failed; 0 ignored; 0 measured; 1334 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+== M1 RESTORED ==
+0
+test cli::viewer::tests::alt_screen_guard_runs_teardown_on_normal_exit ... ok
+test cli::viewer::tests::clamp_scroll_pins_to_last_page ... ok
+test cli::viewer::tests::clamp_scroll_zero_when_content_fits ... ok
+test cli::viewer::tests::focus_next_wraps_at_last_block ... ok
+test cli::viewer::tests::focus_prev_wraps_at_first ... ok
+test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
+test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
+test cli::viewer::tests::collapse_all_outputs_collapses_only_outputs ... ok
+test cli::viewer::tests::expanded_layout_is_unchanged_by_the_new_path ... ok
+test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
+test cli::viewer::tests::collapse_toggle_is_involutive ... ok
+test cli::viewer::tests::rows_carry_their_source_block_index ... ok
+test cli::viewer::tests::layout_blocks_renders_full_output ... ok
+test cli::viewer::tests::collapsed_output_lays_out_as_exactly_one_row ... ok
+test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 1334 filtered out; finished in 0.00s
+
+exit=0
+== GATES ==
+fmt exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.63s
+clippy exit=0
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+   Doc-tests daemoneye
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test exit=0
+== VIEWER UNITS ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 18 tests
+test cli::viewer::tests::alt_screen_guard_runs_teardown_on_drop ... ok
+test cli::viewer::tests::alt_screen_guard_runs_teardown_on_normal_exit ... ok
+test cli::viewer::tests::clamp_scroll_zero_when_content_fits ... ok
+test cli::viewer::tests::clamp_scroll_pins_to_last_page ... ok
+test cli::viewer::tests::focus_next_wraps_at_last_block ... ok
+test cli::viewer::tests::focus_prev_wraps_at_first ... ok
+test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
+test cli::viewer::tests::collapse_all_outputs_collapses_only_outputs ... ok
+test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
+test cli::viewer::tests::expanded_layout_is_unchanged_by_the_new_path ... ok
+test cli::viewer::tests::collapse_toggle_is_involutive ... ok
+test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
+test cli::viewer::tests::rows_carry_their_source_block_index ... ok
+test cli::viewer::tests::layout_blocks_renders_full_output ... ok
+test cli::viewer::tests::collapsed_output_lays_out_as_exactly_one_row ... ok
+test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 1334 filtered out; finished in 0.00s
+
+units exit=0
+== FOOTER UNIT ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 1 test
+test cli::commands::stream::tests::output_footer_names_ctrl_o ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1351 filtered out; finished in 0.00s
+
+footer exit=0
+== CTRL+O IS NAMED ==
+3
+1
+== PHASE-02 CONTRACT STILL HOLDS ==
+0
+teardown grep exit=1  (1 = none found, which is the pass)
+```
+
+PASTE MATCH

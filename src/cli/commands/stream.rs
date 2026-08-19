@@ -51,6 +51,11 @@ fn silence_budget(response_started: bool) -> std::time::Duration {
     })
 }
 
+/// Footer shown on an elided inline tool-output panel.
+fn output_footer(total: usize, shown: usize) -> String {
+    format!("… {} more lines · ctrl+o", total - shown)
+}
+
 /// Fire an out-of-band cancel at the daemon on a fresh connection, so the
 /// streaming connection's reader is never touched. Best-effort: on failure
 /// (daemon gone, timeout) the daemon still ends the turn via EPIPE as today.
@@ -704,7 +709,7 @@ pub(super) async fn ask_with_session_ratatui(
                 };
                 let mut body: Vec<String> = lines[..shown].to_vec();
                 if total > MAX_LINES {
-                    body.push(format!("… {} more lines", total - shown));
+                    body.push(output_footer(total, shown));
                 } else if body.is_empty() {
                     body.push("(no output)".to_string());
                 }
@@ -1466,6 +1471,14 @@ mod tests {
             silence_budget(true),
             std::time::Duration::from_secs(PHASE2_SILENCE_TIMEOUT_SECS)
         );
+    }
+
+    // ── output_footer ──────────────────────────────────────────────────
+
+    #[test]
+    fn output_footer_names_ctrl_o() {
+        assert_eq!(output_footer(300, 9), "… 291 more lines · ctrl+o");
+        assert_eq!(output_footer(10, 9), "… 1 more lines · ctrl+o");
     }
 }
 

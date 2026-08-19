@@ -24,7 +24,7 @@ Commands:
 Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
 
 At a tool-approval prompt, type a message instead of Y/A/N to redirect the agent.
-Tool output is capped at 10 lines on screen (… N more lines); full output is kept in history.
+Tool output is capped at 10 lines on screen (… N more lines · ctrl+o opens the full transcript).
 
 Up/Down navigate the input; at the top/bottom edge they recall history.
 ";
