@@ -1,7 +1,7 @@
 # Phase 04: Search
 
 **Milestone:** M17 — Transcript View
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03 (expand-collapse, `done`)
 **Estimated diff:** ~450 lines
 
@@ -416,3 +416,14 @@ is `src/cli/input/tty.rs` — this phase adds no key parsing.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-19 14:37 (progress)
+
+Started phase-04 (search). Flipped phase doc status to `in-progress` and the
+milestone README row to match. Implemented tasks 1–6: the `ViewerAction` enum
+and pure `key_action` decoder, `find_matches` / `next_match` / `prev_match` /
+`scroll_to_row` helpers, rewired `viewer_loop` through the decoder with search
+state, `render_transcript` match styling and search-prompt status line, and the
+full test plan. Next: the M1 mutation pair (tasks 7–8), then the end-to-end
+capture (tasks 9–10).
+
