@@ -30,6 +30,102 @@ pub struct ViewRow {
     pub block: usize,
 }
 
+/// What a keypress means to the viewer. `searching` in `key_action` selects
+/// between command mode and search-input mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewerAction {
+    ScrollUp,
+    ScrollDown,
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
+    FocusNext,
+    FocusPrev,
+    ToggleCollapse,
+    CollapseOutputs,
+    ExpandAll,
+    SearchOpen,
+    SearchType(char),
+    SearchBackspace,
+    SearchCommit,
+    SearchCancel,
+    MatchNext,
+    MatchPrev,
+    Quit,
+    Ignore,
+}
+
+/// Decode one key. `searching` is true while the search prompt is open.
+pub fn key_action(key: &crate::cli::input::Key, searching: bool) -> ViewerAction {
+    match (searching, key) {
+        (true, crate::cli::input::Key::Char('\x1b')) => ViewerAction::SearchCancel,
+        (true, crate::cli::input::Key::Enter) => ViewerAction::SearchCommit,
+        (true, crate::cli::input::Key::Backspace) => ViewerAction::SearchBackspace,
+        (true, crate::cli::input::Key::Char(c)) if !c.is_control() => ViewerAction::SearchType(*c),
+        (_, crate::cli::input::Key::Up) => ViewerAction::ScrollUp,
+        (_, crate::cli::input::Key::Down) => ViewerAction::ScrollDown,
+        (_, crate::cli::input::Key::PageUp) => ViewerAction::PageUp,
+        (_, crate::cli::input::Key::PageDown) => ViewerAction::PageDown,
+        (_, crate::cli::input::Key::Home) => ViewerAction::Top,
+        (_, crate::cli::input::Key::End) => ViewerAction::Bottom,
+        (false, crate::cli::input::Key::Char(']')) => ViewerAction::FocusNext,
+        (false, crate::cli::input::Key::Char('[')) => ViewerAction::FocusPrev,
+        (false, crate::cli::input::Key::Enter) => ViewerAction::ToggleCollapse,
+        (false, crate::cli::input::Key::Char('c')) => ViewerAction::CollapseOutputs,
+        (false, crate::cli::input::Key::Char('a')) => ViewerAction::ExpandAll,
+        (false, crate::cli::input::Key::Char('\x1b'))
+        | (false, crate::cli::input::Key::Char('q'))
+        | (false, crate::cli::input::Key::CtrlO) => ViewerAction::Quit,
+        (false, crate::cli::input::Key::Char('/')) => ViewerAction::SearchOpen,
+        (false, crate::cli::input::Key::Char('n')) => ViewerAction::MatchNext,
+        (false, crate::cli::input::Key::Char('N')) => ViewerAction::MatchPrev,
+        _ => ViewerAction::Ignore,
+    }
+}
+
+/// Row indices whose text contains `query`, case-insensitively.
+/// An empty query matches nothing.
+pub fn find_matches(rows: &[ViewRow], query: &str) -> Vec<usize> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let needle = query.to_lowercase();
+    rows.iter()
+        .enumerate()
+        .filter(|(_, r)| r.text.to_lowercase().contains(&needle))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Next match index, wrapping. `len == 0` yields 0.
+pub fn next_match(cur: usize, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (cur + 1) % len
+}
+
+/// Previous match index, wrapping. `len == 0` yields 0.
+pub fn prev_match(cur: usize, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (cur + len - 1) % len
+}
+
+/// Minimal scroll offset that keeps `row` visible in a `height`-row viewport.
+/// Returns `scroll` unchanged when the row is already visible.
+pub fn scroll_to_row(row: usize, scroll: usize, height: usize) -> usize {
+    if row < scroll {
+        return row;
+    }
+    if row >= scroll.saturating_add(height) {
+        return row.saturating_add(1).saturating_sub(height);
+    }
+    scroll
+}
+
 /// Lay the transcript out at `width` columns: one `ViewRow` per screen row,
 /// blocks separated by exactly one blank row (never after the last).
 pub fn layout_blocks(blocks: &[Block], width: usize) -> Vec<ViewRow> {
@@ -184,6 +280,19 @@ pub fn clamp_scroll(scroll: usize, total: usize, height: usize) -> usize {
     scroll.min(max)
 }
 
+/// What the search feature needs at draw time, bundled to keep
+/// `render_transcript`'s parameter count inside clippy's arity limit.
+pub struct SearchState<'a> {
+    /// Whether the search prompt is open.
+    pub active: bool,
+    /// The typed (or committed) query.
+    pub query: &'a str,
+    /// View row indices whose text contains `query`.
+    pub matches: &'a [usize],
+    /// Index into `matches` of the current match.
+    pub current: usize,
+}
+
 /// Render `rows` into a frame at a scroll offset. The bottom row is a status
 /// line; the rows above it show `rows[scroll..]`. Never panics on an empty
 /// row set or an out-of-range scroll.
@@ -192,16 +301,27 @@ pub fn render_transcript(
     rows: &[ViewRow],
     scroll: usize,
     focus: usize,
+    search: &SearchState,
     evicted: usize,
 ) {
     let area = f.area();
     let body_height = area.height.saturating_sub(1);
     let scroll = clamp_scroll(scroll, rows.len(), body_height as usize);
     let palette = crate::cli::palette::Palette::from_env();
+    let current_row = search.matches.get(search.current).copied();
 
     let mut lines: Vec<Line<'static>> = Vec::new();
-    for row in rows.iter().skip(scroll).take(body_height as usize) {
-        let style = if row.block == focus {
+    for (row_idx, row) in rows
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(body_height as usize)
+    {
+        let style = if Some(row_idx) == current_row {
+            style_for_current(row.kind, palette)
+        } else if search.matches.contains(&row_idx) {
+            style_for_match(row.kind, palette)
+        } else if row.block == focus {
             style_for_focused(row.kind, palette)
         } else {
             style_for(row.kind, palette)
@@ -216,8 +336,29 @@ pub fn render_transcript(
     if evicted > 0 {
         status = format!("{evicted} older blocks evicted · {status}");
     }
-    status
-        .push_str(" · [ ] focus · enter collapse · c/a all · ↑↓ PgUp/PgDn Home/End · esc to close");
+    let k = if search.matches.is_empty() {
+        0
+    } else {
+        search.current + 1
+    };
+    if search.active {
+        status = format!(
+            "{status} · /{} — {k}/{}",
+            search.query,
+            search.matches.len()
+        );
+    } else if !search.matches.is_empty() {
+        status = format!(
+            "{status} · {k}/{} for \"{}\"",
+            search.matches.len(),
+            search.query
+        );
+    }
+    status.push_str(" · [ ] focus · enter collapse · c/a all");
+    if !search.matches.is_empty() {
+        status.push_str(" · / search · n/N next/prev");
+    }
+    status.push_str(" · ↑↓ PgUp/PgDn Home/End · esc to close");
 
     let status_line = Line::from(Span::styled(
         status,
@@ -232,6 +373,21 @@ pub fn render_transcript(
         status_line,
         ratatui::layout::Rect::new(area.x, area.y + body_height, area.width, 1),
     );
+}
+
+/// Violet-tinted variant marking a row that contains a search match. Distinct
+/// from the focused-underlined variant; `style_for_current` is stronger.
+fn style_for_match(kind: RowKind, palette: crate::cli::palette::Palette) -> Style {
+    style_for(kind, palette).add_modifier(Modifier::BOLD)
+}
+
+/// Violet-tinted variant marking the active search match. Strongest of the
+/// match styles; wins over focus.
+fn style_for_current(kind: RowKind, palette: crate::cli::palette::Palette) -> Style {
+    style_for(kind, palette)
+        .fg(Color::LightMagenta)
+        .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::UNDERLINED)
 }
 
 fn style_for(kind: RowKind, palette: crate::cli::palette::Palette) -> Style {
@@ -339,15 +495,33 @@ async fn viewer_loop(
     let mut focus = blocks_len.saturating_sub(1);
     let mut collapsed: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
+    let mut searching = false;
+    let mut query = String::new();
+    let mut current: usize = 0;
+
     let mut scroll: usize;
+    let mut matches: Vec<usize>;
     {
         let size = terminal.size()?;
         let width = size.width as usize;
         let rows = layout_blocks(transcript.blocks(), width);
         let body_height = size.height.saturating_sub(1) as usize;
         scroll = clamp_scroll(usize::MAX, rows.len(), body_height);
+        matches = find_matches(&rows, &query);
         terminal.draw(|f| {
-            render_transcript(f, &rows, scroll, focus, transcript.evicted());
+            render_transcript(
+                f,
+                &rows,
+                scroll,
+                focus,
+                &SearchState {
+                    active: searching,
+                    query: &query,
+                    matches: &matches,
+                    current,
+                },
+                transcript.evicted(),
+            );
         })?;
     }
 
@@ -359,8 +533,22 @@ async fn viewer_loop(
                 let rows = layout_blocks(transcript.blocks(), width);
                 let body_height = size.height.saturating_sub(1) as usize;
                 scroll = clamp_scroll(scroll, rows.len(), body_height);
+                matches = find_matches(&rows, &query);
+                current = current.min(matches.len().saturating_sub(1));
                 terminal.draw(|f| {
-                    render_transcript(f, &rows, scroll, focus, transcript.evicted());
+                    render_transcript(
+                        f,
+                        &rows,
+                        scroll,
+                        focus,
+                        &SearchState {
+                            active: searching,
+                            query: &query,
+                            matches: &matches,
+                            current,
+                        },
+                        transcript.evicted(),
+                    );
                 })?;
                 continue;
             }
@@ -372,72 +560,126 @@ async fn viewer_loop(
         let rows = layout_blocks(transcript.blocks(), width);
         let body_height = size.height.saturating_sub(1) as usize;
         let mut focus_changed = false;
-        match key {
-            crate::cli::input::Key::Up => {
+        match key_action(&key, searching) {
+            ViewerAction::ScrollUp => {
                 scroll = scroll.saturating_sub(1);
             }
-            crate::cli::input::Key::Down => {
+            ViewerAction::ScrollDown => {
                 scroll = scroll.saturating_add(1);
             }
-            crate::cli::input::Key::PageUp => {
+            ViewerAction::PageUp => {
                 scroll = scroll.saturating_sub(body_height.saturating_sub(1));
             }
-            crate::cli::input::Key::PageDown => {
+            ViewerAction::PageDown => {
                 scroll = scroll.saturating_add(body_height.saturating_sub(1));
             }
-            crate::cli::input::Key::Home => scroll = 0,
-            crate::cli::input::Key::End => scroll = usize::MAX,
-            crate::cli::input::Key::Char(']') => {
+            ViewerAction::Top => scroll = 0,
+            ViewerAction::Bottom => scroll = usize::MAX,
+            ViewerAction::FocusNext => {
                 focus = focus_next(focus, blocks_len);
                 focus_changed = true;
             }
-            crate::cli::input::Key::Char('[') => {
+            ViewerAction::FocusPrev => {
                 focus = focus_prev(focus, blocks_len);
                 focus_changed = true;
             }
-            crate::cli::input::Key::Enter => {
+            ViewerAction::ToggleCollapse => {
                 if collapsed.contains(&focus) {
                     collapsed.remove(&focus);
                 } else {
                     collapsed.insert(focus);
                 }
+                matches = find_matches(&rows, &query);
+                current = current.min(matches.len().saturating_sub(1));
             }
-            crate::cli::input::Key::Char('c') => {
+            ViewerAction::CollapseOutputs => {
                 collapsed.clear();
                 for (i, block) in transcript.blocks().iter().enumerate() {
                     if matches!(block, crate::cli::transcript::Block::Output { .. }) {
                         collapsed.insert(i);
                     }
                 }
+                matches = find_matches(&rows, &query);
+                current = current.min(matches.len().saturating_sub(1));
             }
-            crate::cli::input::Key::Char('a') => {
+            ViewerAction::ExpandAll => {
                 collapsed.clear();
+                matches = find_matches(&rows, &query);
+                current = current.min(matches.len().saturating_sub(1));
             }
-            crate::cli::input::Key::Char('\x1b')
-            | crate::cli::input::Key::Char('q')
-            | crate::cli::input::Key::CtrlO => break,
-            _ => {}
+            ViewerAction::Quit => break,
+            ViewerAction::SearchOpen => {
+                searching = true;
+                query.clear();
+                matches.clear();
+                current = 0;
+            }
+            ViewerAction::SearchType(c) => {
+                query.push(c);
+                matches = find_matches(&rows, &query);
+                current = 0;
+                if let Some(&m) = matches.first() {
+                    scroll = scroll_to_row(m, scroll, body_height);
+                }
+            }
+            ViewerAction::SearchBackspace => {
+                query.pop();
+                matches = find_matches(&rows, &query);
+                current = 0;
+                if let Some(&m) = matches.first() {
+                    scroll = scroll_to_row(m, scroll, body_height);
+                }
+            }
+            ViewerAction::SearchCommit => {
+                searching = false;
+            }
+            ViewerAction::SearchCancel => {
+                searching = false;
+                query.clear();
+                matches.clear();
+                current = 0;
+            }
+            ViewerAction::MatchNext => {
+                if let Some(&m) = matches.get(current) {
+                    current = next_match(current, matches.len());
+                    scroll = scroll_to_row(m, scroll, body_height);
+                }
+            }
+            ViewerAction::MatchPrev => {
+                if let Some(&m) = matches.get(current) {
+                    current = prev_match(current, matches.len());
+                    scroll = scroll_to_row(m, scroll, body_height);
+                }
+            }
+            ViewerAction::Ignore => {}
         }
         if focus_changed
             && let Some(row_idx) = rows
                 .iter()
                 .position(|r| r.block == focus && r.kind == crate::cli::viewer::RowKind::Header)
         {
-            if row_idx < scroll {
-                scroll = row_idx;
-            } else if row_idx >= scroll + body_height {
-                scroll = row_idx.saturating_add(1).saturating_sub(body_height);
-            }
+            scroll = scroll_to_row(row_idx, scroll, body_height);
         }
         scroll = clamp_scroll(scroll, rows.len(), body_height);
         terminal.draw(|f| {
-            render_transcript(f, &rows, scroll, focus, transcript.evicted());
+            render_transcript(
+                f,
+                &rows,
+                scroll,
+                focus,
+                &SearchState {
+                    active: searching,
+                    query: &query,
+                    matches: &matches,
+                    current,
+                },
+                transcript.evicted(),
+            );
         })?;
     }
     Ok(())
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,7 +790,21 @@ mod tests {
             },
         ];
         terminal
-            .draw(|f| render_transcript(f, &rows, 2, 0, 0))
+            .draw(|f| {
+                render_transcript(
+                    f,
+                    &rows,
+                    2,
+                    0,
+                    &SearchState {
+                        active: false,
+                        query: "",
+                        matches: &[],
+                        current: 0,
+                    },
+                    0,
+                )
+            })
             .unwrap();
         let buf = terminal.backend().buffer();
         let all_text: String = buf
@@ -587,7 +843,21 @@ mod tests {
             },
         ];
         terminal
-            .draw(|f| render_transcript(f, &rows, 9999, 0, 1))
+            .draw(|f| {
+                render_transcript(
+                    f,
+                    &rows,
+                    9999,
+                    0,
+                    &SearchState {
+                        active: false,
+                        query: "",
+                        matches: &[],
+                        current: 0,
+                    },
+                    1,
+                )
+            })
             .unwrap();
         let buf = terminal.backend().buffer();
         let all_text: String = buf
@@ -747,7 +1017,21 @@ mod tests {
         let rows = layout_blocks_with(&blocks, 60, &collapsed);
         let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
         terminal
-            .draw(|f| render_transcript(f, &rows, 0, 1, 0))
+            .draw(|f| {
+                render_transcript(
+                    f,
+                    &rows,
+                    0,
+                    1,
+                    &SearchState {
+                        active: false,
+                        query: "",
+                        matches: &[],
+                        current: 0,
+                    },
+                    0,
+                )
+            })
             .unwrap();
         let buf = terminal.backend().buffer();
         let all_text: String = buf
@@ -760,6 +1044,195 @@ mod tests {
             "collapsed marker must draw: {all_text}"
         );
         assert!(all_text.contains("enter collapse"), "got: {all_text}");
+    }
+
+    #[test]
+    fn key_action_typing_wins_over_commands_while_searching() {
+        for ch in ['q', 'c', 'a', '[', ']', 'n'] {
+            assert_eq!(
+                key_action(&crate::cli::input::Key::Char(ch), true),
+                ViewerAction::SearchType(ch),
+                "typing {ch} while searching must type, not command"
+            );
+        }
+        assert_eq!(
+            key_action(&crate::cli::input::Key::Char('N'), true),
+            ViewerAction::SearchType('N'),
+            "typing N while searching must type"
+        );
+    }
+
+    #[test]
+    fn key_action_commands_apply_when_not_searching() {
+        let cases = [
+            ('q', ViewerAction::Quit),
+            ('c', ViewerAction::CollapseOutputs),
+            ('a', ViewerAction::ExpandAll),
+            ('[', ViewerAction::FocusPrev),
+            (']', ViewerAction::FocusNext),
+            ('n', ViewerAction::MatchNext),
+        ];
+        for (ch, action) in cases {
+            assert_eq!(
+                key_action(&crate::cli::input::Key::Char(ch), false),
+                action,
+                "decoding {ch} when not searching"
+            );
+        }
+        assert_eq!(
+            key_action(&crate::cli::input::Key::Char('N'), false),
+            ViewerAction::MatchPrev
+        );
+    }
+
+    #[test]
+    fn key_action_escape_cancels_search_but_quits_otherwise() {
+        assert_eq!(
+            key_action(&crate::cli::input::Key::Char('\x1b'), true),
+            ViewerAction::SearchCancel
+        );
+        assert_eq!(
+            key_action(&crate::cli::input::Key::Char('\x1b'), false),
+            ViewerAction::Quit
+        );
+    }
+
+    #[test]
+    fn find_matches_empty_query_matches_nothing() {
+        let rows = vec![
+            ViewRow {
+                text: "lorem ipsum".to_string(),
+                kind: RowKind::Output,
+                block: 0,
+            },
+            ViewRow {
+                text: "dolor sit".to_string(),
+                kind: RowKind::Output,
+                block: 0,
+            },
+        ];
+        assert_eq!(find_matches(&rows, "").len(), 0);
+    }
+
+    #[test]
+    fn find_matches_is_case_insensitive() {
+        let rows = vec![
+            ViewRow {
+                text: "Lorem ipsum".to_string(),
+                kind: RowKind::Output,
+                block: 0,
+            },
+            ViewRow {
+                text: "lorem dolor".to_string(),
+                kind: RowKind::Output,
+                block: 0,
+            },
+            ViewRow {
+                text: "no hit".to_string(),
+                kind: RowKind::Output,
+                block: 0,
+            },
+        ];
+        let upper = find_matches(&rows, "LOREM");
+        let lower = find_matches(&rows, "lorem");
+        assert_eq!(upper, lower);
+        assert!(!lower.is_empty(), "case-insensitive query must match");
+    }
+
+    #[test]
+    fn find_matches_skips_collapsed_block_bodies() {
+        let blocks = vec![
+            Block::UserTurn {
+                label: "me".to_string(),
+                text: "subject header".to_string(),
+            },
+            output_block("needle inside body\nonly\n", 2),
+        ];
+        let collapsed = HashSet::from([1]);
+        let collapsed_rows = layout_blocks_with(&blocks, 60, &collapsed);
+        assert_eq!(
+            find_matches(&collapsed_rows, "needle").len(),
+            0,
+            "collapsed body text must not be searchable"
+        );
+        let expanded_rows = layout_blocks_with(&blocks, 60, &HashSet::new());
+        assert!(
+            !find_matches(&expanded_rows, "needle").is_empty(),
+            "the same query over the expanded layout must match"
+        );
+    }
+
+    #[test]
+    fn next_match_wraps() {
+        assert_eq!(next_match(2, 3), 0);
+        assert_eq!(next_match(0, 3), 1);
+        assert_eq!(next_match(0, 0), 0);
+    }
+
+    #[test]
+    fn prev_match_wraps() {
+        assert_eq!(prev_match(0, 3), 2);
+        assert_eq!(prev_match(2, 3), 1);
+        assert_eq!(prev_match(0, 0), 0);
+    }
+
+    #[test]
+    fn scroll_to_row_only_moves_when_offscreen() {
+        assert_eq!(scroll_to_row(5, 0, 10), 0, "visible: unchanged");
+        assert_eq!(scroll_to_row(2, 5, 10), 2, "above viewport: jump");
+        assert_eq!(scroll_to_row(20, 0, 10), 11, "below viewport: jump");
+        scroll_to_row(3, 0, 0);
+    }
+
+    #[test]
+    fn render_transcript_shows_match_counter() {
+        let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
+        let rows = vec![
+            ViewRow {
+                text: "apple pie".to_string(),
+                kind: RowKind::Output,
+                block: 0,
+            },
+            ViewRow {
+                text: "banana split".to_string(),
+                kind: RowKind::Output,
+                block: 0,
+            },
+            ViewRow {
+                text: "cherry tart".to_string(),
+                kind: RowKind::Output,
+                block: 0,
+            },
+        ];
+        terminal
+            .draw(|f| {
+                render_transcript(
+                    f,
+                    &rows,
+                    0,
+                    0,
+                    &SearchState {
+                        active: false,
+                        query: "e",
+                        matches: &[0, 1, 2],
+                        current: 0,
+                    },
+                    0,
+                )
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let bottom_row: String = buf
+            .content
+            .iter()
+            .skip((9 * 60) as usize)
+            .take(60)
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(
+            bottom_row.contains("1/3"),
+            "match counter must be on the status row, got: {bottom_row}"
+        );
     }
 
     #[test]

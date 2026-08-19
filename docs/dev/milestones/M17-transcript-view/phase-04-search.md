@@ -427,3 +427,140 @@ state, `render_transcript` match styling and search-prompt status line, and the
 full test plan. Next: the M1 mutation pair (tasks 7–8), then the end-to-end
 capture (tasks 9–10).
 
+
+### Update — 2026-08-19 14:52 (end-to-end verification)
+
+All phase-04 acceptance criteria exercised against the real viewer module:
+
+- `key_action` mode decode (six command characters type while searching, keep
+  command meanings when idle), escape flipping between `SearchCancel`/`Quit`.
+- `find_matches` empty-query, case-insensitivity (the M1 mutation proves the
+  normalisation is real), and collapsed-body skipping.
+- `next_match` / `prev_match` wrapping, `scroll_to_row` offsets and height-0
+  safety, and a `TestBackend` draw showing `1/3` on the status row.
+- The inline scroll-into-view arithmetic is gone (`row_idx >= scroll +
+  body_height` count = 0) and `scroll_to_row` exists exactly once; the
+  phase-02 teardown contract still holds (`disarm` count 0, no
+  `try_restore`/`disable_raw_mode`/`.restore()`).
+
+Mutation pair M1 applied → run fails (`find_matches_is_case_insensitive`
+catches it, grep = 1) and restored → run passes (grep = 0).
+
+```
+== M1 APPLIED ==
+1
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+
+failures:
+
+---- cli::viewer::tests::find_matches_is_case_insensitive stdout ----
+
+thread 'cli::viewer::tests::find_matches_is_case_insensitive' (2236236) panicked at src/cli/viewer.rs:1138:9:
+assertion `left == right` failed
+  left: []
+ right: [0, 1]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli::viewer::tests::find_matches_is_case_insensitive
+
+test result: FAILED. 27 passed; 1 failed; 0 ignored; 0 measured; 1334 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+== M1 RESTORED ==
+0
+test cli::viewer::tests::collapse_toggle_is_involutive ... ok
+test cli::viewer::tests::find_matches_skips_collapsed_block_bodies ... ok
+test cli::viewer::tests::key_action_escape_cancels_search_but_quits_otherwise ... ok
+test cli::viewer::tests::key_action_typing_wins_over_commands_while_searching ... ok
+test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
+test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
+test cli::viewer::tests::next_match_wraps ... ok
+test cli::viewer::tests::prev_match_wraps ... ok
+test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
+test cli::viewer::tests::scroll_to_row_only_moves_when_offscreen ... ok
+test cli::viewer::tests::rows_carry_their_source_block_index ... ok
+test cli::viewer::tests::layout_blocks_renders_full_output ... ok
+test cli::viewer::tests::collapsed_output_lays_out_as_exactly_one_row ... ok
+test cli::viewer::tests::render_transcript_shows_match_counter ... ok
+test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 1334 filtered out; finished in 0.00s
+
+exit=0
+== GATES ==
+fmt exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.67s
+clippy exit=0
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+   Doc-tests daemoneye
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test exit=0
+== VIEWER UNITS ==
+test cli::viewer::tests::clamp_scroll_zero_when_content_fits ... ok
+test cli::viewer::tests::alt_screen_guard_runs_teardown_on_normal_exit ... ok
+test cli::viewer::tests::alt_screen_guard_runs_teardown_on_drop ... ok
+test cli::viewer::tests::find_matches_empty_query_matches_nothing ... ok
+test cli::viewer::tests::find_matches_is_case_insensitive ... ok
+test cli::viewer::tests::focus_prev_wraps_at_first ... ok
+test cli::viewer::tests::collapse_all_outputs_collapses_only_outputs ... ok
+test cli::viewer::tests::key_action_commands_apply_when_not_searching ... ok
+test cli::viewer::tests::collapse_toggle_is_involutive ... ok
+test cli::viewer::tests::expanded_layout_is_unchanged_by_the_new_path ... ok
+test cli::viewer::tests::focus_next_wraps_at_last_block ... ok
+test cli::viewer::tests::key_action_escape_cancels_search_but_quits_otherwise ... ok
+test cli::viewer::tests::find_matches_skips_collapsed_block_bodies ... ok
+test cli::viewer::tests::key_action_typing_wins_over_commands_while_searching ... ok
+test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
+test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
+test cli::viewer::tests::next_match_wraps ... ok
+test cli::viewer::tests::prev_match_wraps ... ok
+test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
+test cli::viewer::tests::scroll_to_row_only_moves_when_offscreen ... ok
+test cli::viewer::tests::layout_blocks_renders_full_output ... ok
+test cli::viewer::tests::collapsed_output_lays_out_as_exactly_one_row ... ok
+test cli::viewer::tests::rows_carry_their_source_block_index ... ok
+test cli::viewer::tests::render_transcript_shows_match_counter ... ok
+test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 1334 filtered out; finished in 0.00s
+
+units exit=0
+== ONE COPY OF THE SCROLL ARITHMETIC ==
+0
+2
+== PHASE-02 CONTRACT STILL HOLDS ==
+0
+teardown grep exit=1  (1 = none found, which is the pass)
+```
+PASTE MATCH
