@@ -95,7 +95,7 @@ half deferred to a PE spot-check), retrospective in the M15 README.
 
 ---
 
-## Active milestone: M16 — LLM Stream Robustness (drafted 2026-08-16, opened 2026-08-16)
+## M16 — LLM Stream Robustness (drafted 2026-08-16, opened 2026-08-16; all phases done 2026-08-18, PE sign-off outstanding)
 
 **phase-01 — transport-scaffolding: done (escalated — architect close
 2026-08-17)**, implementation commit `d3ad2c0`. DeepSeek V4 Flash's first
@@ -277,7 +277,7 @@ per test, `never()` not ported, and that `send_cancel` opens its own
 
 ---
 
-## Active phase: **none** — M16 is at its milestone boundary
+## M16 — LLM Stream Robustness: at its milestone boundary (superseded as active by M17)
 
 All eight M16 phases are `done`. **The milestone is not closed**: five live
 exit criteria are unrun and one calibration fold awaits a PE decision. Full
@@ -303,6 +303,66 @@ retrospective in
 
 **Also outstanding (minor):** `CLAUDE.md`'s `src/daemon/utils/` row does not
 list the new `keepalive.rs`. Not gated by `tests/doc_truth.rs`.
+
+---
+
+## Active milestone: M17 — Transcript View (scoped 2026-08-18)
+
+**Active phase: phase-01 — transcript-model** (`docs/dev/milestones/
+M17-transcript-view/phase-01-transcript-model.md`, status `todo`, drafted
+2026-08-18). Dispatch with `/rexymcp:dispatch phase-01`.
+
+Phase-01 staging notes (verified against the tree at draft time):
+`grep -rn "Response::ToolResult(" --include=*.rs src tests` finds **17**
+tuple-form sites, not the 13 sends alone — the inventory in the phase doc
+includes two easily-missed ones (`src/cli/commands/ask.rs:207`, a skip arm in a
+`|`-chain, and `src/ipc_tests.rs:338,340`, the existing round-trip test, which
+lives in `src/` and not `tests/`). The E2E block's test filter is
+path-qualified `cli::transcript` because a bare `transcript` filter also
+matches the pre-existing
+`cli::render_ratatui::tests::commit_renders_transcript_line_into_buffer`. The
+PASTE MATCH extraction was validated both directions against a scratch fixture
+before being written into the spec: a retyped line printed `PASTE MISMATCH`
+with the divergent lines, the byte-exact copy printed `PASTE MATCH`.
+
+**Goal:** an alternate-screen transcript viewer opened with `ctrl+o` from the
+chat prompt — full (un-elided) tool output, scroll, search, block copy to a
+tmux buffer, and rehydration from the session JSONL — with the inline
+`insert_before` streaming path left untouched as the primary surface.
+
+Milestone README: `docs/dev/milestones/M17-transcript-view/README.md`.
+Design of record: `docs/design/transcript-view.md`.
+
+**Why modal rather than an app-owned chat buffer.** Owning the primary
+transcript would move history out of terminal scrollback, which is what makes
+tmux copy-mode and drag selection work today; the client would have to
+reimplement selection and clipboard hand-off — the one part of the UX tests
+cannot validate. The viewer is additive and modal instead.
+
+**Load-bearing facts derived for the scope (re-verify before each dispatch):**
+
+- `Response::ToolResult` already carries the **full** output on the wire
+  (`src/cli/commands/stream.rs:674`); the client elides at 10 lines and drops
+  the string. It is a bare `String` with no id (`src/ipc.rs:414`) — M17 adds a
+  `tool_call_id` so blocks can be joined to history records.
+- Committed panels are frozen: `commit_panel_labeled`
+  (`src/cli/render_ratatui.rs:755`) writes through `insert_before`, and
+  absolute row arithmetic is untrustworthy after any scroll or resize
+  (`render_ratatui.rs:177-189`). In-place expansion is not reachable.
+- Persisted copies are all lossy or unsafe as a viewer source: `events.jsonl`
+  caps output at 200 chars (`src/daemon/utils/event_log.rs:291`); session-JSONL
+  `tool_results` are truncated at `limits.tool_result_chars` (default 16 000,
+  `src/config/types.rs:453`); `var/log/panes/*.log` covers background jobs only
+  and is written **unmasked** (`src/daemon/background/helpers.rs:78`).
+- Foreground execution archives nothing — its output exists only on the wire
+  and in the truncated history copy.
+- tmux on the target host is **3.7b**, so `tmux load-buffer -w -` (≥ 3.2) is
+  available for block copy; no OSC 52 negotiation needed.
+
+**Blocking on M16:** M16's five live exit criteria and its calibration fold are
+still awaiting PE. M17 phases touch `src/cli/` and `src/ipc.rs` while M16's
+open items are daemon-stream behaviours, so they do not collide — but M16
+should be signed off and closed before the first M17 dispatch.
 
 ---
 
