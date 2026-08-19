@@ -318,8 +318,30 @@ executor claimed it left the status `in-progress` (the doc said `review`) and
 reported 2 ignored tests (actual 3).
 
 **Active phase: phase-02 — viewer-shell** (`docs/dev/milestones/
-M17-transcript-view/phase-02-viewer-shell.md`, status `todo`, drafted
-2026-08-18). Dispatch with `/rexymcp:dispatch phase-02`.
+M17-transcript-view/phase-02-viewer-shell.md`, status `in-progress` —
+**bounced 2026-08-18, round 1, bug-phase-02-1**). Re-dispatch with
+`/rexymcp:dispatch phase-02`.
+
+Round 1 (`9f57131`) landed all 12 tasks with four green gates, a byte-exact
+E2E artifact and a mutation pair that the reviewer re-ran independently
+(2 of 8 viewer tests fail under it, 8 of 8 restored). It was bounced for one
+defect: `run_transcript_viewer` leaves the alternate screen and calls
+`reanchor()` as straight-line statements at the end of the happy path, while
+seven `?` early-returns sit between `EnterAlternateScreen` and
+`LeaveAlternateScreen` — and the call site propagates the error out of the
+input loop with `.await?`, past the `renderer.restore()` that sits after the
+loop. Any viewer I/O error therefore exits the chat process with the terminal
+still on the alternate screen **and** still in raw mode.
+
+**The failure class is `spec_bug`, not an executor error.** The spec's task 4
+step 5 said "On break: drop the fullscreen terminal, then `LeaveAlternateScreen`,
+then `renderer.reanchor()`" — it described the happy path and never said "on
+every exit path". The executor implemented exactly what was written. The
+lesson generalises: **when a spec hands out a resource, it must say what
+releases it on the error path, not only on the success path** — the codebase
+already carries the idiom (`FgHookGuard`, `src/daemon/executor/foreground.rs:50-80`).
+Second architect-side spec/criterion defect in M17 (phase-01's was the
+copied ignored-count); third occurrence folds.
 
 Phase-02 staging notes (verified against the tree at draft time):
 
