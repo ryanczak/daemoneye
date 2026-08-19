@@ -390,8 +390,36 @@ growing a parameter per feature — and every criterion phrased around
 The inline scroll-into-view arithmetic is gone (`grep` prints 0);
 `scroll_to_row` is defined once and called from all five navigation sites.
 
-**Active phase: none** — phase-05 (block-copy) is an intent, not yet drafted.
-Draft it with `/rexymcp:architect next`.
+**Active phase: phase-05 — block-copy** (`docs/dev/milestones/
+M17-transcript-view/phase-05-block-copy.md`, status `todo`, drafted
+2026-08-19). Dispatch with `/rexymcp:dispatch phase-05`.
+
+Phase-05 staging notes (verified against the tree at draft time):
+
+- **This is the first M17 viewer phase with a headlessly verifiable real
+  artifact** — the tmux buffer. The E2E block loads a known string through the
+  same `tmux load-buffer -w -` the code uses and reads it back with
+  `tmux show-buffer`. **I ran that round-trip before speccing it**: tmux 3.7b,
+  load exit 0, `show-buffer` returned exactly `alpha/beta/gamma`. Earlier
+  viewer phases could only be checked live at close; this one proves its
+  mechanism in the artifact.
+- **`crate::tmux::bounded_output` cannot be reused** — it pipes stdout/stderr
+  only (`src/tmux/mod.rs:67-75`) and gives no stdin handle, so `load-buffer -`
+  through it would load an empty buffer. The spec gives the spawner verbatim,
+  including the reason the stdin handle must drop before `wait()` (holding it
+  across the wait deadlocks).
+- **Copy derives from `Block`, never from the rendered `ViewRow`s.** Rows carry
+  the `▾`/`▸` marker, the `output (N lines)` header and the
+  `[collapsed, N lines]` suffix, and a collapsed block has no body rows at all.
+  Deriving from `Block` is what makes "a collapsed block copies in full" true,
+  and it is pinned as a test.
+- **The `Output` match arm is pinned verbatim** in task 1 so the mutation's
+  `old_str` is deterministic — an equivalent-but-differently-written arm would
+  break the pair. Grep baselines checked: `take(\*shown)` 0, and
+  `let _ = copy_to_tmux_buffer` 0 (the criterion that the error is surfaced,
+  not swallowed).
+- `y` is already a `Key::Char`, so no `tty.rs` change; the new arm goes below
+  the existing `(true, Char(c))` arm and both modes are asserted.
 
 Round 1 (`9f57131`) landed all 12 tasks with four green gates, a byte-exact
 E2E artifact and a mutation pair that the reviewer re-ran independently
