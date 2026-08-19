@@ -80,12 +80,12 @@ the user's door, session JSONL as the evidence anchor).
 ## Phases
 
 Planned decomposition; drafted on demand via `/rexymcp:architect next`.
-Phase-01 is drafted; 02–07 are intents only until drafted.
+Phases 01–02 are drafted; 03–07 are intents only until drafted.
 
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | transcript-model ([phase-01-transcript-model.md](phase-01-transcript-model.md)) | done |
-| 02 | viewer-shell | todo |
+| 02 | viewer-shell ([phase-02-viewer-shell.md](phase-02-viewer-shell.md)) | todo |
 | 03 | expand-collapse | todo |
 | 04 | search | todo |
 | 05 | block-copy | todo |

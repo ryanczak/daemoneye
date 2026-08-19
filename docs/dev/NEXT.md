@@ -317,8 +317,34 @@ tests fail under it, 5 of 5 restored) and re-extracted the pasted artifact
 executor claimed it left the status `in-progress` (the doc said `review`) and
 reported 2 ignored tests (actual 3).
 
-**Active phase: none** — phase-02 (viewer-shell) is an intent, not yet
-drafted. Draft it with `/rexymcp:architect next`.
+**Active phase: phase-02 — viewer-shell** (`docs/dev/milestones/
+M17-transcript-view/phase-02-viewer-shell.md`, status `todo`, drafted
+2026-08-18). Dispatch with `/rexymcp:dispatch phase-02`.
+
+Phase-02 staging notes (verified against the tree at draft time):
+
+- **Three key-parsing facts the spec pre-injects**, each a bounce if missed:
+  there is no `Key::Esc` (a bare Escape becomes `Key::Char('\x1b')` via the
+  catch-all at `tty.rs:244`); ctrl+O is currently swallowed by
+  `c if c < 0x20 => Key::Char('\0')` at `tty.rs:247`, so the new arm must sit
+  with the other control-byte arms; and `ESC[5~`/`ESC[6~` are unparsed, leaving
+  a stray `~` delivered as `Key::Char('~')` unless the new arms consume it like
+  the Delete arm at `tty.rs:187-191`.
+- **The viewer must never call `ratatui::try_restore()` / `restore()` /
+  `disable_raw_mode()`** — `RatatuiRenderer::restore()`
+  (`render_ratatui.rs:851`) disables raw mode and is end-of-session teardown;
+  the chat session continues after the viewer closes. Enforced by a negative
+  grep in the E2E block, validated against a known-positive file
+  (`render_ratatui.rs`, which does contain `try_restore`, so the grep form
+  exits 0 there — it detects the violation it is meant to catch).
+- The exit path is `LeaveAlternateScreen` + `renderer.reanchor()`, which is the
+  same operation the input loop's existing sigwinch arm (`chat.rs:633`) already
+  performs.
+- **The two gaps carried out of phase-01's review are tasks 7 and 8**, so they
+  close in the phase that first depends on them rather than drifting.
+- The live alt-screen enter/exit check is architect-run at milestone close per
+  the M14/M15/M16 convention; the executor verifies the pure layout, the scroll
+  clamp, a `TestBackend` draw, and the structural greps.
 
 Phase-01 staging notes (verified against the tree at draft time):
 `grep -rn "Response::ToolResult(" --include=*.rs src tests` finds **17**
