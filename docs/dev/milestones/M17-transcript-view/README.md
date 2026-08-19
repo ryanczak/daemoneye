@@ -92,7 +92,7 @@ Phases 01–04 are drafted; 05–07 are intents only until drafted.
 | 01 | transcript-model ([phase-01-transcript-model.md](phase-01-transcript-model.md)) | done |
 | 02 | viewer-shell ([phase-02-viewer-shell.md](phase-02-viewer-shell.md)) | done |
 | 03 | expand-collapse ([phase-03-expand-collapse.md](phase-03-expand-collapse.md)) | done |
-| 04 | search ([phase-04-search.md](phase-04-search.md)) | review      |
+| 04 | search ([phase-04-search.md](phase-04-search.md)) | done |
 | 05 | block-copy | todo |
 | 06 | rehydration | todo |
 | 07 | viewer-mouse | todo |

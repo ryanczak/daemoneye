@@ -1,7 +1,7 @@
 # Phase 04: Search
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** done
 **Depends on:** phase-03 (expand-collapse, `done`)
 **Estimated diff:** ~450 lines
 
@@ -705,3 +705,58 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** d1b08328cb2ae11707804023a999e42804a2e7f4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-19
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** one, accepted and better than the spec. The spec asked
+  `render_transcript` to take `matches: &[usize]` and `current: Option<usize>`
+  as two loose parameters; the executor introduced a borrowed
+  `SearchState<'a> { active, query, matches, current }` and passes that instead.
+  It carries strictly more of what the status line needs, keeps the signature
+  from growing a parameter per feature, and `current: usize` is resolved
+  through `matches.get(current)` so the empty case is handled identically.
+  Accepted as written — the criteria phrased around `matches`/`current` are all
+  satisfied through it.
+- **Calibration:** none.
+
+**Independent verification (re-run, not read):**
+
+- Four gates re-run as separate invocations: all exit 0. 1362 lib tests, up 10
+  from 1352 — exactly the 10 tests in the plan.
+- All 10 named tests present and passing.
+- E2E artifact re-extracted from the last end-to-end entry and diffed against
+  `/tmp/e2e-04.txt`: `PASTE MATCH`. It is this dispatch's own entry
+  (2026-08-19 14:52).
+- DoD greps over the diff: the only `.unwrap()` additions are at
+  `viewer.rs:1189,1223`, inside `mod tests` (line 684). No `#[ignore]`,
+  `#[allow]`, `TODO`, `dbg!`, `unsafe` added.
+
+**The refactor did not drop an action — checked, not assumed.** The pure
+`key_action` tests would pass even if `viewer_loop` silently ignored a decoded
+action, so the two sets were diffed directly: all **20** `ViewerAction`
+variants are both declared and matched in the loop, with an empty difference in
+each direction.
+
+**The scroll arithmetic was deduplicated, not copied.**
+`grep -c "row_idx >= scroll + body_height"` prints 0, `scroll_to_row` is
+defined exactly once (`viewer.rs:119`), and it is called from all five
+navigation sites — the four match jumps and the focus jump.
+
+**Mutation characterisation, both run by the reviewer:**
+
+- **Ma** — `query.to_lowercase()` → `query.to_string()`: exactly
+  `find_matches_is_case_insensitive` fails, 27 others pass. The normalisation
+  guard is real and precisely targeted.
+- **Mb** — `match (searching, key)` → `match (false, key)`, disabling the
+  search-mode guard entirely: exactly the two mode-sensitive tests fail
+  (`key_action_typing_wins_over_commands_while_searching`,
+  `key_action_escape_cancels_search_but_quits_otherwise`), 26 others pass.
+  This is the phase's central claim — that `q` types a letter while searching
+  instead of quitting — and it is now guarded by a test that demonstrably
+  fails when the guard is removed, without a terminal.
+
+**Phase-02's contract still holds:** `disarm` count 0 in `viewer.rs`, and the
+raw-mode teardown grep exits 1. Re-run here, not taken from the artifact.
