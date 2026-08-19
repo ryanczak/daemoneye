@@ -11,6 +11,7 @@ pub mod render;
 pub mod render_ratatui;
 pub mod status;
 pub mod transcript;
+pub mod viewer;
 
 pub use commands::*;
 pub use local_cmds::*;

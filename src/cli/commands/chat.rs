@@ -409,6 +409,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
             cost_usd,
             has_untracked,
             last_ctrl_c: &mut last_ctrl_c,
+            transcript: &transcript,
         })
         .await?;
 
@@ -609,6 +610,7 @@ struct RatatuiInputCtx<'a> {
     cost_usd: f64,
     has_untracked: bool,
     last_ctrl_c: &'a mut Option<std::time::Instant>,
+    transcript: &'a crate::cli::transcript::Transcript,
 }
 
 async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Result<Option<String>> {
@@ -627,6 +629,7 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
         cost_usd,
         has_untracked,
         last_ctrl_c,
+        transcript,
     } = ctx;
     loop {
         tokio::select! {
@@ -730,6 +733,22 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                     Key::CtrlU => { state.current_line_mut().kill_to_start(); }
                     Key::Paste(text) => {
                         state.current_line_mut().insert_str(&text);
+                    }
+                    Key::CtrlO => {
+                        crate::cli::viewer::run_transcript_viewer(stdin, sigwinch, renderer, transcript)
+                            .await?;
+                        let sb = StatusBarState {
+                            session_id,
+                            approval_hint: &approval.hint(),
+                            model,
+                            prompt_tokens,
+                            context_window,
+                            daemon_up,
+                            tools_total: 0,
+                            cost_usd,
+                            has_untracked,
+                        };
+                        let _ = renderer.draw(state.current_line(), &sb);
                     }
                     _ => {}
                 }

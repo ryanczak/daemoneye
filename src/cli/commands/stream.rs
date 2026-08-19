@@ -682,6 +682,11 @@ pub(super) async fn ask_with_session_ratatui(
                             true,
                             None,
                         );
+                        transcript.push(crate::cli::transcript::Block::ToolPanel {
+                            tool: "result".to_string(),
+                            summary: label.clone(),
+                            label: None,
+                        });
                     }
                 }
             }
@@ -728,7 +733,13 @@ pub(super) async fn ask_with_session_ratatui(
 
     // Flush a started-but-never-finished tool so its panel is not lost.
     if let Some((title, body)) = pending_tool.take() {
-        let _ = renderer.commit_panel(&title, &body, false);
+        let body_clone = body.clone();
+        let _ = renderer.commit_panel(&title, &body_clone, false);
+        transcript.push(crate::cli::transcript::Block::ToolPanel {
+            tool: title,
+            summary: body_clone.join("\n"),
+            label: None,
+        });
     }
 
     // Turn completed normally — reset interrupt state for next turn.

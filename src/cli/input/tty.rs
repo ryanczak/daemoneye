@@ -109,6 +109,10 @@ pub enum Key {
     CtrlU,
     CtrlC,
     CtrlD,
+    /// Ctrl+O — open the alt-screen transcript viewer.
+    CtrlO,
+    PageUp,
+    PageDown,
     /// Terminal focus-in report (`ESC [ I`) — this tmux pane regained focus.
     FocusGained,
     /// Terminal focus-out report (`ESC [ O`) — this tmux pane lost focus.
@@ -170,6 +174,7 @@ pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
         b'\x04' => Key::CtrlD,
         b'\x05' => Key::CtrlE,
         b'\x0b' => Key::CtrlK,
+        b'\x0f' => Key::CtrlO,
         b'\x15' => Key::CtrlU,
         b'\x1b' => {
             match timeout(Duration::from_millis(30), stdin.read_byte()).await {
@@ -198,6 +203,16 @@ pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
                             // \x1b[4~ / \x1b[8~ = End
                             let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
                             Key::End
+                        }
+                        Ok(Some(b'5')) => {
+                            // \x1b[5~ = PageUp
+                            let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
+                            Key::PageUp
+                        }
+                        Ok(Some(b'6')) => {
+                            // \x1b[6~ = PageDown
+                            let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
+                            Key::PageDown
                         }
                         Ok(Some(b'2')) => {
                             // Could be bracketed paste start: ESC [ 2 0 0 ~

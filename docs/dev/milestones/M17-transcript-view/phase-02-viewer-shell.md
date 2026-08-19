@@ -1,7 +1,7 @@
 # Phase 02: Viewer Shell
 
 **Milestone:** M17 — Transcript View
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (transcript-model, `done`)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -500,3 +500,145 @@ No new dependencies — `ratatui` 0.30 and `crossterm` 0.29 are already present.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-19 03:00 (progress)
+
+Started phase-02 viewer-shell. Status flipped to in-progress. Implementing the
+three new keys in `src/cli/input/tty.rs` first, then the pure layout, draw
+pass, loop, module registration, wire-up, and the two carried gaps.
+
+### Update — 2026-08-19 03:20 (end-to-end verification)
+
+The viewer’s real behaviour — alternate screen enter/exit and the inline
+surface surviving the round trip — is a live check in a real tmux pane and is
+architect-run at milestone close. What is verified headlessly here: the pure
+layout, the scroll clamp (with the M1 kill-switch mutation pair proving the
+clamp is real), a real `TestBackend` draw, the structural greps that pin the
+enter/exit contract, and the full gate suite. Script was run verbatim and
+unmodified; its entire output is pasted below inside the fence:
+
+```sh
+== M1 APPLIED ==
+1
+assertion `left == right` failed
+  left: 3
+ right: 0
+
+---- cli::viewer::tests::clamp_scroll_pins_to_last_page stdout ----
+
+thread 'cli::viewer::tests::clamp_scroll_pins_to_last_page' (1052462) panicked at src/cli/viewer.rs:326:9:
+assertion `left == right` failed
+  left: 100
+ right: 90
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli::viewer::tests::clamp_scroll_pins_to_last_page
+    cli::viewer::tests::clamp_scroll_zero_when_content_fits
+
+test result: FAILED. 6 passed; 2 failed; 0 ignored; 0 measured; 1333 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+== M1 RESTORED ==
+0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.28s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 8 tests
+test cli::viewer::tests::clamp_scroll_pins_to_last_page ... ok
+test cli::viewer::tests::clamp_scroll_zero_when_content_fits ... ok
+test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
+test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
+test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
+test cli::viewer::tests::layout_blocks_renders_full_output ... ok
+test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1333 filtered out; finished in 0.00s
+
+exit=0
+== GATES ==
+fmt exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.26s
+clippy exit=0
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+   Doc-tests daemoneye
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test exit=0
+== VIEWER UNITS ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 8 tests
+test cli::viewer::tests::clamp_scroll_pins_to_last_page ... ok
+test cli::viewer::tests::clamp_scroll_zero_when_content_fits ... ok
+test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
+test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
+test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
+test cli::viewer::tests::layout_blocks_renders_full_output ... ok
+test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1333 filtered out; finished in 0.00s
+
+units exit=0
+== TRANSCRIPT UNITS ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 6 tests
+test cli::transcript::tests::transcript_append_assistant_breaks_on_other_block ... ok
+test cli::transcript::tests::append_assistant_enforces_byte_cap ... ok
+test cli::transcript::tests::transcript_push_evicts_oldest_over_block_cap ... ok
+test cli::transcript::tests::transcript_push_evicts_over_byte_cap ... ok
+test cli::transcript::tests::transcript_append_assistant_coalesces ... ok
+test cli::transcript::tests::transcript_records_full_output_not_truncated ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1335 filtered out; finished in 0.00s
+
+transcript exit=0
+== ALT-SCREEN CONTRACT ==
+2
+2
+2
+== NO RAW-MODE TEARDOWN IN VIEWER ==
+teardown grep exit=1  (1 = none found, which is the pass)
+== KEY WIRING ==
+113:    CtrlO,
+114:    PageUp,
+115:    PageDown,
+177:        b'\x0f' => Key::CtrlO,
+208:                            // \x1b[5~ = PageUp
+210:                            Key::PageUp
+213:                            // \x1b[6~ = PageDown
+215:                            Key::PageDown
+keys exit=0
+```
+
+PASTE MATCH

@@ -103,16 +103,29 @@ impl Transcript {
             self.bytes += text.len();
             existing.push_str(text);
         } else {
-            self.push(Block::Assistant {
+            self.bytes += text.len();
+            self.blocks.push(Block::Assistant {
                 text: text.to_string(),
             });
         }
+        self.evict_assistant();
     }
     fn evict(&mut self) {
         while self.blocks.len() > self.max_blocks || self.bytes > self.max_bytes {
             if self.blocks.is_empty() {
                 break;
             }
+            let removed = self.blocks.remove(0);
+            self.bytes = self.bytes.saturating_sub(removed.byte_len());
+            self.evicted += 1;
+        }
+    }
+    /// Enforce the store budgets on the coalescing path without evicting the
+    /// block being appended to when it is the only block left.
+    fn evict_assistant(&mut self) {
+        while self.blocks.len() > 1
+            && (self.bytes > self.max_bytes || self.blocks.len() > self.max_blocks)
+        {
             let removed = self.blocks.remove(0);
             self.bytes = self.bytes.saturating_sub(removed.byte_len());
             self.evicted += 1;
@@ -210,5 +223,30 @@ mod tests {
             }
             other => panic!("expected Output, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn append_assistant_enforces_byte_cap() {
+        let mut t = Transcript::with_caps(usize::MAX, 64);
+        t.push(Block::System {
+            text: "x".repeat(60),
+        });
+        t.append_assistant(&"y".repeat(200));
+        let last = t.blocks().last().expect("assistant block must survive");
+        match last {
+            Block::Assistant { text } => assert_eq!(text.len(), 200),
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+        assert!(
+            t.bytes <= 64 || t.len() <= 1,
+            "byte accounting must stay bounded"
+        );
+        assert_eq!(
+            t.len(),
+            1,
+            "the oversized assistant must evict the older block"
+        );
+        // evicted counter advanced because the System block was evicted.
+        assert_eq!(t.evicted(), 1);
     }
 }
