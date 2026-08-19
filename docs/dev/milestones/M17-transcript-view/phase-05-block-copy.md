@@ -1,7 +1,7 @@
 # Phase 05: Block Copy
 
 **Milestone:** M17 — Transcript View
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04 (search, `done`)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
