@@ -587,30 +587,30 @@ pass, loop, module registration, wire-up, and the two carried gaps.
 
 ### Update — 2026-08-19 03:20 (end-to-end verification)
 
-Round 2 (bug-phase-02-1 fixed): the viewer's real behaviour — alternate screen
+Round 3 (bug-phase-02-2 fixed): the viewer's real behaviour — alternate screen
 enter/exit and the inline surface surviving the round trip — is a live check in
 a real tmux pane and is architect-run at milestone close. What is verified
 headlessly here: the pure layout, the scroll clamp (with the M1 kill-switch
 mutation pair proving the clamp is real), a real `TestBackend` draw, the
-structural greps that pin the enter/exit contract, the round-2 scope-guard
-checks, and the full gate suite. Script was run verbatim and unmodified; its
-entire output is pasted below inside the fence:
+structural greps that pin the enter/exit contract, the round-3 scope-guard
+fixes (no `disarm`, `viewer_loop` factored out, teardown runs exactly once on
+the normal exit path), and the full gate suite. Script was run verbatim and
+unmodified; its entire output is pasted below inside the fence:
 
 ```sh
 == M1 APPLIED ==
-pre=0 post=
-post_applied=1 (1 expected)
+pre=1
 assertion `left == right` failed
   left: 100
  right: 90
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
 ---- cli::viewer::tests::clamp_scroll_zero_when_content_fits stdout ----
 
-thread 'cli::viewer::tests::clamp_scroll_zero_when_content_fits' (1217485) panicked at src/cli/viewer.rs:370:9:
+thread 'cli::viewer::tests::clamp_scroll_zero_when_content_fits' (1746770) panicked at src/cli/viewer.rs:371:9:
 assertion `left == right` failed
   left: 3
  right: 0
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
  (x2)
 failures:
     cli::viewer::tests::clamp_scroll_pins_to_last_page
@@ -619,19 +619,19 @@ failures:
 test result: FAILED. 8 passed; 2 failed; 0 ignored; 0 measured; 1333 filtered out; finished in 0.00s
 
 error: test failed, to rerun pass `--lib`
-applied_exit=101 (101 expected)
+exit=101
+post=1
 == M1 RESTORED ==
-restored_state=1 (1 now; restored next)
-restored_state=0 (0 expected)
+pre=0
    Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.40s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.30s
      Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
 
 running 10 tests
-test cli::viewer::tests::alt_screen_guard_disarmed_skips_teardown ... ok
-test cli::viewer::tests::clamp_scroll_zero_when_content_fits ... ok
-test cli::viewer::tests::alt_screen_guard_runs_teardown_on_drop ... ok
 test cli::viewer::tests::clamp_scroll_pins_to_last_page ... ok
+test cli::viewer::tests::alt_screen_guard_runs_teardown_on_drop ... ok
+test cli::viewer::tests::clamp_scroll_zero_when_content_fits ... ok
+test cli::viewer::tests::alt_screen_guard_runs_teardown_on_normal_exit ... ok
 test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
 test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
 test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
@@ -641,11 +641,12 @@ test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
 
 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1333 filtered out; finished in 0.00s
 
-restored_exit=0 (0 expected)
+exit=0
+post=0
 == GATES ==
 fmt exit=0
     Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.08s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.20s
 clippy exit=0
 
 test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
@@ -658,8 +659,8 @@ test held_port_cannot_be_rebound ... ok
 test webhook_ports_differ_between_environments ... ok
 test stub_returns_canned_response_via_make_client ... ok
 test webhook_ghost_e2e_deterministic ... ok
-test hooks_land_on_private_server ... ok
 test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
 test daemon_boots_in_throwaway_root ... ok
 test default_server_unchanged ... ok
 test daemon_webhook_returns_200 ... ok
@@ -678,16 +679,16 @@ test exit=0
      Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
 
 running 10 tests
-test cli::viewer::tests::clamp_scroll_pins_to_last_page ... ok
-test cli::viewer::tests::alt_screen_guard_disarmed_skips_teardown ... ok
+test cli::viewer::tests::alt_screen_guard_runs_teardown_on_normal_exit ... ok
 test cli::viewer::tests::alt_screen_guard_runs_teardown_on_drop ... ok
 test cli::viewer::tests::clamp_scroll_zero_when_content_fits ... ok
+test cli::viewer::tests::clamp_scroll_pins_to_last_page ... ok
 test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
 test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
 test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
 test cli::viewer::tests::layout_blocks_renders_full_output ... ok
-test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
 test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
 
 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1333 filtered out; finished in 0.00s
 
@@ -697,24 +698,25 @@ units exit=0
      Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
 
 running 6 tests
-test cli::transcript::tests::append_assistant_enforces_byte_cap ... ok
-test cli::transcript::tests::transcript_append_assistant_breaks_on_other_block ... ok
-test cli::transcript::tests::transcript_append_assistant_coalesces ... ok
 test cli::transcript::tests::transcript_push_evicts_oldest_over_block_cap ... ok
 test cli::transcript::tests::transcript_push_evicts_over_byte_cap ... ok
+test cli::transcript::tests::append_assistant_enforces_byte_cap ... ok
+test cli::transcript::tests::transcript_append_assistant_coalesces ... ok
+test cli::transcript::tests::transcript_append_assistant_breaks_on_other_block ... ok
 test cli::transcript::tests::transcript_records_full_output_not_truncated ... ok
 
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1337 filtered out; finished in 0.00s
 
 transcript exit=0
 == ALT-SCREEN CONTRACT ==
-2
-2
-2
+2 (x3)
 == NO RAW-MODE TEARDOWN IN VIEWER ==
 teardown grep exit=1  (1 = none found, which is the pass)
 == SCOPE GUARD (round 2) ==
 GUARD OK
+1
+== NO DISABLE PATH (round 3) ==
+0
 1
 == CALL SITE DOES NOT PROPAGATE ==
 0
