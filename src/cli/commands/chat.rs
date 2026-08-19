@@ -735,8 +735,16 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                         state.current_line_mut().insert_str(&text);
                     }
                     Key::CtrlO => {
-                        crate::cli::viewer::run_transcript_viewer(stdin, sigwinch, renderer, transcript)
-                            .await?;
+                        if let Err(e) = crate::cli::viewer::run_transcript_viewer(
+                            stdin,
+                            sigwinch,
+                            renderer,
+                            transcript,
+                        )
+                        .await
+                        {
+                            eprintln!("\x1b[31m✗\x1b[0m viewer: {}", e);
+                        }
                         let sb = StatusBarState {
                             session_id,
                             approval_hint: &approval.hint(),

@@ -175,6 +175,38 @@ fn style_for(kind: RowKind, palette: crate::cli::palette::Palette) -> Style {
     }
 }
 
+/// RAII guard for the alternate screen: `Drop` runs the teardown even when the
+/// guarded scope exits early through `?`, so a viewer failure can never strand
+/// the terminal on the alternate screen with the inline viewport unpinned.
+/// The teardown action is injectable so tests can count how often it runs
+/// without a real terminal.
+struct AltScreenGuard<'a> {
+    teardown: Box<dyn FnMut() + 'a>,
+    armed: bool,
+}
+
+impl<'a> AltScreenGuard<'a> {
+    fn new(teardown: impl FnMut() + 'a) -> Self {
+        Self {
+            teardown: Box::new(teardown),
+            armed: true,
+        }
+    }
+
+    /// Concede the screen was already left; `Drop` becomes a no-op.
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AltScreenGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            (self.teardown)();
+        }
+    }
+}
+
 /// Full-screen alternate-screen viewer loop.
 ///
 /// Enters the alternate screen, runs its own key loop, and exits back to the
@@ -193,6 +225,16 @@ pub async fn run_transcript_viewer(
     use ratatui::backend::CrosstermBackend;
 
     execute!(std::io::stdout(), EnterAlternateScreen)?;
+
+    // From here on the screen is owned by this guard: leaving it and re-pinning
+    // the inline viewport runs from `Drop`, so `?`, `break` and `Ok(())` all
+    // exit the same way. `let _ =` is required — a `Drop` cannot propagate.
+    let mut guard = AltScreenGuard::new(|| {
+        let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(std::io::stdout(), Show);
+        renderer.reanchor();
+    });
+
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
 
     let mut scroll: usize;
@@ -252,14 +294,10 @@ pub async fn run_transcript_viewer(
             render_transcript(f, &rows, scroll, transcript.evicted());
         })?;
     }
-
-    // Drop the fullscreen terminal before leaving the alternate screen so the
-    // screen is cleared under the alternate-screen buffer, then re-pin the
-    // inline viewport just as a resize would.
+    guard.disarm();
+    // Terminal drops before the guard (declared after it), so the fullscreen
+    // buffer is cleared under the alternate screen before the screen is left.
     drop(terminal);
-    execute!(std::io::stdout(), LeaveAlternateScreen)?;
-    let _ = execute!(std::io::stdout(), Show);
-    renderer.reanchor();
     Ok(())
 }
 
@@ -413,5 +451,41 @@ mod tests {
             .collect();
         assert!(all_text.contains("evicted ·"), "got: {all_text}");
         assert!(all_text.contains("of 2 lines"), "got: {all_text}");
+    }
+
+    #[test]
+    fn alt_screen_guard_runs_teardown_on_drop() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let teardown_runs = Rc::new(Cell::new(0));
+        let count = Rc::clone(&teardown_runs);
+        {
+            let guard = AltScreenGuard::new(move || {
+                count.set(count.get() + 1);
+            });
+            drop(guard);
+        }
+        assert_eq!(teardown_runs.get(), 1, "teardown must run exactly once");
+    }
+
+    #[test]
+    fn alt_screen_guard_disarmed_skips_teardown() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let teardown_runs = Rc::new(Cell::new(0));
+        let count = Rc::clone(&teardown_runs);
+        {
+            let mut guard = AltScreenGuard::new(move || {
+                count.set(count.get() + 1);
+            });
+            guard.disarm();
+        }
+        assert_eq!(
+            teardown_runs.get(),
+            0,
+            "disarmed guard must not run teardown"
+        );
     }
 }
