@@ -317,39 +317,35 @@ tests fail under it, 5 of 5 restored) and re-extracted the pasted artifact
 executor claimed it left the status `in-progress` (the doc said `review`) and
 reported 2 ignored tests (actual 3).
 
-**Active phase: phase-02 — viewer-shell** (`docs/dev/milestones/
-M17-transcript-view/phase-02-viewer-shell.md`, status `in-progress` —
-**bounced twice: round 1 bug-phase-02-1 (2026-08-18), round 2 bug-phase-02-2
-(2026-08-19)**). Re-dispatch with `/rexymcp:dispatch phase-02`.
+**phase-02 — viewer-shell: done (approved_after_2) 2026-08-19**, commits
+`9f57131` → `ea7ebe4` → `7cebf08` + approval. Two bounces, both on the same
+obligation, inverted each time: round 1 released the alternate screen on the
+normal path but not the error path; round 2 moved the release into a `Drop`
+guard and then disarmed it on the normal path, so `esc` never left the screen
+at all. Round 3 deleted the disable path entirely (`AltScreenGuard` has no
+`armed` field) and factored the fallible body into `viewer_loop`, so every exit
+leaves through one drop — correct by construction rather than by convention.
 
-**Round 2 is the important data point.** It satisfied every criterion the
-round-1 bounce added — `GUARD OK`, one `impl Drop`, no `await?` at the call
-site, the negative raw-mode grep, four green gates — while the viewer's normal
-exit was *more* broken than before: `guard.disarm()` (`viewer.rs:297`) runs on
-the `break` path, and the only executable `LeaveAlternateScreen` sits inside
-the teardown that disarm switches off. Pressing `esc` leaves the user on the
-alternate screen. Round 1 failed on the error path; round 2 failed on the path
-every user takes, every time.
+Reviewer ran two mutations: `Drop` no-op fails both guard tests (they are not
+vacuous), and `let _guard` → `let _` — which leaves the screen before the loop
+runs — keeps all 10 headless tests green. That residual gap is real, is
+inherently live-only, and the milestone's first exit criterion was amended to
+name it so the close-out check exercises it.
 
-**Criterion-design lesson (architect-side, third occurrence in M17):** the
-round-1 criteria asserted the guard *exists* and *contains* the teardown —
-structure, not behaviour. Nothing asserted the teardown *runs* on the normal
-path, so a disarm on that path passed every check. **A criterion for a cleanup
-obligation must assert the cleanup ran, and assert the count (`== 1`), not
-that a mechanism for it is present.** Prior two occurrences: phase-01's
-copied ignored-count, and phase-02's `grep -c EnterAlternateScreen` expecting
-1 where the correct implementation prints 2. **Three occurrences hits the fold
-threshold in WORKFLOW.md § Calibration — the fold is drafted but NOT applied;
-it needs PE sign-off** (architect prohibition #5).
+**Open calibration item, drafted not applied (needs PE sign-off):** a criterion
+for a cleanup obligation must assert the cleanup **ran**, and assert the count
+(`== 1`), not that a mechanism for it is present. Round 2 satisfied every
+structural criterion the round-1 bounce added while being more broken than
+round 1. Third architect-side criterion defect in M17 — phase-01's copied
+ignored-count and phase-02's `grep -c EnterAlternateScreen` expecting 1 where
+correct code prints 2 are the other two — which is the WORKFLOW.md § Calibration
+fold threshold.
 
-Round 3's criteria are behavioural where they can be: no `disarm` in the file
-at all, the fallible body factored into a `viewer_loop` helper so every path
-leaves through one drop, and a test asserting the teardown ran **exactly once**
-on a normal return. All three were run against the round-2 tree and fail there.
+Cleared, not a defect: the round-2 `eprintln!` at `chat.rs:746` matches
+existing convention in the same loop (`chat.rs:370-372`, `chat.rs:572`).
 
-Also checked and cleared, so it does not get re-raised: the round-2 `eprintln!`
-at `chat.rs:746` matches existing convention in the same loop
-(`chat.rs:370-372`, `chat.rs:572`). Not a defect.
+**Active phase: none** — phase-03 (expand-collapse) is an intent, not yet
+drafted. Draft it with `/rexymcp:architect next`.
 
 Round 1 (`9f57131`) landed all 12 tasks with four green gates, a byte-exact
 E2E artifact and a mutation pair that the reviewer re-ran independently

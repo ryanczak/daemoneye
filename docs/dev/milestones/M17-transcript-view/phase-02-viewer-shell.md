@@ -1,7 +1,7 @@
 # Phase 02: Viewer Shell
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (transcript-model, `done`)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1186,3 +1186,79 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7cebf0853a5050bf424fba82f78bc3010c7bb7ef
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-19
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bug-phase-02-1 round 1, bug-phase-02-2 round 2)
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none. Round 3 changed only `src/cli/viewer.rs`
+  (+22 −22).
+- **Calibration:** see § "Criterion design" below — the architect-side lesson
+  from this phase, third of its class in M17. Fold drafted in `NEXT.md`, **not
+  applied**, pending PE sign-off.
+
+**Independent verification (re-run, not read):**
+
+- Four gates re-run as separate invocations: `fmt` 0, `build` 0,
+  `clippy --all-targets --all-features -- -D warnings` 0, `cargo test` 0
+  (1343 lib tests).
+- All round-1 and round-3 criteria re-run: `disarm` count 0, `fn viewer_loop`
+  1, `alt_screen_guard_runs_teardown_on_normal_exit` present and passing,
+  `GUARD OK`, the raw-mode negative grep exits 1, `await?` at the call site 0.
+- Round-3 E2E artifact re-extracted from the last end-to-end entry and diffed
+  against `/tmp/e2e-02.txt`: `PASTE MATCH`. The artifact is this dispatch's own
+  (2026-08-19 03:20), not a carried-forward entry, and contains the round-3
+  block with `disarm`=0 / `viewer_loop`=1.
+- DoD greps over the round-3 diff: no `#[ignore]`, `#[allow]`, `TODO`, `dbg!`,
+  `unsafe`, `unwrap`, `expect` or `panic!` added.
+
+**The fix is correct by construction, which is why it is approved.**
+`AltScreenGuard` no longer has an `armed` field at all
+(`src/cli/viewer.rs:183-186`), so `Drop` cannot be skipped; there is no
+`disarm` to call. `run_transcript_viewer` is now enter → bind guard →
+`viewer_loop(...).await?` → `Ok(())`, and the fullscreen `Terminal` lives
+inside `viewer_loop`, so it drops when the helper returns — before the guard's
+teardown — preserving the clear-then-leave ordering that round 2 tried to get
+by disabling the guard.
+
+**Mutation characterisation, both run by the reviewer:**
+
+- **Ma** — `Drop` body replaced with a no-op: both
+  `alt_screen_guard_runs_teardown_on_normal_exit` and
+  `alt_screen_guard_runs_teardown_on_drop` fail. The guard tests are not
+  vacuous.
+- **Mb** — `let _guard = AltScreenGuard::new(…)` changed to
+  `let _ = AltScreenGuard::new(…)`, which drops the guard immediately and
+  leaves the alternate screen *before* the loop runs: **all 10 tests still
+  pass.** This is a real residual gap and it is recorded rather than papered
+  over — no headless test covers the binding's lifetime inside
+  `run_transcript_viewer`, because doing so needs a real terminal. The
+  milestone's live exit criteria carry it (see the README's first criterion,
+  amended to name this case).
+
+### Criterion design — the lesson this phase paid for twice
+
+Round 1 shipped cleanup as straight-line statements after the happy path,
+with seven `?` early-returns above them. The bounce added criteria asserting a
+`Drop` guard **exists** and **contains** `LeaveAlternateScreen`. Round 2
+satisfied every one of those — `GUARD OK`, one `impl Drop`, four green gates,
+a byte-exact artifact — and was *more* broken: it disarmed the guard on the
+`break` path, so `esc` never left the alternate screen at all. Round 1 failed
+the error path; round 2 failed the path every user takes.
+
+The criteria were structural. They asserted a mechanism was present, never
+that it **ran**. Round 3's criteria assert the teardown runs **exactly once**
+(`== 1`, not `>= 1`) and that the disable path does not exist — and the fix
+deleted the mechanism that made the regression expressible, rather than
+merely not calling it.
+
+**A criterion for a cleanup obligation must assert the cleanup ran, and assert
+the count.** Third architect-side criterion defect in M17 (phase-01's copied
+ignored-count; phase-02's `grep -c EnterAlternateScreen` expecting 1 where
+correct code prints 2). Three occurrences is the WORKFLOW.md § Calibration fold
+threshold; the fold is drafted in `NEXT.md` and awaits PE sign-off.
+
+**Cleared, not a defect:** the `eprintln!` at `src/cli/commands/chat.rs:746`
+matches existing convention in the same raw-mode loop (`chat.rs:370-372`,
+`chat.rs:572`).

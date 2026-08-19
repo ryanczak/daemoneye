@@ -1,7 +1,7 @@
 # Bug 2 on phase-02: the normal exit path disarms the guard, so `esc` never leaves the alternate screen
 
 **Severity:** blocker
-**Status:** open
+**Status:** resolved (round 3, `7cebf08`)
 **Filed:** 2026-08-19
 
 ## What's wrong

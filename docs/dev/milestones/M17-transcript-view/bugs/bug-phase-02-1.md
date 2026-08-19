@@ -1,7 +1,7 @@
 # Bug 1 on phase-02: a viewer error strands the user on the alternate screen and kills the chat session
 
 **Severity:** major
-**Status:** open
+**Status:** resolved (round 2, `ea7ebe4`)
 **Filed:** 2026-08-18
 
 ## What's wrong

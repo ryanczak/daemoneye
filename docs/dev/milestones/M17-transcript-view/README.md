@@ -19,7 +19,12 @@ dispatches.
   the full pane and `esc` returns to the inline chat with the input box, status
   bar and prior scrollback intact — no border corruption, no duplicated or lost
   committed rows (live check; the M13 width-flip / M15 border-corruption blast
-  radius).
+  radius). **Amended 2026-08-19 after phase-02's two bounces:** this check must
+  exercise the alternate screen being left on the *normal* exit (`esc`), not
+  only that the viewer opens. Phase-02 review mutation Mb showed that changing
+  `let _guard = AltScreenGuard::new(…)` to `let _ = …` — which leaves the screen
+  before the loop even runs — keeps all 10 headless tests green. Nothing below
+  the live door covers the guard binding's lifetime.
 - A `run_terminal_command` whose output exceeded the 10-line inline cap shows
   **every** captured line in the viewer, byte-for-byte equal to the
   `Response::ToolResult` payload (live check; evidence anchor = the session
@@ -85,7 +90,7 @@ Phases 01–02 are drafted; 03–07 are intents only until drafted.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | transcript-model ([phase-01-transcript-model.md](phase-01-transcript-model.md)) | done |
-| 02 | viewer-shell ([phase-02-viewer-shell.md](phase-02-viewer-shell.md)) | review      |
+| 02 | viewer-shell ([phase-02-viewer-shell.md](phase-02-viewer-shell.md)) | done |
 | 03 | expand-collapse | todo |
 | 04 | search | todo |
 | 05 | block-copy | todo |
