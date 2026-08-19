@@ -99,6 +99,7 @@ pub(super) struct RatatuiQueryCtx<'a> {
     pub(super) renderer: &'a mut crate::cli::render_ratatui::RatatuiRendererStdout,
     pub(super) model: &'a str,
     pub(super) stdin: &'a AsyncStdin,
+    pub(super) transcript: &'a mut crate::cli::transcript::Transcript,
 }
 
 /// Stream the AI response through the ratatui renderer.
@@ -134,6 +135,7 @@ pub(super) async fn ask_with_session_ratatui(
         renderer,
         model,
         stdin,
+        transcript,
     } = ctx;
 
     let stream = connect().await?;
@@ -368,6 +370,9 @@ pub(super) async fn ask_with_session_ratatui(
                     // animating in the live region on any pause between tokens;
                     // the live region is redrawn normally after the turn completes.
                 }
+                // Record the raw token text before the markdown renderer consumes
+                // it, so the transcript holds the lossless form.
+                transcript.append_assistant(&t);
                 // Stream token through markdown renderer, committing completed
                 // styled lines to scrollback via the renderer.
                 let lines = md.feed_to_lines(&t, render_width);
@@ -391,6 +396,7 @@ pub(super) async fn ask_with_session_ratatui(
                     response_started = true;
                 }
                 let _ = renderer.commit(&format!("\n⚙ {}\n", msg));
+                transcript.push(crate::cli::transcript::Block::System { text: msg.clone() });
             }
             // Auto-deny tool calls — daemon will inform the AI and respond in text.
             Response::ToolCallPrompt {
@@ -663,6 +669,11 @@ pub(super) async fn ask_with_session_ratatui(
                 match pending_tool.take() {
                     Some((title, body)) => {
                         let _ = renderer.commit_panel_labeled(&title, &body, false, Some(&label));
+                        transcript.push(crate::cli::transcript::Block::ToolPanel {
+                            tool: title,
+                            summary: body.join("\n"),
+                            label: Some(label),
+                        });
                     }
                     None => {
                         let _ = renderer.commit_panel_labeled(
@@ -674,7 +685,10 @@ pub(super) async fn ask_with_session_ratatui(
                     }
                 }
             }
-            Response::ToolResult(output) => {
+            Response::ToolResult {
+                tool_call_id,
+                output,
+            } => {
                 let lines: Vec<String> = output.lines().map(|l| l.to_string()).collect();
                 let total = lines.len();
                 const MAX_LINES: usize = 10;
@@ -690,6 +704,11 @@ pub(super) async fn ask_with_session_ratatui(
                     body.push("(no output)".to_string());
                 }
                 let _ = renderer.commit_panel("output", &body, true);
+                transcript.push(crate::cli::transcript::Block::Output {
+                    tool_call_id,
+                    full: output,
+                    shown,
+                });
             }
             // Ignore informational responses not relevant to minimal rendering.
             Response::ScheduleList { .. }

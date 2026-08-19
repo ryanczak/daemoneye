@@ -1,7 +1,7 @@
 # Phase 01: Transcript Model
 
 **Milestone:** M17 — Transcript View
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -561,3 +561,125 @@ No new dependencies. `docs/architecture.md` is **not** authorized.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-19 02:01 (progress)
+
+Implemented phase-01 in full: `src/cli/transcript.rs` with the `Block` enum
+(`UserTurn`, `Assistant`, `ToolPanel`, `Output`, `System`) and the bounded
+`Transcript` store; `tool_call_id` added to `Response::ToolResult` and threaded
+through all 12 daemon send sites and the two client arms; the stream loop
+records every block kind; the chat loop owns a `Transcript` and pushes
+`UserTurn`; `ask` passes a throwaway transcript. `Response::ToolResult` has no
+remaining tuple-form sites. Mutation M1 (block cap `+1000`) was applied and
+shown to fail `transcript_push_evicts_oldest_over_block_cap`, then restored —
+`/tmp/e2e-01.txt` records `grep -c` = 1 (applied, failing run) then 0 (restored,
+passing run and full gate suite green). The end-to-end artifact was pasted into
+this doc and verified byte-identical via the PASTE MATCH self-check.
+
+### Update — 2026-08-19 02:00 (end-to-end verification)
+
+```text
+== M1 APPLIED ==
+1
+
+thread 'cli::transcript::tests::transcript_push_evicts_over_byte_cap' (954600) panicked at src/cli/transcript.rs:112:35:
+attempt to add with overflow
+
+---- cli::transcript::tests::transcript_push_evicts_oldest_over_block_cap stdout ----
+
+thread 'cli::transcript::tests::transcript_push_evicts_oldest_over_block_cap' (954599) panicked at src/cli/transcript.rs:135:9:
+assertion `left == right` failed
+  left: 5
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli::transcript::tests::transcript_push_evicts_oldest_over_block_cap
+    cli::transcript::tests::transcript_push_evicts_over_byte_cap
+
+test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 1327 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+== M1 RESTORED ==
+0
+== M1 RESTORED (test run) ==
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.84s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 5 tests
+test cli::transcript::tests::transcript_append_assistant_coalesces ... ok
+test cli::transcript::tests::transcript_append_assistant_breaks_on_other_block ... ok
+test cli::transcript::tests::transcript_push_evicts_over_byte_cap ... ok
+test cli::transcript::tests::transcript_push_evicts_oldest_over_block_cap ... ok
+test cli::transcript::tests::transcript_records_full_output_not_truncated ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1327 filtered out; finished in 0.00s
+
+exit=0
+== GATES ==
+fmt exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.05s
+clippy exit=0
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+   Doc-tests daemoneye
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test exit=0
+== PROTOCOL ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 1 test
+test ipc::tests::response_tool_result_roundtrip ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1331 filtered out; finished in 0.00s
+
+protocol exit=0
+== TRANSCRIPT UNITS ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 5 tests
+test cli::transcript::tests::transcript_append_assistant_coalesces ... ok
+test cli::transcript::tests::transcript_append_assistant_breaks_on_other_block ... ok
+test cli::transcript::tests::transcript_push_evicts_over_byte_cap ... ok
+test cli::transcript::tests::transcript_push_evicts_oldest_over_block_cap ... ok
+test cli::transcript::tests::transcript_records_full_output_not_truncated ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1327 filtered out; finished in 0.00s
+
+units exit=0
+== NO TUPLE-FORM SITES ==
+grep exit=1  (1 = none found, which is the pass)
+== WIRE FIELD ==
+414:    /// `tool_call_id` joins this output to the AI tool call that produced it,
+417:        tool_call_id: String,
+wire exit=0
+```
+
+PASTE MATCH

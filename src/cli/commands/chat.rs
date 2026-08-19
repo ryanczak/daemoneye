@@ -268,6 +268,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     let mut turn: usize = 0;
     let mut cost_usd: f64 = 0.0;
     let mut has_untracked: bool = false;
+    let mut transcript = crate::cli::transcript::Transcript::new();
     let config = Config::load().unwrap_or_default();
     let mut context_window = config.resolve_model(None).context_window();
     let mut model = config.resolve_model(None).model.clone();
@@ -357,6 +358,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                 renderer: &mut renderer,
                 model: &model,
                 stdin,
+                transcript: &mut transcript,
             },
         )
         .await
@@ -527,6 +529,10 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
             let echo_body: Vec<String> = echo_body(&query);
             let label = turn_budget_label(turn, prompt_tokens, context_window);
             let _ = renderer.commit_panel_labeled(&user_host, &echo_body, false, Some(&label));
+            transcript.push(crate::cli::transcript::Block::UserTurn {
+                label: user_host.clone(),
+                text: query.clone(),
+            });
         }
 
         // ── Send the user query ─────────────────────────────────────────
@@ -555,6 +561,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     renderer: &mut renderer,
                     model: &model,
                     stdin,
+                    transcript: &mut transcript,
                 },
             )
             .await

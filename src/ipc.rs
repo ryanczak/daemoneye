@@ -411,7 +411,12 @@ pub enum Response {
     CredentialPrompt { id: String, prompt: String },
     /// The output captured after an approved tool call completes.
     /// Sent to the client so it can display a dimmed result block.
-    ToolResult(String),
+    /// `tool_call_id` joins this output to the AI tool call that produced it,
+    /// and to the matching `tool_results` record in the session JSONL.
+    ToolResult {
+        tool_call_id: String,
+        output: String,
+    },
     /// Emitted before the daemon executes a silent tool call (one without an
     /// approval prompt or panel response). Allows the client to display a
     /// one-line history entry and animate an elapsed timer while the tool runs.
@@ -667,7 +672,7 @@ impl Response {
             Response::SystemMsg(_) => "SystemMsg",
             Response::ToolCallPrompt { .. } => "ToolCallPrompt",
             Response::CredentialPrompt { .. } => "CredentialPrompt",
-            Response::ToolResult(_) => "ToolResult",
+            Response::ToolResult { .. } => "ToolResult",
             Response::ToolStarted { .. } => "ToolStarted",
             Response::ToolFinished { .. } => "ToolFinished",
             Response::PaneSelectPrompt { .. } => "PaneSelectPrompt",

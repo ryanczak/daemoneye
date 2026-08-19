@@ -192,7 +192,14 @@ where
     if is_ghost_shell && ghost_policy.is_none() {
         let msg = "Error: ghost shell has no policy configured (ghost_config missing in runbook frontmatter)".to_string();
         log::error!("{} for session {:?}", msg, session_id);
-        send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+        send_response_split(
+            tx,
+            Response::ToolResult {
+                tool_call_id: call.id().to_string(),
+                output: msg.clone(),
+            },
+        )
+        .await?;
         return Ok(ToolCallOutcome::Result(msg));
     }
     let is_ghost = ghost_policy.is_some();
@@ -214,7 +221,14 @@ where
             session_id,
             msg
         );
-        send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+        send_response_split(
+            tx,
+            Response::ToolResult {
+                tool_call_id: call.id().to_string(),
+                output: msg.clone(),
+            },
+        )
+        .await?;
         return Ok(ToolCallOutcome::Result(msg));
     }
 

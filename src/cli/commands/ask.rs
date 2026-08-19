@@ -33,6 +33,7 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
                 return Err(e.into());
             }
         };
+    let mut transcript = crate::cli::transcript::Transcript::new();
 
     ask_with_session_ratatui(
         QueryArgs {
@@ -56,6 +57,7 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
             renderer: &mut renderer,
             model: &ask_config.resolve_model(None).model,
             stdin: &stdin,
+            transcript: &mut transcript,
         },
     )
     .await
@@ -204,7 +206,7 @@ async fn run_ask_raw(query: String) -> Result<()> {
             Response::SessionInfo { .. }
             | Response::UsageUpdate { .. }
             | Response::SystemMsg(_)
-            | Response::ToolResult(_)
+            | Response::ToolResult { .. }
             | Response::ScheduleList { .. }
             | Response::ScriptList { .. }
             | Response::RunbookList { .. }

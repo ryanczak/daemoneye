@@ -178,7 +178,14 @@ where
                  Pane IDs start with '%' followed by digits (e.g. \"%3\"). \
                  {suggestion}"
             );
-            send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+            send_response_split(
+                tx,
+                Response::ToolResult {
+                    tool_call_id: id.to_string(),
+                    output: msg.clone(),
+                },
+            )
+            .await?;
             return Ok(ToolCallOutcome::Result(msg));
         }
     }
@@ -215,7 +222,14 @@ where
                 "Error: target_pane '{tp}' no longer exists in the current session. \
                  {suggestion}\n{pane_map}"
             );
-            send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+            send_response_split(
+                tx,
+                Response::ToolResult {
+                    tool_call_id: id.to_string(),
+                    output: msg.clone(),
+                },
+            )
+            .await?;
             return Ok(ToolCallOutcome::Result(msg));
         }
     }
@@ -327,7 +341,14 @@ where
                          script to a sudoers-authorized location before running it."
                     );
                     crate::daemon::stats::finish_command(cmd_id, 1);
-                    send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+                    send_response_split(
+                        tx,
+                        Response::ToolResult {
+                            tool_call_id: id.to_string(),
+                            output: msg.clone(),
+                        },
+                    )
+                    .await?;
                     log_command(
                         session_id,
                         "foreground",
@@ -634,7 +655,14 @@ where
                                 })
                                 .await;
                                 crate::daemon::stats::finish_command(cmd_id, 1);
-                                send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+                                send_response_split(
+                                    tx,
+                                    Response::ToolResult {
+                                        tool_call_id: id.to_string(),
+                                        output: msg.clone(),
+                                    },
+                                )
+                                .await?;
                                 log_command(
                                     session_id,
                                     "foreground",
@@ -930,7 +958,14 @@ where
                 output.push_str(&note);
             }
             crate::daemon::stats::finish_command(cmd_id, exit_status.unwrap_or(0));
-            send_response_split(tx, Response::ToolResult(output.clone())).await?;
+            send_response_split(
+                tx,
+                Response::ToolResult {
+                    tool_call_id: id.to_string(),
+                    output: output.clone(),
+                },
+            )
+            .await?;
             log_command(
                 session_id,
                 "foreground",
@@ -1012,7 +1047,14 @@ where
                  retry_in_pane to start a fresh background window.",
                 pane_id
             );
-            send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+            send_response_split(
+                tx,
+                Response::ToolResult {
+                    tool_call_id: id.to_string(),
+                    output: msg.clone(),
+                },
+            )
+            .await?;
             return Ok(ToolCallOutcome::Result(msg));
         }
         let win_name: String = session_id
@@ -1063,7 +1105,14 @@ where
             sessions.clone(),
         )
         .await;
-        send_response_split(tx, Response::ToolResult(output.clone())).await?;
+        send_response_split(
+            tx,
+            Response::ToolResult {
+                tool_call_id: id.to_string(),
+                output: output.clone(),
+            },
+        )
+        .await?;
         log_command(session_id, "background_retry", "", cmd, "approved", &output);
         return Ok(ToolCallOutcome::Result(output));
     }
@@ -1134,7 +1183,14 @@ where
                      available on the daemon host: {}. Use write_script to create it first.",
                     name, e
                 );
-                send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+                send_response_split(
+                    tx,
+                    Response::ToolResult {
+                        tool_call_id: id.to_string(),
+                        output: msg.clone(),
+                    },
+                )
+                .await?;
                 log_command(session_id, "background", "", cmd, "transfer-failed", &msg);
                 return Ok(ToolCallOutcome::Result(msg));
             }
@@ -1170,7 +1226,14 @@ where
                  Use `daemoneye install-sudoers <script-name>` to create a NOPASSWD rule \
                  for this command, or run it in a foreground pane instead."
                 .to_string();
-            send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+            send_response_split(
+                tx,
+                Response::ToolResult {
+                    tool_call_id: id.to_string(),
+                    output: msg.clone(),
+                },
+            )
+            .await?;
             log_command(
                 session_id,
                 "background",
@@ -1222,7 +1285,14 @@ where
         sessions.clone(),
     )
     .await;
-    send_response_split(tx, Response::ToolResult(output.clone())).await?;
+    send_response_split(
+        tx,
+        Response::ToolResult {
+            tool_call_id: id.to_string(),
+            output: output.clone(),
+        },
+    )
+    .await?;
     log_command(session_id, "background", "", cmd, "approved", &output);
     Ok(ToolCallOutcome::Result(output))
 }

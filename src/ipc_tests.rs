@@ -335,11 +335,25 @@ fn response_credential_prompt_roundtrip() {
 
 #[test]
 fn response_tool_result_roundtrip() {
-    let resp = Response::ToolResult("output here".to_string());
+    let resp = Response::ToolResult {
+        tool_call_id: "toolu_abc".to_string(),
+        output: "line1\nline2".to_string(),
+    };
     match roundtrip_resp(&resp) {
-        Response::ToolResult(s) => assert_eq!(s, "output here"),
+        Response::ToolResult {
+            tool_call_id,
+            output,
+        } => {
+            assert_eq!(tool_call_id, "toolu_abc");
+            assert_eq!(output, "line1\nline2");
+        }
         _ => panic!("wrong variant"),
     }
+    let json = serde_json::to_string(&resp).expect("serialize");
+    assert!(
+        json.contains("tool_call_id"),
+        "wire should carry tool_call_id"
+    );
 }
 
 #[test]
