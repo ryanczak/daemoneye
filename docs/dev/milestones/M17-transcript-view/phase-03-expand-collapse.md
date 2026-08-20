@@ -1,7 +1,7 @@
 # Phase 03: Expand / Collapse
 
 **Milestone:** M17 — Transcript View
-**Status:** in-progress (round 3 — see bugs/bug-phase-03-2.md)
+**Status:** review
 **Depends on:** phase-02 (viewer-shell, `done`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1289,3 +1289,151 @@ teardown grep exit=1  (1 = none found, which is the pass)
 ```
 
 PASTE MATCH
+
+### Update — ts=1787263674411 (complete, server-authored)
+
+**Summary:** ## Summary + Notes for review
+
+Round 3 of phase-03 (bug-phase-03-2) is complete and committed. The shipped wrap/focus behaviour was already correct in round 2; the problem was that two guards passed even when the wiring was reverted. I fixed the **tests**, not the behaviour:
+
+**What I built** (all additions in `src/cli/viewer.rs`, `mod tests`):
+- `layout_wraps_prose_on_word_boundaries` — goes through `layout_blocks` with an `Assistant` block `"aaa bbb ccc ddd"` at width 7, asserting rows exactly `["aaa bbb", "ccc ddd"]` (word-wrap) vs. hard-wrap's `["aaa bbb", " ccc dd", "d"]`.
+- `layout_keeps_output_hard_wrapped` — through `layout_blocks` with `output_block("aaa bbb ccc", 0)` at width 5, asserting rows exactly `["output (1 lines)", "aaa b", "bb cc", "c"]` (hard-wrap every 5 chars) vs. word-wrap's `["aaa", "bbb", "ccc"]`.
+- I **kept** the two weak round-2 tests (`wrap_words_does_not_split_words` still exercises `wrap_words` directly — it has independent value for the helper itself; `output_rows_keep_hard_wrap` on the 30-char token) alongside the new behaviour-level guards. The bug doc allowed keeping or dropping; keeping them is harmless and cheap.
+
+**Mutation M2 (both directions) in `/tmp/e2e-03.txt`**, proven alongside M1:
+- M2A apply: `Output` arm `push_wrapped_hard`→`push_wrapped` (grep `=1` for the hard-wire before, then mutating) → **fails** `layout_keeps_output_hard_wrapped` (42/1, exit 101) → restore (grep `=1`).
+- M2B apply: `User`/`Assistant` arms `push_wrapped`→`push_wrapped_hard` (grep `=1` for a prose `push_wrapped` wire) → **fails** `layout_wraps_prose_on_word_boundaries` (42/1, exit 101) → restore (grep `=1`=0... final greps: `Modifier::UNDERLINED` = 0, hard-wire present = 1, suite green 43/43 exit 0). Each mutation was re-verified after restore per the DoD.
+
+**E2E evidence:** The spec's Task 10 block (plus M2 above) ran verbatim and is pasted into a new `### Update — 2026-08-20 21:49 (end-to-end verification)` entry; Task 11's `diff` printed `PASTE MATCH`, appended literally under the fence. Gates: fmt exit=0, clippy exit=0, build clean, `cargo test` exit=0 (viewer units 43/43, footer unit 1/1, ctrl+o named 3× in stream.rs / 1× in chat.rs, phase-02 contract: `disarm`=0, teardown grep exit=1). Working tree clean; phase status and README row remain `in-progress`.
+
+**Notes for review:** (a) I appended the started + end-to-end entries and committed them as a separate `docs:` commit — per the lifecycle, no `(complete)` entry and no `review` flip (server owns the tail). (b) The project root is `/home/matt/src/daemoneye`; `/tmp/e2e-03.txt` is the canonical artifact and `PASTE MATCH` confirms the doc copy is byte-identical. (c) Reprint of the M1 pair used the same file (no `git checkout` reset), as task 8/9 require.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 4.20s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test hooks_land_on_private_server ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/cli/viewer.rs` — +27 -0
+
+**Commit:** 3fee471f59ce9712500341a6ab11e5bdde9be5ae
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
