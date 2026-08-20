@@ -1471,11 +1471,35 @@ that repo. This is the second batch carrying that caveat.
    false assumption about which candidate comes first, so the path under test is
    never entered.
 
-**Active phase:
-[M11 phase-07b — situational-knowledge-hooks](milestones/M11-knowledge-index/phase-07b-situational-knowledge-hooks.md)
-(`in-progress` — **bounced ×2 on 2026-08-07**, see
-[bug-07b-1](milestones/M11-knowledge-index/bugs/bug-07b-1.md)). **This is the
-last phase of M11** — after it, the milestone hits its human gate.**
+**Active phase: phase-06 — rehydration** (`docs/dev/milestones/
+M17-transcript-view/phase-06-rehydration.md`, status `todo`, drafted
+2026-08-20 by the /rexymcp:auto loop). Dispatch with
+`/rexymcp:dispatch phase-06`.
+
+Phase-06 staging notes (verified against the tree at draft time):
+
+- **The trigger is `/session load <name>`, not process start.** There is no
+  "resume this session id" path in `daemoneye chat` — `run_chat_inner`'s
+  `session_override` (`chat.rs:32`) is a **tmux session name** for
+  managed-session auto-attach, and every chat mints a fresh id at `chat.rs:89`.
+  A spec that assumed a resume flag would have sent the executor hunting for
+  something that does not exist.
+- **`Message` → `Block` is one-to-many and one-to-none**, pinned per case: one
+  assistant record can carry both `content` and `tool_calls`; a user record
+  carrying `tool_results` has empty `content`; a record with neither
+  contributes zero blocks.
+- **The transcript is cleared before refilling** — `/session load` replaces the
+  conversation, so appending would interleave loaded history with the current
+  client's screen. `Transcript::clear()` resets `evicted` too, so a stale
+  "N older blocks evicted" note is not inherited.
+- **The daemon's truncation marker is kept verbatim** and the pane log is never
+  read — that archive is unmasked. Criterion:
+  `grep -rn "pane_logs_dir\|var/log/panes" src/cli/` exits 1 (verified: it
+  does today, and must keep doing so).
+- Import path pinned as `crate::ai::Message`, verified against
+  `src/session_store.rs:6` and `src/daemon/session.rs:5`.
+- Mutation baseline checked: `grep -c 'shown: usize::MAX,' src/cli/transcript.rs`
+  is 0 now, 1 once the field is broken.
 
 **Start at the `ROUND 2` block at the top of the phase doc's § Acceptance
 criteria.** That block holds the only unfinished work: four criteria, each run
