@@ -119,6 +119,14 @@ pub enum Key {
     FocusLost,
     /// A pasted block of text (bracketed paste).
     Paste(String),
+    /// A mouse report from inside the transcript viewer (SGR 1006).
+    /// `col`/`row` are 0-based, converted from the wire's 1-based values.
+    Mouse {
+        button: u8,
+        col: u16,
+        row: u16,
+        pressed: bool,
+    },
 }
 
 /// Switch stdin to raw (non-canonical, no-echo) mode.
@@ -189,6 +197,11 @@ pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
                         // Focus reporting (DEC private mode 1004): ESC[I / ESC[O.
                         Ok(Some(b'I')) => Key::FocusGained,
                         Ok(Some(b'O')) => Key::FocusLost,
+                        // SGR mouse report (1006): ESC[<Cb;Cx;CyM|m.
+                        Ok(Some(b'<')) => match read_sgr_mouse(stdin).await {
+                            Some(key) => key,
+                            None => Key::Char('\0'),
+                        },
                         Ok(Some(b'3')) => {
                             // \x1b[3~ = Delete
                             let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
@@ -288,6 +301,62 @@ pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
             }
         }
     })
+}
+
+/// Read the rest of an SGR mouse report after `ESC[<` (already consumed):
+/// decimal fields `Cb;Cx;Cy`, terminated by `M` (press) or `m` (release).
+/// Returns `None` on a malformed or truncated sequence.
+async fn read_sgr_mouse(stdin: &AsyncStdin) -> Option<Key> {
+    use tokio::time::{Duration, timeout};
+
+    let first = timeout(Duration::from_millis(30), stdin.read_byte())
+        .await
+        .ok()
+        .flatten()?;
+    let mut cb: u16 = match first {
+        c @ b'0'..=b'9' => (c - b'0') as u16,
+        _ => return None,
+    };
+    loop {
+        match timeout(Duration::from_millis(30), stdin.read_byte()).await {
+            Ok(Some(c @ b'0'..=b'9')) => cb = cb * 10 + (c - b'0') as u16,
+            Ok(Some(b';')) => break,
+            _ => return None,
+        }
+    }
+
+    let mut cx: u16 = 0;
+    loop {
+        match timeout(Duration::from_millis(30), stdin.read_byte()).await {
+            Ok(Some(c @ b'0'..=b'9')) => cx = cx * 10 + (c - b'0') as u16,
+            Ok(Some(b';')) => break,
+            _ => return None,
+        }
+    }
+
+    let mut cy: u16 = 0;
+    loop {
+        match timeout(Duration::from_millis(30), stdin.read_byte()).await {
+            Ok(Some(c @ b'0'..=b'9')) => cy = cy * 10 + (c - b'0') as u16,
+            Ok(Some(b'M')) => {
+                return Some(Key::Mouse {
+                    button: cb as u8,
+                    col: cx.saturating_sub(1),
+                    row: cy.saturating_sub(1),
+                    pressed: true,
+                });
+            }
+            Ok(Some(b'm')) => {
+                return Some(Key::Mouse {
+                    button: cb as u8,
+                    col: cx.saturating_sub(1),
+                    row: cy.saturating_sub(1),
+                    pressed: false,
+                });
+            }
+            _ => return None,
+        }
+    }
 }
 
 /// Read a bracketed paste: bytes between `ESC[200~` (already consumed) and `ESC[201~`.
@@ -546,5 +615,70 @@ mod tests {
         // `None` at once (EOF), which would pass this test for the wrong reason.
         let (stdin, _write_file) = make_pipe_stdin();
         let _ = read_key_within(&stdin, std::time::Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn read_key_parses_sgr_wheel_up() {
+        let (stdin, write_file) = make_pipe_stdin();
+        write_bytes(&write_file, b"\x1b[<64;10;5M").await;
+        let key = read_key_bounded(&stdin).await;
+        assert_eq!(
+            key,
+            Some(Key::Mouse {
+                button: 64,
+                col: 9,
+                row: 4,
+                pressed: true
+            }),
+            "SGR wheel-up must convert 1-based coords to 0-based"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_parses_multi_digit_mouse_coords() {
+        let (stdin, write_file) = make_pipe_stdin();
+        write_bytes(&write_file, b"\x1b[<0;137;42M").await;
+        let key = read_key_bounded(&stdin).await;
+        assert_eq!(
+            key,
+            Some(Key::Mouse {
+                button: 0,
+                col: 136,
+                row: 41,
+                pressed: true
+            }),
+            "multi-digit columns (137) must parse as a single field"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_mouse_release_is_not_pressed() {
+        let (stdin, write_file) = make_pipe_stdin();
+        write_bytes(&write_file, b"\x1b[<0;10;5m").await;
+        let key = read_key_bounded(&stdin).await;
+        assert_eq!(
+            key,
+            Some(Key::Mouse {
+                button: 0,
+                col: 9,
+                row: 4,
+                pressed: false
+            }),
+            "lowercase-m terminator must yield pressed: false"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_malformed_mouse_sequence_is_ignored() {
+        // Truncated sequence: ESC[<64;10 with nothing after — must not hang and
+        // must degrade to the parser's ignore value.
+        let (stdin, write_file) = make_pipe_stdin();
+        write_bytes(&write_file, b"\x1b[<64;10").await;
+        let key = read_key_within(&stdin, std::time::Duration::from_millis(300)).await;
+        assert_eq!(
+            key,
+            Some(Key::Char('\0')),
+            "truncated SGR mouse sequence must yield the ignore value"
+        );
     }
 }

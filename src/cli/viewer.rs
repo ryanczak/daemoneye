@@ -54,6 +54,7 @@ pub enum ViewerAction {
     MatchPrev,
     Copy,
     Quit,
+    ClickAt { col: u16, row: u16 },
     Ignore,
 }
 
@@ -82,6 +83,34 @@ pub fn key_action(key: &crate::cli::input::Key, searching: bool) -> ViewerAction
         (false, crate::cli::input::Key::Char('n')) => ViewerAction::MatchNext,
         (false, crate::cli::input::Key::Char('N')) => ViewerAction::MatchPrev,
         (false, crate::cli::input::Key::Char('y')) => ViewerAction::Copy,
+        (
+            _,
+            crate::cli::input::Key::Mouse {
+                button: 64,
+                pressed: true,
+                ..
+            },
+        ) => ViewerAction::ScrollUp,
+        (
+            _,
+            crate::cli::input::Key::Mouse {
+                button: 65,
+                pressed: true,
+                ..
+            },
+        ) => ViewerAction::ScrollDown,
+        (
+            false,
+            crate::cli::input::Key::Mouse {
+                button: 0,
+                pressed: true,
+                col,
+                row,
+            },
+        ) => ViewerAction::ClickAt {
+            col: *col,
+            row: *row,
+        },
         _ => ViewerAction::Ignore,
     }
 }
@@ -325,6 +354,29 @@ pub fn clamp_scroll(scroll: usize, total: usize, height: usize) -> usize {
     scroll.min(max)
 }
 
+/// Which transcript row a mouse row lands on, or `None` for the status line
+/// or out of range. `area_y` is the body's first screen row, `body_height`
+/// its height, `scroll` the current offset, `total` the row count.
+pub fn row_at(
+    mouse_row: u16,
+    area_y: u16,
+    body_height: u16,
+    scroll: usize,
+    total: usize,
+) -> Option<usize> {
+    if mouse_row < area_y {
+        return None;
+    }
+    if mouse_row >= area_y + body_height {
+        return None;
+    }
+    let idx = scroll + (mouse_row - area_y) as usize;
+    if idx >= total {
+        return None;
+    }
+    Some(idx)
+}
+
 /// What the search feature needs at draw time, bundled to keep
 /// `render_transcript`'s parameter count inside clippy's arity limit.
 pub struct SearchState<'a> {
@@ -493,15 +545,18 @@ pub async fn run_transcript_viewer(
     transcript: &crate::cli::transcript::Transcript,
 ) -> anyhow::Result<()> {
     use crossterm::cursor::Show;
+    use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
     use crossterm::execute;
     use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 
     execute!(std::io::stdout(), EnterAlternateScreen)?;
+    execute!(std::io::stdout(), EnableMouseCapture)?;
 
     // From here on the screen is owned by this guard: leaving it and re-pinning
     // the inline viewport runs from `Drop`, so `?`, `break` and `Ok(())` all
     // exit the same way. `let _ =` is required — a `Drop` cannot propagate.
     let _guard = AltScreenGuard::new(|| {
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
         let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
         let _ = execute!(std::io::stdout(), Show);
         renderer.reanchor();
@@ -718,6 +773,21 @@ async fn viewer_loop(
                             ))
                         }
                         Err(e) => note = Some(format!("copy failed: {e}")),
+                    }
+                }
+            }
+            ViewerAction::ClickAt { row, .. } => {
+                if let Some(row_idx) = row_at(row, 0, body_height as u16, scroll, rows.len()) {
+                    let click_row = &rows[row_idx];
+                    focus = click_row.block;
+                    if click_row.kind == RowKind::Header {
+                        if collapsed.contains(&focus) {
+                            collapsed.remove(&focus);
+                        } else {
+                            collapsed.insert(focus);
+                        }
+                        matches = find_matches(&rows, &query);
+                        current = current.min(matches.len().saturating_sub(1));
                     }
                 }
             }
@@ -1416,5 +1486,71 @@ mod tests {
             key_action(&crate::cli::input::Key::Char('y'), true),
             ViewerAction::SearchType('y')
         );
+    }
+
+    #[test]
+    fn row_at_rejects_the_status_line() {
+        // area_y = 0, body_height = 10: row 10 is the status line → None; row 9 maps.
+        assert_eq!(
+            row_at(10, 0, 10, 0, 100),
+            None,
+            "status line must be rejected"
+        );
+        assert_eq!(
+            row_at(9, 0, 10, 0, 100),
+            Some(9),
+            "last body row must map to Some(scroll + row)"
+        );
+        assert_eq!(
+            row_at(9, 0, 10, 0, 5),
+            None,
+            "a row resolving past total must be None"
+        );
+    }
+
+    #[test]
+    fn row_at_maps_body_rows_with_scroll() {
+        assert_eq!(row_at(5, 2, 10, 30, 100), Some(33));
+    }
+
+    #[test]
+    fn key_action_wheel_scrolls_click_ignored_while_searching() {
+        let wheel_up = crate::cli::input::Key::Mouse {
+            button: 64,
+            col: 0,
+            row: 0,
+            pressed: true,
+        };
+        assert_eq!(key_action(&wheel_up, true), ViewerAction::ScrollUp);
+        assert_eq!(key_action(&wheel_up, false), ViewerAction::ScrollUp);
+
+        let click = crate::cli::input::Key::Mouse {
+            button: 0,
+            col: 5,
+            row: 3,
+            pressed: true,
+        };
+        assert_eq!(key_action(&click, true), ViewerAction::Ignore);
+        assert_eq!(
+            key_action(&click, false),
+            ViewerAction::ClickAt { col: 5, row: 3 }
+        );
+    }
+
+    #[test]
+    fn key_action_mouse_release_is_ignored() {
+        for button in [0u8, 64, 65] {
+            let release = crate::cli::input::Key::Mouse {
+                button,
+                col: 0,
+                row: 0,
+                pressed: false,
+            };
+            assert_eq!(
+                key_action(&release, false),
+                ViewerAction::Ignore,
+                "release of button {button} must decode to Ignore"
+            );
+        }
     }
 }
