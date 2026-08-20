@@ -32,6 +32,7 @@ pub(super) struct SlashCtx<'a> {
     pub(super) context_window: &'a mut u32,
     pub(super) current_prompt: &'a mut Option<String>,
     pub(super) target_pane: &'a mut Option<String>,
+    pub(super) transcript: &'a mut crate::cli::transcript::Transcript,
 }
 
 /// Whether `cmd` looks like a command token (`/word`) rather than a path or
@@ -549,6 +550,22 @@ async fn cmd_session(ctx: SlashCtx<'_>, rest: &str) {
                     note(r, &format!("✓ loaded '{name}' ({message_count} messages)"));
                     if !banner.is_empty() {
                         let _ = r.commit(&format!("{banner}\n"));
+                    }
+                    match crate::session_store::load_session_messages(&name, usize::MAX) {
+                        Ok(msgs) => {
+                            let blocks = crate::cli::transcript::blocks_from_messages(&msgs);
+                            let n = blocks.len();
+                            ctx.transcript.clear();
+                            for block in blocks {
+                                ctx.transcript.push(block);
+                            }
+                            ctx.transcript.push(crate::cli::transcript::Block::System {
+                                text: format!("rehydrated {n} blocks from session '{name}'"),
+                            });
+                        }
+                        Err(e) => {
+                            note(r, &format!("✗ transcript rehydrate failed: {e}"));
+                        }
                     }
                 }
                 Ok(other) => render_error(r, other),

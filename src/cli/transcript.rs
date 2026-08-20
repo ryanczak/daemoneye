@@ -5,6 +5,8 @@
 //! transcript viewer can re-render, expand and search. See
 //! `docs/design/transcript-view.md`.
 
+use crate::ai::Message;
+
 /// One rendered unit of the conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Block {
@@ -131,11 +133,228 @@ impl Transcript {
             self.evicted += 1;
         }
     }
+    /// Reset the store to empty, including the eviction counter. Used when a
+    /// loaded session's history replaces the live conversation.
+    pub fn clear(&mut self) {
+        self.blocks.clear();
+        self.bytes = 0;
+        self.evicted = 0;
+    }
+}
+
+/// Rebuild transcript blocks from stored session messages.
+pub fn blocks_from_messages(messages: &[Message]) -> Vec<Block> {
+    let mut blocks = Vec::new();
+    for msg in messages {
+        if !msg.content.is_empty() {
+            match msg.role.as_str() {
+                "user" => blocks.push(Block::UserTurn {
+                    label: "you".to_string(),
+                    text: msg.content.clone(),
+                }),
+                "assistant" => blocks.push(Block::Assistant {
+                    text: msg.content.clone(),
+                }),
+                _ => {}
+            }
+        }
+        if let Some(calls) = &msg.tool_calls {
+            for call in calls {
+                blocks.push(Block::ToolPanel {
+                    tool: call.name.clone(),
+                    summary: call.arguments.clone(),
+                    label: None,
+                });
+            }
+        }
+        if let Some(results) = &msg.tool_results {
+            for r in results {
+                blocks.push(Block::Output {
+                    tool_call_id: r.tool_call_id.clone(),
+                    full: r.content.clone(),
+                    shown: 0,
+                });
+            }
+        }
+    }
+    blocks
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Block, Transcript};
+    use crate::ai::types::ToolCall;
+    use crate::ai::{Message, ToolResult};
+
+    use super::{Block, Transcript, blocks_from_messages};
+
+    fn user_msg(content: &str) -> Message {
+        Message {
+            role: "user".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+            turn: None,
+        }
+    }
+
+    fn assistant_msg(content: &str) -> Message {
+        Message {
+            role: "assistant".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+            turn: None,
+        }
+    }
+
+    fn tool_call(id: &str, name: &str, args: &str) -> ToolCall {
+        ToolCall {
+            id: id.to_string(),
+            name: name.to_string(),
+            arguments: args.to_string(),
+            thought_signature: None,
+        }
+    }
+
+    fn tool_result(id: &str, name: &str, content: &str) -> ToolResult {
+        ToolResult {
+            tool_call_id: id.to_string(),
+            tool_name: name.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    #[test]
+    fn blocks_from_messages_maps_each_record_kind() {
+        let messages = vec![
+            user_msg("what time is it?"),
+            assistant_msg("checking the clock"),
+            Message {
+                role: "assistant".to_string(),
+                content: "here you go".to_string(),
+                tool_calls: Some(vec![
+                    tool_call("call_1", "run_terminal_command", r#"{"command":"date"}"#),
+                    tool_call("call_2", "read_file", r#"{"path":"/etc/hostname"}"#),
+                ]),
+                tool_results: None,
+                turn: Some(1),
+            },
+            Message {
+                role: "user".to_string(),
+                content: String::new(),
+                tool_calls: None,
+                tool_results: Some(vec![
+                    tool_result(
+                        "call_1",
+                        "run_terminal_command",
+                        "Thu Aug 20 14:00:00 UTC 2026\n",
+                    ),
+                    tool_result("call_2", "read_file", "myhost\n"),
+                ]),
+                turn: Some(1),
+            },
+            Message {
+                role: "user".to_string(),
+                content: String::new(),
+                tool_calls: None,
+                tool_results: None,
+                turn: Some(1),
+            },
+        ];
+        let blocks = blocks_from_messages(&messages);
+        assert_eq!(blocks.len(), 7, "5 records must map to exactly 7 blocks");
+        let variants: Vec<&str> = blocks
+            .iter()
+            .map(|b| match b {
+                Block::UserTurn { .. } => "UserTurn",
+                Block::Assistant { .. } => "Assistant",
+                Block::ToolPanel { .. } => "ToolPanel",
+                Block::Output { .. } => "Output",
+                Block::System { .. } => "System",
+            })
+            .collect();
+        assert_eq!(
+            variants,
+            [
+                "UserTurn",
+                "Assistant",
+                "Assistant",
+                "ToolPanel",
+                "ToolPanel",
+                "Output",
+                "Output",
+            ],
+            "pinned order: content block first, then its calls, then the results"
+        );
+        match &blocks[2] {
+            Block::Assistant { text } => assert_eq!(text, "here you go"),
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn blocks_from_messages_keeps_truncation_marker() {
+        let marker = "[truncated — 51234 chars total; full output archived in pane log]";
+        let content = format!("line1\nline2\n{marker}");
+        let messages = vec![user_msg_with_results(("call_1", "df -h", &content))];
+        let blocks = blocks_from_messages(&messages);
+        match &blocks[0] {
+            Block::Output { full, .. } => assert!(full.ends_with(marker)),
+            other => panic!("expected Output, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rehydrated_output_reports_nothing_shown_inline() {
+        let messages = vec![
+            user_msg_with_results(("call_1", "ls", "a\nb\nc\n")),
+            user_msg_with_results(("call_2", "cat", "d\ne\n")),
+        ];
+        let blocks = blocks_from_messages(&messages);
+        let outputs: Vec<&Block> = blocks
+            .iter()
+            .filter(|b| matches!(b, Block::Output { .. }))
+            .collect();
+        assert_eq!(outputs.len(), 2);
+        for b in &outputs {
+            match b {
+                Block::Output { shown, .. } => assert_eq!(*shown, 0, "nothing shown inline: {b:?}"),
+                other => panic!("expected Output, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn blocks_from_messages_empty_input_is_empty() {
+        let blocks = blocks_from_messages(&[]);
+        assert_eq!(blocks.len(), 0);
+    }
+
+    #[test]
+    fn transcript_clear_resets_counters() {
+        let mut t = Transcript::with_caps(1, usize::MAX);
+        t.push(Block::System {
+            text: "one".to_string(),
+        });
+        t.push(Block::System {
+            text: "two".to_string(),
+        });
+        assert_eq!(t.evicted(), 1, "one block was evicted by the cap");
+        t.clear();
+        assert_eq!(t.len(), 0);
+        assert!(t.is_empty());
+        assert_eq!(t.evicted(), 0, "the eviction counter resets too");
+    }
+
+    fn user_msg_with_results((id, name, content): (&str, &str, &str)) -> Message {
+        Message {
+            role: "user".to_string(),
+            content: String::new(),
+            tool_calls: None,
+            tool_results: Some(vec![tool_result(id, name, content)]),
+            turn: Some(1),
+        }
+    }
 
     #[test]
     fn transcript_push_evicts_oldest_over_block_cap() {

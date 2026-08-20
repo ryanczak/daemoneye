@@ -1,7 +1,7 @@
 # Phase 06: Rehydration
 
 **Milestone:** M17 — Transcript View
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (transcript-model, `done`) — and in practice phases
 02–05, since the viewer is what makes a rehydrated transcript visible.
 **Estimated diff:** ~400 lines
@@ -357,3 +357,124 @@ needs no change for this phase.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-20 14:55 (progress)
+
+Started phase-06 rehydration. Working tree was clean on `master` at commit
+f8b6ee4; flipped the phase status and milestone README row to `in-progress`.
+Have read the phase doc, architecture references, `src/cli/transcript.rs`,
+`src/cli/commands/slash.rs`, the `SlashCtx` construction site in `chat.rs`,
+`src/session_store.rs` and `src/ai/types/wire.rs`. Beginning Task 1
+(`blocks_from_messages`) now.
+
+### Update — 2026-08-20 15:00 (end-to-end verification)
+
+Mutation pair (M1 applied → failing `rehydrated_output_reports_nothing_shown_inline`, M1 restored → green) and the full gate sequence, captured from `/tmp/e2e-06.txt`:
+
+```
+== M1 APPLIED ==
+1
+test cli::transcript::tests::transcript_push_evicts_over_byte_cap ... ok
+test cli::transcript::tests::transcript_records_full_output_not_truncated ... ok
+
+failures:
+
+---- cli::transcript::tests::rehydrated_output_reports_nothing_shown_inline stdout ----
+
+thread 'cli::transcript::tests::rehydrated_output_reports_nothing_shown_inline' (3167051) panicked at src/cli/transcript.rs:321:48:
+assertion `left == right` failed: nothing shown inline: Output { tool_call_id: "call_1", full: "a\nb\nc\n", shown: 18446744073709551615 }
+  left: 18446744073709551615
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli::transcript::tests::rehydrated_output_reports_nothing_shown_inline
+
+test result: FAILED. 10 passed; 1 failed; 0 ignored; 0 measured; 1361 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+== M1 RESTORED ==
+0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 11 tests
+test cli::transcript::tests::blocks_from_messages_empty_input_is_empty ... ok
+test cli::transcript::tests::append_assistant_enforces_byte_cap ... ok
+test cli::transcript::tests::transcript_append_assistant_coalesces ... ok
+test cli::transcript::tests::blocks_from_messages_keeps_truncation_marker ... ok
+test cli::transcript::tests::rehydrated_output_reports_nothing_shown_inline ... ok
+test cli::transcript::tests::transcript_append_assistant_breaks_on_other_block ... ok
+test cli::transcript::tests::transcript_clear_resets_counters ... ok
+test cli::transcript::tests::blocks_from_messages_maps_each_record_kind ... ok
+test cli::transcript::tests::transcript_push_evicts_oldest_over_block_cap ... ok
+test cli::transcript::tests::transcript_push_evicts_over_byte_cap ... ok
+test cli::transcript::tests::transcript_records_full_output_not_truncated ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1361 filtered out; finished in 0.00s
+
+exit=0
+== GATES ==
+fmt exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.18s
+clippy exit=0
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+   Doc-tests daemoneye
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test exit=0
+== TRANSCRIPT UNITS ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 11 tests
+test cli::transcript::tests::blocks_from_messages_empty_input_is_empty ... ok
+test cli::transcript::tests::blocks_from_messages_keeps_truncation_marker ... ok
+test cli::transcript::tests::append_assistant_enforces_byte_cap ... ok
+test cli::transcript::tests::rehydrated_output_reports_nothing_shown_inline ... ok
+test cli::transcript::tests::blocks_from_messages_maps_each_record_kind ... ok
+test cli::transcript::tests::transcript_append_assistant_breaks_on_other_block ... ok
+test cli::transcript::tests::transcript_append_assistant_coalesces ... ok
+test cli::transcript::tests::transcript_clear_resets_counters ... ok
+test cli::transcript::tests::transcript_push_evicts_oldest_over_block_cap ... ok
+test cli::transcript::tests::transcript_push_evicts_over_byte_cap ... ok
+test cli::transcript::tests::transcript_records_full_output_not_truncated ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1361 filtered out; finished in 0.00s
+
+units exit=0
+== CLIENT NEVER READS THE UNMASKED ARCHIVE ==
+archive grep exit=1  (1 = none found, which is the pass)
+== LOAD RESULT NOT DISCARDED ==
+0
+== PHASE-02 CONTRACT STILL HOLDS ==
+0
+teardown grep exit=1  (1 = none found, which is the pass)
+```
+
+PASTE MATCH

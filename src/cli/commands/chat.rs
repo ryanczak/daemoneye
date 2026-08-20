@@ -478,6 +478,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     context_window: &mut context_window,
                     current_prompt: &mut current_prompt,
                     target_pane: &mut target_pane,
+                    transcript: &mut transcript,
                 },
                 &query,
             )
