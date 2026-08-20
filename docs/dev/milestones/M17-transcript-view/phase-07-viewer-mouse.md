@@ -1,7 +1,7 @@
 # Phase 07: Viewer Mouse
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (search — `key_action`/`ViewerAction` are the decode
 surface this extends) and phase-03 (collapse — click-to-toggle acts on it).
 **Estimated diff:** ~420 lines
@@ -676,3 +676,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7026ef97316859bdb5d6849c744a54bd709da50c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-20
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none
+- **Calibration:** none
