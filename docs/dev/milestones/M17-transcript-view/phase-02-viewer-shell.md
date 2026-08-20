@@ -1,7 +1,7 @@
 # Phase 02: Viewer Shell
 
 **Milestone:** M17 — Transcript View
-**Status:** done
+**Status:** in-progress (re-opened 2026-08-20 — see bugs/bug-phase-02-3.md)
 **Depends on:** phase-01 (transcript-model, `done`)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -387,6 +387,39 @@ the only teardown, `viewer.rs` still contains no `try_restore` /
 `disable_raw_mode` / `.restore()`, and the call site still does not propagate
 the error out of the input loop.
 
+### Task 10c — Let ctrl+o open the viewer mid-turn (round 4, bug-phase-02-3)
+
+Read `docs/dev/milestones/M17-transcript-view/bugs/bug-phase-02-3.md` first — it
+carries the measured evidence, the mechanism, and the Definition of done.
+
+The viewer has exactly one entry point today: the idle input loop at
+`src/cli/commands/chat.rs:738`. During a turn the client sits in `select_stream`
+(`src/cli/commands/stream.rs:807`), where `focus_outcome` maps only
+`Key::FocusGained` and `InterruptState::feed` returns `Ignore` for ctrl+O — so
+the keypress is consumed and dropped.
+
+Extend the **existing** pure classifier rather than adding a second one; it is
+already the tested precedent:
+
+```rust
+fn focus_outcome(key: &Key) -> Option<StreamOutcome> {
+    match key {
+        Key::FocusGained => Some(StreamOutcome::Reanchor),
+        _ => None,
+    }
+}
+```
+
+Add a `StreamOutcome::OpenViewer` variant, map `Key::CtrlO` to it, and handle
+that outcome in `ask_with_session_ratatui` by running
+`crate::cli::viewer::run_transcript_viewer(...)` with the transcript it already
+holds, then `renderer.reanchor()`, then **continuing the same read loop**.
+
+Two things the fix must not do, both pinned in the bug doc: it must not end,
+restart or reconnect the turn (the `line_buf` is caller-owned precisely so a
+dropped read future loses no bytes), and it must not change interrupt
+behaviour.
+
 ### Task 11 — Capture the end-to-end evidence
 
 Run the block in § End-to-end verification **verbatim and unmodified**, then
@@ -465,6 +498,25 @@ round-2 tree and FAILS there. Round 2 satisfied every criterion above while
       scope returning **normally** ran the teardown **exactly once** (assert
       `== 1`, not `>= 1`). (Round 2: absent.)
 
+**Added 2026-08-20 after the milestone-close live check (bug-phase-02-3). Each
+was run against the current tree and FAILS there. The viewer works at the idle
+prompt but `ctrl+o` is swallowed mid-turn, while phase-03's footer advertises it
+exactly then:**
+
+- [ ] `grep -c "Key::CtrlO" src/cli/commands/stream.rs` prints at least `1`.
+      (Now: `0`.)
+- [ ] Test `stream_key_ctrl_o_opens_viewer` passes — the pure classifier at
+      `stream.rs:873` maps `Key::CtrlO` to `StreamOutcome::OpenViewer`, asserted
+      by value. (Now: absent; `grep -c OpenViewer` is `0`.)
+- [ ] Test `stream_key_focus_gained_still_reanchors` passes — `Key::FocusGained`
+      still maps to `StreamOutcome::Reanchor` after the classifier is extended.
+- [ ] Test `select_stream_first_interrupt_press_warns` (`stream.rs:1581`) still
+      passes unchanged — interrupt behaviour is not collateral damage.
+- [ ] `renderer.reanchor()` runs after a mid-turn viewer closes, and the turn
+      resumes on the same connection and the same `line_buf` (no reconnect, no
+      lost frames). The mechanism is stated in the Update Log; the on-screen
+      check is live at milestone close.
+
 ## Test plan
 
 In `src/cli/viewer.rs` (`#[cfg(test)] mod tests`):
@@ -536,6 +588,11 @@ echo "teardown grep exit=$?  (1 = none found, which is the pass)" >> "$A"
 echo "== SCOPE GUARD (round 2) ==" >> "$A"
 awk '/impl Drop for/{f=1} f&&/LeaveAlternateScreen/{print "GUARD OK"; exit}' src/cli/viewer.rs >> "$A"
 grep -c "impl Drop" src/cli/viewer.rs >> "$A"
+echo "== MID-TURN ENTRY (round 4) ==" >> "$A"
+grep -c "Key::CtrlO" src/cli/commands/stream.rs >> "$A"
+grep -c "OpenViewer" src/cli/commands/stream.rs >> "$A"
+cargo test --lib cli::commands::stream 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tail -15 >> "$A"
+echo "stream units exit=${PIPESTATUS[0]}" >> "$A"
 echo "== NO DISABLE PATH (round 3) ==" >> "$A"
 grep -c "disarm" src/cli/viewer.rs >> "$A"
 grep -c "fn viewer_loop" src/cli/viewer.rs >> "$A"

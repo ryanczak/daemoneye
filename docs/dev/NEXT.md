@@ -1483,10 +1483,40 @@ that repo. This is the second batch carrying that caveat.
    false assumption about which candidate comes first, so the path under test is
    never entered.
 
-**Active phase: phase-07 — viewer-mouse** (`docs/dev/milestones/
-M17-transcript-view/phase-07-viewer-mouse.md`, status `todo`, drafted
-2026-08-20 by the /rexymcp:auto loop). **This is M17's last in-scope phase** —
-when it is approved the loop stops at the milestone boundary for PE sign-off.
+**Active phase: phase-02 — viewer-shell, RE-OPENED 2026-08-20**
+(`docs/dev/milestones/M17-transcript-view/phase-02-viewer-shell.md`, status
+`in-progress`, bug-phase-02-3). Re-dispatch with `/rexymcp:dispatch phase-02`.
+
+**M17's live check found a real defect — the first thing the deferred live
+criteria have caught.** Measured in an isolated `tmux -L de-m17` server against
+the shipped binary: pressing `ctrl+o` **mid-turn**, at the moment phase-03's
+`… N more lines · ctrl+o` footer renders, does nothing — `#{alternate_on}`
+stays `0` and the keypress is **swallowed, not queued**. The same key at the
+idle prompt opens the viewer correctly (`alternate_on` 1, full 60-line output
+present in a 98-row transcript). So the viewer is sound; its single entry point
+is not.
+
+Mechanism: `Key::CtrlO` is handled only in the idle input loop
+(`chat.rs:738`). During a turn the client is in `select_stream`
+(`stream.rs:807`), where `focus_outcome` maps only `Key::FocusGained` and
+`InterruptState::feed` returns `Ignore` for ctrl+O.
+
+**Classified `spec_bug` — architect-side, not executor error.** Phase-02 listed
+"opening the viewer mid-turn" as out of scope (defensible alone); phase-03 then
+added the ` · ctrl+o` footer, which advertises the key at the one moment it
+cannot work. A deliberate limitation plus an unconditional advertisement is a
+broken promise. Neither phase's criteria could see it: both were satisfied, and
+no headless test can observe "the key does nothing right now".
+
+Round-4 criteria are behavioural and were each run against the current tree to
+confirm they fail: `grep -c "Key::CtrlO" src/cli/commands/stream.rs` = 0,
+`grep -c OpenViewer` = 0, and `stream_key_ctrl_o_opens_viewer` absent. The fix
+extends the **existing** pure classifier (`focus_outcome`, `stream.rs:873`,
+already unit-tested) rather than adding a second one, and must not end,
+restart or reconnect the turn — `line_buf` is caller-owned so no daemon frames
+are lost across the viewer.
+
+**M17 is no longer at its boundary**: six phases `done`, phase-02 re-opened.
 
 Phase-07 staging notes (verified against the tree at draft time):
 
