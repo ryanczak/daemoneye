@@ -390,9 +390,14 @@ growing a parameter per feature — and every criterion phrased around
 The inline scroll-into-view arithmetic is gone (`grep` prints 0);
 `scroll_to_row` is defined once and called from all five navigation sites.
 
-**Active phase: phase-05 — block-copy** (`docs/dev/milestones/
-M17-transcript-view/phase-05-block-copy.md`, status `todo`, drafted
-2026-08-19). Dispatch with `/rexymcp:dispatch phase-05`.
+**phase-05 — block-copy: done (approved_first_try) 2026-08-20**, commit
+`ef4d3a8` + approval (this commit). Independently re-run gates, five pinned
+tests, the M1 mutation pair, PASTE MATCH, and the phase-02 guard-contract
+re-check all confirmed. Live check (`tmux show-buffer` after a real `y`
+press) deferred to milestone close per the M14/M15/M16 convention.
+
+**Active phase: none.** Phase-06 (rehydration) is an intent only — not yet
+drafted. Draft it via `/rexymcp:architect next`.
 
 Phase-05 staging notes (verified against the tree at draft time):
 

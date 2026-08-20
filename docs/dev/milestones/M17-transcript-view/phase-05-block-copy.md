@@ -1,7 +1,7 @@
 # Phase 05: Block Copy
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (search, `done`)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -645,3 +645,30 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 71c5aaec2e6e56e46c9ebd0b6d1e2c0b3ab44f0e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-20
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** DeepSeek V4 Flash 0731
+- **Scope deviations:** none
+- **Calibration:** none
+
+Independently re-ran all four gates (fmt/build/clippy/test, each a separate
+invocation) — all exit 0. Re-ran the five pinned `copy_text`/`key_action`
+unit tests directly — all pass. Re-applied mutation M1 myself (task 6's
+`old_str`/`new_str` on the `Output` arm) and confirmed it fails exactly the
+two tests the spec names (`copy_text_copies_full_output_not_the_elided_view`,
+`copy_text_of_collapsed_block_is_unchanged`), then restored it and confirmed
+33/33 pass and `git status --short` is clean. Independently re-derived the
+PASTE MATCH check (extracted the fenced block after the last
+`### Update … (end-to-end verification)` heading and diffed it against
+`/tmp/e2e-05.txt`) — matches byte-for-byte. Confirmed
+`grep -c "let _ = copy_to_tmux_buffer" src/cli/viewer.rs` = 0 and the
+phase-02 guard contract still holds (`grep -c "disarm"` = 0;
+`grep -nE "try_restore|disable_raw_mode|\.restore\(\)"` finds nothing, exit 1).
+The E2E artifact's `== TMUX ROUND TRIP ==` section shows the real
+`tmux load-buffer -w -` / `tmux show-buffer` round trip returning the exact
+three loaded lines (tmux 3.7b). No `unwrap`/`expect`/`panic!` outside
+`#[cfg(test)]`, no `TODO`/`FIXME`/`XXX`, no `#[allow]`, no `unsafe`, one
+conventional commit (`ef4d3a8`) for the implementation.
