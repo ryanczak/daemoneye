@@ -396,7 +396,19 @@ tests, the M1 mutation pair, PASTE MATCH, and the phase-02 guard-contract
 re-check all confirmed. Live check (`tmux show-buffer` after a real `y`
 press) deferred to milestone close per the M14/M15/M16 convention.
 
-**Active phase: none.** Phase-06 (rehydration) is an intent only — not yet
+**phase-06 — rehydration: done (approved_first_try) 2026-08-20**, commit
+`d341854` + approval (this review). `/session load <name>` now refills the
+client transcript from the named session's stored `messages.jsonl` via
+`blocks_from_messages`, cleared and refilled rather than appended, so `ctrl+o`
+after a load shows the conversation that predates the current client.
+Independently re-run gates, five pinned tests, the M1 mutation pair, PASTE
+MATCH, and the phase-06-specific + phase-02 guard-contract greps all
+confirmed. An additional non-spec mutation (deleting `self.evicted = 0;` from
+`Transcript::clear()`) was also caught by `transcript_clear_resets_counters`,
+ruling out a tautological test. The `/session load` wiring itself remains a
+live check deferred to milestone close (it requires a running daemon).
+
+**Active phase: none.** Phase-07 (viewer-mouse) is an intent only — not yet
 drafted. Draft it via `/rexymcp:architect next`.
 
 Phase-05 staging notes (verified against the tree at draft time):

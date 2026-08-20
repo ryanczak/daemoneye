@@ -1,7 +1,7 @@
 # Phase 06: Rehydration
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (transcript-model, `done`) — and in practice phases
 02–05, since the viewer is what makes a rehydrated transcript visible.
 **Estimated diff:** ~400 lines
@@ -630,3 +630,47 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** d341854538e571cbfbb42d80ffb0d4eb7b54de05
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-20
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none
+- **Calibration:** none
+
+Independently re-ran fmt/build/clippy/test (all exit 0) and `cargo test --lib
+cli::transcript` (11/11 passing). Re-executed the M1 mutation pair myself:
+`shown: 0,` → `shown: usize::MAX,` in `blocks_from_messages` makes
+`rehydrated_output_reports_nothing_shown_inline` fail (exit 101, same panic
+message as the executor's artifact); restoring makes all 11 transcript tests
+green again and leaves `git status --short` clean. Extracted the pasted fenced
+block from the `(end-to-end verification)` Update Log entry and diffed it
+against the still-present `/tmp/e2e-06.txt` on disk — `PASTE MATCH`,
+byte-identical.
+
+Ran the four phase-06-specific greps directly: `grep -rn "pane_logs_dir\|var/log/panes" src/cli/`
+prints nothing (exit 1); `grep -c "let _ = crate::session_store::load_session_messages" src/cli/commands/slash.rs`
+= 0; `grep -c "disarm" src/cli/viewer.rs` = 0; the `try_restore|disable_raw_mode|\.restore\(\)`
+grep on `viewer.rs` finds nothing (exit 1) — the phase-02 teardown-guard
+contract still holds and this phase did not touch `viewer.rs` (confirmed via
+`git show d341854 --stat`, which lists only `transcript.rs`, `slash.rs`,
+`chat.rs`, and the two doc files).
+
+Additionally mutated a second, non-pinned line to check for a tautological
+test: removed `self.evicted = 0;` from `Transcript::clear()` — this is not
+what the spec's task 6/7 mutation targets, but `transcript_clear_resets_counters`
+caught it (`left: 1, right: 0`, "the eviction counter resets too"), confirming
+that test is not vacuous. Restored; tree clean; re-ran green.
+
+Read the full diff (`git show d341854`) line by line against the Spec's Task
+1–4 mapping: the `blocks_from_messages` cases, the `SlashCtx` field, the
+`chat.rs` call-site wiring, and the `Response::SessionLoaded` `Ok`/`Err` arms
+all match the spec verbatim, including the load call using `usize::MAX` and
+the `Err` arm surfacing via `note(...)` rather than a discarded `let _ =`.
+No new `unwrap`/`expect`/`panic!` in production code (the only hits are
+pre-existing test-module code in `slash.rs`, untouched by this diff, and
+`panic!` calls inside this phase's own `#[test]` fns, which STANDARDS.md §2.1
+exempts). No `TODO`/`FIXME`/`XXX`, no `dbg!`/stray `println!`, no new
+`#[allow]`, no new dependencies, no `unsafe`. Working tree was clean before
+and after review; no drift was introduced.

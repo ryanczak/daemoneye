@@ -94,7 +94,7 @@ Phases 01–06 are drafted; 07 is an intent only until drafted.
 | 03 | expand-collapse ([phase-03-expand-collapse.md](phase-03-expand-collapse.md)) | done |
 | 04 | search ([phase-04-search.md](phase-04-search.md)) | done |
 | 05 | block-copy ([phase-05-block-copy.md](phase-05-block-copy.md)) | done |
-| 06 | rehydration ([phase-06-rehydration.md](phase-06-rehydration.md)) | review      |
+| 06 | rehydration ([phase-06-rehydration.md](phase-06-rehydration.md)) | done        |
 | 07 | viewer-mouse | todo |
 
 Ordering: 01 → 02 is a hard chain (nothing to render without the model).
