@@ -1,7 +1,7 @@
 # Phase 07: Viewer Mouse
 
 **Milestone:** M17 — Transcript View
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04 (search — `key_action`/`ViewerAction` are the decode
 surface this extends) and phase-03 (collapse — click-to-toggle acts on it).
 **Estimated diff:** ~420 lines
@@ -524,3 +524,155 @@ GUARD OK (drop)
 teardown grep exit=1  (1 = none found, which is the pass)
 ```
 PASTE MATCH
+
+### Update — ts=1787242442902 (complete, server-authored)
+
+**Summary:** </think>Let me verify the phase doc's status. I should confirm there's no lingering `if false` in the code and the working tree is committed. Also confirm the E2E artifact matches.
+
+Let me do a final check of the acceptance criteria:
+- PASTE MATCH — verified.
+- M1 APPLIED failing with 1, RESTORED passing with 0 — verified in the artifact.
+- E2E block ran.
+
+Working tree is clean. Everything committed. Let me write the final summary.</think>
+All ten tasks are complete. Working tree is clean, and the commit contains every file this phase touched.
+
+## Summary + Notes for review
+
+**Built (phase 07, M17 — viewer mouse):** SGR 1006 parsing in `src/cli/input/tty.rs` via `Key::Mouse { button, col, row, pressed }` and a new `read_sgr_mouse` helper — every byte read under the same 30 ms timeout guard as the neighbouring CSI arms; decimal fields accumulate until `M` (press) / `m` (release); coordinates go 1-based→0-based with `saturating_sub`; malformed/truncated sequences degrade to `Key::Char('\0')` (the existing ignore value) without hanging. In `src/cli/viewer.rs`: `EnableMouseCapture` right after `EnterAlternateScreen`, `DisableMouseCapture` inside the existing `AltScreenGuard` closure (before `LeaveAlternateScreen`) — no second guard, no `disarm`, nothing after the loop. Added pure `row_at` hit-test, decoded wheel→`ScrollUp`/`ScrollDown`, button-0 press→new `ViewerAction::ClickAt` (release and other buttons → `Ignore`, clicks ignored while searching), and wired the click arm to focus the block and toggle collapse on header rows with `find_matches` recomputed. Wrote all six required tests (4 parser in `tty.rs`, 4 in `viewer.rs`) plus a `key_action_mouse_release_is_ignored` variant; every acceptance-criterion test passes.
+
+**Deviation from spec:** the pinned mutation line is the status-line guard `if mouse_row >= area_y + body_height { return None; }`, which the spec explicitly allows ("if your guard is written with a different but equivalent condition, mutate **that** line"). I exercised the mutation exactly once, captured both halves cleanly into `/tmp/e2e-07.txt`, then pasted verbatim and re-ran the PASTE MATCH self-check against the final committed file (mismatch → fixed by reconstructing the entry mechanically from the original + pasted block → `PASTE MATCH`).
+
+**Verification:** mutation M1 applied — `grep -c` = 1, `cargo test --lib cli::viewer` fails on `row_at_rejects_the_status_line` (`exit=101`); restored — grep = 0, tests pass. All four gates green (`cargo fmt --all -- --check`, `build`, `clippy -D warnings`, `cargo test` = 1380 passed, 0 failed). Structural greps: `EnableMouseCapture` appears 2× in viewer.rs and 0 elsewhere; `awk` prints `GUARD OK` for both the closure and the `Drop`; `disarm` count = 0. The E2E artifact (with the `== M1 APPLIED/RESTORED ==` failing/passing pair, GATES, units, tty, structural sections) is pasted into the Update Log and ends with `PASTE MATCH` verified by diff against the byte-exact artifact. Status left at `in-progress`; no `(complete)` entry written — the server authors that tail.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 3.98s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M17-transcript-view/README.md` — +1 -1
+- `docs/dev/milestones/M17-transcript-view/phase-07-viewer-mouse.md` — +145 -1
+- `src/cli/input/tty.rs` — +134 -0
+- `src/cli/viewer.rs` — +136 -0
+
+**Commit:** 7026ef97316859bdb5d6849c744a54bd709da50c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
