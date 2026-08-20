@@ -1,7 +1,7 @@
 # Bug 3 on phase-02: ctrl+o is swallowed mid-turn, so the footer advertises a key that does nothing
 
 **Severity:** major
-**Status:** open
+**Status:** resolved (round 4, `d24dba9`)
 **Filed:** 2026-08-20
 **Found by:** live check in a real tmux pane (isolated `tmux -L de-m17` server),
 during M17 milestone close-out.

@@ -90,7 +90,7 @@ All seven phases are drafted.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | transcript-model ([phase-01-transcript-model.md](phase-01-transcript-model.md)) | done |
-| 02 | viewer-shell ([phase-02-viewer-shell.md](phase-02-viewer-shell.md)) | review      |
+| 02 | viewer-shell ([phase-02-viewer-shell.md](phase-02-viewer-shell.md)) | done |
 | 03 | expand-collapse ([phase-03-expand-collapse.md](phase-03-expand-collapse.md)) | done |
 | 04 | search ([phase-04-search.md](phase-04-search.md)) | done |
 | 05 | block-copy ([phase-05-block-copy.md](phase-05-block-copy.md)) | done |

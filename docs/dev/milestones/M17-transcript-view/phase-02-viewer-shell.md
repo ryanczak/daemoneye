@@ -1,7 +1,7 @@
 # Phase 02: Viewer Shell
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (transcript-model, `done`)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1665,3 +1665,54 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** d24dba9d053791e23724484605ebdb1da1150dc7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-20 (round 4)
+
+- **Verdict:** approved_after_3
+- **Bounces:** 3 (bug-phase-02-1 round 1, bug-phase-02-2 round 2,
+  bug-phase-02-3 round 4 — the last filed from the milestone-close live check)
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none. The diff touches `src/cli/commands/stream.rs`
+  only (+39 −8) and leaves the viewer, the idle input path and phase-03's
+  footer alone, exactly as bug-phase-02-3 required.
+- **Calibration:** the bug itself was `spec_bug` (recorded at bounce). No new
+  calibration item from this round.
+
+**Independent verification (re-run, not read):**
+
+- Four gates re-run as separate invocations: all exit 0. 1381 lib tests, +1 for
+  the new test.
+- Round-4 criteria: `Key::CtrlO` in `stream.rs` = 2, `OpenViewer` = 4,
+  `stream_key_ctrl_o_opens_viewer` present and passing,
+  `stream_key_focus_gained_still_reanchors` present,
+  `select_stream_first_interrupt_press_warns` still present and passing.
+  Phase-02 guard contract intact: `disarm` = 0, raw-mode teardown grep exits 1.
+- **Mutation by the reviewer:** deleting the
+  `Key::CtrlO => Some(StreamOutcome::OpenViewer)` arm fails exactly
+  `stream_key_ctrl_o_opens_viewer` (21 pass, 1 fail); restored, 22/22 pass,
+  tree clean. The new guard is not vacuous.
+- **The "no lost frames" property checked structurally:** `line_buf` is
+  declared at `stream.rs:211`, the read loop at `:222`, and the `OpenViewer`
+  arm at `:305` ends in `continue` — so the loop is re-entered with the same
+  buffer and the same connection. No return, no reconnect.
+- DoD greps over the diff: no `#[ignore]`, `#[allow]`, `TODO`, `dbg!`,
+  `unsafe`, `unwrap`, `expect` or `panic!` added.
+
+**Live verification — the check that found the bug, re-run against the fix.**
+Isolated `tmux -L de-m17b` server, freshly built debug binary, a turn that runs
+`seq 1 40` and then keeps talking:
+
+| Moment | `#{alternate_on}` | Observed |
+|---|---|---|
+| ctrl+o pressed **mid-turn**, as `… N more lines · ctrl+o` renders | **1** | viewer opened, `transcript — 111-132 of 132 lines` |
+| Escape | 0 | returned to the inline chat surface |
+| After the viewer closed | 0 | **turn resumed** — spinner active and a further tool-output panel streamed in |
+
+Before the fix the same probe measured `alternate_on = 0` with the keypress
+swallowed. The footer phase-03 added is now true.
+
+**Stated precisely:** the probe observed the turn *resuming and continuing to
+stream* after the viewer closed; it was still in flight when the capture window
+ended, so "resumes without dying" is verified and "runs to final completion
+after a mid-turn viewer" is not separately proven. The remaining M17 live
+criteria still belong to milestone close.

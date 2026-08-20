@@ -1483,9 +1483,35 @@ that repo. This is the second batch carrying that caveat.
    false assumption about which candidate comes first, so the path under test is
    never entered.
 
-**Active phase: phase-02 — viewer-shell, RE-OPENED 2026-08-20**
-(`docs/dev/milestones/M17-transcript-view/phase-02-viewer-shell.md`, status
-`in-progress`, bug-phase-02-3). Re-dispatch with `/rexymcp:dispatch phase-02`.
+**phase-02 — viewer-shell: done (approved_after_3) 2026-08-20**, round-4
+commit `d24dba9` + approval. bug-phase-02-3 resolved: `ctrl+o` now opens the
+viewer mid-turn as well as at the prompt, so phase-03's
+`… N more lines · ctrl+o` footer is true wherever it renders.
+
+The fix extended the existing pure classifier (`focus_outcome` → `key_outcome`,
+`stream.rs:889`) with `Key::CtrlO => StreamOutcome::OpenViewer`, and the caller
+handles that outcome by running the viewer, re-anchoring, and `continue`-ing the
+same loop — `line_buf` (`:211`) sits outside that loop (`:222`), so the
+connection and the partial read survive. Reviewer mutation: deleting the CtrlO
+arm fails exactly `stream_key_ctrl_o_opens_viewer`.
+
+**Live-verified, not just unit-tested.** The probe that found the bug was re-run
+against the fix in an isolated `tmux -L de-m17b` server: mid-turn ctrl+o now
+gives `alternate_on = 1` with `transcript — 111-132 of 132 lines`, Escape
+returns to the chat surface, and the turn **resumes and keeps streaming**
+afterwards. Stated precisely: resumption was observed; run-to-final-completion
+after a mid-turn viewer was not separately proven within the capture window.
+
+**Active phase: none — M17 is at its milestone boundary.** All seven phases are
+`done`. Close-out belongs to the human via `/rexymcp:architect`, and three items
+wait there: **(1)** M16's sign-off, still outstanding since before M17 opened;
+**(2)** the criterion-design fold at the three-occurrence threshold, drafted and
+unapplied — now arguably four occurrences with bug-phase-02-3, which was a
+scoping miss rather than a criterion miss; **(3)** M17's remaining live exit
+criteria — the alt-screen round trip including the amended `esc` case, resize
+reflow while open, `y` copy through the viewer, `/session load` rehydration
+against a live daemon, and wheel/click. One of those live checks has already
+paid for itself by finding bug-phase-02-3.
 
 **M17's live check found a real defect — the first thing the deferred live
 criteria have caught.** Measured in an isolated `tmux -L de-m17` server against
