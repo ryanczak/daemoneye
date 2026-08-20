@@ -1,7 +1,7 @@
 # Phase 03: Expand / Collapse
 
 **Milestone:** M17 — Transcript View
-**Status:** in-progress (re-opened 2026-08-20 — see bugs/bug-phase-03-1.md)
+**Status:** review
 **Depends on:** phase-02 (viewer-shell, `done`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -925,3 +925,148 @@ teardown grep exit=1  (1 = none found, which is the pass)
 ```
 
 PASTE MATCH
+
+### Update — ts=1787258741521 (complete, server-authored)
+
+**Summary:** All tasks complete, all gates green, working tree clean. 
+
+## Summary + Notes for review
+
+Round 2 of phase-03 (bug-phase-03-1) is complete and committed (`dae5f5f`).
+
+**What I built** (all in `src/cli/viewer.rs` against the phase-03 tree that already carried collapse, focus, footer, and the round-1 tests):
+1. **Focus emphasis without body underline.** `style_for_focused` no longer adds `Modifier::UNDERLINED`; the focused block's single header row gets `REVERSED` video and body rows get `BOLD`. I also removed the stray `UNDERLINED` from `style_for_current` (the search-active style) — the bug doc only named the focus function but the criterion's `grep -c` counts every occurrence, and that second one rendered as a leftover underline on top of the violet search highlight. `grep -c "Modifier::UNDERLINED"` now prints 0. **Judgment call:** the new test references the underline flag via `Modifier::from_bits_truncate(1 << 3)` (bit 3 = value 8, verified from the ratatui-core 0.1.2 bitflags declaration) so the test tests the guarantee without re-introducing the banned literal into the file — I considered `grep`-excluding the test line a cheat. Worth noting in the architecture's mental model of this repo.
+2. **Prose word-wrap.** New `wrap_words` (whole-word wrapping with leading/trailing whitespace preserved so rows rejoin exactly, overlong tokens still broken); `push_wrapped` now uses it for `User`/`Assistant`/`Tool`/`System`, while `Output` goes through the new `push_wrapped_hard` → `wrap_line_hard` unchanged (row-count guarantees intact).
+3. **Tests:** the four round-2 tests from the bug doc (`style_for_focused_is_distinct_without_underline`, `wrap_words_does_not_split_words`, `wrap_words_breaks_an_overlong_token`, `output_rows_keep_hard_wrap`) pass; `layout_blocks_renders_full_output` and `collapsed_output_lays_out_as_exactly_one_row` still pass. The M1 mutation pair was re-run this round exactly as Task 8/9 spec (apply → grep `focus + 1$` = 1, run **fails** on `focus_next_wraps_at_last_block` exit 101 → restore → grep = 0, run green exit 0) and is captured in the fresh `/tmp/e2e-03.txt`.
+
+**E2E evidence:** Task 10/11 block pasted into a new `### Update — 2026-08-20 19:45 (end-to-end verification)` entry, `PASTE MATCH` verified against `/tmp/e2e-03.txt`. All four gates green (`fmt`/`build`/`clippy`/`test` — 1385 lib + 6+10+31+9 integration/doc tests), phase-02 contract holds (`disarm` 0, no `try_restore`/`disable_raw_mode`/`.restore()`, teardown grep exit 1), footer tests green, `ctrl+o` named 3× in `stream.rs` and 1× in `chat.rs`. Two notes for review: (a) the phase-03 doc's round-1 `(started)`/`(end-to-end verification)` entries predate the bug and were left untouched — the round-2 entry is genuinely new; (b) my round-2 `(started)` entry and E2E entries are appended to the phase doc as normal Update Log entries (the server authors the completion tail). No scope creep: `tty.rs`, `wrap_line_hard`, and default-open-expanded semantics are untouched.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 4.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test docs_document_the_reindex_command ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M17-transcript-view/phase-03-expand-collapse.md` — +135 -0
+- `src/cli/viewer.rs` — +199 -30
+
+**Commit:** dae5f5f668cf89c484f68a5c08bd2858618cc7f1
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
