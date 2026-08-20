@@ -1319,3 +1319,200 @@ threshold; the fold is drafted in `NEXT.md` and awaits PE sign-off.
 **Cleared, not a defect:** the `eprintln!` at `src/cli/commands/chat.rs:746`
 matches existing convention in the same raw-mode loop (`chat.rs:370-372`,
 `chat.rs:572`).
+
+### Update — 2026-08-20 (progress)
+
+Round 4 (bug-phase-02-3): repo was clean at `7494f59`; status already
+`in-progress` (re-opened). Implemented mid-turn viewer entry: added
+`StreamOutcome::OpenViewer`, extended the pure classifier
+`focus_outcome` → `key_outcome` to map `Key::CtrlO`, handled the new outcome in
+`ask_with_session_ratatui` (run viewer, `renderer.reanchor()`, `continue` same
+loop — caller-owned `line_buf` untouched, no reconnect), renamed/added the
+classifier tests. Then ran the M1 mutation pair and the § End-to-end
+verification block verbatim; artifact below.
+
+### Update — 2026-08-20 (end-to-end verification)
+
+Round 4 (bug-phase-02-3 fixed): the viewer now opens mid-turn as well as at the
+idle prompt. `Key::CtrlO` during a stream is mapped by the extended pure
+classifier `key_outcome` (renamed from `focus_outcome`) to a new
+`StreamOutcome::OpenViewer`; handling it in `ask_with_session_ratatui` runs
+`crate::cli::viewer::run_transcript_viewer(...)`, calls `renderer.reanchor()`,
+and `continue`s the same read loop — the caller-owned `line_buf` is untouched
+and the connection is never reset, so no daemon frames are lost across the
+viewer (the same mechanism that makes interrupt-during-stream non-destructive).
+The viewer's `run_transcript_viewer` already leaves the alternate screen and
+re-pins the viewport on every exit path (rounds 2–3), so the mid-turn open
+inherits that contract unchanged. Interrupt behaviour is untouched:
+`select_stream_first_interrupt_press_warns` still passes. Both new tests — the
+idle-loop round-1 `Key::CtrlO` arm in `chat.rs` and the mid-turn
+`stream_key_ctrl_o_opens_viewer` — plus `stream_key_focus_gained_still_reanchors`
+(replacing the renamed classifier's old test) pass. What is still live-only:
+the on-screen check that the turn resumes visually where it left off (milestone
+close). Everything else — the mutation pair, gates, structural greps, viewer /
+transcript / stream units — is in the artifact below; script run verbatim and
+unmodified, output pasted inside the fence:
+
+```sh
+== M1 APPLIED ==
+1
+assertion `left == right` failed
+  left: 3
+ right: 0
+
+---- cli::viewer::tests::clamp_scroll_pins_to_last_page stdout ----
+
+thread 'cli::viewer::tests::clamp_scroll_pins_to_last_page' (3377708) panicked at src/cli/viewer.rs:884:9:
+assertion `left == right` failed
+  left: 100
+ right: 90
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli::viewer::tests::clamp_scroll_pins_to_last_page
+    cli::viewer::tests::clamp_scroll_zero_when_content_fits
+
+test result: FAILED. 35 passed; 2 failed; 0 ignored; 0 measured; 1344 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+== M1 RESTORED ==
+0
+test cli::viewer::tests::key_action_wheel_scrolls_click_ignored_while_searching ... ok
+test cli::viewer::tests::key_action_y_copies_only_when_not_searching ... ok
+test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
+test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
+test cli::viewer::tests::next_match_wraps ... ok
+test cli::viewer::tests::prev_match_wraps ... ok
+test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
+test cli::viewer::tests::collapsed_output_lays_out_as_exactly_one_row ... ok
+test cli::viewer::tests::row_at_maps_body_rows_with_scroll ... ok
+test cli::viewer::tests::row_at_rejects_the_status_line ... ok
+test cli::viewer::tests::layout_blocks_renders_full_output ... ok
+test cli::viewer::tests::rows_carry_their_source_block_index ... ok
+test cli::viewer::tests::scroll_to_row_only_moves_when_offscreen ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+test cli::viewer::tests::render_transcript_shows_match_counter ... ok
+test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 1344 filtered out; finished in 0.00s
+
+exit=0
+== GATES ==
+fmt exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.58s
+clippy exit=0
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+   Doc-tests daemoneye
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test exit=0
+== VIEWER UNITS ==
+test cli::viewer::tests::key_action_wheel_scrolls_click_ignored_while_searching ... ok
+test cli::viewer::tests::key_action_y_copies_only_when_not_searching ... ok
+test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
+test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
+test cli::viewer::tests::next_match_wraps ... ok
+test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
+test cli::viewer::tests::prev_match_wraps ... ok
+test cli::viewer::tests::collapsed_output_lays_out_as_exactly_one_row ... ok
+test cli::viewer::tests::row_at_maps_body_rows_with_scroll ... ok
+test cli::viewer::tests::row_at_rejects_the_status_line ... ok
+test cli::viewer::tests::scroll_to_row_only_moves_when_offscreen ... ok
+test cli::viewer::tests::rows_carry_their_source_block_index ... ok
+test cli::viewer::tests::layout_blocks_renders_full_output ... ok
+test cli::viewer::tests::render_transcript_shows_match_counter ... ok
+test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 1344 filtered out; finished in 0.00s
+
+units exit=0
+== TRANSCRIPT UNITS ==
+running 11 tests
+test cli::transcript::tests::blocks_from_messages_empty_input_is_empty ... ok
+test cli::transcript::tests::append_assistant_enforces_byte_cap ... ok
+test cli::transcript::tests::transcript_append_assistant_coalesces ... ok
+test cli::transcript::tests::rehydrated_output_reports_nothing_shown_inline ... ok
+test cli::transcript::tests::transcript_append_assistant_breaks_on_other_block ... ok
+test cli::transcript::tests::transcript_clear_resets_counters ... ok
+test cli::transcript::tests::blocks_from_messages_keeps_truncation_marker ... ok
+test cli::transcript::tests::transcript_push_evicts_over_byte_cap ... ok
+test cli::transcript::tests::blocks_from_messages_maps_each_record_kind ... ok
+test cli::transcript::tests::transcript_push_evicts_oldest_over_block_cap ... ok
+test cli::transcript::tests::transcript_records_full_output_not_truncated ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1370 filtered out; finished in 0.00s
+
+transcript exit=0
+== ALT-SCREEN CONTRACT ==
+2
+2
+2
+== NO RAW-MODE TEARDOWN IN VIEWER ==
+teardown grep exit=1  (1 = none found, which is the pass)
+== SCOPE GUARD (round 2) ==
+GUARD OK
+1
+== MID-TURN ENTRY (round 4) ==
+2
+4
+test cli::commands::stream::tests::parse_approval_decision_a_approves_session ... ok
+test cli::commands::stream::tests::parse_approval_decision_typed_message_redirects ... ok
+test cli::commands::stream::tests::parse_approval_decision_y_approves ... ok
+test cli::commands::stream::tests::parse_approval_decision_y_uppercase_approves ... ok
+test cli::commands::stream::tests::parse_approval_decision_yes_approves ... ok
+test cli::commands::stream::tests::silence_budget_phase1_is_90s ... ok
+test cli::commands::stream::tests::silence_budget_phase2_is_120s ... ok
+test cli::commands::stream::stream_seam_tests::select_stream_delivers_a_full_daemon_message ... ok
+test cli::commands::stream::stream_seam_tests::select_stream_focus_gained_returns_reanchor ... ok
+test cli::commands::stream::stream_seam_tests::select_stream_first_interrupt_press_warns ... ok
+test cli::commands::stream::stream_seam_tests::recv_line_preserves_partial_bytes_across_a_dropped_read ... ok
+test cli::commands::stream::stream_seam_tests::select_stream_sigwinch_returns_reanchor ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1359 filtered out; finished in 0.05s
+
+stream units exit=0
+== NO DISABLE PATH (round 3) ==
+0
+1
+== CALL SITE DOES NOT PROPAGATE ==
+0
+== KEY WIRING ==
+113:    CtrlO,
+114:    PageUp,
+115:    PageDown,
+185:        b'\x0f' => Key::CtrlO,
+221:                            // \x1b[5~ = PageUp
+223:                            Key::PageUp
+226:                            // \x1b[6~ = PageDown
+228:                            Key::PageDown
+keys exit=0
+```
+
+PASTE MATCH

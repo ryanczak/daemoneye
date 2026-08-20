@@ -37,6 +37,8 @@ enum StreamOutcome {
     Interrupted,
     /// A resize or focus-gain arrived mid-stream — caller must re-anchor.
     Reanchor,
+    /// Ctrl+O — caller opens the transcript viewer, then resumes the read.
+    OpenViewer,
     /// Daemon error (EOF, parse failure, timeout).
     Error(String),
     /// Deadline expired before a daemon message (phase-accurate timeout).
@@ -297,6 +299,24 @@ pub(super) async fn ask_with_session_ratatui(
                 continue;
             }
             StreamOutcome::Reanchor => {
+                renderer.reanchor();
+                continue;
+            }
+            StreamOutcome::OpenViewer => {
+                // Ctrl+O mid-turn. The viewer's teardown already re-pins the
+                // inline viewport on exit; we re-pin again so the spinner
+                // resumes over a correctly-anchored surface, then keep the
+                // same connection and line_buf — no turn restart.
+                if let Err(e) = crate::cli::viewer::run_transcript_viewer(
+                    stdin,
+                    &mut sigwinch,
+                    renderer,
+                    transcript,
+                )
+                .await
+                {
+                    eprintln!("\x1b[31m✗\x1b[0m viewer: {}", e);
+                }
                 renderer.reanchor();
                 continue;
             }
@@ -806,7 +826,7 @@ async fn select_stream(
             tokio::select! {
                 key = read_key(stdin) => {
                     if let Some(key) = key {
-                        if let Some(outcome) = focus_outcome(&key) {
+                        if let Some(outcome) = key_outcome(&key) {
                             return outcome;
                         }
                         match interrupt_state.feed(&key) {
@@ -837,7 +857,7 @@ async fn select_stream(
             tokio::select! {
                 key = read_key(stdin) => {
                     if let Some(key) = key {
-                        if let Some(outcome) = focus_outcome(&key) {
+                        if let Some(outcome) = key_outcome(&key) {
                             return outcome;
                         }
                         match interrupt_state.feed(&key) {
@@ -869,10 +889,12 @@ async fn select_stream(
 
 /// Map a key event to a stream outcome the interrupt filter must not
 /// swallow. FocusGained (ESC [ I) means the user switched back to this
-/// pane and the viewport may need re-pinning.
-fn focus_outcome(key: &Key) -> Option<StreamOutcome> {
+/// pane and the viewport may need re-pinning; Ctrl+O opens the transcript
+/// viewer mid-turn (the transcript holds everything up to this moment).
+fn key_outcome(key: &Key) -> Option<StreamOutcome> {
     match key {
         Key::FocusGained => Some(StreamOutcome::Reanchor),
+        Key::CtrlO => Some(StreamOutcome::OpenViewer),
         _ => None,
     }
 }
@@ -1658,13 +1680,22 @@ mod stream_seam_tests {
         assert_eq!(tool_runtime_label(false, 450), "✗ 0.5s");
     }
 
-    // ── focus_outcome ───────────────────────────────────────────────────
+    // ── key_outcome ─────────────────────────────────────────────────────
 
     #[test]
-    fn focus_outcome_maps_focus_gained_to_reanchor() {
-        let result = focus_outcome(&Key::FocusGained);
+    fn stream_key_focus_gained_still_reanchors() {
+        let result = key_outcome(&Key::FocusGained);
         assert!(matches!(result, Some(StreamOutcome::Reanchor)));
-        assert!(focus_outcome(&Key::Char('x')).is_none());
+        assert!(key_outcome(&Key::Char('x')).is_none());
+    }
+
+    #[test]
+    fn stream_key_ctrl_o_opens_viewer() {
+        assert!(matches!(
+            key_outcome(&Key::CtrlO),
+            Some(StreamOutcome::OpenViewer)
+        ));
+        assert!(key_outcome(&Key::Char('q')).is_none());
     }
 
     // ── select_stream focus / sigwinch ──────────────────────────────────
