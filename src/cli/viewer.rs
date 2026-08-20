@@ -1273,6 +1273,33 @@ mod tests {
     }
 
     #[test]
+    fn layout_wraps_prose_on_word_boundaries() {
+        let rows = layout_blocks(
+            &[Block::Assistant {
+                text: "aaa bbb ccc ddd".to_string(),
+            }],
+            7,
+        );
+        let texts: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            ["aaa bbb", "ccc ddd"],
+            "prose must wrap on word boundaries, not mid-word"
+        );
+    }
+
+    #[test]
+    fn layout_keeps_output_hard_wrapped() {
+        let rows = layout_blocks(&[output_block("aaa bbb ccc", 0)], 5);
+        let texts: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            ["output (1 lines)", "aaa b", "bb cc", "c"],
+            "machine output must keep the every-width hard wrap"
+        );
+    }
+
+    #[test]
     fn focus_next_wraps_at_last_block() {
         assert_eq!(focus_next(2, 3), 0);
         assert_eq!(focus_next(0, 3), 1);
