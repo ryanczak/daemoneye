@@ -1,7 +1,7 @@
 # Phase 02: Viewer Shell
 
 **Milestone:** M17 — Transcript View
-**Status:** in-progress (re-opened 2026-08-20 — see bugs/bug-phase-02-3.md)
+**Status:** review
 **Depends on:** phase-01 (transcript-model, `done`)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1516,3 +1516,152 @@ keys exit=0
 ```
 
 PASTE MATCH
+
+### Update — ts=1787246854665 (complete, server-authored)
+
+**Summary:** </think>Wait — the status line still says `in-progress (re-opened 2026-08-20 — see bugs/bug-phase-02-3.md)`. That's fine per the contract — the phase doc status line remained in-progress (it started in-progress because it was re-opened; I didn't need to flip it since it was already shown in-progress). Actually the contract says I flip it from todo/in-progress... it's already in-progress, so leaving it as-is is correct.
+
+Everything is verified. Working tree clean, all tasks done, one commit. Final summary.</think>
+## Summary + Notes for review
+
+Fixed **bug-phase-02-3** (round 4) on the phase-02 viewer shell — ctrl+o now opens the transcript viewer mid-turn:
+
+- **Pure classifier extended, not duplicated:** renamed `focus_outcome` → `key_outcome` in `src/cli/commands/stream.rs` and added `Key::CtrlO => Some(StreamOutcome::OpenViewer)`, alongside the existing `Key::FocusGained => Some(StreamOutcome::Reanchor)`. `select_stream`'s two `read_key` arms were switched to `key_outcome`, and a new `StreamOutcome::OpenViewer` variant was added to `ask_with_session_ratatui`'s outcome match.
+- **Mid-turn handling:** `StreamOutcome::OpenViewer` runs `run_transcript_viewer(stdin, &mut sigwinch, renderer, transcript).await` (handled, not propagated — same `eprintln!` convention as the idle-loop arm), then `renderer.reanchor()`, then `continue`s the *same* read loop. The caller-owned `line_buf` is untouched and the connection is never reset, so no daemon frames are lost across the viewer — the identical mechanism that makes interrupt-during-stream non-destructive. Interrupt behaviour is untouched.
+- **Round-2/3 guard contract intact:** no `disarm`, `fn viewer_loop` = 1, no `try_restore`/`disable_raw_mode`/`.restore()` in `viewer.rs` (grep exits 1).
+- **Tests:** `stream_key_ctrl_o_opens_viewer` (asserts `key_outcome` maps `Key::CtrlO` → `OpenViewer` by value), `stream_key_focus_gained_still_reanchors` (replaces the renamed classifier's old test), and `select_stream_first_interrupt_press_warns` all pass unchanged.
+- **E2E artifact:** script run verbatim; `/tmp/e2e-02.txt` shows `== M1 APPLIED ==` (grep=1, **failing** clamp tests, exit 101) then `== M1 RESTORED ==` (grep=0, **passing**, exit 0), all gates green (fmt=0, clippy=0, test=0: 1381 lib), MID-TURN ENTRY `Key::CtrlO`=2 / `OpenViewer`=4 with 22 stream tests green, guard contract greps, key wiring. New Update Log entries: a `(progress)` started entry + a `(end-to-end verification)` entry with the artifact in its own fence; `PASTE MATCH` diff returns clean, literal line below the fence.
+
+**Verification:** `cargo fmt --all` clean, `cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings` exits 0, `cargo test` all green. Working tree clean; single conventional commit `d24dba9`. Status left `in-progress`.
+
+**Notes for review:** (1) Spec-pinned literals verified by grep: `Key::CtrlO` present in `stream.rs` (2) and `tty.rs` (1, with `b'\x0f'` arm), `OpenViewer` present (4), `0x0f`/`\x0f` grep matches 1. (2) The live on-screen check that the turn resumes visually where it left off remains architect-run at milestone close, per the bug doc. (3) Renaming `focus_outcome`→`key_outcome` was deliberate — the bug doc explicitly sanctions extending/renaming the existing classifier rather than adding a second one.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 4.09s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_strips_trailing_prose ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M17-transcript-view/phase-02-viewer-shell.md` — +11 -0
+- `src/cli/commands/stream.rs` — +39 -8
+
+**Commit:** d24dba9d053791e23724484605ebdb1da1150dc7
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
