@@ -1502,9 +1502,40 @@ returns to the chat surface, and the turn **resumes and keeps streaming**
 afterwards. Stated precisely: resumption was observed; run-to-final-completion
 after a mid-turn viewer was not separately proven within the capture window.
 
-**Active phase: phase-03 — expand-collapse, round 3** (`docs/dev/milestones/
-M17-transcript-view/phase-03-expand-collapse.md`, status `in-progress`,
-bug-phase-03-2). Re-dispatch with `/rexymcp:dispatch phase-03`.
+**Active phase: none.** Both **M16 — LLM Stream Robustness** and **M17 —
+Transcript View** were closed 2026-08-20 on PE sign-off. No milestone is open;
+the next one needs scoping with `/rexymcp:architect`.
+
+**M17 closed** with all 7 phases `done` (5 approved_first_try; phase-02
+approved_after_3, phase-03 approved_after_2) and all 5 bug docs resolved.
+Retrospective: `docs/dev/milestones/M17-transcript-view/README.md`.
+
+**M16 closed** with all 8 phases `done`. Its **five live exit criteria were
+never run** — sign-off accepts that rather than recording a pass. The list and
+the reason are in that milestone's § Close-out. M17 later proved the safe way to
+run them: an isolated `tmux -L <name>` server, which cannot touch the operator's
+session.
+
+**Calibration state after the close:**
+
+- **Applied** to `docs/dev/WORKFLOW.md` (PE-approved): *a criterion for a
+  cleanup obligation must assert the cleanup ran, and assert the count* — three
+  occurrences, all in M17.
+- **Held at 2 occurrences:** *a criterion that names a function produces a test
+  of that function; only a criterion that names an observable behaviour produces
+  a test of the wiring.*
+- **Carried from M16, unapplied:** the "criterion validated in only one
+  direction" fold (5 occurrences), which was not part of this close decision.
+
+**Carried work, none of it blocking:**
+
+- M16's five live criteria (§ Close-out there).
+- M17's four unrun live checks: resize-while-open reflow, `y` copy through the
+  viewer, `/session load` rehydration against a live daemon, wheel/click.
+- Two M17 design questions deliberately left out of bug fixes: whether the
+  viewer should re-render markdown (it currently prints the raw token stream,
+  losslessly), and opening the viewer from an approval or credential prompt,
+  which use their own readers.
 
 **Round 2 fixed the behaviour and left the guards hollow.** `dae5f5f` removed
 `Modifier::UNDERLINED` (focus is now REVERSED on the header, BOLD on the body),

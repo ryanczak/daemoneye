@@ -5,9 +5,7 @@ LLM query — every stall, drop, truncation, or abort becomes a user-visible
 message within a bounded time, and long generations are never killed by an
 arbitrary total-request timeout.
 
-**Status:** all 8 phases `done` (2026-08-18) — **awaiting PE sign-off; not
-closed.** Five live exit criteria are still unrun and one calibration fold
-awaits a decision; see § Retrospective → Outstanding before close.
+**Status:** done (closed 2026-08-20, PE sign-off)
 
 **Depends on:** M15 — Chat Reliability & Dialog UX (closed 2026-08-16)
 
@@ -281,3 +279,40 @@ prohibition #5. Both supporting evidence and cost data are above.
    on a closed peer). Benign (daemon survives; criterion met), but noisy on
    every interrupt. Candidate fix: ignore `Broken pipe`/`ConnectionReset` on
    that reply. See incident memory `m16-d5-epipe-after-cancel`.
+
+## Close-out — 2026-08-20 (PE sign-off)
+
+M16 was signed off by the PE on 2026-08-20, two days after its eighth phase
+landed. All 8 phases were `done` and all four gates green throughout.
+
+**What sign-off does and does not mean here.** The milestone's **five live exit
+criteria were never run**, and closing it is a decision to accept that — not a
+record that they passed. Stated explicitly so a later reader does not mistake an
+unrun check for a green one. The five, verbatim from § Exit criteria:
+
+1. A streamed generation lasting > 5 minutes completing without a client-side
+   timeout or mid-stream kill.
+2. `kill -STOP` on the daemon mid-turn producing a client-side error naming the
+   hang within 90 s.
+3. An `await_agent_result` call waiting ≥ 300 s with `KeepAlive` frames
+   throughout.
+4. An unknown-tool-only model response yielding a visible `SystemMsg`.
+5. Esc during token streaming cancelling cleanly with a `⊘ cancelled` marker and
+   no EPIPE in `daemon.log`.
+
+The reason they went unrun is on record and unchanged: they touch the live
+daemon and the operator's tmux server, and the phase-01 incident — an executor
+running `tmux kill-server` on the default server — is why they were never run
+unprompted. M17 later demonstrated a safe pattern for exactly this kind of
+check: an **isolated `tmux -L <name>` server**, which cannot disturb the
+operator's session and which found two real defects. Any future attempt at these
+five should use it.
+
+**The calibration fold that was awaiting a decision** (a criterion validated in
+only one direction, five occurrences) is **carried, not applied** — it was not
+part of the M17 close decision and remains available for a future fold.
+
+**Carried into future work:** the five live criteria above, and the minor
+`CLAUDE.md` gap noted at the time — the `src/daemon/utils/` row now does list
+`keepalive.rs`, so that item is closed.
+

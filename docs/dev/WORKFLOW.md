@@ -1283,6 +1283,43 @@ would only degrade; (4) pin the missing-binary runtime behavior in the phase doc
 as a named advisory, per the rule above. Record the feature's toolchain
 dependencies in the phase doc (Pre-flight or a "Toolchain dependencies" line).
 
+### A criterion for a cleanup obligation must assert the cleanup *ran*
+
+When a phase hands out a resource — an alternate screen, mouse tracking, a
+terminal mode, a lock, a temp file — the criterion that guards its release must
+assert **that the release happened, and how many times**. A criterion that
+asserts a *mechanism exists* does not do this, and a phase can satisfy it while
+being more broken than before.
+
+Write:
+
+- [ ] Test `x_guard_runs_teardown_on_normal_exit` passes: a guarded scope
+      returning normally ran the teardown **exactly once** (assert `== 1`, not
+      `>= 1`).
+
+Not:
+
+- [ ] `grep -c "impl Drop" src/foo.rs` prints 1.
+- [ ] The `Drop` impl contains `LeaveAlternateScreen`.
+
+**Assert the count, not merely non-zero.** A teardown that runs twice leaves the
+resource released twice and is also wrong; `>= 1` hides that.
+
+*(Folded 2026-08-20 at M17 close, on PE sign-off. Three occurrences, each a
+criterion that was satisfied while the thing it guarded was broken or
+mis-measured. **M17 phase-02 round 2 is the case that pays for this rule**: the
+round-1 bounce added criteria asserting a `Drop` guard existed and contained
+`LeaveAlternateScreen`; round 2 satisfied every one of them — `GUARD OK`, one
+`impl Drop`, four green gates, a byte-exact artifact — and was *more* broken
+than round 1, because it called `disarm()` on the `break` path, so `esc` never
+left the alternate screen at all. Round 1 failed the error path; round 2 failed
+the path every user takes. The other two: M17 phase-02's
+`grep -c "EnterAlternateScreen"` criterion expected 1 where correct code prints
+2 (the `use` import plus the call), and M17 phase-01's ignored-test-count
+criterion was copied from a stale `CLAUDE.md` claim of 1 when the suite has 3.
+Note what the three share — each measured a proxy for the obligation instead of
+the obligation.)*
+
 ### Run every count criterion; never derive it
 
 A phase doc that pins a count (`grep -c … returns 4`) is making a claim about the

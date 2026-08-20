@@ -5,7 +5,7 @@ every byte of elided tool output — in an alternate-screen viewer with `ctrl+o`
 scroll and search it, copy any block to a tmux buffer, and close it back to an
 inline chat surface that is byte-identical to the one they left.
 
-**Status:** planning
+**Status:** done (closed 2026-08-20, PE sign-off)
 
 **Depends on:** M16 — LLM Stream Robustness (all 8 phases done 2026-08-18;
 **PE sign-off outstanding**, five live exit criteria unrun). M17 phases touch
@@ -138,3 +138,96 @@ Phase intents:
 
 Freeform notes, dead ends and calibration observations accumulate here during
 the milestone; the retrospective is written at close.
+
+## Retrospective — closed 2026-08-20 (PE sign-off)
+
+**Shipped:** an alternate-screen transcript viewer opened with `ctrl+o` from the
+chat prompt **or mid-turn**, showing every block in full — including the tool
+output the inline panel elides at 10 lines — with focus movement, collapse,
+incremental search, block copy to a tmux buffer, rehydration from a saved
+session, and wheel/click. The inline `insert_before` streaming path was never
+touched, so native tmux scroll, copy-mode and drag-selection still work exactly
+as before. That was the milestone's central design bet and it held.
+
+| # | Phase | Verdict | Bugs |
+|---|---|---|---|
+| 01 | transcript-model | approved_first_try | — |
+| 02 | viewer-shell | approved_after_3 | 3 |
+| 03 | expand-collapse | approved_after_2 | 2 |
+| 04 | search | approved_first_try | — |
+| 05 | block-copy | approved_first_try | — |
+| 06 | rehydration | approved_first_try | — |
+| 07 | viewer-mouse | approved_first_try | — |
+
+Five of seven phases were approved first try. All five bug docs are resolved.
+
+### The headline: every bug was architect-side, and half were invisible to the gates
+
+All five bugs were **spec gaps, not executor errors** — in each case the
+executor implemented exactly what the phase doc said. Two of them could not have
+been caught by any test in the suite:
+
+- **`bug-phase-02-3`** — `ctrl+o` was swallowed mid-turn, at precisely the moment
+  phase-03's `… N more lines · ctrl+o` footer advertised it. Phase-02 scoped
+  mid-turn entry out (defensible alone) and phase-03 then advertised it
+  unconditionally; a deliberate limitation plus an unconditional advertisement
+  is a broken promise. Found by an architect live probe in an isolated tmux
+  server, measuring `#{alternate_on}` before and after the keypress.
+- **`bug-phase-03-1`** — the focused block rendered with `Modifier::UNDERLINED`
+  on **every row**, so a long answer appeared as dozens of underlined lines.
+  Found from a user screenshot, confirmed by `tmux capture-pane -e` showing
+  `ESC[4m` on each row of the focused block.
+
+Neither is observable from `cargo test`. The milestone deferred its live exit
+criteria to close-out, and those checks paid for themselves twice.
+
+### Two bounce shapes worth remembering
+
+**Phase-02 inverted the same obligation twice.** Round 1 released the alternate
+screen on the normal path but not the error path; round 2 moved the release into
+a `Drop` guard and then disarmed it on the normal path, so `esc` never left the
+screen at all. Round 3 deleted the disable path entirely — correct *by
+construction* rather than by convention — which is why it stuck. The lesson is
+in the fold applied at this close.
+
+**Phase-03 shipped a correct fix with hollow guards.** Round 2 fixed the
+underline and the mid-word wrapping; reviewer mutations that reverted both
+wirings left 41/41 tests passing, because one guard tested the helper directly
+instead of going through `layout_blocks`, and the other used a fixture both
+wrappers split identically. Round 3 added behaviour-level guards, and the same
+two mutations now fail the right test each.
+
+### Calibration
+
+- **Applied at close (PE-approved):** *a criterion for a cleanup obligation must
+  assert the cleanup ran, and assert the count* — `docs/dev/WORKFLOW.md`, three
+  occurrences.
+- **Held at 2 occurrences, not applied:** *a criterion that names a function
+  produces a test of that function; only a criterion that names an observable
+  behaviour produces a test of the wiring.* Phase-03 round 1 (a wrapper compared
+  with the function it delegates to) and phase-03 round 2 (the two hollow wrap
+  guards). Per one-is-data / two-is-trend / three-is-fix, this waits for a third.
+
+### Live checks: what was run, and what was not
+
+**Run and passing** (isolated `tmux -L de-m17*` servers, plus the user's own
+session): alt-screen entry and exit; `esc` returning to an intact inline
+surface; full output visible in the viewer where the inline panel elided it;
+`ctrl+o` mid-turn opening the viewer and the turn resuming afterwards; the
+`tmux load-buffer -w -` round trip.
+
+**Not run** — carried, and honestly unverified rather than assumed: resize
+while the viewer is open (reflow), `y` copy invoked *through the viewer* rather
+than through a shell, `/session load` rehydration against a live daemon, and
+wheel/click with a physical mouse.
+
+### For the next milestone
+
+- The viewer prints raw markdown (`**bold**`, backticks) because phase-01 stores
+  the raw token stream losslessly. Whether the viewer should re-render markdown
+  is a **design decision**, deliberately left out of `bug-phase-03-1` rather
+  than smuggled into a fix.
+- Opening the viewer from an approval prompt (`[Y]es/[A]pprove/[N]o`) or the
+  credential prompt is still unhandled — those use their own readers.
+- The four unrun live checks above.
+
