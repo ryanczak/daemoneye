@@ -1502,16 +1502,40 @@ returns to the chat surface, and the turn **resumes and keeps streaming**
 afterwards. Stated precisely: resumption was observed; run-to-final-completion
 after a mid-turn viewer was not separately proven within the capture window.
 
-**Active phase: none — M17 is at its milestone boundary.** All seven phases are
-`done`. Close-out belongs to the human via `/rexymcp:architect`, and three items
-wait there: **(1)** M16's sign-off, still outstanding since before M17 opened;
-**(2)** the criterion-design fold at the three-occurrence threshold, drafted and
-unapplied — now arguably four occurrences with bug-phase-02-3, which was a
-scoping miss rather than a criterion miss; **(3)** M17's remaining live exit
-criteria — the alt-screen round trip including the amended `esc` case, resize
-reflow while open, `y` copy through the viewer, `/session load` rehydration
-against a live daemon, and wheel/click. One of those live checks has already
-paid for itself by finding bug-phase-02-3.
+**Active phase: phase-03 — expand-collapse, RE-OPENED 2026-08-20**
+(`docs/dev/milestones/M17-transcript-view/phase-03-expand-collapse.md`, status
+`in-progress`, bug-phase-03-1). Re-dispatch with `/rexymcp:dispatch phase-03`.
+
+**Second defect found by looking at the thing on screen.** A user screenshot of
+the working viewer showed the trailing answer rendered with dozens of underlined
+rows. Confirmed by SGR capture in an isolated `tmux -L de-m17c` server: eight
+rows of the focused block each carry `ESC[4m`. Cause:
+`style_for_focused = style_for(..).add_modifier(Modifier::UNDERLINED)` applied
+to **every row** whose `block == focus`, and the viewer opens focused on the
+last block. Underline is a fine cue for one header row; on a multi-row block it
+reads as a rendering fault.
+
+The same screenshot shows prose wrapping mid-word (`` `/var/lo `` + `` g` ``,
+`daem` + `on dir)`) because `push_wrapped` uses `wrap_line_hard` for everything.
+That is right for tool **output** — machine text must not be re-flowed — and
+wrong for the prose people now read in the viewer. Round-2 criteria pin both
+halves, including `output_rows_keep_hard_wrap` so the fix cannot re-flow output.
+
+**Classified `spec_bug` again.** Phase-03 task 5 said "emphasised style — pick
+it from the existing `Palette`; nothing about the colour is pinned", which left
+the *scope* of the emphasis unpinned; the executor reasonably applied it
+per-row. The wrap was inherited from phase-02 reusing the inline helper. Both
+phases implemented their specs.
+
+**Explicitly out of scope in the bug:** the viewer shows literal `**bold**` and
+backticks, because phase-01 stores the raw token stream (lossless) and the
+viewer prints it plainly. Whether the viewer should re-render markdown is a
+design decision for milestone discussion, not a bug fix.
+
+**Pattern worth naming at close:** three of M17's four bugs are architect-side
+spec gaps, and **two of them were invisible to every headless gate** — found
+only by running the thing and looking at it. The milestone's deferred live
+criteria have now paid for themselves twice.
 
 **M17's live check found a real defect — the first thing the deferred live
 criteria have caught.** Measured in an isolated `tmux -L de-m17` server against

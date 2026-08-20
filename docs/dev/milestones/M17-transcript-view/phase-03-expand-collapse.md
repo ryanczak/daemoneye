@@ -1,7 +1,7 @@
 # Phase 03: Expand / Collapse
 
 **Milestone:** M17 — Transcript View
-**Status:** done
+**Status:** in-progress (re-opened 2026-08-20 — see bugs/bug-phase-03-1.md)
 **Depends on:** phase-02 (viewer-shell, `done`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -223,6 +223,31 @@ Tool output is capped at 10 lines on screen (… N more lines · ctrl+o opens th
 Write the tests named in § Test plan. They are pure — no terminal, no `HOME`
 manipulation, no tmux.
 
+### Task 7a — Fix the focus emphasis and the prose wrap (round 2, bug-phase-03-1)
+
+Read `docs/dev/milestones/M17-transcript-view/bugs/bug-phase-03-1.md` first — it
+carries the captured SGR evidence and the Definition of done.
+
+Two changes, both in `src/cli/viewer.rs`:
+
+1. **Focus must not underline a whole block.** `style_for_focused` currently
+   returns `style_for(kind, palette).add_modifier(Modifier::UNDERLINED)`, and
+   `render_transcript` applies it to every row of the focused block. Make focus
+   visible some other way — a header-row marker, a brighter/dimmer contrast,
+   whatever reads well from the existing `Palette` — with **no
+   `Modifier::UNDERLINED` anywhere in the file**. Focus must remain
+   distinguishable: the test asserts the focused and unfocused styles differ.
+2. **Prose wraps on word boundaries; output does not.** Add a `wrap_words`
+   helper and use it for `RowKind::User`, `Assistant`, `System` and the
+   `ToolPanel` summary. `RowKind::Output` rows keep
+   `crate::cli::render::wrap_line_hard` exactly as today — machine output must
+   not be re-flowed, and the existing row-count guarantees
+   (`layout_blocks_renders_full_output`,
+   `collapsed_output_lays_out_as_exactly_one_row`) must still hold.
+
+Do not touch `wrap_line_hard` itself — the inline panel and other callers
+depend on it.
+
 ### Task 8 — Mutation M1: apply
 
 Use the `patch` tool on `src/cli/viewer.rs`.
@@ -313,6 +338,24 @@ of a mechanism — a phase-02 lesson (see that phase's § "Criterion design").
 - [ ] The Update Log's newest entry is headed
       `### Update — <date> (end-to-end verification)`, contains the pasted
       artifact, and ends with the literal line `PASTE MATCH`.
+
+**Added 2026-08-20 after the close-out live check (bug-phase-03-1). Each was run
+against the current tree and FAILS there. The focused block is underlined in
+full — dozens of underlined rows on a long answer — and prose wraps mid-word:**
+
+- [ ] `grep -c "Modifier::UNDERLINED" src/cli/viewer.rs` prints `0`.
+      (Now: `2`.)
+- [ ] Test `style_for_focused_is_distinct_without_underline` passes — the
+      focused style differs from the unfocused style for the same `RowKind`
+      (focus stays visible) and does not carry `Modifier::UNDERLINED`.
+- [ ] Test `wrap_words_does_not_split_words` passes — no row ends mid-word for
+      ordinary prose at width 12.
+- [ ] Test `wrap_words_breaks_an_overlong_token` passes — a 30-char token at
+      width 10 still yields 3 rows, none longer than 10.
+- [ ] Test `output_rows_keep_hard_wrap` passes — `Block::Output` rows are still
+      hard-wrapped; machine output is never re-flowed.
+- [ ] `layout_blocks_renders_full_output` and
+      `collapsed_output_lays_out_as_exactly_one_row` still pass unchanged.
 
 ## Test plan
 
