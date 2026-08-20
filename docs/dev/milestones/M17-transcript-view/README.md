@@ -85,7 +85,7 @@ the user's door, session JSONL as the evidence anchor).
 ## Phases
 
 Planned decomposition; drafted on demand via `/rexymcp:architect next`.
-Phases 01–06 are drafted; 07 is an intent only until drafted.
+All seven phases are drafted.
 
 | #  | Phase | Status |
 |----|-------|--------|
@@ -95,7 +95,7 @@ Phases 01–06 are drafted; 07 is an intent only until drafted.
 | 04 | search ([phase-04-search.md](phase-04-search.md)) | done |
 | 05 | block-copy ([phase-05-block-copy.md](phase-05-block-copy.md)) | done |
 | 06 | rehydration ([phase-06-rehydration.md](phase-06-rehydration.md)) | done        |
-| 07 | viewer-mouse | todo |
+| 07 | viewer-mouse ([phase-07-viewer-mouse.md](phase-07-viewer-mouse.md)) | todo |
 
 Ordering: 01 → 02 is a hard chain (nothing to render without the model).
 03, 04, 05 and 07 each depend on 02 and are otherwise independent. 06 depends

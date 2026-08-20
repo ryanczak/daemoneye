@@ -1483,10 +1483,32 @@ that repo. This is the second batch carrying that caveat.
    false assumption about which candidate comes first, so the path under test is
    never entered.
 
-**Active phase: phase-06 — rehydration** (`docs/dev/milestones/
-M17-transcript-view/phase-06-rehydration.md`, status `todo`, drafted
-2026-08-20 by the /rexymcp:auto loop). Dispatch with
-`/rexymcp:dispatch phase-06`.
+**Active phase: phase-07 — viewer-mouse** (`docs/dev/milestones/
+M17-transcript-view/phase-07-viewer-mouse.md`, status `todo`, drafted
+2026-08-20 by the /rexymcp:auto loop). **This is M17's last in-scope phase** —
+when it is approved the loop stops at the milestone boundary for PE sign-off.
+
+Phase-07 staging notes (verified against the tree at draft time):
+
+- **The disable must live in the existing `AltScreenGuard` closure**, not after
+  the loop. If mouse tracking is left on when the viewer exits by an error
+  path, the *chat* session sprays escape sequences on every mouse move. This is
+  the phase-02 failure re-run on a new resource, so the spec says it in those
+  terms and a criterion checks the disable is inside the guard.
+- **Mouse is enabled in the viewer and nowhere else** — enabling it on the
+  inline surface would take drag-select away from the user's own terminal.
+  Criterion: `EnableMouseCapture` appears in `viewer.rs` and in no other file
+  under `src/cli/` (baseline verified: 0 occurrences anywhere today).
+- **SGR fields are multi-digit decimals**, so the parser must accumulate until
+  `M`/`m` — a click at column 137 sends three digits. There is no `<` arm in
+  `read_key` today, so those digits currently leak out as stray `Key::Char`s.
+  Pinned with an explicit multi-digit test (`col: 136, row: 41`).
+- `crossterm` 0.29 already exports `EnableMouseCapture`/`DisableMouseCapture` —
+  verified in the vendored source; no dependency change.
+- tty test helpers named by line (`make_pipe_stdin` 353, `read_key_bounded` 410,
+  `read_key_within` 415) so the executor reuses them instead of inventing a
+  harness. Filter `cargo test --lib cli::input` verified: 32 tests today.
+- Mutation baselines checked: `if false {` 0, `disarm` 0.
 
 Phase-06 staging notes (verified against the tree at draft time):
 
