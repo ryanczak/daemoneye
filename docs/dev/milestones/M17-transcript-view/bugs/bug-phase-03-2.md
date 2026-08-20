@@ -1,7 +1,7 @@
 # Bug 2 on phase-03: the wrap guards pass when the wrap wiring is reverted
 
 **Severity:** minor (shipped behaviour is correct; the guards do not hold it)
-**Status:** open
+**Status:** resolved (round 3, `3fee471`)
 **Filed:** 2026-08-20
 **Found by:** reviewer mutation during the round-2 review.
 

@@ -1,7 +1,7 @@
 # Phase 03: Expand / Collapse
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** done
 **Depends on:** phase-02 (viewer-shell, `done`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1437,3 +1437,37 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3fee471f59ce9712500341a6ab11e5bdde9be5ae
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-20 (round 3)
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bug-phase-03-1 whole-block underline + mid-word prose wrap;
+  bug-phase-03-2 the guards for that fix were vacuous)
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none. Round 3 added 27 lines of tests to
+  `src/cli/viewer.rs` and changed no behaviour — exactly what bug-phase-03-2
+  required, which explicitly forbade adjusting the shipped behaviour to satisfy
+  a fixture.
+- **Calibration:** the fold candidate from bug-phase-03-2 ("a criterion that
+  names a function produces a test of that function; only one that names a
+  behaviour tests the wiring") stands at **2 occurrences** and is **held, not
+  applied**, per the one-is-data / two-is-trend / three-is-fix rule and PE
+  decision at close.
+
+**Independent verification (re-run, not read):** four gates green as separate
+invocations; 1387 lib tests (+2). Behaviour unchanged from round 2:
+`Modifier::UNDERLINED` count 0, and `viewer.rs:273` still calls
+`push_wrapped_hard` for `RowKind::Output`.
+
+**The guards bite now — the same two mutations that passed green last round:**
+
+| Mutation | Round 2 | Round 3 |
+|---|---|---|
+| `viewer.rs:273` `push_wrapped_hard` → `push_wrapped` (re-flows machine output) | 41/41 passed | **fails `layout_keeps_output_hard_wrapped`** (42 pass, 1 fail) |
+| `viewer.rs:242,245` `push_wrapped` → `push_wrapped_hard` (mid-word prose cuts) | 41/41 passed | **fails `layout_wraps_prose_on_word_boundaries`** (42 pass, 1 fail) |
+
+Restored after each: 43/43 pass, `git status --short` clean.
+
+**Live confirmation:** the user reports ctrl+o and the viewer rendering are
+working well in real use — the defect this phase's two bounces chased
+(`bug-phase-03-1`) is resolved on screen, not merely in tests.
