@@ -790,3 +790,138 @@ asserted mechanisms rather than behaviour). Those were caught by review; this
 one was caught only by mutating the code the test claimed to protect — which is
 the argument for running a mutation against every new guard, not only against
 the one the spec names.
+
+### Update — 2026-08-19 20:15 (started, round 2 — bug-phase-03-1)
+
+Beginning round 2 of phase-03 on bug-phase-03-1: removing the whole-block
+underline (focus cue becomes a per-header reversed marker plus BOLD on body
+rows), adding the word-boundary `wrap_words` for prose rows while Output keeps
+the hard wrap, and adding the four round-2 tests plus the underline-hygiene
+grep.
+
+### Update — 2026-08-20 19:45 (end-to-end verification)
+
+```
+== M1 APPLIED ==
+1
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+
+failures:
+
+---- cli::viewer::tests::focus_next_wraps_at_last_block stdout ----
+
+thread 'cli::viewer::tests::focus_next_wraps_at_last_block' (3637712) panicked at src/cli/viewer.rs:1277:9:
+assertion `left == right` failed
+  left: 3
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli::viewer::tests::focus_next_wraps_at_last_block
+
+test result: FAILED. 40 passed; 1 failed; 0 ignored; 0 measured; 1344 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+== M1 RESTORED ==
+0
+test cli::viewer::tests::next_match_wraps ... ok
+test cli::viewer::tests::collapsed_output_lays_out_as_exactly_one_row ... ok
+test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
+test cli::viewer::tests::prev_match_wraps ... ok
+test cli::viewer::tests::output_rows_keep_hard_wrap ... ok
+test cli::viewer::tests::layout_blocks_renders_full_output ... ok
+test cli::viewer::tests::row_at_maps_body_rows_with_scroll ... ok
+test cli::viewer::tests::row_at_rejects_the_status_line ... ok
+test cli::viewer::tests::scroll_to_row_only_moves_when_offscreen ... ok
+test cli::viewer::tests::rows_carry_their_source_block_index ... ok
+test cli::viewer::tests::style_for_focused_is_distinct_without_underline ... ok
+test cli::viewer::tests::wrap_words_breaks_an_overlong_token ... ok
+test cli::viewer::tests::wrap_words_does_not_split_words ... ok
+test cli::viewer::tests::render_transcript_shows_match_counter ... ok
+test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 1344 filtered out; finished in 0.00s
+
+exit=0
+== GATES ==
+fmt exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.25s
+clippy exit=0
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+   Doc-tests daemoneye
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test exit=0
+== VIEWER UNITS ==
+test cli::viewer::tests::key_action_typing_wins_over_commands_while_searching ... ok
+test cli::viewer::tests::key_action_wheel_scrolls_click_ignored_while_searching ... ok
+test cli::viewer::tests::key_action_y_copies_only_when_not_searching ... ok
+test cli::viewer::tests::layout_blocks_empty_transcript_is_empty ... ok
+test cli::viewer::tests::layout_blocks_separates_blocks_with_one_blank ... ok
+test cli::viewer::tests::collapsed_output_lays_out_as_exactly_one_row ... ok
+test cli::viewer::tests::next_match_wraps ... ok
+test cli::viewer::tests::output_rows_keep_hard_wrap ... ok
+test cli::viewer::tests::prev_match_wraps ... ok
+test cli::viewer::tests::layout_blocks_wraps_to_width ... ok
+test cli::viewer::tests::row_at_maps_body_rows_with_scroll ... ok
+test cli::viewer::tests::row_at_rejects_the_status_line ... ok
+test cli::viewer::tests::layout_blocks_renders_full_output ... ok
+test cli::viewer::tests::scroll_to_row_only_moves_when_offscreen ... ok
+test cli::viewer::tests::style_for_focused_is_distinct_without_underline ... ok
+test cli::viewer::tests::rows_carry_their_source_block_index ... ok
+test cli::viewer::tests::wrap_words_breaks_an_overlong_token ... ok
+test cli::viewer::tests::wrap_words_does_not_split_words ... ok
+test cli::viewer::tests::render_transcript_draws_rows_into_backend ... ok
+test cli::viewer::tests::render_transcript_survives_scroll_past_end ... ok
+test cli::viewer::tests::render_transcript_marks_collapsed_and_focused ... ok
+test cli::viewer::tests::render_transcript_shows_match_counter ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 1344 filtered out; finished in 0.00s
+
+units exit=0
+== FOOTER UNIT ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 1 test
+test cli::commands::stream::tests::output_footer_names_ctrl_o ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1384 filtered out; finished in 0.00s
+
+footer exit=0
+== CTRL+O IS NAMED ==
+3
+1
+== PHASE-02 CONTRACT STILL HOLDS ==
+0
+teardown grep exit=1  (1 = none found, which is the pass)
+```
+
+PASTE MATCH

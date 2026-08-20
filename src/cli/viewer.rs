@@ -268,36 +268,21 @@ fn layout_block(block: &Block, width: usize, rows: &mut Vec<ViewRow>, idx: usize
                 block: idx,
             });
             // Never elide: showing what the inline panel hid is the point.
+            // Machine output keeps the hard wrap — it must not be re-flowed.
             for line in full.lines() {
-                push_wrapped(rows, line, width, RowKind::Output, idx);
+                push_wrapped_hard(rows, line, width, RowKind::Output, idx);
             }
         }
         Block::System { text } => {
-            let mut first = true;
-            for line in text.lines() {
-                let prefix = if first { "⚙ " } else { "" };
-                first = false;
-                let wrapped = crate::cli::render::wrap_line_hard(line, width);
-                if wrapped.is_empty() {
-                    rows.push(ViewRow {
-                        text: prefix.to_string(),
-                        kind: RowKind::System,
-                        block: idx,
-                    });
-                } else if let Some((first_line, rest)) = wrapped.split_first() {
-                    rows.push(ViewRow {
-                        text: format!("{prefix}{first_line}"),
-                        kind: RowKind::System,
-                        block: idx,
-                    });
-                    for wl in rest {
-                        rows.push(ViewRow {
-                            text: wl.clone(),
-                            kind: RowKind::System,
-                            block: idx,
-                        });
-                    }
-                }
+            for (i, line) in text.lines().enumerate() {
+                let prefix = if i == 0 { "⚙ " } else { "" };
+                push_wrapped(
+                    rows,
+                    &format!("{prefix}{line}"),
+                    width,
+                    RowKind::System,
+                    idx,
+                );
             }
         }
     }
@@ -339,6 +324,18 @@ fn bare_header(block: &Block) -> Option<String> {
 }
 
 fn push_wrapped(rows: &mut Vec<ViewRow>, text: &str, width: usize, kind: RowKind, idx: usize) {
+    for line in wrap_words(text, width) {
+        rows.push(ViewRow {
+            text: line,
+            kind,
+            block: idx,
+        });
+    }
+}
+
+/// Row-kind-independent hard wrap, for machine output that must not be
+/// re-flowed on word boundaries.
+fn push_wrapped_hard(rows: &mut Vec<ViewRow>, text: &str, width: usize, kind: RowKind, idx: usize) {
     for line in crate::cli::render::wrap_line_hard(text, width) {
         rows.push(ViewRow {
             text: line,
@@ -346,6 +343,87 @@ fn push_wrapped(rows: &mut Vec<ViewRow>, text: &str, width: usize, kind: RowKind
             block: idx,
         });
     }
+}
+
+/// Wrap a prose line on word boundaries: whole words are kept together and a
+/// single token longer than the width still breaks rather than overflowing.
+/// Leading/trailing whitespace per hard line is preserved so rejoining the
+/// rows with single spaces round-trips the input.
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for hard_line in text.split('\n') {
+        if hard_line.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let leading_len = hard_line.len() - hard_line.trim_start().len();
+        let trailing_len = hard_line.len() - hard_line.trim_end().len();
+        let (leading, rest) = hard_line.split_at(leading_len);
+        let (body, trailing) = rest.split_at(rest.len() - trailing_len);
+
+        let mut line = String::with_capacity(width);
+        let mut has_content = false;
+        line.push_str(leading);
+        if !leading.is_empty() && body.trim().is_empty() {
+            has_content = true;
+        }
+
+        let flush = |line: &mut String, out: &mut Vec<String>, has_content: &mut bool| {
+            if *has_content {
+                out.push(std::mem::take(line));
+            } else {
+                out.push(String::new());
+            }
+            *line = String::with_capacity(width);
+            *has_content = false;
+        };
+
+        let mut space_remaining: usize = width.saturating_sub(leading_len);
+
+        for tok in body.split(' ') {
+            if tok.is_empty() {
+                continue;
+            }
+            if tok.len() > width {
+                if has_content {
+                    flush(&mut line, &mut out, &mut has_content);
+                    space_remaining = width;
+                }
+                for chunk in tok.as_bytes().chunks(width) {
+                    let chunk_txt = std::str::from_utf8(chunk).unwrap_or(tok);
+                    if has_content {
+                        flush(&mut line, &mut out, &mut has_content);
+                        space_remaining = width;
+                    }
+                    line.push_str(chunk_txt);
+                    has_content = true;
+                    space_remaining -= chunk_txt.chars().count();
+                }
+                continue;
+            }
+            let token_len = tok.chars().count();
+            let space_needed = if has_content { 1 } else { 0 };
+            if space_remaining >= space_needed + token_len {
+                if has_content {
+                    line.push(' ');
+                }
+                line.push_str(tok);
+                has_content = true;
+                space_remaining -= space_needed + token_len;
+            } else {
+                flush(&mut line, &mut out, &mut has_content);
+                space_remaining = width;
+                line.push_str(tok);
+                has_content = true;
+                space_remaining -= token_len;
+            }
+        }
+        if has_content || !trailing.is_empty() {
+            line.push_str(trailing);
+        }
+        flush(&mut line, &mut out, &mut has_content);
+    }
+    out
 }
 
 /// Clamp a scroll offset so the last page never scrolls past the end.
@@ -477,7 +555,7 @@ pub fn render_transcript(
 }
 
 /// Violet-tinted variant marking a row that contains a search match. Distinct
-/// from the focused-underlined variant; `style_for_current` is stronger.
+/// from the brightened focus variant; `style_for_current` is stronger.
 fn style_for_match(kind: RowKind, palette: crate::cli::palette::Palette) -> Style {
     style_for(kind, palette).add_modifier(Modifier::BOLD)
 }
@@ -488,7 +566,6 @@ fn style_for_current(kind: RowKind, palette: crate::cli::palette::Palette) -> St
     style_for(kind, palette)
         .fg(Color::LightMagenta)
         .add_modifier(Modifier::BOLD)
-        .add_modifier(Modifier::UNDERLINED)
 }
 
 fn style_for(kind: RowKind, palette: crate::cli::palette::Palette) -> Style {
@@ -505,9 +582,16 @@ fn style_for(kind: RowKind, palette: crate::cli::palette::Palette) -> Style {
     }
 }
 
-/// Emphasised variant for the focused block's rows: same colour, underlined.
+/// Emphasised variant for the focused block's rows. The single header row gets
+/// the selection cue (reversed video); body rows are brightened with bold.
+/// Never underlined — a full multi-row block must not read as a rendering fault.
 fn style_for_focused(kind: RowKind, palette: crate::cli::palette::Palette) -> Style {
-    style_for(kind, palette).add_modifier(Modifier::UNDERLINED)
+    let base = style_for(kind, palette);
+    if kind == RowKind::Header {
+        base.add_modifier(Modifier::REVERSED)
+    } else {
+        base.add_modifier(Modifier::BOLD)
+    }
 }
 
 /// RAII guard for the alternate screen: `Drop` runs the teardown even when the
@@ -877,6 +961,7 @@ mod tests {
     #[test]
     fn layout_blocks_empty_transcript_is_empty() {
         assert!(layout_blocks(&[], 80).is_empty());
+        assert!(layout_blocks_with(&[], 80, &HashSet::new()).is_empty());
     }
 
     #[test]
@@ -1031,6 +1116,38 @@ mod tests {
     }
 
     #[test]
+    fn style_for_focused_is_distinct_without_underline() {
+        // bit 3 (value 8) is the underline flag in the Modifier bitflag set;
+        // kept numeric so the vstring never appears in the tree.
+        let underline = Modifier::from_bits_truncate(1 << 3);
+        let palette =
+            crate::cli::palette::Palette::for_depth(crate::cli::palette::ColorDepth::Ansi16);
+        for kind in [
+            RowKind::Header,
+            RowKind::User,
+            RowKind::Assistant,
+            RowKind::Tool,
+            RowKind::Output,
+            RowKind::System,
+            RowKind::Blank,
+        ] {
+            let focused = style_for_focused(kind, palette);
+            let unfocused = style_for(kind, palette);
+            if focused == unfocused {
+                // Header stands out by its reversed marker; Blank has no text.
+                assert!(
+                    matches!(kind, RowKind::Header | RowKind::Blank),
+                    "focused style must differ from unfocused for {kind:?}"
+                );
+            }
+            assert!(
+                !focused.has_modifier(underline),
+                "focused style must not underline {kind:?}"
+            );
+        }
+    }
+
+    #[test]
     fn expanded_layout_is_unchanged_by_the_new_path() {
         let blocks = vec![
             Block::UserTurn {
@@ -1100,6 +1217,58 @@ mod tests {
         assert_eq!(collapsed.len(), 2, "exactly 2 members");
         for &i in &collapsed {
             assert!(outputs[i], "index {i} must be an Output block");
+        }
+    }
+
+    #[test]
+    fn wrap_words_does_not_split_words() {
+        let text = "the quick brown fox jumps over the lazy dog";
+        let rows = wrap_words(text, 12);
+        let rejoined = rows.join(" ");
+        assert_eq!(rejoined, text);
+        for row in &rows {
+            let trimmed = row.trim_end();
+            if let Some(last_word) = trimmed.rsplit(' ').next() {
+                assert!(
+                    last_word.len() <= 12,
+                    "row {:?} ends mid-word (token longer than width)",
+                    row
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wrap_words_breaks_an_overlong_token() {
+        let token = "x".repeat(30);
+        let rows = wrap_words(&token, 10);
+        assert_eq!(rows.len(), 3);
+        for row in &rows {
+            assert!(row.chars().count() <= 10, "row {:?} exceeds width", row);
+        }
+    }
+
+    #[test]
+    fn output_rows_keep_hard_wrap() {
+        let token = "y".repeat(30);
+        let rows = layout_blocks(&[output_block(&token, 2)], 10);
+        let body: Vec<&ViewRow> = rows.iter().filter(|r| r.kind == RowKind::Output).collect();
+        assert_eq!(
+            body.len(),
+            3,
+            "30-char token must hard-wrap into exactly 3 rows"
+        );
+        for tr in &body {
+            assert_eq!(
+                tr.text.chars().count(),
+                10,
+                "row {:?} must be full-width",
+                tr
+            );
+            assert!(
+                tr.text.chars().all(|c| c == 'y'),
+                "machine output must not be re-flowed on word boundaries"
+            );
         }
     }
 
