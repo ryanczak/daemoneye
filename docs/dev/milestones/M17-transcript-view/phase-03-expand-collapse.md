@@ -1,7 +1,7 @@
 # Phase 03: Expand / Collapse
 
 **Milestone:** M17 — Transcript View
-**Status:** review
+**Status:** in-progress (round 3 — see bugs/bug-phase-03-2.md)
 **Depends on:** phase-02 (viewer-shell, `done`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -248,6 +248,25 @@ Two changes, both in `src/cli/viewer.rs`:
 Do not touch `wrap_line_hard` itself — the inline panel and other callers
 depend on it.
 
+### Task 7b — Make the wrap guards bite (round 3, bug-phase-03-2)
+
+Read `docs/dev/milestones/M17-transcript-view/bugs/bug-phase-03-2.md` first.
+
+**Do not change the shipped behaviour.** Round 2's wrapping and focus styling
+are correct. The problem is that two guards pass even when the wiring is
+reverted: `wrap_words_does_not_split_words` calls the helper directly instead of
+going through `layout_blocks`, and `output_rows_keep_hard_wrap` uses a single
+unbroken 30-char token, which word-wrap and hard-wrap split identically.
+
+Add the two behaviour-level tests named in the criteria, asserting exact row
+vectors through `layout_blocks` with fixtures whose two wrappings differ
+(`wrap_line_hard` cuts every `width` characters; see the bug doc for the
+expected vectors). Keep or drop the two weak tests as you judge best — the
+criteria only require the new ones plus the surviving round-2 guards.
+
+Then add mutation **M2** to the E2E block, in both directions, proving each new
+guard fails when its wiring is reverted.
+
 ### Task 8 — Mutation M1: apply
 
 Use the `patch` tool on `src/cli/viewer.rs`.
@@ -356,6 +375,21 @@ full — dozens of underlined rows on a long answer — and prose wraps mid-word
       hard-wrapped; machine output is never re-flowed.
 - [ ] `layout_blocks_renders_full_output` and
       `collapsed_output_lays_out_as_exactly_one_row` still pass unchanged.
+
+**Added 2026-08-20 after the round-2 review (bug-phase-03-2). Round 2's
+behaviour is correct; two of its guards do not detect the regression they exist
+for — reviewer mutations reverting the wrap wiring left 41/41 passing. Both
+items below are absent from the current tree:**
+
+- [ ] Test `layout_wraps_prose_on_word_boundaries` passes — through
+      `layout_blocks`, an `Assistant` block `"aaa bbb ccc ddd"` at width 7
+      yields rows exactly `["aaa bbb", "ccc ddd"]`.
+- [ ] Test `layout_keeps_output_hard_wrapped` passes — through `layout_blocks`,
+      an `Output` block `"aaa bbb ccc"` at width 5 yields rows exactly
+      `["aaa b", "bb cc", "c"]`.
+- [ ] Mutation **M2** (both directions) is in the E2E artifact and shows each
+      guard failing when the corresponding wiring is reverted — see
+      bugs/bug-phase-03-2.md § Definition of done for the exact swaps.
 
 ## Test plan
 

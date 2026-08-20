@@ -1502,9 +1502,40 @@ returns to the chat surface, and the turn **resumes and keeps streaming**
 afterwards. Stated precisely: resumption was observed; run-to-final-completion
 after a mid-turn viewer was not separately proven within the capture window.
 
-**Active phase: phase-03 — expand-collapse, RE-OPENED 2026-08-20**
-(`docs/dev/milestones/M17-transcript-view/phase-03-expand-collapse.md`, status
-`in-progress`, bug-phase-03-1). Re-dispatch with `/rexymcp:dispatch phase-03`.
+**Active phase: phase-03 — expand-collapse, round 3** (`docs/dev/milestones/
+M17-transcript-view/phase-03-expand-collapse.md`, status `in-progress`,
+bug-phase-03-2). Re-dispatch with `/rexymcp:dispatch phase-03`.
+
+**Round 2 fixed the behaviour and left the guards hollow.** `dae5f5f` removed
+`Modifier::UNDERLINED` (focus is now REVERSED on the header, BOLD on the body),
+word-wraps prose, and keeps `Block::Output` on the hard wrap — all correct, and
+`style_for_focused_is_distinct_without_underline` bites when the focus style is
+neutered. But two reviewer mutations that **undo the user-visible fix** left the
+suite fully green:
+
+| Mutation | Observed |
+|---|---|
+| `Output` back to word-wrap (re-flows machine output) | 41/41 pass |
+| prose back to hard wrap (mid-word cuts return) | 41/41 pass |
+
+Causes: `wrap_words_does_not_split_words` calls the helper directly and never
+goes through `layout_blocks`, so the wiring is unasserted; and
+`output_rows_keep_hard_wrap` uses a single unbroken 30-char token, which both
+wrappers split identically into 3×10.
+
+**Architect-side, and the second occurrence of one shape in this phase** — the
+round-1 review already recorded `expanded_layout_is_unchanged_by_the_new_path`
+comparing a wrapper with the function it delegates to. Named for the calibration
+queue: **a criterion that names a function produces a test of that function;
+only a criterion that names an observable behaviour produces a test of the
+wiring.** With the criterion-design fold already at threshold, this is a second,
+distinct fold candidate for PE decision at close.
+
+Round-3 criteria assert exact row vectors through `layout_blocks` with fixtures
+whose two wrappings differ (`"aaa bbb ccc ddd"` at 7 → `["aaa bbb","ccc ddd"]`
+word vs `["aaa bbb"," ccc dd","d"]` hard), and require a second mutation pair
+(M2) proving each guard fails when its wiring is reverted. The bug doc forbids
+changing the shipped behaviour to satisfy a fixture.
 
 **Second defect found by looking at the thing on screen.** A user screenshot of
 the working viewer showed the trailing answer rendered with dozens of underlined

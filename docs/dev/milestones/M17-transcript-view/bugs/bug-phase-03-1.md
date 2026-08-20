@@ -1,7 +1,7 @@
 # Bug 1 on phase-03: the focused block is underlined in full, and prose wraps mid-word
 
 **Severity:** minor (cosmetic, but pervasive — it makes the viewer look broken)
-**Status:** open
+**Status:** resolved (round 2, `dae5f5f`) — behaviour fixed; guards addressed by bug-phase-03-2
 **Filed:** 2026-08-20
 **Found by:** user screenshot during M17 close-out, confirmed by SGR capture in
 an isolated `tmux -L de-m17c` server.
