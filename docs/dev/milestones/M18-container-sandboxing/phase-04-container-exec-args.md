@@ -1,7 +1,7 @@
 # Phase 04: Sandbox preflight and container argv construction
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`SandboxConfig`), phase-02 (uid gate, probe), phase-03 (`SandboxLock`, `check_image_matches`)
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -232,9 +232,13 @@ Every count was measured against the current tree while drafting.
       prints `1`.
 - [ ] `grep -c "pub fn split_run_as" src/daemon/executor/container.rs` prints `1`.
 - [ ] `cargo test --lib sandbox_exec 2>&1 | grep -c "^test .* ok$"` prints
-      `11` — one per test in § Test plan. A count, not an exit status.
+      `12` — one per test in § Test plan. A count, not an exit status.
+      **Corrected 2026-08-28 from `11`: the architect miscounted its own Test
+      plan, which names 2 + 5 + 2 + 3 = 12 tests.** The run produced exactly
+      the 12 specified names; the criterion was wrong, not the work.
 - [ ] `cargo test --lib 2>&1 | grep -E "^test result:"` reports
-      `1425 passed; 0 failed; 1 ignored` (1414 today + 11 new).
+      `1426 passed; 0 failed; 1 ignored` (1414 today + 12 new). **Corrected
+      from `1425` for the same reason.**
 - [ ] `grep -rc "allow(dead_code)" src/ | awk -F: '{s+=$2} END {print s}'`
       prints `7` — unchanged. No new `#[allow]`.
 **The next three greps are scoped to the production half of the file with
@@ -337,7 +341,7 @@ Run this block verbatim from the repo root.
 
 ```sh
 {
-echo "== A. sandbox_exec tests (expect 11 lines) =="
+echo "== A. sandbox_exec tests (expect 12 lines) =="
 cargo test --lib sandbox_exec 2>&1 | grep -E "^test .* ok$"; echo "cargo_exit=${PIPESTATUS[0]}"
 echo "== B. lib suite totals =="
 cargo test --lib 2>&1 | grep -E "^test result:"; echo "cargo_exit=${PIPESTATUS[0]}"
@@ -363,9 +367,9 @@ tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/paste
 diff /tmp/pasted-04.txt /tmp/e2e-04.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
 ```
 
-**Section A is the one that can lie** — on the current tree it prints zero
-test lines and still reports `cargo_exit=0`. Eleven lines is the pass
-condition.
+**Section A is the one that can lie** — on the pre-phase tree it prints zero
+test lines and still reports `cargo_exit=0`. **Twelve** lines is the pass
+condition (corrected from eleven; see § Acceptance criteria).
 
 ## Authorizations
 
@@ -402,3 +406,62 @@ condition.
 - Editing `CLAUDE.md`, `README.md`, or `assets/etc/config.toml`.
 
 ## Update Log
+
+### Update — 2026-08-28 20:25 (progress)
+
+Started phase-04. Baseline confirmed: four gates green on commit `2a9a26e`,
+all six current-state greps (0 for the new functions, 7 for `allow(dead_code)`,
+scoped `--user`/`mode=0700`/`uid=1000` all 0) match the numbers in the phase
+doc. Not yet implemented — this entry is the start-of-phase bookkeeping.
+
+### Update — 2026-08-28 (escalation)
+
+**Chosen lever:** resume (deferred — the executor endpoint is down)
+**Rationale:** the run died on a `BackendError` reaching
+`http://brain:8888/v1/chat/completions`, not on anything about the spec or the
+work; the partial tree is essentially finished, so the completed work is worth
+preserving rather than re-deriving.
+
+Assessed by the architect against the partial tree left on disk (not reverted):
+
+| Check | State |
+|---|---|
+| `cargo build` | exit 0, no warnings |
+| `cargo fmt --all --check` | exit 0 |
+| `cargo test --lib` | **1426 passed; 0 failed; 1 ignored** |
+| `cargo test --lib sandbox_exec` | **12 ok**, names matching § Test plan exactly |
+| `cargo clippy … -D warnings` | **fails — 1 error** |
+| § End-to-end capture | not done |
+| `src/daemon/executor/mod.rs` | untouched — scope held |
+
+**Remaining work is two items.** First, one clippy lint in test code,
+`container.rs:877`:
+
+```
+error: field assignment outside of initializer for an instance created with Default::default()
+877 |         cfg.run_as = "nope".to_string();
+note: consider initializing the variable with
+      `SandboxConfig { run_as: "nope".to_string(), ..Default::default() }`
+```
+
+Second, the § End-to-end capture and its Update Log entry with the literal
+`PASTE MATCH` line.
+
+**Architect-side correction made here, not executor error:** § Acceptance
+criteria pinned `11` sandbox_exec tests and `1425` total. The § Test plan
+names **12** (2 `split_run_as` + 5 `run_args` + 2 `stage_args` + 3
+`preflight`), and the run produced exactly those 12 names. The criteria and
+the § End-to-end block are corrected to `12` / `1426`. This is the second
+architect miscount of a self-authored count in this project's history; it is
+recorded in the M18 README rather than folded at one further occurrence.
+
+**Not chosen, and why:** *refined re-dispatch* would discard a green,
+essentially complete tree to fix a fault that has nothing to do with the spec.
+*Session takeover* would burn the model-vs-spec telemetry point for a
+one-line lint fix the executor is perfectly able to make — the escalate
+skill's named anti-pattern.
+
+**Blocked on infrastructure.** `executor_health` reports
+`{"base_url":"http://brain:8888/v1","models":[],"reachable":false}` — the
+endpoint is still down at the time of this entry. Resume via
+`continue_phase` once it answers again.
