@@ -1581,9 +1581,60 @@ executed by a phase. The architect builds the image and verifies the lock
 round-trip at close. (The Dockerfile itself *was* built and exercised during
 phase-03 drafting and again during phase-04 drafting — see below.)
 
-**Active phase: phase-04 — container-exec-args** (`docs/dev/milestones/
-M18-container-sandboxing/phase-04-container-exec-args.md`, status: todo,
-drafted 2026-08-28). Dispatch with `/rexymcp:dispatch phase-04`.
+**phase-04 — container-exec-args: done (approved_first_try) 2026-08-28**,
+commit `d0b45a2` + approval `8beca06`. `evaluate_preflight` + `split_run_as` +
+`stage_args` + `run_args`, all pure; 1414 → 1426 lib tests.
+
+**No review bounces**, but the phase ran twice: the first run died on a
+`BackendError` reaching `brain:8888` and was **resumed** (`continue_phase`),
+not re-dispatched. Classified `infra_blip`. The partial tree was assessed
+before choosing the lever — build/fmt/tests already green, one clippy lint
+left — which is what made resume obviously right over re-dispatch or takeover.
+
+**Two architect miscounts, both corrected against the finished tree**, and
+both the same shape: *a pinned count must be derived from the phase's own
+Spec, not estimated.* `11` sandbox_exec tests where the Test plan names 12;
+`--user` emitted `1` where Task 3 and Task 4 each require an emission. The
+executor **filed a blocker** on the second rather than editing the criterion
+or merging two required call sites — the § Authorizations contract working.
+
+All three high-risk mutations bit at review: hardcoded tmpfs ids, disabled
+`BadRunAs` ordering, and a weakened `script_name_is_safe`. The shipped
+validator is a character allowlist plus a `..` check — stronger than the
+blocklist the spec described.
+
+**Active phase: phase-05 — background-window-integration**
+(`docs/dev/milestones/M18-container-sandboxing/phase-05-background-window-integration.md`,
+status: todo, drafted 2026-08-28). Dispatch with `/rexymcp:dispatch phase-05`.
+
+**This is the first M18 phase whose code actually starts a container.** Scope:
+`sandbox_window_command` wraps a background command as a shell-quoted
+`docker run …` line, wired at the single seam in `run.rs:159-172`; the
+`de-bg-*` window, completion detection, output capture and GC are untouched.
+It also removes the module's `#[allow(dead_code)]` (7 → 6), since it adds the
+first production caller.
+
+Phase-05 staging notes (measured on the live rootless Docker):
+
+- **The safety property was proven before it was specced.** Using the exact
+  `sh_single_quote` algorithm, the hostile command
+  `echo inside-container; touch /tmp/PWNED` was built into a window command
+  and run through `sh -c`: it printed `inside-container` from **inside** the
+  container and `/tmp/PWNED` was never created on the host. A test pins the
+  final token verbatim.
+- **`sh_single_quote` (`shell.rs:27`), not `shell_escape_arg` (`shell.rs:15`)**
+  — the codebase's own doc comment says which, and the latter is a tmux
+  `send-keys` helper that would leave `;` and `&&` live. A criterion pins
+  `shell_escape_arg` at 0 occurrences in `container.rs`.
+- **Both pinned quoting renderings were executed, not written from memory:**
+  `echo 'a'` → `'echo '\''a'\'''` and the hostile command → one token.
+- **The seam ordering is load-bearing.** The wrap goes after the sudo
+  sentinel and before `let wrapped = …`, so `$__de_ec` captures `docker run`'s
+  exit status — which is the container's — and completion detection needs no
+  change.
+- **A named volume auto-creates on `-v` even read-only, and outlives `--rm`.**
+  So phase-05 pre-creates nothing, and the volume-leak cleanup is explicitly
+  phase-06's; a criterion pins `gc.rs` untouched.
 
 Scope: the two pure decisions that stand between an agent and a container —
 `evaluate_preflight` (runtime → uid gate → lock → image, in that order) and

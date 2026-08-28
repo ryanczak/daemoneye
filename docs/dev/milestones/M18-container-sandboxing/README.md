@@ -133,8 +133,8 @@ state will shift with each landing.
 | 02 | container-runtime-probe ([phase-02-container-runtime-probe.md](phase-02-container-runtime-probe.md)) | **done** (approved_after_1, 2026-08-28) | `executor/container.rs`: runtime version probe + D1 UID-map gate, all decision logic pure and fixture-tested; one `#[ignore]`d live test. Nothing wired yet. **IPC surface deferred** — see Notes. |
 | 03 | image-lifecycle ([phase-03-image-lifecycle.md](phase-03-image-lifecycle.md)) | **done** (approved_after_1, 2026-08-28) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + the pure compare helpers phase-04's refusal gate uses. Staleness warning and `requires_tools` deferred — see Notes. |
 | 04 | container-exec-args ([phase-04-container-exec-args.md](phase-04-container-exec-args.md)) | **done** (approved_first_try, 2026-08-28) | The two pure decisions before any container starts: `evaluate_preflight` (runtime + uid gate + image lock, in that order) and the argv builders `run_args` / `stage_args` / `split_run_as`. Whole argv prototyped against the real image first. Nothing spawns. |
-| 05 | background-window-integration | todo (not drafted) | **First phase that spawns a container.** Route background `run_terminal_command` through the phase-04 argv inside the `de-bg-*` window when enabled; create/destroy the staging volume; completion detection, archive, cap, GC unchanged. Removes the module's `#[allow(dead_code)]` by adding the first caller. Also carries the deferred `Request::ContainerStatus` + `daemoneye status` surface, the `log` relay opcode, and the egress proxy. |
-| 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep. |
+| 05 | background-window-integration ([phase-05-background-window-integration.md](phase-05-background-window-integration.md)) | **todo** (drafted 2026-08-28) | **First phase whose code starts a container.** `sandbox_window_command` wraps a background command as a shell-quoted `docker run …` line at the `run.rs:159` seam when enabled; `de-bg-*` window, completion detection, capture and GC untouched. Removes the module's `#[allow(dead_code)]` (7 → 6). |
+| 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep — **and the staging-volume GC phase-05 deliberately defers** (a named volume auto-creates on `-v` and outlives `--rm`; measured). Owns all container/volume cleanup. |
 | 07 | escape-hatch | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify (mailbox + `[Ghost Shell …]` event), `escape_hatch` flag on `ToolCallPrompt`, event-log records. |
 | 08 | chat-session-containers | todo (not drafted) | Long-lived `de-chat-<session>` container, lazy create, restart-independent, session-end GC + restart sweep. |
 | 09 | egress-proxy | todo (not drafted) | Daemon-owned egress proxy, `network = "proxy"` profile wiring, per-profile hostname allowlist, request logging. May be deferred at PE discretion — nothing in 01–08 depends on it. |
@@ -163,6 +163,14 @@ state will shift with each landing.
   1000" — that test had passed only against stock `alpine`, which has no
   `/de/work`, where Docker creates the tmpfs mode `1777`. D4 now carries the
   measured table. **Phase-04 must pass the uid/gid options.**
+- **Scope change at phase-05 drafting (2026-08-28):** staging-volume cleanup
+  moved to phase-06. Measured: `docker run -v de-stage-x:/de/scripts:ro …`
+  auto-creates the named volume even read-only, and the volume **outlives
+  `--rm`**. Phase-05 therefore needs no pre-creation, but does leak a volume
+  per sandboxed background run until phase-06 lands. Bounded and flag-gated
+  (`enabled` defaults false); phase-06 owns all container and volume GC, which
+  is where `docker rm -f` and the orphan sweep already live. Recorded rather
+  than silently deferred.
 - **Scope change at phase-03 drafting (2026-08-28):** the image **staleness
   warning** and the runbook **`requires_tools`** check are deferred out of
   phase-03. The staleness warning does not fit `retention_warnings()` —
