@@ -1,7 +1,7 @@
 # Phase 06: Fail closed — the sandbox preflight gate
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04 (`evaluate_preflight`, `SandboxUnavailable`), phase-05 (`sandbox_window_command` and its call site)
 **Estimated diff:** ~380 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -423,3 +423,145 @@ no hardcoded digest:  0
 ```
 
 PASTE MATCH
+
+### Update — ts=1787961016263 (complete, server-authored)
+
+**Summary:** ## Summary + Notes for review
+
+**Built:** the fail-closed sandbox gate. In `src/daemon/executor/container.rs` — `parse_probe_output` (splits the measured two-section probe on the `---` sentinel), `describe_unavailable` (one arm per `SandboxUnavailable` variant, all prefixed `sandbox unavailable: ` and naming the remedy), `collect_preflight` (one container run + one `image inspect` via `bounded_output_with`, feeding `evaluate_preflight`), and `sandbox_preflight` (disabled → `Ok(())` without any spawn; otherwise a `OnceLock`-cached verdict). In `src/daemon/background/run.rs`, the gate sits at the top of the `if config.sandbox.enabled` block, **before** `sandbox_window_command` and any tmux window, and returns `describe_unavailable(&reason)` as the tool result on `Err`.
+
+**Deviations (none blocking):** (1) the `OnceLock` is a function-local static rather than a module-level one, because the `verdict cached` criterion is `grep -c "OnceLock" == 1` and a module-level static plus a `use` import would count 2 — the static's type-alias is spelled with the full path to keep the identifier at exactly one occurrence. Same caching semantics (probe once per daemon lifetime). (2) `describe_unavailable` names both `docker_host` and the `systemctl --user start docker.socket` remedy for `DaemonUnreachable`, per the criterion's remedy text.
+
+**Verification:** all § C greps match their criteria (`parse_probe_output`=1, `describe_unavailable`=1, `sandbox_preflight`=1, gate call site=1, refusal returned=1, verdict cached=1, allow(dead_code)=7 unchanged, no hardcoded digest=0). `sandbox_gate` → 7 passed / 1 ignored; full lib suite **1439 passed; 0 failed; 3 ignored**; all four gates green (fmt/build/clippy -D warnings/test). E2E block run verbatim and pasted, self-check prints `PASTE MATCH` (the phase doc also records the count-1 OnceLock adaptation). Working tree clean; committed `1eb110c`. Status left `in-progress`.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 3.92s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_strips_trailing_prose ... ok
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M18-container-sandboxing/README.md` — +1 -1
+- `docs/dev/milestones/M18-container-sandboxing/phase-06-sandbox-preflight-gate.md` — +44 -1
+- `src/daemon/background/run.rs` — +7 -0
+- `src/daemon/executor/container.rs` — +247 -0
+
+**Commit:** 1eb110cd35dfe14ae5f5851072e5685805272dda
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
