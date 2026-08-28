@@ -488,7 +488,8 @@ mod tests {
             format!("image = daemoneye-agent-base\nimage_id = {id}\nbuilt_at = 1787900000\n");
         assert!(parse_lock(&valid).is_some());
 
-        let missing_key = "image_id = {id}\nbuilt_at = 1787900000\n";
+        let missing_image = format!("image_id = {id}\nbuilt_at = 1787900000\n");
+        let missing_built_at = format!("image = daemoneye-agent-base\nimage_id = {id}\n");
         let duplicated_key = format!(
             "image = daemoneye-agent-base\nimage = agent\nimage_id = {id}\nbuilt_at = 1787900000\n"
         );
@@ -502,7 +503,8 @@ mod tests {
             "z".repeat(64)
         );
         for text in [
-            missing_key,
+            &missing_image,
+            &missing_built_at,
             &duplicated_key,
             &unknown_key,
             &non_numeric_built_at,

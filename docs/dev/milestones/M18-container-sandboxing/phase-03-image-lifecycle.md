@@ -678,3 +678,73 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 2c6d201ae685c30a0e252f9c29218f3f1ea79281
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-28 12:25 (progress)
+
+Resuming after the round-1 bounce (bug-phase-03-1):
+
+1. **Missing-key fixtures fixed.** The `missing_key` string literal — which
+   contained the characters `{id}` instead of a real id, so `parse_lock`
+   rejected it at the image-id check and never reached the missing-key path —
+   is now `format!`-interpolated (`missing_image`), and a second
+   `missing_built_at` fixture was added covering the missing `built_at` key.
+   The unknown-key/malformed-id/duplicate/non-numeric fixtures are unchanged.
+   `sandbox_lock_parse_rejects_bad_records` still exercises all six rejects;
+   test count stays 9.
+2. **`pub(crate) mod container;`** — narrowed from `pub mod container;`,
+   keeping the phase-02 `#[allow(dead_code)]` and its comment intact. Build
+   and all 9 filter tests pass.
+3. **Mutation evidence** — each mutation below was applied, tested, and
+   restored; both now FAIL as required:
+
+```
+$ image: image? → image: image.unwrap_or_default()
+test result: FAILED. 8 passed; 1 failed (sandbox_lock_parse_rejects_bad_records
+  — accepted the missing-image record: "image_id = sha256:dddd…\nbuilt_at = 1787900000")
+
+$ built_at: built_at? → built_at: built_at.unwrap_or(0)
+test result: FAILED. 8 passed; 1 failed (accepted the missing-built_at record:
+  "image = daemoneye-agent-base\nimage_id = sha256:dddd…")
+```
+
+Restored `image?` / `built_at?`; `git status --short` now shows only
+`container.rs` and `mod.rs` modified.
+
+### Update — 2026-08-28 12:26 (end-to-end verification)
+
+Ran the § End-to-end block verbatim on the fixed tree; full block below.
+
+```text
+== A. sandbox_lock tests (expect 9 lines) ==
+test daemon::executor::container::tests::sandbox_lock_accepts_a_well_formed_image_id ... ok
+test cli::commands::sandbox::tests::sandbox_lock_build_result_distinguishes_first_build_from_rebuild ... ok
+test daemon::executor::container::tests::sandbox_lock_check_reports_match ... ok
+test daemon::executor::container::tests::sandbox_lock_check_reports_malformed_live_before_mismatch ... ok
+test daemon::executor::container::tests::sandbox_lock_check_reports_mismatch ... ok
+test daemon::executor::container::tests::sandbox_lock_parse_tolerates_whitespace_and_blank_lines ... ok
+test daemon::executor::container::tests::sandbox_lock_parse_rejects_bad_records ... ok
+test daemon::executor::container::tests::sandbox_lock_rejects_malformed_image_ids ... ok
+test daemon::executor::container::tests::sandbox_lock_render_parse_round_trip ... ok
+cargo_exit=0
+== B. lib suite totals ==
+test result: ok. 1414 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.04s
+cargo_exit=0
+== C. the CLI is really wired (no daemon, no docker needed) ==
+Manage the container sandbox image
+
+Usage: daemoneye sandbox <COMMAND>
+
+Commands:
+cargo_exit=0
+== D. structural greps ==
+Dockerfile present:   1
+USER 1000:1000:       1
+no chown in image:    0
+is_valid_image_id:    1
+check_image_matches:  1
+main.rs wiring:       1
+allow(dead_code) tot: 7
+hardcoded digest:     0
+```
+
+PASTE MATCH
