@@ -130,9 +130,9 @@ state will shift with each landing.
 | #  | Phase | Status | Scope (one line) |
 |----|-------|--------|------------------|
 | 01 | sandbox-config ([phase-01-sandbox-config.md](phase-01-sandbox-config.md)) | **done** (approved_after_1, 2026-08-28) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic — no docker. |
-| 02 | container-runtime-probe | todo (not drafted) | `executor/container.rs` scaffold: runtime detection, `docker info` health, UID-map gate with fixture-tested parsing, `Request::ContainerStatus` / `Response::ContainerStatus`, `daemoneye status` surface. |
+| 02 | container-runtime-probe ([phase-02-container-runtime-probe.md](phase-02-container-runtime-probe.md)) | **todo** (drafted 2026-08-28) | `executor/container.rs`: runtime version probe + D1 UID-map gate, all decision logic pure and fixture-tested; one `#[ignore]`d live test. Nothing wired yet. **IPC surface deferred** — see Notes. |
 | 03 | image-lifecycle | todo (not drafted) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + refuse-on-mismatch, staleness warning in `retention_warnings()`, `requires_tools` frontmatter check. |
-| 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, `--user 1000:1000`, D4 per-run staging volume (root helper stages the approved script, chown 1000), `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Flag-gated, nothing routed yet. |
+| 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, `--user 1000:1000`, D4 per-run staging volume (root helper stages the approved script, chown 1000), `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Calls the phase-02 gate. Also carries the deferred `Request::ContainerStatus` / `Response::ContainerStatus` + `daemoneye status` surface. Flag-gated, nothing routed yet. |
 | 05 | background-window-integration | todo (not drafted) | Route background `run_terminal_command` through `docker exec` inside the `de-bg-*` window when enabled; completion detection, archive, cap, GC unchanged. |
 | 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep. |
 | 07 | escape-hatch | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify (mailbox + `[Ghost Shell …]` event), `escape_hatch` flag on `ToolCallPrompt`, event-log records. |
@@ -153,6 +153,13 @@ state will shift with each landing.
   the design, needed by none of these phases.
 - Scoped 2026-08-28 from `docs/design/agent-container-sandboxing.md`
   (commit `d856ca6`).
+- **Scope change at phase-02 drafting (2026-08-28):** the `Request::ContainerStatus`
+  / `Response::ContainerStatus` IPC surface and its `daemoneye status` line moved
+  from phase-02 to phase-04. Reason: until phase-04 can actually run a container
+  there is nothing to report but "the runtime answered a version probe", and
+  wiring a status field for that alone adds IPC surface with no consumer.
+  Phase-02 is correspondingly narrower — a pure, fixture-tested probe and gate
+  module that nothing calls yet.
 - **Calibration, held at 1 occurrence (phase-01):** a phase doc's
   § Authorizations tells the executor to file a blocker and stop *"if an
   acceptance criterion cannot be satisfied honestly"* — which does not cover

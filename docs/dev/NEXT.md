@@ -1512,10 +1512,66 @@ Design of record: `docs/design/agent-container-sandboxing.md` (commit
 `d856ca6`). Milestone README with the 10-phase plan and exit criteria:
 `docs/dev/milestones/M18-container-sandboxing/README.md`.
 
-**Active phase: phase-01 — sandbox-config** (`docs/dev/milestones/
-M18-container-sandboxing/phase-01-sandbox-config.md`, status: todo, drafted
-2026-08-28). Dispatch with `/rexymcp:dispatch phase-01`. Phase docs are
-drafted one at a time, not ahead (M4/M16 stale-line-number precedent).
+**phase-01 — sandbox-config: done (approved_after_1) 2026-08-28**, commits
+`4f8fed3` (feat) + `f008509` (test repair) + approval `d258292`. The
+`[sandbox]` schema, `runs_as_container_root()`, warn-only `validate()`, the
+startup call and the template docs all landed; 1387 → 1395 lib tests.
+
+One bounce (bug-phase-01-1, resolved): fixing a **real** pre-existing flake,
+the executor's replacement `peer_euid` test asserted on a descriptor whose
+owning `File` dropped in the same statement, trading a deterministic
+environment failure for a cross-thread fd-reuse race. Round 2 bound the
+`File` to a named local. Review proved the original defect first — the old
+test passes under `/dev/null` and pipe stdin and **fails under a socketpair**,
+which is what an MCP stdio server hands its children — so the gate really was
+blocked and the scope deviation was accepted rather than charged.
+
+**Architect-side calibration, held at 1 occurrence:** § Authorizations tells
+the executor to file a blocker and stop *"if an acceptance criterion cannot be
+satisfied honestly"*, which does not cover **a gate blocked by a pre-existing
+test**. The executor had no sanctioned path. phase-02's § Authorizations
+already carries the widened wording; fold into WORKFLOW.md only if it recurs.
+
+**Active phase: phase-02 — container-runtime-probe** (`docs/dev/milestones/
+M18-container-sandboxing/phase-02-container-runtime-probe.md`, status: todo,
+drafted 2026-08-28). Dispatch with `/rexymcp:dispatch phase-02`.
+
+Scope: `src/daemon/executor/container.rs` — the runtime version probe and the
+D1 UID-mapping gate, with **all decision logic pure and fixture-tested** and a
+single `#[ignore]`d live test. Nothing calls it; phase-04 wires it in.
+
+**Scope change made at drafting:** the `Request::ContainerStatus` IPC surface
+and its `daemoneye status` line moved from phase-02 to phase-04 — until a
+container can actually run there is nothing to report but "the version probe
+answered", and that does not justify new IPC surface. Recorded in the M18
+README § Notes.
+
+Phase-02 staging notes (every fixture captured live from the rootless Docker
+on scrappy 2026-08-28; the executor cannot reproduce any of them, which is why
+they are quoted verbatim in the doc):
+
+- **`/proc/self/uid_map` is byte-identical with and without `--user`** — it
+  describes the namespace, not the process. A gate reading only the map cannot
+  tell a root container from a non-root one, so the spec requires **two**
+  inputs (`id -u` plus the map). This is the trap most likely to produce a
+  confidently wrong gate.
+- **The pinned arithmetic was executed, not reasoned:** container `0 → 1000`,
+  `1 → 100000`, `1000 → 100999`, `65536 → 165535`, and `65537`/`70000 → None`.
+  The `1000 → 100999` value matches the live host-visible uid measured for a
+  `--user 1000:1000` container; an off-by-one against the range start gives
+  `101000`.
+- **Missing binary and dead daemon are different outcomes** and the enum keeps
+  them apart, because the operator fix differs. Measured: unreachable daemon →
+  `exit=1`, empty stdout, a specific stderr string (quoted in the doc); absent
+  binary → the spawn itself fails with `NotFound`. Healthy → `exit=0`,
+  stdout `29.7.2`.
+- **`cargo test sandbox_runtime` passes today with zero tests**, so every
+  criterion is a line count. Measured on this tree.
+- Reuses `crate::tmux::bounded_output_with` (`src/tmux/mod.rs:125`) rather
+  than `Command::output()`, and a criterion pins `.output()` at 0 — a plain
+  `output()` can deadlock on a full pipe buffer.
+- The phase adds exactly **one** `#[ignore]`, pinned by a criterion, so the
+  no-docker gate constraint cannot be met by quietly ignoring more.
 
 Scope: `[sandbox]` config schema only — `SandboxConfig` + `SandboxLimits` +
 `SandboxProfile` + `SandboxGhostDefaults`, serde defaults, a warn-only
