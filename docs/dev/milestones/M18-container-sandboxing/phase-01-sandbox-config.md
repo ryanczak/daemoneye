@@ -524,3 +524,16 @@ bare profile heading: 1
 ```
 
 PASTE MATCH
+
+### Update — 2026-08-28 16:50 (progress)
+
+No code changes this round. Investigation of the intermittent
+`peer_euid_none_on_invalid_fd` failure (a pre-existing test, untouched by this
+phase): the failure is only ever observed when the full lib suite runs, never
+under a filtered run, and my manual attempts to reproduce it have not. The
+failure is in a test that asserts stdin's fd yields `None` from
+`SO_PEERCRED`; getsockopt on a non-socket fd returns 0 with `ucred` filled
+from the process's own identity on this configuration, so the test depends on
+host/runner behavior outside the phase. It passes in isolation and the full
+suite passes green on every local run. Left as-is per "do not widen scope";
+the pre-existing flake is noted for the reviewer.
