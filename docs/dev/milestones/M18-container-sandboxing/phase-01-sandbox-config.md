@@ -780,3 +780,62 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** fd0d99a5f251a477784f6bee29fec22e00065466
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-28 17:40 (started)
+
+Dispatch-3 executor session for phase-01 (sandbox schema). Status already
+`in-progress` from the prior bounce; README row already matches. Fixing the
+round-1 review defect per `bugs/bug-phase-01-1.md`: `peer_euid_none_on_invalid_fd`
+in `src/daemon/server/mod.rs` now binds the `/dev/null` `File` to a named local
+that outlives the assertion, so `getsockopt` → `ENOTSOCK` → `None` on every
+platform — no fd-number reuse race. Production code untouched; the rest of the
+phase (structs, validate(), tests, template docs) verified present on disk from
+prior dispatches and will be re-verified end to end in this dispatch.
+
+### Update — 2026-08-28 17:41 (end-to-end verification)
+
+```
+== A. sandbox unit tests (expect 8 lines) ==
+test config::tests::sandbox_defaults_are_disabled_and_non_root ... ok
+test config::tests::sandbox_limits_defaults_match_documented_values ... ok
+test config::tests::sandbox_run_as_root_detection_pins_negative_cases ... ok
+test config::tests::missing_sandbox_section_uses_defaults ... ok
+test config::tests::partial_sandbox_section_fills_remaining_defaults ... ok
+test config::tests::sandbox_validate_warns_and_never_panics ... ok
+test config::tests::sandbox_profile_table_parses_named_profiles ... ok
+test config::tests::sandbox_section_parses_all_fields ... ok
+cargo_exit=0
+== B. doc_truth seeded-config gates (expect 2 lines) ==
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+cargo_exit=0
+== C. lib suite totals ==
+test result: ok. 1395 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.06s
+cargo_exit=0
+== D. structural greps ==
+SandboxConfig struct: 1
+Config field:         1
+startup validate:     1
+bare profile heading: 1
+```
+
+PASTE MATCH
+
+### Update — 2026-08-28 17:42 (progress)
+
+Bug-phase-01-1 — the repaired `peer_euid_none_on_invalid_fd` now binds the
+`/dev/null` `File` to a named local (`dev_null`) that outlives the assertion,
+so `getsockopt` returns `ENOTSOCK` → `None`. The `as_raw_fd(&std::fs::File::open(...))`
+temporary dropped in the same statement is gone, and the test still passes
+under all three stdin shapes — socketpair (the shape that broke the original
+test), `/dev/null`, and a pipe:
+
+```
+socketpair: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1394 filtered out; finished in 0.00s
+/dev/null:  test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1394 filtered out; finished in 0.00s
+pipe:       test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1394 filtered out; finished in 0.00s
+```
+
+No production code touched. All four gates green (`cargo fmt --all`,
+`cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo test`).

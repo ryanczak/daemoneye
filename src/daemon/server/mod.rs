@@ -358,16 +358,18 @@ mod tests {
     #[test]
     fn peer_euid_none_on_invalid_fd() {
         // An fd that is no longer a socket must return None (reject) rather than panic.
-        // The harness may leave stdin as a socket (or reuse its number during
-        // the full suite), so this pins a deterministically closed fd number
-        // instead: getsockopt → EBADF → None on every platform.
-        let fd = std::os::fd::AsRawFd::as_raw_fd(&std::fs::File::open("/dev/null").unwrap()); // closes on drop
-        struct ClosedFd(std::os::fd::RawFd);
-        impl std::os::fd::AsRawFd for ClosedFd {
+        // The harness may leave stdin as a socket, so this pins a LIVE, non-socket
+        // descriptor instead — kept bound to a named File for the assertion's
+        // lifetime, so getsockopt → ENOTSOCK → None on every platform.
+        let dev_null = std::fs::File::open("/dev/null").unwrap();
+        struct NonSocketFd(std::os::fd::RawFd);
+        impl std::os::fd::AsRawFd for NonSocketFd {
             fn as_raw_fd(&self) -> std::os::fd::RawFd {
                 self.0
             }
         }
-        assert_eq!(peer_euid(&ClosedFd(fd)), None);
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&dev_null);
+        assert_eq!(peer_euid(&NonSocketFd(fd)), None);
+        drop(dev_null);
     }
 }
