@@ -1,7 +1,7 @@
 # Phase 03: Agent image and digest lockfile
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`SandboxConfig.image`), phase-02 (`container.rs` exists)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -899,3 +899,57 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 5f61ac2d2d60ab9031990d93d7f381b654e87276
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-28
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-phase-03-1, major — resolved)
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none in round 2. Round 1's `pub mod container;` is
+  narrowed to `pub(crate)`; the phase-02 `#[allow(dead_code)]` and its comment
+  are untouched.
+- **Calibration:** one architect-side item, held at 1 occurrence. **A
+  multi-case rejection test that asserts only *that* input is rejected, never
+  *why*, cannot detect a fixture that is rejected for the wrong reason.**
+  § Test plan asked for five rejection cases inside one test and did not ask
+  the reasons to be told apart; a dropped `format!` then made two of them
+  silently untested while the test stayed green. Where a test bundles several
+  rejection cases, either assert the discriminating reason per case or require
+  mutation evidence per path. Not folded — one occurrence.
+
+**The phase-02 calibration worked, applied up front rather than after a
+bounce.** § Current state's "Dead-code strategy" block and the criterion
+pinning the repo-wide `allow(dead_code)` count at 7 held through both rounds:
+no new `#[allow]`, no dead-code blocker, no improvisation. The digest guard
+also held — a broader review sweep (`grep -rnE 'sha256:[0-9a-f]{64}' src/`)
+finds **0**, so no build-specific id is hardcoded anywhere, not merely none of
+the one the criterion names.
+
+**Round 1** delivered the Dockerfile, the lock record and helpers, the CLI
+command and its clap wiring, and met every acceptance criterion. It was
+bounced for two defects, both now fixed.
+
+**Round 2** verified at review, with the mutations re-run independently rather
+than read from the pasted evidence:
+
+| Mutation to `parse_lock` | round 1 | round 2 (reviewer re-run) |
+|---|---|---|
+| `image: image?` → `image.unwrap_or_default()` | 9 passed — unguarded | **FAILED. 8 passed; 1 failed** |
+| `built_at: built_at?` → `built_at.unwrap_or(0)` | 9 passed — unguarded | **FAILED. 8 passed; 1 failed** |
+| unknown-key path neutered (control) | 1 failed | **FAILED. 8 passed; 1 failed** |
+
+So both previously-unguarded required-key paths now bite, and the control is
+undisturbed. Test count stayed at **9** — the fixtures were fixed, not padded
+with new tests.
+
+Also confirmed: the `missing_key` literal is gone (grep `0`);
+`pub(crate) mod container;` is in place (`pub mod` grep `0`, `pub(crate)`
+grep `1`) and the CLI still reaches the helpers; `allow(dead_code)` still 7;
+`USER 1000:1000` 1 and `chown` 0 in the Dockerfile; no `unwrap`/`expect` in
+`src/cli/commands/sandbox.rs`; four gates green; 1414 passed, 1 ignored; and
+this round's E2E artifact re-extracts identical apart from the elapsed-time
+line.
+
+**Deferred to milestone close:** `daemoneye sandbox build` has never been
+executed — the phase forbade running docker. The architect builds the image
+and verifies the lock round-trip at close, against the real runtime.

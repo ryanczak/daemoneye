@@ -131,7 +131,7 @@ state will shift with each landing.
 |----|-------|--------|------------------|
 | 01 | sandbox-config ([phase-01-sandbox-config.md](phase-01-sandbox-config.md)) | **done** (approved_after_1, 2026-08-28) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic — no docker. |
 | 02 | container-runtime-probe ([phase-02-container-runtime-probe.md](phase-02-container-runtime-probe.md)) | **done** (approved_after_1, 2026-08-28) | `executor/container.rs`: runtime version probe + D1 UID-map gate, all decision logic pure and fixture-tested; one `#[ignore]`d live test. Nothing wired yet. **IPC surface deferred** — see Notes. |
-| 03 | image-lifecycle ([phase-03-image-lifecycle.md](phase-03-image-lifecycle.md)) | **in-progress** (bounced 2026-08-28, bug-phase-03-1) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + the pure compare helpers phase-04's refusal gate uses. Staleness warning and `requires_tools` deferred — see Notes. |
+| 03 | image-lifecycle ([phase-03-image-lifecycle.md](phase-03-image-lifecycle.md)) | **done** (approved_after_1, 2026-08-28) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + the pure compare helpers phase-04's refusal gate uses. Staleness warning and `requires_tools` deferred — see Notes. |
 | 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, `--user 1000:1000`, D4 per-run staging volume (root helper stages the approved script, chown 1000), scratch tmpfs **with `mode=0700,uid=1000,gid=1000`** (see Notes — without these flags it is not writable), `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Calls the phase-02 gate and phase-03's `check_image_matches`; removes phase-02's `#[allow(dead_code)]`. Also carries the deferred `Request::ContainerStatus` + `daemoneye status` surface. Flag-gated. |
 | 05 | background-window-integration | todo (not drafted) | Route background `run_terminal_command` through `docker exec` inside the `de-bg-*` window when enabled; completion detection, archive, cap, GC unchanged. |
 | 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep. |
@@ -177,6 +177,19 @@ state will shift with each landing.
   wiring a status field for that alone adds IPC surface with no consumer.
   Phase-02 is correspondingly narrower — a pure, fixture-tested probe and gate
   module that nothing calls yet.
+- **Calibration from phase-03 (2026-08-28), held at 1 occurrence:** a
+  multi-case rejection test that asserts only *that* input is rejected, never
+  *why*, cannot detect a fixture rejected for the wrong reason. Phase-03's
+  § Test plan bundled five rejection cases into one test without asking the
+  reasons to be told apart; a dropped `format!` left two of them silently
+  untested while the test stayed green. When a test bundles rejection cases,
+  either assert the discriminating reason per case or require mutation
+  evidence per path. **The bug DoD's "paste mutation evidence for both halves"
+  is what proved the fix** — a green suite would not have.
+- **Phase-03 confirmed the phase-02 fold works when applied up front.** The
+  "Dead-code strategy" block plus a criterion pinning the repo-wide
+  `allow(dead_code)` count held through both rounds: no new `#[allow]`, no
+  blocker, no improvisation. Keep doing this for phases 04–10.
 - **Calibration from phase-02 (2026-08-28), none folded:**
   1. **Architect-side, repeat of an already-folded rule.** Phase-02 as first
      drafted specced a module nothing calls under a `-D warnings` gate without

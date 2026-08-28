@@ -1,7 +1,7 @@
 # Bug 1 on phase-03: the "rejects bad records" test does not cover two of the cases it names, and the container module is more public than it needs to be
 
 **Severity:** major
-**Status:** open
+**Status:** verified 2026-08-28 (commit `5f61ac2`, round 2)
 **Filed:** 2026-08-28
 
 ## What's wrong
