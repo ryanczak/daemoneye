@@ -549,3 +549,32 @@ recurred in the phase gate, confirming root cause. The test now opens
 `EBADF` → `None` path (deterministic on every platform). No production code
 touched. Committed as `test(ipc): make peer_euid_none test independent of
 stdin fd state`.
+
+### Update — 2026-08-28 16:58 (end-to-end verification)
+
+```
+== A. sandbox unit tests (expect 8 lines) ==
+test config::tests::sandbox_limits_defaults_match_documented_values ... ok
+test config::tests::sandbox_defaults_are_disabled_and_non_root ... ok
+test config::tests::sandbox_run_as_root_detection_pins_negative_cases ... ok
+test config::tests::missing_sandbox_section_uses_defaults ... ok
+test config::tests::partial_sandbox_section_fills_remaining_defaults ... ok
+test config::tests::sandbox_validate_warns_and_never_panics ... ok
+test config::tests::sandbox_section_parses_all_fields ... ok
+test config::tests::sandbox_profile_table_parses_named_profiles ... ok
+cargo_exit=0
+== B. doc_truth seeded-config gates (expect 2 lines) ==
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+cargo_exit=0
+== C. lib suite totals ==
+test result: ok. 1395 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.01s
+cargo_exit=0
+== D. structural greps ==
+SandboxConfig struct: 1
+Config field:         1
+startup validate:     1
+bare profile heading: 1
+```
+
+PASTE MATCH
