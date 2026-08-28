@@ -465,3 +465,63 @@ skill's named anti-pattern.
 `{"base_url":"http://brain:8888/v1","models":[],"reachable":false}` — the
 endpoint is still down at the time of this entry. Resume via
 `continue_phase` once it answers again.
+
+### Update — 2026-08-28 21:41 (progress)
+
+Resuming after the infrastructure outage. Fixed the one clippy error in test
+code (`let mut cfg` + field reassignment → struct-update form) at the two
+sites the lint flagged. Gates re-run clean: fmt, build, clippy
+`-D warnings`, and `cargo test --lib` → 1426 passed; 0 failed; 1 ignored.
+End-to-end capture follows in the next entry.
+
+### Update — 2026-08-28 21:45 (blocker)
+
+**Blocked on:** Acceptance criterion "`--user` emitted once: 1" is unsatisfiable as written — the phase doc's own Task 3 and Test plan require **two** production `--user` emission sites.
+
+**What I tried:** (1) Fixed the one clippy error — both `let mut cfg` + field-reassignment sites (lines ~815 and ~874) converted to struct-update form `SandboxConfig { run_as: .., ..Default::default() }`. (2) Re-ran all four gates clean: `cargo fmt --all`, `cargo build` (exit 0, no warnings), `cargo clippy --all-targets --all-features -- -D warnings` (exit 0), `cargo test --lib` → 1426 passed / 0 failed / 1 ignored. (3) Ran the § End-to-end block verbatim; section C prints `--user emitted once: 2`, not the pinned `1`.
+
+Why the count is irreducibly 2, all in `src/daemon/executor/container.rs` before the `#[cfg(test)]` boundary at line 440:
+- `stage_args` (line 381) must emit `--user 0:0` — § Task 3 and Test-plan test `sandbox_exec_stage_args_run_as_root_and_chown_to_the_sandbox_uid` pin it.
+- `run_args` (line 409) must emit `--user <cfg.run_as>` — § Task 4 and Test-plan test `sandbox_exec_run_args_match_the_prototyped_vector` pin it.
+
+Every other acceptance criterion measured true on the finished tree: `run_args`/`evaluate_preflight`/`split_run_as` counts 1, sandbox_exec 12 `ok`, lib suite 1426/0/1 ignored, `allow(dead_code)` total 7, scoped `mode=0700` count 1, scoped `no literal uid=1000|gid=1000` count 0, four gates green.
+
+**What I need:** A decision on the pinned count (or scope) for the scoped `--user` grep. The two production sites cannot be merged without dropping Task 3's `0:0` flag or Task 4's `<run_as>` flag, both of which the § Test plan pins. The criterion's rationale — "cannot be conditionally skipped" — is honorably met by `run_args`: its `--user` is unconditional (absent only when the whole vector is empty for an unparseable `run_as`, which is itself a pinned criterion). I did not edit the criteria, as instructed.
+
+### Update — 2026-08-28 21:47 (end-to-end verification)
+
+Block verbatim from the repo root (§ End-to-end verification), captured mechanically to `/tmp/e2e-04.txt`:
+
+```sh
+== A. sandbox_exec tests (expect 12 lines) ==
+test daemon::executor::container::tests::sandbox_exec_preflight_passes_when_everything_is_healthy ... ok
+test daemon::executor::container::tests::sandbox_exec_preflight_reports_each_failure ... ok
+test daemon::executor::container::tests::sandbox_exec_preflight_reports_the_most_fundamental_failure_first ... ok
+test daemon::executor::container::tests::sandbox_exec_run_args_are_empty_for_bad_run_as ... ok
+test daemon::executor::container::tests::sandbox_exec_rejects_malformed_run_as ... ok
+test daemon::executor::container::tests::sandbox_exec_splits_a_valid_run_as ... ok
+test daemon::executor::container::tests::sandbox_exec_run_args_derive_tmpfs_ids_from_run_as ... ok
+test daemon::executor::container::tests::sandbox_exec_run_args_honour_limits_and_workdir ... ok
+test daemon::executor::container::tests::sandbox_exec_run_args_label_ghost_jobs ... ok
+test daemon::executor::container::tests::sandbox_exec_stage_args_reject_unsafe_script_names ... ok
+test daemon::executor::container::tests::sandbox_exec_stage_args_run_as_root_and_chown_to_the_sandbox_uid ... ok
+test daemon::executor::container::tests::sandbox_exec_run_args_match_the_prototyped_vector ... ok
+cargo_exit=0
+== B. lib suite totals ==
+test result: ok. 1426 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.95s
+cargo_exit=0
+== C. structural greps ==
+run_args:             1
+evaluate_preflight:   1
+split_run_as:         1
+--user emitted once:  2
+mode=0700 once:       1
+no literal uid=1000:  0
+allow(dead_code) tot: 7
+```
+
+Note: section C reports `--user emitted once: 2`, not the pinned `1` — see the blocker entry above. Section A: 12 test lines; section B: 1426/0/1.
+
+```
+PASTE MATCH
+```
