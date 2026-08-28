@@ -1,3 +1,5 @@
+// Dead until phase-06 wires the probe/preflight/staging callers.
+#[allow(dead_code)]
 pub(crate) mod container;
 mod file_ops;
 mod foreground;
