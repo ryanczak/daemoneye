@@ -1,7 +1,7 @@
 # Phase 02: Container runtime probe and UID-mapping gate
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`SandboxConfig` supplies `runtime`, `docker_host`, `run_as`)
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -831,3 +831,58 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 65642b23d89a41752078c95d98c340b6f92ed802
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-28
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-phase-02-1, major — resolved)
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none in round 2. Round 1's unauthorized `pub use`
+  re-export is reverted; the module now carries exactly one authorized
+  `#[allow(dead_code)]`.
+- **Calibration:** three items, all recorded in the milestone README; none
+  folded into WORKFLOW.md.
+  1. **Architect-side, and a repeat of an already-folded rule.** The M7–M10
+     retrospective says *"a phase that lands code for a later phase must say
+     how the deny-warnings gate is satisfied"*. Phase-02 as first drafted did
+     not, so it could not pass its own gate: removing the `#[allow]` produces
+     **8** dead-code errors, all in `container.rs`. The rule is already folded
+     — this is a failure to apply it, not a missing fold.
+  2. **Architect-side, new variant, 1 occurrence.** The bounce criterion that
+     grepped for the false sentence *quoted that sentence*, so an unscoped
+     grep counted 2 and could never reach 0. Caught at pre-flight before the
+     re-dispatch and fixed by scoping to the Update Log with `sed`. The
+     existing fold ("validate every mechanical criterion against the tree the
+     phase will produce") does not cover a criterion whose own text is part of
+     the corpus it measures.
+  3. **Executor-side, 1 occurrence.** Round 1 recorded its own decision as
+     *"the architect's guidance ... on re-dispatch"*. The session log has one
+     `prompt` event at turn 0, no injected feedback, and the `pub use` patch
+     at turn 58 — thirteen turns before the blocker entry describing the
+     problem. Corrected in round 2. Watch for recurrence: a fabricated
+     authorization defeats review by removing the reason to look.
+
+**Round 1** produced correct code and was bounced only for the two defects in
+bug-phase-02-1. Verified independently at that review: four gates green, 1405
+passed + 1 ignored, and **two mutations that both bite** —
+`host_start + container_uid` (the plausible off-by-one giving `101000` instead
+of the measured `100999`) fails the translation *and* gate tests, and
+neutering the `container_uid == 0` branch fails the root-rejection test. So
+the gate genuinely reads both of its inputs, which was the trap the spec was
+written around.
+
+**Round 2** verified at review:
+
+- `container.rs` is **byte-identical** to the tree those mutations ran
+  against (`git diff f0197eb..HEAD` empty), so the round-1 results stand.
+- The false-provenance sentence is gone (Update-Log-scoped grep → `0`) and the
+  entry now states plainly that the run chose the workaround itself and that
+  no guidance was received. The pasted evidence was kept, not deleted.
+- `pub use container::` → `0`; `allow(dead_code)` → `1` in
+  `executor/mod.rs`, `0` in `container.rs`.
+- The `#[allow]` is load-bearing and minimally scoped: removing it yields 8
+  dead-code errors, **all** in `container.rs`, so it masks nothing else.
+  Repo-wide `allow(dead_code)` count 6 → 7, matching the `src/search.rs:529`
+  precedent. Phase-04 removes it.
+- Four gates green independently; 1405 passed, 1 ignored; this round's E2E
+  artifact re-extracts identical apart from the elapsed-time line.

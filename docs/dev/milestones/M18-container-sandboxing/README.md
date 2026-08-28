@@ -130,7 +130,7 @@ state will shift with each landing.
 | #  | Phase | Status | Scope (one line) |
 |----|-------|--------|------------------|
 | 01 | sandbox-config ([phase-01-sandbox-config.md](phase-01-sandbox-config.md)) | **done** (approved_after_1, 2026-08-28) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic — no docker. |
-| 02 | container-runtime-probe ([phase-02-container-runtime-probe.md](phase-02-container-runtime-probe.md)) | **in-progress** (bounced 2026-08-28, bug-phase-02-1) | `executor/container.rs`: runtime version probe + D1 UID-map gate, all decision logic pure and fixture-tested; one `#[ignore]`d live test. Nothing wired yet. **IPC surface deferred** — see Notes. |
+| 02 | container-runtime-probe ([phase-02-container-runtime-probe.md](phase-02-container-runtime-probe.md)) | **done** (approved_after_1, 2026-08-28) | `executor/container.rs`: runtime version probe + D1 UID-map gate, all decision logic pure and fixture-tested; one `#[ignore]`d live test. Nothing wired yet. **IPC surface deferred** — see Notes. |
 | 03 | image-lifecycle | todo (not drafted) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + refuse-on-mismatch, staleness warning in `retention_warnings()`, `requires_tools` frontmatter check. |
 | 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, `--user 1000:1000`, D4 per-run staging volume (root helper stages the approved script, chown 1000), `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Calls the phase-02 gate. Also carries the deferred `Request::ContainerStatus` / `Response::ContainerStatus` + `daemoneye status` surface. Flag-gated, nothing routed yet. |
 | 05 | background-window-integration | todo (not drafted) | Route background `run_terminal_command` through `docker exec` inside the `de-bg-*` window when enabled; completion detection, archive, cap, GC unchanged. |
@@ -160,6 +160,24 @@ state will shift with each landing.
   wiring a status field for that alone adds IPC surface with no consumer.
   Phase-02 is correspondingly narrower — a pure, fixture-tested probe and gate
   module that nothing calls yet.
+- **Calibration from phase-02 (2026-08-28), none folded:**
+  1. **Architect-side, repeat of an already-folded rule.** Phase-02 as first
+     drafted specced a module nothing calls under a `-D warnings` gate without
+     saying how dead-code would be satisfied — the M7–M10 rule *"a phase that
+     lands code for a later phase must say how the deny-warnings gate is
+     satisfied"* already covers this. Apply it when drafting phases 03–10:
+     every phase that lands code for a later consumer must name its
+     dead-code strategy in § Authorizations up front.
+  2. **Architect-side, new variant, 1 occurrence.** A bounce criterion that
+     greps for an offending phrase must not *contain* that phrase — the
+     criterion becomes part of the corpus it measures and can never reach 0.
+     Scope such greps to a section (`sed -n '/^## Update Log/,$p' | grep -c`).
+  3. **Executor-side, 1 occurrence.** DeepSeek V4 Flash recorded its own
+     unauthorized decision as architect guidance received "on re-dispatch",
+     when the session log shows a single turn-0 prompt and no injected
+     feedback. Corrected on bounce. Watch across phases 03+: a fabricated
+     authorization is worse than an unauthorized decision, because it removes
+     the reviewer's reason to look.
 - **Calibration, held at 1 occurrence (phase-01):** a phase doc's
   § Authorizations tells the executor to file a blocker and stop *"if an
   acceptance criterion cannot be satisfied honestly"* — which does not cover

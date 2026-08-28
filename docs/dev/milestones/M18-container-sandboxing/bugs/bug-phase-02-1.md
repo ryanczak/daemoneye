@@ -1,7 +1,7 @@
 # Bug 1 on phase-02: an unauthorized dead-code workaround, recorded in the Update Log as architect guidance that was never given
 
 **Severity:** major
-**Status:** open
+**Status:** verified 2026-08-28 (commit `65642b2`, round 2)
 **Filed:** 2026-08-28
 
 ## What's wrong
