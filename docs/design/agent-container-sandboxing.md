@@ -5,6 +5,11 @@ execution* inside rootless Docker containers while the daemon (the broker)
 remains native. Revised 2026-08-28 after architect review: tool disposition
 table added; credential mount removed; network default hardened to `none`;
 ghost escape-hatch policy resolved; IPC respecified as socket enums.
+**Revised again 2026-08-28 after standing up the runtime and measuring it** —
+D1's uid model was wrong and is corrected (with it, the run-as-root
+decision), D4's script bind-mount is replaced by per-run staging, and D5's
+host-bound proxy is replaced by a containerized one. Every fact in D1/D4/D5
+marked *measured* was executed on scrappy, not reasoned about.
 
 ## Problem
 
@@ -40,16 +45,20 @@ The disposition table in D0 makes this explicit, tool by tool.
 
 **Goals**
 - Every *background* command and script an agent triggers runs inside an
-  ephemeral, non-root, resource-limited container.
+  ephemeral, resource-limited container **as container uid 1000, never as
+  container root** — see D1: under rootless Docker container root *is* host
+  `matt`, which is precisely the blast radius this design exists to remove.
 - The daemon (native) keeps full ownership of tmux, webhook, scheduling,
   approval, and the socket — sandboxed execution happens only through the
   `ContainerExec` backend at the executor choke point.
 - Ghost shells get a disposable container per run; chat sessions get a
   long-lived container that can be restarted independently of the daemon.
-- Mount policy is minimal and read-mostly: scripts ro, runbook ro, empty
-  scratch volume. **No credentials enter the sandbox.**
+- Mount policy is minimal and read-mostly: **only the approved script for
+  this run** (staged, ro), runbook ro, empty scratch volume. **No credentials
+  enter the sandbox.**
 - Default network is `none`. Workloads that need egress get it only through a
-  daemon-owned proxy, per profile.
+  **containerized** proxy on a shared user-defined network, per profile — a
+  host-bound proxy is unreachable (D5).
 - Host-level ops happen ONLY via an explicit escape-hatch classification —
   interactively approved in chat, allowlist-pre-approved or parked for
   unattended ghosts.
@@ -75,8 +84,10 @@ The disposition table in D0 makes this explicit, tool by tool.
 |-------|-------|
 | Runtime decision | **Docker (rootless)** — made 2026-08-28 |
 | Enforcement point | executor backend (`ContainerExec`), not prompts |
-| Network default | `none`; egress only via daemon-owned proxy, per profile |
+| Execution identity | **container uid 1000** (host-visible 100999), never container root |
+| Network default | `none`; egress only via a containerized proxy, per profile |
 | Security posture | defence-in-depth; the audit trail remains the primary control |
+| Runtime verified | 2026-08-28 on scrappy — docker 29.7.2 rootless, rootlesskit 3.1.0, slirp4netns 1.3.5 |
 
 ## Current architecture (what we build on)
 
@@ -104,9 +115,26 @@ The disposition table in D0 makes this explicit, tool by tool.
   *daemon* that talks to it. The sandbox needs no AI egress and no API
   credential (D4/D5).
 
-Verified facts from the host (2026-08-28):
-- No container runtime installed on scrappy (`docker`, `podman`, `nerdctl`
-  all absent). First real step is runtime installation.
+Verified facts from the host — **all measured 2026-08-28, not assumed**:
+- Rootless Docker is now **installed and running** on scrappy: docker 29.7.2,
+  rootlesskit 3.1.0, slirp4netns 1.3.5, as a systemd **user** unit
+  (`systemctl --user … docker.service`), socket
+  `/run/user/1000/docker.sock`. `docker info` reports
+  `["name=seccomp,profile=builtin","name=rootless","name=cgroupns"]`.
+- **Arch ships no `dockerd-rootless-setuptool.sh`** — `docker-rootless-extras`
+  provides the systemd user unit and `99-docker-rootless.conf` instead, so the
+  upstream setup tool is replaced, not missing.
+- **`slirp4netns` is not a dependency and must be installed explicitly.**
+  rootlesskit embeds no network driver (`--net` needs an external binary for
+  every non-`host` value); without it `dockerd-rootless.sh` exhausts its
+  slirp4netns → pasta → vpnkit → gvisor-tap-vsock chain and fails to start.
+- **`loginctl enable-linger matt` is required.** Rootless dockerd is a user
+  service; without linger it dies with the last login session, while the
+  daemoneye daemon persists — the failure would present as a daemoneye bug.
+- Client gotcha: a stale `~/.docker/config.json` from a prior Docker Desktop
+  install carried `"credsStore": "desktop"`, breaking every `docker pull`
+  with `docker-credential-desktop: executable file not found`. Removed
+  (`auths` was empty; backup at `config.json.bak-20260828`).
 - tmux socket: `/tmp/tmux-1000/default`, mode `srwxrwx---`, owned by uid 1000
   (`matt`). Container must never need to touch it; daemon does.
 - Daemon binary: `~/.daemoneye/bin/daemoneye` (mode 0700, 25.5 MB, rust,
@@ -144,14 +172,38 @@ size of this design — small choke-point change, large blast-radius change.
 
 ### D1 — Runtime: Docker, rootless, user-namespace-mapped execution
 
-Docker selected over Podman per user decision 2026-08-28. The consequence of
-that decision is that the execution must be **rootless**: `dockerd-rootless`
-maps host uid 1000 → container uid 1000 via the user namespace, so every
-`docker exec` runs as `matt` *inside* the userns (host-visible as 1000, not 0).
+Docker selected over Podman per user decision 2026-08-28. Execution is
+**rootless**.
 
-Failure mode to guard against: any `--userns=host`, numeric UID override, or
-compose use of explicit IDs silently breaks the mapping and commands execute as
-a different host uid. Step 2 of the runbook exists solely to catch this.
+**Correction (measured 2026-08-28 — the first draft of this section was
+wrong).** The draft claimed the userns "maps host uid 1000 → container uid
+1000". It does not. The real map, read from `/proc/self/uid_map` inside a
+container:
+
+```
+         0       1000          1        # container root  → host 1000 (matt)
+         1     100000      65536        # container 1..65536 → host 100000..165535
+```
+
+Measured both directions: a default (container-root) process is
+**host-visible as uid 1000 `matt`**; a `--user 1000:1000` process is
+**host-visible as uid 100999**.
+
+**This inverts the decision.** Container root *is* host `matt` — the exact
+identity whose blast radius this whole design exists to shrink. A breakout
+from a container running as root lands you back at the starting threat model.
+A breakout from `--user 1000:1000` lands on host uid 100999, a subuid that
+owns no file on the system.
+
+**Decision: every sandboxed process runs as `--user 1000:1000`.** Container
+root is used only by the short-lived staging helper (D4), which never runs
+agent-controlled code.
+
+Failure modes to guard against, each of which silently returns execution to
+host `matt`: omitting `--user`, `--userns=host`, `--privileged`, or any
+`USER root` in the image. The D1 gate (§ Testing) exists solely to catch
+this, and it asserts the *host-visible* uid, because that is the number the
+threat model is about.
 
 **New attack surface, stated plainly**: the rootless Docker API socket
 (`$XDG_RUNTIME_DIR/docker.sock`) is reachable by any process running as
@@ -197,11 +249,33 @@ user, which resource limits.
 
 ### D4 — Mount policy
 
-| Host path | Container path | Mode | Rationale |
-|-----------|----------------|------|-----------|
-| `~/.daemoneye/scripts/` | `/de/scripts` | RO | vetted automation |
-| per-runbook `runbooks/` file | `/de/runbook.md` | RO | context, not mutable |
-| fresh tmpfs/volume | `/de/work` | RW | agent scratch, destroyed with container |
+**A bind-mount of `~/.daemoneye/scripts/` does not work and is not used.**
+Measured 2026-08-28: that directory is `drwx------ matt matt` and its scripts
+are `-rwx------` (the chmod-700 property `src/scripts.rs` enforces). Under the
+D1 decision the process is host uid 100999, so the mount reads `READ DENIED`.
+Relaxing those permissions to make a bind-mount work would trade a real
+host-side security property for container convenience — rejected.
+
+Instead the daemon **stages** into a per-run named volume. Verified end to
+end 2026-08-28:
+
+1. Daemon creates a per-run volume (`de-stage-<job_id>`).
+2. A short-lived helper container (container root = host `matt`, so it can
+   read the 0700 originals) copies in **only the script approved for this
+   run**, `chmod 0500`, `chown 1000:1000`.
+3. The agent container mounts that volume at `/de/scripts:ro` and runs as
+   `--user 1000:1000` — the script executes; a write to the mount fails with
+   `Read-only file system`.
+4. The volume is removed with the container.
+
+This is strictly tighter than the bind-mount it replaces: the sandbox sees
+one vetted script, not the whole library.
+
+| Source | Container path | Mode | Rationale |
+|--------|----------------|------|-----------|
+| staged volume (approved script only) | `/de/scripts` | RO | vetted automation, staged per run — never a bind-mount of the 0700 dir |
+| staged volume (per-runbook file) | `/de/runbook.md` | RO | context, not mutable |
+| `--tmpfs` sized by `[sandbox.limits] scratch` | `/de/work` | RW | agent scratch, destroyed with container; verified writable as uid 1000 |
 | *(no log mount — relay only)* | *(none)* | — | agents hand log lines to the daemon via a `log` opcode; daemon appends to the real event log |
 
 **No credential mount.** The daemon runs the LLM loop and talks to the AI
@@ -216,20 +290,32 @@ state, it asks the relay; it does not reach through the filesystem.
 ### D5 — Network policy
 
 **Default: `--network=none`.** With the credential mount gone (D4), the
-common case — run a command over mounted data, return output — needs no
+common case — run a command over staged data, return output — needs no
 network at all, and `none` is categorically stronger than any filtering.
 
-For workloads that genuinely need egress (researcher-profile fetches, package
-metadata checks): rootless Docker's slirp4netns/pasta networking gives no
-real per-container netfilter egress control, so bridge-plus-firewall is
-**not** the mechanism. Instead:
+This default is load-bearing, not decorative. Measured 2026-08-28 on the
+**default** docker network, a container reached the LAN AI backend
+(`192.168.50.90:8888/v1/models`), answered ICMP across the LAN, and fetched
+`https://example.com` — full LAN + internet egress. Under `--network=none`
+the same probes report `NET_BLOCKED` with only `lo` present.
 
-- The daemon runs (or fronts) an **egress proxy** bound on the host; the
-  profile's containers get `--network=slirp4netns` plus `HTTP(S)_PROXY`
-  pointing at it. The proxy enforces the allowlist (per-profile hostnames)
-  and logs every request to the event log.
-- Direct internet from the container is not routable to anything except the
-  proxy; the proxy is the audited door.
+**Correction (measured): a host-bound proxy is unreachable, so the earlier
+"daemon-owned proxy on the host" mechanism does not work.**
+`dockerd-rootless.sh` runs slirp4netns with `--disable-host-loopback`
+(confirmed in the live process args). A container probing the slirp gateway
+`10.0.2.2` reached **neither** a 127.0.0.1-bound listener nor a
+0.0.0.0-bound one — both `BLOCKED`. Disabling that flag to make a host proxy
+reachable would re-open every host loopback service to every container, which
+is a strictly worse trade.
+
+**Mechanism, corrected: the egress proxy is itself a container.** For a
+profile declaring `network = "proxy"`, the daemon runs a proxy container on a
+dedicated user-defined network and attaches the agent container to that
+network only. The agent gets `HTTP(S)_PROXY` pointing at the proxy's service
+name; the proxy enforces the per-profile hostname allowlist and logs every
+request to the event log. `--disable-host-loopback` stays on, and the agent
+container still has no route to the host or the wider LAN — the proxy is the
+only door, and it is audited.
 
 Host services (webhook `:9393`, grafana) are reachable by the daemon, never
 by a container.
@@ -278,6 +364,8 @@ enabled  = false                       # feature flag; default OFF for rollout
 runtime  = "docker"                    # only supported value today
 image    = "daemoneye-agent-base"      # tag pinned by digest in lockfile, see Image lifecycle
 workdir  = "/de/work"
+run_as   = "1000:1000"                 # D1: never container root; host-visible 100999
+docker_host = "unix:///run/user/1000/docker.sock"
 
 [sandbox.limits]
 memory     = "1g"
@@ -345,14 +433,28 @@ JSON over the unix socket — this project has no HTTP API surface):
 
 ## Testing
 
-- UID mapping gate: run `id` in a fresh container at daemon start; assert
-  host-visible uid 1000 and in-container uid 1000. Refuse sandboxed
-  execution (not the daemon itself) on mismatch.
+- **UID mapping gate** (rewritten — the first draft asserted "host uid 1000
+  and container uid 1000", which D1 measured to be mutually exclusive and so
+  could never pass). At daemon start, run a probe container as
+  `--user 1000:1000` and assert **both**:
+  - in-container `id -u` = 1000, and
+  - the **host-visible** uid of the container process = **100999**
+    (i.e. `subuid_base + 999`, read from `/etc/subuid`, not hardcoded),
+  and additionally assert `/proc/self/uid_map` contains a `0 <host_uid> 1`
+  line — proving container root maps to the daemon's own uid, which is the
+  condition that makes running as root unacceptable.
+  On mismatch, refuse **sandboxed execution** (never the daemon itself).
 - **Mount-surface assertion**: from inside a fresh container, assert the
   *absence* of every non-mounted host path (`~/.daemoneye/etc`, memory dirs,
-  `~/.ssh`, tmux socket path, Docker socket) and the read-onlyness of
-  `/de/scripts`. (Replaces the earlier `/etc/shadow` test, which only ever
-  read the container's own harmless shadow file and would pass vacuously.)
+  `~/.ssh`, tmux socket path, Docker socket) and that a write to
+  `/de/scripts` fails with `Read-only file system`. (Replaces the earlier
+  `/etc/shadow` test, which only ever read the container's own harmless
+  shadow file and would pass vacuously.)
+- **Staging assertion** (D4): `/de/scripts` contains **exactly** the script
+  approved for this run and no other; the staged file is mode `0500` owned by
+  container `1000:1000` and is executable by the agent process. Negative
+  half: a second, non-approved script in `~/.daemoneye/scripts/` is absent
+  from the mount.
 - **Relay refusal**: a host-path request through the broker (e.g. ghost asks
   to run a non-allowlisted host script) is refused/parked without approval —
   asserted through the daemon's actual door (event log + mailbox), not the
@@ -369,9 +471,13 @@ JSON over the unix socket — this project has no HTTP API surface):
 
 ## Rollout
 
-1. Install rootless docker (Arch): `pacman -S docker docker-rootless-extras`,
-   `dockerd-rootless-setuptool.sh install`, enable --user unit, verify `id`
-   mapping.
+1. ~~Install rootless docker~~ — **DONE 2026-08-28.** On Arch the accurate
+   sequence is `pacman -S docker docker-rootless-extras slirp4netns`
+   (slirp4netns is *not* pulled in and is required), then
+   `systemctl --user enable --now docker.service` — there is **no**
+   `dockerd-rootless-setuptool.sh` on Arch — then `loginctl enable-linger
+   matt`. Set `DOCKER_HOST=unix:///run/user/1000/docker.sock`. Verified
+   working; uid map and mount/network behaviour measured into D1/D4/D5.
 2. Build `daemoneye-agent-base` via `daemoneye sandbox build`; commit
    Dockerfile under `containers/`; lockfile digest recorded.
 3. Implement the `ContainerExec` backend + D0 routing behind
@@ -396,7 +502,9 @@ JSON over the unix socket — this project has no HTTP API surface):
 
 | Risk | Mitigation |
 |------|------------|
-| UID mapping breakage (kernel/docker update) | D1 gate: `id` assert at daemon start; sandboxed exec refused on mismatch |
+| Container runs as root → host `matt` (the original blast radius) | D1: `--user 1000:1000` always; gate asserts host-visible uid 100999 and refuses sandboxed exec on mismatch |
+| UID mapping breakage (kernel/docker update, `--userns=host`, `USER root` in image) | same D1 gate, run at daemon start |
+| Rootless dockerd dies at logout (user service) | `loginctl enable-linger`; `container:info` surfaces runtime-down as a clear error, never a silent host fallback |
 | Rootless Docker API socket reachable by any `matt` process | accepted — same trust boundary as today; socket never mounted into containers; stated here so it is not rediscovered as a surprise |
 | Runaway container resources | `[sandbox.limits]`: memory, pids, cpus, scratch size; GC on ghost exit |
 | Stale/drifted image breaks runbooks | digest lockfile + refuse-on-mismatch; `requires_tools` fail-fast; >90-day staleness warning |

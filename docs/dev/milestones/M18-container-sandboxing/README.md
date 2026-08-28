@@ -7,13 +7,22 @@ and host-level ops flowing only through an explicit escape hatch.
 
 **Status:** planning
 
-**Depends on:** none (M16 and M17 closed 2026-08-20). **Operator prerequisite
-before phase-02 dispatch:** rootless Docker installed on the daemon host
-(design § Rollout step 1: `pacman -S docker docker-rootless-extras`,
-`dockerd-rootless-setuptool.sh install`, user unit enabled). This is a sudo
-system-state change and is the operator's/architect's job, never an executor
-task — the executor bash guard forbids it, and the M16 phase-01 incident is
-the standing reason no executor touches host services.
+**Depends on:** none (M16 and M17 closed 2026-08-20).
+
+**Operator prerequisite — SATISFIED 2026-08-28.** Rootless Docker is
+installed and running on scrappy (docker 29.7.2, rootlesskit 3.1.0,
+slirp4netns 1.3.5, systemd user unit, linger enabled,
+`DOCKER_HOST=unix:///run/user/1000/docker.sock`). The accurate Arch recipe —
+no `dockerd-rootless-setuptool.sh` exists there, and `slirp4netns` must be
+installed explicitly — is recorded in the design's § Rollout step 1 and
+§ Current architecture. Installing it was an operator/architect action, never
+an executor task: the executor bash guard forbids it and the M16 phase-01
+incident is the standing reason no executor touches host services.
+
+**Standing up the runtime before drafting disproved three design claims**
+(uid model, script bind-mount, host-bound proxy) — all three corrected in the
+design of record. This is the "never assert an unexecuted spec fact" rule
+paying out before a single phase was dispatched.
 
 **Design of record:** `docs/design/agent-container-sandboxing.md` (revised
 2026-08-28). The D0 tool disposition table is the contract: exactly one tool
@@ -26,13 +35,22 @@ backend; everything else is broker-native or foreground and must be untouched.
   inside a container: the process tree under the `de-bg-*` pane is
   `docker exec …`, and `pane-died` completion detection, output
   capture/archive, and `close_background_window` work unchanged (live check).
-- UID-mapping gate: `id` inside a fresh container reports uid 1000, and the
-  host-visible uid of the containerized process is 1000 (live check; refusal
-  path unit-tested against fixture output).
+- UID-mapping gate: a probe container run as `--user 1000:1000` reports
+  in-container uid 1000 **and** host-visible uid **100999**
+  (`subuid_base + 999`, read from `/etc/subuid`), and `/proc/self/uid_map`
+  shows container root mapping to the daemon's own uid (live check; refusal
+  path unit-tested against fixture output). **Note the corrected model** —
+  the pre-2026-08-28 draft asserted host uid 1000 *and* container uid 1000,
+  which measurement proved mutually exclusive.
+- No sandboxed process runs as container root: `--user` is always passed, and
+  a container started without it is refused (unit + live check).
+- Staging: `/de/scripts` holds exactly the approved script for the run, mode
+  `0500` owned `1000:1000`, with a non-approved script from the same host
+  directory demonstrably absent (unit + live check).
 - Mount-surface assertion: from inside a fresh container, every non-mounted
   host path is absent (`~/.daemoneye/etc`, memory dirs, `~/.ssh`, the tmux
-  socket path, the Docker API socket) and `/de/scripts` is read-only (live
-  check, scripted).
+  socket path, the Docker API socket) and a write to `/de/scripts` fails with
+  `Read-only file system` (live check, scripted).
 - No credential enters the sandbox: the container environment and filesystem
   contain no AI API key (live check; also a negative grep criterion on the
   mount-assembly code).
@@ -42,10 +60,11 @@ backend; everything else is broker-native or foreground and must be untouched.
   real door (event log + mailbox), not the container (unit + live check).
 - Ghost lifecycle: `kill -9` the daemon mid-ghost; after restart no container
   labeled `de.ghost=1` remains (live check).
-- Network: a default-profile container has no route out (`none`); a
-  proxy-profile container reaches an allowlisted host through the
-  daemon-owned proxy (request logged) and cannot reach a non-allowlisted one
-  (live check).
+- Network: a default-profile container has no route out (`none` — verified
+  necessary, since the *default* docker network reaches the LAN backend and
+  the public internet); a proxy-profile container reaches an allowlisted host
+  through the **containerized** proxy on a shared user-defined network
+  (request logged) and cannot reach a non-allowlisted one (live check).
 - Resource limits: an in-container fork bomb hits the `pids` cap and a
   scratch write beyond the `scratch` cap fails, with daemon and host
   unaffected (live check, isolated).
@@ -80,7 +99,17 @@ servers so the operator's session is never touched).
   every phase; a phase that touches them is mis-scoped by definition.
 - **One base image, per-profile policy** — no per-agent images (design D3).
 - **No credential mount, network `none` by default** (design D4/D5); egress
-  only via the daemon-owned proxy for profiles that declare it.
+  only via a **containerized** proxy on a shared user-defined network for
+  profiles that declare it — a host-bound proxy was measured unreachable
+  (`--disable-host-loopback`).
+- **Never container root** (design D1, measured): container root maps to host
+  `matt`, the exact identity being sandboxed. All sandboxed execution is
+  `--user 1000:1000` (host-visible 100999).
+- **Scripts are staged per run, never bind-mounted** (design D4, measured):
+  `~/.daemoneye/scripts/` is 0700 and unreadable at the non-root uid, and
+  relaxing it would trade a host security property for container
+  convenience. A root helper container stages only the approved script into a
+  per-run volume.
 - **Sudoers and the escape hatch are the same door** in the sandbox world:
   rootless containers cannot exercise host sudo, so sudo-needing scripts are
   always escape-hatch ops (design D6).
@@ -103,7 +132,7 @@ state will shift with each landing.
 | 01 | sandbox-config | todo (not drafted) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic. |
 | 02 | container-runtime-probe | todo (not drafted) | `executor/container.rs` scaffold: runtime detection, `docker info` health, UID-map gate with fixture-tested parsing, `Request::ContainerStatus` / `Response::ContainerStatus`, `daemoneye status` surface. |
 | 03 | image-lifecycle | todo (not drafted) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + refuse-on-mismatch, staleness warning in `retention_warnings()`, `requires_tools` frontmatter check. |
-| 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, D4 mounts, `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Flag-gated, nothing routed yet. |
+| 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, `--user 1000:1000`, D4 per-run staging volume (root helper stages the approved script, chown 1000), `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Flag-gated, nothing routed yet. |
 | 05 | background-window-integration | todo (not drafted) | Route background `run_terminal_command` through `docker exec` inside the `de-bg-*` window when enabled; completion detection, archive, cap, GC unchanged. |
 | 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep. |
 | 07 | escape-hatch | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify (mailbox + `[Ghost Shell …]` event), `escape_hatch` flag on `ToolCallPrompt`, event-log records. |
