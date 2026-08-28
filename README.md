@@ -214,6 +214,59 @@ When a class flag is `true`, approval is pre-granted for the entire class at ses
 
 ---
 
+### 🔒 Container-Sandboxed Agents (in progress)
+
+> **Status: in flight, not yet shipped.** The groundwork is landing now — 3 of
+> 10 phases are merged. Everything below is behind `[sandbox] enabled = false`,
+> so current behaviour is unchanged and no container runtime is required to
+> build, test, or run DaemonEye today.
+
+Every approval prompt above is a *behavioural* control: it depends on the
+operator reading the command correctly. None of it stops a
+degenerate-but-approved command, a script that writes outside its lane, or a
+prompt-injection that yields a plausible-looking command the operator waves
+through. Today a compromised agent has exactly the daemon's privileges — the
+daemon's user, its filesystem, its tmux, its network.
+
+The fix is architectural: separate the **control plane** (the daemon) from the
+**work plane** (command execution), and give the work plane a bounded sandbox.
+Background commands and scripts move into ephemeral **rootless Docker**
+containers; the daemon stays native so it can keep mediating tmux, approvals,
+scheduling and the socket.
+
+What that buys, and the decisions behind it:
+
+- **Never container root.** Under rootless Docker, container uid 0 maps to the
+  daemon's *own* host uid — so a container running as root is exactly the
+  blast radius the sandbox exists to remove. Everything runs as
+  `--user 1000:1000`, which maps to an unprivileged subuid that owns nothing
+  on the host. A startup gate asserts this and refuses sandboxed execution if
+  the mapping ever breaks.
+- **No credentials in the sandbox.** The daemon talks to the model provider;
+  the container never holds an API key.
+- **No network by default.** Containers run `--network=none`. Profiles that
+  genuinely need egress get it through a proxy that enforces a per-profile
+  hostname allowlist and logs every request.
+- **Least-privilege mounts.** Only the *one* vetted script a run was approved
+  for is staged in, read-only — not the script library, and never the config,
+  memory, `.ssh`, or the tmux socket.
+- **Host access stays deliberate.** Operations that genuinely need the host
+  (package updates, zpool, sudo scripts) are classified as **escape-hatch**:
+  approved interactively in chat, or — for unattended ghost shells — limited
+  to a pre-vetted allowlist, with anything else parked and surfaced in your
+  catch-up brief rather than silently run or silently dropped.
+- **Your visibility doesn't change.** Sandboxed background jobs still run in
+  their own `de-bg-*` tmux window, so you can watch a job exactly as you do
+  now — the process inside the pane is simply contained.
+
+Foreground commands — the ones injected into your own pane with `send-keys` —
+stay host-level by design. They are visible, approved, and run in your shell;
+sandboxing them would break the thing that makes them useful.
+
+Design of record: [`docs/design/agent-container-sandboxing.md`](docs/design/agent-container-sandboxing.md).
+
+---
+
 ### 🔍 Full-View tmux Awareness
 
 The agent sees your whole tmux world, not just the pane you are typing in.
