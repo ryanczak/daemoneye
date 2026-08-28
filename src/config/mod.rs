@@ -567,4 +567,185 @@ mod tests {
         assert_eq!(pricing.cache_write_per_mtok, 0.0); // zero fallback
         assert_eq!(pricing.source, PricingSource::UserConfig);
     }
+
+    // ── SandboxConfig ────────────────────────────────────────────────────────
+
+    #[test]
+    fn sandbox_defaults_are_disabled_and_non_root() {
+        let sbx = SandboxConfig::default();
+        assert!(!sbx.enabled);
+        assert_eq!(sbx.runtime, "docker");
+        assert_eq!(sbx.run_as, "1000:1000");
+        assert_eq!(sbx.workdir, "/de/work");
+        assert!(!sbx.runs_as_container_root());
+    }
+
+    #[test]
+    fn sandbox_limits_defaults_match_documented_values() {
+        let l = SandboxLimits::default();
+        assert_eq!(l.memory, "1g");
+        assert_eq!(l.pids, 256);
+        assert_eq!(l.cpus, 2.0);
+        assert_eq!(l.scratch, "2g");
+    }
+
+    #[test]
+    fn missing_sandbox_section_uses_defaults() {
+        let toml_src = r#"
+            [models.default]
+            provider = "anthropic"
+            api_key  = "sk-ant-test"
+            model    = "claude-sonnet-4-6"
+        "#;
+        let cfg: Config = toml::from_str(toml_src).unwrap();
+        let sbx = &cfg.sandbox;
+        assert!(!sbx.enabled);
+        assert_eq!(sbx.runtime, "docker");
+        assert_eq!(sbx.run_as, "1000:1000");
+        assert_eq!(sbx.workdir, "/de/work");
+        assert_eq!(sbx.limits.memory, "1g");
+        assert_eq!(sbx.limits.pids, 256);
+        assert_eq!(sbx.limits.cpus, 2.0);
+        assert_eq!(sbx.limits.scratch, "2g");
+        assert!(sbx.ghost_defaults.destroy_on_exit);
+        assert_eq!(sbx.ghost_defaults.mount_scripts, "ro");
+        assert_eq!(sbx.image, "daemoneye-agent-base");
+        assert_eq!(sbx.docker_host, "unix:///run/user/1000/docker.sock");
+    }
+
+    #[test]
+    fn sandbox_section_parses_all_fields() {
+        let toml_src = r#"
+            [models.default]
+            provider = "anthropic"
+            api_key  = "sk-ant-test"
+            model    = "claude-sonnet-4-6"
+
+            [sandbox]
+            enabled     = true
+            runtime     = "podman"
+            image       = "my-image"
+            workdir     = "/de/work-custom"
+            run_as      = "0:0"
+            docker_host = "unix:///run/user/1000/docker.sock"
+
+            [sandbox.limits]
+            memory  = "2g"
+            pids    = 512
+            cpus    = 4.0
+            scratch = "4g"
+
+            [sandbox.ghost_defaults]
+            destroy_on_exit = false
+            mount_scripts   = "rw"
+        "#;
+        let cfg: Config = toml::from_str(toml_src).unwrap();
+        let sbx = &cfg.sandbox;
+        assert!(sbx.enabled);
+        assert_eq!(sbx.runtime, "podman");
+        assert_eq!(sbx.image, "my-image");
+        assert_eq!(sbx.workdir, "/de/work-custom");
+        assert_eq!(sbx.run_as, "0:0");
+        assert_eq!(sbx.docker_host, "unix:///run/user/1000/docker.sock");
+        assert_eq!(sbx.limits.memory, "2g");
+        assert_eq!(sbx.limits.pids, 512);
+        assert_eq!(sbx.limits.cpus, 4.0);
+        assert_eq!(sbx.limits.scratch, "4g");
+        assert!(!sbx.ghost_defaults.destroy_on_exit);
+        assert_eq!(sbx.ghost_defaults.mount_scripts, "rw");
+    }
+
+    #[test]
+    fn partial_sandbox_section_fills_remaining_defaults() {
+        let toml_src = r#"
+            [models.default]
+            provider = "anthropic"
+            api_key  = "sk-ant-test"
+            model    = "claude-sonnet-4-6"
+
+            [sandbox]
+            enabled = true
+        "#;
+        let cfg: Config = toml::from_str(toml_src).unwrap();
+        let sbx = &cfg.sandbox;
+        assert!(sbx.enabled);
+        assert_eq!(sbx.run_as, "1000:1000");
+        assert_eq!(sbx.runtime, "docker");
+        assert_eq!(sbx.limits.memory, "1g");
+        assert_eq!(sbx.limits.pids, 256);
+        assert_eq!(sbx.limits.cpus, 2.0);
+        assert_eq!(sbx.limits.scratch, "2g");
+        assert!(sbx.ghost_defaults.destroy_on_exit);
+        assert_eq!(sbx.ghost_defaults.mount_scripts, "ro");
+    }
+
+    #[test]
+    fn sandbox_profile_table_parses_named_profiles() {
+        let toml_src = r#"
+            [models.default]
+            provider = "anthropic"
+            api_key  = "sk-ant-test"
+            model    = "claude-sonnet-4-6"
+
+            [sandbox.profile.researcher]
+            network      = "proxy"
+            proxy_allow  = ["crates.io"]
+        "#;
+        let cfg: Config = toml::from_str(toml_src).unwrap();
+        let prof = cfg
+            .sandbox
+            .profile
+            .get("researcher")
+            .expect("profile present");
+        assert_eq!(prof.network, "proxy");
+        assert_eq!(prof.proxy_allow, vec!["crates.io"]);
+        assert!(
+            !cfg.sandbox.profile.contains_key("analyst"),
+            "absent profile must not materialize"
+        );
+    }
+
+    #[test]
+    fn sandbox_run_as_root_detection_pins_negative_cases() {
+        let cases = [
+            ("1000:1000", false),
+            ("10:0", false),
+            ("0:0", true),
+            ("root:root", true),
+            ("", true),
+        ];
+        for (run_as, expected) in cases {
+            let sbx = SandboxConfig {
+                run_as: run_as.to_string(),
+                ..SandboxConfig::default()
+            };
+            assert_eq!(
+                sbx.runs_as_container_root(),
+                expected,
+                "run_as = {run_as:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sandbox_validate_warns_and_never_panics() {
+        let sbx = SandboxConfig {
+            run_as: "0:0".to_string(),
+            runtime: "podman".to_string(),
+            profile: std::collections::HashMap::from([(
+                "researcher".to_string(),
+                SandboxProfile {
+                    network: "proxy".to_string(),
+                    proxy_allow: Vec::new(),
+                },
+            )]),
+            ..SandboxConfig::default()
+        };
+        assert!(sbx.runs_as_container_root());
+        assert_ne!(sbx.runtime, "docker");
+        let prof = sbx.profile.get("researcher").unwrap();
+        assert_eq!(prof.network, "proxy");
+        assert!(prof.proxy_allow.is_empty());
+        sbx.validate(); // must not panic
+    }
 }

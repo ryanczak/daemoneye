@@ -38,6 +38,8 @@ pub struct Config {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub retention: RetentionConfig,
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
 }
 
 impl Default for Config {
@@ -59,6 +61,7 @@ impl Default for Config {
             events: EventsConfig::default(),
             logging: LoggingConfig::default(),
             retention: RetentionConfig::default(),
+            sandbox: SandboxConfig::default(),
         }
     }
 }
@@ -389,6 +392,218 @@ impl Default for GhostDaemonConfig {
         Self {
             max_ghost_turns: default_max_ghost_turns(),
             max_concurrent_ghosts: default_max_concurrent_ghosts(),
+        }
+    }
+}
+
+/// Per-container resource ceilings (`[sandbox.limits]`).
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct SandboxLimits {
+    /// Container memory ceiling, in Docker's `--memory` syntax. Default: "1g".
+    #[serde(default = "default_sandbox_limits_memory")]
+    pub memory: String,
+    /// Maximum process IDs inside the container (`--pids-limit`), which is what
+    /// bounds a fork bomb. Default: 256.
+    #[serde(default = "default_sandbox_limits_pids")]
+    pub pids: u32,
+    /// CPU quota (`--cpus`). Default: 2.0.
+    #[serde(default = "default_sandbox_limits_cpus")]
+    pub cpus: f64,
+    /// Size of the `/de/work` scratch tmpfs. Default: "2g".
+    #[serde(default = "default_sandbox_limits_scratch")]
+    pub scratch: String,
+}
+
+fn default_sandbox_limits_memory() -> String {
+    "1g".to_string()
+}
+
+fn default_sandbox_limits_pids() -> u32 {
+    256
+}
+
+fn default_sandbox_limits_cpus() -> f64 {
+    2.0
+}
+
+fn default_sandbox_limits_scratch() -> String {
+    "2g".to_string()
+}
+
+impl Default for SandboxLimits {
+    fn default() -> Self {
+        Self {
+            memory: default_sandbox_limits_memory(),
+            pids: default_sandbox_limits_pids(),
+            cpus: default_sandbox_limits_cpus(),
+            scratch: default_sandbox_limits_scratch(),
+        }
+    }
+}
+
+/// Per-profile overrides (`[sandbox.profile.<name>]`), keyed by agent/profile name.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct SandboxProfile {
+    /// "none" (default, no route out) or "proxy" (egress via the containerized
+    /// proxy on a shared user-defined network).
+    #[serde(default = "default_sandbox_profile_network")]
+    pub network: String,
+    /// Hostnames this profile may reach when `network = "proxy"`. Ignored for
+    /// "none". Default: empty.
+    #[serde(default)]
+    pub proxy_allow: Vec<String>,
+}
+
+fn default_sandbox_profile_network() -> String {
+    "none".to_string()
+}
+
+impl Default for SandboxProfile {
+    fn default() -> Self {
+        Self {
+            network: default_sandbox_profile_network(),
+            proxy_allow: Vec::new(),
+        }
+    }
+}
+
+/// Defaults applied to ghost-shell containers (`[sandbox.ghost_defaults]`).
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct SandboxGhostDefaults {
+    /// Destroy the container on ghost exit, on every path including failure.
+    /// Default: true.
+    #[serde(default = "default_true")]
+    pub destroy_on_exit: bool,
+    /// Mount mode for the staged script volume. Default: "ro".
+    #[serde(default = "default_sandbox_ghost_mount_scripts")]
+    pub mount_scripts: String,
+}
+
+fn default_sandbox_ghost_mount_scripts() -> String {
+    "ro".to_string()
+}
+
+impl Default for SandboxGhostDefaults {
+    fn default() -> Self {
+        Self {
+            destroy_on_exit: default_true(),
+            mount_scripts: default_sandbox_ghost_mount_scripts(),
+        }
+    }
+}
+
+/// Container sandboxing for agent command execution (`[sandbox]`).
+/// Nothing here takes effect while `enabled = false`; later M18 phases consume
+/// these values. The defaults describe the safe, disabled state.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct SandboxConfig {
+    /// Master feature flag. Default: false — behaviour is unchanged until set.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Container runtime. Only "docker" is supported today.
+    #[serde(default = "default_sandbox_runtime")]
+    pub runtime: String,
+    /// Image the agent containers run. Default: "daemoneye-agent-base".
+    #[serde(default = "default_sandbox_image")]
+    pub image: String,
+    /// Working directory / scratch mount point inside the container.
+    /// Default: "/de/work".
+    #[serde(default = "default_sandbox_workdir")]
+    pub workdir: String,
+    /// `--user` value for every sandboxed process, as "uid:gid".
+    /// Default: "1000:1000". Under rootless Docker container root maps to the
+    /// daemon's own host uid, so running as root would return execution to the
+    /// exact identity the sandbox exists to contain.
+    #[serde(default = "default_sandbox_run_as")]
+    pub run_as: String,
+    /// Docker API endpoint. Default: "unix:///run/user/1000/docker.sock"
+    /// (the rootless per-user socket, not the rootful /var/run one).
+    #[serde(default = "default_sandbox_docker_host")]
+    pub docker_host: String,
+    #[serde(default)]
+    pub limits: SandboxLimits,
+    #[serde(default)]
+    pub profile: std::collections::HashMap<String, SandboxProfile>,
+    #[serde(default)]
+    pub ghost_defaults: SandboxGhostDefaults,
+}
+
+fn default_sandbox_runtime() -> String {
+    "docker".to_string()
+}
+
+fn default_sandbox_image() -> String {
+    "daemoneye-agent-base".to_string()
+}
+
+fn default_sandbox_workdir() -> String {
+    "/de/work".to_string()
+}
+
+fn default_sandbox_run_as() -> String {
+    "1000:1000".to_string()
+}
+
+fn default_sandbox_docker_host() -> String {
+    "unix:///run/user/1000/docker.sock".to_string()
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            runtime: default_sandbox_runtime(),
+            image: default_sandbox_image(),
+            workdir: default_sandbox_workdir(),
+            run_as: default_sandbox_run_as(),
+            docker_host: default_sandbox_docker_host(),
+            limits: SandboxLimits::default(),
+            profile: std::collections::HashMap::new(),
+            ghost_defaults: SandboxGhostDefaults::default(),
+        }
+    }
+}
+
+impl SandboxConfig {
+    /// True when `run_as` would put the process at container uid 0 — which
+    /// under rootless Docker is the daemon's own host uid. An empty value
+    /// counts as root, because Docker's own default is root when `--user` is
+    /// omitted.
+    pub fn runs_as_container_root(&self) -> bool {
+        let uid_field = self.run_as.split(':').next().unwrap_or("").trim();
+        uid_field.is_empty() || uid_field == "0" || uid_field == "root"
+    }
+
+    /// Emit warnings for sandbox configuration that would silently defeat the
+    /// sandbox. Call once at daemon startup after the config is loaded.
+    pub fn validate(&self) {
+        if self.runtime != "docker" {
+            log::warn!(
+                "[sandbox] runtime = {:?} is not supported — only \"docker\" is supported today",
+                self.runtime
+            );
+        }
+        if self.runs_as_container_root() {
+            log::warn!(
+                "[sandbox] run_as = {:?} puts the process at container root, which under \
+                 rootless Docker maps to the daemon's own host uid — the sandbox would not \
+                 reduce the blast radius",
+                self.run_as
+            );
+        }
+        for (name, profile) in &self.profile {
+            let network = profile.network.as_str();
+            if network != "none" && network != "proxy" {
+                log::warn!(
+                    "[sandbox] profile.{name} network = {network:?} is invalid — only \
+                     \"none\" or \"proxy\" are supported"
+                );
+            } else if network == "proxy" && profile.proxy_allow.is_empty() {
+                log::warn!(
+                    "[sandbox] profile.{name} has network = \"proxy\" but an empty \
+                     proxy_allow — it can reach nothing and is equivalent to \"none\""
+                );
+            }
         }
     }
 }

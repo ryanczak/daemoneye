@@ -1,7 +1,7 @@
 # Phase 01: Sandbox configuration schema
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~330 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -485,3 +485,40 @@ one line retyped printed `PASTE MISMATCH`.
 - Editing `CLAUDE.md` or `README.md` (phase-10 does the doc sweep).
 
 ## Update Log
+
+### Update — 2026-08-28 16:40 (started)
+
+Executor session for phase-01 (sandbox schema). Status flipped
+todo → in-progress; milestone README row updated to match. Implementing the
+eight Spec tasks: three nested structs + `SandboxConfig`+ `runs_as_container_root()`
++ `validate()` added to `src/config/types.rs`, wired into `Config` and the
+startup `validate()` call, `[sandbox]` docs added to `assets/etc/config.toml`,
+eight unit tests appended to `src/config/mod.rs`'s `mod tests`. All four gates
+green so far; e2e capture is the final task.
+
+### Update — 2026-08-28 16:42 (end-to-end verification)
+
+```
+== A. sandbox unit tests (expect 8 lines) ==
+test config::tests::sandbox_limits_defaults_match_documented_values ... ok
+test config::tests::sandbox_defaults_are_disabled_and_non_root ... ok
+test config::tests::sandbox_run_as_root_detection_pins_negative_cases ... ok
+test config::tests::partial_sandbox_section_fills_remaining_defaults ... ok
+test config::tests::missing_sandbox_section_uses_defaults ... ok
+test config::tests::sandbox_validate_warns_and_never_panics ... ok
+test config::tests::sandbox_profile_table_parses_named_profiles ... ok
+test config::tests::sandbox_section_parses_all_fields ... ok
+cargo_exit=0
+== B. doc_truth seeded-config gates (expect 2 lines) ==
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+cargo_exit=0
+== C. lib suite totals ==
+test result: ok. 1395 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.25s
+cargo_exit=0
+== D. structural greps ==
+SandboxConfig struct: 1
+Config field:         1
+startup validate:     1
+bare profile heading: 1
+```

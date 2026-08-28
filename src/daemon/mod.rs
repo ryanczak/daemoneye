@@ -478,6 +478,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // Warn about any limit configuration that is likely unintentional.
     startup_config.limits.validate();
 
+    // Warn about sandbox configuration that would silently defeat the sandbox.
+    startup_config.sandbox.validate();
+
     // Warn about retention settings that are off by default (keep forever).
     for warn in crate::daemon::utils::retention_warnings(&startup_config) {
         log::warn!(

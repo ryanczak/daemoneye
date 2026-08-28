@@ -234,6 +234,40 @@ prompt = "sre"
 # max_ghost_turns = 20        # hard ceiling; individual runbooks may set lower
 # max_concurrent_ghosts = 3   # ghost shells that may run at once (0 = unlimited; default: 3)
 
+# ── Sandbox ──────────────────────────────────────────────────────────────────
+
+# [sandbox]
+# Container-sandboxed agent command execution. Nothing here takes effect
+# while `enabled` is false; later M18 phases consume these values. The
+# defaults describe the safe, disabled state.
+#
+# enabled     = false                    # master feature flag
+# runtime     = "docker"                 # only supported value today
+# image       = "daemoneye-agent-base"   # tag pinned by digest in sandbox.lock
+# workdir     = "/de/work"               # container scratch mount point
+# run_as      = "1000:1000"              # NEVER container root: under rootless
+#                                        # Docker container root IS the daemon's
+#                                        # host uid, defeating the sandbox
+# docker_host = "unix:///run/user/1000/docker.sock"   # rootless per-user socket
+#
+# [sandbox.limits]
+# memory  = "1g"   # per-container memory ceiling (`--memory`)
+# pids    = 256    # max PIDs inside the container (`--pids-limit`) bounds a fork bomb
+# cpus    = 2.0    # CPU quota (`--cpus`)
+# scratch = "2g"   # /de/work tmpfs size
+#
+# [sandbox.profile]
+# Per-profile policy, keyed by agent/profile name. A profile absent here gets
+# the defaults (network "none", empty proxy_allow).
+# [sandbox.profile.researcher]
+# network      = "proxy"    # "none" (default, no route out) or "proxy" (egress
+#                           # via the containerized proxy on a shared network)
+# proxy_allow  = ["crates.io"]   # only consulted when network = "proxy"
+#
+# [sandbox.ghost_defaults]
+# destroy_on_exit = true   # destroy the container on ghost exit, every path
+# mount_scripts   = "ro"   # mount mode for the staged script volume
+
 # ── Daemon ───────────────────────────────────────────────────────────────────
 
 # [daemon]
