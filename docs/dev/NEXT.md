@@ -1560,9 +1560,70 @@ by scoping to the Update Log with `sed`. The existing "validate every
 criterion against the tree the phase will produce" fold does not cover a
 criterion whose own text is part of the corpus it measures.
 
-**Active phase: phase-03 — image-lifecycle** (`docs/dev/milestones/
-M18-container-sandboxing/phase-03-image-lifecycle.md`, status: todo, drafted
-2026-08-28). Dispatch with `/rexymcp:dispatch phase-03`.
+**phase-03 — image-lifecycle: done (approved_after_1) 2026-08-28**, commits
+`2c6d201` (round 1) + `5f61ac2` (round 2), approval `9657f92`. Dockerfile,
+`daemoneye sandbox build`, the `sandbox.lock` record and the compare helpers;
+1405 → 1414 lib tests.
+
+One bounce (bug-phase-03-1): the `missing_key` fixture was a plain string
+literal containing the characters `{id}` rather than a `format!`, so
+`parse_lock` rejected it at the image-id check and **two required-key
+rejection paths were unguarded** — proven by mutation, invisible to a green
+suite. Round 2 fixed the fixtures; both mutations now fail, re-run
+independently at review. Also narrowed `pub mod container;` → `pub(crate)`.
+
+**The phase-02 fold worked when applied up front:** the "Dead-code strategy"
+block plus a criterion pinning the repo-wide `allow(dead_code)` count held
+through both rounds — no new `#[allow]`, no blocker. Keep doing this.
+
+**Deferred to milestone close:** `daemoneye sandbox build` has never been
+executed by a phase. The architect builds the image and verifies the lock
+round-trip at close. (The Dockerfile itself *was* built and exercised during
+phase-03 drafting and again during phase-04 drafting — see below.)
+
+**Active phase: phase-04 — container-exec-args** (`docs/dev/milestones/
+M18-container-sandboxing/phase-04-container-exec-args.md`, status: todo,
+drafted 2026-08-28). Dispatch with `/rexymcp:dispatch phase-04`.
+
+Scope: the two pure decisions that stand between an agent and a container —
+`evaluate_preflight` (runtime → uid gate → lock → image, in that order) and
+the argv builders `run_args` / `stage_args` / `split_run_as`. **Nothing
+spawns**; phase-05 is the first phase that starts a container.
+
+**Scope change:** phase-04 was originally scoped as the whole
+`ContainerExec` backend. Split — argv construction and the preflight decision
+are pure, hermetic and where a subtle error silently defeats the sandbox;
+spawning, the `de-bg-*` wiring, the `log` opcode, `Request::ContainerStatus`
+and the egress proxy all move to phase-05. The README phase table reflects
+this.
+
+Phase-04 staging notes (measured on the live rootless Docker):
+
+- **The whole argv was prototyped end to end before the spec was written**,
+  against an image built from the checked-in `containers/Dockerfile`: uid 1000
+  inside, staged script executed from the read-only volume, scratch written,
+  `ls -ld /de/work` showing `drwx------ de de`. The pinned vector's flags were
+  then diffed against that prototype — no flag in one and missing from the
+  other.
+- **`f64` renders without a trailing `.0`.** Measured with `rustc`:
+  `format!("{}", 2.0f64)` → `"2"`, `1.5` → `"1.5"`; docker accepts
+  `--cpus 2`. The pinned vector therefore expects `"2"`, and § Gotchas warns
+  against `{:.1}`.
+- **The tmpfs uid/gid must derive from `run_as`, not a literal.** A dedicated
+  test uses `run_as = "10:0"` — a hardcoded `1000` passes the default-config
+  test and fails that one.
+- **`stage_args` interpolates a script name into a shell line**, so seven
+  unsafe names are pinned as must-reject (`../etc/passwd`, `a;rm -rf /`,
+  `a$(id)`, …).
+- **Image ids are genuinely not reproducible** — the same Dockerfile built
+  from two contexts produced `sha256:185a9ca…` and `sha256:0d02beb…`,
+  confirming phase-03's no-hardcoded-digest rule empirically.
+- **An unsatisfiable criterion was caught at drafting** (third occurrence of
+  that shape, now a fold candidate — see the M18 README): three greps over
+  `container.rs` would have counted the phase's own pinned test vector, which
+  legitimately contains `mode=0700` and `uid=1000,gid=1000`. All three are
+  now scoped to the production half with
+  `sed -n '1,/^#\[cfg(test)\]/p'`, and re-validated at `0`.
 
 Scope: `containers/Dockerfile`, `daemoneye sandbox build`, the
 `~/.daemoneye/etc/sandbox.lock` digest lockfile, and the pure compare helpers

@@ -132,8 +132,8 @@ state will shift with each landing.
 | 01 | sandbox-config ([phase-01-sandbox-config.md](phase-01-sandbox-config.md)) | **done** (approved_after_1, 2026-08-28) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic — no docker. |
 | 02 | container-runtime-probe ([phase-02-container-runtime-probe.md](phase-02-container-runtime-probe.md)) | **done** (approved_after_1, 2026-08-28) | `executor/container.rs`: runtime version probe + D1 UID-map gate, all decision logic pure and fixture-tested; one `#[ignore]`d live test. Nothing wired yet. **IPC surface deferred** — see Notes. |
 | 03 | image-lifecycle ([phase-03-image-lifecycle.md](phase-03-image-lifecycle.md)) | **done** (approved_after_1, 2026-08-28) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + the pure compare helpers phase-04's refusal gate uses. Staleness warning and `requires_tools` deferred — see Notes. |
-| 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, `--user 1000:1000`, D4 per-run staging volume (root helper stages the approved script, chown 1000), scratch tmpfs **with `mode=0700,uid=1000,gid=1000`** (see Notes — without these flags it is not writable), `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Calls the phase-02 gate and phase-03's `check_image_matches`; removes phase-02's `#[allow(dead_code)]`. Also carries the deferred `Request::ContainerStatus` + `daemoneye status` surface. Flag-gated. |
-| 05 | background-window-integration | todo (not drafted) | Route background `run_terminal_command` through `docker exec` inside the `de-bg-*` window when enabled; completion detection, archive, cap, GC unchanged. |
+| 04 | container-exec-args ([phase-04-container-exec-args.md](phase-04-container-exec-args.md)) | **todo** (drafted 2026-08-28) | The two pure decisions before any container starts: `evaluate_preflight` (runtime + uid gate + image lock, in that order) and the argv builders `run_args` / `stage_args` / `split_run_as`. Whole argv prototyped against the real image first. Nothing spawns. |
+| 05 | background-window-integration | todo (not drafted) | **First phase that spawns a container.** Route background `run_terminal_command` through the phase-04 argv inside the `de-bg-*` window when enabled; create/destroy the staging volume; completion detection, archive, cap, GC unchanged. Removes the module's `#[allow(dead_code)]` by adding the first caller. Also carries the deferred `Request::ContainerStatus` + `daemoneye status` surface, the `log` relay opcode, and the egress proxy. |
 | 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep. |
 | 07 | escape-hatch | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify (mailbox + `[Ghost Shell …]` event), `escape_hatch` flag on `ToolCallPrompt`, event-log records. |
 | 08 | chat-session-containers | todo (not drafted) | Long-lived `de-chat-<session>` container, lazy create, restart-independent, session-end GC + restart sweep. |
@@ -177,6 +177,25 @@ state will shift with each landing.
   wiring a status field for that alone adds IPC surface with no consumer.
   Phase-02 is correspondingly narrower — a pure, fixture-tested probe and gate
   module that nothing calls yet.
+- **Calibration, architect-side, now at 3 occurrences — fold candidate for
+  PE at milestone close.** *A mechanical criterion must not be written so that
+  its own corpus contains the text it greps for.* Three variants, all caught
+  before they cost a dispatch, all fixed by scoping the search:
+  1. phase-02 bounce: the criterion grepped the phase doc for a sentence and
+     **quoted that sentence**, so the count could never reach 0. Fixed with
+     `sed -n '/^## Update Log/,$p' | grep -c`.
+  2. phase-04 drafting: criteria grepped `container.rs` for `mode=0700` and
+     `uid=1000`, but the phase's own **pinned test vector** legitimately
+     contains both as expected output. Fixed by scoping to the production
+     half, `sed -n '1,/^#\[cfg(test)\]/p' | grep -c`.
+  3. (same phase) the companion `"--user"` count had the same defect.
+  The existing fold — *validate every mechanical criterion against the tree
+  the phase will produce* — does not cover this: the criterion passes that
+  check and still becomes unsatisfiable the moment it is written into the
+  doc, or the moment the phase adds the text for a legitimate reason.
+  Proposed wording: **when a criterion greps a corpus the phase itself
+  writes into, scope the search to the region that must not contain the
+  text.**
 - **Calibration from phase-03 (2026-08-28), held at 1 occurrence:** a
   multi-case rejection test that asserts only *that* input is rejected, never
   *why*, cannot detect a fixture rejected for the wrong reason. Phase-03's
