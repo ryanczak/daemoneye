@@ -133,8 +133,8 @@ state will shift with each landing.
 | 02 | container-runtime-probe ([phase-02-container-runtime-probe.md](phase-02-container-runtime-probe.md)) | **done** (approved_after_1, 2026-08-28) | `executor/container.rs`: runtime version probe + D1 UID-map gate, all decision logic pure and fixture-tested; one `#[ignore]`d live test. Nothing wired yet. **IPC surface deferred** — see Notes. |
 | 03 | image-lifecycle ([phase-03-image-lifecycle.md](phase-03-image-lifecycle.md)) | **done** (approved_after_1, 2026-08-28) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + the pure compare helpers phase-04's refusal gate uses. Staleness warning and `requires_tools` deferred — see Notes. |
 | 04 | container-exec-args ([phase-04-container-exec-args.md](phase-04-container-exec-args.md)) | **done** (approved_first_try, 2026-08-28) | The two pure decisions before any container starts: `evaluate_preflight` (runtime + uid gate + image lock, in that order) and the argv builders `run_args` / `stage_args` / `split_run_as`. Whole argv prototyped against the real image first. Nothing spawns. |
-| 05 | background-window-integration ([phase-05-background-window-integration.md](phase-05-background-window-integration.md)) | **in-progress** | **First phase whose code starts a container.** `sandbox_window_command` wraps a background command as a shell-quoted `docker run …` line at the `run.rs:159` seam when enabled; `de-bg-*` window, completion detection, capture and GC untouched. Removes the module's `#[allow(dead_code)]` (7 → 6). |
-| 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep — **and the staging-volume GC phase-05 deliberately defers** (a named volume auto-creates on `-v` and outlives `--rm`; measured). Owns all container/volume cleanup. |
+| 05 | background-window-integration ([phase-05-background-window-integration.md](phase-05-background-window-integration.md)) | **done** (approved_first_try, 2026-08-28) | **First phase whose code starts a container.** `sandbox_window_command` wraps a background command as a shell-quoted `docker run …` line at the `run.rs:159` seam when enabled; `de-bg-*` window, completion detection, capture and GC untouched. The `#[allow(dead_code)]` removal was **withdrawn** — 14 phase-02/03/04 items are still unwired; see Notes. |
+| 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep — **and the staging-volume GC phase-05 deliberately defers** (a named volume auto-creates on `-v` and outlives `--rm`; measured). Owns all container/volume cleanup. **Also inherits the `#[allow(dead_code)]` removal** once the probe/preflight/staging callers are wired. |
 | 07 | escape-hatch | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify (mailbox + `[Ghost Shell …]` event), `escape_hatch` flag on `ToolCallPrompt`, event-log records. |
 | 08 | chat-session-containers | todo (not drafted) | Long-lived `de-chat-<session>` container, lazy create, restart-independent, session-end GC + restart sweep. |
 | 09 | egress-proxy | todo (not drafted) | Daemon-owned egress proxy, `network = "proxy"` profile wiring, per-profile hostname allowlist, request logging. May be deferred at PE discretion — nothing in 01–08 depends on it. |
@@ -185,7 +185,14 @@ state will shift with each landing.
   wiring a status field for that alone adds IPC surface with no consumer.
   Phase-02 is correspondingly narrower — a pure, fixture-tested probe and gate
   module that nothing calls yet.
-- **Calibration, architect-side, 2 occurrences (distinct from the shape
+- **Phase-05 addendum, 3rd occurrence and the sharpest:** Task 3 claimed that
+  removing the module `#[allow(dead_code)]` would leave the tree green. The
+  architect "validated" it by deleting the line and running
+  `grep -rc "allow(dead_code)"`, seeing `6`, and stopping — measuring the
+  attribute's absence rather than the lint gate's outcome. `cargo clippy`
+  would have shown **14** dead items at once. **A criterion about a gate must
+  be validated by running that gate, not by a proxy that resembles it.**
+- **Calibration, architect-side, 3 occurrences (distinct from the shape
   below): a pinned count must be derived from the phase's own Spec, not
   estimated.** phase-04 shipped two criteria whose numbers contradicted the
   doc that contained them: `11` sandbox_exec tests where the Test plan names

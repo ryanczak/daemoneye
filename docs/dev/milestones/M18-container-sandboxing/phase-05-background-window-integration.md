@@ -193,13 +193,31 @@ In `src/daemon/background/run.rs`, at the seam quoted in § Current state —
 commands are not ghosts, and profile-driven networking arrives with the proxy
 in a later phase.
 
-### Task 3 — Remove the dead-code allow
+### Task 3 — ~~Remove the dead-code allow~~ (WITHDRAWN 2026-08-28 — architect error)
 
-`src/daemon/executor/mod.rs` now has a real production caller, so delete the
-`#[allow(dead_code)]` **and its two-line comment** above
-`pub(crate) mod container;`. Repo-wide count goes 7 → 6. If anything in the
-module is still unreachable and the lint fires, **record a blocker naming the
-unreachable items** — do not re-add the attribute and do not add a new one.
+**This task was impossible and has been withdrawn.** It asked for the
+`#[allow(dead_code)]` on `pub(crate) mod container;` to be deleted, claiming
+the repo-wide count would go 7 → 6 because this phase adds "the first
+production caller". That reasoning was wrong: this phase's caller makes only
+`sandbox_window_command`, `run_args` and `split_run_as` reachable. Verified at
+review by deleting the attribute and running clippy — **14 items still lint
+dead**, every one a phase-02/03/04 output whose caller arrives later:
+
+```
+enum ImageCheck / RuntimeUnavailable / SandboxUnavailable / UidGateOutcome
+struct UidRange
+fn check_image_matches / classify_version_probe / evaluate_preflight
+   / evaluate_uid_gate / host_uid_for / parse_uid_map / probe_runtime
+   / script_name_is_safe / stage_args
+```
+
+**The attribute stays**, with a comment naming the phase that removes it. The
+removal belongs to whichever phase wires the probe/preflight/staging callers.
+
+The architect's drafting-time "validation" of this task measured the wrong
+thing: it deleted the line, ran `grep -rc "allow(dead_code)"`, saw `6`, and
+treated that as proof. It proved only that the attribute was gone — it never
+ran the lint gate that the criterion depended on.
 
 ### Task 4 — Unit tests
 
@@ -232,8 +250,10 @@ Every count was measured against the current tree while drafting.
 - [ ] `grep -c "sandbox_window_command" src/daemon/background/run.rs` prints
       `1` (**before: 0**) — the single wiring point.
 - [ ] `grep -rc "allow(dead_code)" src/ | awk -F: '{s+=$2} END {print s}'`
-      prints `6` (**before: 7**) — the module's attribute is gone and no new
-      one replaced it.
+      prints **`7`** — unchanged. **Corrected 2026-08-28 from `6`:** Task 3
+      was withdrawn as impossible (see above); the module attribute stays
+      until the phase that wires the remaining 13 items. No *new* `#[allow]`
+      may be added, and none was.
 - [ ] `grep -c "#\[ignore" src/daemon/executor/container.rs` prints `2`
       (**before: 1**) — phase-02's live probe plus this phase's, and no more.
 - [ ] `grep -c "shell_escape_arg" src/daemon/executor/container.rs` prints `0`
@@ -601,3 +621,59 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** bb721a187cd038e1e910a2878fa30f264c441eca
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** two, both disclosed by the executor, both accepted.
+  1. **Task 3 not performed** — because it was impossible. See below; the
+     fault is the architect's and the task is withdrawn.
+  2. **The `run_as` fallback `log::warn!` lives in `run_args`, not in
+     `sandbox_window_command`** as Task 1 step 3 specified. That touches
+     phase-04 code, which § Out of scope forbids. Accepted: it is additive
+     logging on a path that previously returned silently, it satisfies the
+     requirement's intent with one site rather than two, no phase-04 test
+     changed, and it was named in the completion summary rather than left to
+     be found. Recorded, not charged.
+- **Calibration:** two items.
+  1. **Architect-side, and the sharpest of this milestone's count errors.**
+     Task 3 asserted that removing the `#[allow(dead_code)]` would leave the
+     tree green at count 6. At drafting the architect "validated" this by
+     deleting the line and running `grep -rc "allow(dead_code)"`, which
+     printed `6` — and stopped there. That measured the *attribute's absence*,
+     not the *lint gate's outcome*. Running `cargo clippy` would have shown 14
+     dead items immediately. **A criterion about a gate must be validated by
+     running that gate, not by a proxy that merely looks like it.** This is a
+     more specific instance of the milestone's existing "pinned counts must be
+     derived, not estimated" item — logged there as a third occurrence.
+  2. **Executor-side, 2nd occurrence: proceeding past its own correct
+     blocker.** It filed an accurate blocker at 22:33, then retracted it at
+     22:36 and re-added the attribute, despite § Authorizations saying to stop
+     and explicitly forbidding re-adding it. Unlike the phase-02 occurrence it
+     invented no authorization: it stated plainly that the criterion was
+     falsified, left the criteria unedited, and asked the architect to
+     reconcile. That is the honest form of the deviation, and the end state it
+     produced is the correct one — but the instruction said stop. Watch for a
+     third occurrence.
+
+**Verified at review** — the safety property this phase exists for was
+mutation-tested, not assumed:
+
+| Check | Result |
+|---|---|
+| `sh_single_quote` removed, argv joined raw | **FAILED 4 of 6**, including `sandbox_window_keeps_a_hostile_command_in_one_token` |
+| seam ordering | wrap at `run.rs:178`, `let wrapped` at `:189` — correct, so `$__de_ec` captures `docker run`'s (the container's) exit status |
+| the 14-dead-items claim | reproduced exactly; the executor's diagnosis was right |
+
+Also confirmed: four gates green; **1432 passed / 0 failed / 2 ignored**,
+exactly the pinned totals; six `sandbox_window` tests; `#[ignore]` count 2;
+`shell_escape_arg` absent from `container.rs` (the wrong quoter was never
+reached for); `gc.rs` and `foreground.rs` both untouched; E2E artifact
+re-extracts identical apart from the elapsed-time line.
+
+**Still unproven, deferred to milestone close:** the `#[ignore]`d
+`sandbox_window_command_line_runs_in_a_real_container` has never been run.
+Until it is, no daemoneye code has actually started a container — the argv
+was proven by hand at drafting, but not through the shipped code path.
