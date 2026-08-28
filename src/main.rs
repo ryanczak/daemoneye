@@ -79,6 +79,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: SchedCommands,
     },
+    /// Manage the container sandbox image
+    Sandbox {
+        #[command(subcommand)]
+        cmd: SandboxCommands,
+    },
     /// Internal out-of-band notifications (e.g. from tmux hooks)
     Notify {
         #[command(subcommand)]
@@ -242,6 +247,12 @@ enum NotifyCommands {
         /// Session name
         session_name: String,
     },
+}
+
+#[derive(Subcommand)]
+enum SandboxCommands {
+    /// Build the agent image from containers/Dockerfile and record its id
+    Build,
 }
 
 #[derive(Subcommand)]
@@ -411,6 +422,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             SchedCommands::Windows => {
                 cli::run_sched_windows()?;
+            }
+        },
+        Commands::Sandbox { cmd } => match cmd {
+            SandboxCommands::Build => {
+                cli::run_sandbox_build();
             }
         },
         Commands::Notify { cmd } => match cmd {

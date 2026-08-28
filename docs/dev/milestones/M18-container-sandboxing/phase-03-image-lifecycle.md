@@ -1,7 +1,7 @@
 # Phase 03: Agent image and digest lockfile
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`SandboxConfig.image`), phase-02 (`container.rs` exists)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -434,3 +434,61 @@ if the subcommand is not wired it fails there rather than in a unit test.
 - Editing `CLAUDE.md`, `README.md`, or `assets/etc/config.toml`.
 
 ## Update Log
+
+<!-- entries appended below this line -->
+
+### Update — 2026-08-28 18:40 (progress)
+
+Started phase-03: flipped status to in-progress, checked in
+`containers/Dockerfile` verbatim, added the `SandboxLock` record and pure
+helpers (`is_valid_image_id`, `render_lock`, `parse_lock`, `lock_path`,
+`read_lock`, `write_lock`, `check_image_matches`, `ImageCheck`) to
+`src/daemon/executor/container.rs`, plus the formatter test in
+`src/cli/commands/sandbox.rs` and nine `sandbox_lock` tests total. One
+adaptation (noted for review): the module had to become `pub mod container;`
+(instead of private `mod container;` alongside its existing
+`#[allow(dead_code)]`) because `cli` is a sibling of `daemon` in the crate
+tree, so `run_sandbox_build` cannot reach a private `daemon::executor`
+submodule — the `#[allow(dead_code)]` count stays at 7 and phase-04 can
+re-privatize. Wired `Sandbox { cmd: SandboxCommands }` into `main.rs`; the
+`--help` tree resolves. All nine filter tests pass; full lib suite is 1414
+passed / 1 ignored. End-to-end capture pending along with the final gates.
+
+### Update — 2026-08-28 18:45 (end-to-end verification)
+
+Ran the § End-to-end block verbatim on the finished tree; full block below.
+
+```text
+== A. sandbox_lock tests (expect 9 lines) ==
+test daemon::executor::container::tests::sandbox_lock_accepts_a_well_formed_image_id ... ok
+test cli::commands::sandbox::tests::sandbox_lock_build_result_distinguishes_first_build_from_rebuild ... ok
+test daemon::executor::container::tests::sandbox_lock_check_reports_malformed_live_before_mismatch ... ok
+test daemon::executor::container::tests::sandbox_lock_check_reports_match ... ok
+test daemon::executor::container::tests::sandbox_lock_check_reports_mismatch ... ok
+test daemon::executor::container::tests::sandbox_lock_rejects_malformed_image_ids ... ok
+test daemon::executor::container::tests::sandbox_lock_render_parse_round_trip ... ok
+test daemon::executor::container::tests::sandbox_lock_parse_tolerates_whitespace_and_blank_lines ... ok
+test daemon::executor::container::tests::sandbox_lock_parse_rejects_bad_records ... ok
+cargo_exit=0
+== B. lib suite totals ==
+test result: ok. 1414 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 3.93s
+cargo_exit=0
+== C. the CLI is really wired (no daemon, no docker needed) ==
+Manage the container sandbox image
+
+Usage: daemoneye sandbox <COMMAND>
+
+Commands:
+cargo_exit=0
+== D. structural greps ==
+Dockerfile present:   1
+USER 1000:1000:       1
+no chown in image:    0
+is_valid_image_id:    1
+check_image_matches:  1
+main.rs wiring:       1
+allow(dead_code) tot: 7
+hardcoded digest:     0
+```
+
+PASTE MATCH

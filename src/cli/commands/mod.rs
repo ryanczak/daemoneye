@@ -10,6 +10,7 @@ mod ipc_client;
 mod lifecycle;
 mod pane;
 mod reindex;
+mod sandbox;
 mod setup;
 mod slash;
 mod stream;
@@ -21,6 +22,7 @@ pub use interrupt::InterruptState;
 pub use ipc_client::{connect, recv, send_request};
 pub use lifecycle::{liveness_line, run_logs, run_ping, run_stop};
 pub use reindex::run_reindex;
+pub use sandbox::run_sandbox_build;
 pub use setup::run_setup;
 
 use chat::run_chat_inner;

@@ -164,6 +164,123 @@ pub fn probe_runtime(cfg: &SandboxConfig) -> Result<String, RuntimeUnavailable> 
     }
 }
 
+/// The recorded identity of the agent image, persisted at
+/// `~/.daemoneye/etc/sandbox.lock`. Phase-04 refuses to run a container whose
+/// image id differs from this.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SandboxLock {
+    pub image: String,
+    pub image_id: String,
+    pub built_at: u64,
+}
+
+/// True when `s` is a well-formed docker image id: literal "sha256:" followed
+/// by exactly 64 lowercase hex characters.
+pub fn is_valid_image_id(s: &str) -> bool {
+    let Some(hex) = s.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64 && hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+}
+
+/// Serialize a lock to the on-disk form (see below).
+pub fn render_lock(lock: &SandboxLock) -> String {
+    format!(
+        "image = {}\nimage_id = {}\nbuilt_at = {}\n",
+        lock.image, lock.image_id, lock.built_at
+    )
+}
+
+/// Parse the on-disk form. `None` for a malformed record, an unknown key set,
+/// or an `image_id` that fails `is_valid_image_id`.
+pub fn parse_lock(text: &str) -> Option<SandboxLock> {
+    let mut image: Option<String> = None;
+    let mut image_id: Option<String> = None;
+    let mut built_at: Option<u64> = None;
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (key, value) = line.split_once('=')?;
+        let key = key.trim();
+        let value = value.trim();
+        if key == "image" && image.is_none() {
+            image = Some(value.to_string());
+        } else if key == "image_id" && image_id.is_none() {
+            image_id = Some(value.to_string());
+        } else if key == "built_at" && built_at.is_none() {
+            built_at = Some(value.parse::<u64>().ok()?);
+        } else {
+            return None;
+        }
+    }
+    let image_id = image_id?;
+    if !is_valid_image_id(&image_id) {
+        return None;
+    }
+    Some(SandboxLock {
+        image: image?,
+        image_id,
+        built_at: built_at?,
+    })
+}
+
+/// Path to the lock file: `crate::config::etc_dir().join("sandbox.lock")`.
+pub fn lock_path() -> std::path::PathBuf {
+    crate::config::etc_dir().join("sandbox.lock")
+}
+
+/// Read and parse the lock. `None` when the file is absent or malformed —
+/// the caller distinguishes "no lock yet" from "bad lock" by its own logic.
+pub fn read_lock() -> Option<SandboxLock> {
+    let text = std::fs::read_to_string(lock_path()).ok()?;
+    parse_lock(&text)
+}
+
+/// Write `lock` to `lock_path()`, creating `etc/` if needed.
+pub fn write_lock(lock: &SandboxLock) -> std::io::Result<()> {
+    use std::io::Write;
+    let path = lock_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut f = std::fs::File::create(&path)?;
+    f.write_all(render_lock(lock).as_bytes())?;
+    f.flush()
+}
+
+/// Compare a live image id against the lock. Phase-04's refusal gate.
+pub fn check_image_matches(lock: &SandboxLock, live_image_id: &str) -> ImageCheck {
+    if !is_valid_image_id(live_image_id) {
+        return ImageCheck::MalformedLive {
+            live: live_image_id.to_string(),
+        };
+    }
+    if lock.image_id == live_image_id {
+        ImageCheck::Match
+    } else {
+        ImageCheck::Mismatch {
+            locked: lock.image_id.clone(),
+            live: live_image_id.to_string(),
+        }
+    }
+}
+
+/// Result of comparing a live image id against a lock.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImageCheck {
+    Match,
+    Mismatch {
+        locked: String,
+        live: String,
+    },
+    /// The live id is not a well-formed image id at all.
+    MalformedLive {
+        live: String,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +434,133 @@ mod tests {
     fn sandbox_runtime_probe_reaches_a_real_docker() {
         let result = probe_runtime(&SandboxConfig::default());
         assert!(result.is_ok(), "probe failed: {:?}", result);
+    }
+
+    #[test]
+    fn sandbox_lock_accepts_a_well_formed_image_id() {
+        let fixture = format!("sha256:{}", "a".repeat(64));
+        assert!(is_valid_image_id(&fixture));
+    }
+
+    #[test]
+    fn sandbox_lock_rejects_malformed_image_ids() {
+        let hex64 = "a".repeat(64);
+        let cases = [
+            hex64.clone(),
+            format!("md5:{}", hex64),
+            format!("sha256:{}", "a".repeat(63)),
+            format!("sha256:{}", "a".repeat(65)),
+            format!("sha256:{}", "A".repeat(64)),
+            String::new(),
+        ];
+        for case in &cases {
+            assert!(!is_valid_image_id(case), "accepted: {case:?}");
+        }
+    }
+
+    #[test]
+    fn sandbox_lock_render_parse_round_trip() {
+        let lock = SandboxLock {
+            image: "daemoneye-agent-base".to_string(),
+            image_id: format!("sha256:{}", "b".repeat(64)),
+            built_at: 1_787_900_000,
+        };
+        let parsed = parse_lock(&render_lock(&lock)).expect("round trip parses");
+        assert_eq!(parsed, lock);
+    }
+
+    #[test]
+    fn sandbox_lock_parse_tolerates_whitespace_and_blank_lines() {
+        let text = format!(
+            "\n\n  image   =  daemoneye-agent-base  \n\n  image_id = sha256:{}\nbuilt_at   =  1787900000\n\n",
+            "c".repeat(64)
+        );
+        let parsed = parse_lock(&text).expect("whitespace-tolerant parse");
+        assert_eq!(parsed.image, "daemoneye-agent-base");
+        assert_eq!(parsed.image_id, format!("sha256:{}", "c".repeat(64)));
+        assert_eq!(parsed.built_at, 1_787_900_000);
+    }
+
+    #[test]
+    fn sandbox_lock_parse_rejects_bad_records() {
+        let id = format!("sha256:{}", "d".repeat(64));
+        let valid =
+            format!("image = daemoneye-agent-base\nimage_id = {id}\nbuilt_at = 1787900000\n");
+        assert!(parse_lock(&valid).is_some());
+
+        let missing_key = "image_id = {id}\nbuilt_at = 1787900000\n";
+        let duplicated_key = format!(
+            "image = daemoneye-agent-base\nimage = agent\nimage_id = {id}\nbuilt_at = 1787900000\n"
+        );
+        let unknown_key = format!(
+            "image = daemoneye-agent-base\nimage_id = {id}\nbuilt_at = 1787900000\nrevision = 3\n"
+        );
+        let non_numeric_built_at =
+            format!("image = daemoneye-agent-base\nimage_id = {id}\nbuilt_at = soon\n");
+        let malformed_image_id = format!(
+            "image = daemoneye-agent-base\nimage_id = sha256:{}\nbuilt_at = 1787900000\n",
+            "z".repeat(64)
+        );
+        for text in [
+            missing_key,
+            &duplicated_key,
+            &unknown_key,
+            &non_numeric_built_at,
+            &malformed_image_id,
+        ] {
+            assert!(parse_lock(text).is_none(), "accepted: {text}");
+        }
+    }
+
+    #[test]
+    fn sandbox_lock_check_reports_match() {
+        let lock = SandboxLock {
+            image: "daemoneye-agent-base".to_string(),
+            image_id: format!("sha256:{}", "f".repeat(64)),
+            built_at: 1_787_900_000,
+        };
+        assert_eq!(
+            check_image_matches(&lock, &lock.image_id),
+            ImageCheck::Match
+        );
+    }
+
+    #[test]
+    fn sandbox_lock_check_reports_mismatch() {
+        let lock = SandboxLock {
+            image: "daemoneye-agent-base".to_string(),
+            image_id: format!("sha256:{}", "d".repeat(64)),
+            built_at: 1_787_900_000,
+        };
+        let live = format!("sha256:{}", "e".repeat(64));
+        let check = check_image_matches(&lock, &live);
+        assert_eq!(
+            check,
+            ImageCheck::Mismatch {
+                locked: lock.image_id.clone(),
+                live: live.clone(),
+            }
+        );
+    }
+
+    #[test]
+    fn sandbox_lock_check_reports_malformed_live_before_mismatch() {
+        let lock = SandboxLock {
+            image: "daemoneye-agent-base".to_string(),
+            image_id: format!("sha256:{}", "i".repeat(64)),
+            built_at: 1_787_900_000,
+        };
+        let check = check_image_matches(&lock, "garbage");
+        assert_ne!(
+            check,
+            ImageCheck::Mismatch {
+                locked: "".into(),
+                live: "".into()
+            }
+        );
+        match check {
+            ImageCheck::MalformedLive { live } => assert_eq!(live, "garbage"),
+            other => panic!("expected MalformedLive, got {other:?}"),
+        }
     }
 }
