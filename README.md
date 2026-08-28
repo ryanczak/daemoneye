@@ -196,7 +196,7 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 
 **Tool call history** — For silent tools (reads, memory, search, terminal context, etc.) that don't require an approval prompt, DaemonEye renders a compact history line in chat: `▸ tool(args)` when the tool starts, then `⎿ detail · Xs` when it finishes. The spinner shows a live elapsed timer between the two lines so you always know what the AI is doing and how long it has been running. The status bar shows a session-cumulative count (`· tools: N`) so you can see at a glance how many silent tool calls have occurred in the conversation.
 
-**`/approvals`** — type this at the chat prompt to inspect which approvals are currently active across all five scopes: terminal commands (regular and sudo), scripts, runbooks, and file paths. Use `/approvals revoke` to instantly revoke all session approvals, or revoke a single class with `/approvals revoke commands`, `/approvals revoke scripts`, `/approvals revoke runbooks`, or `/approvals revoke files`. The status bar shows a compact count-based summary (e.g. `⚡approvals: all · files: 2 · Ctrl+C revokes`) so you always know what the AI can do without opening `/approvals`. Cumulative write-approval and denial counts for scripts, runbooks, and file edits are tracked by the daemon and shown in `daemoneye status`.
+**`/approvals`** — type this at the chat prompt to inspect which approvals are currently active across all five scopes: terminal commands (regular and sudo), scripts, runbooks, and file paths. Use `/approvals revoke` (alias `/approvals reset`) to instantly revoke every session approval and return to fully gated. `/approvals on` and `/approvals off` toggle just the terminal-command class. The status bar shows a compact count-based summary (e.g. `⚡approvals: all · files: 2 · Ctrl+C revokes`) so you always know what the AI can do without opening `/approvals`. Cumulative write-approval and denial counts for scripts, runbooks, and file edits are tracked by the daemon and shown in `daemoneye status`.
 
 **Configurable defaults** — Add an `[approvals]` section to `~/.daemoneye/etc/config.toml` to seed the initial approval state at the start of every session (both `daemoneye chat` and `daemoneye ask`):
 
@@ -210,7 +210,7 @@ file_edits  = false   # all file edits (default: false)
 ghost_commands = false # explicitly tell ghost shells they may run investigation commands freely
 ```
 
-When a class flag is `true`, approval is pre-granted for the entire class at session start — the `[A]pprove for session` prompt is suppressed since it would be redundant. Ctrl+C or `/approvals revoke` resets all flags back to the config defaults.
+When a class flag is `true`, approval is pre-granted for the entire class at session start — the `[A]pprove for session` prompt is suppressed since it would be redundant. `/approvals revoke` resets all flags back to fully-gated for the rest of the session.
 
 ---
 
@@ -236,7 +236,25 @@ The chat client is built on a `ratatui` inline viewport that treats your termina
 - **Two-press interrupt that actually stops the work** — While the agent is streaming, press ESC or Ctrl+C once to warn, twice to abort. The second press sends a cancel to the daemon over a fresh connection, so the daemon aborts the in-flight provider stream instead of billing it to completion; the partial response is kept in history with a `⊘ cancelled` marker.
 - **No infinite spinner** — The daemon signals liveness at least every 15 s for the whole turn, including during long tool runs. The client holds it to that: 90 s of silence before any output, or 120 s mid-response, ends the wait with an error that says which happened and what to check, rather than spinning forever against a wedged daemon.
 - **Silent conditions are surfaced** — Response truncation at `max_tokens`, a provider refusal or content filter, a dropped unknown-tool call, malformed provider frames, and an entirely empty reply each produce a visible `⚠` notice. Previously these only reached `daemon.log` while the chat showed a short or blank answer.
+- **Full transcript on demand** — Command output is capped at 10 lines inline (`… N more lines · ctrl+o`). Press `ctrl+o` at any time — including mid-turn while the agent is streaming — to open the whole conversation, every byte included, in an alternate-screen viewer. See [Full-Transcript Viewer](#-full-transcript-viewer-ctrlo).
 - **Color-coded panels** — Committed command-output panels use a blood-red border and deep-yellow title so executed actions stand out in the scrollback.
+
+---
+
+### 📜 Full-Transcript Viewer (`ctrl+o`)
+
+Inline panels stay short so the scrollback stays readable — a `run_terminal_command` that printed 4 000 lines shows 9 of them plus `… 3991 more lines · ctrl+o`. The rest is not lost. Press **`ctrl+o`** from the chat prompt, or mid-turn while the agent is still streaming, and the client opens an alternate-screen pager over the full conversation.
+
+- **Every byte is there** — the viewer renders the exact `Response::ToolResult` payload the daemon sent, not a re-read of the event log (which caps output at 200 chars) or the session JSONL (truncated at `limits.tool_result_chars`). Masking is applied on the way in, so nothing redacted in the inline panel appears unmasked in the viewer, and it never reads `var/log/panes/`.
+- **Modal and additive** — the inline `insert_before` streaming surface is untouched, so native tmux scrollback, copy-mode and drag selection keep working exactly as before. `esc` restores the inline chat byte-identically: input box, status bar and prior scrollback intact, including after a pane resize while the viewer was open.
+- **Block-structured** — user turns, assistant replies, tool panels, command output and system notices are separate blocks you can focus, collapse and expand individually, or all at once.
+- **Search** — `/` opens an incremental search across the whole transcript, including inside expanded output bodies; `n` / `N` walk the matches and the status line shows `k/N`.
+- **Copy** — `y` loads the focused block into a tmux buffer (`tmux load-buffer -w`, so it also reaches the system clipboard where the terminal supports OSC 52). Paste it anywhere with `ctrl+a ]`. The copied text is the block's real content, decoration-free and independent of whether it is collapsed.
+- **Mouse** — wheel scroll and click-to-toggle work inside the viewer. Mouse tracking is enabled *only* while the viewer is up, so it never steals drag-select from the terminal on the main screen.
+- **Rehydration** — `/session load <name>` refills the transcript from the saved session, so a fresh client on a resumed conversation shows the prior turns under `ctrl+o` too.
+- **Bounded** — the client keeps at most 500 blocks or 8 MiB, whichever binds first, evicting oldest-first. When anything has been evicted the status line says so (`N older blocks evicted`).
+
+Keys are listed in [Transcript viewer keys](#transcript-viewer-keys).
 
 ---
 
@@ -362,11 +380,45 @@ Both `reindex` and `audit-prompts` run without a daemon. `reindex` is safe to ru
 | `/model` | List or switch the active model (alias: `/models`) |
 | `/prompt` | List or switch the system prompt |
 | `/pane` | Window-grouped pane inspector — cwd, status, activity age and a preview line per pane; `/pane %N` or `/pane <n>` pins the foreground target (alias: `/panes`) |
-| `/approvals` | Inspect approval state; `on`/`off`/`revoke [class]` (alias: `/approval`) |
+| `/approvals` | Inspect approval state; `on`/`off` toggle commands, `revoke` gates everything (alias: `/approval`) |
 | `/limits` | Show active limits and live session counters; `/limits reset` |
 | `/session` | `save`/`load`/`list`/`delete`/`rename`/`diff`/`tag` (alias: `/sessions`) |
 
 At a tool-approval prompt, typing a message instead of `Y`/`A`/`N` redirects the agent. Up/Down navigate the input; at the top or bottom edge they recall history.
+
+### Chat pane keys
+
+| Key | Effect |
+|---|---|
+| `ctrl+o` | Open the full-transcript viewer — works at the prompt and mid-turn while the agent is streaming |
+| `Esc` / `Ctrl+C` | Once warns, twice aborts the in-flight turn (the daemon cancels the provider stream) |
+| `Ctrl+C` at the prompt | Clear the input line; press twice within a second to quit |
+| `Ctrl+D` on an empty line | Quit the chat session |
+| `Ctrl+A` / `Ctrl+E` | Move to start / end of the current line |
+| `Ctrl+U` / `Ctrl+K` | Kill to start / end of the current line |
+| `Up` / `Down` | Move within the input; at the top or bottom edge, recall history |
+
+### Transcript viewer keys
+
+Active only while the alternate-screen viewer is open (`ctrl+o`).
+
+| Key | Effect |
+|---|---|
+| `↑` / `↓` | Scroll one line |
+| `PgUp` / `PgDn` | Scroll one page |
+| `Home` / `End` | Jump to the top / bottom |
+| `[` / `]` | Focus the previous / next block |
+| `Enter` | Collapse or expand the focused block |
+| `c` | Collapse every output block |
+| `a` | Expand everything |
+| `/` | Open incremental search |
+| `n` / `N` | Next / previous match |
+| `y` | Copy the focused block to a tmux buffer (and the system clipboard where supported) |
+| Wheel | Scroll |
+| Click | Focus and toggle the block under the cursor |
+| `Esc` / `q` / `ctrl+o` | Close the viewer and restore the inline chat |
+
+While the search prompt is open, typing edits the query, `Enter` commits it and `Esc` cancels it.
 
 ---
 
@@ -532,7 +584,7 @@ Without this hook foreground commands still appear in `daemoneye status` but are
 
 ## Configuration
 
-DaemonEye stores its configuration in `~/.daemoneye/etc/config.toml`. The file is created automatically on first launch with default values.
+DaemonEye stores its configuration in `~/.daemoneye/etc/config.toml`. The file is created automatically on first launch with default values. Every key below also appears — commented, with its default — in the seeded template (`assets/etc/config.toml`); a test gate keeps that template in sync with the config structs, so the file on disk is always a complete reference.
 
 ### Full example
 
@@ -565,8 +617,19 @@ model    = "claude-sonnet-4-6"
 # stream_idle_timeout_secs = 240     # max gap between chunks mid-stream (never retried)
 # connect_timeout_secs     = 30      # TCP/TLS connect budget; there is no total request timeout
 
+# [context]
+# environment = "personal"   # "personal" | "development" | "staging" | "production"
+
 # [masking]
 # extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
+
+# [approvals]
+# commands       = true    # non-sudo terminal commands auto-approve at session start
+# sudo           = false
+# scripts        = false
+# runbooks       = false
+# file_edits     = false
+# ghost_commands = false
 
 # [ghost]
 # max_ghost_turns = 20   # hard ceiling; individual runbooks may set lower
@@ -597,6 +660,14 @@ model    = "claude-sonnet-4-6"
 
 # [events]
 # retention_days = 90       # delete dated event segments older than this (0 = keep forever)
+
+# [logging]
+# log_max_bytes  = 5242880  # rotate daemon.log past this size (default 5 MiB)
+# log_keep_count = 5        # rotated copies to keep
+
+# [retention]
+# pane_log_retention_days = 7   # delete var/log/panes/*.log older than this (0 = keep forever)
+# mailbox_retention_days  = 7   # delete agents/*/mailbox/*.json older than this (0 = keep forever)
 
 # [daemon]
 # tmux_session = "daemoneye"   # session the daemon creates/adopts when launched outside tmux
@@ -656,6 +727,14 @@ no first token within `first_token_timeout_secs`, or no data for
 `stream_idle_timeout_secs` mid-stream — ends it, and the error names which of
 the two happened.
 
+### `[context]` section
+
+Declares the operating environment so the AI calibrates caution, blast-radius assessment, and security posture. The value is injected into the system prompt.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `environment` | string | `"personal"` | One of `"personal"`, `"development"`, `"staging"`, `"production"`. |
+
 ### `[masking]` section
 
 | Key | Type | Default | Description |
@@ -681,17 +760,32 @@ extra_patterns = [
 on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
 ```
 
+### `[approvals]` section
+
+Seeds the approval state at the start of every session — for `daemoneye chat` and `daemoneye ask` alike. Setting a class to `true` pre-grants approval for that whole class, so the per-call `[Y]es / [A]pprove session / [N]o` prompt is skipped for it. `/approvals revoke` gates everything again for the rest of the session, regardless of these defaults. See § **Collaborative Execution & Safety** for the runtime `/approvals` controls.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `commands` | bool | `true` | Non-sudo terminal commands. Defaults to `true` because they run as the daemon user and are bounded by OS file permissions — the same trust model ghost shells use. |
+| `sudo` | bool | `false` | Sudo terminal commands. |
+| `scripts` | bool | `false` | All `write_script` calls. |
+| `runbooks` | bool | `false` | All `write_runbook` calls. |
+| `file_edits` | bool | `false` | All `edit_file` calls. |
+| `ghost_commands` | bool | `false` | Let ghost shells run non-sudo commands without the script being listed in the runbook's `auto_approve_scripts`. OR-ed with the per-runbook `auto_approve_commands` frontmatter field. |
+
 ### `[webhook]` section
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Start the HTTP webhook server on daemon startup. |
 | `port` | integer | `9393` | TCP port to listen on. |
-| `bind_addr` | string | `"127.0.0.1"` | IP address to bind the webhook listener. Set to `"0.0.0.0"` to expose on all interfaces. |
+| `bind_addr` | string | `"127.0.0.1"` | IP address to bind the webhook listener. Set to `"0.0.0.0"` to expose on all interfaces — **only with `secret` set**: a non-loopback bind with an empty secret is refused and the daemon fails to start, because every webhook post can launch a ghost shell that runs arbitrary commands. |
 | `secret` | string | `""` | Bearer token for authentication. Empty = no auth. |
 | `auto_analyze` | bool | `true` | Run runbook-based AI analysis when a matching runbook exists. |
 | `severity_threshold` | string | `"warning"` | Minimum severity to trigger AI analysis and `on_alert`. One of `"info"`, `"warning"`, `"critical"`. |
 | `dedup_window_secs` | integer | `300` | Suppress duplicate alerts with the same fingerprint within this many seconds. |
+
+The listener also enforces a per-IP rate limit of 30 requests per 60-second window (a compile-time constant, not configurable). A bind failure at startup is fatal — it is treated as a duplicate-instance signal, not a transient error.
 
 #### Prometheus Alertmanager integration
 
@@ -775,6 +869,24 @@ model    = "claude-haiku-4-5-20251001"
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `retention_days` | integer | `90` | Delete dated event segments (`var/log/events/events-YYYYMMDD.jsonl`) older than this many days. `0` = keep forever. The legacy `var/log/events.jsonl` is never deleted. |
+
+### `[logging]` section
+
+Rotation for `~/.daemoneye/var/log/daemon.log`. The live log was observed reaching 25.8 MB in about twelve weeks; the defaults bound total on-disk log usage to roughly 25 MB while keeping enough history to debug from.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `log_max_bytes` | integer | `5242880` (5 MiB) | Rotate `daemon.log` once it exceeds this size. Rotated files are `daemon.log.1` … `daemon.log.N`. |
+| `log_keep_count` | integer | `5` | Number of rotated files to keep. |
+
+### `[retention]` section
+
+Periodic sweeps for the two artifact directories that otherwise grow without bound. Both are swept by the daemon; `0` disables the sweep for that class.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `pane_log_retention_days` | integer | `7` | Delete captured pane logs (`var/log/panes/*.log`, written by background jobs) older than this many days. `0` = keep forever. |
+| `mailbox_retention_days` | integer | `7` | Delete agent mailbox results (`agents/<name>/mailbox/*.json`) older than this many days. `0` = keep forever. |
 
 ### `[daemon]` section
 

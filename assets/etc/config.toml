@@ -247,7 +247,7 @@ prompt = "sre"
 # artifact scans) always runs when token pressure crosses the digest
 # threshold; the narrative step is opt-in because it costs one extra API
 # call per compaction.
-# narrative_enabled = false    # set to true to prepend an AI-generated
+# narrative_enabled = true     # set to false to skip the AI-generated
 #                              # natural-language summary of the compacted
 #                              # turns to each digest.  Uses [models.digest]
 #                              # if defined, otherwise [models.default].
