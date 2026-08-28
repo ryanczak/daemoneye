@@ -1,7 +1,7 @@
 # Phase 01: Sandbox configuration schema
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~330 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1012,3 +1012,52 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f008509371d9d0fe8ac1e7f3a751def5d5e2be63
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-28
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-phase-01-1, major — resolved)
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** one, accepted. `src/daemon/server/mod.rs` is outside
+  § Authorizations, but the file it touched holds a **pre-existing** test that
+  deterministically blocked the `cargo test` gate in the executor's
+  environment. Confirmed independently at review: the original
+  `peer_euid_none_on_invalid_fd` asserted on `std::io::stdin()`, which yields
+  `None` under `/dev/null` or a pipe and `Some(1000)` under a **socketpair** —
+  and an MCP stdio server hands its children a socket on fd 0. The diagnosis
+  was correct, no production code was touched, the fix was committed
+  separately as `test(ipc):`, and the deviation was disclosed in the
+  completion summary rather than buried.
+- **Calibration:** one architect-side item, held (1 occurrence). § Authorizations
+  says to file a blocker and stop *"if an **acceptance criterion** cannot be
+  satisfied honestly"* — it does not cover **a pre-existing test blocking a
+  gate**, which is what happened here. The executor had no sanctioned path:
+  every criterion was satisfiable, but the gate was red through no fault of
+  the phase. Future phase docs should extend that sentence to gates, not just
+  criteria. Recorded in the milestone README; **not** folded into WORKFLOW.md
+  at one occurrence.
+
+**Round 1** met every acceptance criterion — verified independently, not read
+from the executor's report: four gates re-run green, 1395 lib tests, the
+mutation `run_as` → substring matching failed exactly the two guards it should
+(so the `"10:0"` negative case is genuinely protected), and the pasted E2E
+artifact re-extracted byte-identical apart from the elapsed-time line. It was
+bounced solely for bug-phase-01-1.
+
+**Round 2** repaired it with the bug doc's second accepted shape: `/dev/null`
+bound to a named `dev_null` local that outlives the assertion, so `getsockopt`
+returns `ENOTSOCK` → `None` with the descriptor still allocated. Verified at
+review:
+
+- `grep -cE 'as_raw_fd\(&std::fs::File::open' src/daemon/server/mod.rs` → `0`
+  (was `1`); the test still exists (`1`).
+- Passes under **all three** stdin shapes — `/dev/null`, pipe, and socketpair
+  (the original breaker) — each `1 passed; 0 failed`, matching the pasted
+  transcripts exactly.
+- Mutation `if rc == 0 && len >= …` → `if true` (peer_euid always returns
+  `Some`) fails `peer_euid_none_on_invalid_fd` and leaves
+  `peer_euid_matches_own_process` passing — the repaired test is not vacuous.
+- Round-1 schema work intact: all six structural criteria still `1`/`2`/`8`,
+  1395 lib tests, four gates green, and no new `unsafe`, `#[allow]`,
+  `dbg!`/`println!`, `TODO`, or production `unwrap`/`expect` across the whole
+  phase diff.

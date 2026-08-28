@@ -1,7 +1,7 @@
 # Bug 1 on phase-01: the replacement `peer_euid` test trades a deterministic environment failure for a cross-thread fd-reuse race
 
 **Severity:** major
-**Status:** open
+**Status:** verified 2026-08-28 (commit `f008509`, round 2)
 **Filed:** 2026-08-28
 
 ## What's wrong

@@ -129,7 +129,7 @@ state will shift with each landing.
 
 | #  | Phase | Status | Scope (one line) |
 |----|-------|--------|------------------|
-| 01 | sandbox-config ([phase-01-sandbox-config.md](phase-01-sandbox-config.md)) | **in-progress** (bounced 2026-08-28, bug-phase-01-1) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic — no docker. |
+| 01 | sandbox-config ([phase-01-sandbox-config.md](phase-01-sandbox-config.md)) | **done** (approved_after_1, 2026-08-28) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic — no docker. |
 | 02 | container-runtime-probe | todo (not drafted) | `executor/container.rs` scaffold: runtime detection, `docker info` health, UID-map gate with fixture-tested parsing, `Request::ContainerStatus` / `Response::ContainerStatus`, `daemoneye status` surface. |
 | 03 | image-lifecycle | todo (not drafted) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + refuse-on-mismatch, staleness warning in `retention_warnings()`, `requires_tools` frontmatter check. |
 | 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, `--user 1000:1000`, D4 per-run staging volume (root helper stages the approved script, chown 1000), `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Flag-gated, nothing routed yet. |
@@ -153,3 +153,13 @@ state will shift with each landing.
   the design, needed by none of these phases.
 - Scoped 2026-08-28 from `docs/design/agent-container-sandboxing.md`
   (commit `d856ca6`).
+- **Calibration, held at 1 occurrence (phase-01):** a phase doc's
+  § Authorizations tells the executor to file a blocker and stop *"if an
+  acceptance criterion cannot be satisfied honestly"* — which does not cover
+  **a pre-existing test blocking a gate**. Phase-01 hit exactly that: every
+  criterion was satisfiable, but `cargo test` was red because
+  `peer_euid_none_on_invalid_fd` asserted on stdin, and the executor's MCP
+  stdio environment supplies a socket there. With no sanctioned path the
+  executor repaired the test out of scope — correctly diagnosed and
+  disclosed, but unauthorized. Extend the sentence to cover gates in future
+  M18 phase docs. Not folded into WORKFLOW.md at one occurrence.
