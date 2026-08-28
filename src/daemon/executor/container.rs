@@ -281,9 +281,166 @@ pub enum ImageCheck {
     },
 }
 
+/// Split a `"uid:gid"` string into its numeric halves.
+/// `None` when either half is missing or non-numeric. Used for both the
+/// `--user` flag and the tmpfs `uid=`/`gid=` options, so the two can never
+/// disagree.
+pub fn split_run_as(run_as: &str) -> Option<(u32, u32)> {
+    let halves: Vec<&str> = run_as.split(':').collect();
+    if halves.len() != 2 {
+        return None;
+    }
+    let uid = halves[0].trim();
+    let gid = halves[1].trim();
+    if uid.is_empty() || gid.is_empty() {
+        return None;
+    }
+    Some((uid.parse().ok()?, gid.parse().ok()?))
+}
+
+/// Why sandboxed execution cannot proceed. One operator-facing reason,
+/// collapsed from the three independent checks.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SandboxUnavailable {
+    /// The runtime is missing, unreachable, or unsupported.
+    Runtime(RuntimeUnavailable),
+    /// The uid gate did not return `Ok` — carries the outcome that failed.
+    UidGate(UidGateOutcome),
+    /// No `sandbox.lock` exists; `daemoneye sandbox build` has not been run.
+    NoLock,
+    /// The live image does not match the lock — carries the failing check.
+    Image(ImageCheck),
+    /// `run_as` is not a parseable `uid:gid` pair.
+    BadRunAs { run_as: String },
+}
+
+/// Decide whether sandboxed execution may proceed, from inputs the caller has
+/// already collected. Pure: it starts no process and reads no file.
+pub fn evaluate_preflight(
+    run_as: &str,
+    version: &Result<String, RuntimeUnavailable>,
+    gate: &UidGateOutcome,
+    lock: Option<&SandboxLock>,
+    live_image_id: &str,
+) -> Result<(), SandboxUnavailable> {
+    if split_run_as(run_as).is_none() {
+        return Err(SandboxUnavailable::BadRunAs {
+            run_as: run_as.to_string(),
+        });
+    }
+    if let Err(err) = version {
+        return Err(SandboxUnavailable::Runtime(err.clone()));
+    }
+    match gate {
+        UidGateOutcome::Ok { .. } => {}
+        other => return Err(SandboxUnavailable::UidGate(other.clone())),
+    }
+    let lock = match lock {
+        Some(l) => l,
+        None => return Err(SandboxUnavailable::NoLock),
+    };
+    let check = check_image_matches(lock, live_image_id);
+    if check != ImageCheck::Match {
+        return Err(SandboxUnavailable::Image(check));
+    }
+    Ok(())
+}
+
+/// Per-run staging volume name for `job_id`: `de-stage-<job_id>`.
+pub fn stage_volume_name(job_id: &str) -> String {
+    format!("de-stage-{job_id}")
+}
+
+fn script_name_is_safe(script_name: &str) -> bool {
+    if script_name.is_empty() || script_name.contains("..") {
+        return false;
+    }
+    script_name.chars().all(|c| {
+        !c.is_whitespace() && !matches!(c, '/' | ';' | '&' | '|' | '$' | '`' | '\'' | '"' | '\n')
+    })
+}
+
+/// argv for the short-lived helper that stages one approved script into the
+/// per-run volume. Runs as **container root** (`--user 0:0`) because it must
+/// read the 0700 originals and chown the copy — it never runs agent-supplied
+/// code, only this fixed shell line.
+pub fn stage_args(cfg: &SandboxConfig, job_id: &str, script_name: &str) -> Vec<String> {
+    if !script_name_is_safe(script_name) {
+        return Vec::new();
+    }
+    let Some((uid, gid)) = split_run_as(&cfg.run_as) else {
+        return Vec::new();
+    };
+    let volume = stage_volume_name(job_id);
+    let shell_line = format!(
+        "cp /de/src/{script_name} /stage/{script_name} && chmod 0500 /stage/{script_name} && chown {uid}:{gid} /stage/{script_name}"
+    );
+    vec![
+        "run".to_string(),
+        "--rm".to_string(),
+        "--user".to_string(),
+        "0:0".to_string(),
+        "-v".to_string(),
+        format!("{volume}:/stage"),
+        cfg.image.clone(),
+        "sh".to_string(),
+        "-c".to_string(),
+        shell_line,
+    ]
+}
+
+/// One sandboxed job's identity and payload.
+pub struct ExecSpec<'a> {
+    pub job_id: &'a str,
+    pub network: &'a str,
+    pub is_ghost: bool,
+    pub command: &'a str,
+}
+
+/// argv for the sandboxed run. Pure — the caller prepends the runtime binary
+/// and spawns it.
+pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec) -> Vec<String> {
+    let Some((uid, gid)) = split_run_as(&cfg.run_as) else {
+        return Vec::new();
+    };
+    let mut args = vec![
+        "run".to_string(),
+        "--rm".to_string(),
+        "--user".to_string(),
+        cfg.run_as.clone(),
+        "--network".to_string(),
+        spec.network.to_string(),
+        "--memory".to_string(),
+        cfg.limits.memory.clone(),
+        "--pids-limit".to_string(),
+        cfg.limits.pids.to_string(),
+        "--cpus".to_string(),
+        cfg.limits.cpus.to_string(),
+        "--tmpfs".to_string(),
+        format!(
+            "{}:rw,size={},mode=0700,uid={},gid={}",
+            cfg.workdir, cfg.limits.scratch, uid, gid
+        ),
+        "-v".to_string(),
+        format!("{}:/de/scripts:ro", stage_volume_name(spec.job_id)),
+    ];
+    if spec.is_ghost {
+        args.push("--label".to_string());
+        args.push("de.ghost=1".to_string());
+    }
+    args.push("--workdir".to_string());
+    args.push(cfg.workdir.clone());
+    args.push(cfg.image.clone());
+    args.push("sh".to_string());
+    args.push("-lc".to_string());
+    args.push(spec.command.to_string());
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SandboxLimits;
 
     const UID_MAP: &str = "         0       1000          1\n         1     100000      65536\n";
 
@@ -563,6 +720,369 @@ mod tests {
         match check {
             ImageCheck::MalformedLive { live } => assert_eq!(live, "garbage"),
             other => panic!("expected MalformedLive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sandbox_exec_splits_a_valid_run_as() {
+        assert_eq!(split_run_as("1000:1000"), Some((1000, 1000)));
+        assert_eq!(split_run_as("10:0"), Some((10, 0)));
+        assert_eq!(split_run_as("0:0"), Some((0, 0)));
+    }
+
+    #[test]
+    fn sandbox_exec_rejects_malformed_run_as() {
+        for input in ["1000", ":1000", "1000:", "a:b", "1000:1000:1000", ""] {
+            assert_eq!(split_run_as(input), None, "accepted: {input:?}");
+        }
+    }
+
+    #[test]
+    fn sandbox_exec_run_args_match_the_prototyped_vector() {
+        let cfg = SandboxConfig::default();
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: false,
+            command: "echo hi",
+        };
+        assert_eq!(
+            run_args(&cfg, &spec),
+            vec![
+                "run",
+                "--rm",
+                "--user",
+                "1000:1000",
+                "--network",
+                "none",
+                "--memory",
+                "1g",
+                "--pids-limit",
+                "256",
+                "--cpus",
+                "2",
+                "--tmpfs",
+                "/de/work:rw,size=2g,mode=0700,uid=1000,gid=1000",
+                "-v",
+                "de-stage-j1:/de/scripts:ro",
+                "--workdir",
+                "/de/work",
+                "daemoneye-agent-base",
+                "sh",
+                "-lc",
+                "echo hi"
+            ]
+        );
+    }
+
+    #[test]
+    fn sandbox_exec_run_args_label_ghost_jobs() {
+        let cfg = SandboxConfig::default();
+        let args = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: true,
+                command: "echo hi",
+            },
+        );
+        let position = args
+            .windows(2)
+            .position(|pair| pair == ["--label", "de.ghost=1"]);
+        assert!(
+            position.is_some(),
+            "ghost vector lacks --label de.ghost=1: {args:?}"
+        );
+        let plain = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: false,
+                command: "echo hi",
+            },
+        );
+        assert!(
+            !plain
+                .iter()
+                .any(|arg| arg == "--label" || arg == "de.ghost=1"),
+            "non-ghost vector carries label: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_exec_run_args_derive_tmpfs_ids_from_run_as() {
+        let cfg = SandboxConfig {
+            run_as: "10:0".to_string(),
+            ..SandboxConfig::default()
+        };
+        let args = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: false,
+                command: "echo hi",
+            },
+        );
+        let tmpfs = args
+            .iter()
+            .position(|arg| arg == "--tmpfs")
+            .map(|i| &args[i + 1])
+            .expect("tmpfs value present");
+        assert!(tmpfs.ends_with("mode=0700,uid=10,gid=0"), "got {tmpfs}");
+        let user = args
+            .iter()
+            .position(|arg| arg == "--user")
+            .map(|i| &args[i + 1])
+            .expect("user value present");
+        assert_eq!(user, "10:0");
+    }
+
+    #[test]
+    fn sandbox_exec_run_args_honour_limits_and_workdir() {
+        let cfg = SandboxConfig {
+            limits: SandboxLimits {
+                memory: "4g".to_string(),
+                pids: 64,
+                cpus: 1.5,
+                scratch: "8g".to_string(),
+            },
+            workdir: "/scratch".to_string(),
+            ..SandboxConfig::default()
+        };
+        let args = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: false,
+                command: "echo hi",
+            },
+        );
+        assert!(args.iter().any(|a| a == "--memory") && args.iter().any(|a| a == "4g"));
+        assert!(args.iter().any(|a| a == "--pids-limit") && args.iter().any(|a| a == "64"));
+        assert!(args.iter().any(|a| a == "--cpus") && args.iter().any(|a| a == "1.5"));
+        let tmpfs = args
+            .iter()
+            .position(|arg| arg == "--tmpfs")
+            .map(|i| &args[i + 1])
+            .expect("tmpfs value present");
+        assert!(tmpfs.starts_with("/scratch:rw,size=8g,"), "got {tmpfs}");
+    }
+
+    #[test]
+    fn sandbox_exec_run_args_are_empty_for_bad_run_as() {
+        let cfg = SandboxConfig {
+            run_as: "nope".to_string(),
+            ..SandboxConfig::default()
+        };
+        assert!(
+            run_args(
+                &cfg,
+                &ExecSpec {
+                    job_id: "j1",
+                    network: "none",
+                    is_ghost: false,
+                    command: "echo hi",
+                }
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn sandbox_exec_stage_args_run_as_root_and_chown_to_the_sandbox_uid() {
+        let cfg = SandboxConfig::default();
+        let args = stage_args(&cfg, "j1", "myscript.sh");
+        assert_eq!(
+            &args[..6],
+            &["run", "--rm", "--user", "0:0", "-v", "de-stage-j1:/stage"]
+        );
+        let shell = args.last().expect("shell line present");
+        assert!(shell.contains("chmod 0500 /stage/myscript.sh"));
+        assert!(shell.contains("chown 1000:1000 /stage/myscript.sh"));
+    }
+
+    #[test]
+    fn sandbox_exec_stage_args_reject_unsafe_script_names() {
+        let cfg = SandboxConfig::default();
+        for name in [
+            "../etc/passwd",
+            "a/b",
+            "a b",
+            "a;rm -rf /",
+            "a$(id)",
+            "a|b",
+            "a\nb",
+        ] {
+            assert!(
+                stage_args(&cfg, "j1", name).is_empty(),
+                "accepted: {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sandbox_exec_preflight_passes_when_everything_is_healthy() {
+        let lock = SandboxLock {
+            image: "daemoneye-agent-base".to_string(),
+            image_id: format!("sha256:{}", "f".repeat(64)),
+            built_at: 1_787_900_000,
+        };
+        let version = Ok("Docker version 26.1.4".to_string());
+        assert_eq!(
+            evaluate_preflight(
+                "1000:1000",
+                &version,
+                &UidGateOutcome::Ok {
+                    container_uid: 1000,
+                    host_uid: 100999
+                },
+                Some(&lock),
+                &lock.image_id,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn sandbox_exec_preflight_reports_each_failure() {
+        let lock = SandboxLock {
+            image: "daemoneye-agent-base".to_string(),
+            image_id: format!("sha256:{}", "f".repeat(64)),
+            built_at: 1_787_900_000,
+        };
+        let healthy_version = Ok("Docker version 26.1.4".to_string());
+        let healthy_gate = UidGateOutcome::Ok {
+            container_uid: 1000,
+            host_uid: 100999,
+        };
+
+        let bad_run_as = evaluate_preflight(
+            "nope",
+            &healthy_version,
+            &healthy_gate,
+            Some(&lock),
+            &lock.image_id,
+        );
+        match bad_run_as {
+            Err(SandboxUnavailable::BadRunAs { run_as }) => assert_eq!(run_as, "nope"),
+            other => panic!("expected BadRunAs, got {other:?}"),
+        }
+
+        let runtime = evaluate_preflight(
+            "1000:1000",
+            &Err(RuntimeUnavailable::NotInstalled {
+                runtime: "docker".to_string(),
+            }),
+            &healthy_gate,
+            Some(&lock),
+            &lock.image_id,
+        );
+        match runtime {
+            Err(SandboxUnavailable::Runtime(_)) => {}
+            other => panic!("expected Runtime, got {other:?}"),
+        }
+
+        let gate = evaluate_preflight(
+            "1000:1000",
+            &healthy_version,
+            &UidGateOutcome::ContainerRoot { host_uid: 0 },
+            Some(&lock),
+            &lock.image_id,
+        );
+        match gate {
+            Err(SandboxUnavailable::UidGate(UidGateOutcome::ContainerRoot { host_uid: 0 })) => {}
+            other => panic!("expected UidGate, got {other:?}"),
+        }
+
+        let no_lock = evaluate_preflight(
+            "1000:1000",
+            &healthy_version,
+            &healthy_gate,
+            None,
+            &lock.image_id,
+        );
+        match no_lock {
+            Err(SandboxUnavailable::NoLock) => {}
+            other => panic!("expected NoLock, got {other:?}"),
+        }
+
+        let mismatched_live = format!("sha256:{}", "d".repeat(64));
+        let image_failure = evaluate_preflight(
+            "1000:1000",
+            &healthy_version,
+            &healthy_gate,
+            Some(&lock),
+            &mismatched_live,
+        );
+        match image_failure {
+            Err(SandboxUnavailable::Image(ImageCheck::Mismatch { locked, live })) => {
+                assert_eq!(locked, lock.image_id);
+                assert_eq!(live, mismatched_live);
+            }
+            other => panic!("expected Image, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sandbox_exec_preflight_reports_the_most_fundamental_failure_first() {
+        let version = Ok("Docker version 26.1.4".to_string());
+        let all_bad_run_as = evaluate_preflight(
+            "nope",
+            &Err(RuntimeUnavailable::NotInstalled {
+                runtime: "docker".to_string(),
+            }),
+            &UidGateOutcome::ContainerRoot { host_uid: 0 },
+            None,
+            "not-an-image-id",
+        );
+        match all_bad_run_as {
+            Err(SandboxUnavailable::BadRunAs { .. }) => {}
+            other => panic!("expected BadRunAs, got {other:?}"),
+        }
+
+        let runtime = evaluate_preflight(
+            "1000:1000",
+            &Err(RuntimeUnavailable::NotInstalled {
+                runtime: "docker".to_string(),
+            }),
+            &UidGateOutcome::ContainerRoot { host_uid: 0 },
+            None,
+            "not-an-image-id",
+        );
+        match runtime {
+            Err(SandboxUnavailable::Runtime(_)) => {}
+            other => panic!("expected Runtime, got {other:?}"),
+        }
+
+        let gate = evaluate_preflight(
+            "1000:1000",
+            &version,
+            &UidGateOutcome::ContainerRoot { host_uid: 0 },
+            None,
+            "not-an-image-id",
+        );
+        match gate {
+            Err(SandboxUnavailable::UidGate(_)) => {}
+            other => panic!("expected UidGate, got {other:?}"),
+        }
+
+        let no_lock = evaluate_preflight(
+            "1000:1000",
+            &version,
+            &UidGateOutcome::Ok {
+                container_uid: 1000,
+                host_uid: 100999,
+            },
+            None,
+            "not-an-image-id",
+        );
+        match no_lock {
+            Err(SandboxUnavailable::NoLock) => {}
+            other => panic!("expected NoLock, got {other:?}"),
         }
     }
 }
