@@ -1,7 +1,7 @@
 # Phase 04: Sandbox preflight and container argv construction
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`SandboxConfig`), phase-02 (uid gate, probe), phase-03 (`SandboxLock`, `check_image_matches`)
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -675,3 +675,61 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 4ece40be1b19e007ce0a06b5984dd9aef38df536
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none. The phase ran twice, but not because of a review
+  rejection: the first run died on a `BackendError` reaching
+  `brain:8888/v1/chat/completions` and was **resumed**, not re-dispatched. No
+  bug was filed and no spec was refined.
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none. `src/daemon/executor/mod.rs` untouched, no new
+  `#[allow]` (repo-wide count still 7), nothing spawned.
+- **Calibration:** two architect-side items, both **my errors, corrected
+  against the finished tree**, and both of the same shape: *a pinned count
+  must be derived from the phase's own Spec, not estimated.*
+  1. `11` sandbox_exec tests where the § Test plan names **12**
+     (2 `split_run_as` + 5 `run_args` + 2 `stage_args` + 3 `preflight`).
+  2. `--user` emitted `1` time where Task 3 requires `stage_args` to emit
+     `--user 0:0` and Task 4 requires `run_args` to emit
+     `--user <cfg.run_as>` — **2**, verified at `container.rs:381` and `:409`.
+  Recorded in the milestone README at 2 occurrences, held, and deliberately
+  kept distinct from the self-matching-corpus shape already at 3.
+  A third, minor: correcting an `echo` label inside the § End-to-end block
+  *after* the executor had pasted its output means a re-run no longer
+  byte-matches the entry on that line. The value is identical (`2`); only the
+  label differs. Prefer leaving E2E labels alone once evidence exists, or
+  note the drift — as done here.
+
+**The executor's blocker was correct, and filing it was the right call.**
+Facing a criterion it could not satisfy, it stopped and filed a precise
+blocker naming both emission sites and the tests that pin them — rather than
+editing the criterion, deleting a test to reach 11, or merging two required
+call sites to make a grep say 1. Given the phase-02 fabricated-provenance
+incident, this is the § Authorizations contract demonstrably working.
+
+**Verified at review, with all three high-risk mutations re-run
+independently** — each targets a defect that would leave the suite green:
+
+| Mutation | Result |
+|---|---|
+| tmpfs ids hardcoded to `uid=1000,gid=1000` instead of derived from `run_as` | **FAILED** `sandbox_exec_run_args_derive_tmpfs_ids_from_run_as` (11 passed, 1 failed) — the default-config test passes under this mutation, which is why the dedicated test exists |
+| `BadRunAs` check disabled, breaking the preflight ordering | **FAILED** `..._reports_the_most_fundamental_failure_first` **and** `..._reports_each_failure` (10 passed, 2 failed) |
+| `script_name_is_safe` weakened to a `;`-only blocklist | **FAILED** `sandbox_exec_stage_args_reject_unsafe_script_names` (11 passed, 1 failed) |
+
+The shipped `script_name_is_safe` (`container.rs:354`) is a character
+**allowlist** — rejecting whitespace and `/ ; & | $ ` ' " \n` plus a `..`
+check — which is stronger than the blocklist the spec described, and the
+right shape for a string interpolated into a shell line.
+
+Also confirmed: four gates green; 1426 passed / 0 failed / 1 ignored; all
+eight structural criteria at their corrected values; no `unwrap`/`expect`/
+`panic!` in the production half; no `TODO`, `dbg!`, or `println!`; and the
+single `unsafe` hit is the substring in the test *name*
+`sandbox_exec_stage_args_reject_unsafe_script_names`, not a block.
+
+**Still deferred to milestone close:** nothing in M18 has yet run a container
+under daemoneye's own code. `run_args`/`stage_args` return vectors that were
+prototyped by hand against the real runtime, but the daemon has never spawned
+one — phase-05 is the first phase that does.
