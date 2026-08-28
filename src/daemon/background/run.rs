@@ -168,6 +168,13 @@ pub async fn run_background_in_window(
     let cmd: &str = {
         let config = crate::config::Config::load().unwrap_or_default();
         if config.sandbox.enabled {
+            if let Err(reason) =
+                crate::daemon::executor::container::sandbox_preflight(&config.sandbox)
+            {
+                let message = crate::daemon::executor::container::describe_unavailable(&reason);
+                log::warn!("refusing sandboxed background command: {message}");
+                return message;
+            }
             let job_id = format!("{pane_num}-{unix_ts}");
             let spec = crate::daemon::executor::container::ExecSpec {
                 job_id: &job_id,

@@ -346,6 +346,129 @@ pub fn evaluate_preflight(
     Ok(())
 }
 
+/// Split the combined probe's stdout into `(container_uid, uid_map)`.
+/// The probe prints the uid, a line containing only `---`, then the map.
+/// `None` when the sentinel is missing or the uid line is not a `u32`.
+pub fn parse_probe_output(text: &str) -> Option<(u32, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let sentinel = lines.iter().position(|line| line.trim() == "---")?;
+    let uid = lines[..sentinel]
+        .iter()
+        .map(|line| line.trim())
+        .find(|line| !line.is_empty())?
+        .parse::<u32>()
+        .ok()?;
+    let map = lines[sentinel + 1..].join("\n");
+    Some((uid, map.trim_matches('\n').to_string()))
+}
+
+/// Run the combined probe of § Gotchas 1 and reduce its output to the uid gate.
+fn probe_uid_gate(cfg: &SandboxConfig) -> UidGateOutcome {
+    let mut cmd = Command::new(&cfg.runtime);
+    cmd.args([
+        "run",
+        "--rm",
+        "--user",
+        &cfg.run_as,
+        "--network",
+        "none",
+        &cfg.image,
+        "sh",
+        "-c",
+        "id -u; echo ---; cat /proc/self/uid_map",
+    ])
+    .env("DOCKER_HOST", &cfg.docker_host);
+    match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            match parse_probe_output(&text) {
+                Some((uid, map)) => evaluate_uid_gate(uid, &map),
+                None => UidGateOutcome::MalformedMap,
+            }
+        }
+        Err(_) => UidGateOutcome::MalformedMap,
+    }
+}
+
+/// The live image id via `image inspect`, or the empty string when it cannot
+/// be read — `evaluate_preflight` treats a malformed live id correctly.
+fn probe_live_image_id(cfg: &SandboxConfig) -> String {
+    let mut cmd = Command::new(&cfg.runtime);
+    cmd.args(["image", "inspect", &cfg.image, "--format", "{{.Id}}"])
+        .env("DOCKER_HOST", &cfg.docker_host);
+    match bounded_output_with(&mut cmd, Duration::from_secs(15)) {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Run the combined probe and the image inspection, then decide.
+/// Impure: starts one container and runs one `image inspect`.
+fn collect_preflight(cfg: &SandboxConfig) -> Result<(), SandboxUnavailable> {
+    let version = probe_runtime(cfg);
+    let gate = probe_uid_gate(cfg);
+    let live_id = probe_live_image_id(cfg);
+    evaluate_preflight(&cfg.run_as, &version, &gate, read_lock().as_ref(), &live_id)
+}
+
+/// Cached sandbox verdict — probed once per daemon lifetime.
+pub fn sandbox_preflight(cfg: &SandboxConfig) -> Result<(), SandboxUnavailable> {
+    if !cfg.enabled {
+        return Ok(());
+    }
+    static SANDBOX_VERDICT: SandboxVerdictCell = SandboxVerdictCell::new();
+    SANDBOX_VERDICT
+        .get_or_init(|| collect_preflight(cfg))
+        .clone()
+}
+
+type SandboxVerdictCell = std::sync::OnceLock<Result<(), SandboxUnavailable>>;
+
+/// Operator-facing explanation of why sandboxed execution is unavailable,
+/// including the concrete fix. Used as the tool result the AI sees.
+pub fn describe_unavailable(reason: &SandboxUnavailable) -> String {
+    match reason {
+        SandboxUnavailable::Runtime(RuntimeUnavailable::NotInstalled { runtime }) => format!(
+            "sandbox unavailable: runtime `{runtime}` is not installed — install it (e.g. `docker`) and try again"
+        ),
+        SandboxUnavailable::Runtime(RuntimeUnavailable::DaemonUnreachable {
+            docker_host, ..
+        }) => format!(
+            "sandbox unavailable: cannot reach the container runtime at `{docker_host}` — start the user docker service (e.g. `systemctl --user start docker.socket`) and try again"
+        ),
+        SandboxUnavailable::Runtime(RuntimeUnavailable::UnsupportedRuntime { runtime }) => format!(
+            "sandbox unavailable: runtime `{runtime}` is not supported (only `docker` is) — set `[sandbox] runtime = \"docker\"` and try again"
+        ),
+        SandboxUnavailable::UidGate(UidGateOutcome::ContainerRoot { .. }) => {
+            "sandbox unavailable: the container would run as root, which maps to the daemon's own host uid — set `[sandbox] run_as` to an unprivileged numeric uid:gid and rebuild the image, then try again".to_string()
+        }
+        SandboxUnavailable::UidGate(UidGateOutcome::Unmapped { container_uid }) => format!(
+            "sandbox unavailable: container uid {container_uid} is not covered by any range in the uid map — adjust `[sandbox] run_as` or the rootless subuid allocation, then retry"
+        ),
+        SandboxUnavailable::UidGate(UidGateOutcome::MalformedMap) => {
+            "sandbox unavailable: the container's uid map could not be parsed — check the rootless docker installation and retry".to_string()
+        }
+        SandboxUnavailable::UidGate(UidGateOutcome::Ok { .. }) => {
+            "sandbox unavailable: uid gate passed but preflight still failed (internal inconsistency)".to_string()
+        }
+        SandboxUnavailable::NoLock => {
+            "sandbox unavailable: no sandbox.lock exists — run `daemoneye sandbox build` to create the image lock, then try again".to_string()
+        }
+        SandboxUnavailable::Image(ImageCheck::Mismatch { live, .. }) => format!(
+            "sandbox unavailable: the live image (sha256:{live}) differs from the lock — run `daemoneye sandbox build` to rebuild and re-lock, then try again"
+        ),
+        SandboxUnavailable::Image(ImageCheck::MalformedLive { live }) => format!(
+            "sandbox unavailable: the live image id `{live}` is malformed — run `daemoneye sandbox build` to rebuild and re-lock, then try again"
+        ),
+        SandboxUnavailable::Image(ImageCheck::Match) => {
+            "sandbox unavailable: image matched the lock but preflight still failed (internal inconsistency)".to_string()
+        }
+        SandboxUnavailable::BadRunAs { run_as } => format!(
+            "sandbox unavailable: run_as `{run_as}` is not a numeric uid:gid pair — set `[sandbox] run_as` (e.g. \"1000:1000\") and try again"
+        ),
+    }
+}
+
 /// Per-run staging volume name for `job_id`: `de-stage-<job_id>`.
 pub fn stage_volume_name(job_id: &str) -> String {
     format!("de-stage-{job_id}")
@@ -1252,5 +1375,129 @@ mod tests {
             "container output lacked 'sandbox-ok': {stdout:?} stderr={:?}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn sandbox_gate_parses_the_real_probe_output() {
+        let probe =
+            "1000\n---\n         0       1000          1\n         1     100000      65536\n";
+        let (uid, map) = parse_probe_output(probe).expect("real probe output must parse");
+        assert_eq!(uid, 1000);
+        let ranges = parse_uid_map(&map).expect("map must parse");
+        assert_eq!(
+            ranges,
+            vec![
+                UidRange {
+                    container_start: 0,
+                    host_start: 1000,
+                    length: 1
+                },
+                UidRange {
+                    container_start: 1,
+                    host_start: 100000,
+                    length: 65536
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn sandbox_gate_probe_output_rejects_malformed_input() {
+        let cases: &[&str] = &[
+            "1000\n     90000\n",            // no sentinel
+            "abc\n---\n     0   1000   1\n", // non-numeric uid
+            "",                              // empty
+            "---\n     0   1000   1\n",      // sentinel, empty uid line
+        ];
+        for case in cases {
+            assert_eq!(parse_probe_output(case), None, "input: {case:?}");
+        }
+    }
+
+    #[test]
+    fn sandbox_gate_probe_output_feeds_the_uid_gate() {
+        let stdout =
+            "1000\n---\n         0       1000          1\n         1     100000      65536\n";
+        let (uid, map) = parse_probe_output(stdout).expect("real probe output must parse");
+        let outcome = evaluate_uid_gate(uid, &map);
+        assert_eq!(
+            outcome,
+            UidGateOutcome::Ok {
+                container_uid: 1000,
+                host_uid: 100999
+            }
+        );
+    }
+
+    #[test]
+    fn sandbox_gate_describes_every_unavailable_variant() {
+        use std::collections::HashSet;
+        let cases = [
+            SandboxUnavailable::BadRunAs { run_as: "x".into() },
+            SandboxUnavailable::Runtime(RuntimeUnavailable::NotInstalled {
+                runtime: "docker".into(),
+            }),
+            SandboxUnavailable::Runtime(RuntimeUnavailable::DaemonUnreachable {
+                docker_host: "unix:///tmp/docker.sock".into(),
+                stderr: String::new(),
+            }),
+            SandboxUnavailable::Runtime(RuntimeUnavailable::UnsupportedRuntime {
+                runtime: "podman".into(),
+            }),
+            SandboxUnavailable::UidGate(UidGateOutcome::ContainerRoot { host_uid: 1000 }),
+            SandboxUnavailable::NoLock,
+            SandboxUnavailable::Image(ImageCheck::Mismatch {
+                locked: "a".repeat(64),
+                live: "b".repeat(64),
+            }),
+        ];
+        let mut messages = HashSet::new();
+        for case in cases {
+            let text = describe_unavailable(&case);
+            assert!(
+                text.starts_with("sandbox unavailable: "),
+                "message must start with the prefix: {text:?}"
+            );
+            messages.insert(text);
+        }
+        assert_eq!(
+            messages.len(),
+            7,
+            "every variant must have a distinct message"
+        );
+    }
+
+    #[test]
+    fn sandbox_gate_describes_nolock_with_the_build_command() {
+        let text = describe_unavailable(&SandboxUnavailable::NoLock);
+        assert!(text.contains("sandbox build"), "got: {text}");
+    }
+
+    #[test]
+    fn sandbox_gate_describes_bad_run_as_with_the_offending_value() {
+        let text = describe_unavailable(&SandboxUnavailable::BadRunAs {
+            run_as: "nope".into(),
+        });
+        assert!(text.contains("nope"), "got: {text}");
+    }
+
+    #[test]
+    fn sandbox_gate_disabled_config_is_ok_without_probing() {
+        let cfg = SandboxConfig::default();
+        assert!(sandbox_preflight(&cfg).is_ok());
+    }
+
+    #[test]
+    #[ignore = "requires a running rootless Docker daemon"]
+    fn sandbox_gate_preflight_reaches_a_real_runtime() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..SandboxConfig::default()
+        };
+        match sandbox_preflight(&cfg) {
+            Ok(()) => {}
+            Err(SandboxUnavailable::NoLock) => {}
+            Err(other) => panic!("unexpected preflight failure: {other:?}"),
+        }
     }
 }
