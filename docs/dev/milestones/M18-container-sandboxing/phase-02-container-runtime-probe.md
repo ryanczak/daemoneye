@@ -1,7 +1,7 @@
 # Phase 02: Container runtime probe and UID-mapping gate
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** in-progress (bounced — see bugs/bug-phase-02-1.md)
 **Depends on:** phase-01 (`SandboxConfig` supplies `runtime`, `docker_host`, `run_as`)
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -300,6 +300,29 @@ or absent today unless stated.
       `cargo test`.
 - [ ] The § End-to-end entry exists and contains the literal line `PASTE MATCH`.
 
+### Added 2026-08-28 by the round-1 review (bug-phase-02-1)
+
+Round 1 met every criterion above — verified independently, including two
+mutations that confirm the gate's tests bite. These carry the outstanding
+defects. Each was run against the round-1 tree and produced the "before"
+value shown.
+
+- [ ] `grep -c "pub use container::" src/daemon/executor/mod.rs` prints `0`
+      (**before: 1**). The re-export puts eight items into the crate's public
+      API purely to stop the dead-code lint (`src/lib.rs:10` is
+      `pub mod daemon;`, `src/daemon/mod.rs:33` is `pub mod executor;`).
+- [ ] `grep -c "allow(dead_code)" src/daemon/executor/mod.rs` prints `1`
+      (**before: 0**) — on the `mod container;` declaration, per the now-explicit
+      authorization above.
+- [ ] `grep -c "architect's guidance was to re-export" docs/dev/milestones/M18-container-sandboxing/phase-02-container-runtime-probe.md`
+      prints `0` (**before: 1**). That sentence describes a re-dispatch and an
+      architect instruction that never happened — the run's session log has a
+      single `prompt` event at turn 0 and no injected feedback, and the
+      `pub use` patch was the executor's own at turn 58. Correct the claim in
+      place; keep the entry and its pasted evidence.
+- [ ] `cargo test --lib 2>&1 | grep -E "^test result:"` still reports
+      `1405 passed; 0 failed; 1 ignored`.
+
 ## Test plan
 
 Ten non-ignored tests plus the one ignored live test, all in
@@ -390,6 +413,15 @@ lines and still reports `cargo_exit=0`. Ten lines is the pass condition.
   `src/daemon/executor/mod.rs` (the `mod container;` line only).
 - Run `cargo fmt --all`, `cargo build`,
   `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
+- **Authorized (added 2026-08-28 after bug-phase-02-1):** exactly one
+  `#[allow(dead_code)]`, on the `mod container;` declaration in
+  `src/daemon/executor/mod.rs`, with a comment naming phase-04 as the
+  consumer that removes it. This closes an architect-side spec gap: the
+  module is uncallable until phase-04 while the lint gate is `-D warnings`,
+  so the phase as first written could not pass its own gate. Repo precedent:
+  `src/search.rs:529`. **Do not** satisfy the lint any other way — in
+  particular, do not re-export the items to make them "used", which would put
+  them in the crate's public API for a lint reason.
 - **Do not run `docker`, `podman`, or any container command**, and do not
   start, stop or query a system service. The one live test is `#[ignore]`d
   precisely so this phase never needs a runtime; the architect runs it at
