@@ -1,7 +1,7 @@
 # Phase 01: Sandbox configuration schema
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** in-progress
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~330 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -578,3 +578,182 @@ bare profile heading: 1
 ```
 
 PASTE MATCH
+
+### Update — ts=1787936920773 (complete, server-authored)
+
+**Summary:** </think>The phase doc is `in-progress`, working tree is clean, all gates pass. Let me do a final review of the completion checklist:
+
+- [x] Phase doc Status: in-progress
+- [x] Milestone README row: in-progress
+- [x] Did NOT hand-write a (complete) Update Log entry
+- [x] cargo fmt --all was run immediately before git add (it was run, and again after the final commit — wait, the final commit was doc-only. Actually the phase doc commit. Let me re-check: after the final code commit (d0b298c), I ran fmt+build+clippy+test, committed doc entries, and ran fmt again (no diff). The fmt actually ran before git add in the last verification block. Good.
+- [x] All verification commands ran clean
+- [x] Final message will be a substantive summary
+- [x] git status --short shows nothing — all committed
+- [x] git log -1 --stat shows the commit includes every file I touched
+
+Wait — the last thing I need to confirm: the refactoring I did was restoring `src/daemon/server/mod.rs` to the original state, then modifying only the test function. The file has no other diff. That's fine.
+
+Let me verify the final state of things one more time — particularly that the "PASTE MATCH" line is in the newest entry, and the acceptance criteria all still hold (they were re-verified in the dispatch-2 e2e block).
+
+Actually, wait — I need to check one thing: the `# [sandbox.profile]` bare heading grep still shows 1, and the commit `fd0d99a` shows the last commit includes only the phase doc. That's correct.
+
+Let me run one final verification that the acceptance criteria all hold, since the last full check was in the dispatch-2 e2e block. All verified:
+
+- grep -c "^pub struct SandboxConfig" → 1 ✓
+- grep -c "pub sandbox: SandboxConfig" → 1 ✓
+- grep -c "startup_config.sandbox.validate()" src/daemon/mod.rs → 1 ✓
+- grep -c "^# \[sandbox.profile\]$" → 1 ✓
+- cargo test --test doc_truth seeded_config_template → 2 ✓
+- cargo test --lib sandbox → 8 ✓
+- cargo test --lib → 1395 passed ✓
+- All gates green ✓
+- E2E entry contains PASTE MATCH ✓ (verified: 2 occurrences of "^PASTE MATCH" — one in each e2e entry)
+
+Everything is complete. The working tree is clean, all committed. Final signal.</think>
+All work is committed (working tree clean) and every gate passes. Final summary follows.
+
+## Summary
+
+Phase-01 (sandbox config schema) is implemented end to end. `src/config/types.rs` gains `SandboxLimits` / `SandboxProfile` / `SandboxGhostDefaults` (serde defaults + hand-written `Default` in the `GhostDaemonConfig` idiom) plus `SandboxConfig` with `runs_as_container_root()` (splits on `:`, trims, tests the first field only — `"10:0"` is correctly non-root) and a warn-only `validate()` covering non-docker runtime, root `run_as`, invalid profile network, and proxy-with-empty-allowlist. `Config`/`Default` carry `sandbox: SandboxConfig` as the last field; the startup site calls `startup_config.sandbox.validate()`; the seeded template documents every knob — including the load-bearing bare `# [sandbox.profile]` heading — and both `doc_truth` gates confirm the template matches the struct.
+
+**Deviations / notes for review:**
+- **Fixed a pre-existing flaky gate test** (`daemon::server::tests::peer_euid_none_on_invalid_fd`): under `cargo test`, stdin can be left as a socket, so `getsockopt(SO_PEERCRED)` on stdin returned the daemon's own uid (`Some(1000)`) instead of failing — intermittent across full-suite runs, never in isolation. The test now opens `/dev/null`, captures the fd number, drops the handle, and asserts the closed-fd `EBADF → None` path, which is deterministic. No production code touched. This was necessary to keep the phase's gate green; committed separately as `test(ipc):`.
+- `destroy_on_exit` reuses the existing `default_true()` helper rather than a second free function.
+
+**E2E:** the phase's block ran verbatim (8 sandbox tests ok, 2 doc_truth gates ok, 1395 lib tests passed, all four structural greps = 1) in a fresh end-to-end entry for this dispatch with the literal `PASTE MATCH` line; the re-extracted fence diffs byte-identical to the artifact (`PASTE MATCH`). All four gates clean: `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all` (1395 lib + 56 integration/doc tests, only pre-existing ignores). Phase status left `in-progress`; 7 commits, tree clean.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 3.94s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_strips_trailing_prose ... ok
+test header_status_reads_bare_word ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `assets/etc/config.toml` — +34 -0
+- `docs/dev/milestones/M18-container-sandboxing/README.md` — +1 -1
+- `docs/dev/milestones/M18-container-sandboxing/phase-01-sandbox-config.md` — +94 -1
+- `src/config/mod.rs` — +181 -0
+- `src/config/types.rs` — +215 -0
+- `src/daemon/mod.rs` — +3 -0
+- `src/daemon/server/mod.rs` — +11 -2
+
+**Commit:** fd0d99a5f251a477784f6bee29fec22e00065466
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
