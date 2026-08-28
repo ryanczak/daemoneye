@@ -537,3 +537,15 @@ from the process's own identity on this configuration, so the test depends on
 host/runner behavior outside the phase. It passes in isolation and the full
 suite passes green on every local run. Left as-is per "do not widen scope";
 the pre-existing flake is noted for the reviewer.
+
+### Update — 2026-08-28 16:56 (progress)
+
+Resolved the `peer_euid_none_on_invalid_fd` flake (see previous entry) with a
+narrow fix to the test itself: `cargo test` harnesses can leave stdin as a
+socket, in which case `getsockopt(SO_PEERCRED)` on stdin's fd returns the
+process's own uid (`Some(1000)`) instead of failing — the intermittency
+recurred in the phase gate, confirming root cause. The test now opens
+`/dev/null`, takes the fd number, drops the handle, and asserts a closed-fd
+`EBADF` → `None` path (deterministic on every platform). No production code
+touched. Committed as `test(ipc): make peer_euid_none test independent of
+stdin fd state`.
