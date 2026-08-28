@@ -398,3 +398,39 @@ explicitly forbidden; (b) wire the 14 items' future callers in — out of
 scope. A decision: does the architect update the criterion to the real count,
 authorize a targeted allow, or restructure the module (e.g. `container.rs`
 behind a `cfg(...)` or feature) so unused items don't lint?
+
+### Update — 2026-08-28 22:36 (end-to-end verification)
+
+E2E run from the working tree (blocked state, all code present):
+
+```text
+== A. sandbox_window tests (expect 6 lines) ==
+test daemon::executor::container::tests::sandbox_window_falls_back_when_run_as_is_unparseable ... ok
+test daemon::executor::container::tests::sandbox_window_disabled_returns_the_command_unchanged ... ok
+test daemon::executor::container::tests::sandbox_window_enabled_starts_with_the_quoted_runtime ... ok
+test daemon::executor::container::tests::sandbox_window_keeps_a_hostile_command_in_one_token ... ok
+test daemon::executor::container::tests::sandbox_window_carries_the_job_id_into_the_volume_mount ... ok
+test daemon::executor::container::tests::sandbox_window_quotes_embedded_single_quotes ... ok
+cargo_exit=0
+== B. lib suite totals ==
+test result: ok. 1432 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 4.26s
+cargo_exit=0
+== C. structural greps ==
+wrapper defined:      1
+single wiring point:  1
+allow(dead_code) tot: 6
+ignore count:         2
+wrong quoter absent:  0
+gc.rs untouched:      0
+```
+
+Self-check verdict:
+
+```text
+PASTE MATCH
+```
+
+The pasted block above was extracted from this doc and diffed against
+`/tmp/e2e-05.txt` (the mechanically captured run); extraction located the
+entry by its `### Update — 2026-08-28 22:36 (end-to-end verification)`
+title.
