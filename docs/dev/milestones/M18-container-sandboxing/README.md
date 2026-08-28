@@ -177,6 +177,17 @@ state will shift with each landing.
   wiring a status field for that alone adds IPC surface with no consumer.
   Phase-02 is correspondingly narrower — a pure, fixture-tested probe and gate
   module that nothing calls yet.
+- **Calibration, architect-side, 2 occurrences (distinct from the shape
+  below): a pinned count must be derived from the phase's own Spec, not
+  estimated.** phase-04 shipped two criteria whose numbers contradicted the
+  doc that contained them: `11` sandbox_exec tests where the Test plan names
+  12 (2+5+2+3), and `--user` emitted `1` time where Task 3 and Task 4 each
+  require an emission. Both were corrected against the finished tree, and in
+  both cases the executor was right and the criterion wrong. Distinct from the
+  self-matching-corpus shape below — these are arithmetic over the architect's
+  own prose, checkable at drafting by counting the Spec. **Phase-04's blocker
+  is the good outcome here:** the executor stopped and filed rather than
+  editing the criterion or merging two required call sites to hit a number.
 - **Calibration, architect-side, now at 3 occurrences — fold candidate for
   PE at milestone close.** *A mechanical criterion must not be written so that
   its own corpus contains the text it greps for.* Three variants, all caught

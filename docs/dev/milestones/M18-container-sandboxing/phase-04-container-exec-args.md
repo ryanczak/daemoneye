@@ -249,8 +249,18 @@ could never hit their targets. Today the boundary is at
 `container.rs:284`; all three scoped counts are `0`.
 
 - [ ] `sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/container.rs | grep -c '"--user"'`
-      prints `1` (**before: 0**) — the flag is emitted from exactly one place
-      in production code, so it cannot be conditionally skipped.
+      prints `2` (**before: 0**). **Corrected 2026-08-28 from `1`, which this
+      doc's own Spec made unsatisfiable:** Task 3 requires `stage_args` to emit
+      `--user 0:0` and Task 4 requires `run_args` to emit
+      `--user <cfg.run_as>`, and both emissions are pinned by tests
+      (`sandbox_exec_stage_args_run_as_root_and_chown_to_the_sandbox_uid`,
+      `sandbox_exec_run_args_match_the_prototyped_vector`). The criterion's
+      real intent — that `run_args` cannot conditionally skip the flag — is
+      carried by `sandbox_exec_run_args_are_empty_for_bad_run_as`: the only
+      way `run_args` omits `--user` is by returning an empty vector, which is
+      itself pinned. The executor flagged this as a blocker rather than
+      editing the criterion or merging the two sites; that was the correct
+      call and the count was wrong, not the work.
 - [ ] `sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/container.rs | grep -c "mode=0700"`
       prints `1` (**before: 0**).
 - [ ] `sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/container.rs | grep -cE 'uid=1000|gid=1000'`
@@ -349,7 +359,7 @@ echo "== C. structural greps =="
 echo -n "run_args:             "; grep -c "pub fn run_args" src/daemon/executor/container.rs
 echo -n "evaluate_preflight:   "; grep -c "pub fn evaluate_preflight" src/daemon/executor/container.rs
 echo -n "split_run_as:         "; grep -c "pub fn split_run_as" src/daemon/executor/container.rs
-echo -n "--user emitted once:  "; sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/container.rs | grep -c '"--user"'
+echo -n "--user emitted twice: "; sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/container.rs | grep -c '"--user"'
 echo -n "mode=0700 once:       "; sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/container.rs | grep -c "mode=0700"
 echo -n "no literal uid=1000:  "; sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/container.rs | grep -cE 'uid=1000|gid=1000'
 echo -n "allow(dead_code) tot: "; grep -rc "allow(dead_code)" src/ | awk -F: '{s+=$2} END {print s}'
