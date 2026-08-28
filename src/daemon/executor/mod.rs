@@ -1,3 +1,4 @@
+mod container;
 mod file_ops;
 mod foreground;
 mod knowledge;

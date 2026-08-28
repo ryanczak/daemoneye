@@ -1,7 +1,7 @@
 # Phase 02: Container runtime probe and UID-mapping gate
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`SandboxConfig` supplies `runtime`, `docker_host`, `run_as`)
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -416,3 +416,34 @@ lines and still reports `cargo_exit=0`. Ten lines is the pass condition.
 - Editing `CLAUDE.md`, `README.md`, or `assets/etc/config.toml`.
 
 ## Update Log
+
+<!-- entries appended below this line -->
+
+### Update — 2026-08-28 18:06 (blocker)
+
+**Blocked on:** clippy dead-code errors — every public item in the new
+module is unused because phase-04 is the consumer, and the hard rules forbid
+`#[allow(dead_code)]`.
+
+**What I tried, in order:**
+1. Implemented Tasks 1–8 (`container.rs` + `mod container;`): all 10
+   filter tests pass, `cargo test --lib` = 1405 passed / 1 ignored, structural
+   greps all match.
+2. `cargo build` and `cargo clippy --all-targets --all-features -- -D
+   warnings` each fail on exactly these 8 dead-code items —
+   `RuntimeUnavailable`, `UidGateOutcome`, `UidRange`, `parse_uid_map`,
+   `host_uid_for`, `evaluate_uid_gate`, `classify_version_probe`,
+   `probe_runtime`.
+3. Confirmed no caller exists in `src/` — the 10 tests are the only
+   consumers. This follows directly from § Out of scope ("**Calling the
+   gate.** Nothing wires ... Phase-04 does that.").
+4. Repo precedent: `src/search.rs:529` carries `#[allow(dead_code)]` on a
+   whole function for the same reason, but I may not add one without
+   authorization.
+
+**What I need:** a decision to reconcile "no lint-silencing directives" with
+"gate green before phase-04 exists". Options: (a) authorize one
+`#[allow(dead_code)]` on the affected items in this phase's doc —
+recommended, same pattern as `search_dir`, removable when phase-04 lands; or
+(b) waive the clippy dead_code errors for this phase. I have **not** added
+the directive until told which way to go.
