@@ -1,7 +1,7 @@
 # Phase 01: Sandbox configuration schema
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** in-progress (bounced — see bugs/bug-phase-01-1.md)
 **Depends on:** none
 **Estimated diff:** ~330 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -379,6 +379,29 @@ Every count below was measured against the current tree while drafting and is
 - [ ] All four gates green: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 - [ ] The § End-to-end entry exists and contains the literal line `PASTE MATCH`.
+
+### Added 2026-08-28 by the round-1 review (bug-phase-01-1)
+
+Round 1 met every criterion above — verified independently at review. These
+carry the one outstanding defect. Both were run against the round-1 tree and
+produced the "before" value shown.
+
+- [ ] `grep -cE 'as_raw_fd\(&std::fs::File::open' src/daemon/server/mod.rs`
+      prints `0` (**before: 1**). The rewritten `peer_euid_none_on_invalid_fd`
+      calls `as_raw_fd()` on a temporary `File` that drops — and therefore
+      closes — in the same statement, then asserts on the reusable descriptor
+      number. Linux reuses it immediately (measured: closed fd 3 → next socket
+      fd 3), and the suite is multi-threaded in one process with sibling tests
+      opening Unix sockets. Fix by using a permanently invalid descriptor
+      (`-1` → `EBADF`) or by binding the `File` to a named local that outlives
+      the assertion (`ENOTSOCK`). Full analysis: `bugs/bug-phase-01-1.md`.
+- [ ] `peer_euid_none_on_invalid_fd` passes under **all three** stdin shapes —
+      `< /dev/null`, a pipe, and a socketpair — with the socketpair result
+      pasted into the Update Log. (**before: passes**; a regression guard, so
+      it must stay passing. The socketpair case is the one that broke the
+      *original* test and is why it was rewritten at all.)
+- [ ] `cargo test --lib 2>&1 | grep -E "^test result:"` still reports
+      `1395 passed; 0 failed` — the repair changes no test count.
 
 ## Test plan
 
