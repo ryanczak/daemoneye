@@ -1,7 +1,7 @@
 # Phase 05: Route background commands through the sandbox
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04 (`run_args`, `ExecSpec`), phase-01 (`SandboxConfig.enabled`)
 **Estimated diff:** ~330 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -353,3 +353,48 @@ test lines and still reports `cargo_exit=0`. Six lines is the pass condition.
   `README.md`, or `assets/etc/config.toml`.
 
 ## Update Log
+
+### Update — 2026-08-28 22:24 (started)
+
+Starting phase-05. Status flipped `todo → in-progress`, milestone README row
+updated. Work: implement `sandbox_window_command` (Task 1), wire it into the
+`run.rs` seam (Task 2), remove the `#[allow(dead_code)]` on
+`pub(crate) mod container;` (Task 3), add six unit tests + one `#[ignore]`d
+live test (Tasks 4–5), capture the § End-to-end block verbatim (Task 6).
+
+Executor: model run for the rexyMCP server.
+
+### Update — 2026-08-28 22:33 (blocker)
+
+**Blocked on:** Task 3's stated dead-code count (7 → 6) does not match the
+tree — removing the module `#[allow(dead_code)]` surfaces **14** dead items,
+not zero, so `cargo clippy` cannot pass and the spec's own rule forbids
+re-adding the attribute or adding a new one.
+
+**What I tried, in order:**
+
+1. Implemented Task 1 (`sandbox_window_command`), Task 2 (seam wiring in
+   `run.rs`), Tasks 4–5 (six unit tests + the one `#[ignore]`d live test).
+   `cargo test --lib sandbox_window` → 6 passed; 1 ignored; all green. The
+   pure wrapper itself works and every § Test plan pin passes.
+2. Removed the `#[allow(dead_code)]` + comment from `executor/mod.rs`
+   (Task 3) as specified.
+3. `cargo build` → 14 warnings; `cargo clippy --all-targets --all-features --
+   -D warnings` → **14 errors** (all `dead_code`): `RuntimeUnavailable`,
+   `UidGateOutcome`, `UidRange`, `parse_uid_map`, `host_uid_for`,
+   `evaluate_uid_gate`, `classify_version_probe`, `probe_runtime`,
+   `check_image_matches`, `ImageCheck`, `SandboxUnavailable`,
+   `evaluate_preflight`, `script_name_is_safe`, `stage_args`.
+4. Confirmed those 14 items are exactly the phase-02/03/04 outputs whose
+   production callers do not exist yet (phase-06 ghost lifecycle, staging, and
+   later phases). No legitimate wiring exists within this phase's scope; the
+   only caller this phase adds is `sandbox_window_command`.
+
+**What I need:** guidance on Task 3 with a tree that has 14 dead items and a
+`-D warnings` gate. Options the spec forbids me to choose myself: (a) keep a
+module-level `#[allow(dead_code)]`/`#[allow(dead_code)]` scoped
+`#[allow(dead_code)]` on the 14 items — both are "add an allow" which is
+explicitly forbidden; (b) wire the 14 items' future callers in — out of
+scope. A decision: does the architect update the criterion to the real count,
+authorize a targeted allow, or restructure the module (e.g. `container.rs`
+behind a `cfg(...)` or feature) so unused items don't lint?

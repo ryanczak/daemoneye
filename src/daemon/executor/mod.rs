@@ -1,6 +1,3 @@
-// Phase-04 wires this module into the executor; until then nothing calls it,
-// so the dead-code lint must be silenced to keep the `-D warnings` gate green.
-#[allow(dead_code)]
 pub(crate) mod container;
 mod file_ops;
 mod foreground;

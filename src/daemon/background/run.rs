@@ -164,6 +164,28 @@ pub async fn run_background_in_window(
         cmd
     };
 
+    let sandboxed_cmd;
+    let cmd: &str = {
+        let config = crate::config::Config::load().unwrap_or_default();
+        if config.sandbox.enabled {
+            let job_id = format!("{pane_num}-{unix_ts}");
+            let spec = crate::daemon::executor::container::ExecSpec {
+                job_id: &job_id,
+                network: "none",
+                is_ghost: false,
+                command: cmd,
+            };
+            sandboxed_cmd = crate::daemon::executor::container::sandbox_window_command(
+                &config.sandbox,
+                &spec,
+                cmd,
+            );
+            &sandboxed_cmd
+        } else {
+            cmd
+        }
+    };
+
     let wrapped = if exit_var == "$status" {
         // fish: use set to capture status before running notify
         format!("{cmd}; set __de_ec $status; {notify}")
@@ -171,7 +193,6 @@ pub async fn run_background_in_window(
         // bash / zsh / sh / ksh / dash / ...
         format!("{cmd}; __de_ec=$?; {notify}")
     };
-
     // Fix A: subscribe to completion channels BEFORE send_keys so a fast-completing
     // command cannot fire its signal before the monitor has subscribed.
     let mut complete_rx = complete_subscribe();

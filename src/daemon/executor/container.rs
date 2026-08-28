@@ -401,6 +401,10 @@ pub struct ExecSpec<'a> {
 /// and spawns it.
 pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec) -> Vec<String> {
     let Some((uid, gid)) = split_run_as(&cfg.run_as) else {
+        log::warn!(
+            "sandbox enabled but run_as={:?} unparseable; falling back to running on the host",
+            cfg.run_as
+        );
         return Vec::new();
     };
     let mut args = vec![
@@ -435,6 +439,27 @@ pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec) -> Vec<String> {
     args.push("-lc".to_string());
     args.push(spec.command.to_string());
     args
+}
+
+/// The command string a `de-bg-*` window should run for `raw_cmd`.
+///
+/// With the sandbox disabled this is `raw_cmd` unchanged. With it enabled the
+/// result is a fully shell-quoted `docker run …` line that carries `raw_cmd`
+/// as a single literal argument to the container's shell, so nothing in it is
+/// interpreted by the host shell.
+pub fn sandbox_window_command(cfg: &SandboxConfig, spec: &ExecSpec, raw_cmd: &str) -> String {
+    if !cfg.enabled {
+        return raw_cmd.to_string();
+    }
+    let run = run_args(cfg, spec);
+    if run.is_empty() {
+        return raw_cmd.to_string();
+    }
+    std::iter::once(cfg.runtime.clone())
+        .chain(run)
+        .map(|arg| crate::daemon::utils::sh_single_quote(&arg))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -1084,5 +1109,148 @@ mod tests {
             Err(SandboxUnavailable::NoLock) => {}
             other => panic!("expected NoLock, got {other:?}"),
         }
+    }
+
+    // ── sandbox_window_command ─────────────────────────────────────────────
+    //
+    // The six non-ignored tests below pin the pure wrapper's behaviour; the
+    // seventh is the milestone's second live ignored test.
+
+    #[test]
+    fn sandbox_window_disabled_returns_the_command_unchanged() {
+        let cfg = SandboxConfig::default();
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: false,
+            command: "echo hi",
+        };
+        let result = sandbox_window_command(&cfg, &spec, "echo hi");
+        assert_eq!(result, "echo hi");
+        assert_eq!(result.as_str(), "echo hi");
+    }
+
+    #[test]
+    fn sandbox_window_enabled_starts_with_the_quoted_runtime() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..SandboxConfig::default()
+        };
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: false,
+            command: "echo hi",
+        };
+        let result = sandbox_window_command(&cfg, &spec, "echo hi");
+        assert!(result.starts_with("'docker' 'run' '--rm'"), "got: {result}");
+    }
+
+    #[test]
+    fn sandbox_window_keeps_a_hostile_command_in_one_token() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..SandboxConfig::default()
+        };
+        let raw = "echo inside-container; touch /tmp/PWNED";
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: false,
+            command: raw,
+        };
+        let result = sandbox_window_command(&cfg, &spec, raw);
+        assert!(
+            result.ends_with("'echo inside-container; touch /tmp/PWNED'"),
+            "got: {result}"
+        );
+    }
+
+    #[test]
+    fn sandbox_window_quotes_embedded_single_quotes() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..SandboxConfig::default()
+        };
+        let raw = "echo 'a'";
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: false,
+            command: raw,
+        };
+        let result = sandbox_window_command(&cfg, &spec, raw);
+        // The embedded `'` becomes `'\''` (close-quote, escaped quote, reopen)
+        // — the sh_single_quote rendering — never a naive close-open `''` pair.
+        let expected_tail = r"'echo '\''a'\'''";
+        assert!(result.ends_with(expected_tail), "got: {result}");
+        assert_eq!(
+            result.matches('\'').count(),
+            result.len() - result.replace('\'', "").len()
+        );
+    }
+
+    #[test]
+    fn sandbox_window_carries_the_job_id_into_the_volume_mount() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..SandboxConfig::default()
+        };
+        let spec = ExecSpec {
+            job_id: "42-1712937600",
+            network: "none",
+            is_ghost: false,
+            command: "echo hi",
+        };
+        let result = sandbox_window_command(&cfg, &spec, "echo hi");
+        assert!(
+            result.contains("'de-stage-42-1712937600:/de/scripts:ro'"),
+            "got: {result}"
+        );
+    }
+
+    #[test]
+    fn sandbox_window_falls_back_when_run_as_is_unparseable() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            run_as: "nope".to_string(),
+            ..SandboxConfig::default()
+        };
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: false,
+            command: "echo hi",
+        };
+        let result = sandbox_window_command(&cfg, &spec, "echo hi");
+        assert_eq!(result, "echo hi");
+    }
+
+    #[test]
+    #[ignore = "requires a running rootless Docker daemon"]
+    fn sandbox_window_command_line_runs_in_a_real_container() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..SandboxConfig::default()
+        };
+        let job_id = format!("e2e-{}", std::process::id());
+        let spec = ExecSpec {
+            job_id: &job_id,
+            network: "none",
+            is_ghost: false,
+            command: "echo sandbox-ok",
+        };
+        let line = sandbox_window_command(&cfg, &spec, "echo sandbox-ok");
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&line)
+            .output()
+            .expect("spawning sh failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("sandbox-ok"),
+            "container output lacked 'sandbox-ok': {stdout:?} stderr={:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
