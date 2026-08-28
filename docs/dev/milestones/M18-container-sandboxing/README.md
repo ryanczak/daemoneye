@@ -1,0 +1,126 @@
+# M18 — Container-sandboxed Agents
+
+**Goal:** Every background command or script an agent triggers executes inside
+an ephemeral, rootless, resource-limited Docker container instead of directly
+on the host — with the daemon staying native, foreground execution untouched,
+and host-level ops flowing only through an explicit escape hatch.
+
+**Status:** planning
+
+**Depends on:** none (M16 and M17 closed 2026-08-20). **Operator prerequisite
+before phase-02 dispatch:** rootless Docker installed on the daemon host
+(design § Rollout step 1: `pacman -S docker docker-rootless-extras`,
+`dockerd-rootless-setuptool.sh install`, user unit enabled). This is a sudo
+system-state change and is the operator's/architect's job, never an executor
+task — the executor bash guard forbids it, and the M16 phase-01 incident is
+the standing reason no executor touches host services.
+
+**Design of record:** `docs/design/agent-container-sandboxing.md` (revised
+2026-08-28). The D0 tool disposition table is the contract: exactly one tool
+(`run_terminal_command`, background mode) plus script execution changes
+backend; everything else is broker-native or foreground and must be untouched.
+
+**Exit criteria:**
+
+- With `[sandbox] enabled = true`, a background `run_terminal_command` runs
+  inside a container: the process tree under the `de-bg-*` pane is
+  `docker exec …`, and `pane-died` completion detection, output
+  capture/archive, and `close_background_window` work unchanged (live check).
+- UID-mapping gate: `id` inside a fresh container reports uid 1000, and the
+  host-visible uid of the containerized process is 1000 (live check; refusal
+  path unit-tested against fixture output).
+- Mount-surface assertion: from inside a fresh container, every non-mounted
+  host path is absent (`~/.daemoneye/etc`, memory dirs, `~/.ssh`, the tmux
+  socket path, the Docker API socket) and `/de/scripts` is read-only (live
+  check, scripted).
+- No credential enters the sandbox: the container environment and filesystem
+  contain no AI API key (live check; also a negative grep criterion on the
+  mount-assembly code).
+- Relay refusal: a ghost requesting a host script not on its
+  `escape_allowlist` gets the op **parked** — mailbox result + `[Ghost Shell …]`
+  event — with nothing executed on the host, asserted through the daemon's
+  real door (event log + mailbox), not the container (unit + live check).
+- Ghost lifecycle: `kill -9` the daemon mid-ghost; after restart no container
+  labeled `de.ghost=1` remains (live check).
+- Network: a default-profile container has no route out (`none`); a
+  proxy-profile container reaches an allowlisted host through the
+  daemon-owned proxy (request logged) and cannot reach a non-allowlisted one
+  (live check).
+- Resource limits: an in-container fork bomb hits the `pids` cap and a
+  scratch write beyond the `scratch` cap fails, with daemon and host
+  unaffected (live check, isolated).
+- Image lockfile: `daemoneye sandbox build` records the image digest;
+  the daemon refuses sandboxed execution when the available image digest
+  differs from the lockfile (unit-tested with fixtures; live check).
+- With `[sandbox] enabled = false` (the default), behaviour is byte-for-byte
+  today's: no docker invocation anywhere in a full chat + ghost round trip
+  (unit + live check).
+- All four gates green on a host **without** docker installed: `cargo fmt
+  --all`, `cargo build`, `cargo clippy --all-targets --all-features -- -D
+  warnings`, `cargo test`. Docker-dependent tests are `#[ignore]`d with a
+  reason string naming the runtime requirement; the ignored set is run
+  explicitly at milestone close on the docker-equipped host.
+
+Live checks are architect-run (M14–M17 convention: through the user's door,
+session JSONL / event log as evidence anchors, isolated `tmux -L <name>`
+servers so the operator's session is never touched).
+
+## Architecture references
+
+- `docs/design/agent-container-sandboxing.md` — the design of record
+  (D0–D6, config schema, image lifecycle, testing).
+- `CLAUDE.md` § "Request/Response lifecycle" and § "Key files" —
+  `src/daemon/executor/`, `src/daemon/background/`.
+- `docs/architecture.md` — orchestration layer.
+
+## Design decisions on record
+
+- **D0 disposition is frozen for the milestone.** Broker-native tools and
+  foreground execution (including remote `target_pane`) are out of scope for
+  every phase; a phase that touches them is mis-scoped by definition.
+- **One base image, per-profile policy** — no per-agent images (design D3).
+- **No credential mount, network `none` by default** (design D4/D5); egress
+  only via the daemon-owned proxy for profiles that declare it.
+- **Sudoers and the escape hatch are the same door** in the sandbox world:
+  rootless containers cannot exercise host sudo, so sudo-needing scripts are
+  always escape-hatch ops (design D6).
+- **The rootless Docker API socket is accepted attack surface** (same trust
+  boundary as any `matt` process today); it is never mounted into a
+  container.
+- **Everything lands behind `[sandbox] enabled`, default OFF**, so every
+  phase keeps the unmodified path shippable.
+
+## Phases
+
+Ordering: 01 → 02 → 03 → 04 (core plumbing, each depending on the previous),
+then 05 → 06 → 07 (execution integration), then 08–10. Phase docs are drafted
+one at a time via `/rexymcp:architect next` — none are drafted ahead;
+line-number facts go stale (M4/M16 precedent) and this milestone's Current
+state will shift with each landing.
+
+| #  | Phase | Status | Scope (one line) |
+|----|-------|--------|------------------|
+| 01 | sandbox-config | todo (not drafted) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic. |
+| 02 | container-runtime-probe | todo (not drafted) | `executor/container.rs` scaffold: runtime detection, `docker info` health, UID-map gate with fixture-tested parsing, `Request::ContainerStatus` / `Response::ContainerStatus`, `daemoneye status` surface. |
+| 03 | image-lifecycle | todo (not drafted) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + refuse-on-mismatch, staleness warning in `retention_warnings()`, `requires_tools` frontmatter check. |
+| 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, D4 mounts, `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Flag-gated, nothing routed yet. |
+| 05 | background-window-integration | todo (not drafted) | Route background `run_terminal_command` through `docker exec` inside the `de-bg-*` window when enabled; completion detection, archive, cap, GC unchanged. |
+| 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep. |
+| 07 | escape-hatch | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify (mailbox + `[Ghost Shell …]` event), `escape_hatch` flag on `ToolCallPrompt`, event-log records. |
+| 08 | chat-session-containers | todo (not drafted) | Long-lived `de-chat-<session>` container, lazy create, restart-independent, session-end GC + restart sweep. |
+| 09 | egress-proxy | todo (not drafted) | Daemon-owned egress proxy, `network = "proxy"` profile wiring, per-profile hostname allowlist, request logging. May be deferred at PE discretion — nothing in 01–08 depends on it. |
+| 10 | docs-and-pilot | todo (not drafted) | CLAUDE.md / README / doc_truth updates, pilot runbook (low-risk, network-none), pilot metrics capture (start latency, park counts, failed starts). |
+
+## Notes
+
+- **Executor-host constraint (load-bearing):** the four gates must stay green
+  on hosts with no docker binary. Runtime interaction lives behind
+  `#[ignore]`; logic phases test parsing/assembly against captured fixture
+  output. Phase docs must pre-inject the fixture text — the executor cannot
+  run docker to produce it.
+- **Warm pool deliberately not scoped** — phase-10's latency numbers decide
+  whether it is ever worth a follow-up milestone item (design D3).
+- **`container:shell` (interactive tty relay) deferred** — open question in
+  the design, needed by none of these phases.
+- Scoped 2026-08-28 from `docs/design/agent-container-sandboxing.md`
+  (commit `d856ca6`).

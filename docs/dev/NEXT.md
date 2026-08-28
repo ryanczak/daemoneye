@@ -1502,9 +1502,34 @@ returns to the chat surface, and the turn **resumes and keeps streaming**
 afterwards. Stated precisely: resumption was observed; run-to-final-completion
 after a mid-turn viewer was not separately proven within the capture window.
 
-**Active phase: none.** Both **M16 — LLM Stream Robustness** and **M17 —
-Transcript View** were closed 2026-08-20 on PE sign-off. No milestone is open;
-the next one needs scoping with `/rexymcp:architect`.
+## Active milestone: M18 — Container-sandboxed Agents (scoped 2026-08-28)
+
+**Goal:** background command/script execution moves into ephemeral rootless
+Docker containers via a `ContainerExec` backend at the executor choke point;
+daemon stays native, foreground untouched, host ops only via the escape hatch.
+
+Design of record: `docs/design/agent-container-sandboxing.md` (commit
+`d856ca6`). Milestone README with the 10-phase plan and exit criteria:
+`docs/dev/milestones/M18-container-sandboxing/README.md`.
+
+**Active phase: none — phase-01 (sandbox-config) is not yet drafted.** Draft
+it via `/rexymcp:architect next`. Phase docs are drafted one at a time, not
+ahead (M4/M16 stale-line-number precedent).
+
+**Operator prerequisite before phase-02 dispatch:** rootless Docker installed
+on the daemon host (sudo system-state change — operator/architect only, never
+an executor task). Phase-01 is pure config schema and does not need it.
+
+**Load-bearing constraint for every M18 phase doc:** the four gates must stay
+green on hosts without docker; runtime-touching tests are `#[ignore]`d, logic
+is tested against pre-injected fixture output.
+
+---
+
+## Historical: post-M17 boundary (superseded by M18 scoping)
+
+**Active phase was none.** Both **M16 — LLM Stream Robustness** and **M17 —
+Transcript View** were closed 2026-08-20 on PE sign-off.
 
 **M17 closed** with all 7 phases `done` (5 approved_first_try; phase-02
 approved_after_3, phase-03 approved_after_2) and all 5 bug docs resolved.
