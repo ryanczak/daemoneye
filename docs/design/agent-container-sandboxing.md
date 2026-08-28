@@ -275,13 +275,33 @@ one vetted script, not the whole library.
 |--------|----------------|------|-----------|
 | staged volume (approved script only) | `/de/scripts` | RO | vetted automation, staged per run — never a bind-mount of the 0700 dir |
 | staged volume (per-runbook file) | `/de/runbook.md` | RO | context, not mutable |
-| `--tmpfs` sized by `[sandbox.limits] scratch` | `/de/work` | RW | agent scratch, destroyed with container; verified writable as uid 1000 |
+| `--tmpfs` sized by `[sandbox.limits] scratch`, **plus `mode=0700,uid=1000,gid=1000`** | `/de/work` | RW | agent scratch, destroyed with container. The uid/gid options are **required**, not cosmetic — see below |
 | *(no log mount — relay only)* | *(none)* | — | agents hand log lines to the daemon via a `log` opcode; daemon appends to the real event log |
 
 **No credential mount.** The daemon runs the LLM loop and talks to the AI
 backend; nothing inside the sandbox needs the API key, and it is precisely
 the secret a compromised workload must not hold. (The earlier draft mounted
 `/de/cred:ro` — removed.)
+
+**Correction (measured 2026-08-28 while drafting phase-03).** An earlier note
+here said the scratch tmpfs was "verified writable as uid 1000". That test
+passed only because it ran against stock `alpine`, which has no `/de/work`
+directory: when the mountpoint does **not** exist in the image, Docker creates
+the tmpfs mode `1777`. Once the agent image carries `WORKDIR /de/work`, the
+directory exists (root-owned `0755`) and **the tmpfs inherits that mode**, so
+the sandboxed uid gets `Permission denied`.
+
+Measured, on the real agent image:
+
+| tmpfs flags | resulting `/de/work` | writable as uid 1000 |
+|---|---|---|
+| `rw,size=64m` (image has the dir) | `drwxr-xr-x root root` | **no** |
+| image `chown 1000:1000` + `rw,size=64m` | `drwx------ root root` | **no** — mode is inherited, ownership is not |
+| `rw,size=64m,mode=0700,uid=1000,gid=1000` | `drwx------ de de` | **yes** |
+
+So the fix belongs on the **mount flag, not in the Dockerfile** — chowning the
+directory in the image is the obvious move and it does not work. Phase-04 must
+pass `mode=0700,uid=1000,gid=1000` on every scratch tmpfs.
 
 Explicitly NOT mounted: `etc/config.toml`, memory dirs, `var/run` (socket),
 the rootless Docker socket, `.ssh`, shell rc. If a workload needs host

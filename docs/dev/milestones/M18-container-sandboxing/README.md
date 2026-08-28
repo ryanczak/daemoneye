@@ -131,8 +131,8 @@ state will shift with each landing.
 |----|-------|--------|------------------|
 | 01 | sandbox-config ([phase-01-sandbox-config.md](phase-01-sandbox-config.md)) | **done** (approved_after_1, 2026-08-28) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic — no docker. |
 | 02 | container-runtime-probe ([phase-02-container-runtime-probe.md](phase-02-container-runtime-probe.md)) | **done** (approved_after_1, 2026-08-28) | `executor/container.rs`: runtime version probe + D1 UID-map gate, all decision logic pure and fixture-tested; one `#[ignore]`d live test. Nothing wired yet. **IPC surface deferred** — see Notes. |
-| 03 | image-lifecycle | todo (not drafted) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + refuse-on-mismatch, staleness warning in `retention_warnings()`, `requires_tools` frontmatter check. |
-| 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, `--user 1000:1000`, D4 per-run staging volume (root helper stages the approved script, chown 1000), `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Calls the phase-02 gate. Also carries the deferred `Request::ContainerStatus` / `Response::ContainerStatus` + `daemoneye status` surface. Flag-gated, nothing routed yet. |
+| 03 | image-lifecycle ([phase-03-image-lifecycle.md](phase-03-image-lifecycle.md)) | **todo** (drafted 2026-08-28) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + the pure compare helpers phase-04's refusal gate uses. Staleness warning and `requires_tools` deferred — see Notes. |
+| 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, `--user 1000:1000`, D4 per-run staging volume (root helper stages the approved script, chown 1000), scratch tmpfs **with `mode=0700,uid=1000,gid=1000`** (see Notes — without these flags it is not writable), `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Calls the phase-02 gate and phase-03's `check_image_matches`; removes phase-02's `#[allow(dead_code)]`. Also carries the deferred `Request::ContainerStatus` + `daemoneye status` surface. Flag-gated. |
 | 05 | background-window-integration | todo (not drafted) | Route background `run_terminal_command` through `docker exec` inside the `de-bg-*` window when enabled; completion detection, archive, cap, GC unchanged. |
 | 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep. |
 | 07 | escape-hatch | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify (mailbox + `[Ghost Shell …]` event), `escape_hatch` flag on `ToolCallPrompt`, event-log records. |
@@ -153,6 +153,23 @@ state will shift with each landing.
   the design, needed by none of these phases.
 - Scoped 2026-08-28 from `docs/design/agent-container-sandboxing.md`
   (commit `d856ca6`).
+- **Measured while drafting phase-03 (2026-08-28) — a design correction.**
+  The scratch tmpfs at `/de/work` is **not** writable by the sandboxed uid
+  unless the mount flag carries `mode=0700,uid=1000,gid=1000`, and the obvious
+  Dockerfile fix does not work: when the mountpoint exists in the image the
+  tmpfs **inherits its mode but not its ownership**, so an in-image
+  `chown 1000:1000` still yields `drwx------ root root` and a denial. The
+  design's D4 originally claimed the mount was "verified writable as uid
+  1000" — that test had passed only against stock `alpine`, which has no
+  `/de/work`, where Docker creates the tmpfs mode `1777`. D4 now carries the
+  measured table. **Phase-04 must pass the uid/gid options.**
+- **Scope change at phase-03 drafting (2026-08-28):** the image **staleness
+  warning** and the runbook **`requires_tools`** check are deferred out of
+  phase-03. The staleness warning does not fit `retention_warnings()` —
+  `RetentionWarning` holds `&'static str` fields
+  (`src/daemon/utils/warnings.rs:24`) and a "built N days ago" message is
+  dynamic — and neither check has a consumer until phase-04 can run a
+  container. Both land with the phase that uses them.
 - **Scope change at phase-02 drafting (2026-08-28):** the `Request::ContainerStatus`
   / `Response::ContainerStatus` IPC surface and its `daemoneye status` line moved
   from phase-02 to phase-04. Reason: until phase-04 can actually run a container

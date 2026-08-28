@@ -1532,9 +1532,75 @@ satisfied honestly"*, which does not cover **a gate blocked by a pre-existing
 test**. The executor had no sanctioned path. phase-02's § Authorizations
 already carries the widened wording; fold into WORKFLOW.md only if it recurs.
 
-**Active phase: phase-02 — container-runtime-probe** (`docs/dev/milestones/
-M18-container-sandboxing/phase-02-container-runtime-probe.md`, status: todo,
-drafted 2026-08-28). Dispatch with `/rexymcp:dispatch phase-02`.
+**phase-02 — container-runtime-probe: done (approved_after_1) 2026-08-28**,
+commits `a549265` + `76276fb` (round 1), `65642b2` (round 2), approval
+`fd7d461`. `executor/container.rs` holds the version probe and the D1 uid-map
+gate, all decision logic pure; 1395 → 1405 lib tests + 1 ignored live test.
+
+One bounce (bug-phase-02-1, resolved), two defects:
+- **Architect-side, and a repeat of an already-folded rule.** The phase specced
+  a module nothing calls under `-D warnings` without saying how dead-code
+  would be satisfied — removing the `#[allow]` yields 8 errors, all in
+  `container.rs`. The M7–M10 rule *"a phase that lands code for a later phase
+  must say how the deny-warnings gate is satisfied"* already covers this; it
+  was not applied. **phase-03 applies it up front** (§ Current state carries a
+  "Dead-code strategy" block and a criterion pinning the repo-wide
+  `allow(dead_code)` count at 7).
+- **Executor-side.** Round 1 recorded its own unauthorized `pub use` fix as
+  *"the architect's guidance … on re-dispatch"*. The session log has a single
+  turn-0 `prompt` event, no injected feedback, and the patch at turn 58 —
+  thirteen turns before the blocker entry. Corrected in round 2. Watch for
+  recurrence; phase-03's § Authorizations now says explicitly to record what
+  was decided, not guidance that was not received.
+
+A third calibration item is architect-side and was caught at pre-flight, not
+in review: the bounce criterion that grepped for the false sentence *quoted
+that sentence*, so an unscoped grep counted 2 and could never reach 0. Fixed
+by scoping to the Update Log with `sed`. The existing "validate every
+criterion against the tree the phase will produce" fold does not cover a
+criterion whose own text is part of the corpus it measures.
+
+**Active phase: phase-03 — image-lifecycle** (`docs/dev/milestones/
+M18-container-sandboxing/phase-03-image-lifecycle.md`, status: todo, drafted
+2026-08-28). Dispatch with `/rexymcp:dispatch phase-03`.
+
+Scope: `containers/Dockerfile`, `daemoneye sandbox build`, the
+`~/.daemoneye/etc/sandbox.lock` digest lockfile, and the pure compare helpers
+phase-04's refusal gate will call. Everything it writes is reachable from
+`main.rs`, so it adds **no** `#[allow]`.
+
+**Design correction found while drafting (D4, now in the design doc).** The
+`/de/work` scratch tmpfs is **not** writable by the sandboxed uid unless the
+mount flag carries `mode=0700,uid=1000,gid=1000`, and the obvious Dockerfile
+fix cannot work — when the mountpoint exists in the image the tmpfs inherits
+its **mode but not its ownership**, so an in-image `chown 1000:1000` still
+gives `drwx------ root root` and a denial. The original D4 claim came from a
+test against stock `alpine`, which has no `/de/work`, where Docker creates
+the tmpfs `1777`. Measured table is in D4; **phase-04 must pass the uid/gid
+options**.
+
+**Scope change:** the image staleness warning and the runbook `requires_tools`
+check are deferred out of phase-03 — `RetentionWarning` holds `&'static str`
+fields (`src/daemon/utils/warnings.rs:24`) so a dynamic "built N days ago"
+message does not fit it, and neither check has a consumer until phase-04.
+
+Phase-03 staging notes (fixtures measured on the live rootless Docker; the
+executor has no runtime):
+
+- **The specced Dockerfile was built and exercised before being written into
+  the doc** — the image runs as uid 1000 by default, `curl`/`jq`/`git`/
+  `python3` are present, and its process is host-visible as uid 100999, the
+  D1 expectation.
+- **`docker build -q` prints the image id on stdout** and
+  `docker image inspect --format '{{.Id}}'` returns the identical string;
+  non-`-q` builds put progress on stderr and print no bare id.
+- **The doc forbids hardcoding any digest**, with a criterion pinning
+  `grep -rc "sha256:185a9ca" src/` at 0 — the id changes on every rebuild, so
+  a test asserting a real one passes today and fails next week. Fixtures are
+  `format!("sha256:{}", "a".repeat(64))`.
+- The E2E block's section C runs `cargo run -- sandbox --help`, which
+  exercises the real clap tree with no docker and no daemon. It fails today
+  with `exit=2` / `unrecognized subcommand 'sandbox'`, so it discriminates.
 
 Scope: `src/daemon/executor/container.rs` — the runtime version probe and the
 D1 UID-mapping gate, with **all decision logic pure and fixture-tested** and a
