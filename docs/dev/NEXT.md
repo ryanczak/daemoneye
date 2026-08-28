@@ -1512,9 +1512,50 @@ Design of record: `docs/design/agent-container-sandboxing.md` (commit
 `d856ca6`). Milestone README with the 10-phase plan and exit criteria:
 `docs/dev/milestones/M18-container-sandboxing/README.md`.
 
-**Active phase: none — phase-01 (sandbox-config) is not yet drafted.** Draft
-it via `/rexymcp:architect next`. Phase docs are drafted one at a time, not
-ahead (M4/M16 stale-line-number precedent).
+**Active phase: phase-01 — sandbox-config** (`docs/dev/milestones/
+M18-container-sandboxing/phase-01-sandbox-config.md`, status: todo, drafted
+2026-08-28). Dispatch with `/rexymcp:dispatch phase-01`. Phase docs are
+drafted one at a time, not ahead (M4/M16 stale-line-number precedent).
+
+Scope: `[sandbox]` config schema only — `SandboxConfig` + `SandboxLimits` +
+`SandboxProfile` + `SandboxGhostDefaults`, serde defaults, a warn-only
+`validate()`, `runs_as_container_root()`, wiring into `Config` and the
+`daemon/mod.rs:479` startup validation site, and the `assets/etc/config.toml`
+documentation. **Hermetic — the phase must not invoke docker at all**, so it
+passes on a host with no container runtime.
+
+Phase-01 staging notes (all measured against the tree at draft time, commit
+`70a3389`):
+
+- **Baseline: 1387 lib tests, four gates green, zero `sandbox` matches** in
+  `src/`, `assets/`, `tests/`. Five of the six mechanical criteria measured
+  `0` today; the sixth is a regression guard measured in **both** directions
+  (see below).
+- **The `doc_truth` config gate is automatic and bidirectional.**
+  `config_sections()` derives sections from the `Config` struct, so adding
+  `pub sandbox: SandboxConfig` immediately makes every `SandboxConfig` field
+  a documentation obligation in `assets/etc/config.toml`. Proven live: seeding
+  `# nonexistent_knob = 1` under `[ghost]` made
+  `seeded_config_template_has_no_phantom_keys` FAIL naming the key; reverted,
+  `2 passed`.
+- **The `profile` map needs a bare `# [sandbox.profile]` heading line** — a
+  trap that is not guessable. The gate matches a sub-table on its **last**
+  dot-segment, so `[sandbox.profile.researcher]` registers as `researcher`
+  and leaves `profile` undocumented. Simulated against faithful ports of the
+  real `template_keys`/`subtables`/`struct_fields` functions: template with
+  only the `.researcher` heading → `MISSING: ['profile']`; same template plus
+  the bare heading → `MISSING: []`. Now § Gotchas item 2 with both results
+  quoted.
+- **`cargo test sandbox` passes today with zero tests** — the M16 vacuity
+  trap. Measured: section A of the E2E block prints no test lines at all
+  while reporting `cargo_exit=0`. Every criterion is therefore a **line
+  count**, never an exit status, and § Gotchas item 3 says so with the
+  measurement.
+- **`run_as` must be split on `:`, not substring-matched** — `"10:0"` is not
+  root. Pinned as a five-row table in § Test plan including three negative
+  cases, per the "pin negative cases" rule.
+- **PASTE MATCH validated both ways** against a copy of the phase doc: a
+  byte-exact paste → `PASTE MATCH`, one retyped line → `PASTE MISMATCH`.
 
 **Operator prerequisite before phase-02 dispatch:** rootless Docker installed
 on the daemon host (sudo system-state change — operator/architect only, never

@@ -129,7 +129,7 @@ state will shift with each landing.
 
 | #  | Phase | Status | Scope (one line) |
 |----|-------|--------|------------------|
-| 01 | sandbox-config | todo (not drafted) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic. |
+| 01 | sandbox-config ([phase-01-sandbox-config.md](phase-01-sandbox-config.md)) | **todo** (drafted 2026-08-28) | `[sandbox]` config schema: `SandboxConfig` + limits + profiles + ghost defaults, parsing, validation, `assets/etc/config.toml` docs. Hermetic — no docker. |
 | 02 | container-runtime-probe | todo (not drafted) | `executor/container.rs` scaffold: runtime detection, `docker info` health, UID-map gate with fixture-tested parsing, `Request::ContainerStatus` / `Response::ContainerStatus`, `daemoneye status` surface. |
 | 03 | image-lifecycle | todo (not drafted) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + refuse-on-mismatch, staleness warning in `retention_warnings()`, `requires_tools` frontmatter check. |
 | 04 | container-exec-backend | todo (not drafted) | `ContainerExec`: create-if-missing, `--user 1000:1000`, D4 per-run staging volume (root helper stages the approved script, chown 1000), `[sandbox.limits]` flags, `--network=none`, bounded output, `log` relay opcode. Flag-gated, nothing routed yet. |
