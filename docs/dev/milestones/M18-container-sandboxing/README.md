@@ -134,11 +134,11 @@ state will shift with each landing.
 | 03 | image-lifecycle ([phase-03-image-lifecycle.md](phase-03-image-lifecycle.md)) | **done** (approved_after_1, 2026-08-28) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + the pure compare helpers phase-04's refusal gate uses. Staleness warning and `requires_tools` deferred — see Notes. |
 | 04 | container-exec-args ([phase-04-container-exec-args.md](phase-04-container-exec-args.md)) | **done** (approved_first_try, 2026-08-28) | The two pure decisions before any container starts: `evaluate_preflight` (runtime + uid gate + image lock, in that order) and the argv builders `run_args` / `stage_args` / `split_run_as`. Whole argv prototyped against the real image first. Nothing spawns. |
 | 05 | background-window-integration ([phase-05-background-window-integration.md](phase-05-background-window-integration.md)) | **done** (approved_first_try, 2026-08-28) | **First phase whose code starts a container.** `sandbox_window_command` wraps a background command as a shell-quoted `docker run …` line at the `run.rs:159` seam when enabled; `de-bg-*` window, completion detection, capture and GC untouched. The `#[allow(dead_code)]` removal was **withdrawn** — 14 phase-02/03/04 items are still unwired; see Notes. |
-| 06 | ghost-container-lifecycle | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep — **and the staging-volume GC phase-05 deliberately defers** (a named volume auto-creates on `-v` and outlives `--rm`; measured). Owns all container/volume cleanup. **Also inherits the `#[allow(dead_code)]` removal** once the probe/preflight/staging callers are wired. |
-| 07 | escape-hatch | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify (mailbox + `[Ghost Shell …]` event), `escape_hatch` flag on `ToolCallPrompt`, event-log records. |
-| 08 | chat-session-containers | todo (not drafted) | Long-lived `de-chat-<session>` container, lazy create, restart-independent, session-end GC + restart sweep. |
-| 09 | egress-proxy | todo (not drafted) | Daemon-owned egress proxy, `network = "proxy"` profile wiring, per-profile hostname allowlist, request logging. May be deferred at PE discretion — nothing in 01–08 depends on it. |
-| 10 | docs-and-pilot | todo (not drafted) | CLAUDE.md / README / doc_truth updates, pilot runbook (low-risk, network-none), pilot metrics capture (start latency, park counts, failed starts). |
+| 06 | sandbox-preflight-gate ([phase-06-sandbox-preflight-gate.md](phase-06-sandbox-preflight-gate.md)) | **todo** (drafted 2026-08-28) | **Fail closed.** Probe the runtime once (`OnceLock`), decide with phase-04's `evaluate_preflight`, and **refuse** a background command when the sandbox is not sane instead of running it on the host. Phase-05 shipped sandboxed execution with no gate at all. |
+| 07 | ghost-lifecycle-and-gc | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep, **and the `de-stage-*` volume GC phase-05 deferred**. Wires staging (`stage_args`, `script_name_is_safe`), which is what finally allows the `#[allow(dead_code)]` to go. |
+| 08 | escape-hatch | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify (mailbox + `[Ghost Shell …]` event), `escape_hatch` flag on `ToolCallPrompt`, event-log records. |
+| 09 | chat-containers-and-egress | todo (not drafted) | Long-lived `de-chat-<session>` container (lazy create, restart-independent, session-end GC) **and** the containerized egress proxy for `network = "proxy"` profiles. The proxy may be dropped if the pilot shows no need. |
+| 10 | docs-and-pilot | todo (not drafted) | CLAUDE.md / README / doc_truth updates, `Request::ContainerStatus` + `daemoneye status` surface, the `log` relay opcode, pilot runbook, and pilot metrics (start latency, park counts, failed starts). |
 
 ## Notes
 
@@ -163,6 +163,16 @@ state will shift with each landing.
   1000" — that test had passed only against stock `alpine`, which has no
   `/de/work`, where Docker creates the tmpfs mode `1777`. D4 now carries the
   measured table. **Phase-04 must pass the uid/gid options.**
+- **Scope change at phase-06 drafting (2026-08-28):** a **preflight gate**
+  phase was inserted as 06, pushing ghost lifecycle to 07 and folding the
+  egress proxy into 09. Reason: phase-05 shipped sandboxed background
+  execution with **no preflight at all** — a missing runtime, a broken uid map
+  or a drifted image would surface as a confusing `docker` error inside the
+  pane. Worse, the design is fail-open there: `sandbox_window_command` falls
+  back to the host command. **When the operator asked for a sandbox, running
+  on the host instead is the wrong answer**, so phase-06 makes it fail closed
+  and refuses. That gap is more urgent than ghost lifecycle, which is still
+  behind a default-off flag.
 - **Scope change at phase-05 drafting (2026-08-28):** staging-volume cleanup
   moved to phase-06. Measured: `docker run -v de-stage-x:/de/scripts:ro …`
   auto-creates the named volume even read-only, and the volume **outlives

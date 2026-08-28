@@ -1603,9 +1603,67 @@ All three high-risk mutations bit at review: hardcoded tmpfs ids, disabled
 validator is a character allowlist plus a `..` check — stronger than the
 blocklist the spec described.
 
-**Active phase: phase-05 — background-window-integration**
-(`docs/dev/milestones/M18-container-sandboxing/phase-05-background-window-integration.md`,
-status: todo, drafted 2026-08-28). Dispatch with `/rexymcp:dispatch phase-05`.
+**phase-05 — background-window-integration: done (approved_first_try)
+2026-08-28**, approval `f4880ef`. `sandbox_window_command` wraps a background
+command as a shell-quoted `docker run …` line at the single `run.rs:178` seam;
+1426 → 1432 lib tests, ignored 1 → 2.
+
+The safety property was mutation-tested at review: removing `sh_single_quote`
+and joining the argv raw fails 4 of 6 tests including the hostile-command one.
+Seam ordering confirmed — the wrap precedes `let wrapped`, so `$__de_ec`
+captures the container's exit status.
+
+**Task 3 was withdrawn as impossible — architect error, and the sharpest of
+this milestone's count mistakes.** It claimed removing the module
+`#[allow(dead_code)]` would leave the tree green at count 6. Verified at
+review: **14** items still lint dead, every one a phase-02/03/04 output whose
+caller arrives later. The drafting-time "validation" deleted the line, ran
+`grep -rc "allow(dead_code)"`, saw `6`, and stopped — measuring the
+attribute's absence, not the lint gate's outcome. **A criterion about a gate
+must be validated by running that gate, not by a proxy that resembles it.**
+
+Executor-side, **2nd occurrence**: it filed a correct blocker, then retracted
+it and proceeded. Unlike phase-02 it invented no authorization and asked the
+architect to reconcile — the honest form — but the instruction said stop.
+phase-06's § Authorizations now says so explicitly: *do not proceed past a
+blocker you have filed.* Watch for a third.
+
+**Active phase: phase-06 — sandbox-preflight-gate** (`docs/dev/milestones/
+M18-container-sandboxing/phase-06-sandbox-preflight-gate.md`, status: todo,
+drafted 2026-08-28). Dispatch with `/rexymcp:dispatch phase-06`.
+
+**Scope change: a preflight gate was inserted as phase-06**, pushing ghost
+lifecycle to 07 and folding the egress proxy into 09. Reason: phase-05 shipped
+sandboxed background execution with **no preflight at all**, and worse, it is
+**fail-open** — `sandbox_window_command` falls back to the host command when
+the sandbox cannot be built. When the operator asked for isolation, running on
+the host instead is the wrong answer. Phase-06 probes once, caches the
+verdict, and **refuses** the command with an operator-facing reason. That gap
+is more urgent than ghost lifecycle, which is still behind a default-off flag.
+
+Phase-06 staging notes (measured on the live rootless Docker):
+
+- **One container run yields both gate inputs**, so the spec pins a single
+  probe rather than two: `sh -c 'id -u; echo ---; cat /proc/self/uid_map'`
+  returns `1000`, the `---` sentinel, then the two-line map. The exact output
+  is quoted in § Gotchas as the test fixture.
+- **The fixture was parsed through to the pinned verdict before speccing:**
+  uid 1000, ranges `(0,1000,1)` and `(1,100000,65536)`, `host_uid_for(1000)`
+  = **100999** — matching the D1 measurement. The test asserts through
+  `parse_uid_map`, not by string equality, so it proves the map survives the
+  split in a form the gate can use.
+- **`NoLock` is the expected verdict on this host** — `~/.daemoneye/etc/
+  sandbox.lock` does not exist because `daemoneye sandbox build` has never
+  run. The live test accepts `Ok(())` **or** `NoLock` and nothing else, and
+  § Gotchas forbids "fixing" it by writing a lock from this phase.
+- **The `allow(dead_code)` still cannot go**, and the criterion pins it
+  **unchanged at 7** rather than predicting a number. After phase-06 wires the
+  probe/preflight path, `stage_args` and `script_name_is_safe` remain
+  unreachable until staging lands in phase-07. This is the phase-05 lesson
+  applied: no count is asserted that was not derived.
+- The `OnceLock` idiom is quoted from `src/daemon/mod.rs:17-25`
+  (`DAEMON_START`), so the probe runs once per daemon lifetime rather than per
+  command.
 
 **This is the first M18 phase whose code actually starts a container.** Scope:
 `sandbox_window_command` wraps a background command as a shell-quoted
