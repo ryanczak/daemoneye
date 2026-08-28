@@ -1,4 +1,8 @@
 mod container;
+pub use container::{
+    RuntimeUnavailable, UidGateOutcome, UidRange, classify_version_probe, evaluate_uid_gate,
+    host_uid_for, parse_uid_map, probe_runtime,
+};
 mod file_ops;
 mod foreground;
 mod knowledge;

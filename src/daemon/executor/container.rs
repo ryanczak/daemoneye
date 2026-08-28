@@ -190,8 +190,8 @@ mod tests {
         let with_blank = format!("{}\n", UID_MAP);
         assert!(parse_uid_map(&with_blank).is_some());
         let blank_between =
-            format!("         0       1000          1\n\n         1     100000      65536\n");
-        assert!(parse_uid_map(&blank_between).is_some());
+            "         0       1000          1\n\n         1     100000      65536\n";
+        assert!(parse_uid_map(blank_between).is_some());
     }
 
     #[test]
