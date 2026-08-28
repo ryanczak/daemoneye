@@ -1,7 +1,7 @@
 # Phase 03: Agent image and digest lockfile
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** in-progress (bounced — see bugs/bug-phase-03-1.md)
 **Depends on:** phase-01 (`SandboxConfig.image`), phase-02 (`container.rs` exists)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -320,6 +320,34 @@ Every count was measured against the current tree while drafting.
 - [ ] All four gates green: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 - [ ] The § End-to-end entry exists and contains the literal line `PASTE MATCH`.
+
+### Added 2026-08-28 by the round-1 review (bug-phase-03-1)
+
+Round 1 met every criterion above — verified independently. The dead-code
+strategy worked (count held at 7, no new `#[allow]`), and no digest is
+hardcoded anywhere in `src/`. These carry the outstanding defects; each was
+run against the round-1 tree and produced the "before" value shown.
+
+- [ ] `grep -c 'let missing_key = "image_id = {id}' src/daemon/executor/container.rs`
+      prints `0` (**before: 1**). The fixture is a plain string literal
+      containing the characters `{id}`, not a `format!`, so `parse_lock`
+      rejects it at the image-id check and never reaches the missing-key path
+      the case is named for.
+- [ ] **Both missing-required-key paths are guarded.** Measured at review,
+      each of these mutations leaves all 9 tests green today:
+      `image: image?` → `image: image.unwrap_or_default()`, and
+      `built_at: built_at?` → `built_at: built_at.unwrap_or(0)`. After the
+      fix both must **FAIL**, with the results pasted into the Update Log and
+      the file restored afterwards. (The unknown-key path is already guarded —
+      neutering it fails 1 of 9 — so only these two are at issue.)
+- [ ] `grep -c "^pub mod container;" src/daemon/executor/mod.rs` prints `0`
+      (**before: 1**) and
+      `grep -c "^pub(crate) mod container;" src/daemon/executor/mod.rs` prints
+      `1` (**before: 0**). `pub mod` puts the whole module in the crate's
+      public API; `pub(crate)` was measured sufficient for the CLI to reach
+      the helpers (`cargo build` exit 0).
+- [ ] `cargo test --lib sandbox_lock 2>&1 | grep -c "^test .* ok$"` still
+      prints `9` — fix the fixtures, do not add tests.
 
 ## Test plan
 
