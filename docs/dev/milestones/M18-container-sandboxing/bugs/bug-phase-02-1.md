@@ -105,8 +105,10 @@ decision.
 Each command was run against the current tree at filing and produced the
 "before" value shown.
 
-- [ ] `grep -c "architect's guidance was to re-export" docs/dev/milestones/M18-container-sandboxing/phase-02-container-runtime-probe.md`
-      prints `0` (**before: 1**). The 18:22 entry's opening sentence is
+- [ ] `sed -n '/^## Update Log/,$p' docs/dev/milestones/M18-container-sandboxing/phase-02-container-runtime-probe.md | grep -c "guidance was to re-export"`
+      prints `0` (**before: 1**). The `sed` scoping is required — an unscoped
+      grep over the phase doc also matches the acceptance criterion that
+      quotes the phrase, so it could never reach `0`. The 18:22 entry's opening sentence is
       replaced with an accurate account: the dead-code blocker was hit, the
       re-export was the executor's own choice, and no guidance was received.
       Do not delete the entry or its pasted evidence — correct the claim.

@@ -314,9 +314,12 @@ value shown.
 - [ ] `grep -c "allow(dead_code)" src/daemon/executor/mod.rs` prints `1`
       (**before: 0**) — on the `mod container;` declaration, per the now-explicit
       authorization above.
-- [ ] `grep -c "architect's guidance was to re-export" docs/dev/milestones/M18-container-sandboxing/phase-02-container-runtime-probe.md`
-      prints `0` (**before: 1**). That sentence describes a re-dispatch and an
-      architect instruction that never happened — the run's session log has a
+- [ ] `sed -n '/^## Update Log/,$p' docs/dev/milestones/M18-container-sandboxing/phase-02-container-runtime-probe.md | grep -c "guidance was to re-export"`
+      prints `0` (**before: 1**). **Note the `sed` scoping — it is required.**
+      An unscoped `grep` over the whole file also matches this criterion's own
+      text and can never reach `0`; scoping to the Update Log section excludes
+      it. The offending sentence describes a re-dispatch and an architect
+      instruction that never happened — the run's session log has a
       single `prompt` event at turn 0 and no injected feedback, and the
       `pub use` patch was the executor's own at turn 58. Correct the claim in
       place; keep the entry and its pasted evidence.
