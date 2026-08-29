@@ -1,7 +1,7 @@
 # Phase 08: Label every sandboxed container, and sweep what leaks
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04 (`run_args`), phase-07 (`--host` prefix)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
