@@ -1,7 +1,7 @@
 # Phase 02: Stage the invoked script into the sandbox, and retire the module `#[allow(dead_code)]`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** done
 **Depends on:** none (independent of phase-01)
 **Estimated diff:** ~190 lines including tests
 **Tags:** language=rust, kind=feature, size=m
@@ -1188,3 +1188,32 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 718b497bec0042181a497f5ebc685e3a37ad94a8
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-29
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-phase-02-1 — the round-1 end-to-end entry carried no bare
+  `PASTE MATCH` verdict line; docs-only, code was already correct)
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none. `git diff 8223ac8 -- src/` is empty — round 2
+  touched only this Update Log, as the bug's DoD required.
+- **Calibration:** none new. The bounce is the M18 "misdescribes its own
+  bookkeeping" pattern in its evidence-artifact form: the self-check was run
+  and its verdict written into the completion summary instead of the entry.
+  Round 2 fixed it exactly as specified, first try.
+
+Independent re-run at review (all four gates, separate invocations):
+`cargo fmt --all` → 0; `cargo build` → 0; `cargo clippy --all-targets
+--all-features -- -D warnings` → 0; `cargo test` → **1464 passed; 0 failed;
+4 ignored** in the lib suite, every other target green.
+
+Every acceptance criterion re-measured on the tree under review: `mod.rs`
+allow 0, repo-wide `allow(dead_code)` 6 (was 7), the four new fns 1 each,
+`run.rs` invocation/stage/remove calls 1/1/2, `job_id` hoisted 1 and
+`let job_id = format!` 1, `off_runtime("sandbox` 0, `#[ignore]` 4, production
+`unwrap`/`expect` 0, `cargo test --lib sandbox_staging` 6 ok. The reviewer ran
+§ End-to-end verification's own self-check recipe against the last entry: the
+fenced block is byte-identical to `/tmp/e2e-02.txt` and prints `PASTE MATCH`;
+`grep -c '^PASTE MATCH$'` on this doc prints 1 (measured 0 at the bounce).
+Both mutation pairs are in the entry, each APPLIED direction failing exactly
+its named test with a `grep -c` of `1` after each direction.

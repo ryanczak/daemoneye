@@ -1,7 +1,7 @@
 # Bug 1 on phase-02: the end-to-end entry has no `PASTE MATCH` verdict line
 
 **Severity:** minor
-**Status:** open
+**Status:** resolved
 **Filed:** 2026-08-29
 
 ## What's wrong
@@ -58,14 +58,14 @@ Per `WORKFLOW.md` § "One entry per dispatch, not per phase": the round that
 fixes this needs its **own** end-to-end entry. Do not edit the existing
 18:25 entry.
 
-- [ ] `rm -f /tmp/e2e-02.txt` first, so the new artifact holds only this
+- [x] `rm -f /tmp/e2e-02.txt` first, so the new artifact holds only this
       round's output; then Tasks 7, 8 and 9 re-run in full — mutation markers,
       the § End-to-end block verbatim, the paste, the self-check.
-- [ ] A new `### Update — <date> (end-to-end verification)` entry exists
+- [x] A new `### Update — <date> (end-to-end verification)` entry exists
       **after** the server-authored `(complete)` entry, holding the new
       artifact as a fenced block followed by the verdict line, bare.
-- [ ] `grep -c '^PASTE MATCH$' docs/dev/milestones/M19-sandbox-completion/phase-02-staging-integration.md`
+- [x] `grep -c '^PASTE MATCH$' docs/dev/milestones/M19-sandbox-completion/phase-02-staging-integration.md`
       prints `1` (**measured 0 on the tree under review**).
-- [ ] The self-check recipe in § End-to-end verification, run by the
+- [x] The self-check recipe in § End-to-end verification, run by the
       reviewer against the last entry, prints `PASTE MATCH`.
-- [ ] No source file changes. `git diff 8223ac8 -- src/` is empty.
+- [x] No source file changes. `git diff 8223ac8 -- src/` is empty.
