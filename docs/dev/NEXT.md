@@ -1737,10 +1737,41 @@ reproduced it faithfully.
 
 ## M19 — Sandbox Completion (opened 2026-08-29, PE sign-off)
 
-**Active phase: phase-01 — is-ghost-predicate**
-(`docs/dev/milestones/M19-sandbox-completion/phase-01-is-ghost-predicate.md`,
+**Active phase: phase-02 — staging-integration**
+(`docs/dev/milestones/M19-sandbox-completion/phase-02-staging-integration.md`,
 status: todo, drafted 2026-08-29). Dispatch with
-`/rexymcp:dispatch phase-01`.
+`/rexymcp:dispatch phase-02`.
+
+**phase-01 — is-ghost-predicate: done (approved_first_try) 2026-08-29**,
+commit `475909a` + approval `6625650`. 1454 → 1458 lib tests; reviewer
+mutation confirmed the two `resolve_is_ghost` tests discriminate different
+branches. Two of my criteria pinned `grep -c "fn name"` at `1` where the
+test-name prefixes made `3` the only reachable value — the documented
+`fn name(` trap, validated in the failing state only. Corrected in the doc.
+
+Phase-02 drafting notes:
+
+- **Prototyped in the tree and mutated before speccing**, then reverted. The
+  four functions, the `run.rs` wiring and the six tests in the spec are the
+  prototype verbatim; 1458 → 1464, all four gates green with the module
+  `#[allow(dead_code)]` **removed** (repo-wide 7 → 6), three mutations each
+  caught by exactly one named test.
+- **Measured: clippy names exactly two dead items behind that allow today**
+  (`script_name_is_safe`, `stage_args`), not the 14 M18 phase-05 recorded —
+  M18's later phases gave the rest callers. One caller of `stage_args`
+  retires both.
+- **Measured: every sandboxed job leaks a named volume.** `docker run --rm`
+  removes anonymous volumes only, and `run_args` mounts `de-stage-<job_id>`
+  unconditionally; three leaked volumes from M18's own tests were sitting on
+  scrappy. Phase-02 removes the volume at both completion sites — D4 step 4,
+  which was designed but never built.
+- **Criterion defect caught by validating against the prototype tree, not
+  the current one:** `grep -c 'let job_id'` reads `2` on a correct tree
+  because `let job_id_bg` matches. Pinned as `let job_id = format!` instead.
+  Same family as phase-01's, caught on the right side of dispatch this time.
+- **Gap recorded in the README:** scheduled `ActionOn::Script` jobs never
+  enter `run_background_in_window`, so they are neither sandboxed nor staged;
+  D0's claim that scheduled commands run sandboxed is false today.
 
 **PE decisions at open:** the **egress proxy is IN scope** — I had scoped it
 out and was overruled; it is phases 06–08, three phases rather than one

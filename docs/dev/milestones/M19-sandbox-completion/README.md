@@ -59,7 +59,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | is-ghost-predicate ([phase-01-is-ghost-predicate.md](phase-01-is-ghost-predicate.md)) | **done** (approved_first_try, 2026-08-29) |
-| 02 | staging-integration | todo (not drafted) |
+| 02 | staging-integration ([phase-02-staging-integration.md](phase-02-staging-integration.md)) | todo (drafted 2026-08-29) |
 | 03 | ghost-container-execution | todo (not drafted) |
 | 04 | ghost-scoped-teardown | todo (not drafted) |
 | 05 | container-status-ipc | todo (not drafted) |
@@ -120,6 +120,14 @@ Phase intents:
   measurement — a host-bound proxy is unreachable under
   `--disable-host-loopback`, and disabling that flag to reach one would expose
   every host loopback service to every container.
+
+- **Gap found drafting phase-02 (2026-08-29): scheduled script jobs are not
+  sandboxed.** `ActionOn::Script` runs the script's host path in a `de-sj-*`
+  host shell (`src/daemon/scheduled.rs`) and never enters
+  `run_background_in_window`, so neither the sandbox wrap nor the staging
+  phase-02 adds reaches it. D0 says *"scheduled commands execute sandboxed
+  when they fire"*; today they do not. Not in any phase's scope — the design
+  claim needs correcting in the phase-10 doc sweep, or a phase adding.
 
 - **`container:shell` (interactive tty relay) stays deferred** — still an open
   question in the design doc, and nothing in M18 settled it.
