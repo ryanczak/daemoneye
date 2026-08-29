@@ -1750,6 +1750,34 @@ land in WORKFLOW.md** (the architect does not fold unilaterally):
 2. **3 occurrences** — *a pinned count must be derived from the phase's own
    Spec by counting it, not estimated* (phase-04 ×2, phase-05).
 
+### Both folds landed 2026-08-29 (PE sign-off) — and neither is a new section
+
+Both existing sections already *gestured* at these failures, and § "Run every
+count criterion" says outright that a sixth occurrence calls for **a mechanical
+check, not stronger prose**. So the folds add mechanism where the prose was
+already adequate:
+
+1. **§ "Run every count criterion; never derive it"** gains *"scope the search
+   so the criterion's own corpus cannot satisfy it"* — a three-row recipe table
+   (`sed -n '1,/^#[cfg(test)]/p'` for production-only, `sed -n '/^## Update
+   Log/,$p'` for log-only, a section range for docs) plus one literal drafting
+   step: **after writing a grep criterion, run it against the phase doc you are
+   writing.** A non-zero hit on your own spec means the corpus is contaminated.
+   All three recipes were executed against real files before being written down
+   — they discriminate 3 → 1 and 6 → 4 on `container.rs` and phase-10 — rather
+   than being reasoned to look right, which is the failure mode of the very
+   rules they sit under.
+2. **§ "Every acceptance criterion must be satisfiable"** gains two paragraphs:
+   *a criterion about a gate must be validated by running that gate, not by a
+   proxy that resembles it* (the `grep -rc "allow(dead_code)"` vs `cargo
+   clippy` miss — 14 dead items the proxy could not see), and *count the Spec,
+   don't estimate it*, since a number describing the phase's own tasks is
+   arithmetic over prose already written and needs no tree at all.
+
+**Neither is applied upstream** — both join the push backlog alongside M13's
+four and M14's two (`~/src/rexyMCP/plugin/templates/WORKFLOW.md`; drift is
+bidirectional and is checked at milestone start, not close).
+
 Two executor-side items are **held at 2 occurrences each** — proceeding past
 its own filed blocker, and misdescribing its own bookkeeping undetectably. A
 third of the latter should change how this model is dispatched, not just how it

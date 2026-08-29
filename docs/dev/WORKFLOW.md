@@ -1356,6 +1356,34 @@ Staleness clause added the same day, after a fifth miscount **in a phase drafted
 under this rule** — the rule was not unclear, it was not followed. If a sixth
 occurs, the remedy is a mechanical pre-dispatch check, not stronger prose.)*
 
+**Scope the search so the criterion's own corpus cannot satisfy it.** The
+sixth occurrence arrived — four more, in M18 — so per the clause above this
+fold is a *mechanism*, not more prose. The failure shape: a criterion greps a
+file that also contains the criterion's own text, the spec's dictated prose, or
+a pinned test vector, so the count can never reach its target no matter what
+the executor writes. Three recipes cover every instance seen so far:
+
+| The grep is about… | Scope it with |
+|---|---|
+| production code only | `sed -n '1,/^#\[cfg(test)\]/p' <file> \| grep -c …` |
+| the Update Log only | `sed -n '/^## Update Log/,$p' <doc> \| grep -c …` |
+| a section of a doc | `sed -n '/^## Section/,/^## /p' <doc> \| grep -c …` |
+
+The tell at drafting is mechanical, so make it a literal step: **after writing
+a grep criterion, run it against the phase doc you are writing.** A non-zero
+hit on your own spec means the corpus is contaminated — scope it or pick a
+different token.
+
+*(Folded 2026-08-29 at M18 close, on PE sign-off, at four further occurrences:
+phase-02's criterion quoting the very sentence it counted; phase-04's two
+criteria greping `container.rs` for `mode=0700` / `uid=1000` / `--user` while
+the phase's own pinned test vector legitimately contains all three; and
+phase-08's § Spec dictating a doc comment containing `filter name=` while its
+criteria required that string to appear zero times in production code. All four
+were caught at drafting and cost no dispatch — which is the argument for a
+recipe rather than a warning: the shape is recognisable and the fix is
+uniform.)*
+
 ### A sweep's scope is its convertible sites, not its matches
 
 When a phase applies one mechanical change to every instance of a pattern — a
@@ -1704,6 +1732,27 @@ own mutation was indiscriminable, and phase-06's prefix-matching grep. In
 every case the criterion was *reasoned* against an imagined end-state; in no
 case did the reasoning survive execution. The executor's behavior was correct
 all five times — twice it flagged the discrepancy itself.)*
+
+**A criterion about a gate must be validated by running that gate, not by a
+proxy that resembles it.** The proxy will look equivalent and will not be. An
+M18 phase asserted that removing a module's `#[allow(dead_code)]` would leave
+the tree green; it was "validated" by deleting the line and running
+`grep -rc "allow(dead_code)"`, seeing the count drop, and stopping — measuring
+the *attribute's absence* rather than the *lint gate's outcome*. `cargo clippy`
+would have shown 14 dead items at once, and the task was impossible as written.
+If a criterion names a gate, the validation is that gate's exit status.
+
+**And count the Spec, don't estimate it.** A pinned number that describes the
+phase's own tasks is arithmetic over prose you have already written, so it is
+checkable at drafting with no tree at all: an M18 phase shipped a criterion
+demanding 11 tests where its own Test plan named 12 (2+5+2+3), and another
+demanding `--user` be emitted once where two of its tasks each require an
+emission. In both cases the executor was right and the criterion wrong — and
+the good outcome is what the executor did with the second one: it **stopped and
+filed a blocker** rather than editing the criterion or merging two required
+call sites to hit the number.
+
+*(Folded 2026-08-29 at M18 close, on PE sign-off, at three occurrences.)*
 
 **A bounce makes the acceptance criteria stale, and stale criteria certify the
 phase as finished.** After a review rejects a phase, the criteria in the phase

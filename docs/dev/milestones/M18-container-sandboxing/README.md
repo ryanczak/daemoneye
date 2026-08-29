@@ -495,6 +495,12 @@ the wrong reason.** The tests were present, green, and hollow.
 
 ### Calibration — for PE decision
 
+**Both fold candidates below LANDED 2026-08-29 on PE sign-off** — as
+mechanism added to the two existing sections, not as new sections, since
+§ "Run every count criterion" already says a further occurrence calls for a
+mechanical check rather than stronger prose. See `docs/dev/WORKFLOW.md`; the
+push-backlog entry is in `docs/dev/NEXT.md`.
+
 **Fold candidate, 4 occurrences (architect-side).** *A mechanical criterion
 must not be written so that its own corpus contains the text it greps for.*
 phase-02 (a criterion quoting the sentence it counted), phase-04 (×2 — pinned
