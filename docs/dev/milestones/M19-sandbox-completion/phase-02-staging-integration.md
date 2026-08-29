@@ -1,7 +1,7 @@
 # Phase 02: Stage the invoked script into the sandbox, and retire the module `#[allow(dead_code)]`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** in-progress
+**Status:** review
 **Depends on:** none (independent of phase-01)
 **Estimated diff:** ~190 lines including tests
 **Tags:** language=rust, kind=feature, size=m
@@ -777,3 +777,187 @@ no off_runtime staging (0):  0
 ignore count (4):            4
 prod unwrap/expect (0):      0
 ```
+
+### Update — ts=1788027569063 (complete, server-authored)
+
+**Summary:** </think>All tasks complete. Let me do one final sanity check on the completion checklist.
+
+1. Phase doc Status: in-progress ✓ (left at in-progress)
+2. Milestone README row: in-progress ✓
+3. Did NOT write a (complete) entry ✓
+4. cargo fmt --all run before git add ✓
+5. All verification commands ran clean ✓
+6. Final message will be substantive ✓
+7. git status --short shows nothing ✓
+8. git log -1 --stat shows the commit includes all files ✓
+
+Let me double check the acceptance criteria once more from the /tmp/e2e-02.txt output:
+- mod.rs allow 0 ✓ (before 1)
+- allow total 6 ✓ (before 7)
+- clippy green ✓
+- fn counts: 1 each ✓
+- run.rs invocation call 1, stage call 1 ✓
+- run.rs remove calls 2 ✓
+- job_id hoisted 1, job_id = format! 1 ✓
+- off_runtime("sandbox 0 ✓
+- test result 6 ok ✓
+- 1464 passed, 0 failed, 4 ignored ✓
+- ignore count 4 ✓
+- prod unwrap/expect 0 ✓
+- M1/M2 markers ✓ with grep -c after each direction ✓
+- PASTE MATCH ✓
+- all four gates green ✓
+
+Everything checks out. Now write the final summary.</think>
+## Summary
+
+Implemented phase-02 of M19 — script staging integration for sandboxed background commands.
+
+**Built:**
+- **Task 1** — Added `sandbox_script_invocation`, `staged_script_command`, `stage_script`, `remove_stage_volume` to `src/daemon/executor/container.rs` exactly as specified, inserted directly after `stage_args`.
+- **Task 2** — Hoisted `job_id` in `src/daemon/background/run.rs` (4-space indent, the inner copy deleted; the `ExecSpec` borrows the hoisted binding).
+- **Task 3** — The stage-and-rewrite block before `let sandboxed_cmd;`: spawn-blocking `stage_script` (no tmux bound), kill-window on failure, `return message`, rewrite to `/de/scripts/<name><args_tail>`. No-op when sandbox disabled.
+- **Task 4** — Volume removal at both completion sites (inline fast path + slow path with `sandbox_bg`/`job_id_bg` clones).
+- **Task 5** — Removed the module `#[allow(dead_code)]`; clippy green; no other dead items surfaced.
+- **Task 6** — Six `sandbox_staging_*` tests appended verbatim, all passing.
+- **Tasks 7–8** — Mutation pairs M1 (existence guard) and M2 (sudo guard) each fail exactly the named test (1 failed) while applied, pass after restore, with a `grep -c` after each direction.
+- **Task 9** — Full e2e transcript captured in `/tmp/e2e-02.txt`, pasted verbatim, self-check prints `PASTE MATCH`, and the block was run.
+
+**Verification:** All four gates green — `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` (1464 passed, 0 failed, 4 ignored: **before 1458**, +6). Structural greps all match (mod.rs `allow` 0, total 6, all function/call counts = spec, job_id hoisted, off_runtime("sandbox 0, ignore count 4, prod unwrap/expect 0).
+
+**Notes for review:** The staging does not go through `tmux::off_runtime` per Gotchas 1, and the existence + sudo guards were proven live via mutations that each killed exactly the intended test. No docker/system commands were run. The repo was clean-branch at start; working tree is now clean after commit `8223ac8`.
+
+**Deviations:** none — all spec-pinned literals verified by grep in the transcript (allow(dead_code) total 6, sandbox_script_invocation( 1, etc.).
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 3.95s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M19-sandbox-completion/README.md` — +1 -1
+- `docs/dev/milestones/M19-sandbox-completion/phase-02-staging-integration.md` — +62 -1
+- `src/daemon/background/run.rs` — +47 -1
+- `src/daemon/executor/container.rs` — +148 -0
+- `src/daemon/executor/mod.rs` — +0 -2
+
+**Commit:** 8223ac85842768f36c7ec9ecfbb72161a3f43105
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
