@@ -499,6 +499,8 @@ pub fn stage_args(cfg: &SandboxConfig, job_id: &str, script_name: &str) -> Vec<S
         "cp /de/src/{script_name} /stage/{script_name} && chmod 0500 /stage/{script_name} && chown {uid}:{gid} /stage/{script_name}"
     );
     vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
         "run".to_string(),
         "--rm".to_string(),
         "--user".to_string(),
@@ -531,6 +533,8 @@ pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec) -> Vec<String> {
         return Vec::new();
     };
     let mut args = vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
         "run".to_string(),
         "--rm".to_string(),
         "--user".to_string(),
@@ -897,6 +901,8 @@ mod tests {
         assert_eq!(
             run_args(&cfg, &spec),
             vec![
+                "--host",
+                "unix:///run/user/1000/docker.sock",
                 "run",
                 "--rm",
                 "--user",
@@ -1045,8 +1051,17 @@ mod tests {
         let cfg = SandboxConfig::default();
         let args = stage_args(&cfg, "j1", "myscript.sh");
         assert_eq!(
-            &args[..6],
-            &["run", "--rm", "--user", "0:0", "-v", "de-stage-j1:/stage"]
+            &args[..8],
+            &[
+                "--host",
+                "unix:///run/user/1000/docker.sock",
+                "run",
+                "--rm",
+                "--user",
+                "0:0",
+                "-v",
+                "de-stage-j1:/stage"
+            ]
         );
         let shell = args.last().expect("shell line present");
         assert!(shell.contains("chmod 0500 /stage/myscript.sh"));
@@ -1266,7 +1281,11 @@ mod tests {
             command: "echo hi",
         };
         let result = sandbox_window_command(&cfg, &spec, "echo hi");
-        assert!(result.starts_with("'docker' 'run' '--rm'"), "got: {result}");
+        assert!(
+            result
+                .starts_with("'docker' '--host' 'unix:///run/user/1000/docker.sock' 'run' '--rm'"),
+            "got: {result}"
+        );
     }
 
     #[test]
@@ -1514,5 +1533,111 @@ mod tests {
             Err(SandboxUnavailable::NoLock) => {}
             Err(other) => panic!("unexpected preflight failure: {other:?}"),
         }
+    }
+
+    #[test]
+    fn sandbox_host_run_args_start_with_the_configured_endpoint() {
+        let cfg = SandboxConfig::default();
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: false,
+            command: "echo hi",
+        };
+        let args = run_args(&cfg, &spec);
+        let first_three = args.iter().take(3).cloned().collect::<Vec<_>>();
+        assert_eq!(
+            first_three,
+            vec![
+                "--host".to_string(),
+                "unix:///run/user/1000/docker.sock".to_string(),
+                "run".to_string()
+            ]
+        );
+        assert_eq!(
+            args.iter().filter(|a| *a == "--host").count(),
+            1,
+            "`--host` must appear exactly once: {args:?}"
+        );
+        assert_ne!(args[0], "run");
+    }
+
+    #[test]
+    fn sandbox_host_stage_args_start_with_the_configured_endpoint() {
+        let cfg = SandboxConfig {
+            docker_host: "unix:///tmp/alt.sock".to_string(),
+            ..SandboxConfig::default()
+        };
+        let args = stage_args(&cfg, "j1", "myscript.sh");
+        let first_three = args.iter().take(3).cloned().collect::<Vec<_>>();
+        assert_eq!(
+            first_three,
+            vec![
+                "--host".to_string(),
+                "unix:///tmp/alt.sock".to_string(),
+                "run".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn sandbox_host_window_command_carries_the_endpoint() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..SandboxConfig::default()
+        };
+        let result = sandbox_window_command(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: false,
+                command: "echo hi",
+            },
+            "echo hi",
+        );
+        let prefix = "'--host' 'unix:///run/user/1000/docker.sock'";
+        let run_at = result.find("'run'").expect("run must be present");
+        let host_at = result
+            .find(prefix)
+            .expect("endpoint prefix must be present");
+        assert!(
+            host_at < run_at,
+            "`--host` must precede `run` in the window command: {result}"
+        );
+        assert_eq!(
+            result.matches("'--host'").count(),
+            1,
+            "`--host` must appear exactly once in the window command: {result}"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a running rootless Docker daemon"]
+    fn sandbox_host_command_runs_with_no_ambient_docker_host() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..SandboxConfig::default()
+        };
+        let job_id = format!("scrub-{}", std::process::id());
+        let spec = ExecSpec {
+            job_id: &job_id,
+            network: "none",
+            is_ghost: false,
+            command: "echo scrubbed-ok",
+        };
+        let line = sandbox_window_command(&cfg, &spec, "echo scrubbed-ok");
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&line)
+            .env_remove("DOCKER_HOST")
+            .output()
+            .expect("spawning sh failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("scrubbed-ok"),
+            "command without DOCKER_HOST failed: {stdout:?} stderr={:?}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

@@ -1,7 +1,7 @@
 # Phase 07: Carry `DOCKER_HOST` into the sandboxed command
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04 (`run_args`, `stage_args`), phase-05 (`sandbox_window_command`)
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -275,3 +275,27 @@ capture of what the spec asked for.
   `assets/etc/config.toml`, or `containers/Dockerfile`.
 
 ## Update Log
+
+### Update — 2026-08-29 02:42 (progress)
+
+Started phase-07. Flipped Status: todo → in-progress; README phase-table row 07 updated to match. Implemented Task 1 (`--host` prepended in `run_args` and `stage_args`), Task 2 (pinned vector in `sandbox_exec_run_args_match_the_prototyped_vector` updated to the new prefix; `sandbox_exec_stage_args_run_as_root_and_chown_to_the_sandbox_uid`'s position-dependent `&args[..6]` slice widened to `[..8]`), and Tasks 3–4 (three `sandbox_host` unit tests + one `#[ignore]`d live scrubbed-env test) in `container.rs`. Also updated `sandbox_window_enabled_starts_with_the_quoted_runtime`, which asserted the old vector prefix and would otherwise have failed — the same deliberate phase-04 expectation change, applied to the window-line test that pinned the pre-fix prefix. Full lib suite: 1443 passed; 0 failed; 4 ignored. Now running the gates and the § End-to-end block.
+
+### Update — 2026-08-29 02:45 (end-to-end verification)
+
+```text
+== A. sandbox_host tests (expect 3 lines) ==
+test daemon::executor::container::tests::sandbox_host_stage_args_start_with_the_configured_endpoint ... ok
+test daemon::executor::container::tests::sandbox_host_run_args_start_with_the_configured_endpoint ... ok
+test daemon::executor::container::tests::sandbox_host_window_command_carries_the_endpoint ... ok
+cargo_exit=0
+== B. lib suite totals ==
+test result: ok. 1443 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 3.90s
+cargo_exit=0
+== C. structural greps ==
+--host in prod (want 2): 2
+ignore count (want 4):   4
+env_remove (want 1):     1
+allow(dead_code) tot:    7
+```
+
+PASTE MATCH
