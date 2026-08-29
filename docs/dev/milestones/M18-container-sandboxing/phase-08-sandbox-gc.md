@@ -1,7 +1,7 @@
 # Phase 08: Label every sandboxed container, and sweep what leaks
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (`run_args`), phase-07 (`--host` prefix)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -519,3 +519,58 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0d5009d7d94778558654eb572d7dd08fd73a05cd
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** two, both declared, both accepted. (1) Two syntax
+  fixes in `sweep_sandbox_leftovers` — `Vec<u8>` has no `.lines()`, so
+  `String::from_utf8_lossy(..).lines()`. Ordinary implementation work.
+  (2) The doc comment on `stale_stage_volumes` was reworded to avoid the
+  literal `filter name=`. **That was forced by an architect defect** — see
+  below.
+- **Calibration:** one, architect-side, and it is the **fourth occurrence** of
+  a family already on the fold queue.
+
+**The data-destroying slip is guarded.** The mutation that matters here is one
+character wide, and it bites:
+
+| Mutation | Result |
+|---|---|
+| `starts_with("de-stage-")` → `contains("de-stage-")` | **FAILED** `sandbox_gc_selects_only_stage_prefixed_volumes` |
+| empty-slice guard removed from `sweep_container_rm_args` | **FAILED** `sandbox_gc_rm_args_are_empty_for_an_empty_slice` |
+
+The first is the one that would delete a user's volume — `zz-de-stage-decoy`
+is a real name docker's own `--filter name=` matched when measured, so the
+negative case is not hypothetical. The disabled short-circuit is present at
+the top of `sweep_sandbox_leftovers`, so a disabled sandbox still spawns
+nothing.
+
+Also confirmed: four gates green; **1450 passed / 0 failed / 4 ignored**;
+`de.sandbox=1` twice in production; the sweep wired at exactly one startup
+site; `filter name=` absent from production code; `#[ignore]` still 4;
+`allow(dead_code)` still 7; no `unwrap`/`expect` in the new production code;
+Update Log **appended**, not rewritten; E2E artifact re-extracts identical
+apart from the elapsed-time line.
+
+**Calibration — architect-side, 4th of its family.** § Task 4 dictated this
+doc comment verbatim:
+
+```
+/// Prefix match only — `docker`'s own `--filter name=` is a substring match
+```
+
+while § Acceptance criteria required `filter name=` to appear **zero** times
+in production code. The spec therefore instructed the executor to write the
+exact string the spec forbids. It reworded the comment to
+*"docker's own name filter is a substring match"* — same meaning, criterion
+satisfied — and disclosed it, which is the right handling of a spec that
+contradicts itself in a way that is still satisfiable.
+
+This is the same family as the phase-02 bounce criterion that quoted its own
+sentence and the phase-04 criteria that counted the phase's own test vector:
+**a criterion must not forbid a string that the phase itself is told to
+write.** Recorded in the milestone README, where it is a standing fold
+candidate for PE at close.

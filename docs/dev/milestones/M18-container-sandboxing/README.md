@@ -136,7 +136,7 @@ state will shift with each landing.
 | 05 | background-window-integration ([phase-05-background-window-integration.md](phase-05-background-window-integration.md)) | **done** (approved_first_try, 2026-08-28) | **First phase whose code starts a container.** `sandbox_window_command` wraps a background command as a shell-quoted `docker run …` line at the `run.rs:159` seam when enabled; `de-bg-*` window, completion detection, capture and GC untouched. The `#[allow(dead_code)]` removal was **withdrawn** — 14 phase-02/03/04 items are still unwired; see Notes. |
 | 06 | sandbox-preflight-gate ([phase-06-sandbox-preflight-gate.md](phase-06-sandbox-preflight-gate.md)) | **done** (approved_after_1, 2026-08-29) | **Fail closed.** Probe the runtime once (`OnceLock`), decide with phase-04's `evaluate_preflight`, and **refuse** a background command when the sandbox is not sane instead of running it on the host. Phase-05 shipped sandboxed execution with no gate at all. |
 | 07 | docker-host-propagation ([phase-07-docker-host-propagation.md](phase-07-docker-host-propagation.md)) | **done** (approved_first_try, 2026-08-29) | **Production-break fix, found by live verification.** The window command carried no `DOCKER_HOST`, so it targeted the *rootful* socket and failed while preflight passed. `run_args`/`stage_args` now emit `--host <docker_host>` first; a live test runs with `env_remove("DOCKER_HOST")` so the gap cannot reopen. |
-| 08 | sandbox-gc ([phase-08-sandbox-gc.md](phase-08-sandbox-gc.md)) | **in-progress** (started 2026-08-29) | Label **every** sandboxed container `de.sandbox=1` (today none are labelled, so no sweep is possible), then sweep orphaned containers and the leaked `de-stage-*` volumes at daemon start. Volume selection is a Rust prefix check — docker's own `--filter name=` is a substring match. |
+| 08 | sandbox-gc ([phase-08-sandbox-gc.md](phase-08-sandbox-gc.md)) | **done** (approved_first_try, 2026-08-29) | Label **every** sandboxed container `de.sandbox=1` (today none are labelled, so no sweep is possible), then sweep orphaned containers and the leaked `de-stage-*` volumes at daemon start. Volume selection is a Rust prefix check — docker's own `--filter name=` is a substring match. |
 | 09 | ghost-lifecycle-and-staging | todo (not drafted) | Set `is_ghost` at the ghost call site so ghost containers are labelled and torn down per run; wire staging (`stage_args`, `script_name_is_safe`), which is what finally retires the `#[allow(dead_code)]`. |
 | 10 | escape-hatch-docs-and-pilot | todo (not drafted) | Escape-hatch classification + `GhostPolicy.escape_allowlist` + park-and-notify; CLAUDE.md / README / doc_truth updates; pilot runbook and metrics. `Request::ContainerStatus`, the `log` relay opcode and the egress proxy fold in here or are dropped if the pilot shows no need. |
 
@@ -279,6 +279,12 @@ state will shift with each landing.
      contains both as expected output. Fixed by scoping to the production
      half, `sed -n '1,/^#\[cfg(test)\]/p' | grep -c`.
   3. (same phase) the companion `"--user"` count had the same defect.
+  4. phase-08: § Task 4 **dictated a doc comment containing `filter name=`**
+     while § Acceptance criteria required that string to appear zero times in
+     production code — the spec told the executor to write the exact string
+     the spec forbade. Caught by the executor, which reworded the comment and
+     disclosed it. Sharpest statement of the rule: **a criterion must not
+     forbid a string the phase itself is told to write.**
   The existing fold — *validate every mechanical criterion against the tree
   the phase will produce* — does not cover this: the criterion passes that
   check and still becomes unsatisfiable the moment it is written into the
