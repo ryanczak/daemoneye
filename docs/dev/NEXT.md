@@ -2672,3 +2672,43 @@ Corollaries, each earned more than once: naming a false-success mode is worthles
 unless the guard is checked against it; a phase that lands code for a *later*
 phase must say how the deny-warnings gate is satisfied; and **a green bounce
 always needs a refined re-dispatch**, never a plain one.
+
+## M19 — Sandbox Completion (opened 2026-08-29)
+
+**phase-01 — is-ghost-predicate: done (approved_first_try) 2026-08-29.**
+`is_ghost_session_id` / `resolve_is_ghost` extracted to `src/daemon/mod.rs`
+beside the other D6 predicates; both `run.rs` ghost checks route through them.
+
+**phase-02 — staging-integration: done (approved_after_1) 2026-08-29**,
+commits `8223ac8` (code) + `718b497` (round-2 evidence) + `f8738ef`
+(approval). `stage_args` has a production caller, the module
+`#[allow(dead_code)]` in `executor/mod.rs` is gone (repo-wide 7 → 6), and the
+job's staging volume is removed on both completion paths. Bug-phase-02-1 was
+evidence-only: the round-1 end-to-end entry carried no bare `PASTE MATCH`
+line. Code was byte-identical across both rounds.
+
+**Active phase: phase-03 — ghost-container-execution**
+(`docs/dev/milestones/M19-sandbox-completion/phase-03-ghost-container-execution.md`,
+status: todo, drafted 2026-08-29). **Its premise was corrected from
+measurement before drafting.** The README claimed ghosts were "labelled, not
+sandboxed"; measured, a ghost's ordinary background command is already
+containerized. The real hole is two *other* doors: `background=false` reaches
+`run_foreground`, which destructures `is_ghost: _` and ignores it, and
+`retry_in_pane` reaches `respawn_background_in_pane`, where
+`grep -c sandbox` prints 0 — it `send-keys`es the raw command to the host
+shell. Scope: a pure `ghost_may_run_foreground(is_ghost, sandbox_enabled)`
+gate beside `ghost_may_use_tmux_control` plus its dispatch-site refusal, and
+the full preflight → stage → wrap → remove-volume sequence added to the retry
+path, sharing a new `container::job_id_for(pane_id, unix_ts)` with `run.rs`.
+Seven tests, two mutation pairs. Every mechanical acceptance criterion was
+validated against the current tree at drafting: all read their stated "before"
+value.
+
+Live measurement taken while drafting (rootless Docker, daemon host): `docker
+run -v <absent-name>:…` **creates** the named volume rather than refusing, so
+a retry that skipped staging mounts an empty dir (loud failure, good) and a
+retry leaks one volume unless it is removed (hence removal on both retry
+completion paths). Recorded in the phase doc's § Live measurements.
+
+Gap recorded in the milestone README while drafting: `[sandbox.ghost_defaults]
+mount_scripts` is parsed and consulted by nothing and has no phase.

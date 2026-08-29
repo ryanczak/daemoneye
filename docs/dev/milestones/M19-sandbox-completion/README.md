@@ -20,7 +20,9 @@ done).
   still green (repo-wide count 7 → 6).
 - A ghost shell's background command runs in a container carrying
   `de.ghost=1`, and a ghost-scoped teardown reclaims only that ghost's
-  containers — verified live, not only in tests.
+  containers — verified live, not only in tests. **With the sandbox enabled a
+  ghost has no unsandboxed door out**: neither `background=false` nor
+  `retry_in_pane` reaches the host uncontained (phase-03).
 - `is_ghost` is derived by a **pure, directly tested predicate**: mutating it
   to a constant fails a named test. (Today hardcoding `is_ghost: true` leaves
   all 1454 tests green.)
@@ -60,7 +62,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 |----|-------|--------|
 | 01 | is-ghost-predicate ([phase-01-is-ghost-predicate.md](phase-01-is-ghost-predicate.md)) | **done** (approved_first_try, 2026-08-29) |
 | 02 | staging-integration ([phase-02-staging-integration.md](phase-02-staging-integration.md)) | **done** (approved_after_1, 2026-08-29) |
-| 03 | ghost-container-execution | todo (not drafted) |
+| 03 | ghost-container-execution ([phase-03-ghost-container-execution.md](phase-03-ghost-container-execution.md)) | todo (drafted 2026-08-29) |
 | 04 | ghost-scoped-teardown | todo (not drafted) |
 | 05 | container-status-ipc | todo (not drafted) |
 | 06 | proxy-network-and-image | todo (not drafted) |
@@ -85,8 +87,15 @@ Phase intents:
 - **02 staging-integration** — give `stage_args` a caller so a sandboxed
   command can run a script, then **remove** the module `#[allow(dead_code)]`.
   Removal is the phase's real acceptance test.
-- **03 ghost-container-execution** — route ghost background commands through
-  the sandbox. Today ghosts are *labelled*, not sandboxed.
+- **03 ghost-container-execution** — close the two paths by which a ghost
+  reaches the host with no container: `background=false` (foreground execution
+  ignores `is_ghost` entirely) and `retry_in_pane` (`respawn.rs` has **zero**
+  sandbox code). **Corrected from measurement at drafting, 2026-08-29:** the
+  original intent line here said *"today ghosts are labelled, not sandboxed"* —
+  false. A ghost's ordinary background command *is* containerized;
+  `run_background_in_window` wraps every enabled-sandbox command and phase-01
+  already routes the `de.ghost=1` decision through `resolve_is_ghost`. The two
+  bypasses above are the actual hole.
 - **04 ghost-scoped-teardown** — reclaim one ghost's containers on exit, using
   `de.ghost=1` plus a per-job label. Must not touch another ghost's or an
   interactive session's containers; the negative case is the point.
@@ -128,6 +137,14 @@ Phase intents:
   phase-02 adds reaches it. D0 says *"scheduled commands execute sandboxed
   when they fire"*; today they do not. Not in any phase's scope — the design
   claim needs correcting in the phase-10 doc sweep, or a phase adding.
+
+- **Gap found drafting phase-03 (2026-08-29): `[sandbox.ghost_defaults]` is
+  parsed and consulted by nothing.** `grep -rn ghost_defaults src/` returns
+  only `src/config/mod.rs` tests. `destroy_on_exit` is phase-04's business;
+  **`mount_scripts` has no phase** — staging always mounts `/de/scripts:ro`,
+  so a config that sets `mount_scripts = "rw"` is silently ignored. Either
+  wire it or delete the field in the phase-10 sweep; a config key that does
+  nothing is worse than no key.
 
 - **`container:shell` (interactive tty relay) stays deferred** — still an open
   question in the design doc, and nothing in M18 settled it.
