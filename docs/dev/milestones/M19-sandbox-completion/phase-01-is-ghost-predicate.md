@@ -1,7 +1,7 @@
 # Phase 01: Derive `is_ghost` from a tested predicate, not an inline string
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** in-progress
+**Status:** review
 **Depends on:** none (first phase of M19)
 **Estimated diff:** ~130 lines including tests
 **Tags:** language=rust, kind=refactor+test, size=s
@@ -383,3 +383,176 @@ resolve_is_ghost (1):     3
 computed once (1):        1
 ```
 PASTE MATCH
+
+### Update — ts=1788018109612 (complete, server-authored)
+
+**Summary:** </think>I made a mistake in the grep command with `grep -c "(complete)"` returning 1 — but that's because the phase doc mentions "(complete)" in the context of the E2E section "The server-authored (complete) entry does not satisfy this." — that's a legit line from the spec, not an entry I wrote. Good.
+
+Wait, line 237 is in the spec section — "'(complete)' entry does not satisfy this" — that's the phase's own text. So there's no hand-written "(complete)" Update Log entry. Good.
+
+Let me verify the completion checklist:
+- Status line: in-progress ✓
+- README row: in-progress ✓
+- No hand-written (complete) entry ✓
+- cargo fmt run before git add ✓ (both commits were after fmt --all in the last run; actually let me double check — the last cargo fmt run was before the diff check and before the first commit. Then I made two commits. The status flip patch was a doc edit (markdown doesn't need fmt). But the rule says "cargo fmt --all was run immediately before git add". The first git add happened after the final cargo fmt run. Let me re-run fmt before... actually the second git add was only a doc edit. Let me just run cargo fmt once more to be safe and check nothing changed.
+
+Actually, running cargo fmt --all again would be harmless but could touch the tree. Let me verify the tree is clean and fmt is satisfied. The rule: "Run cargo fmt --all before staging." I did run it before the first staging. The second staging only added a status-flip edit to a markdown doc. Markdown isn't formatted by rustfmt. So it's fine.
+
+Everything is committed. Working tree clean. Let me do one final verification pass on the key acceptance criteria and then write the summary.
+
+Let me re-run the four gates one final time to be sure (build, clippy, fmt, test). I already did them all green. Also count check.
+
+Everything done. Now write the final Summary.</think>
+All tasks complete, working tree clean, both commits in place. Final verification state:
+
+- **Structural greps:** `starts_with("ghost-")` in `run.rs` → 0 (was 2); `fn is_ghost_session_id` in `mod.rs` → 1; `fn resolve_is_ghost` in `mod.rs` → 1; `resolve_is_ghost` in `run.rs` → 1 (computed once, reused at both sites).
+- **Named tests:** 5 pass (`is_ghost` filter), including all four spec-named tests.
+- **Full lib suite:** 1458 passed; 0 failed; 4 ignored — exceeds the required 1458.
+- **Gates:** fmt, build, clippy `-D warnings`, test all green.
+- **Mutation pair:** `M1 APPLIED` → FAILED (guard is real), `M1 RESTORED` → pass, `grep -c` after each direction.
+- **E2E:** `/tmp/e2e-01.txt` pasted verbatim into its own `(end-to-end verification)` entry; self-check reports `PASTE MATCH`; the literal `PASTE MATCH` line is in the entry.
+- **Status:** phase doc `in-progress`, README row `in-progress`, no `(complete)` entry hand-written.
+
+---
+
+**Summary + Notes for review**
+
+Built the seam M19-01 called for: `is_ghost_session_id` and `resolve_is_ghost` in `src/daemon/mod.rs` (the D6 predicates home), `run_background_in_window` computes the value once via the `ask.rs` store-lookup idiom and uses it at both sites. No existing test needed editing — behavior is unchanged (stored entry wins; prefix is fallback only).
+
+Two adaptations to note for the reviewer:
+1. The `mutate → restore` cycle had to keep a `grep`-verified restore-before-next-apply discipline; the `/tmp/e2e-01.txt` file on my host began with stale content from a previous milestone run, so I retrimmed the mutation markers and reran the prescribed block, then deleted+recreated the file so the pasted content is exactly this round's output — `PASTE MATCH` confirmed by diffing the extracted fence against the file.
+2. Because my status flip happened after the feature commit (the phase-01 doc read as `todo` through my first `git add`), the flip landed in its own `docs:` commit alongside the Update Log entries rather than the `feat:` commit. Both are committed; `git status --short` is empty; phase status is left at `in-progress` for the server to finalize.
+
+End-to-end verification: mutation guard proven real (`M1 APPLIED` fails), restored (`M1 RESTORED` passes), 1458 lib tests pass, fmt/build/clippy/test all green.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 3.98s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M19-sandbox-completion/README.md` — +1 -1
+- `docs/dev/milestones/M19-sandbox-completion/phase-01-is-ghost-predicate.md` — +42 -1
+- `src/daemon/background/run.rs` — +7 -4
+- `src/daemon/mod.rs` — +69 -0
+
+**Commit:** 475909a9f707c812addedf99411ba9bc22ef1355
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
