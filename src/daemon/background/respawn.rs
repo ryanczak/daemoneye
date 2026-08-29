@@ -31,6 +31,69 @@ pub async fn respawn_background_in_pane(
     session_id: Option<String>,
     sessions: SessionStore,
 ) -> String {
+    // Refuse BEFORE respawn-pane: a refusal must leave the pane's running
+    // process untouched. Mirrors run_background_in_window's pre-window gate.
+    let config = crate::config::Config::load().unwrap_or_default();
+    if config.sandbox.enabled
+        && let Err(reason) = crate::daemon::executor::container::sandbox_preflight(&config.sandbox)
+    {
+        let message = crate::daemon::executor::container::describe_unavailable(&reason);
+        log::warn!("refusing sandboxed retry command: {message}");
+        return message;
+    }
+
+    let entry_is_ghost = session_id
+        .as_deref()
+        .and_then(|id| with_sessions(&sessions, |store| store.get(id).map(|e| e.is_ghost)));
+    let is_ghost = crate::daemon::resolve_is_ghost(session_id.as_deref(), entry_is_ghost);
+    let job_id =
+        crate::daemon::executor::container::job_id_for(pane_id, chrono::Utc::now().timestamp());
+
+    // Stage the daemon-host script this retry invokes, if any, and point the
+    // command at the staged copy. Fails closed, and returns before the pane is
+    // respawned so a refusal costs the user nothing.
+    let staged_cmd;
+    let cmd: &str = if config.sandbox.enabled
+        && let Some((name, args_tail)) =
+            crate::daemon::executor::container::sandbox_script_invocation(cmd, |n| {
+                crate::scripts::resolve_script(n).is_ok()
+            }) {
+        let (cfg_s, job_s, name_s) = (config.sandbox.clone(), job_id.clone(), name.clone());
+        let staged = tokio::task::spawn_blocking(move || {
+            crate::daemon::executor::container::stage_script(&cfg_s, &job_s, &name_s)
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("sandbox staging task failed: {e}")));
+        if let Err(message) = staged {
+            log::warn!("refusing sandboxed retry command: {message}");
+            return message;
+        }
+        staged_cmd = crate::daemon::executor::container::staged_script_command(&name, &args_tail);
+        &staged_cmd
+    } else {
+        cmd
+    };
+
+    let sandboxed_cmd;
+    let cmd: &str = {
+        if config.sandbox.enabled {
+            let spec = crate::daemon::executor::container::ExecSpec {
+                job_id: &job_id,
+                network: "none",
+                is_ghost,
+                command: cmd,
+            };
+            sandboxed_cmd = crate::daemon::executor::container::sandbox_window_command(
+                &config.sandbox,
+                &spec,
+                cmd,
+            );
+            &sandboxed_cmd
+        } else {
+            cmd
+        }
+    };
+
     if let Ok(mut map) = BG_COMMAND_MAP
         .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
         .lock()
@@ -202,6 +265,13 @@ pub async fn respawn_background_in_pane(
             .await
             .unwrap_or_default();
 
+            if config.sandbox.enabled {
+                let (cfg_v, job_v) = (config.sandbox.clone(), job_id.clone());
+                tokio::task::spawn_blocking(move || {
+                    crate::daemon::executor::container::remove_stage_volume(&cfg_v, &job_v)
+                });
+            }
+
             log_event(
                 "job_complete",
                 serde_json::json!({
@@ -281,6 +351,8 @@ pub async fn respawn_background_in_pane(
             let session_bg = session.to_string();
             let session_id_bg = session_id.clone();
             let sessions_bg = sessions.clone();
+            let sandbox_bg = config.sandbox.clone();
+            let job_id_bg = job_id.clone();
 
             tokio::spawn(async move {
                 let mut complete_rx = complete_rx;
@@ -329,6 +401,15 @@ pub async fn respawn_background_in_pane(
                 })
                 .await
                 .unwrap_or_default();
+
+                if sandbox_bg.enabled {
+                    tokio::task::spawn_blocking(move || {
+                        crate::daemon::executor::container::remove_stage_volume(
+                            &sandbox_bg,
+                            &job_id_bg,
+                        )
+                    });
+                }
 
                 log_event(
                     "job_complete",

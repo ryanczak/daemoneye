@@ -474,6 +474,14 @@ pub fn stage_volume_name(job_id: &str) -> String {
     format!("de-stage-{job_id}")
 }
 
+/// The job id for a pane's sandboxed run: the pane number without tmux's `%`
+/// sigil, then the run's unix timestamp. Both background paths build it here
+/// so the container the command runs in and the volume staged for it always
+/// name the same job.
+pub fn job_id_for(pane_id: &str, unix_ts: i64) -> String {
+    format!("{}-{}", pane_id.trim_start_matches('%'), unix_ts)
+}
+
 fn script_name_is_safe(script_name: &str) -> bool {
     if script_name.is_empty() || script_name.contains("..") {
         return false;
@@ -2142,6 +2150,31 @@ mod tests {
         assert!(
             err.starts_with("sandbox staging failed for `myscript.sh`"),
             "got: {err}"
+        );
+    }
+
+    #[test]
+    fn job_id_for_strips_the_pane_sigil() {
+        assert_eq!(job_id_for("%42", 1712937600), "42-1712937600");
+        assert_eq!(
+            job_id_for("42", 1712937600),
+            "42-1712937600",
+            "a pane number with no sigil is already the job id's first half"
+        );
+    }
+
+    #[test]
+    fn job_id_for_names_the_volume_the_container_mounts() {
+        let job = job_id_for("%42", 17);
+        assert_eq!(stage_volume_name(&job), "de-stage-42-17");
+    }
+
+    #[test]
+    fn job_id_for_distinguishes_a_retry_from_its_original_run() {
+        assert_ne!(
+            job_id_for("%42", 100),
+            job_id_for("%42", 101),
+            "a retry in the same pane must not reuse the original job's volume name"
         );
     }
 }

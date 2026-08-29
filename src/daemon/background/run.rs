@@ -95,7 +95,7 @@ pub async fn run_background_in_window(
 
     // Build final name: prefix + pane-number + unix-ts + command-slug.
     let pane_num = pane_id.trim_start_matches('%');
-    let job_id = format!("{pane_num}-{unix_ts}");
+    let job_id = crate::daemon::executor::container::job_id_for(&pane_id, unix_ts);
     let cmd_slug = crate::daemon::utils::sanitize_cmd_for_window(cmd, 30);
     let final_name = format!("{}{}-{}-{}", prefix, pane_num, unix_ts, cmd_slug);
     let (s2, t2, f2) = (session.to_string(), temp_name.clone(), final_name.clone());

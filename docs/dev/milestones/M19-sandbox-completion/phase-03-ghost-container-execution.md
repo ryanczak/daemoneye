@@ -1,6 +1,6 @@
 # Phase 03: Close the two ghost execution paths that bypass the container
 
-**Milestone:** M19 — Sandbox Completion
+**Status:** in-progress
 **Status:** todo
 **Depends on:** phase-01 (`resolve_is_ghost`), phase-02 (`stage_script`, `remove_stage_volume`)
 **Estimated diff:** ~230 lines including tests
@@ -759,3 +759,69 @@ editing the block.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-29 21:18 (progress)
+
+Started phase-03: closed the two ghost execution paths that bypass the
+container. Worked through the Spec in order — `job_id_for`, the foreground
+gate, preflight/stage/wrap/volume-removal in the retry path, the seven tests,
+both mutation pairs, and the end-to-end evidence capture. Nothing surprising
+came up; the retry path itself (docker spawn + tmux drive) is verified live at
+milestone close, exactly as the phase's test plan prescribes.
+
+### Update — 2026-08-29 21:18 (end-to-end verification)
+
+```
+== M1 APPLIED ==
+test daemon::executor::container::tests::job_id_for_strips_the_pane_sigil ... FAILED
+test daemon::executor::container::tests::job_id_for_names_the_volume_the_container_mounts ... FAILED
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 1472 filtered out; finished in 0.00s
+1
+== M1 RESTORED ==
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1472 filtered out; finished in 0.00s
+1
+== M2 APPLIED ==
+test daemon::executor::ghost_foreground_gate_tests::ghost_may_run_foreground_denies_ghosts_when_the_sandbox_is_on ... FAILED
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 1471 filtered out; finished in 0.00s
+1
+== M2 RESTORED ==
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1471 filtered out; finished in 0.00s
+1
+== A. named tests (expect 3 + 4 ok) ==
+test daemon::executor::container::tests::job_id_for_distinguishes_a_retry_from_its_original_run ... ok
+test daemon::executor::container::tests::job_id_for_names_the_volume_the_container_mounts ... ok
+test daemon::executor::container::tests::job_id_for_strips_the_pane_sigil ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1472 filtered out; finished in 0.00s
+cargo_exit=0
+test daemon::executor::ghost_foreground_gate_tests::ghost_may_run_foreground_allows_ghosts_when_the_sandbox_is_off ... ok
+test daemon::executor::ghost_foreground_gate_tests::ghost_may_run_foreground_allows_non_ghosts_with_the_sandbox_off ... ok
+test daemon::executor::ghost_foreground_gate_tests::ghost_may_run_foreground_allows_non_ghosts_with_the_sandbox_on ... ok
+test daemon::executor::ghost_foreground_gate_tests::ghost_may_run_foreground_denies_ghosts_when_the_sandbox_is_on ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1471 filtered out; finished in 0.00s
+cargo_exit=0
+== B. full lib suite ==
+test result: ok. 1471 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.02s
+cargo_exit=0
+== C. gates ==
+fmt_exit=0
+clippy_exit=0
+== D. structural greps ==
+fn job_id_for (1):            1
+run.rs job_id_for call (1):   1
+respawn job_id_for call (1):  1
+run.rs job_id = format! (0):  0
+run.rs job_id hoisted (1):    1
+respawn job_id hoisted (1):   1
+fn ghost_may_run_fg (1):      1
+gate call site (1):           1
+foreground is_ghost: _ (1):   1
+respawn preflight (1):        1
+respawn stage_script (1):     1
+respawn wrap (1):             1
+respawn remove calls (2):     2
+respawn resolve_is_ghost (1): 1
+no off_runtime staging (0):   0
+allow total (6):              6
+respawn prod unwrap/expect (0): 0
+```
+PASTE MATCH

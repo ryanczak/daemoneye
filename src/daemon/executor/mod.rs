@@ -135,6 +135,17 @@ pub(crate) fn ghost_may_use_tmux_control(
     !is_ghost || policy.is_some_and(|p| p.explicitly_allows("tmux_control")) // ghost needs an explicit allow
 }
 
+/// True when this session may run a **foreground** command.
+///
+/// Foreground execution is deliberately outside the container — the user is
+/// present and approving it. A ghost shell has no user, so with the sandbox
+/// enabled a ghost foreground command would be an unsandboxed command on the
+/// host. Ghosts are background-only by design; this makes that a condition
+/// rather than a line of prompt text.
+pub(crate) fn ghost_may_run_foreground(is_ghost: bool, sandbox_enabled: bool) -> bool {
+    !is_ghost || !sandbox_enabled // a ghost gets no unsandboxed door out
+}
+
 pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
     tx: &mut W,
@@ -268,6 +279,22 @@ where
         PendingCall::Foreground {
             id, cmd, target, ..
         } => {
+            // Ghost gate — a ghost has no unsandboxed door out (M19 phase-03).
+            if !ghost_may_run_foreground(
+                is_ghost,
+                crate::config::Config::load()
+                    .unwrap_or_default()
+                    .sandbox
+                    .enabled,
+            ) {
+                return Ok(ToolCallOutcome::Result(
+                    "Foreground execution is not sandboxed and is denied for ghost \
+                     shells while the container sandbox is enabled. Re-issue this \
+                     command with background=true so it runs in a container."
+                        .to_string(),
+                ));
+            }
+
             foreground::run_foreground(
                 foreground::FgArgs {
                     id,
@@ -1279,6 +1306,33 @@ mod tmux_control_gate_tests {
             deny: None,
         };
         assert!(ghost_may_use_tmux_control(true, Some(&policy)));
+    }
+}
+
+#[cfg(test)]
+mod ghost_foreground_gate_tests {
+    use super::ghost_may_run_foreground;
+
+    #[test]
+    fn ghost_may_run_foreground_allows_non_ghosts_with_the_sandbox_on() {
+        assert!(ghost_may_run_foreground(false, true));
+    }
+
+    #[test]
+    fn ghost_may_run_foreground_allows_non_ghosts_with_the_sandbox_off() {
+        assert!(ghost_may_run_foreground(false, false));
+    }
+
+    #[test]
+    fn ghost_may_run_foreground_allows_ghosts_when_the_sandbox_is_off() {
+        // Nothing is containerized in this configuration, so foreground
+        // execution is no worse for a ghost than any other command.
+        assert!(ghost_may_run_foreground(true, false));
+    }
+
+    #[test]
+    fn ghost_may_run_foreground_denies_ghosts_when_the_sandbox_is_on() {
+        assert!(!ghost_may_run_foreground(true, true));
     }
 }
 
