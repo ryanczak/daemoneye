@@ -216,10 +216,12 @@ When a class flag is `true`, approval is pre-granted for the entire class at ses
 
 ### 🔒 Container-Sandboxed Agents (in progress)
 
-> **Status: in flight, not yet shipped.** The groundwork is landing now — 3 of
-> 10 phases are merged. Everything below is behind `[sandbox] enabled = false`,
-> so current behaviour is unchanged and no container runtime is required to
-> build, test, or run DaemonEye today.
+> **Status: milestone-complete, feature not shipped.** M18 is done: background
+> command execution runs inside a rootless Docker container when enabled. The
+> sandbox remains **behind `[sandbox] enabled = false`**, so current behaviour
+> is unchanged and no container runtime is required to build, test, or run
+> DaemonEye today. The remaining work — script staging, the escape hatch, and
+> the egress proxy — is M19.
 
 Every approval prompt above is a *behavioural* control: it depends on the
 operator reading the command correctly. None of it stops a

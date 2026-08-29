@@ -48,6 +48,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/prompt.rs` | Prompt assembly via `PromptCtx` (`build_first_turn_prompt`, `build_subsequent_turn_prompt`) |
 | `src/daemon/stream.rs` | AI event streaming loop (`run_conversation_loop`); tool execution; response persistence |
 | `src/daemon/executor/` | Tool call dispatch; approval gate (`ToolCallOutcome`); background/foreground execution coordination; `ArtifactCtx` for session-origin stamping |
+| `src/daemon/executor/container.rs` | Container sandbox: runtime probe + D1 uid gate, `evaluate_preflight`, the `docker` argv builders (`run_args`/`stage_args`), `sandbox_window_command`, the image lockfile, and the startup sweep. All decision logic is pure; one spawn site per operation. Gated by `[sandbox] enabled` (default off). |
 | `src/daemon/background/` | Background execution: `run.rs` `run_background_in_window()`, `respawn.rs` `respawn_background_in_pane()`, `gc.rs` `notify_job_completion()` + `gc_bg_windows()` + `OwnedJobInfo`, `helpers.rs` output capture/archive and session notification |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
 | `src/daemon/digest.rs` | Session digest: structured compaction of conversation history at 30 messages; scans events.jsonl + filesystem for artifacts |
@@ -221,5 +222,30 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 - **Retroactive backfill**: When an unnamed session is saved for the first time, `session_store::backfill_session_origin(&artifacts, name)` walks `artifacts_created` and stamps `session_origin` on each. Called from the `SaveSession` handler in `server.rs` when `current_saved_name` was `None`.
 - **Ghost sessions are excluded**: `ArtifactCtx.is_ghost` guards `track_artifact()` — ghost sessions never write to `artifacts_created` or stamp `session_origin`.
 - **Import**: `daemoneye session import <id> --name <name>` reads an orphaned `var/log/sessions/<id>.jsonl` and saves it to the named session store without a running daemon.
+
+## Container sandbox
+
+Background `run_terminal_command` execution is wrapped as
+`docker --host <docker_host> run … sh -lc '<cmd>'` and runs **inside the
+existing `de-bg-*` window** via `sandbox_window_command`, so completion
+detection, output capture/archive and GC are unchanged.
+
+- Every sandboxed process runs as `--user 1000:1000`. Under rootless Docker
+  container root maps to the daemon's own host uid, so running as root would
+  defeat the sandbox entirely — this is the reason for the uid gate.
+- Preflight (runtime probe → uid gate → `sandbox.lock` → live image id) is
+  cached once per daemon lifetime and **fails closed**: a failed gate refuses
+  the command with an operator-facing reason instead of running it on the host.
+- Containers are `--network=none`, carry `--label de.sandbox=1` (plus
+  `de.ghost=1` for ghost sessions), get a `0700` tmpfs scratch at `/de/work`,
+  and are swept at daemon start along with leaked `de-stage-*` volumes.
+- **Not sandboxed:** foreground execution, remote (`target_pane`) execution,
+  and every broker-native tool.
+- `daemoneye sandbox build` builds the image and records its digest in
+  `~/.daemoneye/etc/sandbox.lock`; a live image that differs from the lock is
+  refused.
+
+All sandboxed code is gated by `[sandbox] enabled` (default off); with the flag
+off, background execution is byte-for-byte today's host behaviour.
 
 @REXYMCP.md

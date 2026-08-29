@@ -1,7 +1,7 @@
 # Phase 10: Document what shipped
 
 **Milestone:** M18 — Container-sandboxed Agents (final phase)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phases 01–09 (all `done`)
 **Estimated diff:** ~180 lines, docs only
 **Tags:** language=markdown, kind=docs, size=s
@@ -264,3 +264,34 @@ editing the block.
 - Re-running the pilot or any live check.
 
 ## Update Log
+
+### Update — 2026-08-29 04:35 (in-progress, started)
+
+Kicking off phase-10 per the lifecycle: flipped phase doc status to
+`in-progress`, updated the milestone phase-table row. Implementing the four
+Spec tasks (CLAUDE.md table row + section, README blockquote, E2E capture).
+
+— rexyMCP executor run (2026-08-29)
+
+### Update — 2026-08-29 04:40 (end-to-end verification)
+
+```sh
+== A. doc_truth still green ==
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+cargo_exit=0
+== B. lib suite unchanged ==
+test result: ok. 1454 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 3.99s
+cargo_exit=0
+== C. structural greps ==
+container.rs row (1):     1
+sandbox section (1):      1
+sandbox mentions (>=10):  11
+stale '3 of' gone (0):    0
+default-off kept (>=1):   2
+config.toml untouched (0):0
+src untouched (0):        0
+```
+
+PASTE MATCH
+
+— rexyMCP executor run (2026-08-29)
