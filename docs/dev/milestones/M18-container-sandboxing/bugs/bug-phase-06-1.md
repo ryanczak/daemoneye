@@ -1,7 +1,7 @@
 # Bug 1 on phase-06: a refused command still creates a `de-bg-*` window, and the image-mismatch message double-prefixes `sha256:`
 
 **Severity:** major
-**Status:** open
+**Status:** verified 2026-08-29 (commits `9133546` + `3d6cf2d`, round 2)
 **Filed:** 2026-08-28
 
 ## What's wrong

@@ -1,7 +1,7 @@
 # Phase 06: Fail closed — the sandbox preflight gate
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (`evaluate_preflight`, `SandboxUnavailable`), phase-05 (`sandbox_window_command` and its call site)
 **Estimated diff:** ~380 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -344,7 +344,7 @@ Run this block verbatim from the repo root.
 
 ```sh
 {
-echo "== A. sandbox_gate tests (expect 7 lines) =="
+echo "== A. sandbox_gate tests (expect 8 lines) =="
 cargo test --lib sandbox_gate 2>&1 | grep -E "^test .* ok$"; echo "cargo_exit=${PIPESTATUS[0]}"
 echo "== B. lib suite totals =="
 cargo test --lib 2>&1 | grep -E "^test result:"; echo "cargo_exit=${PIPESTATUS[0]}"
@@ -371,9 +371,9 @@ tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/paste
 diff /tmp/pasted-06.txt /tmp/e2e-06.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
 ```
 
-**Section A is the one that can lie** — on the current tree it prints zero
-test lines and still reports `cargo_exit=0`. Seven lines is the pass
-condition.
+**Section A is the one that can lie** — on the pre-phase tree it prints zero
+test lines and still reports `cargo_exit=0`. **Eight** lines is the pass
+condition (corrected from seven after bug-phase-06-1 added a test).
 
 ## Authorizations
 
@@ -414,6 +414,59 @@ condition.
   `containers/Dockerfile`.
 
 ## Update Log
+
+### Update — restored 2026-08-29 by the architect
+
+The two round-1 entries below were **overwritten in place** by the round-2
+run rather than superseded, and its completion summary stated they
+"remain below, clearly marked superseded" — they did not. Recovered verbatim
+from commit `550e315` and reinstated here, because an Update Log entry is the
+historical record of the tree that produced it and must not be edited away by
+a later round. Round-1's numbers (1439 passed, 7 `sandbox_gate` tests) are
+correct **for round 1** and are superseded by the round-2 entry further down.
+
+### Update — 2026-08-28 23:31 (progress)
+
+Started phase-06. Flipped Status to in-progress, updated the README phase-table
+row, and appended this started entry. Now reading `container.rs` and `run.rs`
+before implementing the Spec tasks.
+
+### Update — 2026-08-28 23:52 (end-to-end verification)
+
+All seven Spec acceptance criteria verified against the real tree, including
+the § Test plan count and § C greps. Full `cargo` gates green
+(fmt/build/clippy/test). `verdict cached` prints `1`: to keep the count
+exactly one, the `OnceLock` static lives inside `sandbox_preflight` with the
+module-level `use std::sync::OnceLock;` removed, so the identifier appears
+once (the E2E block's `grep -c "OnceLock"` counts the static's type use; the
+type-alias `SandboxVerdictCell = std::sync::OnceLock<...>` is spelled with the
+full path on purpose).
+
+```
+== A. sandbox_gate tests (expect 7 lines) ==
+test daemon::executor::container::tests::sandbox_gate_describes_nolock_with_the_build_command ... ok
+test daemon::executor::container::tests::sandbox_gate_describes_bad_run_as_with_the_offending_value ... ok
+test daemon::executor::container::tests::sandbox_gate_disabled_config_is_ok_without_probing ... ok
+test daemon::executor::container::tests::sandbox_gate_probe_output_rejects_malformed_input ... ok
+test daemon::executor::container::tests::sandbox_gate_describes_every_unavailable_variant ... ok
+test daemon::executor::container::tests::sandbox_gate_parses_the_real_probe_output ... ok
+test daemon::executor::container::tests::sandbox_gate_probe_output_feeds_the_uid_gate ... ok
+cargo_exit=0
+== B. lib suite totals ==
+test result: ok. 1439 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 3.93s
+cargo_exit=0
+== C. structural greps ==
+parse_probe_output:   1
+describe_unavailable: 1
+sandbox_preflight:    1
+gate call site:       1
+refusal returned:     1
+verdict cached:       1
+allow(dead_code) tot: 7
+no hardcoded digest:  0
+```
+
+PASTE MATCH
 
 ### Update — 2026-08-29 01:58 (progress, re-dispatch after bug-phase-06-1)
 
@@ -752,3 +805,57 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3d6cf2d9e81bc44329d35b6a323623c59ad4dd13
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-29
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-phase-06-1, major — resolved)
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none in the code.
+- **Calibration:** three items — one architect-side, two executor-side.
+
+**The code is correct and was verified by mutation, not by reading:**
+
+| Check | Result |
+|---|---|
+| gate precedes window creation | `preflight` at `run.rs:50`, `create_job_window` at `:75` — **GATE_FIRST** |
+| `sha256:` printed once | `grep -c 'sha256:{live}'` → `0`; restoring the double prefix **FAILS** `sandbox_gate_describes_image_mismatch_with_a_single_prefix` |
+| round-1 distinctness guard | still bites — collapsing `describe_unavailable` fails 3 tests |
+| gates | four green; **1440 passed / 0 failed / 3 ignored**; 8 `sandbox_gate` tests; `allow(dead_code)` still 7 |
+
+The new prefix test uses a genuinely prefixed fixture
+(`format!("sha256:{}", "b".repeat(64))`) and asserts the **count** of
+`sha256:` is 1 — so it cannot repeat the round-1 blind spot, where a bare
+64-hex fixture hid a formatting bug that only appears with production-shaped
+data.
+
+**Calibration 1 — architect-side.** The § End-to-end block still said
+`(expect 7 lines)` after the bounce raised the criterion to 8. I corrected the
+criterion and left the block stale, which is what put the executor in the
+position of choosing between a verbatim run and an accurate one. Corrected
+here. *When a bounce changes a count, change it everywhere the count appears —
+criteria, the E2E block, and the prose beneath it.*
+
+**Calibration 2 — executor-side, evidence fidelity.** The pasted E2E fence was
+**not** a verbatim capture of the spec's block: its header reads
+`== A. sandbox_gate tests ==` where the block prints
+`== A. sandbox_gate tests (expect 7 lines) ==`. A `PASTE MATCH` line is
+therefore present but attests to a comparison against a modified block. My
+stale header provoked it and the reported numbers are all true, so this is
+recorded rather than charged — but the correct move on a stale block is a
+blocker, not a quietly edited artifact.
+
+**Calibration 3 — executor-side, 2nd factual misstatement in this milestone,
+and the more serious item.** Round-1's two Update Log entries were
+**overwritten in place**, and the completion summary asserted they "remain
+below, clearly marked superseded". They did not — the headings were gone from
+disk and only a prose reference to a non-existent entry survived. The
+architect recovered them from `550e315` and reinstated them above. Combined
+with phase-02's fabricated provenance this is the second time this executor
+has described its own bookkeeping inaccurately in a way a reader could not
+detect without checking git. **A third occurrence should change how this model
+is dispatched**, not just how it is reviewed.
+
+**Still deferred to milestone close:** the three `#[ignore]`d live tests have
+never been run, so no daemoneye code has yet started a container or completed
+a real preflight.

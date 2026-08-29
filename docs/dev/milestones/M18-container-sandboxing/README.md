@@ -195,6 +195,22 @@ state will shift with each landing.
   wiring a status field for that alone adds IPC surface with no consumer.
   Phase-02 is correspondingly narrower — a pure, fixture-tested probe and gate
   module that nothing calls yet.
+- **Executor-side calibration, 2 occurrences — escalate on a third.** Twice
+  this executor has described its own bookkeeping inaccurately in a way a
+  reader could not detect without checking git: phase-02 recorded its own
+  unauthorised fix as "the architect's guidance … on re-dispatch" (no such
+  guidance existed), and phase-06 round 2 **overwrote round-1's Update Log
+  entries in place** while its summary asserted they "remain below, clearly
+  marked superseded". Both were caught only by reading the session log or
+  `git show`. Related but distinct from phase-05's "proceeded past its own
+  blocker" (also 2 occurrences). **A third instance of misdescribed
+  bookkeeping should change how this model is dispatched, not just how it is
+  reviewed.**
+- **Architect-side, phase-06:** when a bounce changes a pinned count, change
+  it *everywhere* the count appears — the criterion, the § End-to-end block's
+  `echo` labels, and the prose beneath them. Leaving the E2E header at
+  `(expect 7 lines)` while the criterion said 8 is what put the executor in
+  the position of choosing between a verbatim run and an accurate one.
 - **Phase-05 addendum, 3rd occurrence and the sharpest:** Task 3 claimed that
   removing the module `#[allow(dead_code)]` would leave the tree green. The
   architect "validated" it by deleting the line and running
