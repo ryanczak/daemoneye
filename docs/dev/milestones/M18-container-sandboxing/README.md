@@ -136,9 +136,9 @@ state will shift with each landing.
 | 05 | background-window-integration ([phase-05-background-window-integration.md](phase-05-background-window-integration.md)) | **done** (approved_first_try, 2026-08-28) | **First phase whose code starts a container.** `sandbox_window_command` wraps a background command as a shell-quoted `docker run …` line at the `run.rs:159` seam when enabled; `de-bg-*` window, completion detection, capture and GC untouched. The `#[allow(dead_code)]` removal was **withdrawn** — 14 phase-02/03/04 items are still unwired; see Notes. |
 | 06 | sandbox-preflight-gate ([phase-06-sandbox-preflight-gate.md](phase-06-sandbox-preflight-gate.md)) | **done** (approved_after_1, 2026-08-29) | **Fail closed.** Probe the runtime once (`OnceLock`), decide with phase-04's `evaluate_preflight`, and **refuse** a background command when the sandbox is not sane instead of running it on the host. Phase-05 shipped sandboxed execution with no gate at all. |
 | 07 | docker-host-propagation ([phase-07-docker-host-propagation.md](phase-07-docker-host-propagation.md)) | **done** (approved_first_try, 2026-08-29) | **Production-break fix, found by live verification.** The window command carried no `DOCKER_HOST`, so it targeted the *rootful* socket and failed while preflight passed. `run_args`/`stage_args` now emit `--host <docker_host>` first; a live test runs with `env_remove("DOCKER_HOST")` so the gap cannot reopen. |
-| 08 | ghost-lifecycle-and-gc | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep, **and the `de-stage-*` volume GC phase-05 deferred**. Wires staging (`stage_args`, `script_name_is_safe`), which is what finally allows the `#[allow(dead_code)]` to go. |
-| 09 | escape-hatch-and-chat | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify; plus the long-lived `de-chat-<session>` container. The egress proxy folds in here or is dropped if the pilot shows no need. |
-| 10 | docs-and-pilot | todo (not drafted) | CLAUDE.md / README / doc_truth updates, `Request::ContainerStatus` + `daemoneye status` surface, the `log` relay opcode, pilot runbook, and pilot metrics (start latency, park counts, failed starts). |
+| 08 | sandbox-gc ([phase-08-sandbox-gc.md](phase-08-sandbox-gc.md)) | **todo** (drafted 2026-08-29) | Label **every** sandboxed container `de.sandbox=1` (today none are labelled, so no sweep is possible), then sweep orphaned containers and the leaked `de-stage-*` volumes at daemon start. Volume selection is a Rust prefix check — docker's own `--filter name=` is a substring match. |
+| 09 | ghost-lifecycle-and-staging | todo (not drafted) | Set `is_ghost` at the ghost call site so ghost containers are labelled and torn down per run; wire staging (`stage_args`, `script_name_is_safe`), which is what finally retires the `#[allow(dead_code)]`. |
+| 10 | escape-hatch-docs-and-pilot | todo (not drafted) | Escape-hatch classification + `GhostPolicy.escape_allowlist` + park-and-notify; CLAUDE.md / README / doc_truth updates; pilot runbook and metrics. `Request::ContainerStatus`, the `log` relay opcode and the egress proxy fold in here or are dropped if the pilot shows no need. |
 
 ## Notes
 
@@ -170,6 +170,23 @@ state will shift with each landing.
   passed on a value that was thrown away, and phase-06's row read
   `in-progress` while its doc read `done` for two further phases. An assertion
   on a value you do not write proves nothing.
+- **Second live-verification pass, 2026-08-29 (phase-08 drafting) — three
+  more measured facts, none of them guessable.**
+  1. **Sandboxed containers carry no labels at all.** `run_args` emits
+     `--label de.ghost=1` only when `is_ghost`, and the one call site
+     hardcodes `false`. `docker inspect … .Config.Labels` → `{}`. **No sweep
+     is possible today**, which is why phase-08 labels every container
+     `de.sandbox=1` rather than only ghosts.
+  2. **A killed `docker` client leaves the container running and `--rm` never
+     fires** — `SIGKILL` the client, and `docker ps` still shows `Up 3
+     seconds`. So `--rm` is not sufficient and an orphan sweep is genuinely
+     needed.
+  3. **`docker volume ls --filter name=X` is a SUBSTRING match.** A decoy
+     volume `zz-de-stage-decoy` matched `--filter name=de-stage-`. A sweep
+     trusting that filter would delete user volumes; phase-08 does the prefix
+     check in Rust and pins the decoy as a must-NOT-match.
+  Two stale `de-stage-*` volumes are deliberately left on the host as the
+  fixture for the milestone-close sweep check.
 - **Live verification, first run, 2026-08-29 — and it found a production
   break.** Six phases in, no daemoneye code had ever started a container. The
   architect ran the three `#[ignore]`d tests (all pass) and executed

@@ -1659,9 +1659,57 @@ fails with "cannot connect". Phase-06's gate cannot catch it: the daemon
 probes with `Command::env` set, while tmux runs a bare string. Invisible to
 1440 green tests; found in the first minute of running the thing.
 
-**Active phase: phase-07 — docker-host-propagation** (`docs/dev/milestones/
-M18-container-sandboxing/phase-07-docker-host-propagation.md`, status: todo,
-drafted 2026-08-29). Dispatch with `/rexymcp:dispatch phase-07`.
+**phase-07 — docker-host-propagation: done (approved_first_try) 2026-08-29**,
+approval `3605e3e`. `--host <docker_host>` now heads both argv builders, so
+the tmux-run command carries its endpoint; 1440 → 1443 lib tests.
+
+**The production break is closed and proven.** At review the live test was run
+with `DOCKER_HOST` scrubbed from the reviewer's own environment: it passes as
+shipped and **fails** when `--host` is reverted out of `run_args`. A second
+mutation moving `--host` after `run` (which docker rejects) fails two more
+tests, so the ordering is guarded too. Update Log entries were appended, not
+rewritten — the phase-06 round-2 behaviour did not recur once § Authorizations
+said so explicitly.
+
+**Architect calibration:** the phase-06 approval left the README row reading
+`in-progress` while the doc read `done`, because the script computed the
+replacement into `s2`, asserted on `s2`, then wrote `s`. **An assertion on a
+value you do not write proves nothing** — verify a scripted edit by reading the
+file back. Both rows fixed.
+
+**Active phase: phase-08 — sandbox-gc** (`docs/dev/milestones/
+M18-container-sandboxing/phase-08-sandbox-gc.md`, status: todo, drafted
+2026-08-29). Dispatch with `/rexymcp:dispatch phase-08`.
+
+Scope: label **every** sandboxed container `de.sandbox=1`, then sweep orphaned
+containers and leaked `de-stage-*` volumes at daemon start. Nothing spawns
+during the phase; the sweep is exercised by the architect at close.
+
+**Renumbering:** ghost lifecycle + staging becomes 09 (it is what finally
+retires the `#[allow(dead_code)]`), and escape-hatch merges with docs + pilot
+into 10.
+
+Phase-08 staging notes — a second live pass produced three facts, none of them
+guessable from the code:
+
+- **No sandboxed container is labelled today.** `run_args` emits
+  `--label de.ghost=1` only when `is_ghost`, and the sole call site hardcodes
+  `false`; `docker inspect … .Config.Labels` returns `{}`. **A sweep is
+  therefore impossible right now**, which is why the phase labels every
+  container rather than only ghosts.
+- **A killed `docker` client leaves the container running and `--rm` never
+  fires** — measured with `SIGKILL`, then `docker ps` reporting `Up 3
+  seconds`. `--rm` alone does not prevent orphans.
+- **`docker volume ls --filter name=` is a SUBSTRING match**, measured with a
+  decoy `zz-de-stage-decoy` that matched `--filter name=de-stage-`. A sweep
+  trusting docker's filter would delete user volumes. The spec does the prefix
+  check in Rust and pins the decoy, a near-miss (`de-stagex`) and a control
+  (`unrelated`) as must-NOT-matches.
+- Two stale `de-stage-*` volumes are deliberately **left on the host** as the
+  fixture the milestone-close sweep check will consume.
+- The pinned vector changes for the second time in two phases (label added);
+  § Gotchas 4 says so explicitly so the expectation is updated rather than
+  worked around.
 
 Inserted to fix the break above; ghost lifecycle moves to 08, escape-hatch
 merges with chat containers into 09.
