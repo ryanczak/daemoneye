@@ -1,7 +1,7 @@
 # Phase 09: Give the staging helper its source mount, and label ghost containers
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (`stage_args`), phase-05 (`ExecSpec` call site), phase-08 (`de.sandbox=1` label)
 **Estimated diff:** ~260 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -442,3 +442,62 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3c0e18008d5535241e07a14ecd70950463749737
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** one, declared and necessary — phase-04's
+  `sandbox_exec_stage_args_run_as_root_and_chown_to_the_sandbox_uid` pinned a
+  10-element prefix that the new mount extends to 12. Updated, as the third
+  such pinned-vector move in three phases.
+- **Calibration:** one, architect-side. **A coverage gap I specced, carried to
+  M19** — see below.
+
+**Both fixes verified by mutation, not by reading:**
+
+| Mutation | Result |
+|---|---|
+| `:ro` dropped from the source mount | **FAILED** `sandbox_stage_args_mount_the_script_source_read_only` **and** the phase-04 prefix test (2 failures) |
+| — | so the read-only property is genuinely guarded, not merely present |
+
+`:ro` is the security property here: the helper runs as container root, which
+under rootless Docker *is* host `matt`, so a writable mount would give a
+compromised helper write access to the operator's real 0700 script library.
+
+Also confirmed: four gates green; **1454 passed / 0 failed / 4 ignored**; the
+`:ro` mount present once in production; `is_ghost: false` gone with exactly
+one `is_ghost` mention remaining; `#[ignore]` still 4; `allow(dead_code)` still
+7; no `unwrap`/`expect` in new production code; Update Log appended; E2E
+artifact re-extracts identical apart from the elapsed-time line.
+
+**Calibration — architect-side, and carried to M19.** The `is_ghost`
+derivation is **unguarded**: replacing
+
+```rust
+is_ghost: session_id.as_deref().is_some_and(|sid| sid.starts_with("ghost-")),
+```
+
+with a hardcoded `is_ghost: true` leaves **all 1454 tests green** and still
+satisfies every criterion of this phase (`is_ghost: false` count `0`, one
+`is_ghost` mention). That is not the executor's miss — § Test plan said
+outright that *"the `run.rs` change itself has no unit-testable seam"* and
+asked instead for a `run_args`-level test, which is exactly what was
+delivered. **The claim was wrong**: extracting a pure
+`is_ghost_session(Option<&str>) -> bool` predicate would have been trivially
+testable, with `Some("ghost-abc")` / `Some("chat-1")` / `None` as the cases.
+
+Consequence today is nil — a mislabelled container is consumed by nothing,
+and phase-08's sweep keys on `de.sandbox=1`. It becomes load-bearing in **M19**
+when ghost-scoped teardown reads `de.ghost=1`. **Recorded as an explicit M19
+carry rather than bounced**, because the phase met every criterion this spec
+set and moving the goalposts onto the executor for a gap the spec granted
+would be unfair.
+
+**Minor, not charged:** the verdict line was written as `` `PASTE MATCH` ``
+(backticked) rather than bare. My criterion says *"contains the literal line
+`PASTE MATCH`"* — the backticks there are markdown formatting, but that is
+genuinely ambiguous and every previous phase happened to read it the other
+way. The self-check itself is unaffected; it extracts the fence, not the
+verdict line.

@@ -137,10 +137,29 @@ state will shift with each landing.
 | 06 | sandbox-preflight-gate ([phase-06-sandbox-preflight-gate.md](phase-06-sandbox-preflight-gate.md)) | **done** (approved_after_1, 2026-08-29) | **Fail closed.** Probe the runtime once (`OnceLock`), decide with phase-04's `evaluate_preflight`, and **refuse** a background command when the sandbox is not sane instead of running it on the host. Phase-05 shipped sandboxed execution with no gate at all. |
 | 07 | docker-host-propagation ([phase-07-docker-host-propagation.md](phase-07-docker-host-propagation.md)) | **done** (approved_first_try, 2026-08-29) | **Production-break fix, found by live verification.** The window command carried no `DOCKER_HOST`, so it targeted the *rootful* socket and failed while preflight passed. `run_args`/`stage_args` now emit `--host <docker_host>` first; a live test runs with `env_remove("DOCKER_HOST")` so the gap cannot reopen. |
 | 08 | sandbox-gc ([phase-08-sandbox-gc.md](phase-08-sandbox-gc.md)) | **done** (approved_first_try, 2026-08-29) | Label **every** sandboxed container `de.sandbox=1` (today none are labelled, so no sweep is possible), then sweep orphaned containers and the leaked `de-stage-*` volumes at daemon start. Volume selection is a Rust prefix check — docker's own `--filter name=` is a substring match. |
-| 09 | staging-mount-and-ghost-label ([phase-09-staging-mount-and-ghost-label.md](phase-09-staging-mount-and-ghost-label.md)) | **in-progress** (2026-08-29) | Two measured defects: `stage_args` copies from `/de/src` but **nothing mounts it** (`cp: cannot stat`, verified live), and no ghost container is ever labelled because the call site hardcodes `is_ghost: false`. Adds the read-only source mount and derives `is_ghost` from the existing session predicate. |
-| 10 | escape-hatch-docs-and-pilot | todo (not drafted) | Escape-hatch classification + `GhostPolicy.escape_allowlist` + park-and-notify; CLAUDE.md / README / doc_truth updates; pilot runbook and metrics. **Likely more than one phase's work — see the scope note in Notes.** |
+| 09 | staging-mount-and-ghost-label ([phase-09-staging-mount-and-ghost-label.md](phase-09-staging-mount-and-ghost-label.md)) | **done** (approved_first_try, 2026-08-29) | Two measured defects: `stage_args` copies from `/de/src` but **nothing mounts it** (`cp: cannot stat`, verified live), and no ghost container is ever labelled because the call site hardcodes `is_ghost: false`. Adds the read-only source mount and derives `is_ghost` from the existing session predicate. |
+| 10 | pilot-and-close ([to be drafted](.)) | todo (not drafted) | **PE decision 2026-08-29: M18 closes here.** Turn `[sandbox] enabled = true` for real, run background commands through chat against the live runtime, capture start latency / pane readability / sweep behaviour, then the doc sweep (CLAUDE.md, README, `assets/etc/config.toml`) and the retrospective. Escape hatch, egress proxy, `ContainerStatus`, the `log` opcode and staging integration all move to **M19**. |
 
 ## Notes
+
+- **PE DECISION 2026-08-29 — close M18 after the pilot; carry the rest into
+  M19.** M18 stays ten phases, ending with phase-10 as pilot + docs +
+  close-out. **M19 inherits:** staging integration (a production caller for
+  `stage_args` — the only thing that retires the `#[allow(dead_code)]`, so
+  **that attribute is an explicit recorded carry out of M18, not an
+  oversight**); the escape hatch (`GhostPolicy.escape_allowlist`,
+  park-and-notify, the `escape_hatch` flag on `ToolCallPrompt`); the egress
+  proxy; `Request::ContainerStatus` + the `daemoneye status` surface; and the
+  `log` relay opcode. **Also carried:** the phase-09 `is_ghost` coverage gap —
+  hardcoding `is_ghost: true` leaves all 1454 tests green, because the
+  phase-09 Test plan wrongly claimed the `run.rs` change had no unit-testable
+  seam. M19 should extract a pure `is_ghost_session()` predicate and pin it,
+  *before* ghost-scoped teardown starts reading `de.ghost=1`.
+- **Framing for phase-10:** the design's § Rollout imagined a *ghost-shell*
+  pilot, but ghosts are not wired to containers — phase-09 only labels them.
+  The honest pilot for what M18 shipped is **background command execution**,
+  the one path complete end to end. Do not spec a pilot the code cannot
+  perform.
 
 - **Executor-host constraint (load-bearing):** the four gates must stay green
   on hosts with no docker binary. Runtime interaction lives behind
