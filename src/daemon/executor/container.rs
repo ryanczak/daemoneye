@@ -518,6 +518,67 @@ pub fn stage_args(cfg: &SandboxConfig, job_id: &str, script_name: &str) -> Vec<S
     ]
 }
 
+/// The daemon-host script a sandboxed background command invokes, if any,
+/// as `(name, args_tail)` from [`crate::scripts::parse_script_invocation`].
+///
+/// Pure: `script_exists` answers whether `~/.daemoneye/scripts/<name>` is a
+/// real script (production passes `resolve_script(..).is_ok()`; tests pass a
+/// closure). `ls -la` parses as a candidate but does not exist, so it is an
+/// ordinary command. A command under `sudo` is never staged — sudo inside the
+/// sandbox is the escape hatch's business, not staging's.
+pub fn sandbox_script_invocation(
+    cmd: &str,
+    script_exists: impl Fn(&str) -> bool,
+) -> Option<(String, String)> {
+    if crate::daemon::utils::command_has_sudo(cmd) {
+        return None;
+    }
+    let (name, args_tail) = crate::scripts::parse_script_invocation(cmd)?;
+    if !script_exists(&name) {
+        return None;
+    }
+    Some((name, args_tail))
+}
+
+/// The in-container command for a staged script: its path under the
+/// `/de/scripts` mount `run_args` provides, then the verbatim argument tail.
+pub fn staged_script_command(script_name: &str, args_tail: &str) -> String {
+    format!("/de/scripts/{script_name}{args_tail}")
+}
+
+/// Stage one script into this job's volume by spawning the helper
+/// [`stage_args`] describes. Blocking — call it off the async runtime.
+/// Fails closed: every error is an operator-facing reason and the caller
+/// must not run the command.
+pub fn stage_script(cfg: &SandboxConfig, job_id: &str, script_name: &str) -> Result<(), String> {
+    let args = stage_args(cfg, job_id, script_name);
+    if args.is_empty() {
+        return Err(format!(
+            "sandbox staging refused: `{script_name}` is not a stageable script name"
+        ));
+    }
+    let mut cmd = Command::new(&cfg.runtime);
+    cmd.args(args);
+    match bounded_output_with(&mut cmd, Duration::from_secs(60)) {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => Err(format!(
+            "sandbox staging failed for `{script_name}`: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+        Err(e) => Err(format!("sandbox staging failed for `{script_name}`: {e}")),
+    }
+}
+
+/// Remove this job's staging volume once the job is over. Best-effort: a
+/// failure is logged, never surfaced — the startup sweep reclaims leftovers.
+pub fn remove_stage_volume(cfg: &SandboxConfig, job_id: &str) {
+    let mut cmd = Command::new(&cfg.runtime);
+    cmd.args(sweep_volume_rm_args(cfg, &[stage_volume_name(job_id)]));
+    if let Err(e) = bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+        log::warn!("sandbox stage volume remove failed for job {job_id}: {e}");
+    }
+}
+
 /// argv listing every container this daemon's sandbox created, running or not.
 pub fn sweep_container_list_args(cfg: &SandboxConfig) -> Vec<String> {
     vec![
@@ -1995,5 +2056,92 @@ mod tests {
         );
         assert!(ordinary.iter().any(|a| a == "de.sandbox=1"));
         assert!(!ordinary.iter().any(|a| a == "de.ghost=1"));
+    }
+
+    #[test]
+    fn sandbox_staging_detects_a_script_the_predicate_knows() {
+        let known = |n: &str| n == "myscript.sh";
+        assert_eq!(
+            sandbox_script_invocation("myscript.sh --flag one", known),
+            Some(("myscript.sh".to_string(), " --flag one".to_string()))
+        );
+        assert_eq!(
+            sandbox_script_invocation("~/.daemoneye/scripts/myscript.sh", known),
+            Some(("myscript.sh".to_string(), String::new()))
+        );
+    }
+
+    #[test]
+    fn sandbox_staging_ignores_commands_that_are_not_scripts() {
+        let known = |n: &str| n == "myscript.sh";
+        assert_eq!(
+            sandbox_script_invocation("ls -la", known),
+            None,
+            "a basename that is not a script is an ordinary command"
+        );
+        assert_eq!(
+            sandbox_script_invocation("myscript.sh", |_| false),
+            None,
+            "the predicate is the authority, not the name shape"
+        );
+        assert_eq!(
+            sandbox_script_invocation("/home/op/.daemoneye/scripts/myscript.sh", |_| true),
+            None,
+            "an absolute path is never a script invocation (foreground parity)"
+        );
+        assert_eq!(
+            sandbox_script_invocation("", |_| true),
+            None,
+            "empty command"
+        );
+    }
+
+    #[test]
+    fn sandbox_staging_never_stages_under_sudo() {
+        assert_eq!(
+            sandbox_script_invocation("sudo myscript.sh", |_| true),
+            None,
+            "leading sudo"
+        );
+        assert_eq!(
+            sandbox_script_invocation("myscript.sh && sudo reboot", |_| true),
+            None,
+            "sudo later in the line"
+        );
+    }
+
+    #[test]
+    fn sandbox_staging_rewrites_to_the_staged_path() {
+        assert_eq!(
+            staged_script_command("myscript.sh", " --flag one"),
+            "/de/scripts/myscript.sh --flag one"
+        );
+        assert_eq!(
+            staged_script_command("myscript.sh", ""),
+            "/de/scripts/myscript.sh"
+        );
+    }
+
+    #[test]
+    fn sandbox_staging_refuses_unstageable_names_without_spawning() {
+        let cfg = SandboxConfig {
+            runtime: "/nonexistent/de-runtime".to_string(),
+            ..Default::default()
+        };
+        let err = stage_script(&cfg, "j1", "../etc/passwd").expect_err("refused");
+        assert!(err.contains("not a stageable script name"), "got: {err}");
+    }
+
+    #[test]
+    fn sandbox_staging_reports_a_helper_that_cannot_run() {
+        let cfg = SandboxConfig {
+            runtime: "/nonexistent/de-runtime".to_string(),
+            ..Default::default()
+        };
+        let err = stage_script(&cfg, "j1", "myscript.sh").expect_err("spawn fails");
+        assert!(
+            err.starts_with("sandbox staging failed for `myscript.sh`"),
+            "got: {err}"
+        );
     }
 }

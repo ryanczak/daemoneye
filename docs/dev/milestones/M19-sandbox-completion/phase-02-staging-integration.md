@@ -1,7 +1,7 @@
 # Phase 02: Stage the invoked script into the sandbox, and retire the module `#[allow(dead_code)]`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (independent of phase-01)
 **Estimated diff:** ~190 lines including tests
 **Tags:** language=rust, kind=feature, size=m
@@ -716,3 +716,64 @@ editing the block.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-29 18:05 (started)
+
+Executing phase-02 per the spec: four staging functions in `container.rs`,
+`job_id` hoist + stage/rewrite + remove-volume wiring in `run.rs`,
+`#[allow(dead_code)]` removal in `executor/mod.rs`, six unit tests, mutation
+pairs M1/M2, and the end-to-end evidence capture.
+
+**Executor:** rexyMCP executor (session 2026-08-29)
+
+### Update — 2026-08-29 18:25 (end-to-end verification)
+
+The full transcript, mutation markers included. Section A through D ran
+verbatim from the repo root after both mutation pairs were restored.
+
+```text
+== M1 APPLIED ==
+test daemon::executor::container::tests::sandbox_staging_ignores_commands_that_are_not_scripts ... FAILED
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 1462 filtered out; finished in 0.00s
+1
+== M1 RESTORED ==
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1462 filtered out; finished in 0.00s
+1
+== M2 APPLIED ==
+test daemon::executor::container::tests::sandbox_staging_never_stages_under_sudo ... FAILED
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 1462 filtered out; finished in 0.00s
+1
+== M2 RESTORED ==
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1462 filtered out; finished in 0.00s
+1
+== A. named tests (expect 6 ok) ==
+test daemon::executor::container::tests::sandbox_staging_rewrites_to_the_staged_path ... ok
+test daemon::executor::container::tests::sandbox_staging_refuses_unstageable_names_without_spawning ... ok
+test daemon::executor::container::tests::sandbox_staging_reports_a_helper_that_cannot_run ... ok
+test daemon::executor::container::tests::sandbox_staging_ignores_commands_that_are_not_scripts ... ok
+test daemon::executor::container::tests::sandbox_staging_detects_a_script_the_predicate_knows ... ok
+test daemon::executor::container::tests::sandbox_staging_never_stages_under_sudo ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1462 filtered out; finished in 0.00s
+cargo_exit=0
+== B. full lib suite ==
+test result: ok. 1464 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.07s
+cargo_exit=0
+== C. gates ==
+fmt_exit=0
+clippy_exit=0
+== D. structural greps ==
+mod.rs allow (0):            0
+allow total (6):             6
+sandbox_script_invocation (1): 1
+staged_script_command (1):   1
+stage_script (1):            1
+remove_stage_volume (1):     1
+run.rs invocation call (1):  1
+run.rs stage call (1):       1
+run.rs remove calls (2):     2
+job_id hoisted (1):          1
+job_id = format! (1):        1
+no off_runtime staging (0):  0
+ignore count (4):            4
+prod unwrap/expect (0):      0
+```

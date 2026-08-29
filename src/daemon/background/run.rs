@@ -95,6 +95,7 @@ pub async fn run_background_in_window(
 
     // Build final name: prefix + pane-number + unix-ts + command-slug.
     let pane_num = pane_id.trim_start_matches('%');
+    let job_id = format!("{pane_num}-{unix_ts}");
     let cmd_slug = crate::daemon::utils::sanitize_cmd_for_window(cmd, 30);
     let final_name = format!("{}{}-{}-{}", prefix, pane_num, unix_ts, cmd_slug);
     let (s2, t2, f2) = (session.to_string(), temp_name.clone(), final_name.clone());
@@ -182,10 +183,37 @@ pub async fn run_background_in_window(
         cmd
     };
 
+    // Stage the daemon-host script this command invokes, if any, into the
+    // job's volume and point the command at the staged copy. Fails closed: a
+    // command whose script cannot be staged is refused and its window reclaimed.
+    let staged_cmd;
+    let cmd: &str = if config.sandbox.enabled
+        && let Some((name, args_tail)) =
+            crate::daemon::executor::container::sandbox_script_invocation(cmd, |n| {
+                crate::scripts::resolve_script(n).is_ok()
+            }) {
+        let (cfg_s, job_s, name_s) = (config.sandbox.clone(), job_id.clone(), name.clone());
+        let staged = tokio::task::spawn_blocking(move || {
+            crate::daemon::executor::container::stage_script(&cfg_s, &job_s, &name_s)
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("sandbox staging task failed: {e}")));
+        if let Err(message) = staged {
+            log::warn!("refusing sandboxed background command: {message}");
+            let (s5, wn5) = (session.to_string(), win_name.clone());
+            let _ = tmux::off_runtime("kill-job-window", move || tmux::kill_job_window(&s5, &wn5))
+                .await;
+            return message;
+        }
+        staged_cmd = crate::daemon::executor::container::staged_script_command(&name, &args_tail);
+        &staged_cmd
+    } else {
+        cmd
+    };
+
     let sandboxed_cmd;
     let cmd: &str = {
         if config.sandbox.enabled {
-            let job_id = format!("{pane_num}-{unix_ts}");
             let spec = crate::daemon::executor::container::ExecSpec {
                 job_id: &job_id,
                 network: "none",
@@ -377,6 +405,13 @@ pub async fn run_background_in_window(
             .await
             .unwrap_or_default();
 
+            if config.sandbox.enabled {
+                let (cfg_v, job_v) = (config.sandbox.clone(), job_id.clone());
+                tokio::task::spawn_blocking(move || {
+                    crate::daemon::executor::container::remove_stage_volume(&cfg_v, &job_v)
+                });
+            }
+
             log_event(
                 "job_complete",
                 serde_json::json!({
@@ -456,6 +491,8 @@ pub async fn run_background_in_window(
             let session_bg = session.to_string();
             let session_id_bg = session_id.clone();
             let sessions_bg = sessions.clone();
+            let sandbox_bg = config.sandbox.clone();
+            let job_id_bg = job_id.clone();
 
             tokio::spawn(async move {
                 let mut complete_rx = complete_rx;
@@ -505,6 +542,15 @@ pub async fn run_background_in_window(
                 })
                 .await
                 .unwrap_or_default();
+
+                if sandbox_bg.enabled {
+                    tokio::task::spawn_blocking(move || {
+                        crate::daemon::executor::container::remove_stage_volume(
+                            &sandbox_bg,
+                            &job_id_bg,
+                        )
+                    });
+                }
 
                 log_event(
                     "job_complete",
