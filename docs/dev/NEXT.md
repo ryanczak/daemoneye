@@ -1677,9 +1677,54 @@ replacement into `s2`, asserted on `s2`, then wrote `s`. **An assertion on a
 value you do not write proves nothing** — verify a scripted edit by reading the
 file back. Both rows fixed.
 
-**Active phase: phase-08 — sandbox-gc** (`docs/dev/milestones/
-M18-container-sandboxing/phase-08-sandbox-gc.md`, status: todo, drafted
-2026-08-29). Dispatch with `/rexymcp:dispatch phase-08`.
+**phase-08 — sandbox-gc: done (approved_first_try) 2026-08-29**, approval
+`4cad433`. Every sandboxed container now carries `de.sandbox=1`; a best-effort
+sweep of orphaned containers and leaked `de-stage-*` volumes runs at daemon
+start. 1443 → 1450 lib tests.
+
+The data-destroying slip is guarded, proven by mutation: `starts_with` →
+`contains` fails `sandbox_gc_selects_only_stage_prefixed_volumes`, and
+`zz-de-stage-decoy` is a real name docker's own `--filter name=` matched when
+measured. The disabled short-circuit holds, so a disabled sandbox still spawns
+nothing.
+
+**Architect calibration, 4th of its family:** § Task 4 dictated a doc comment
+containing `filter name=` while § Acceptance criteria required that string to
+appear zero times in production code — the spec told the executor to write the
+exact string the spec forbade. Stated at its sharpest in the README:
+**a criterion must not forbid a string the phase itself is told to write.**
+Standing fold candidate for PE.
+
+**Active phase: phase-09 — staging-mount-and-ghost-label**
+(`docs/dev/milestones/M18-container-sandboxing/phase-09-staging-mount-and-ghost-label.md`,
+status: todo, drafted 2026-08-29). Dispatch with `/rexymcp:dispatch phase-09`.
+
+Two measured defects, both small:
+
+- **The staging helper has never worked.** `stage_args` copies from
+  `/de/src/<script>` and nothing mounts `/de/src`. Measured against a real
+  0700 script: `cp: cannot stat '/de/src/…': No such file or directory`.
+  Adding `-v ~/.daemoneye/scripts:/de/src:ro` fixes it, and the full D4 chain
+  then works — the root helper (= host `matt`) reads the 0700 original, chowns
+  the copy, and the sandboxed uid reads it back as `-r-x------ de de`. The gap
+  survived phases 04–08 because **nothing ever calls `stage_args`**.
+- **No ghost container is ever labelled.** The one call site hardcodes
+  `is_ghost: false`, while `run.rs:57-58` already branches on
+  `sid.starts_with("ghost-")` for the window prefix. The phase derives
+  `is_ghost` from that same predicate so the two cannot disagree.
+
+The `:ro` on the source mount is load-bearing and § Gotchas says why: the
+helper runs as container root = host `matt`, so a writable mount would hand a
+compromised helper write access to the operator's real script library.
+
+**PE DECISION NEEDED — M18 will not fit in ten phases.** After 09 the
+remaining work is: staging integration (a production caller for `stage_args`,
+which is the only thing that retires the `#[allow(dead_code)]`), the escape
+hatch, the egress proxy, `Request::ContainerStatus` + `daemoneye status`, the
+`log` relay opcode, and docs + pilot. That is three to five phases, not one.
+**Either extend M18, or close it after a pilot and carry the escape hatch and
+proxy into M19.** The sandbox is functional and default-off today, so closing
+early is a real option. Recorded in the milestone README § Notes.
 
 Scope: label **every** sandboxed container `de.sandbox=1`, then sweep orphaned
 containers and leaked `de-stage-*` volumes at daemon start. Nothing spawns

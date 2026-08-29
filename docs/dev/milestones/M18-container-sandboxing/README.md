@@ -137,8 +137,8 @@ state will shift with each landing.
 | 06 | sandbox-preflight-gate ([phase-06-sandbox-preflight-gate.md](phase-06-sandbox-preflight-gate.md)) | **done** (approved_after_1, 2026-08-29) | **Fail closed.** Probe the runtime once (`OnceLock`), decide with phase-04's `evaluate_preflight`, and **refuse** a background command when the sandbox is not sane instead of running it on the host. Phase-05 shipped sandboxed execution with no gate at all. |
 | 07 | docker-host-propagation ([phase-07-docker-host-propagation.md](phase-07-docker-host-propagation.md)) | **done** (approved_first_try, 2026-08-29) | **Production-break fix, found by live verification.** The window command carried no `DOCKER_HOST`, so it targeted the *rootful* socket and failed while preflight passed. `run_args`/`stage_args` now emit `--host <docker_host>` first; a live test runs with `env_remove("DOCKER_HOST")` so the gap cannot reopen. |
 | 08 | sandbox-gc ([phase-08-sandbox-gc.md](phase-08-sandbox-gc.md)) | **done** (approved_first_try, 2026-08-29) | Label **every** sandboxed container `de.sandbox=1` (today none are labelled, so no sweep is possible), then sweep orphaned containers and the leaked `de-stage-*` volumes at daemon start. Volume selection is a Rust prefix check — docker's own `--filter name=` is a substring match. |
-| 09 | ghost-lifecycle-and-staging | todo (not drafted) | Set `is_ghost` at the ghost call site so ghost containers are labelled and torn down per run; wire staging (`stage_args`, `script_name_is_safe`), which is what finally retires the `#[allow(dead_code)]`. |
-| 10 | escape-hatch-docs-and-pilot | todo (not drafted) | Escape-hatch classification + `GhostPolicy.escape_allowlist` + park-and-notify; CLAUDE.md / README / doc_truth updates; pilot runbook and metrics. `Request::ContainerStatus`, the `log` relay opcode and the egress proxy fold in here or are dropped if the pilot shows no need. |
+| 09 | staging-mount-and-ghost-label ([phase-09-staging-mount-and-ghost-label.md](phase-09-staging-mount-and-ghost-label.md)) | **todo** (drafted 2026-08-29) | Two measured defects: `stage_args` copies from `/de/src` but **nothing mounts it** (`cp: cannot stat`, verified live), and no ghost container is ever labelled because the call site hardcodes `is_ghost: false`. Adds the read-only source mount and derives `is_ghost` from the existing session predicate. |
+| 10 | escape-hatch-docs-and-pilot | todo (not drafted) | Escape-hatch classification + `GhostPolicy.escape_allowlist` + park-and-notify; CLAUDE.md / README / doc_truth updates; pilot runbook and metrics. **Likely more than one phase's work — see the scope note in Notes.** |
 
 ## Notes
 
@@ -170,6 +170,26 @@ state will shift with each landing.
   passed on a value that was thrown away, and phase-06's row read
   `in-progress` while its doc read `done` for two further phases. An assertion
   on a value you do not write proves nothing.
+- **Scope reality check at phase-09 drafting (2026-08-29) — M18 will not fit
+  in ten phases.** What remains after 09 is: **staging integration** (deciding
+  when a background command *is* a script invocation, so `stage_args` gets a
+  production caller — this is the only thing that retires the
+  `#[allow(dead_code)]`), the **escape hatch** (`GhostPolicy.escape_allowlist`,
+  park-and-notify, the `escape_hatch` flag on `ToolCallPrompt`), the
+  **egress proxy**, `Request::ContainerStatus` + the `daemoneye status`
+  surface, the `log` relay opcode, and **docs + pilot**. That is three to five
+  phases, not one. **PE decision needed at or before phase-10:** extend M18,
+  or close it after the pilot and carry the escape hatch and proxy into M19.
+  The sandbox is already functional and default-off, so closing early is a
+  real option.
+- **Third live pass, 2026-08-29 (phase-09 drafting) — the staging helper has
+  never worked.** `stage_args` copies from `/de/src/<script>` and nothing
+  mounts `/de/src`; measured against a real 0700 script it fails with
+  `cp: cannot stat '/de/src/…': No such file or directory`. Adding
+  `-v ~/.daemoneye/scripts:/de/src:ro` fixes it, and the full D4 chain then
+  works: the root helper (= host `matt`) reads the 0700 original, chowns the
+  copy, and the sandboxed uid reads it back as `-r-x------ de de`. The gap
+  survived phases 04–08 because nothing ever called `stage_args`.
 - **Second live-verification pass, 2026-08-29 (phase-08 drafting) — three
   more measured facts, none of them guessable.**
   1. **Sandboxed containers carry no labels at all.** `run_args` emits
