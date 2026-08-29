@@ -54,8 +54,13 @@ pub async fn run_background_in_window(
         return message;
     }
 
+    let entry_is_ghost = session_id
+        .as_deref()
+        .and_then(|id| with_sessions(&sessions, |store| store.get(id).map(|e| e.is_ghost)));
+    let is_ghost = crate::daemon::resolve_is_ghost(session_id.as_deref(), entry_is_ghost);
+
     let prefix = if let Some(sid) = &session_id {
-        if sid.starts_with("ghost-") {
+        if is_ghost {
             // Use the prefix registered on the session entry so webhook-triggered,
             // scheduler-triggered and interactive ghost shells get distinct prefixes.
             with_sessions(&sessions, |store| {
@@ -184,9 +189,7 @@ pub async fn run_background_in_window(
             let spec = crate::daemon::executor::container::ExecSpec {
                 job_id: &job_id,
                 network: "none",
-                is_ghost: session_id
-                    .as_deref()
-                    .is_some_and(|sid| sid.starts_with("ghost-")),
+                is_ghost,
                 command: cmd,
             };
             sandboxed_cmd = crate::daemon::executor::container::sandbox_window_command(

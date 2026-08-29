@@ -342,3 +342,44 @@ editing the block.
   tested; this phase changes only what is passed *into* it.
 
 ## Update Log
+
+### Update — 2026-08-29 15:28 (started)
+
+Started work on Task 1–4.
+
+### Update — 2026-08-29 15:32 (end-to-end verification)
+
+Transcript captured mechanically to `/tmp/e2e-01.txt` and pasted verbatim
+below. `== M1 APPLIED ==` run fails (mutation is caught), `== M1 RESTORED ==`
+passes; each direction has a `grep -c` line proving the mutation applied and
+was reverted. Final gates green: `fmt_exit=0`, `clippy_exit=0`, full lib suite
+`1458 passed; 0 failed; 4 ignored`. Self-check verdict: PASTE MATCH.
+
+```text
+== M1 APPLIED ==
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1460 filtered out; finished in 0.00s
+1
+== M1 RESTORED ==
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1460 filtered out; finished in 0.00s
+1
+== A. named tests ==
+test daemon::tests::is_ghost_session_id_matches_ghost_session_ids ... ok
+test daemon::tests::is_ghost_session_id_rejects_non_ghost_ids ... ok
+test daemon::tests::is_ghost_window_matches_only_ghost_prefixes ... ok
+test daemon::tests::resolve_is_ghost_prefers_the_session_entry ... ok
+test daemon::tests::resolve_is_ghost_falls_back_to_the_prefix_when_unknown ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1457 filtered out; finished in 0.00s
+cargo_exit=0
+== B. full lib suite ==
+test result: ok. 1458 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.00s
+cargo_exit=0
+== C. gates ==
+fmt_exit=0
+clippy_exit=0
+== D. structural greps ==
+inline prefix gone (0):   0
+is_ghost_session_id (1):  3
+resolve_is_ghost (1):     3
+computed once (1):        1
+```
+PASTE MATCH

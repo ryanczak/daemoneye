@@ -58,7 +58,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | is-ghost-predicate | todo (not drafted) |
+| 01 | is-ghost-predicate | in-progress |
 | 02 | staging-integration | todo (not drafted) |
 | 03 | ghost-container-execution | todo (not drafted) |
 | 04 | ghost-scoped-teardown | todo (not drafted) |

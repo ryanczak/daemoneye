@@ -88,6 +88,25 @@ pub fn is_ghost_window(window_name: &str) -> bool {
         || window_name.starts_with(INCIDENT_WINDOW_PREFIX)
 }
 
+/// True when `session_id` names a Ghost Shell session. Ghost session ids are
+/// built as `ghost-<alert>-<uuid>` (`daemon/ghost.rs`). This is the *session*
+/// namespace, unrelated to the `de-gs-*` window prefixes [`is_ghost_window`]
+/// matches.
+pub fn is_ghost_session_id(session_id: &str) -> bool {
+    session_id.starts_with("ghost-")
+}
+
+/// Resolve whether a background job belongs to a ghost session.
+/// `entry_is_ghost` is the authoritative `SessionEntry.is_ghost` when the
+/// session has an entry; when it does not, fall back to the id prefix rather
+/// than silently answering `false` and dropping the ghost label.
+pub fn resolve_is_ghost(session_id: Option<&str>, entry_is_ghost: Option<bool>) -> bool {
+    match entry_is_ghost {
+        Some(known) => known,
+        None => session_id.is_some_and(is_ghost_session_id),
+    }
+}
+
 /// True when a pane may be offered to the user or the agent as a target: not
 /// daemon-managed, and not the chat pane itself.
 pub fn is_targetable_pane(window_name: &str, pane_id: &str, chat_pane: Option<&str>) -> bool {
@@ -1106,6 +1125,56 @@ mod tests {
         assert!(
             !is_ghost_window("de-sj-1-abc"),
             "de-sj- is daemon but not ghost"
+        );
+    }
+
+    #[test]
+    fn is_ghost_session_id_matches_ghost_session_ids() {
+        assert!(
+            is_ghost_session_id("ghost-disk-full-ab12"),
+            "ghost-<alert>-<uuid>"
+        );
+        assert!(is_ghost_session_id("ghost-x-0"), "minimal ghost id");
+    }
+
+    #[test]
+    fn is_ghost_session_id_rejects_non_ghost_ids() {
+        assert!(
+            !is_ghost_session_id("sess-7f3a"),
+            "normal session id is not ghost"
+        );
+        assert!(!is_ghost_session_id(""), "empty string is not ghost");
+        assert!(
+            !is_ghost_session_id("de-gs-bg-1-abc"),
+            "ghost window name is not a ghost session id"
+        );
+    }
+
+    #[test]
+    fn resolve_is_ghost_prefers_the_session_entry() {
+        assert!(
+            !resolve_is_ghost(Some("ghost-disk-full-ab12"), Some(false)),
+            "stored Some(false) beats the ghost- prefix"
+        );
+        assert!(
+            resolve_is_ghost(Some("sess-7f3a"), Some(true)),
+            "stored Some(true) beats a non-ghost id"
+        );
+    }
+
+    #[test]
+    fn resolve_is_ghost_falls_back_to_the_prefix_when_unknown() {
+        assert!(
+            resolve_is_ghost(Some("ghost-disk-full-ab12"), None),
+            "unknown entry falls back to the ghost- prefix"
+        );
+        assert!(
+            !resolve_is_ghost(Some("sess-7f3a"), None),
+            "unknown entry with a normal id is not ghost"
+        );
+        assert!(
+            !resolve_is_ghost(None, None),
+            "no session id and no entry is not ghost"
         );
     }
 
