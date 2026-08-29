@@ -293,6 +293,11 @@ pub async fn trigger_ghost_turn(
 ) -> Result<()> {
     let result = do_ghost_turn(session_id, sessions, config, cache, schedule_store).await;
     write_mailbox_on_exit(session_id, sessions, result.as_ref().err()).await;
+    let (sbx, sid) = (config.sandbox.clone(), session_id.to_string());
+    let _ = tokio::task::spawn_blocking(move || {
+        crate::daemon::executor::container::teardown_ghost_containers(&sbx, &sid)
+    })
+    .await;
     result
 }
 

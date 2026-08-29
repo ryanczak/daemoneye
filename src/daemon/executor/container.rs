@@ -651,6 +651,69 @@ pub fn stale_stage_volumes(names: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Whether a ghost's containers should be destroyed when it exits: the
+/// sandbox must be on, and `[sandbox.ghost_defaults] destroy_on_exit` must
+/// not have been turned off.
+pub fn should_teardown_ghost(cfg: &SandboxConfig) -> bool {
+    cfg.enabled && cfg.ghost_defaults.destroy_on_exit
+}
+
+/// argv listing the containers one ghost session owns, running or not.
+///
+/// All three filters are load-bearing and docker ANDs them: `de.sandbox=1`
+/// keeps it to this daemon's containers, `de.ghost=1` makes an interactive
+/// session's container unmatchable, and `de.session=<id>` is an **exact**
+/// value match, so a sibling ghost whose id merely shares a prefix is not
+/// selected.
+pub fn ghost_teardown_list_args(cfg: &SandboxConfig, session_id: &str) -> Vec<String> {
+    vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "ps".to_string(),
+        "-aq".to_string(),
+        "--filter".to_string(),
+        "label=de.sandbox=1".to_string(),
+        "--filter".to_string(),
+        "label=de.ghost=1".to_string(),
+        "--filter".to_string(),
+        format!("label=de.session={session_id}"),
+    ]
+}
+
+/// Remove every container belonging to one ghost session. Blocking — call it
+/// off the async runtime. Best-effort: every failure is logged and none is
+/// propagated, because this runs on a ghost's exit path.
+pub fn teardown_ghost_containers(cfg: &SandboxConfig, session_id: &str) {
+    if !should_teardown_ghost(cfg) {
+        return;
+    }
+    let mut cmd = Command::new(&cfg.runtime);
+    cmd.args(ghost_teardown_list_args(cfg, session_id));
+    let listed = match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+        Ok(out) => out,
+        Err(e) => {
+            log::warn!("ghost container teardown list failed for {session_id}: {e}");
+            return;
+        }
+    };
+    let ids: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect();
+    if ids.is_empty() {
+        return;
+    }
+    let count = ids.len();
+    let mut cmd = Command::new(&cfg.runtime);
+    cmd.args(sweep_container_rm_args(cfg, &ids));
+    match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+        Ok(_) => log::info!("ghost teardown removed {count} container(s) for {session_id}"),
+        Err(e) => log::warn!("ghost container teardown remove failed for {session_id}: {e}"),
+    }
+}
+
 /// Remove orphaned sandbox containers and staging volumes. Best-effort:
 /// every failure is logged and none is fatal — a sweep that cannot run must
 /// never stop the daemon from starting.
@@ -734,7 +797,11 @@ pub struct ExecSpec<'a> {
 
 /// argv for the sandboxed run. Pure — the caller prepends the runtime binary
 /// and spawns it.
-pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec) -> Vec<String> {
+///
+/// `session_id` becomes a `de.session=<id>` label, which is what lets a
+/// ghost's own containers be reclaimed on exit without touching a sibling
+/// ghost's or an interactive session's. `None` emits no such label.
+pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec, session_id: Option<&str>) -> Vec<String> {
     let Some((uid, gid)) = split_run_as(&cfg.run_as) else {
         log::warn!(
             "sandbox enabled but run_as={:?} unparseable; falling back to running on the host",
@@ -771,6 +838,10 @@ pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec) -> Vec<String> {
         args.push("--label".to_string());
         args.push("de.ghost=1".to_string());
     }
+    if let Some(sid) = session_id {
+        args.push("--label".to_string());
+        args.push(format!("de.session={sid}"));
+    }
     args.push("--workdir".to_string());
     args.push(cfg.workdir.clone());
     args.push(cfg.image.clone());
@@ -786,11 +857,16 @@ pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec) -> Vec<String> {
 /// result is a fully shell-quoted `docker run …` line that carries `raw_cmd`
 /// as a single literal argument to the container's shell, so nothing in it is
 /// interpreted by the host shell.
-pub fn sandbox_window_command(cfg: &SandboxConfig, spec: &ExecSpec, raw_cmd: &str) -> String {
+pub fn sandbox_window_command(
+    cfg: &SandboxConfig,
+    spec: &ExecSpec,
+    raw_cmd: &str,
+    session_id: Option<&str>,
+) -> String {
     if !cfg.enabled {
         return raw_cmd.to_string();
     }
-    let run = run_args(cfg, spec);
+    let run = run_args(cfg, spec, session_id);
     if run.is_empty() {
         return raw_cmd.to_string();
     }
@@ -1111,7 +1187,7 @@ mod tests {
             command: "echo hi",
         };
         assert_eq!(
-            run_args(&cfg, &spec),
+            run_args(&cfg, &spec, None),
             vec![
                 "--host",
                 "unix:///run/user/1000/docker.sock",
@@ -1164,6 +1240,7 @@ mod tests {
                 is_ghost: false,
                 command: "echo hi",
             },
+            None,
         );
         assert!(
             plain.iter().any(|arg| arg == "de.sandbox=1"),
@@ -1181,6 +1258,7 @@ mod tests {
                 is_ghost: true,
                 command: "echo hi",
             },
+            None,
         );
         assert!(
             ghost.iter().any(|arg| arg == "de.sandbox=1"),
@@ -1290,6 +1368,7 @@ mod tests {
                 is_ghost: true,
                 command: "echo hi",
             },
+            None,
         );
         let position = args
             .windows(2)
@@ -1310,6 +1389,7 @@ mod tests {
                 is_ghost: false,
                 command: "echo hi",
             },
+            None,
         );
         assert!(
             !plain.iter().any(|arg| arg == "de.ghost=1"),
@@ -1335,6 +1415,7 @@ mod tests {
                 is_ghost: false,
                 command: "echo hi",
             },
+            None,
         );
         let tmpfs = args
             .iter()
@@ -1370,6 +1451,7 @@ mod tests {
                 is_ghost: false,
                 command: "echo hi",
             },
+            None,
         );
         assert!(args.iter().any(|a| a == "--memory") && args.iter().any(|a| a == "4g"));
         assert!(args.iter().any(|a| a == "--pids-limit") && args.iter().any(|a| a == "64"));
@@ -1396,7 +1478,8 @@ mod tests {
                     network: "none",
                     is_ghost: false,
                     command: "echo hi",
-                }
+                },
+                None,
             )
             .is_empty()
         );
@@ -1624,7 +1707,7 @@ mod tests {
             is_ghost: false,
             command: "echo hi",
         };
-        let result = sandbox_window_command(&cfg, &spec, "echo hi");
+        let result = sandbox_window_command(&cfg, &spec, "echo hi", None);
         assert_eq!(result, "echo hi");
         assert_eq!(result.as_str(), "echo hi");
     }
@@ -1641,7 +1724,7 @@ mod tests {
             is_ghost: false,
             command: "echo hi",
         };
-        let result = sandbox_window_command(&cfg, &spec, "echo hi");
+        let result = sandbox_window_command(&cfg, &spec, "echo hi", None);
         assert!(
             result
                 .starts_with("'docker' '--host' 'unix:///run/user/1000/docker.sock' 'run' '--rm'"),
@@ -1662,7 +1745,7 @@ mod tests {
             is_ghost: false,
             command: raw,
         };
-        let result = sandbox_window_command(&cfg, &spec, raw);
+        let result = sandbox_window_command(&cfg, &spec, raw, None);
         assert!(
             result.ends_with("'echo inside-container; touch /tmp/PWNED'"),
             "got: {result}"
@@ -1682,7 +1765,7 @@ mod tests {
             is_ghost: false,
             command: raw,
         };
-        let result = sandbox_window_command(&cfg, &spec, raw);
+        let result = sandbox_window_command(&cfg, &spec, raw, None);
         // The embedded `'` becomes `'\''` (close-quote, escaped quote, reopen)
         // — the sh_single_quote rendering — never a naive close-open `''` pair.
         let expected_tail = r"'echo '\''a'\'''";
@@ -1705,7 +1788,7 @@ mod tests {
             is_ghost: false,
             command: "echo hi",
         };
-        let result = sandbox_window_command(&cfg, &spec, "echo hi");
+        let result = sandbox_window_command(&cfg, &spec, "echo hi", None);
         assert!(
             result.contains("'de-stage-42-1712937600:/de/scripts:ro'"),
             "got: {result}"
@@ -1725,7 +1808,7 @@ mod tests {
             is_ghost: false,
             command: "echo hi",
         };
-        let result = sandbox_window_command(&cfg, &spec, "echo hi");
+        let result = sandbox_window_command(&cfg, &spec, "echo hi", None);
         assert_eq!(result, "echo hi");
     }
 
@@ -1743,7 +1826,7 @@ mod tests {
             is_ghost: false,
             command: "echo sandbox-ok",
         };
-        let line = sandbox_window_command(&cfg, &spec, "echo sandbox-ok");
+        let line = sandbox_window_command(&cfg, &spec, "echo sandbox-ok", None);
         let output = std::process::Command::new("sh")
             .arg("-c")
             .arg(&line)
@@ -1905,7 +1988,7 @@ mod tests {
             is_ghost: false,
             command: "echo hi",
         };
-        let args = run_args(&cfg, &spec);
+        let args = run_args(&cfg, &spec, None);
         let first_three = args.iter().take(3).cloned().collect::<Vec<_>>();
         assert_eq!(
             first_three,
@@ -1956,6 +2039,7 @@ mod tests {
                 command: "echo hi",
             },
             "echo hi",
+            None,
         );
         let prefix = "'--host' 'unix:///run/user/1000/docker.sock'";
         let run_at = result.find("'run'").expect("run must be present");
@@ -1987,7 +2071,7 @@ mod tests {
             is_ghost: false,
             command: "echo scrubbed-ok",
         };
-        let line = sandbox_window_command(&cfg, &spec, "echo scrubbed-ok");
+        let line = sandbox_window_command(&cfg, &spec, "echo scrubbed-ok", None);
         let output = std::process::Command::new("sh")
             .arg("-c")
             .arg(&line)
@@ -2049,6 +2133,7 @@ mod tests {
                 is_ghost: true,
                 command: "echo hi",
             },
+            None,
         );
         assert!(ghost.iter().any(|a| a == "de.sandbox=1"));
         assert!(ghost.iter().any(|a| a == "de.ghost=1"));
@@ -2061,6 +2146,7 @@ mod tests {
                 is_ghost: false,
                 command: "echo hi",
             },
+            None,
         );
         assert!(ordinary.iter().any(|a| a == "de.sandbox=1"));
         assert!(!ordinary.iter().any(|a| a == "de.ghost=1"));
@@ -2175,6 +2261,155 @@ mod tests {
             job_id_for("%42", 100),
             job_id_for("%42", 101),
             "a retry in the same pane must not reuse the original job's volume name"
+        );
+    }
+
+    #[test]
+    fn sandbox_session_label_is_absent_without_a_session() {
+        let cfg = SandboxConfig::default();
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: true,
+            command: "echo hi",
+        };
+        assert!(
+            !run_args(&cfg, &spec, None)
+                .iter()
+                .any(|a| a.starts_with("de.session=")),
+            "no session label without a session"
+        );
+    }
+
+    #[test]
+    fn sandbox_session_label_rides_beside_the_ghost_label() {
+        let cfg = SandboxConfig::default();
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: true,
+            command: "echo hi",
+        };
+        let args = run_args(&cfg, &spec, Some("ghost-aaa"));
+        assert!(args.iter().any(|a| a == "de.ghost=1"), "{args:?}");
+        assert!(args.iter().any(|a| a == "de.session=ghost-aaa"), "{args:?}");
+        let label = args
+            .iter()
+            .position(|a| a == "de.session=ghost-aaa")
+            .expect("label");
+        let image = args
+            .iter()
+            .position(|a| a == "daemoneye-agent-base")
+            .expect("image");
+        assert!(
+            label < image,
+            "the label must precede the image or docker hands it to the container: {args:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_session_label_keeps_a_value_containing_an_equals_sign() {
+        // Ghost ids embed the alert name (`ghost-<alert>-<uuid>`), and docker
+        // splits `--label k=v` on the first `=` only — measured, not assumed.
+        let cfg = SandboxConfig::default();
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: true,
+            command: "echo hi",
+        };
+        let args = run_args(&cfg, &spec, Some("ghost-a=b-1"));
+        assert!(
+            args.iter().any(|a| a == "de.session=ghost-a=b-1"),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_session_label_reaches_the_window_command() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let spec = ExecSpec {
+            job_id: "j1",
+            network: "none",
+            is_ghost: true,
+            command: "echo hi",
+        };
+        let line = sandbox_window_command(&cfg, &spec, "echo hi", Some("ghost-aaa"));
+        assert!(line.contains("de.session=ghost-aaa"), "{line}");
+        assert!(
+            !sandbox_window_command(&cfg, &spec, "echo hi", None).contains("de.session"),
+            "no session means no label in the window command either"
+        );
+    }
+
+    #[test]
+    fn ghost_teardown_selects_one_session_and_not_its_neighbours() {
+        let cfg = SandboxConfig::default();
+        let args = ghost_teardown_list_args(&cfg, "ghost-aaa");
+        assert!(
+            args.iter().any(|a| a == "label=de.session=ghost-aaa"),
+            "{args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "label=de.session=ghost-aaa-extra"),
+            "a sibling ghost must never be named: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "label=de.session=ghost-bbb"),
+            "another ghost must never be named: {args:?}"
+        );
+    }
+
+    #[test]
+    fn ghost_teardown_is_scoped_to_this_daemons_ghosts() {
+        let cfg = SandboxConfig::default();
+        let args = ghost_teardown_list_args(&cfg, "ghost-aaa");
+        assert!(args.iter().any(|a| a == "label=de.sandbox=1"), "{args:?}");
+        assert!(
+            args.iter().any(|a| a == "label=de.ghost=1"),
+            "without the ghost filter an interactive session's container could match: {args:?}"
+        );
+        assert_eq!(args.first().map(String::as_str), Some("--host"), "{args:?}");
+        assert!(
+            args.iter().any(|a| a == "-aq"),
+            "stopped containers count too: {args:?}"
+        );
+    }
+
+    #[test]
+    fn ghost_teardown_honours_destroy_on_exit_and_the_sandbox_flag() {
+        let on = SandboxConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(
+            should_teardown_ghost(&on),
+            "default destroy_on_exit is true"
+        );
+
+        let off = SandboxConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        assert!(
+            !should_teardown_ghost(&off),
+            "sandbox off means nothing to reclaim"
+        );
+
+        let no_destroy = SandboxConfig {
+            enabled: true,
+            ghost_defaults: crate::config::SandboxGhostDefaults {
+                destroy_on_exit: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(
+            !should_teardown_ghost(&no_destroy),
+            "the operator turned it off"
         );
     }
 }

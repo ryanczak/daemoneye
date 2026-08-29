@@ -224,6 +224,7 @@ pub async fn run_background_in_window(
                 &config.sandbox,
                 &spec,
                 cmd,
+                session_id.as_deref(),
             );
             &sandboxed_cmd
         } else {

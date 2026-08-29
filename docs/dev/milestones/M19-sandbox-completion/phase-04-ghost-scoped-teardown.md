@@ -1,7 +1,7 @@
 # Phase 04: Reclaim one ghost's containers on exit, and nobody else's
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`resolve_is_ghost`), phase-03 (`respawn.rs` is a sandbox call site)
 **Estimated diff:** ~260 lines including tests
 **Tags:** language=rust, kind=feature, size=m
@@ -843,3 +843,70 @@ editing the block.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-29 23:41 (started)
+
+Executor at 5fca23e begins phase-04: session-scoped labels + ghost-exit teardown.
+
+### Update — 2026-08-29 23:52 (end-to-end verification)
+
+Tasks 1–9 complete; output of the § End-to-end verification block and the two
+mutation pairs (Task 8 / Task 9), captured mechanically:
+
+```txt
+== M1 APPLIED ==
+test daemon::executor::container::tests::ghost_teardown_selects_one_session_and_not_its_neighbours ... FAILED
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 1479 filtered out; finished in 0.00s
+0
+== M1 RESTORED ==
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1479 filtered out; finished in 0.00s
+1
+== M2 APPLIED ==
+test daemon::executor::container::tests::ghost_teardown_honours_destroy_on_exit_and_the_sandbox_flag ... FAILED
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 1479 filtered out; finished in 0.00s
+0
+== M2 RESTORED ==
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1479 filtered out; finished in 0.00s
+1
+== A. named tests (expect 4 + 3 ok) ==
+test daemon::executor::container::tests::sandbox_session_label_keeps_a_value_containing_an_equals_sign ... ok
+test daemon::executor::container::tests::sandbox_session_label_is_absent_without_a_session ... ok
+test daemon::executor::container::tests::sandbox_session_label_rides_beside_the_ghost_label ... ok
+test daemon::executor::container::tests::sandbox_session_label_reaches_the_window_command ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1478 filtered out; finished in 0.00s
+cargo_exit=0
+test daemon::executor::container::tests::ghost_teardown_honours_destroy_on_exit_and_the_sandbox_flag ... ok
+test daemon::executor::container::tests::ghost_teardown_selects_one_session_and_not_its_neighbours ... ok
+test daemon::executor::container::tests::ghost_teardown_is_scoped_to_this_daemons_ghosts ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1479 filtered out; finished in 0.00s
+cargo_exit=0
+== B. the pinned run_args vector still passes ==
+test daemon::executor::container::tests::sandbox_exec_run_args_match_the_prototyped_vector ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1481 filtered out; finished in 0.00s
+cargo_exit=0
+== C. full lib suite ==
+test result: ok. 1478 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.27s
+cargo_exit=0
+== D. gates ==
+fmt_exit=0
+clippy_exit=0
+== E. structural greps ==
+fn ghost_teardown_list_args (1): 1
+fn teardown_ghost_containers (1):1
+fn should_teardown_ghost (1):    1
+pub fn run_args (1):             1
+pub fn swc (1):                  1
+de.session in container (13):    13
+ghost_defaults in container (3): 3
+ExecSpec here (24):              24
+ExecSpec total (26):             26
+run.rs new arg (2):              2
+respawn new arg (2):             2
+ghost.rs teardown (1):           1
+allow total (6):                 6
+prod unwrap/expect (0):          0
+```
+
+PASTE MATCH
+
+
