@@ -1717,7 +1717,36 @@ The `:ro` on the source mount is load-bearing and § Gotchas says why: the
 helper runs as container root = host `matt`, so a writable mount would hand a
 compromised helper write access to the operator's real script library.
 
-**PE DECISION NEEDED — M18 will not fit in ten phases.** After 09 the
+**PE DECISION — MADE 2026-08-29: close M18 after the pilot; carry the rest
+into M19.** So M18 is a **ten-phase milestone** after all, ending with
+phase-10 as the pilot + docs + close-out. What M19 inherits:
+
+- **Staging integration** — a production caller for `stage_args`, deciding
+  when a background command *is* a script invocation. **This is the only thing
+  that retires the `#[allow(dead_code)]`, so that attribute is an explicit,
+  recorded carry out of M18** — not an oversight. M19's first phase should
+  remove it.
+- **The escape hatch** — `GhostPolicy.escape_allowlist`, park-and-notify, the
+  `escape_hatch` flag on `ToolCallPrompt`.
+- **The egress proxy** (`network = "proxy"` profiles), `Request::ContainerStatus`
+  + the `daemoneye status` surface, and the `log` relay opcode.
+
+**What phase-10 therefore is:** turn `[sandbox] enabled = true` for real, run
+background commands through chat against the live rootless runtime, and
+capture what happens — container start latency, whether the `de-bg-*` pane
+still reads normally, whether the startup sweep reclaims the two stale
+`de-stage-*` volumes deliberately left on the host, and whether anything about
+the shipped surface is wrong in a way 1454 green tests cannot see. Plus the
+doc sweep (CLAUDE.md, README, `assets/etc/config.toml`) and the retrospective.
+
+**Framing note for drafting phase-10:** the design's § Rollout imagined a
+*ghost-shell* pilot, but ghosts are not wired to containers yet — phase-09
+only makes them labelled. The honest pilot for what M18 actually shipped is
+**background command execution**, which is the one path that is complete end
+to end. Do not spec a ghost pilot the code cannot perform.
+
+*(Superseded — the original scope question, kept for the record:)*
+**M18 will not fit in ten phases.** After 09 the
 remaining work is: staging integration (a production caller for `stage_args`,
 which is the only thing that retires the `#[allow(dead_code)]`), the escape
 hatch, the egress proxy, `Request::ContainerStatus` + `daemoneye status`, the
