@@ -1,7 +1,7 @@
 # Phase 07: Carry `DOCKER_HOST` into the sandboxed command
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04 (`run_args`, `stage_args`), phase-05 (`sandbox_window_command`)
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -299,3 +299,161 @@ allow(dead_code) tot:    7
 ```
 
 PASTE MATCH
+
+### Update — ts=1787971565293 (complete, server-authored)
+
+**Summary:** </think>Working tree is clean. Let me run through the completion checklist once more:
+
+- [x] Phase doc Status: in-progress ✓ (I flipped it, didn't touch review)
+- [x] Milestone README row: in-progress ✓
+- [x] No hand-written (complete) entry ✓
+- [x] cargo fmt --all run right before git add ✓ (actually run)
+- [x] All verification commands clean: fmt, build, clippy, cargo test ✓
+- [x] Final message will be substantive
+- [x] git status --short shows nothing ✓
+- [x] git log -1 --stat shows every file touched ✓
+
+Now the final summary. Let me include the E2E verdict, grep proof, deviation notes.
+
+Key notes for review:
+- Extra test updated: `sandbox_window_enabled_starts_with_the_quoted_runtime` — phase-05 window-line test that pinned the pre-fix prefix would have failed; changed its assertion to the new prefix.
+- PASTE MATCH confirmed.
+- Live test not run (per authorization — architect runs it).</think>
+**Summary + Notes for review**
+
+Phase-07 complete: `--host <docker_host>` now heads the argv of both `run_args` and `stage_args`, so the tmux-executed window string carries the runtime endpoint and can no longer fall back to the rootful socket. The pinned vector in `sandbox_exec_run_args_match_the_prototyped_vector` was updated to the new prefix as the spec requires, and `sandbox_exec_stage_args_run_as_root_and_chown_to_the_sandbox_uid`'s position-dependent slice widened `[..6]` → `[..8]`. The three `sandbox_host` unit tests and the `#[ignore]`d scrubbed-env live test were added in `container.rs`; the live test is not run (per authorization — the architect runs it), and no `#[allow]`s were added or removed (`allow(dead_code)` total stays 7).
+
+One deviation to flag: `sandbox_window_enabled_starts_with_the_quoted_runtime` — a phase-05 test that pinned the pre-fix window prefix (got `'docker' 'run' '--rm'`, want `'docker' '--host' … 'run' '--rm'`) — was also updated to the new prefix. The phase doc's Task list doesn't name this test, but its assertion is exactly the phase-04-pinned-vector-style expectation the phase changes deliberately, and leaving it red would violate "all gates green." Everything else was per-spec.
+
+End-to-end verification (the § block, run verbatim) is pasted in its own `### Update — 2026-08-29 02:45 (end-to-end verification)` entry with the literal `PASTE MATCH` verdict; the block's own self-check diff printed `PASTE MATCH`. Criterion counts: `--host` in prod = 2, `sandbox_host` ok-lines = 3, lib suite = 1443 passed / 0 failed / 4 ignored, `#[ignore` count = 4, `env_remove` = 1, dead_code total = 7 — acceptance-criteria grep for `'--host' 'unix:///run/user/1000/docker.sock'` before `'run'` in the window string is exercised by `sandbox_host_window_command_carries_the_endpoint`. All four gates (`cargo fmt --all`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`) pass; commit `1001b46`; working tree clean.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 3.93s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M18-container-sandboxing/README.md` — +1 -1
+- `docs/dev/milestones/M18-container-sandboxing/phase-07-docker-host-propagation.md` — +25 -1
+- `src/daemon/executor/container.rs` — +128 -3
+
+**Commit:** 1001b463f9c5e02503d0fe7a70b24b2032beb761
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
