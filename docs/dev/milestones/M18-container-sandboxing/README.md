@@ -138,10 +138,27 @@ state will shift with each landing.
 | 07 | docker-host-propagation ([phase-07-docker-host-propagation.md](phase-07-docker-host-propagation.md)) | **done** (approved_first_try, 2026-08-29) | **Production-break fix, found by live verification.** The window command carried no `DOCKER_HOST`, so it targeted the *rootful* socket and failed while preflight passed. `run_args`/`stage_args` now emit `--host <docker_host>` first; a live test runs with `env_remove("DOCKER_HOST")` so the gap cannot reopen. |
 | 08 | sandbox-gc ([phase-08-sandbox-gc.md](phase-08-sandbox-gc.md)) | **done** (approved_first_try, 2026-08-29) | Label **every** sandboxed container `de.sandbox=1` (today none are labelled, so no sweep is possible), then sweep orphaned containers and the leaked `de-stage-*` volumes at daemon start. Volume selection is a Rust prefix check — docker's own `--filter name=` is a substring match. |
 | 09 | staging-mount-and-ghost-label ([phase-09-staging-mount-and-ghost-label.md](phase-09-staging-mount-and-ghost-label.md)) | **done** (approved_first_try, 2026-08-29) | Two measured defects: `stage_args` copies from `/de/src` but **nothing mounts it** (`cp: cannot stat`, verified live), and no ghost container is ever labelled because the call site hardcodes `is_ghost: false`. Adds the read-only source mount and derives `is_ghost` from the existing session predicate. |
-| 10 | pilot-and-close ([to be drafted](.)) | todo (not drafted) | **PE decision 2026-08-29: M18 closes here.** Turn `[sandbox] enabled = true` for real, run background commands through chat against the live runtime, capture start latency / pane readability / sweep behaviour, then the doc sweep (CLAUDE.md, README, `assets/etc/config.toml`) and the retrospective. Escape hatch, egress proxy, `ContainerStatus`, the `log` opcode and staging integration all move to **M19**. |
+| 10 | docs-and-close ([phase-10-docs-and-close.md](phase-10-docs-and-close.md)) | **todo** (drafted 2026-08-29) | **PE decision 2026-08-29: M18 closes here.** Turn `[sandbox] enabled = true` for real, run background commands through chat against the live runtime, capture start latency / pane readability / sweep behaviour, then the doc sweep (CLAUDE.md, README, `assets/etc/config.toml`) and the retrospective. Escape hatch, egress proxy, `ContainerStatus`, the `log` opcode and staging integration all move to **M19**. |
 
 ## Notes
 
+- **THE PILOT RAN 2026-08-29, and it passed.** In an isolated
+  `tmux -L de-pilot3` server started with **no `DOCKER_HOST`** in its
+  environment — the exact configuration broken before phase-07 — the pane
+  confirmed `PANE_DOCKER_HOST=[UNSET]` and the shipped window command then
+  produced `1000` / `PILOT_OK` / `drwx------ 2 de de … /de/work` / `__EXIT=0`:
+  uid 1000 inside, a container hostname rather than the host's, a writable
+  `0700 de:de` scratch, and the exit status the `de-bg-*` completion detection
+  reads. **No new defects.** After a milestone in which live passes found a
+  production break, a never-working staging helper and three
+  unlabelled-container facts, this one found nothing — which is the result the
+  earlier fixes were for.
+  **Two things the pilot did not cover, and the docs must not claim:** the
+  daemon's **startup sweep** has never run through a real daemon (the
+  operator's daemon holds the single-instance flock), and no **AI-driven**
+  background command has gone through the full chat path. Three stale
+  `de-stage-*` volumes remain on the host as the sweep's fixture — including
+  `de-stage-pilot-1`, which the pilot itself leaked, re-confirming the leak.
 - **PE DECISION 2026-08-29 — close M18 after the pilot; carry the rest into
   M19.** M18 stays ten phases, ending with phase-10 as pilot + docs +
   close-out. **M19 inherits:** staging integration (a production caller for

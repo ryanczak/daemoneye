@@ -1695,9 +1695,62 @@ exact string the spec forbade. Stated at its sharpest in the README:
 **a criterion must not forbid a string the phase itself is told to write.**
 Standing fold candidate for PE.
 
-**Active phase: phase-09 — staging-mount-and-ghost-label**
-(`docs/dev/milestones/M18-container-sandboxing/phase-09-staging-mount-and-ghost-label.md`,
-status: todo, drafted 2026-08-29). Dispatch with `/rexymcp:dispatch phase-09`.
+**phase-09 — staging-mount-and-ghost-label: done (approved_first_try)
+2026-08-29**, approval `0e2b715`. The staging helper got its read-only source
+mount and ghost containers are labelled; 1450 → 1454 lib tests. Dropping `:ro`
+fails two tests, so the security property is guarded — the helper runs as
+container root = host `matt`, and a writable mount would give it write access
+to the operator's real 0700 script library.
+
+**Carried to M19, recorded not bounced:** the `is_ghost` derivation is
+**unguarded** — hardcoding `is_ghost: true` leaves all 1454 tests green and
+satisfies every criterion the phase set. That is my Test plan's fault: it
+claimed the `run.rs` change had no unit-testable seam, which was wrong. M19
+should extract a pure `is_ghost_session()` predicate **before** ghost teardown
+starts reading `de.ghost=1`.
+
+**THE PILOT RAN 2026-08-29 — and it passed.** In an isolated
+`tmux -L de-pilot3` server started with **no `DOCKER_HOST`** (the exact
+configuration broken before phase-07), the pane confirmed
+`PANE_DOCKER_HOST=[UNSET]` and the shipped window command produced `1000` /
+`PILOT_OK` / `drwx------ 2 de de … /de/work` / `__EXIT=0`. **No new defects.**
+Not covered, and therefore not claimable: the startup sweep has never run
+through a real daemon (the operator's holds the single-instance flock), and no
+AI-driven background command has gone through the full chat path.
+
+**Active phase: phase-10 — docs-and-close** (`docs/dev/milestones/
+M18-container-sandboxing/phase-10-docs-and-close.md`, status: todo, drafted
+2026-08-29). Dispatch with `/rexymcp:dispatch phase-10`. **This is M18's final
+phase.**
+
+Scope: docs only. `CLAUDE.md` **does not mention the sandbox once**
+(`grep -ci sandbox` → 0) and has no § "Key files" row for
+`executor/container.rs`, now the milestone's largest addition; `README.md:219`
+still says *"3 of 10 phases are merged"*. The phase adds the key-files row, a
+`## Container sandbox` section, and an honest README status update.
+
+Phase-10 staging notes:
+
+- **Criteria pin both `git diff --stat -- src/` and
+  `git diff --stat assets/etc/config.toml` empty**, and the lib count
+  unchanged at 1454 — a changed count means source was touched. This is a
+  docs phase and the criteria enforce that mechanically.
+- **§ Gotchas is mostly a list of things not to claim**: only *background*
+  execution is sandboxed (not foreground, not remote, not broker-native
+  tools); ghost shells are *labelled*, not sandboxed; script staging is
+  correct but **has no caller**, which is why the `#[allow(dead_code)]`
+  survives into M19. The main risk in a docs phase is overclaiming, so the
+  spec spends its pre-injection budget there.
+- **The pilot's results are quoted into § Current state** so the executor can
+  state them as fact without re-deriving them — and § Authorizations forbids
+  stating any live fact the doc has not given it.
+- **No unit tests, deliberately**, with the reason written into § Test plan:
+  the phase changes only Markdown, and a test asserting on wording that is
+  expected to change would be worse than none.
+- `tests/doc_truth.rs` does **not** gate CLAUDE.md's key-files table (it gates
+  the tools tables and `assets/etc/config.toml`), so these edits are not
+  machine-checked — the spec says so plainly rather than letting the executor
+  assume a safety net.
 
 Two measured defects, both small:
 
