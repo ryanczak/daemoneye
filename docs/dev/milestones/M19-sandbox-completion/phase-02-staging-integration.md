@@ -969,3 +969,60 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 8223ac85842768f36c7ec9ecfbb72161a3f43105
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-29 19:05 (end-to-end verification)
+
+Round-2 re-run per bug-phase-02-1: the round-1 entry lacked the bare
+`PASTE MATCH` verdict line. `/tmp/e2e-02.txt` was removed first so this
+artifact holds only this round's output. The full transcript, mutation
+markers included — section A through D ran verbatim from the repo root
+after both mutation pairs were restored.
+
+```text
+== M1 APPLIED ==
+test daemon::executor::container::tests::sandbox_staging_ignores_commands_that_are_not_scripts ... FAILED
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 1462 filtered out; finished in 0.00s
+1
+== M1 RESTORED ==
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1462 filtered out; finished in 0.00s
+1
+== M2 APPLIED ==
+test daemon::executor::container::tests::sandbox_staging_never_stages_under_sudo ... FAILED
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 1462 filtered out; finished in 0.00s
+1
+== M2 RESTORED ==
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1462 filtered out; finished in 0.00s
+1
+== A. named tests (expect 6 ok) ==
+test daemon::executor::container::tests::sandbox_staging_rewrites_to_the_staged_path ... ok
+test daemon::executor::container::tests::sandbox_staging_refuses_unstageable_names_without_spawning ... ok
+test daemon::executor::container::tests::sandbox_staging_reports_a_helper_that_cannot_run ... ok
+test daemon::executor::container::tests::sandbox_staging_detects_a_script_the_predicate_knows ... ok
+test daemon::executor::container::tests::sandbox_staging_ignores_commands_that_are_not_scripts ... ok
+test daemon::executor::container::tests::sandbox_staging_never_stages_under_sudo ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1462 filtered out; finished in 0.00s
+cargo_exit=0
+== B. full lib suite ==
+test result: ok. 1464 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 3.95s
+cargo_exit=0
+== C. gates ==
+fmt_exit=0
+clippy_exit=0
+== D. structural greps ==
+mod.rs allow (0):            0
+allow total (6):             6
+sandbox_script_invocation (1): 1
+staged_script_command (1):   1
+stage_script (1):            1
+remove_stage_volume (1):     1
+run.rs invocation call (1):  1
+run.rs stage call (1):       1
+run.rs remove calls (2):     2
+job_id hoisted (1):          1
+job_id = format! (1):        1
+no off_runtime staging (0):  0
+ignore count (4):            4
+prod unwrap/expect (0):      0
+```
+
+PASTE MATCH
