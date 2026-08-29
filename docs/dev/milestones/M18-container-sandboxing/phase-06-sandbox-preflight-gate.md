@@ -415,85 +415,42 @@ condition.
 
 ## Update Log
 
-### Update — 2026-08-29 01:52 (progress, re-dispatch after bug-phase-06-1)
+### Update — 2026-08-29 01:58 (progress, re-dispatch after bug-phase-06-1)
 
-Resuming phase-06 from bug-phase-06-1 (round 1 bounced: gate leaked a
-`de-bg-*` window per refusal, and the mismatch message double-prefixed
-`sha256:`). Fixed both:
-
-1. Moved the gate to the top of `run_background_in_window` — `config` loaded
-   at line 48, `sandbox_preflight` at 51, `create_job_window` now at 76.
-   `GATE_FIRST` confirmed. The config is reused at the original
-   `sandbox_window_command` call site (job_id uses the pane number), and the
-   `if config.sandbox.enabled` guard means a disabled sandbox never spawns.
-2. Dropped the literal prefix: `live` carries `sha256:`, so the message
-   renders the id once. New test
-   `sandbox_gate_describes_image_mismatch_with_a_single_prefix` uses a
-   realistic prefixed value (`sha256:` + 64 hex) and asserts exactly one
-   `sha256:` occurrence; the distinctness fixture now also uses prefixed ids.
-
-All eight `sandbox_gate` tests green, full lib suite `1440 passed; 0 failed;
-3 ignored`, all § C greps match (verdict cached 1, allow(dead_code) 7,
-no hardcoded digest 0). Running the four gates next.
+Resuming phase-06 from bug-phase-06-1: the round-1 gate sat at run.rs:172,
+after `create_job_window` at :62, so every refused command leaked a
+`de-bg-*` window, and the mismatch message double-prefixed `sha256:`.
+Moved the gate to the top of `run_background_in_window` (GATE_FIRST; the
+`if config.sandbox.enabled` guard means a disabled sandbox never probes, and
+the config is reused at the `sandbox_window_command` site whose `job_id`
+needs `pane_num`). Dropped the literal `sha256:` prefix — `live` carries it —
+and added `sandbox_gate_describes_image_mismatch_with_a_single_prefix`;
+the distinctness fixture now uses prefixed ids. 8/1 `sandbox_gate` tests,
+full lib `1440 passed; 0 failed; 3 ignored`. Committed as `9133546` before
+this E2E rerun (the `if let` reformat landed after, covered by gates).
 
 ### Update — 2026-08-29 01:55 (end-to-end verification)
 
-All § C greps and the post-bounce criteria verified against the real tree:
-`GATE_FIRST` (gate at 51, window at 76), `sha256:{live}` count 0,
-`sha256:{live}` absent, the single-prefix test passing, 8/1 `sandbox_gate`
-tests, and the full lib suite `1440 passed; 0 failed; 3 ignored`. Four gates
-green. The 8-th test line in § A is the new single-prefix test.
+Round 1 of phase-06 (2026-08-28 23:52 entry below) was bounced by
+bug-phase-06-1. This re-dispatch entry is the E2E evidence against the
+**fixed tree** (round-1 transcript numbers 1439/7 are obsolete). Every line
+below is a mechanical capture of the § End-to-end verification block run
+verbatim from the repo root. `GATE_FIRST` — gate at 50, window at 75.
+All four gates green: fmt/build/clippy -D warnings/test.
 
 ```
 == A. sandbox_gate tests ==
 test daemon::executor::container::tests::sandbox_gate_describes_bad_run_as_with_the_offending_value ... ok
-test daemon::executor::container::tests::sandbox_gate_describes_nolock_with_the_build_command ... ok
 test daemon::executor::container::tests::sandbox_gate_disabled_config_is_ok_without_probing ... ok
 test daemon::executor::container::tests::sandbox_gate_describes_image_mismatch_with_a_single_prefix ... ok
-test daemon::executor::container::tests::sandbox_gate_probe_output_rejects_malformed_input ... ok
-test daemon::executor::container::tests::sandbox_gate_describes_every_unavailable_variant ... ok
-test daemon::executor::container::tests::sandbox_gate_probe_output_feeds_the_uid_gate ... ok
-test daemon::executor::container::tests::sandbox_gate_parses_the_real_probe_output ... ok
-cargo_exit=0
-== B. lib suite totals ==
-test result: ok. 1440 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 3.98s
-cargo_exit=0
-== C. structural greps ==
-parse_probe_output:   1
-describe_unavailable: 1
-sandbox_preflight:    1
-gate call site:       1
-refusal returned:     1
-verdict cached:       1
-allow(dead_code) tot: 7
-no hardcoded digest:  0
-```
-
-PASTE MATCH
-
-### Update — 2026-08-28 23:52 (end-to-end verification)
-
-All seven Spec acceptance criteria verified against the real tree, including
-the § Test plan count and § C greps. Full `cargo` gates green
-(fmt/build/clippy/test). `verdict cached` prints `1`: to keep the count
-exactly one, the `OnceLock` static lives inside `sandbox_preflight` with the
-module-level `use std::sync::OnceLock;` removed, so the identifier appears
-once (the E2E block's `grep -c "OnceLock"` counts the static's type use; the
-type-alias `SandboxVerdictCell = std::sync::OnceLock<...>` is spelled with the
-full path on purpose).
-
-```
-== A. sandbox_gate tests (expect 7 lines) ==
 test daemon::executor::container::tests::sandbox_gate_describes_nolock_with_the_build_command ... ok
-test daemon::executor::container::tests::sandbox_gate_describes_bad_run_as_with_the_offending_value ... ok
-test daemon::executor::container::tests::sandbox_gate_disabled_config_is_ok_without_probing ... ok
-test daemon::executor::container::tests::sandbox_gate_probe_output_rejects_malformed_input ... ok
 test daemon::executor::container::tests::sandbox_gate_describes_every_unavailable_variant ... ok
-test daemon::executor::container::tests::sandbox_gate_parses_the_real_probe_output ... ok
+test daemon::executor::container::tests::sandbox_gate_probe_output_rejects_malformed_input ... ok
 test daemon::executor::container::tests::sandbox_gate_probe_output_feeds_the_uid_gate ... ok
+test daemon::executor::container::tests::sandbox_gate_parses_the_real_probe_output ... ok
 cargo_exit=0
 == B. lib suite totals ==
-test result: ok. 1439 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 3.93s
+test result: ok. 1440 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 3.90s
 cargo_exit=0
 == C. structural greps ==
 parse_probe_output:   1
