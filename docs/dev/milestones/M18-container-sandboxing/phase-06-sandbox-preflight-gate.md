@@ -1,7 +1,7 @@
 # Phase 06: Fail closed — the sandbox preflight gate
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** in-progress (bounced — see bugs/bug-phase-06-1.md)
 **Depends on:** phase-04 (`evaluate_preflight`, `SandboxUnavailable`), phase-05 (`sandbox_window_command` and its call site)
 **Estimated diff:** ~380 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -187,9 +187,18 @@ idiom, so the probe runs once. **Do not** probe when `!cfg.enabled` — return
 
 ### Task 4 — Fail closed at the call site
 
-In `src/daemon/background/run.rs`, inside the existing
-`if config.sandbox.enabled { … }` block that phase-05 added, **before**
-calling `sandbox_window_command`:
+In `src/daemon/background/run.rs`, **before `create_job_window` is called**
+(it is at line ~62; phase-05's `if config.sandbox.enabled { … }` block sits at
+~166, which is far too late — see the correction below):
+
+**Corrected 2026-08-28 after bug-phase-06-1.** This task originally said to
+put the gate *"inside the existing `if config.sandbox.enabled { … }` block
+that phase-05 added"* while also requiring the refusal to precede window
+creation. Those two cannot both hold, and the round-1 run reasonably took the
+concrete placement, leaking a `de-bg-*` window per refusal. Load the config
+and gate **at the top of the function**; leave the `sandbox_window_command`
+call where phase-05 put it, since its `job_id` needs `pane_num`, which only
+exists after the pane is created.
 
 - Call `sandbox_preflight(&config.sandbox)`.
 - On `Err(reason)`, `log::warn!` the reason and **return
@@ -256,6 +265,31 @@ Every count was measured against the current tree while drafting.
 - [ ] All four gates green: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 - [ ] The § End-to-end entry exists and contains the literal line `PASTE MATCH`.
+
+### Added 2026-08-28 by the round-1 review (bug-phase-06-1)
+
+Round 1 met every criterion above and all four gates; the distinctness guard
+was mutation-verified (collapsing `describe_unavailable` fails 3 tests). These
+carry the outstanding defects; each was run against the round-1 tree.
+
+- [ ] **The gate precedes window creation:**
+
+      ```sh
+      P=$(grep -n "sandbox_preflight" src/daemon/background/run.rs | head -1 | cut -d: -f1)
+      W=$(grep -n "create_job_window" src/daemon/background/run.rs | head -1 | cut -d: -f1)
+      [ "$P" -lt "$W" ] && echo GATE_FIRST || echo WINDOW_FIRST
+      ```
+
+      prints `GATE_FIRST` (**before: `WINDOW_FIRST`** — gate at 172, window at
+      62, so every refusal leaked a `de-bg-*` window).
+- [ ] `grep -c 'sha256:{live}' src/daemon/executor/container.rs` prints `0`
+      (**before: 1**) — `live` already carries the prefix, so the message
+      rendered `sha256:sha256:…` in production.
+- [ ] `cargo test --lib sandbox_gate 2>&1 | grep -c "^test .* ok$"` prints `8`
+      (**before: 7**) — one new test pinning a **single** `sha256:` occurrence
+      against a realistic prefixed `live` value.
+- [ ] `cargo test --lib 2>&1 | grep -E "^test result:"` reports
+      `1440 passed; 0 failed; 3 ignored`.
 
 ## Test plan
 
