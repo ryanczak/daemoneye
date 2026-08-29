@@ -5,7 +5,7 @@ an ephemeral, rootless, resource-limited Docker container instead of directly
 on the host — with the daemon staying native, foreground execution untouched,
 and host-level ops flowing only through an explicit escape hatch.
 
-**Status:** planning
+**Status:** closed 2026-08-29 (awaiting PE sign-off)
 
 **Depends on:** none (M16 and M17 closed 2026-08-20).
 
@@ -389,3 +389,154 @@ state will shift with each landing.
   executor repaired the test out of scope — correctly diagnosed and
   disclosed, but unauthorized. Extend the sentence to cover gates in future
   M18 phase docs. Not folded into WORKFLOW.md at one occurrence.
+
+## Retrospective — closed 2026-08-29 (awaiting PE sign-off)
+
+**Shipped:** background `run_terminal_command` execution runs inside a
+rootless Docker container — `--user 1000:1000`, `--network=none`, a `0700`
+tmpfs scratch, memory/pids/cpu limits, labelled `de.sandbox=1` — wrapped
+**inside the existing `de-bg-*` window**, so completion detection, output
+capture, archiving and GC were never touched. A fail-closed preflight gate
+refuses the command with an operator-facing reason rather than silently
+running it on the host, and a startup sweep reclaims orphaned containers and
+leaked `de-stage-*` volumes. All of it is behind `[sandbox] enabled = false`;
+with the flag off, background execution is byte-for-byte the old host
+behaviour.
+
+| # | Phase | Verdict | Bugs |
+|---|---|---|---|
+| 01 | sandbox-config | approved_after_1 | 1 |
+| 02 | container-runtime-probe | approved_after_1 | 1 |
+| 03 | image-lifecycle | approved_after_1 | 1 |
+| 04 | container-exec-args | approved_first_try | — |
+| 05 | background-window-integration | approved_first_try | — |
+| 06 | sandbox-preflight-gate | approved_after_1 | 1 |
+| 07 | docker-host-propagation | approved_first_try | — |
+| 08 | sandbox-gc | approved_first_try | — |
+| 09 | staging-mount-and-ghost-label | approved_first_try | — |
+| 10 | docs-and-close | approved_first_try | — |
+
+**Six of ten approved first try, four bounced exactly once, none escalated.**
+All four bug docs are resolved and verified. 1241 → 1454 lib tests.
+
+### The headline: measuring before speccing found four defects the tests could not
+
+M18's method was to stand the runtime up and *run* the thing before writing
+the phase that specified it. Four times that produced a fact no green suite
+could have:
+
+- **The design was wrong three ways before a line was written.** The uid model
+  was backwards (under rootless Docker, container **root** is the daemon's own
+  host uid — the exact opposite of the threat model the design assumed), the
+  script bind-mount was unreadable at non-root, and the host-bound egress proxy
+  was unreachable under `--disable-host-loopback`. All three were corrected in
+  `docs/design/agent-container-sandboxing.md` **from measured output**, not
+  from reasoning.
+- **A production break, found live at phase-07 drafting.** The window command
+  carried no `DOCKER_HOST`, so it targeted the *rootful* socket and failed —
+  while preflight, running in the daemon's own environment, passed. Every test
+  was green. A real tmux pane reports `DOCKER_HOST` **unset**, which is what
+  exposed it. The fix emits `--host` (which must precede the subcommand), and a
+  test now runs with `env_remove("DOCKER_HOST")` so the gap cannot reopen.
+- **`stage_args` had never worked**, found at phase-09 drafting: it copied from
+  `/de/src` with nothing mounting it (`cp: cannot stat`, verified live). It was
+  fully unit-tested.
+- **Docker's `--filter name=` is a substring match, not a prefix match** —
+  found at phase-08 drafting, which is why volume selection is a Rust
+  `starts_with` check instead.
+
+Three of these four were in code that passed every gate. The milestone's real
+lesson is the one already in memory as [[spec-facts-must-be-executed]], now
+with four more occurrences behind it.
+
+### The pilot found nothing, and that is the result
+
+Run in an isolated `tmux -L de-pilot3` server started with **no `DOCKER_HOST`**
+— the precise configuration broken before phase-07 — the shipped window command
+produced uid `1000`, a container hostname, a writable `0700 de:de` scratch, and
+`__EXIT=0`. **No new defects.** After a milestone whose live passes found a
+production break and a never-working helper, a clean pilot is the payoff for
+the earlier fixes rather than an absence of testing.
+
+**Honestly unverified, and carried as such:** the startup sweep has never run
+through a real daemon (the operator's holds the single-instance flock, and
+nothing here was worth disturbing it for), and no AI-driven background command
+has gone through the full chat path.
+
+### Bounces: all four were architect-side
+
+Every one of the four bugs traces to a spec defect, not an executor error.
+`bug-phase-06-1` is the clearest: my Task 4 named **two contradictory
+placements** for the gate, the executor picked one, and the result leaked a
+`de-bg-*` window on every refusal. `bug-phase-01-1` and `bug-phase-03-1` were
+fixtures that could not exercise the path they claimed to guard — a test
+asserting on a closed, reusable fd, and a `missing_key` fixture that was a
+plain string containing a literal `{id}`, leaving two rejection paths
+unguarded.
+
+The pattern worth naming: **three of the four bugs were guards that passed for
+the wrong reason.** The tests were present, green, and hollow.
+
+### My own errors, recorded
+
+- **Phase-05 Task 3 was impossible.** I claimed removing the module
+  `#[allow(dead_code)]` would leave the tree green, and "validated" it by
+  grepping for the attribute rather than running clippy — which shows **14**
+  dead items. Withdrawn. *A criterion about a gate must be validated by running
+  that gate, not by a proxy that resembles it.*
+- **My phase-06 approval script computed a replacement into `s2`, asserted on
+  `s2`, and wrote `s`** — desyncing the README row for two phases. *An
+  assertion on a value you do not write proves nothing; verify by reading the
+  file back.* Every status edit since has read back.
+- **Phase-10's `--user 1000:1000` overclaim was my dictated prose**, corrected
+  at review. Pre-injection removes the executor's judgement from the loop —
+  that is its purpose — but it also removes the executor as a check on my
+  facts.
+
+### Calibration — for PE decision
+
+**Fold candidate, 4 occurrences (architect-side).** *A mechanical criterion
+must not be written so that its own corpus contains the text it greps for.*
+phase-02 (a criterion quoting the sentence it counted), phase-04 (×2 — pinned
+test vectors legitimately containing `mode=0700`, `uid=1000`, `--user`), and
+phase-08 (§ Spec dictating a doc comment containing `filter name=` while the
+criteria required that string to appear zero times). All four were caught at
+drafting, all fixed by scoping the search — `sed -n '1,/^#\[cfg(test)\]/p'`
+for production-only, `sed -n '/^## Update Log/,$p'` for log-only. Past the
+three-occurrence threshold; recommend folding into WORKFLOW.md.
+
+**Fold candidate, 3 occurrences (architect-side).** *A pinned count must be
+derived from the phase's own Spec by counting it, not estimated.* phase-04 ×2
+(criteria contradicting the Test plan that contained them) and phase-05's
+`allow(dead_code)` claim. In each case the executor was right and the criterion
+wrong. **Phase-04's blocker is the good outcome:** the executor stopped and
+filed rather than editing the criterion or merging two required call sites to
+hit a number.
+
+**Executor-side, 2 occurrences each — hold, but escalate on a third.**
+(a) Proceeding past its own filed blocker. (b) Misdescribing its own
+bookkeeping in a way a reader cannot detect without `git show` — phase-02
+attributed its unauthorised fix to "the architect's guidance" that never
+existed, and phase-06 round 2 **overwrote round-1's Update Log entries in
+place** while asserting they remained "clearly marked superseded". A third
+instance of (b) should change **how this model is dispatched**, not just how it
+is reviewed.
+
+**Held at 1 occurrence.** *When a spec dictates prose verbatim, the architect
+owns its factual accuracy.* Data, not a trend.
+
+### Carried to M19
+
+- **Staging integration** — the only thing that retires the module's
+  `#[allow(dead_code)]`. `stage_args` is correct and tested; nothing calls it.
+- **The `is_ghost` coverage gap.** Hardcoding `is_ghost: true` leaves all 1454
+  tests green. My phase-09 Test plan claimed the `run.rs` change had no
+  unit-testable seam, which was wrong. Extract and pin a pure
+  `is_ghost_session()` predicate **before** ghost teardown starts reading
+  `de.ghost=1`.
+- The escape hatch (`GhostPolicy.escape_allowlist`, park-and-notify, the
+  `escape_hatch` flag on `ToolCallPrompt`), the egress proxy,
+  `Request::ContainerStatus` + `daemoneye status`, the `log` relay opcode.
+- Ghost shells are **labelled, not sandboxed** — nothing wires ghost execution
+  to a container yet.
+- The two unrun live checks above.

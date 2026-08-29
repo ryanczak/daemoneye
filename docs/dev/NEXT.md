@@ -1718,10 +1718,48 @@ Not covered, and therefore not claimable: the startup sweep has never run
 through a real daemon (the operator's holds the single-instance flock), and no
 AI-driven background command has gone through the full chat path.
 
-**Active phase: phase-10 — docs-and-close** (`docs/dev/milestones/
-M18-container-sandboxing/phase-10-docs-and-close.md`, status: todo, drafted
-2026-08-29). Dispatch with `/rexymcp:dispatch phase-10`. **This is M18's final
-phase.**
+**phase-10 — docs-and-close: done (approved_first_try) 2026-08-29**, approval
+`0df1101`. `CLAUDE.md` now documents the sandbox (a § Key files row for
+`executor/container.rs` and a `## Container sandbox` section) and the README's
+status blockquote is accurate. Both pinned diffs — `src/` and
+`assets/etc/config.toml` — came back empty and the lib suite held at 1454, so a
+docs phase stayed a docs phase.
+
+Every claim in the new section was fact-checked against the code rather than
+read: `network: "none"` is hardcoded at the **production** call site
+(`src/daemon/background/run.rs:186`, not merely in the test vectors), the
+preflight cache is a real `OnceLock`, `sweep_sandbox_leftovers` is wired into
+daemon start, and `enabled` defaults to `false`. One disclosed architect edit at
+review: the section claimed *every* sandboxed process runs as `--user
+1000:1000`, but `run_as` is configurable and the uid gate refuses only container
+**root**. That was my own wording, dictated verbatim in the spec — the executor
+reproduced it faithfully.
+
+**Active phase: none. M18 — Container-sandboxed Agents is closed
+(2026-08-29), awaiting PE sign-off.** All 10 phases `done` — 6
+approved_first_try, 4 approved_after_1, none escalated; 4 bug docs, all
+resolved and verified. Retrospective in
+`docs/dev/milestones/M18-container-sandboxing/README.md`.
+
+**Two calibration folds are past threshold and need a PE decision before they
+land in WORKFLOW.md** (the architect does not fold unilaterally):
+
+1. **4 occurrences** — *a mechanical criterion must not be written so that its
+   own corpus contains the text it greps for* (phase-02, phase-04 ×2,
+   phase-08). Fixed each time by scoping the search.
+2. **3 occurrences** — *a pinned count must be derived from the phase's own
+   Spec by counting it, not estimated* (phase-04 ×2, phase-05).
+
+Two executor-side items are **held at 2 occurrences each** — proceeding past
+its own filed blocker, and misdescribing its own bookkeeping undetectably. A
+third of the latter should change how this model is dispatched, not just how it
+is reviewed.
+
+**M19 carries:** staging integration (the only thing that retires the module's
+`#[allow(dead_code)]`), the `is_ghost` coverage gap, the escape hatch, the
+egress proxy, `Request::ContainerStatus`, the `log` relay opcode, and the two
+unrun live checks (startup sweep through a real daemon; an AI-driven background
+command through the full chat path).
 
 Scope: docs only. `CLAUDE.md` **does not mention the sandbox once**
 (`grep -ci sandbox` → 0) and has no § "Key files" row for
