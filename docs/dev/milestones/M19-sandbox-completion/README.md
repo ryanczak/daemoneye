@@ -59,7 +59,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | is-ghost-predicate ([phase-01-is-ghost-predicate.md](phase-01-is-ghost-predicate.md)) | **done** (approved_first_try, 2026-08-29) |
-| 02 | staging-integration ([phase-02-staging-integration.md](phase-02-staging-integration.md)) | review                   |
+| 02 | staging-integration ([phase-02-staging-integration.md](phase-02-staging-integration.md)) | in-progress (bounced 2026-08-29, [bug-phase-02-1](bugs/bug-phase-02-1.md)) |
 | 03 | ghost-container-execution | todo (not drafted) |
 | 04 | ghost-scoped-teardown | todo (not drafted) |
 | 05 | container-status-ipc | todo (not drafted) |

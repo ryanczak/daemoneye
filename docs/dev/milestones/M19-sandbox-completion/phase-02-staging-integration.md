@@ -1,7 +1,7 @@
 # Phase 02: Stage the invoked script into the sandbox, and retire the module `#[allow(dead_code)]`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** in-progress (bounced 2026-08-29 — bug-phase-02-1: E2E entry lacks the bare `PASTE MATCH` line)
 **Depends on:** none (independent of phase-01)
 **Estimated diff:** ~190 lines including tests
 **Tags:** language=rust, kind=feature, size=m
@@ -551,7 +551,9 @@ applied certifies a vacuous guard.
 Run the block in § End-to-end verification **verbatim and unmodified**, then
 paste the resulting `/tmp/e2e-02.txt` into a new Update Log entry headed
 `### Update — <date> (end-to-end verification)`. The server-authored
-`(complete)` entry does not satisfy this.
+`(complete)` entry does not satisfy this. **The entry ends with the
+self-check's verdict line, `PASTE MATCH`, bare on its own line after the
+fenced block** — a tick in your final summary is not that line.
 
 ## Acceptance criteria
 
@@ -595,7 +597,13 @@ the tree this phase produces, not the one in front of you.
 - [ ] All four gates green: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 - [ ] The § End-to-end entry contains the literal line `PASTE MATCH` (bare,
-      with no surrounding backticks).
+      with no surrounding backticks):
+      `grep -c '^PASTE MATCH$' docs/dev/milestones/M19-sandbox-completion/phase-02-staging-integration.md`
+      prints `1`. **Refreshed at the 2026-08-29 bounce (bug-phase-02-1):
+      measured `0` on the round-1 tree** — the verdict was written into the
+      completion summary, not the entry. Round 2 needs a **new** end-to-end
+      entry (per-dispatch rule); `rm -f /tmp/e2e-02.txt` before re-running
+      Tasks 7–9 so the artifact holds only that round's output.
 
 ## Test plan
 
