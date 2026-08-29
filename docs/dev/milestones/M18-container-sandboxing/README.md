@@ -134,8 +134,8 @@ state will shift with each landing.
 | 03 | image-lifecycle ([phase-03-image-lifecycle.md](phase-03-image-lifecycle.md)) | **done** (approved_after_1, 2026-08-28) | `containers/Dockerfile`, `daemoneye sandbox build`, digest lockfile + the pure compare helpers phase-04's refusal gate uses. Staleness warning and `requires_tools` deferred — see Notes. |
 | 04 | container-exec-args ([phase-04-container-exec-args.md](phase-04-container-exec-args.md)) | **done** (approved_first_try, 2026-08-28) | The two pure decisions before any container starts: `evaluate_preflight` (runtime + uid gate + image lock, in that order) and the argv builders `run_args` / `stage_args` / `split_run_as`. Whole argv prototyped against the real image first. Nothing spawns. |
 | 05 | background-window-integration ([phase-05-background-window-integration.md](phase-05-background-window-integration.md)) | **done** (approved_first_try, 2026-08-28) | **First phase whose code starts a container.** `sandbox_window_command` wraps a background command as a shell-quoted `docker run …` line at the `run.rs:159` seam when enabled; `de-bg-*` window, completion detection, capture and GC untouched. The `#[allow(dead_code)]` removal was **withdrawn** — 14 phase-02/03/04 items are still unwired; see Notes. |
-| 06 | sandbox-preflight-gate ([phase-06-sandbox-preflight-gate.md](phase-06-sandbox-preflight-gate.md)) | **in-progress** (re-dispatch 2026-08-29, bug-phase-06-1 fixes on disk) | **Fail closed.** Probe the runtime once (`OnceLock`), decide with phase-04's `evaluate_preflight`, and **refuse** a background command when the sandbox is not sane instead of running it on the host. Phase-05 shipped sandboxed execution with no gate at all. |
-| 07 | docker-host-propagation ([phase-07-docker-host-propagation.md](phase-07-docker-host-propagation.md)) | **in-progress** (drafted 2026-08-29) | **Production-break fix, found by live verification.** The window command carried no `DOCKER_HOST`, so it targeted the *rootful* socket and failed while preflight passed. `run_args`/`stage_args` now emit `--host <docker_host>` first; a live test runs with `env_remove("DOCKER_HOST")` so the gap cannot reopen. |
+| 06 | sandbox-preflight-gate ([phase-06-sandbox-preflight-gate.md](phase-06-sandbox-preflight-gate.md)) | **done** (approved_after_1, 2026-08-29) | **Fail closed.** Probe the runtime once (`OnceLock`), decide with phase-04's `evaluate_preflight`, and **refuse** a background command when the sandbox is not sane instead of running it on the host. Phase-05 shipped sandboxed execution with no gate at all. |
+| 07 | docker-host-propagation ([phase-07-docker-host-propagation.md](phase-07-docker-host-propagation.md)) | **done** (approved_first_try, 2026-08-29) | **Production-break fix, found by live verification.** The window command carried no `DOCKER_HOST`, so it targeted the *rootful* socket and failed while preflight passed. `run_args`/`stage_args` now emit `--host <docker_host>` first; a live test runs with `env_remove("DOCKER_HOST")` so the gap cannot reopen. |
 | 08 | ghost-lifecycle-and-gc | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep, **and the `de-stage-*` volume GC phase-05 deferred**. Wires staging (`stage_args`, `script_name_is_safe`), which is what finally allows the `#[allow(dead_code)]` to go. |
 | 09 | escape-hatch-and-chat | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify; plus the long-lived `de-chat-<session>` container. The egress proxy folds in here or is dropped if the pilot shows no need. |
 | 10 | docs-and-pilot | todo (not drafted) | CLAUDE.md / README / doc_truth updates, `Request::ContainerStatus` + `daemoneye status` surface, the `log` relay opcode, pilot runbook, and pilot metrics (start latency, park counts, failed starts). |
@@ -163,6 +163,13 @@ state will shift with each landing.
   1000" — that test had passed only against stock `alpine`, which has no
   `/de/work`, where Docker creates the tmpfs mode `1777`. D4 now carries the
   measured table. **Phase-04 must pass the uid/gid options.**
+- **Architect-side calibration (phase-07 review):** a scripted doc edit must
+  be **verified by reading the file back**, not by asserting on an
+  intermediate variable. The phase-06 approval computed the README row
+  replacement into `s2`, asserted `s2 != s`, then wrote `s` — the assertion
+  passed on a value that was thrown away, and phase-06's row read
+  `in-progress` while its doc read `done` for two further phases. An assertion
+  on a value you do not write proves nothing.
 - **Live verification, first run, 2026-08-29 — and it found a production
   break.** Six phases in, no daemoneye code had ever started a container. The
   architect ran the three `#[ignore]`d tests (all pass) and executed

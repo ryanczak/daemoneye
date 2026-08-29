@@ -1,7 +1,7 @@
 # Phase 07: Carry `DOCKER_HOST` into the sandboxed command
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (`run_args`, `stage_args`), phase-05 (`sandbox_window_command`)
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -457,3 +457,47 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 1001b463f9c5e02503d0fe7a70b24b2032beb761
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** one, declared and accepted. Task 2 named the phase-04
+  pinned vector and `stage_args`' position-dependent slice, but not
+  `sandbox_window_enabled_starts_with_the_quoted_runtime` — a phase-05 test
+  that also pinned the pre-fix prefix and would have gone red. The executor
+  updated it and said so. That is the correct call: the prefix change is
+  deliberate, so every expectation of the old prefix has to move with it.
+- **Calibration:** one, architect-side, and it is a **bookkeeping bug of
+  mine**, not a spec defect — see below.
+
+**The fix is proven, not asserted.** The live test was run twice at review,
+with `DOCKER_HOST` scrubbed from the reviewer's own environment as well:
+
+| Tree | `sandbox_host_command_runs_with_no_ambient_docker_host` |
+|---|---|
+| as shipped (`--host` first) | **1 passed** |
+| `--host` reverted out of `run_args` | **1 failed** |
+
+So the test genuinely discriminates, and the production break this phase
+existed to fix is closed. A second mutation — moving `--host` to *after*
+`run`, which docker rejects with `unknown flag` — fails
+`sandbox_host_run_args_start_with_the_configured_endpoint` and
+`sandbox_host_window_command_carries_the_endpoint`, so the **ordering** is
+guarded too, not merely the presence of the flag.
+
+Also confirmed: four gates green; **1443 passed / 0 failed / 4 ignored**;
+`--host` twice in production code and once each in both builders;
+`env_remove` present; `allow(dead_code)` still 7; Update Log entries
+**appended**, not rewritten (the phase-06 round-2 behaviour did not recur);
+E2E artifact re-extracts identical apart from the elapsed-time line.
+
+**Calibration — architect-side, new.** The phase-06 approval left the
+milestone README's row for phase-06 reading `in-progress` while its phase doc
+said `done`. Cause: the approval script computed the replacement into `s2`,
+asserted `s2 != s`, and then wrote **`s`** — so the assertion passed on a
+value that was discarded. The status desync survived a commit and two further
+phases before this review caught it. **A scripted edit must be verified by
+reading the file back, not by asserting on an intermediate variable**; an
+assertion on a value you do not write proves nothing. Fixed in this commit.
