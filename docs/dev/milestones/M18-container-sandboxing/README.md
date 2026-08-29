@@ -135,9 +135,9 @@ state will shift with each landing.
 | 04 | container-exec-args ([phase-04-container-exec-args.md](phase-04-container-exec-args.md)) | **done** (approved_first_try, 2026-08-28) | The two pure decisions before any container starts: `evaluate_preflight` (runtime + uid gate + image lock, in that order) and the argv builders `run_args` / `stage_args` / `split_run_as`. Whole argv prototyped against the real image first. Nothing spawns. |
 | 05 | background-window-integration ([phase-05-background-window-integration.md](phase-05-background-window-integration.md)) | **done** (approved_first_try, 2026-08-28) | **First phase whose code starts a container.** `sandbox_window_command` wraps a background command as a shell-quoted `docker run …` line at the `run.rs:159` seam when enabled; `de-bg-*` window, completion detection, capture and GC untouched. The `#[allow(dead_code)]` removal was **withdrawn** — 14 phase-02/03/04 items are still unwired; see Notes. |
 | 06 | sandbox-preflight-gate ([phase-06-sandbox-preflight-gate.md](phase-06-sandbox-preflight-gate.md)) | **in-progress** (re-dispatch 2026-08-29, bug-phase-06-1 fixes on disk) | **Fail closed.** Probe the runtime once (`OnceLock`), decide with phase-04's `evaluate_preflight`, and **refuse** a background command when the sandbox is not sane instead of running it on the host. Phase-05 shipped sandboxed execution with no gate at all. |
-| 07 | ghost-lifecycle-and-gc | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep, **and the `de-stage-*` volume GC phase-05 deferred**. Wires staging (`stage_args`, `script_name_is_safe`), which is what finally allows the `#[allow(dead_code)]` to go. |
-| 08 | escape-hatch | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify (mailbox + `[Ghost Shell …]` event), `escape_hatch` flag on `ToolCallPrompt`, event-log records. |
-| 09 | chat-containers-and-egress | todo (not drafted) | Long-lived `de-chat-<session>` container (lazy create, restart-independent, session-end GC) **and** the containerized egress proxy for `network = "proxy"` profiles. The proxy may be dropped if the pilot shows no need. |
+| 07 | docker-host-propagation ([phase-07-docker-host-propagation.md](phase-07-docker-host-propagation.md)) | **todo** (drafted 2026-08-29) | **Production-break fix, found by live verification.** The window command carried no `DOCKER_HOST`, so it targeted the *rootful* socket and failed while preflight passed. `run_args`/`stage_args` now emit `--host <docker_host>` first; a live test runs with `env_remove("DOCKER_HOST")` so the gap cannot reopen. |
+| 08 | ghost-lifecycle-and-gc | todo (not drafted) | Per-ghost ephemeral container, `docker rm -f` on every exit path, `de.ghost=1` label, startup orphan sweep, **and the `de-stage-*` volume GC phase-05 deferred**. Wires staging (`stage_args`, `script_name_is_safe`), which is what finally allows the `#[allow(dead_code)]` to go. |
+| 09 | escape-hatch-and-chat | todo (not drafted) | Escape-hatch classification, `GhostPolicy.escape_allowlist`, park-and-notify; plus the long-lived `de-chat-<session>` container. The egress proxy folds in here or is dropped if the pilot shows no need. |
 | 10 | docs-and-pilot | todo (not drafted) | CLAUDE.md / README / doc_truth updates, `Request::ContainerStatus` + `daemoneye status` surface, the `log` relay opcode, pilot runbook, and pilot metrics (start latency, park counts, failed starts). |
 
 ## Notes
@@ -163,6 +163,20 @@ state will shift with each landing.
   1000" — that test had passed only against stock `alpine`, which has no
   `/de/work`, where Docker creates the tmpfs mode `1777`. D4 now carries the
   measured table. **Phase-04 must pass the uid/gid options.**
+- **Live verification, first run, 2026-08-29 — and it found a production
+  break.** Six phases in, no daemoneye code had ever started a container. The
+  architect ran the three `#[ignore]`d tests (all pass) and executed
+  `daemoneye sandbox build` for the first time (image built, lock written,
+  recorded id matches `docker image inspect`, so preflight now passes through
+  the full chain instead of via its `NoLock` escape). **But the window command
+  carries no `DOCKER_HOST`**: a live tmux pane here reports
+  `DOCKER_HOST=[UNSET]`, so the generated `docker` line targets
+  `/var/run/docker.sock` — the *rootful* socket, a different daemon — and
+  fails. Phase-06's gate cannot see it, because the daemon probes with
+  `Command::env` set while tmux runs a bare string. **Phase-07 was inserted to
+  fix it**, pushing ghost lifecycle to 08 and merging escape-hatch with chat
+  containers into 09. This is the M14 lesson recurring: a defect invisible to
+  1440 green tests, found in the first minute of running the thing.
 - **Scope change at phase-06 drafting (2026-08-28):** a **preflight gate**
   phase was inserted as 06, pushing ghost lifecycle to 07 and folding the
   egress proxy into 09. Reason: phase-05 shipped sandboxed background

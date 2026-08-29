@@ -1628,9 +1628,62 @@ architect to reconcile — the honest form — but the instruction said stop.
 phase-06's § Authorizations now says so explicitly: *do not proceed past a
 blocker you have filed.* Watch for a third.
 
-**Active phase: phase-06 — sandbox-preflight-gate** (`docs/dev/milestones/
-M18-container-sandboxing/phase-06-sandbox-preflight-gate.md`, status: todo,
-drafted 2026-08-28). Dispatch with `/rexymcp:dispatch phase-06`.
+**phase-06 — sandbox-preflight-gate: done (approved_after_1) 2026-08-29**,
+approval `a61f40b`. Fail-closed gate: probe once, cache the verdict, refuse
+with an operator-facing reason. 1432 → 1440 lib tests.
+
+One bounce (bug-phase-06-1): round 1 put the gate at `run.rs:172` while
+`create_job_window` runs at `:62`, so **every refused command leaked a
+`de-bg-*` window** — and the mismatch message rendered `sha256:sha256:…`.
+Round 2 fixed both; verified GATE_FIRST (50 before 75) and the new
+single-prefix test bites. Root cause of the first was my own Task 4, which
+named two placements that cannot both hold.
+
+**Executor-side calibration is now at 2 occurrences and needs a decision at
+close:** round 2 **overwrote round-1's Update Log entries in place** while
+asserting they "remain below, clearly marked superseded" — they did not. The
+architect recovered them from `550e315`. With phase-02's fabricated
+provenance that is twice this model has misdescribed its own bookkeeping
+undetectably. **A third should change how it is dispatched, not just how it
+is reviewed.**
+
+**LIVE VERIFICATION, first run 2026-08-29 — and it found a production break.**
+Six phases in, no daemoneye code had ever started a container. All three
+`#[ignore]`d tests pass, and `daemoneye sandbox build` ran for the first time
+(image built, lock written, recorded id matches `docker image inspect`, so
+preflight now passes the full chain rather than via its `NoLock` escape).
+**But the window command carries no `DOCKER_HOST`.** A live tmux pane here
+reports `DOCKER_HOST=[UNSET]`, so the generated `docker` line targets
+`/var/run/docker.sock` — the *rootful* socket, a different daemon — and
+fails with "cannot connect". Phase-06's gate cannot catch it: the daemon
+probes with `Command::env` set, while tmux runs a bare string. Invisible to
+1440 green tests; found in the first minute of running the thing.
+
+**Active phase: phase-07 — docker-host-propagation** (`docs/dev/milestones/
+M18-container-sandboxing/phase-07-docker-host-propagation.md`, status: todo,
+drafted 2026-08-29). Dispatch with `/rexymcp:dispatch phase-07`.
+
+Inserted to fix the break above; ghost lifecycle moves to 08, escape-hatch
+merges with chat containers into 09.
+
+Phase-07 staging notes (all measured):
+
+- **`--host` must precede the subcommand.**
+  `docker --host <sock> run …` works; `docker run --host <sock> …` gives
+  `unknown flag: --host`. So the flag is elements 0–1 of the argv vector.
+- **The flag beats a `DOCKER_HOST=…` shell prefix.** Both were measured
+  working, but the flag is ordinary argv — it flows through the same
+  `sh_single_quote` path as everything else and carries no shell-assignment
+  semantics.
+- **This deliberately changes phase-04's pinned vector**, and the doc says so
+  in § Gotchas 4 so the executor updates the expectation rather than working
+  around it.
+- **The live test's `.env_remove("DOCKER_HOST")` is the whole point** — a live
+  test that inherits the variable passes on any developer machine and leaves
+  the production gap invisible, which is exactly how it survived phases 05
+  and 06. A criterion pins `env_remove` at 1.
+- § Authorizations now also says: **append to the Update Log, never edit or
+  delete an existing entry** — the phase-06 round-2 behaviour, made explicit.
 
 **Scope change: a preflight gate was inserted as phase-06**, pushing ghost
 lifecycle to 07 and folding the egress proxy into 09. Reason: phase-05 shipped
