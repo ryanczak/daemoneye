@@ -1,7 +1,7 @@
 # Phase 10: Document what shipped
 
 **Milestone:** M18 — Container-sandboxed Agents (final phase)
-**Status:** review
+**Status:** done
 **Depends on:** phases 01–09 (all `done`)
 **Estimated diff:** ~180 lines, docs only
 **Tags:** language=markdown, kind=docs, size=s
@@ -464,3 +464,35 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 44dbac2841225517e0105b0ecf80051205e657e3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none. Both pinned diffs (`src/`, `assets/etc/config.toml`)
+  are empty and the lib suite is unchanged at 1454 — a docs phase stayed a docs
+  phase. The `@REXYMCP.md` import survived at the end of `CLAUDE.md`, which the
+  criteria did not pin and which a careless append to that file would have
+  broken.
+- **Verification:** all four gates re-run independently and green. Every claim
+  in the new `## Container sandbox` section was fact-checked against the code
+  rather than read: `network: "none"` is hardcoded at the production call site
+  (`src/daemon/background/run.rs:186`, not merely in tests); the preflight cache
+  is a real `OnceLock` (`container.rs:425`); `sweep_sandbox_leftovers` is
+  genuinely wired into daemon start (`src/daemon/mod.rs:486`); `enabled`
+  defaults to `false` (`src/config/types.rs:554`).
+- **Architect edit at review, disclosed:** one sentence corrected. The section
+  read *"Every sandboxed process runs as `--user 1000:1000`"* — but `run_as` is
+  configurable (`default_sandbox_run_as`, `src/config/types.rs:543`) and the uid
+  gate refuses only container **root**, not any non-1000 uid. Now reads
+  `--user <run_as>`, `1000:1000` by default. **This was my wording, dictated
+  verbatim in § Spec Task 2** — the executor reproduced the spec faithfully. I
+  fixed it here rather than bouncing because the defect is architect-side, is a
+  single clause, and this phase existed precisely to stop `CLAUDE.md` carrying
+  wrong statements about the sandbox.
+- **Calibration (1 occurrence):** *when a spec dictates prose verbatim, the
+  architect owns its factual accuracy — the executor will reproduce a wrong
+  claim exactly as written.* Pre-injection removes the executor's judgement from
+  the loop, which is the point, but it also removes the executor as a check.
+  Data, not yet a trend.

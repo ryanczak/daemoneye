@@ -230,9 +230,10 @@ Background `run_terminal_command` execution is wrapped as
 existing `de-bg-*` window** via `sandbox_window_command`, so completion
 detection, output capture/archive and GC are unchanged.
 
-- Every sandboxed process runs as `--user 1000:1000`. Under rootless Docker
-  container root maps to the daemon's own host uid, so running as root would
-  defeat the sandbox entirely — this is the reason for the uid gate.
+- Every sandboxed process runs as `--user <run_as>`, `1000:1000` by default.
+  Under rootless Docker container root maps to the daemon's own host uid, so
+  running as root would defeat the sandbox entirely — this is the reason for
+  the uid gate.
 - Preflight (runtime probe → uid gate → `sandbox.lock` → live image id) is
   cached once per daemon lifetime and **fails closed**: a failed gate refuses
   the command with an operator-facing reason instead of running it on the host.
