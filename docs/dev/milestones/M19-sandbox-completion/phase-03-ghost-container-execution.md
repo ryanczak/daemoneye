@@ -1,7 +1,7 @@
 # Phase 03: Close the two ghost execution paths that bypass the container
 
-**Status:** review
-**Status:** todo
+**Milestone:** M19 — Sandbox Completion
+**Status:** done
 **Depends on:** phase-01 (`resolve_is_ghost`), phase-02 (`stage_script`, `remove_stage_volume`)
 **Estimated diff:** ~230 lines including tests
 **Tags:** language=rust, kind=feature, size=m
@@ -532,9 +532,13 @@ refuse them.** Append each marker and run to `/tmp/e2e-03.txt`. Run the gates
    cargo test --lib job_id_for 2>&1 | grep -E "FAILED|^test result:" >> /tmp/e2e-03.txt
    grep -c 'format!("{}-{}", pane_id, unix_ts)' src/daemon/executor/container.rs >> /tmp/e2e-03.txt
    ```
-   The result must show **1 failed** and name `job_id_for_strips_the_pane_sigil`.
-   A mutation that leaves the suite green means the test is vacuous — record a
-   blocker.
+   The result must show **2 failed**, naming `job_id_for_strips_the_pane_sigil`
+   **and** `job_id_for_names_the_volume_the_container_mounts`. Both assert on
+   the sigil-stripped output, so this mutation legitimately breaks both — that
+   is a stronger guard, not a defect. (Round 1 measured exactly this; the
+   criterion said "exactly one" and was wrong. Corrected at the 2026-08-29
+   bounce.) A mutation that leaves the suite green means the tests are vacuous
+   — record a blocker.
 
 2. **Restore.** The inverse `patch`, then:
    ```sh
@@ -621,9 +625,12 @@ the tree this phase produces, not the one in front of you.
       prints `6` (**unchanged** — this phase neither adds nor retires one).
 - [ ] `sed -n '1,/^#\[cfg(test)\]/p' src/daemon/background/respawn.rs | grep -c '\.unwrap()\|\.expect('`
       prints `0` — no new panicking idiom in production code (**before: 0**).
-- [ ] The § End-to-end entry shows `== M1 APPLIED ==` and `== M2 APPLIED ==`
-      each **failing exactly one** named test, both `RESTORED` runs passing,
-      with a `grep -c` line after each direction.
+- [ ] The § End-to-end entry shows `== M1 APPLIED ==` failing **exactly two**
+      named tests (both `job_id_for` assertions on the stripped output) and
+      `== M2 APPLIED ==` failing **exactly one**, both `RESTORED` runs passing,
+      with a `grep -c` line after each direction. **Refreshed at the
+      2026-08-29 bounce:** this criterion previously demanded one failure from
+      each and was unsatisfiable for M1 without weakening a test.
 - [ ] No new `#[allow(...)]` anywhere, no `unsafe`, no `TODO`.
 - [ ] All four gates green: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
@@ -631,6 +638,13 @@ the tree this phase produces, not the one in front of you.
       with no surrounding backticks):
       `grep -c '^PASTE MATCH$' docs/dev/milestones/M19-sandbox-completion/phase-03-ghost-container-execution.md`
       prints `1`.
+- [ ] This doc's header carries exactly one status line and names its
+      milestone: `grep -c '^\*\*Status:\*\*' <this doc>` prints `1` and
+      `grep -c '^\*\*Milestone:\*\* M19' <this doc>` prints `1`. **Added at
+      review, 2026-08-29:** the `todo` → `in-progress` flip in `935ee23`
+      replaced the `**Milestone:**` line instead of the `**Status:**` line,
+      leaving two status lines and no milestone. Repaired at review — see
+      `bugs/bug-phase-03-1.md`.
 
 ## Test plan
 
@@ -975,3 +989,56 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 935ee23ef5b7db259e49eebf98e34ab232654b57
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none. One finding recorded and repaired at review —
+  `bugs/bug-phase-03-1.md`, filed for the record rather than bounced (see its
+  Disposition).
+- **Executor:** deepseek-v4-flash-0731 (196 turns, commit `935ee23`)
+- **Scope deviations:** one, unintended. The `todo` → `in-progress` status
+  flip replaced this doc's `**Milestone:**` line instead of its `**Status:**`
+  line, leaving two status lines and no milestone. Repaired at review, since
+  the reviewer must rewrite exactly those lines to flip the status anyway.
+- **Calibration:** two items, one of which changes dispatch.
+  1. **Architect spec defect, corrected.** Task 7's M1 demanded "1 failed";
+     the mutation legitimately fails **two** `job_id_for` tests, both of which
+     assert on the sigil-stripped output. The criterion was unsatisfiable
+     without weakening a test. Corrected in this commit. Lesson: when a
+     mutation's target feeds more than one assertion, pin the failure **set**,
+     not the count — count the named tests you expect, do not assume one.
+  2. **Third occurrence — the model's summary contradicted its own pasted
+     evidence.** The completion summary asserts *"the § End-to-end entry shows
+     M1/M2 each failing exactly one named test"*; the entry it had just pasted
+     shows M1 failing two. The artifact is honest and byte-exact; the prose
+     about it is not. With the criterion unsatisfiable, the phase's
+     Authorizations required a blocker entry naming it; none was filed. This
+     is the third of the "misdescribes its own work in a way a reader cannot
+     detect without checking" family the M18 retrospective held at two, and
+     per that note it now changes **dispatch**, not just review — folded into
+     the milestone README's executor note.
+
+Independent re-run at review (four separate invocations): `cargo fmt --all`
+→ 0; `cargo build` → 0; `cargo clippy --all-targets --all-features -- -D
+warnings` → 0; `cargo test` → **1471 passed; 0 failed; 4 ignored** in the lib
+suite, every other target green.
+
+Every acceptance criterion re-measured: `fn job_id_for` 1 with one call in
+each of `run.rs` and `respawn.rs`, `let job_id = format!` gone from `run.rs`
+(0) with both hoisted bindings at 1, the gate defined and called once,
+`is_ghost: _` still 1 in `foreground.rs` (`run_foreground` untouched),
+`respawn.rs` preflight/stage/wrap at 1 each and `remove_stage_volume` at 2,
+`resolve_is_ghost` at 1, `off_runtime("sandbox` at 0, `allow(dead_code)` total
+still 6, no production `unwrap`/`expect` in `respawn.rs`, 3 + 4 named tests
+green. No `#[allow]`, `unsafe`, `TODO` or debug print added — the six `unsafe`
+blocks in `executor/mod.rs` are pre-existing test-only `set_var` calls, none
+in this diff. The self-check recipe run by the reviewer against the last
+end-to-end entry prints `PASTE MATCH`.
+
+**Tests spot-checked as real, independently of the phase's own pairs.**
+Dropping the `!sandbox_enabled` term from `ghost_may_run_foreground` — a
+mutation the phase doc does not name — fails exactly
+`ghost_may_run_foreground_allows_ghosts_when_the_sandbox_is_off` and nothing
+else, so the gate's four rows are independently pinned rather than jointly
+satisfied by one assertion.

@@ -62,7 +62,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 |----|-------|--------|
 | 01 | is-ghost-predicate ([phase-01-is-ghost-predicate.md](phase-01-is-ghost-predicate.md)) | **done** (approved_first_try, 2026-08-29) |
 | 02 | staging-integration ([phase-02-staging-integration.md](phase-02-staging-integration.md)) | **done** (approved_after_1, 2026-08-29) |
-| 03 | ghost-container-execution ([phase-03-ghost-container-execution.md](phase-03-ghost-container-execution.md)) | review                           |
+| 03 | ghost-container-execution ([phase-03-ghost-container-execution.md](phase-03-ghost-container-execution.md)) | **done** (approved_first_try, 2026-08-29) |
 | 04 | ghost-scoped-teardown | todo (not drafted) |
 | 05 | container-status-ipc | todo (not drafted) |
 | 06 | proxy-network-and-image | todo (not drafted) |
@@ -156,10 +156,23 @@ Phase intents:
 
 - **Executor model:** `deepseek-v4-flash-0731` via rexyMCP (`brain:8888`).
   M18 record: 6 first-try, 4 approved_after_1, none escalated. Two calibration
-  items are **held at 2 occurrences each** — proceeding past its own filed
+  items were **held at 2 occurrences each** — proceeding past its own filed
   blocker, and misdescribing its own bookkeeping in a way a reader cannot
-  detect without `git show`. **A third of the latter should change how this
-  model is dispatched, not just how it is reviewed.** Standing hazard from
+  detect without `git show`.
+  **The third of the latter arrived at phase-03 (2026-08-29)** — the
+  completion summary claimed the M1 mutation failed exactly one test while
+  the artifact it had just pasted showed two — so, per the note that
+  anticipated it, the change is now on the **dispatch** side:
+  **every phase doc dispatched to this model gets a mechanically checkable
+  criterion for each claim its summary will make.** A count the reviewer can
+  `grep` cannot be misdescribed; prose about a count can, and twice now has.
+  Concretely: pin the *set* of expected failing test names, not a count of
+  them; and where a summary claim has no grep, do not ask for the claim.
+  A second, narrower fold from the same phase: the status flip is the one
+  edit this model makes that **no** `grep -c` guards — it mis-anchored and
+  ate the `**Milestone:**` line (bug-phase-03-1). Reviewers check the
+  phase-doc header (one `**Status:**`, one `**Milestone:**`) as part of the
+  DoD walk. Standing hazard from
   M16: this model has acted destructively when a gate kept bouncing, so the
   phase doc's criteria and the gate must agree *before* dispatch.
 
