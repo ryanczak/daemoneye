@@ -184,7 +184,9 @@ pub async fn run_background_in_window(
             let spec = crate::daemon::executor::container::ExecSpec {
                 job_id: &job_id,
                 network: "none",
-                is_ghost: false,
+                is_ghost: session_id
+                    .as_deref()
+                    .is_some_and(|sid| sid.starts_with("ghost-")),
                 command: cmd,
             };
             sandboxed_cmd = crate::daemon::executor::container::sandbox_window_command(

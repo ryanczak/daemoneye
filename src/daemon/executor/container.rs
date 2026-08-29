@@ -506,6 +506,8 @@ pub fn stage_args(cfg: &SandboxConfig, job_id: &str, script_name: &str) -> Vec<S
         "--user".to_string(),
         "0:0".to_string(),
         "-v".to_string(),
+        format!("{}:/de/src:ro", crate::config::scripts_dir().display()),
+        "-v".to_string(),
         format!("{volume}:/stage"),
         "--label".to_string(),
         "de.sandbox=1".to_string(),
@@ -1335,8 +1337,9 @@ mod tests {
     fn sandbox_exec_stage_args_run_as_root_and_chown_to_the_sandbox_uid() {
         let cfg = SandboxConfig::default();
         let args = stage_args(&cfg, "j1", "myscript.sh");
+        let src_mount = format!("{}:/de/src:ro", crate::config::scripts_dir().display());
         assert_eq!(
-            &args[..10],
+            &args[..12],
             &[
                 "--host",
                 "unix:///run/user/1000/docker.sock",
@@ -1344,6 +1347,8 @@ mod tests {
                 "--rm",
                 "--user",
                 "0:0",
+                "-v",
+                src_mount.as_str(),
                 "-v",
                 "de-stage-j1:/stage",
                 "--label",
@@ -1926,5 +1931,69 @@ mod tests {
             "command without DOCKER_HOST failed: {stdout:?} stderr={:?}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn sandbox_stage_args_mount_the_script_source_read_only() {
+        let cfg = SandboxConfig::default();
+        let args = stage_args(&cfg, "j1", "myscript.sh");
+        let src = format!("{}:/de/src:ro", crate::config::scripts_dir().display());
+        let stage = "de-stage-j1:/stage";
+        let src_at = args.iter().position(|a| a == &src);
+        let stage_at = args.iter().position(|a| a == stage);
+        assert!(src_at.is_some(), "missing source mount: {args:?}");
+        assert!(stage_at.is_some(), "missing stage volume: {args:?}");
+        assert!(
+            src_at < stage_at,
+            "source mount must precede stage: {args:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_stage_args_keep_the_root_helper_and_chown() {
+        let cfg = SandboxConfig::default();
+        let args = stage_args(&cfg, "j1", "myscript.sh");
+        let user_at = args.iter().position(|a| a == "--user").expect("--user");
+        assert_eq!(args.get(user_at + 1).map(String::as_str), Some("0:0"));
+        let shell = args
+            .iter()
+            .find(|a| a.starts_with("cp /de/src/"))
+            .expect("shell line present");
+        assert!(shell.contains("chmod 0500"), "got: {shell}");
+        assert!(shell.contains("chown 1000:1000"), "got: {shell}");
+    }
+
+    #[test]
+    fn sandbox_stage_args_still_reject_unsafe_script_names() {
+        let cfg = SandboxConfig::default();
+        assert!(stage_args(&cfg, "j1", "../etc/passwd").is_empty());
+    }
+
+    #[test]
+    fn sandbox_stage_ghost_spec_carries_both_labels() {
+        let cfg = SandboxConfig::default();
+        let ghost = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: true,
+                command: "echo hi",
+            },
+        );
+        assert!(ghost.iter().any(|a| a == "de.sandbox=1"));
+        assert!(ghost.iter().any(|a| a == "de.ghost=1"));
+
+        let ordinary = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: false,
+                command: "echo hi",
+            },
+        );
+        assert!(ordinary.iter().any(|a| a == "de.sandbox=1"));
+        assert!(!ordinary.iter().any(|a| a == "de.ghost=1"));
     }
 }

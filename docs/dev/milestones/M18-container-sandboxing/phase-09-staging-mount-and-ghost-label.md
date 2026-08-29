@@ -1,7 +1,7 @@
 # Phase 09: Give the staging helper its source mount, and label ghost containers
 
 **Milestone:** M18 — Container-sandboxed Agents
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04 (`stage_args`), phase-05 (`ExecSpec` call site), phase-08 (`de.sandbox=1` label)
 **Estimated diff:** ~260 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -264,3 +264,35 @@ editing the block.
   `containers/Dockerfile`.
 
 ## Update Log
+
+### Update — 2026-08-29 03:32 (started)
+
+Phase 09 begun: adding the `:ro` source mount to `stage_args` and deriving
+`ExecSpec.is_ghost` from the existing `ghost-` session predicate in `run.rs`,
+then the four `sandbox_stage` tests and the captured end-to-end block.
+
+### Update — 2026-08-29 03:45 (end-to-end verification)
+
+This entry runs the phase's § End-to-end block verbatim. The whole block is
+captured in one redirect (the `cargo` greps) so the transcript below is the
+exact bytes the block produced.
+
+```text
+== A. sandbox_stage tests (expect 4 lines) ==
+test daemon::executor::container::tests::sandbox_stage_args_still_reject_unsafe_script_names ... ok
+test daemon::executor::container::tests::sandbox_stage_ghost_spec_carries_both_labels ... ok
+test daemon::executor::container::tests::sandbox_stage_args_mount_the_script_source_read_only ... ok
+test daemon::executor::container::tests::sandbox_stage_args_keep_the_root_helper_and_chown ... ok
+cargo_exit=0
+== B. lib suite totals ==
+test result: ok. 1454 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.17s
+cargo_exit=0
+== C. structural greps ==
+ro source mount (1):   1
+hardcoded false (0):   0
+is_ghost mentions (1): 1
+ignore count (4):      4
+allow(dead_code) (7):  7
+```
+
+`PASTE MATCH`
