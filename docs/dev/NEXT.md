@@ -1735,18 +1735,54 @@ review: the section claimed *every* sandboxed process runs as `--user
 **root**. That was my own wording, dictated verbatim in the spec — the executor
 reproduced it faithfully.
 
-**M19 — Sandbox Completion is SCOPED but NOT OPEN (2026-08-29).** A milestone
-README is proposed at `docs/dev/milestones/M19-sandbox-completion/README.md`
-with 7 phases, none drafted. **Opening it is a human gate** — the architect does
-not cross a milestone boundary on its own, so no phase doc exists and the
-active phase below stays `none` until sign-off.
+## M19 — Sandbox Completion (opened 2026-08-29, PE sign-off)
 
-Two questions ride on that sign-off: whether the **egress proxy** belongs in
-M19 (I scoped it *out* — a containerized proxy is a network-architecture piece,
-and carrying an unbounded item to the end is the mistake M18 made), and whether
-to **pull the upstream-only § "The E2E block: runnable, complete, and seeded as
-a Spec task"** — M14's calibration item 3, held here at 2 occurrences, which
-upstream has since adopted.
+**Active phase: phase-01 — is-ghost-predicate**
+(`docs/dev/milestones/M19-sandbox-completion/phase-01-is-ghost-predicate.md`,
+status: todo, drafted 2026-08-29). Dispatch with
+`/rexymcp:dispatch phase-01`.
+
+**PE decisions at open:** the **egress proxy is IN scope** — I had scoped it
+out and was overruled; it is phases 06–08, three phases rather than one
+precisely because it is the largest unbuilt piece. Milestone README:
+`docs/dev/milestones/M19-sandbox-completion/README.md`, 10 phases.
+
+**The approved upstream pull turned out to be a no-op, and my claim was
+wrong.** § "The E2E block: runnable, complete, and seeded as a Spec task" was
+folded *upstream from DaemonEye* on 2026-08-09; local `WORKFLOW.md` already
+carries all three of its rules in **fuller** form inside § "End-to-end
+verification", plus three things upstream lacks (`${PIPESTATUS[0]}`, the
+no-unpastable-bytes clause, the last-entry-anchored PASTE MATCH recipe).
+Pasting it would have inserted a weaker duplicate, so nothing was pulled.
+**I reached "we do not have it" from a heading diff in the same breath as
+documenting that heading diffs cannot see paragraph-level folds**, and my
+follow-up content probe compounded it: `grep -ci "Prove it applied"` returned 0
+because local words that rule as *"a `grep -c` of the mutated text after each
+direction"*. A blind instrument reporting clean is § "Run every count
+criterion"'s own second corollary.
+
+Phase-01 staging notes:
+
+- **The measured finding that reshaped the phase:** every other call site in
+  the codebase reads `SessionEntry.is_ghost` (a stored bool); the
+  `starts_with("ghost-")` heuristic exists **only** in `run.rs`, twice. So the
+  phase is not merely "extract the predicate" as the M18 carry note said — it
+  routes both sites through a resolution rule that prefers the authoritative
+  entry and falls back to the prefix. A bare lookup would have been a
+  regression: a ghost session with no store entry would silently lose its
+  label.
+- **Both functions are pure and the store lookup stays at the call site** —
+  purity is what makes the mutation seam directly testable, which is the entire
+  reason this phase exists.
+- **The mutation instruments were checked before being written into the spec:**
+  `^    false$` and `session_id.starts_with("ghost-")` each occur **0** times in
+  `src/daemon/mod.rs` today, so both `grep -c` proofs discriminate 0 → 1. An
+  instrument that already matched would certify a mutation that never applied.
+- **The new corpus-contamination step got its first real use and passed:** the
+  phase doc contains `starts_with("ghost-")` 10 times, but every criterion
+  greps a `src/` file rather than the doc, so nothing is self-satisfying.
+- All four criteria were run against the current tree and **fail** as required
+  (2 / 0 / 0 / 0).
 
 **Template drift checked at milestone start, and the recorded method is
 wrong.** `comm`-ing the `^#{2,3} ` headings both ways gives 5 local-only and 1

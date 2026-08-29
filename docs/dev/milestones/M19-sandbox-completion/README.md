@@ -1,11 +1,12 @@
 # M19 — Sandbox Completion
 
 **Goal:** Finish what M18 started — scripts reach sandboxed commands, ghost
-shells actually run in containers, an operator can see and steer sandbox state
-from the chat surface, and a command that genuinely needs the host has one
-explicit, audited way out.
+shells actually run in containers, a sandboxed agent gets audited network
+egress through a proxy it cannot bypass, an operator can see and steer sandbox
+state from the chat surface, and a command that genuinely needs the host has
+one explicit, audited way out.
 
-**Status:** planning — **proposed, awaiting PE sign-off. Not open.**
+**Status:** in-progress — **opened 2026-08-29 on PE sign-off.**
 
 **Depends on:** M18 — Container-sandboxed Agents (closed 2026-08-29, 10 phases
 done).
@@ -26,6 +27,13 @@ done).
 - `daemoneye status` reports sandbox state — runtime reachable, image id vs
   lockfile, live sandboxed containers — and `Request::ContainerStatus` carries
   it over IPC.
+- A profile declaring `network = "proxy"` runs the agent container attached
+  **only** to a dedicated user-defined network carrying a proxy container;
+  the agent reaches an allowlisted host through it, a non-allowlisted host is
+  refused, and every request is recorded in `events.jsonl`. The negative case
+  is load-bearing: with the proxy in place the container must still reach
+  **neither** the host loopback nor the wider LAN — `--disable-host-loopback`
+  stays on.
 - A command the operator explicitly escalates runs on the host with the
   escape recorded in `events.jsonl`; one that is not escalated cannot.
 - **Live checks, architect-run at close** (the M14/M18 convention — through
@@ -55,13 +63,18 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 03 | ghost-container-execution | todo (not drafted) |
 | 04 | ghost-scoped-teardown | todo (not drafted) |
 | 05 | container-status-ipc | todo (not drafted) |
-| 06 | escape-hatch | todo (not drafted) |
-| 07 | live-verification-and-close | todo (not drafted) |
+| 06 | proxy-network-and-image | todo (not drafted) |
+| 07 | proxy-profile-wiring | todo (not drafted) |
+| 08 | proxy-allowlist-and-audit | todo (not drafted) |
+| 09 | escape-hatch | todo (not drafted) |
+| 10 | live-verification-and-close | todo (not drafted) |
 
 **Ordering.** 01 is first and deliberately small: it closes a *known* coverage
 gap before 03/04 start depending on the value it produces. 02 is independent
-of 01. 03 depends on 01; 04 depends on 03. 05 and 06 are independent of
-everything else. 07 is the close-out.
+of 01. 03 depends on 01; 04 depends on 03. 05 is independent of everything
+else. 06 → 07 → 08 is a hard chain (no wiring without a network; no allowlist
+without wiring). 09 is independent but scheduled late deliberately. 10 is the
+close-out.
 
 Phase intents:
 
@@ -79,21 +92,34 @@ Phase intents:
   interactive session's containers; the negative case is the point.
 - **05 container-status-ipc** — `Request::ContainerStatus` +
   `daemoneye status` output.
-- **06 escape-hatch** — `GhostPolicy.escape_allowlist`, the `escape_hatch`
+- **06 proxy-network-and-image** — a dedicated user-defined docker network
+  and a proxy container image, plus the argv builders that create and tear
+  them down. Pure-decision-logic-first, exactly as `container.rs` is built.
+- **07 proxy-profile-wiring** — `network = "none" | "proxy"` in the sandbox
+  profile; when `proxy`, attach the agent container to the proxy network
+  **only** and set `HTTP(S)_PROXY` to the proxy's service name.
+- **08 proxy-allowlist-and-audit** — per-profile hostname allowlist enforced
+  in the proxy, every request logged to `events.jsonl`. A refused host must
+  be observably refused, not silently dropped.
+- **09 escape-hatch** — `GhostPolicy.escape_allowlist`, the `escape_hatch`
   flag on `ToolCallPrompt`, park-and-notify, and an `events.jsonl` record.
   The highest-risk phase in the milestone: it is the one feature whose bug
   runs a command on the host.
-- **07 live-verification-and-close** — the two unrun M18 live checks plus this
+- **10 live-verification-and-close** — the two unrun M18 live checks plus this
   milestone's own, then the doc sweep and retrospective.
 
 ## Notes
 
-- **The egress proxy is deliberately NOT in this milestone.** M18 measured
-  that a host-bound proxy is unreachable under `--disable-host-loopback`, so
-  the design's answer is a *containerized* proxy — which is a network
-  architecture piece, not a completion task. Scoping it here would repeat
-  M18's own mistake of carrying an unbounded item to the end. It gets its own
-  milestone or an explicit PE decision to fold it in.
+- **PE DECISION 2026-08-29 — the egress proxy IS in scope.** I had scoped it
+  out, arguing a containerized proxy is a network-architecture piece rather
+  than a completion task; the PE overruled that and it is in, as phases 06–08.
+  Recorded because the reasoning that argued against it is still the risk to
+  manage: it is the largest unbuilt piece here, so it gets **three** phases
+  rather than one, and the chain is ordered so each has a runnable end state.
+  Design of record is § D5, whose mechanism was already corrected from
+  measurement — a host-bound proxy is unreachable under
+  `--disable-host-loopback`, and disabling that flag to reach one would expose
+  every host loopback service to every container.
 
 - **`container:shell` (interactive tty relay) stays deferred** — still an open
   question in the design doc, and nothing in M18 settled it.
@@ -122,9 +148,21 @@ Phase intents:
   folds 1/0. **Heading `comm` badly understates drift; probe by content for
   anything folded into an existing section.**
 
-- **One upstream-only section we do not have:** § "The E2E block: runnable,
-  complete, and seeded as a Spec task". This is M14's calibration item 3
-  (seeded FAIL→blocker task), which we **held at 2 occurrences** and upstream
-  has since adopted. Recommend pulling it before phase-01 — M18's mutation
-  work would have been cleaner with it, and it is already battle-tested
-  elsewhere. **PE decision.**
+- **The upstream-only section was approved for pulling, and on inspection
+  there is nothing to pull — my claim that we lacked it was wrong.**
+  § "The E2E block: runnable, complete, and seeded as a Spec task" was folded
+  *upstream from DaemonEye* on 2026-08-09; local `WORKFLOW.md` carries all
+  three of its rules in **fuller** form, inside § "End-to-end verification"
+  rather than under that heading — the runnable-block rule, the mutation-pairs
+  -as-`## Spec`-tasks rule with its `patch` worked example, and the
+  seeded-capture-task rule naming `executor/src/agent/tasks.rs`. Local also
+  carries three things upstream does not: the `${PIPESTATUS[0]}` requirement,
+  the no-unpastable-bytes clause, and the last-entry-anchored PASTE MATCH
+  recipe. Pasting the upstream copy would have inserted a weaker duplicate of
+  guidance already here.
+  **How I got it wrong is the useful part:** I concluded "we do not have it"
+  from a *heading* diff, in the same breath as documenting that heading diffs
+  cannot see paragraph-level folds. My content probe then compounded it —
+  `grep -ci "Prove it applied"` returned 0 because local words that rule as
+  "a `grep -c` of the mutated text after each direction". A blind instrument
+  reporting clean is § "Run every count criterion"'s own second corollary.
