@@ -1,7 +1,7 @@
 # Phase 01: Derive `is_ghost` from a tested predicate, not an inline string
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (first phase of M19)
 **Estimated diff:** ~130 lines including tests
 **Tags:** language=rust, kind=refactor+test, size=s
