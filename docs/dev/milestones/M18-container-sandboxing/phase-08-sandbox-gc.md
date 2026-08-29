@@ -325,3 +325,7 @@ editing the block, so the pasted evidence stays a faithful capture.
   `assets/etc/config.toml`, or `containers/Dockerfile`.
 
 ## Update Log
+
+### Update — 2026-08-29 02:50 (started)
+
+Started phase-08. Flipped Status: todo → in-progress; README phase-table row 08 updated to match. Working through Spec Task 1 (unconditional `de.sandbox=1` label in `run_args` + `stage_args`), Task 2 (update pinned vectors + ghost-label test), Tasks 3–5 (four sweep argv builders, `stale_stage_volumes`, `sweep_sandbox_leftovers` + startup call site in `src/daemon/mod.rs`), Task 6 (seven `sandbox_gc` tests), Task 7 (E2E capture). Full lib suite currently 1443 passed; 0 failed; 4 ignored.
