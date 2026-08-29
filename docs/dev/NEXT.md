@@ -2712,3 +2712,54 @@ completion paths). Recorded in the phase doc's § Live measurements.
 
 Gap recorded in the milestone README while drafting: `[sandbox.ghost_defaults]
 mount_scripts` is parsed and consulted by nothing and has no phase.
+
+**phase-03 — ghost-container-execution: done (approved_first_try) 2026-08-29**,
+commit `935ee23` + approval `3467223`; deepseek-v4-flash-0731, 196 turns. Two
+findings repaired at review rather than bounced (`bugs/bug-phase-03-1.md`): the
+status flip mis-anchored and ate the doc's `**Milestone:**` line, and Task 7's
+M1 expectation was an architect spec defect (the mutation legitimately fails
+two `job_id_for` tests, not one). **Calibration that changes dispatch:** the
+executor's summary claimed M1 failed exactly one test while the artifact it had
+just pasted showed two — the third of the misdescription family M18 held at
+two. Fold: every phase doc for this model now pins a checkable criterion for
+each claim its summary will make.
+
+**Active phase: phase-04 — ghost-scoped-teardown**
+(`docs/dev/milestones/M19-sandbox-completion/phase-04-ghost-scoped-teardown.md`,
+status: todo, drafted 2026-08-29). Adds a `de.session=<session_id>` label to
+every sandboxed container, a ghost-scoped teardown on `trigger_ghost_turn`'s
+exit path, and wires `[sandbox.ghost_defaults] destroy_on_exit` — parsed since
+M18, read by nothing until now.
+
+**The whole change was prototyped end-to-end before the doc was written**, and
+the prototype caught two things the spec would otherwise have shipped wrong:
+
+1. The first design used additive wrapper functions (`run_args_labeled`,
+   `sandbox_window_command_for_session`) to avoid touching 22 `ExecSpec`
+   literals. **Clippy killed it:** with production calling only the new names,
+   `run_args` and `sandbox_window_command` became `never used` and
+   `-D warnings` failed. The shipped design gives the two existing functions a
+   trailing `session_id: Option<&str>` and appends `None` at 23 test call
+   sites.
+2. **`cargo build` does not catch those 23 sites** — it compiles the lib only,
+   and they live behind `#[cfg(test)]`. Measured: `cargo build` was green with
+   every one of them still broken. Only `cargo clippy --all-targets` or
+   `cargo test` reports them. That is now a § Gotcha, because a green `build`
+   would otherwise read as "done".
+
+Both mutation pairs were run on the prototype and each fails **exactly one**
+named test — measured, not estimated, per the phase-03 fold. Test names use
+the `sandbox_session_label_` prefix because the bare token `session_label`
+also matches a pre-existing `approval_panel_sudo_session_label` and would make
+the "4 ok" criterion read 5. Every mechanical criterion was validated against
+the current tree; two were wrong on first write (`session_id.as_deref(),`
+already occurs once per file, and `SandboxGhostDefaults` reaches
+`crate::config` via `pub use types::*`, not a named re-export) and were
+corrected.
+
+Live docker facts recorded in the phase doc: `--filter label=k=v` is an exact
+match (not a prefix — the opposite of `--filter name=`), repeated `--filter`
+clauses AND, `rm -f` reclaims a running container, a label value containing
+`=` or a space round-trips (so **no** sanitizer is needed for the webhook-
+supplied alert name inside a ghost session id), and `-v name:` volumes carry
+no labels (so volumes stay on per-job removal).

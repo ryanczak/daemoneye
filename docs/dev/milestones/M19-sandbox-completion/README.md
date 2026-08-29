@@ -63,7 +63,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 01 | is-ghost-predicate ([phase-01-is-ghost-predicate.md](phase-01-is-ghost-predicate.md)) | **done** (approved_first_try, 2026-08-29) |
 | 02 | staging-integration ([phase-02-staging-integration.md](phase-02-staging-integration.md)) | **done** (approved_after_1, 2026-08-29) |
 | 03 | ghost-container-execution ([phase-03-ghost-container-execution.md](phase-03-ghost-container-execution.md)) | **done** (approved_first_try, 2026-08-29) |
-| 04 | ghost-scoped-teardown | todo (not drafted) |
+| 04 | ghost-scoped-teardown ([phase-04-ghost-scoped-teardown.md](phase-04-ghost-scoped-teardown.md)) | todo (drafted 2026-08-29) |
 | 05 | container-status-ipc | todo (not drafted) |
 | 06 | proxy-network-and-image | todo (not drafted) |
 | 07 | proxy-profile-wiring | todo (not drafted) |
@@ -97,8 +97,15 @@ Phase intents:
   already routes the `de.ghost=1` decision through `resolve_is_ghost`. The two
   bypasses above are the actual hole.
 - **04 ghost-scoped-teardown** — reclaim one ghost's containers on exit, using
-  `de.ghost=1` plus a per-job label. Must not touch another ghost's or an
-  interactive session's containers; the negative case is the point.
+  `de.ghost=1` plus a new `de.session=<session_id>` label, and wire
+  `[sandbox.ghost_defaults] destroy_on_exit`. Must not touch another ghost's or
+  an interactive session's containers; the negative case is the point.
+  **Refined from measurement at drafting (2026-08-29):** the intended selector
+  was "a per-job label" — a *session* label is the right grain, because the
+  hook fires once when the ghost exits, not once per job. Live-measured on the
+  daemon host: `--filter label=k=v` is an **exact** value match (a sibling
+  ghost sharing a name prefix does not match), repeated `--filter` clauses are
+  ANDed, and `rm -f` reclaims a still-running container.
 - **05 container-status-ipc** — `Request::ContainerStatus` +
   `daemoneye status` output.
 - **06 proxy-network-and-image** — a dedicated user-defined docker network
