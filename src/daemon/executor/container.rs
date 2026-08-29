@@ -455,7 +455,7 @@ pub fn describe_unavailable(reason: &SandboxUnavailable) -> String {
             "sandbox unavailable: no sandbox.lock exists — run `daemoneye sandbox build` to create the image lock, then try again".to_string()
         }
         SandboxUnavailable::Image(ImageCheck::Mismatch { live, .. }) => format!(
-            "sandbox unavailable: the live image (sha256:{live}) differs from the lock — run `daemoneye sandbox build` to rebuild and re-lock, then try again"
+            "sandbox unavailable: the live image ({live}) differs from the lock — run `daemoneye sandbox build` to rebuild and re-lock, then try again"
         ),
         SandboxUnavailable::Image(ImageCheck::MalformedLive { live }) => format!(
             "sandbox unavailable: the live image id `{live}` is malformed — run `daemoneye sandbox build` to rebuild and re-lock, then try again"
@@ -1447,8 +1447,8 @@ mod tests {
             SandboxUnavailable::UidGate(UidGateOutcome::ContainerRoot { host_uid: 1000 }),
             SandboxUnavailable::NoLock,
             SandboxUnavailable::Image(ImageCheck::Mismatch {
-                locked: "a".repeat(64),
-                live: "b".repeat(64),
+                locked: format!("sha256:{}", "d".repeat(64)),
+                live: format!("sha256:{}", "b".repeat(64)),
             }),
         ];
         let mut messages = HashSet::new();
@@ -1465,6 +1465,21 @@ mod tests {
             7,
             "every variant must have a distinct message"
         );
+    }
+
+    #[test]
+    fn sandbox_gate_describes_image_mismatch_with_a_single_prefix() {
+        let live = format!("sha256:{}", "b".repeat(64));
+        let text = describe_unavailable(&SandboxUnavailable::Image(ImageCheck::Mismatch {
+            locked: format!("sha256:{}", "a".repeat(64)),
+            live: live.clone(),
+        }));
+        assert_eq!(
+            text.matches("sha256:").count(),
+            1,
+            "rendered message: {text}"
+        );
+        assert!(text.contains(&live), "missing id in: {text}");
     }
 
     #[test]

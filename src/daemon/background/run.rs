@@ -41,6 +41,19 @@ pub async fn run_background_in_window(
     session_id: Option<String>,
     sessions: SessionStore,
 ) -> String {
+    // Load the sandbox config and gate BEFORE any window is created: a
+    // refused command must leave no `de-bg-*` window behind. The config is
+    // reused below where `sandbox_window_command` builds its `job_id` from
+    // the pane number.
+    let config = crate::config::Config::load().unwrap_or_default();
+    if config.sandbox.enabled
+        && let Err(reason) = crate::daemon::executor::container::sandbox_preflight(&config.sandbox)
+    {
+        let message = crate::daemon::executor::container::describe_unavailable(&reason);
+        log::warn!("refusing sandboxed background command: {message}");
+        return message;
+    }
+
     let prefix = if let Some(sid) = &session_id {
         if sid.starts_with("ghost-") {
             // Use the prefix registered on the session entry so webhook-triggered,
@@ -166,15 +179,7 @@ pub async fn run_background_in_window(
 
     let sandboxed_cmd;
     let cmd: &str = {
-        let config = crate::config::Config::load().unwrap_or_default();
         if config.sandbox.enabled {
-            if let Err(reason) =
-                crate::daemon::executor::container::sandbox_preflight(&config.sandbox)
-            {
-                let message = crate::daemon::executor::container::describe_unavailable(&reason);
-                log::warn!("refusing sandboxed background command: {message}");
-                return message;
-            }
             let job_id = format!("{pane_num}-{unix_ts}");
             let spec = crate::daemon::executor::container::ExecSpec {
                 job_id: &job_id,
