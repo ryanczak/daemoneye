@@ -1,7 +1,7 @@
 # Phase 01: Derive `is_ghost` from a tested predicate, not an inline string
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** done
 **Depends on:** none (first phase of M19)
 **Estimated diff:** ~130 lines including tests
 **Tags:** language=rust, kind=refactor+test, size=s
@@ -242,10 +242,13 @@ Every count below was measured against the current tree while drafting.
 
 - [ ] `grep -c 'starts_with("ghost-")' src/daemon/background/run.rs` prints `0`
       (**before: 2**).
-- [ ] `grep -c "fn is_ghost_session_id" src/daemon/mod.rs` prints `1`
-      (**before: 0**).
-- [ ] `grep -c "fn resolve_is_ghost" src/daemon/mod.rs` prints `1`
-      (**before: 0**).
+- [ ] `grep -c "fn is_ghost_session_id(" src/daemon/mod.rs` prints `1`
+      (**before: 0**). **Corrected at review 2026-08-29** — the criterion as
+      dispatched omitted the `(` and so also matched the two test names that
+      begin with the function name, making `1` unreachable on a correct tree.
+      See the Review verdict.
+- [ ] `grep -c "fn resolve_is_ghost(" src/daemon/mod.rs` prints `1`
+      (**before: 0**). Same correction.
 - [ ] `grep -c "resolve_is_ghost" src/daemon/background/run.rs` prints `1` —
       the value is computed **once** and reused, not recomputed per site.
 - [ ] All four named tests in Task 4 pass.
@@ -291,8 +294,8 @@ cargo fmt --all -- --check > /dev/null 2>&1; echo "fmt_exit=$?"
 cargo clippy --all-targets --all-features -- -D warnings > /dev/null 2>&1; echo "clippy_exit=$?"
 echo "== D. structural greps =="
 echo -n "inline prefix gone (0):   "; grep -c 'starts_with("ghost-")' src/daemon/background/run.rs
-echo -n "is_ghost_session_id (1):  "; grep -c "fn is_ghost_session_id" src/daemon/mod.rs
-echo -n "resolve_is_ghost (1):     "; grep -c "fn resolve_is_ghost" src/daemon/mod.rs
+echo -n "is_ghost_session_id (1):  "; grep -c "fn is_ghost_session_id(" src/daemon/mod.rs
+echo -n "resolve_is_ghost (1):     "; grep -c "fn resolve_is_ghost(" src/daemon/mod.rs
 echo -n "computed once (1):        "; grep -c "resolve_is_ghost" src/daemon/background/run.rs
 } >> /tmp/e2e-01.txt 2>&1
 cat /tmp/e2e-01.txt
@@ -556,3 +559,50 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 475909a9f707c812addedf99411ba9bc22ef1355
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none. Only the two authorized source files changed;
+  1454 → 1458 lib tests, exactly the four named tests.
+- **Verification:** all four gates re-run independently and green. **Reviewer
+  mutation, independent of the executor's:** breaking `resolve_is_ghost`'s
+  authoritative branch (`Some(known) => known` → `Some(_) => false`) fails
+  `resolve_is_ghost_prefers_the_session_entry` and **leaves the fallback test
+  passing** — the two tests discriminate different branches rather than both
+  riding on one. Restored; tree clean. The `PASTE MATCH` self-check was re-run
+  against the pasted fence rather than taken on trust.
+
+- **Two acceptance criteria were defective, and they were mine.** Criteria 2
+  and 3 pinned `grep -c "fn is_ghost_session_id"` and
+  `grep -c "fn resolve_is_ghost"` at `1`, but the four test names *begin with
+  the function names*, so a correct tree returns **3**. `1` was unreachable by
+  any implementation. Corrected above to `fn name(`, which returns exactly 1 on
+  the delivered tree. **The executor did not game this:** it left the code
+  correct and pasted the true `3` into its evidence rather than deleting a test
+  or renaming one to hit the number.
+
+  This is the *documented* trap — `WORKFLOW.md` § "Every acceptance criterion
+  must be satisfiable" cites `grep -c 'fn repin_rows'` returning 4 because
+  three test-name prefixes matched, and says the criterion needed
+  `fn repin_rows(`. I validated both criteria in the **failing** state (0 and
+  0) and never against the end-state tree the phase would produce, which is
+  the omission that same section exists to prevent.
+
+- **Calibration, executor-side, recorded (3rd in family, but the weakest
+  instance).** The completion summary asserted *"`fn is_ghost_session_id` in
+  `mod.rs` → 1; `fn resolve_is_ghost` in `mod.rs` → 1"* while the evidence it
+  pasted in the same run reads `3` and `3`. Unlike the two prior occurrences
+  (fabricated provenance; overwritten Update Log entries), this one is
+  **self-refuting from the artifact** — the evidence door worked exactly as
+  designed and no `git show` was needed to catch it. Proposed response, for PE:
+  require the completion summary to **quote** evidence lines rather than
+  restate them, which removes the restatement step where the drift happens.
+  Not a bounce: the deliverable is correct and the evidence was truthful.
+
+- **Note for phases 03/04:** the seam is now real. `is_ghost` resolves to the
+  stored `SessionEntry.is_ghost` when the session has an entry and falls back
+  to the id prefix when it does not, so a ghost session missing from the store
+  no longer silently loses its label.
