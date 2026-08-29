@@ -329,3 +329,31 @@ editing the block, so the pasted evidence stays a faithful capture.
 ### Update — 2026-08-29 02:50 (started)
 
 Started phase-08. Flipped Status: todo → in-progress; README phase-table row 08 updated to match. Working through Spec Task 1 (unconditional `de.sandbox=1` label in `run_args` + `stage_args`), Task 2 (update pinned vectors + ghost-label test), Tasks 3–5 (four sweep argv builders, `stale_stage_volumes`, `sweep_sandbox_leftovers` + startup call site in `src/daemon/mod.rs`), Task 6 (seven `sandbox_gc` tests), Task 7 (E2E capture). Full lib suite currently 1443 passed; 0 failed; 4 ignored.
+
+### Update — 2026-08-29 03:10 (end-to-end verification)
+
+```text
+== A. sandbox_gc tests (expect 7 lines) ==
+test daemon::executor::container::tests::sandbox_gc_selects_nothing_from_an_empty_list ... ok
+test daemon::executor::container::tests::sandbox_gc_container_list_args_filter_by_label ... ok
+test daemon::executor::container::tests::sandbox_gc_rm_args_are_empty_for_an_empty_slice ... ok
+test daemon::executor::container::tests::sandbox_gc_every_container_carries_the_sandbox_label ... ok
+test daemon::executor::container::tests::sandbox_gc_selects_only_stage_prefixed_volumes ... ok
+test daemon::executor::container::tests::sandbox_gc_volume_list_args_do_not_filter ... ok
+test daemon::executor::container::tests::sandbox_gc_stage_args_carry_the_sandbox_label ... ok
+cargo_exit=0
+== B. lib suite totals ==
+test result: ok. 1450 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.02s
+cargo_exit=0
+== C. structural greps ==
+de.sandbox=1 in prod (2): 2
+stale_stage_volumes (1):  1
+sweep fn (1):             1
+startup call site (1):    1
+no docker name filter (0):0
+ignore count (4):         4
+allow(dead_code) tot (7): 7
+```
+
+PASTE MATCH
+

@@ -507,11 +507,150 @@ pub fn stage_args(cfg: &SandboxConfig, job_id: &str, script_name: &str) -> Vec<S
         "0:0".to_string(),
         "-v".to_string(),
         format!("{volume}:/stage"),
+        "--label".to_string(),
+        "de.sandbox=1".to_string(),
         cfg.image.clone(),
         "sh".to_string(),
         "-c".to_string(),
         shell_line,
     ]
+}
+
+/// argv listing every container this daemon's sandbox created, running or not.
+pub fn sweep_container_list_args(cfg: &SandboxConfig) -> Vec<String> {
+    vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "ps".to_string(),
+        "-aq".to_string(),
+        "--filter".to_string(),
+        "label=de.sandbox=1".to_string(),
+    ]
+}
+
+/// argv force-removing the given container ids.
+pub fn sweep_container_rm_args(cfg: &SandboxConfig, ids: &[String]) -> Vec<String> {
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let mut args = vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "rm".to_string(),
+        "-f".to_string(),
+    ];
+    args.extend(ids.iter().cloned());
+    args
+}
+
+/// argv listing every volume name known to the runtime.
+pub fn sweep_volume_list_args(cfg: &SandboxConfig) -> Vec<String> {
+    vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "volume".to_string(),
+        "ls".to_string(),
+        "-q".to_string(),
+    ]
+}
+
+/// argv removing the given volumes.
+pub fn sweep_volume_rm_args(cfg: &SandboxConfig, names: &[String]) -> Vec<String> {
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let mut args = vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "volume".to_string(),
+        "rm".to_string(),
+    ];
+    args.extend(names.iter().cloned());
+    args
+}
+
+/// The subset of `names` that are sandbox staging volumes.
+/// Prefix match only — docker's own name filter is a substring match and
+/// would select a user volume that merely contains the string.
+pub fn stale_stage_volumes(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| name.starts_with("de-stage-"))
+        .cloned()
+        .collect()
+}
+
+/// Remove orphaned sandbox containers and staging volumes. Best-effort:
+/// every failure is logged and none is fatal — a sweep that cannot run must
+/// never stop the daemon from starting.
+pub fn sweep_sandbox_leftovers(cfg: &SandboxConfig) {
+    if !cfg.enabled {
+        return;
+    }
+    let mut cmd = Command::new(&cfg.runtime);
+    cmd.args(sweep_container_list_args(cfg));
+    let listed = match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+        Ok(out) => out,
+        Err(e) => {
+            log::warn!("sandbox container sweep list failed: {e}");
+            return;
+        }
+    };
+    let container_ids: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect();
+    let removed_containers = if container_ids.is_empty() {
+        0
+    } else {
+        cmd = Command::new(&cfg.runtime);
+        cmd.args(sweep_container_rm_args(cfg, &container_ids));
+        match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+            Ok(_) => container_ids.len(),
+            Err(e) => {
+                log::warn!("sandbox container sweep remove failed: {e}");
+                container_ids.len()
+            }
+        }
+    };
+
+    cmd = Command::new(&cfg.runtime);
+    cmd.args(sweep_volume_list_args(cfg));
+    let listed_volumes = match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+        Ok(out) => out,
+        Err(e) => {
+            log::warn!("sandbox volume sweep list failed: {e}");
+            return;
+        }
+    };
+    let volume_names: Vec<String> = String::from_utf8_lossy(&listed_volumes.stdout)
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect();
+    let stale = stale_stage_volumes(&volume_names);
+    let removed_volumes = if stale.is_empty() {
+        0
+    } else {
+        cmd = Command::new(&cfg.runtime);
+        cmd.args(sweep_volume_rm_args(cfg, &stale));
+        match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+            Ok(_) => stale.len(),
+            Err(e) => {
+                log::warn!("sandbox volume sweep remove failed: {e}");
+                stale.len()
+            }
+        }
+    };
+
+    log::info!(
+        "sandbox sweep removed {} orphaned container(s) and {} stale staging volume(s)",
+        removed_containers,
+        removed_volumes
+    );
 }
 
 /// One sandboxed job's identity and payload.
@@ -555,6 +694,8 @@ pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec) -> Vec<String> {
         "-v".to_string(),
         format!("{}:/de/scripts:ro", stage_volume_name(spec.job_id)),
     ];
+    args.push("--label".to_string());
+    args.push("de.sandbox=1".to_string());
     if spec.is_ghost {
         args.push("--label".to_string());
         args.push("de.ghost=1".to_string());
@@ -919,12 +1060,150 @@ mod tests {
                 "/de/work:rw,size=2g,mode=0700,uid=1000,gid=1000",
                 "-v",
                 "de-stage-j1:/de/scripts:ro",
+                "--label",
+                "de.sandbox=1",
                 "--workdir",
                 "/de/work",
                 "daemoneye-agent-base",
                 "sh",
                 "-lc",
                 "echo hi"
+            ]
+        );
+    }
+
+    #[test]
+    fn sandbox_gc_stage_args_carry_the_sandbox_label() {
+        let cfg = SandboxConfig::default();
+        let args = stage_args(&cfg, "j1", "myscript.sh");
+        assert!(
+            args.iter().any(|arg| arg == "de.sandbox=1"),
+            "stage args lack de.sandbox=1: {args:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_gc_every_container_carries_the_sandbox_label() {
+        let cfg = SandboxConfig::default();
+        let plain = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: false,
+                command: "echo hi",
+            },
+        );
+        assert!(
+            plain.iter().any(|arg| arg == "de.sandbox=1"),
+            "non-ghost vector lacks de.sandbox=1: {plain:?}"
+        );
+        assert!(
+            !plain.iter().any(|arg| arg == "de.ghost=1"),
+            "non-ghost vector carries ghost label: {plain:?}"
+        );
+        let ghost = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: true,
+                command: "echo hi",
+            },
+        );
+        assert!(
+            ghost.iter().any(|arg| arg == "de.sandbox=1"),
+            "ghost vector lacks de.sandbox=1: {ghost:?}"
+        );
+        assert!(
+            ghost.iter().any(|arg| arg == "de.ghost=1"),
+            "ghost vector lacks de.ghost=1: {ghost:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_gc_selects_only_stage_prefixed_volumes() {
+        let names: Vec<String> = [
+            "de-stage-a",
+            "zz-de-stage-decoy",
+            "de-stage-b",
+            "unrelated",
+            "de-stagex",
+            "de-stage-",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            stale_stage_volumes(&names),
+            ["de-stage-a", "de-stage-b", "de-stage-"]
+        );
+    }
+
+    #[test]
+    fn sandbox_gc_selects_nothing_from_an_empty_list() {
+        assert!(stale_stage_volumes(&[]).is_empty());
+    }
+
+    #[test]
+    fn sandbox_gc_container_list_args_filter_by_label() {
+        let cfg = SandboxConfig::default();
+        assert_eq!(
+            sweep_container_list_args(&cfg),
+            [
+                "--host",
+                "unix:///run/user/1000/docker.sock",
+                "ps",
+                "-aq",
+                "--filter",
+                "label=de.sandbox=1"
+            ]
+        );
+    }
+
+    #[test]
+    fn sandbox_gc_volume_list_args_do_not_filter() {
+        let cfg = SandboxConfig::default();
+        let args = sweep_volume_list_args(&cfg);
+        assert_eq!(
+            args,
+            [
+                "--host",
+                "unix:///run/user/1000/docker.sock",
+                "volume",
+                "ls",
+                "-q"
+            ]
+        );
+        assert!(
+            !args.iter().any(|a| a.starts_with("--filter")),
+            "volume selection must happen in Rust, not docker's filter: {args:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_gc_rm_args_are_empty_for_an_empty_slice() {
+        let cfg = SandboxConfig::default();
+        assert!(sweep_container_rm_args(&cfg, &[]).is_empty());
+        assert!(sweep_volume_rm_args(&cfg, &[]).is_empty());
+        assert_eq!(
+            sweep_container_rm_args(&cfg, &["abc".to_string()]),
+            [
+                "--host",
+                "unix:///run/user/1000/docker.sock",
+                "rm",
+                "-f",
+                "abc"
+            ]
+        );
+        assert_eq!(
+            sweep_volume_rm_args(&cfg, &["de-stage-1".to_string()]),
+            [
+                "--host",
+                "unix:///run/user/1000/docker.sock",
+                "volume",
+                "rm",
+                "de-stage-1"
             ]
         );
     }
@@ -948,6 +1227,10 @@ mod tests {
             position.is_some(),
             "ghost vector lacks --label de.ghost=1: {args:?}"
         );
+        assert!(
+            args.iter().any(|arg| arg == "de.sandbox=1"),
+            "ghost vector lacks de.sandbox=1: {args:?}"
+        );
         let plain = run_args(
             &cfg,
             &ExecSpec {
@@ -958,10 +1241,12 @@ mod tests {
             },
         );
         assert!(
-            !plain
-                .iter()
-                .any(|arg| arg == "--label" || arg == "de.ghost=1"),
-            "non-ghost vector carries label: {plain:?}"
+            !plain.iter().any(|arg| arg == "de.ghost=1"),
+            "non-ghost vector carries ghost label: {plain:?}"
+        );
+        assert!(
+            plain.iter().any(|arg| arg == "de.sandbox=1"),
+            "non-ghost vector lacks de.sandbox=1: {plain:?}"
         );
     }
 
@@ -1051,7 +1336,7 @@ mod tests {
         let cfg = SandboxConfig::default();
         let args = stage_args(&cfg, "j1", "myscript.sh");
         assert_eq!(
-            &args[..8],
+            &args[..10],
             &[
                 "--host",
                 "unix:///run/user/1000/docker.sock",
@@ -1060,7 +1345,9 @@ mod tests {
                 "--user",
                 "0:0",
                 "-v",
-                "de-stage-j1:/stage"
+                "de-stage-j1:/stage",
+                "--label",
+                "de.sandbox=1"
             ]
         );
         let shell = args.last().expect("shell line present");

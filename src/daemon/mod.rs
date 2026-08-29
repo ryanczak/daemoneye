@@ -481,6 +481,10 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // Warn about sandbox configuration that would silently defeat the sandbox.
     startup_config.sandbox.validate();
 
+    // Remove orphaned sandbox containers and leaked staging volumes before any
+    // sandboxed run. No-op while the sandbox is disabled.
+    crate::daemon::executor::container::sweep_sandbox_leftovers(&startup_config.sandbox);
+
     // Warn about retention settings that are off by default (keep forever).
     for warn in crate::daemon::utils::retention_warnings(&startup_config) {
         log::warn!(
