@@ -1735,6 +1735,27 @@ review: the section claimed *every* sandboxed process runs as `--user
 **root**. That was my own wording, dictated verbatim in the spec — the executor
 reproduced it faithfully.
 
+**M19 — Sandbox Completion is SCOPED but NOT OPEN (2026-08-29).** A milestone
+README is proposed at `docs/dev/milestones/M19-sandbox-completion/README.md`
+with 7 phases, none drafted. **Opening it is a human gate** — the architect does
+not cross a milestone boundary on its own, so no phase doc exists and the
+active phase below stays `none` until sign-off.
+
+Two questions ride on that sign-off: whether the **egress proxy** belongs in
+M19 (I scoped it *out* — a containerized proxy is a network-architecture piece,
+and carrying an unbounded item to the end is the mistake M18 made), and whether
+to **pull the upstream-only § "The E2E block: runnable, complete, and seeded as
+a Spec task"** — M14's calibration item 3, held here at 2 occurrences, which
+upstream has since adopted.
+
+**Template drift checked at milestone start, and the recorded method is
+wrong.** `comm`-ing the `^#{2,3} ` headings both ways gives 5 local-only and 1
+upstream-only — but local `WORKFLOW.md` is **1802 lines against upstream's
+1259**. The 543-line gap is invisible to a heading diff because most folds,
+including both landed at M18 close, are *paragraphs inside existing sections*
+(`PIPESTATUS` 2/0, `validate every mechanical criterion` 1/0, both M18 folds
+1/0). **Probe by content, not by heading.**
+
 **Active phase: none. M18 — Container-sandboxed Agents is closed
 (2026-08-29), awaiting PE sign-off.** All 10 phases `done` — 6
 approved_first_try, 4 approved_after_1, none escalated; 4 bug docs, all
