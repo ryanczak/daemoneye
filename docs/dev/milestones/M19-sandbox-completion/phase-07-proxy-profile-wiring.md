@@ -1153,3 +1153,4 @@ editing the block.
 ### Update — 2026-08-30 22:40 (progress)
 
 Started phase-07: flipping status to in-progress, then implementing Tasks 1-7 (the pure builders, lifecycle, run_args guard, run.rs resolution + proxy startup/teardown) before running the M1-M3 mutation pairs and the E2E block.
+
