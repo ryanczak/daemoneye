@@ -77,7 +77,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 03 | ghost-container-execution ([phase-03-ghost-container-execution.md](phase-03-ghost-container-execution.md)) | **done** (approved_first_try, 2026-08-29) |
 | 04 | ghost-scoped-teardown ([phase-04-ghost-scoped-teardown.md](phase-04-ghost-scoped-teardown.md)) | **done** (approved_after_1, 2026-08-30) |
 | 05 | container-status-ipc ([phase-05-container-status-ipc.md](phase-05-container-status-ipc.md)) | **done** (approved_first_try, 2026-08-30) |
-| 06 | proxy-network-and-image | todo (not drafted) |
+| 06 | proxy-network-and-image ([phase-06-proxy-network-and-image.md](phase-06-proxy-network-and-image.md)) | todo (drafted 2026-08-30) |
 | 07 | proxy-profile-wiring | todo (not drafted) |
 | 08 | proxy-allowlist-and-audit | todo (not drafted) |
 | 09 | escape-hatch | todo (not drafted) |
@@ -154,6 +154,24 @@ Phase intents:
   must exist from the start with the single value `forward`, so a later
   `transparent` value is a new enum arm, not a schema change. Nothing else
   about the proxy image should assume HTTP is forever.
+  **Scoped from measurement at drafting (2026-08-30), and narrower than the
+  intent line above:** 06 is the proxy *image* (`containers/proxy/`, tinyproxy,
+  uid 1000, `FilterDefaultDeny Yes`, filter mounted per job), a second lock
+  (`proxy.lock` — a second *file*, because `parse_lock` rejects unknown keys
+  and every existing `sandbox.lock` must keep parsing), `sandbox build`
+  building both, and the **network sweep** at daemon start. The `network
+  create` / `proxy run` / `network connect` builders were prototyped and
+  measured but **deliberately left to 07**: with no caller they are dead code
+  under `-D warnings`, the exact shape the module `#[allow]` phase-02 retired
+  had papered over. Live facts recorded in the phase doc for 07/08: an
+  `--internal` user-defined network isolates the agent completely (LAN,
+  gateway, public, host loopback, ICMP all blocked; embedded DNS answers only
+  for containers on the network); the proxy gets its egress leg via `network
+  connect bridge` and still cannot reach the host; tinyproxy refuses with a
+  real `HTTP/1.1 403 Filtered` for GET and CONNECT alike and logs one line per
+  request and one per refusal; an empty filter is deny-all; a network with an
+  attached container cannot be removed (containers first); cold cost ≈ 250 ms
+  (create 22 + run 169 + connect 55).
 - **07 proxy-profile-wiring** — `network = "none" | "proxy"` in the sandbox
   profile; when `proxy`, attach the agent container to the proxy network
   **only** and set `HTTP(S)_PROXY` to the proxy's service name. Credentials

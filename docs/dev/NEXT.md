@@ -2814,3 +2814,35 @@ The report carries `enabled` and `image_detail` beyond the design's named
 shape, because the milestone exit criterion asks for the lockfile comparison;
 recorded for the phase-10 doc sweep. The rendered section and the live IPC
 round-trip are architect-verified at milestone close against a real daemon.
+
+**phase-05 — container-status-ipc: done (approved_first_try) 2026-08-30**,
+commit `342f823` + approval `c6bc50e`; 127 turns. First phase dispatched under
+the full fold set from 02–04 (pinned summary claims, pre-measured mutation
+counts, the repeat-run rule) and the first clean run: byte-identical to the
+prototype, one execution in the artifact, `PASTE MATCH`, two reviewer-only
+mutations each failing exactly one test. Recorded as a confirmation, not a
+fold.
+
+**Between phases (2026-08-30):** `docker/compose-for-agents` and
+`docs.docker.com/ai/sandboxes/` reviewed and measured against the real image
+on the daemon host. PE decision: incorporate. README now carries phase-11
+(hardening flags, in scope) and phase-12 (workspace mount policy), sentinel
+credential injection and the sbx rule/audit semantics folded into 08,
+HTTP-only egress stated as a **deferral** in 06 (SSH/TCP later — `host:port`
+rules and a `proxy_type` audit field from the start so it stays additive),
+and two measurements added to 10.
+
+**Active phase: phase-06 — proxy-network-and-image**
+(`docs/dev/milestones/M19-sandbox-completion/phase-06-proxy-network-and-image.md`,
+status: todo, drafted 2026-08-30). The proxy image, its own lock, `sandbox
+build` building both, and the network sweep. **Prototyped and stood up live
+before writing**: an `--internal` network + tinyproxy container + agent
+container on the daemon host — every isolation claim in the doc is a
+measurement (agent reaches the proxy by name and nothing else; proxy's bridge
+leg still cannot reach host loopback; `403 Filtered` on GET and CONNECT;
+empty filter = deny-all; `network rm` fails with active endpoints; ~250 ms
+cold). Scope was **narrowed** from the README intent line by the phase-02
+lesson: the create/run/connect builders would be dead code without 07's
+callers, so they move to 07. Two mutation pairs measured at exactly one
+failure each; `include_str!` pins the conf file itself, so M2 mutates a
+non-Rust file. Every before-value validated against the current tree.
