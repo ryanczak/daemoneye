@@ -2846,3 +2846,62 @@ lesson: the create/run/connect builders would be dead code without 07's
 callers, so they move to 07. Two mutation pairs measured at exactly one
 failure each; `include_str!` pins the conf file itself, so M2 mutates a
 non-Rust file. Every before-value validated against the current tree.
+
+**phase-06 — proxy-network-and-image: done (approved_first_try) 2026-08-30**,
+commit `2ab040e` + approval `5cbdaed`. 1485 → 1491 lib tests. Reviewer ran two
+mutations of its own beyond the spec's pair (`proxy_lock_path` colliding with
+`sandbox.lock`; `write_lock_to` losing `create_dir_all`), each caught by
+exactly one named test — four of the six new tests now proven to discriminate
+— and `diff`ed both proxy image files against the spec's fenced blocks
+(byte-identical). **Calibration recorded, not folded (one occurrence):** the
+executor's summary reported this host's `grep` as "intermittently" flaky and
+claimed its own pinned criterion `grep -c '^PASTE MATCH$'` returned 0,
+substituting `fgrep -nF` + `diff` as proof and recommending spec hardening.
+It does not reproduce — the criterion prints `1` under three independent
+instruments. A **false red** rather than a false green, but the same rule
+applies as [[executor-claims-need-rerunning]]: re-run the claim.
+
+**Active phase: phase-07 — proxy-profile-wiring**
+(`docs/dev/milestones/M19-sandbox-completion/phase-07-proxy-profile-wiring.md`,
+status: todo, drafted 2026-08-30). Dispatch with
+`/rexymcp:dispatch phase-07`. Makes `[sandbox.profile.<name>] network`
+real — it has been parsed and validated since M18 and **read by nothing**
+(`grep -rn 'SandboxProfile\|proxy_allow' src/ | grep -v '^src/config/'`
+returns empty; both production `ExecSpec` sites pass the literal `"none"`).
+
+Phase-07 drafting notes:
+
+- **Prototyped in the tree, mutated, formatted and reverted before speccing.**
+  Every code block in the Spec is that prototype after `cargo fmt --all`;
+  1491 → 1499, four gates green, **zero dead-code warnings** (every new
+  function has a caller — the phase-02/06 lesson held), and three mutations
+  each caught by exactly one named test.
+- **The measurement that reshaped the phase: tinyproxy refuses to start when
+  its `Filter` path does not exist** — `filter file: No such file or
+  directory`, container dead on arrival. So phase-07 *must* write and mount a
+  filter file even though its contents are phase-08's. An empty file is
+  deny-all, so the fail-closed end state falls out for free. Speccing this
+  from the design alone would have produced a phase whose proxy never booted.
+- **The full end state was stood up live**: agent on the `--internal` network
+  only, all four `HTTP(S)_PROXY` spellings set → proxy reachable by name,
+  `403` on HTTP, `curl_rc=56` on CONNECT, LAN/host-loopback/public all
+  blocked, and `example.com` does not even resolve (`SERVFAIL`) — the agent
+  cannot bypass the proxy because it has no DNS of its own. Positive control
+  also confirmed (200/200 with one filter line), so phase-08 inherits working
+  wiring.
+- **Designed around a constraint rather than into one:** the proxy endpoint is
+  derived from `ExecSpec`'s existing `network` and `job_id` fields instead of
+  adding a field, because `ExecSpec` is constructed at 26 sites (24 of them
+  tests). The phase therefore changes **zero existing tests**.
+- **Criterion defect caught by counting instead of deriving** — the same fold
+  as phase-02's. I wrote "`network: \"none\",` still prints 28" from an
+  `ExecSpec` *symbol* count; the literal count is 24, and it goes to **25**
+  because my own new test adds one. Both the criterion and the Gotcha were
+  wrong until measured. Pinned now as 24 → 25 and 24 → 26.
+- **Spec hardening carried forward from phase-06's incident:** every
+  `test result:` line in this phase's evidence is piped through
+  `sed 's/; finished in .*//'`. Phase-06's `PASTE MISMATCH` was caused *only*
+  by per-run durations differing between two identical executions.
+- The whole § End-to-end block was extracted from the doc and **run verbatim
+  against the clean tree**: all 31 structural lines report their documented
+  before-values, so no criterion is self-satisfying and none passes early.
