@@ -144,8 +144,16 @@ Phase intents:
   the proxy through `HTTP(S)_PROXY` and never resolves a name itself, so
   there is no DNS path out; raw TCP (`ssh`, `git@`), UDP and ICMP are not
   forwarded and the proxy image need not try. Docker Sandboxes forwards raw
-  TCP per port rule; we are choosing not to, and the design doc must say so
-  rather than leave it implied.
+  TCP per port rule; we are choosing not to **for M19**, and the design doc
+  must say so rather than leave it implied. **PE note 2026-08-30: HTTP-only is
+  a deferral, not a decision — SSH and other TCP protocols will be needed
+  later.** Two consequences for how 06–08 are built now, so the later
+  extension is additive rather than a rewrite: (1) the profile's rule
+  syntax must accept `host:port` from the start (08 already does), because a
+  TCP rule is a host:port rule; (2) the audit record's `proxy_type` field
+  must exist from the start with the single value `forward`, so a later
+  `transparent` value is a new enum arm, not a schema change. Nothing else
+  about the proxy image should assume HTTP is forever.
 - **07 proxy-profile-wiring** — `network = "none" | "proxy"` in the sandbox
   profile; when `proxy`, attach the agent container to the proxy network
   **only** and set `HTTP(S)_PROXY` to the proxy's service name. Credentials
@@ -161,7 +169,8 @@ Phase intents:
      always beats allow**. Do not invent a fourth form.
   2. **Audit record shape.** Each `events.jsonl` record carries the
      destination host, the **rule that matched** (or `none`), the decision and
-     its reason, and a repeat count for identical consecutive requests —
+     its reason, a `proxy_type` (only `forward` in M19 — see the 06 note on
+     raw TCP), and a repeat count for identical consecutive requests —
      the matched rule is what makes a refusal debuggable. Blocked and allowed
      are the same record with a different decision, never two formats.
   3. **Sentinel credential injection.** A profile may declare
