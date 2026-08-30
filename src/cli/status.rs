@@ -598,6 +598,44 @@ pub async fn run_status() -> Result<()> {
                         }
                         cost.render(tw);
                     }
+
+                    // ── SANDBOX ───────────────────────────────────────────────
+                    send_request(&mut tx, Request::ContainerStatus).await?;
+                    if let Ok(Response::ContainerStatus { report }) = recv(&mut rx).await {
+                        let mut sbx = Section::new("SANDBOX");
+                        sbx.kv(
+                            "enabled",
+                            if report.enabled {
+                                c_ok("yes")
+                            } else {
+                                c_dim("no")
+                            },
+                        );
+                        sbx.kv(
+                            "runtime",
+                            if report.runtime_ok {
+                                c_ok(&report.runtime_detail)
+                            } else {
+                                c_err(&report.runtime_detail)
+                            },
+                        );
+                        sbx.kv("image", c_val(&report.image_detail));
+                        sbx.kv("containers", c_num(&report.containers.len().to_string()));
+                        for ci in &report.containers {
+                            sbx.cont(format!(
+                                "{} {} {} {}",
+                                c_key(&ci.id),
+                                c_val(&ci.state),
+                                if ci.is_ghost {
+                                    c_warn("ghost")
+                                } else {
+                                    c_dim("session")
+                                },
+                                c_dim(ci.session.as_deref().unwrap_or("-")),
+                            ));
+                        }
+                        sbx.render(tw);
+                    }
                 }
                 _ => {
                     eprintln!("{}", c_err("Daemon did not return status."));

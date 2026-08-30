@@ -1,5 +1,34 @@
 use serde::{Deserialize, Serialize};
 
+/// One sandboxed container this daemon owns (M19 phase-05).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ContainerInfo {
+    /// Short (12-char) container id, as docker displays it.
+    pub id: String,
+    /// `running`, `exited`, `created`, …
+    pub state: String,
+    pub image: String,
+    /// Owning session, from the `de.session` label. `None` for a container
+    /// started before the label existed.
+    pub session: Option<String>,
+    /// Carries `de.ghost=1`.
+    pub is_ghost: bool,
+}
+
+/// Sandbox health plus the containers it owns, returned by
+/// `Request::ContainerStatus`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ContainerStatusReport {
+    /// `[sandbox] enabled`. When false the rest is reported, not enforced.
+    pub enabled: bool,
+    pub runtime_ok: bool,
+    /// Version string when reachable; the operator-facing reason when not.
+    pub runtime_detail: String,
+    /// Live image id vs the lockfile, already rendered for display.
+    pub image_detail: String,
+    pub containers: Vec<ContainerInfo>,
+}
+
 /// A snapshot of a single tmux pane (M12 D7). A named struct rather than a
 /// widening tuple — the tuple had already reached five positional fields.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -293,6 +322,10 @@ pub enum Request {
     },
     /// Query the daemon's current operational status (F1).
     Status,
+    /// Query sandbox runtime health and the containers this daemon owns.
+    /// Separate from `Status` because collecting it spawns the container
+    /// runtime, which `Status` must not wait on.
+    ContainerStatus,
     /// Pin the foreground target pane for the given session.
     /// The daemon updates `default_target_pane`, persists to `pane_prefs.json`,
     /// and responds with `Response::PaneChanged`.
@@ -529,6 +562,8 @@ pub enum Response {
     },
     /// List of targetable panes (response to `ListPanesForSession`).
     PaneList { panes: Vec<PaneInfo> },
+    /// Sandbox status snapshot (response to `Request::ContainerStatus`).
+    ContainerStatus { report: ContainerStatusReport },
     /// Daemon status snapshot returned in response to `Request::Status` (F1).
     DaemonStatus {
         uptime_secs: u64,
@@ -691,6 +726,7 @@ impl Response {
             Response::ModelList { .. } => "ModelList",
             Response::PaneChanged { .. } => "PaneChanged",
             Response::PaneList { .. } => "PaneList",
+            Response::ContainerStatus { .. } => "ContainerStatus",
             Response::DaemonStatus { .. } => "DaemonStatus",
             Response::SessionSaved { .. } => "SessionSaved",
             Response::SessionLoaded { .. } => "SessionLoaded",

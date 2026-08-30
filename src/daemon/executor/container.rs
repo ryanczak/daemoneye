@@ -714,6 +714,122 @@ pub fn teardown_ghost_containers(cfg: &SandboxConfig, session_id: &str) {
     }
 }
 
+/// The `--format` template `status_inspect_args` uses. Each container becomes
+/// one line: `<id> <state> <image> <labels-as-json>`. The labels are JSON, not
+/// a comma-joined string, because a `de.session` value carries a
+/// webhook-supplied alert name — `docker ps`'s own `{{.Labels}}` joins pairs
+/// with `,` and is irrecoverably ambiguous once a value contains one.
+pub const STATUS_INSPECT_FORMAT: &str =
+    "{{.Id}} {{.State.Status}} {{.Config.Image}} {{json .Config.Labels}}";
+
+/// argv inspecting the given containers. **Empty when `ids` is empty** —
+/// `docker inspect` with no arguments is a usage error (exit 1), and the empty
+/// case is the common one.
+pub fn status_inspect_args(cfg: &SandboxConfig, ids: &[String]) -> Vec<String> {
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let mut args = vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "inspect".to_string(),
+        "--format".to_string(),
+        STATUS_INSPECT_FORMAT.to_string(),
+    ];
+    args.extend(ids.iter().cloned());
+    args
+}
+
+/// Parse `status_inspect_args`' output into one record per container.
+///
+/// Pure. Splits each line into exactly four fields — the last is the whole
+/// remaining text, so a label value containing a space, comma or `=` cannot
+/// shift the parse. A line whose JSON does not decode is skipped rather than
+/// guessed at.
+pub fn parse_container_records(text: &str) -> Vec<crate::ipc::ContainerInfo> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.trim_end().splitn(4, ' ');
+            let id = parts.next()?;
+            let state = parts.next()?;
+            let image = parts.next()?;
+            let labels: std::collections::HashMap<String, String> =
+                serde_json::from_str(parts.next()?).ok()?;
+            Some(crate::ipc::ContainerInfo {
+                id: id.chars().take(12).collect(),
+                state: state.to_string(),
+                image: image.to_string(),
+                session: labels.get("de.session").cloned(),
+                is_ghost: labels.contains_key("de.ghost"),
+            })
+        })
+        .collect()
+}
+
+/// Runtime and image health plus every sandbox container this daemon owns.
+/// Blocking — call it off the async runtime. Never fails: an unreachable
+/// runtime is reported, not raised.
+pub fn collect_container_status(cfg: &SandboxConfig) -> crate::ipc::ContainerStatusReport {
+    let (runtime_ok, runtime_detail) = match probe_runtime(cfg) {
+        Ok(version) => (true, version),
+        Err(reason) => (
+            false,
+            describe_unavailable(&SandboxUnavailable::Runtime(reason)),
+        ),
+    };
+    let image_detail = match read_lock() {
+        None => format!("no lockfile at {}", lock_path().display()),
+        Some(lock) => match check_image_matches(&lock, &probe_live_image_id(cfg)) {
+            ImageCheck::Match => format!("{} ({})", cfg.image, lock.image_id),
+            other => format!("{other:?}"),
+        },
+    };
+    if !runtime_ok {
+        return crate::ipc::ContainerStatusReport {
+            enabled: cfg.enabled,
+            runtime_ok,
+            runtime_detail,
+            image_detail,
+            containers: Vec::new(),
+        };
+    }
+    let mut cmd = Command::new(&cfg.runtime);
+    cmd.args(sweep_container_list_args(cfg));
+    let ids: Vec<String> = match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+        Ok(out) => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect(),
+        Err(e) => {
+            log::warn!("container status list failed: {e}");
+            Vec::new()
+        }
+    };
+    let inspect = status_inspect_args(cfg, &ids);
+    let containers = if inspect.is_empty() {
+        Vec::new()
+    } else {
+        let mut cmd = Command::new(&cfg.runtime);
+        cmd.args(inspect);
+        match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+            Ok(out) => parse_container_records(&String::from_utf8_lossy(&out.stdout)),
+            Err(e) => {
+                log::warn!("container status inspect failed: {e}");
+                Vec::new()
+            }
+        }
+    };
+    crate::ipc::ContainerStatusReport {
+        enabled: cfg.enabled,
+        runtime_ok,
+        runtime_detail,
+        image_detail,
+        containers,
+    }
+}
+
 /// Remove orphaned sandbox containers and staging volumes. Best-effort:
 /// every failure is logged and none is fatal — a sweep that cannot run must
 /// never stop the daemon from starting.
@@ -2411,5 +2527,84 @@ mod tests {
             !should_teardown_ghost(&no_destroy),
             "the operator turned it off"
         );
+    }
+
+    #[test]
+    fn container_status_inspect_args_are_empty_without_ids() {
+        let cfg = SandboxConfig::default();
+        assert!(
+            status_inspect_args(&cfg, &[]).is_empty(),
+            "docker inspect with no arguments is a usage error, not an empty result"
+        );
+    }
+
+    #[test]
+    fn container_status_inspect_args_carry_the_json_label_format() {
+        let cfg = SandboxConfig::default();
+        let args = status_inspect_args(&cfg, &["abc".to_string(), "def".to_string()]);
+        assert_eq!(args.first().map(String::as_str), Some("--host"), "{args:?}");
+        assert!(args.iter().any(|a| a == "inspect"), "{args:?}");
+        assert!(args.iter().any(|a| a == STATUS_INSPECT_FORMAT), "{args:?}");
+        assert!(
+            args.iter().any(|a| a.contains("json .Config.Labels")),
+            "labels must come back as JSON, not docker's comma-joined string: {args:?}"
+        );
+        assert_eq!(
+            &args[args.len() - 2..],
+            &["abc".to_string(), "def".to_string()]
+        );
+    }
+
+    #[test]
+    fn container_status_parses_a_ghost_and_an_interactive_record() {
+        let text = concat!(
+            "39c2a88ad4137144 running alpine:3.22 {\"de.sandbox\":\"1\",\"de.session\":\"sess-plain\"}\n",
+            "a1997c9929c48003 exited alpine:3.22 {\"de.ghost\":\"1\",\"de.sandbox\":\"1\",\"de.session\":\"ghost-x\"}\n"
+        );
+        let got = parse_container_records(text);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(got[0].id, "39c2a88ad413", "id is truncated for display");
+        assert_eq!(got[0].state, "running");
+        assert_eq!(got[0].session.as_deref(), Some("sess-plain"));
+        assert!(!got[0].is_ghost);
+        assert!(got[1].is_ghost);
+        assert_eq!(got[1].session.as_deref(), Some("ghost-x"));
+    }
+
+    #[test]
+    fn container_status_survives_a_session_id_with_spaces_and_commas() {
+        // A ghost id is `ghost-<alert>-<uuid>` and the alert name comes from a
+        // webhook, so it can hold spaces, commas and `=`. Measured: docker's
+        // own `{{.Labels}}` joins pairs with `,` and cannot be split back.
+        let text = "abcdef0123456789 running img {\"de.ghost\":\"1\",\"de.session\":\"ghost-disk full,x=1-uuid\"}\n";
+        let got = parse_container_records(text);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(
+            got[0].session.as_deref(),
+            Some("ghost-disk full,x=1-uuid"),
+            "the label value must survive the split intact"
+        );
+        assert_eq!(got[0].image, "img");
+    }
+
+    #[test]
+    fn container_status_skips_a_line_it_cannot_decode() {
+        let text = concat!(
+            "abcdef0123456789 running img not-json\n",
+            "0123456789abcdef running img {\"de.session\":\"ok\"}\n",
+            "too few fields\n"
+        );
+        let got = parse_container_records(text);
+        assert_eq!(got.len(), 1, "only the decodable line survives: {got:?}");
+        assert_eq!(got[0].session.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn container_status_reports_an_unlabelled_container_without_a_session() {
+        let text = "abcdef0123456789 created img {\"de.sandbox\":\"1\"}\n";
+        let got = parse_container_records(text);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].session, None);
+        assert!(!got[0].is_ghost);
     }
 }

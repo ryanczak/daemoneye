@@ -657,6 +657,10 @@ fn request_notify_resize_roundtrip() {
 #[test]
 fn request_status_roundtrip() {
     assert!(matches!(roundtrip_req(&Request::Status), Request::Status));
+    assert!(matches!(
+        roundtrip_req(&Request::ContainerStatus),
+        Request::ContainerStatus
+    ));
 }
 
 #[test]
@@ -921,5 +925,28 @@ fn response_tool_finished_backward_compat_no_detail_field() {
             assert!(detail.is_none());
         }
         _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn response_container_status_roundtrip() {
+    let report = crate::ipc::ContainerStatusReport {
+        enabled: true,
+        runtime_ok: true,
+        runtime_detail: "29.7.2".to_string(),
+        image_detail: "daemoneye-agent-base (sha256:abc)".to_string(),
+        containers: vec![crate::ipc::ContainerInfo {
+            id: "39c2a88ad413".to_string(),
+            state: "running".to_string(),
+            image: "daemoneye-agent-base".to_string(),
+            session: Some("ghost-disk full,x=1".to_string()),
+            is_ghost: true,
+        }],
+    };
+    match roundtrip_resp(&Response::ContainerStatus {
+        report: report.clone(),
+    }) {
+        Response::ContainerStatus { report: got } => assert_eq!(got, report),
+        other => panic!("wrong variant: {other:?}"),
     }
 }

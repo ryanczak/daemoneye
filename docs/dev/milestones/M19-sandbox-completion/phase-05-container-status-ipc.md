@@ -1,7 +1,7 @@
 # Phase 05: `Request::ContainerStatus` and a SANDBOX section in `daemoneye status`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04 (`de.session` label) — independent of 01–03
 **Estimated diff:** ~330 lines including tests
 **Tags:** language=rust, kind=feature, size=m
@@ -954,3 +954,77 @@ editing the block.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-30 15:10 (started)
+
+Executor started phase-05. Implementing the wire types, collector, handler,
+SANDBOX section and tests per the spec, then running the mutation pairs and
+capturing end-to-end evidence.
+
+
+### Update — 2026-08-30 15:20 (end-to-end verification)
+
+All three mutation pairs applied, run and restored; the full artifact and the
+self-check verdict follow.
+
+```text
+== M1 APPLIED ==
+test daemon::executor::container::tests::container_status_inspect_args_carry_the_json_label_format ... FAILED
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 1482 filtered out; finished in 0.00s
+0
+== M1 RESTORED ==
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1482 filtered out; finished in 0.00s
+1
+== M2 APPLIED ==
+test daemon::executor::container::tests::container_status_survives_a_session_id_with_spaces_and_commas ... FAILED
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 1482 filtered out; finished in 0.00s
+1
+== M2 RESTORED ==
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1482 filtered out; finished in 0.00s
+1
+== M3 APPLIED ==
+test daemon::executor::container::tests::container_status_inspect_args_are_empty_without_ids ... FAILED
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 1482 filtered out; finished in 0.00s
+2
+== M3 RESTORED ==
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1482 filtered out; finished in 0.00s
+3
+== A. named tests (expect 7 ok) ==
+test daemon::executor::container::tests::container_status_inspect_args_are_empty_without_ids ... ok
+test daemon::executor::container::tests::container_status_inspect_args_carry_the_json_label_format ... ok
+test daemon::executor::container::tests::container_status_skips_a_line_it_cannot_decode ... ok
+test daemon::executor::container::tests::container_status_reports_an_unlabelled_container_without_a_session ... ok
+test daemon::executor::container::tests::container_status_survives_a_session_id_with_spaces_and_commas ... ok
+test daemon::executor::container::tests::container_status_parses_a_ghost_and_an_interactive_record ... ok
+test ipc::tests::response_container_status_roundtrip ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1482 filtered out; finished in 0.00s
+cargo_exit=0
+== B. full lib suite ==
+test result: ok. 1485 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 3.74s
+cargo_exit=0
+== C. gates ==
+fmt_exit=0
+clippy_exit=0
+== D. structural greps ==
+STATUS_INSPECT_FORMAT (1):   1
+three new fns (3):           3
+ContainerInfo struct (1):    1
+ContainerStatusReport (1):   1
+request variant (1):         1
+response variant (1):        1
+response name arm (1):       1
+ask.rs arm (1):              1
+stream.rs arm (1):           1
+handler (1):                 1
+dispatch (1):                1
+status.rs request (1):       1
+status.rs response (1):      1
+SANDBOX section (1):         1
+ipc_tests refs (5):          5
+json label format (1):       1
+ids.is_empty guards (3):     3
+allow total (6):             6
+prod unwrap/expect (0):      0
+```
+
+PASTE MATCH

@@ -64,7 +64,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 02 | staging-integration ([phase-02-staging-integration.md](phase-02-staging-integration.md)) | **done** (approved_after_1, 2026-08-29) |
 | 03 | ghost-container-execution ([phase-03-ghost-container-execution.md](phase-03-ghost-container-execution.md)) | **done** (approved_first_try, 2026-08-29) |
 | 04 | ghost-scoped-teardown ([phase-04-ghost-scoped-teardown.md](phase-04-ghost-scoped-teardown.md)) | **done** (approved_after_1, 2026-08-30) |
-| 05 | container-status-ipc ([phase-05-container-status-ipc.md](phase-05-container-status-ipc.md)) | todo (drafted 2026-08-30) |
+| 05 | container-status-ipc ([phase-05-container-status-ipc.md](phase-05-container-status-ipc.md)) | in-progress |
 | 06 | proxy-network-and-image | todo (not drafted) |
 | 07 | proxy-profile-wiring | todo (not drafted) |
 | 08 | proxy-allowlist-and-audit | todo (not drafted) |

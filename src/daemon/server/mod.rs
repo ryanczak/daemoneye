@@ -205,6 +205,9 @@ pub async fn handle_client(
         Request::Status => {
             handle_status(&mut tx, &sessions, &schedule_store, &config).await?;
         }
+        Request::ContainerStatus => {
+            handle_container_status(&mut tx, &config).await?;
+        }
         Request::QueryLimits { session_id: sid } => {
             handle_query_limits(&mut tx, &sessions, &config, sid).await?;
         }

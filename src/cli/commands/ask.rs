@@ -214,6 +214,7 @@ async fn run_ask_raw(query: String) -> Result<()> {
             | Response::ModelList { .. }
             | Response::PaneChanged { .. }
             | Response::PaneList { .. }
+            | Response::ContainerStatus { .. }
             | Response::DaemonStatus { .. }
             | Response::LimitsInfo { .. }
             | Response::SessionSaved { .. }
