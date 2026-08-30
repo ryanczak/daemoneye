@@ -1,7 +1,7 @@
 # Phase 07: Honouring `network = "proxy"` — profile resolution and the per-job egress proxy
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** done
 **Depends on:** phase-06 (the proxy image, `proxy.lock`, the network sweep)
 **Estimated diff:** ~470 lines including tests, across two existing files
 **Tags:** language=rust, kind=feature, size=m
@@ -963,9 +963,13 @@ change, not derived from the spec text.**
 - [ ] `cargo test --lib` reports **1499** passing and `0 failed`
       (**before: 1491**), with `4 ignored` unchanged; and **`cargo test`
       (all targets)** is green.
-- [ ] No existing test was edited. `git diff --name-only | wc -l` prints `2`
-      — exactly `src/daemon/executor/container.rs` and
-      `src/daemon/background/run.rs`. In `container.rs`,
+- [ ] No existing test was edited. `git diff --name-only | wc -l` prints `3`
+      — `src/daemon/executor/container.rs`, `src/daemon/background/run.rs`
+      **and this phase doc**, whose Update Log the same spec requires you to
+      write (§ Task 11). *(Corrected at review, 2026-08-30: this criterion was
+      drafted as `2`, counting only the source files. It is unsatisfiable as
+      written — the evidence entry has to exist before the block that counts
+      it can run. The executor reported the honest `3`.)* In `container.rs`,
       `grep -c 'ExecSpec {'` prints **26** (**before: 24**) and
       `grep -c 'network: "none",'` prints **25** (**before: 24**): the new
       test in Task 7 adds one `ExecSpec` with `network: "none"` and one with
@@ -1060,7 +1064,7 @@ echo -n "respawn untouched (1):          "; grep -c 'network: "none",' src/daemo
 echo -n "allow total (6):                "; grep -rc "allow(dead_code)" src/ | awk -F: '{s+=$2} END {print s}'
 echo -n "prod unwrap container.rs (0):   "; sed -n '1,/^#\[cfg(test)\]/p' "$C" | grep -c '\.unwrap()\|\.expect('
 echo -n "prod unwrap run.rs (0):         "; sed -n '1,/^#\[cfg(test)\]/p' "$R" | grep -c '\.unwrap()\|\.expect('
-echo -n "files changed (2):              "; git diff --name-only | wc -l
+echo -n "files changed (3):              "; git diff --name-only | wc -l
 } >> /tmp/e2e-07.txt 2>&1
 cat /tmp/e2e-07.txt
 ```
@@ -1388,3 +1392,71 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 1b8532b452311253da61b7a2335a3cf696037054
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731 (192 turns)
+- **Scope deviations:** one, benign — the executor also flipped the milestone
+  README's phase-table row, which § Authorizations did not list. Same
+  deviation as phase-06, same judgement: conventional bookkeeping, not
+  bounced.
+- **Calibration:** **an architect-side criterion defect, found by the
+  executor's own evidence.** The criterion `git diff --name-only | wc -l`
+  prints `2` is **unsatisfiable by construction**: § Task 11 requires the
+  evidence entry to be written into this doc *before* the block that counts
+  changed files runs, so the honest value is always `3`. I validated it on a
+  clean tree (`0`) and on my prototype (`2`, because I had written no Update
+  Log entry) and never on the state the executor would actually be in — the
+  same "validate against the tree the criterion will meet" family as
+  phase-01's `grep -c "fn name"` and phase-02's `let job_id`, now third in
+  this milestone. Criterion and E2E label corrected above; the pasted evidence
+  is untouched and still shows the original `(2)` label beside the value `3`.
+  **The executor pasted the mismatch rather than hiding it, but its summary
+  said "Nothing else deviated from the spec" and listed only passing counts** —
+  § Authorizations asks for a blocker naming an unsatisfiable criterion. A
+  summary that generalises past its own evidence; second occurrence in this
+  milestone after phase-06's false-flaky-grep claim, and both were caught only
+  because the review re-ran the evidence rather than reading the summary.
+  Held for a third; not folded.
+
+**Reviewer verification (independent re-run, not the executor's):**
+
+- All four gates green from a clean tree: `fmt_exit=0`, `build_exit=0`,
+  `lint_exit=0`, `cargo test` → **1499 passed; 0 failed; 4 ignored** plus
+  0/6/10/31/9/0 across the integration targets. Matches the pinned counts.
+- All **32** structural acceptance greps re-run and matching exactly,
+  including the two that phase-drafting got wrong and re-measured
+  (`ExecSpec {` 24 → **26**, `network: "none",` 24 → **25**), the six run.rs
+  counts, `respawn.rs` unchanged at `1`, and `^PASTE MATCH$` → `1`. The only
+  criterion not matching is the `files changed` defect above.
+- **The executor's source is byte-identical to the architect's reverted
+  prototype**, verified by diffing the added lines of both — with a single
+  exception: the doc comment `/// A `SandboxConfig` with one profile named
+  `researcher`.` on the test helper was dropped. Cosmetic, on a test helper,
+  not worth a bounce.
+- **The paste self-check was re-run by the reviewer**, not read: the fenced
+  block was re-extracted with the doc's own `awk` recipe and `diff`ed against
+  the surviving `/tmp/e2e-07.txt` — clean. The `sed 's/; finished in .*//'`
+  hardening carried over from phase-06 did its job: no `PASTE MISMATCH` from
+  timing this run, though the executor still had to re-run the sequence twice
+  for other reasons, and correctly deleted and re-ran rather than editing.
+- **Two further mutations, chosen by the reviewer**, aimed at tests the spec's
+  M1/M2/M3 do not cover:
+  - **R1** — `proxy_run_args` drops the `de.ghost=1` label (the proxy would
+    then outlive its own ghost's teardown, since that filter ANDs all three):
+    `sandbox_egress_proxy_labels_mirror_the_agent_containers` FAILED, alone.
+  - **R2** — `proxy_env_args` drops the lowercase `https_proxy` spelling, the
+    one `curl` reads: `sandbox_egress_env_names_the_proxy_in_all_four_spellings`
+    FAILED, alone.
+  Both restored; `8 passed` and a clean tree confirmed after each. **Five of
+  the eight new tests are now proven to discriminate a real defect.**
+- Hygiene: no `TODO`/`FIXME`/`XXX`, no `dbg!`, no `unsafe`, no `panic!`, no
+  new `#[allow(...)]` (repo total unchanged at 6) and no `#[ignore]` in the
+  added hunks; zero `.unwrap()`/`.expect()` in the production halves of both
+  edited files. The `.unwrap_or_else(...)` on the `spawn_blocking` join that
+  the executor flagged is a `JoinError`→`Err(String)` mapping, not a panicking
+  unwrap, and was specified verbatim.
+- The mid-run `_profile_name` drift the executor reported recovering from
+  leaves no trace: `grep -rc '_profile_name' src/` → **0**.
