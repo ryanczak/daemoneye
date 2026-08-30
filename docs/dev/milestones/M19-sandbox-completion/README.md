@@ -32,10 +32,22 @@ done).
 - A profile declaring `network = "proxy"` runs the agent container attached
   **only** to a dedicated user-defined network carrying a proxy container;
   the agent reaches an allowlisted host through it, a non-allowlisted host is
-  refused, and every request is recorded in `events.jsonl`. The negative case
-  is load-bearing: with the proxy in place the container must still reach
-  **neither** the host loopback nor the wider LAN — `--disable-host-loopback`
-  stays on.
+  refused, and every request is recorded in `events.jsonl` **with the rule
+  that matched and the decision**. The negative case is load-bearing: with the
+  proxy in place the container must still reach **neither** the host loopback
+  nor the wider LAN — `--disable-host-loopback` stays on. **A credential the
+  proxy profile needs never enters the container**: the agent holds a
+  sentinel, the proxy substitutes the real value on the way out, and
+  `docker inspect` / the container's environment show only the sentinel
+  (phase-08, adopted from Docker Sandboxes 2026-08-30).
+- A profile declaring `workspace = "clone"` runs the command over a
+  **read-only, uid-1000-owned copy** of the pane's working directory, staged
+  by the same root helper that stages scripts; `workspace = "none"` (the
+  default) mounts nothing, exactly as today. A sandboxed `cargo test` in the
+  user's repo succeeds under `clone` and fails loudly under `none` (phase-12).
+- Every sandboxed container run is recorded in `events.jsonl` at spawn —
+  job id, session, image id, network mode — so a live check can be anchored
+  to a record rather than to a `docker ps` snapshot (phase-11).
 - A command the operator explicitly escalates runs on the host with the
   escape recorded in `events.jsonl`; one that is not escalated cannot.
 - **Live checks, architect-run at close** (the M14/M18 convention — through
@@ -70,7 +82,8 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 08 | proxy-allowlist-and-audit | todo (not drafted) |
 | 09 | escape-hatch | todo (not drafted) |
 | 10 | live-verification-and-close | todo (not drafted) |
-| 11 | container-hardening-flags | **proposed** (not drafted, **not yet in scope** — PE decision) |
+| 11 | container-hardening-flags | todo (not drafted; **taken into scope 2026-08-30**) |
+| 12 | workspace-mount-policy | todo (not drafted; **added 2026-08-30**) |
 
 **Ordering.** 01 is first and deliberately small: it closes a *known* coverage
 gap before 03/04 start depending on the value it produces. 02 is independent
@@ -79,10 +92,12 @@ else. 06 → 07 → 08 is a hard chain (no wiring without a network; no allowlis
 without wiring). 09 is independent but scheduled late deliberately. 10 is the
 close-out.
 
-**11 is proposed, not scheduled** — it sits last in the table only because it
-was added last. If the PE takes it into scope it runs **before** 10, which
-stays the close-out. It is independent of every other phase and of the proxy
-chain.
+**11 and 12 were added after the original decomposition** (PE decision
+2026-08-30, from the Docker Sandboxes comparison in § Notes) and sit last in
+the table only because they were added last. Both run **before** 10, which
+stays the close-out. 11 is independent of everything. 12 depends on 02's
+staging helper (it is the same root-copy mechanism applied to a directory)
+and on nothing else; it is deliberately **not** on the proxy chain.
 
 Phase intents:
 
@@ -125,20 +140,61 @@ Phase intents:
 - **06 proxy-network-and-image** — a dedicated user-defined docker network
   and a proxy container image, plus the argv builders that create and tear
   them down. Pure-decision-logic-first, exactly as `container.rs` is built.
+  **Contract decided 2026-08-30: egress is HTTP(S) only.** The agent reaches
+  the proxy through `HTTP(S)_PROXY` and never resolves a name itself, so
+  there is no DNS path out; raw TCP (`ssh`, `git@`), UDP and ICMP are not
+  forwarded and the proxy image need not try. Docker Sandboxes forwards raw
+  TCP per port rule; we are choosing not to, and the design doc must say so
+  rather than leave it implied.
 - **07 proxy-profile-wiring** — `network = "none" | "proxy"` in the sandbox
   profile; when `proxy`, attach the agent container to the proxy network
-  **only** and set `HTTP(S)_PROXY` to the proxy's service name.
+  **only** and set `HTTP(S)_PROXY` to the proxy's service name. Credentials
+  are **not** passed here — not as `-e`, not as a file. A key in the
+  container's environment is visible to `docker inspect` and to every process
+  in it; phase-08's sentinel mechanism is the only door.
 - **08 proxy-allowlist-and-audit** — per-profile hostname allowlist enforced
   in the proxy, every request logged to `events.jsonl`. A refused host must
-  be observably refused, not silently dropped.
+  be observably refused, not silently dropped. **Three decisions adopted from
+  Docker Sandboxes' policy model (2026-08-30):**
+  1. **Rule syntax and precedence.** Exact host, `*.domain` wildcard,
+     `host:port` suffix; a `proxy_deny` list beside `proxy_allow`, and **deny
+     always beats allow**. Do not invent a fourth form.
+  2. **Audit record shape.** Each `events.jsonl` record carries the
+     destination host, the **rule that matched** (or `none`), the decision and
+     its reason, and a repeat count for identical consecutive requests —
+     the matched rule is what makes a refusal debuggable. Blocked and allowed
+     are the same record with a different decision, never two formats.
+  3. **Sentinel credential injection.** A profile may declare
+     `[sandbox.profile.<name>.credentials]` entries mapping a destination
+     domain to a daemon-side secret. The container is given a **sentinel**
+     value (`de-cred-<rand>`), never the secret; the proxy rewrites the
+     matching header on the way out. The real value appears in no container
+     environment, argv, file or `docker inspect`. This is strictly weaker than
+     the default profile — which has no credential at all — and strictly
+     stronger than an env var, and it is the only way an agent that needs an
+     API gets one.
 - **09 escape-hatch** — `GhostPolicy.escape_allowlist`, the `escape_hatch`
   flag on `ToolCallPrompt`, park-and-notify, and an `events.jsonl` record.
   The highest-risk phase in the milestone: it is the one feature whose bug
   runs a command on the host.
 - **10 live-verification-and-close** — the two unrun M18 live checks plus this
-  milestone's own, then the doc sweep and retrospective.
+  milestone's own, then the doc sweep and retrospective. **Two measurements
+  added 2026-08-30, both deciding questions the design deferred:**
+  1. **Cold container start latency** per sandboxed command, through a real
+     `daemoneye chat` turn. D3 promised a long-lived `de-chat-<session>`
+     container with `docker exec` and said to measure before building it;
+     measured 2026-08-30, **it is not built** — `grep -rn "docker exec"
+     src/` is empty and every job is `docker run --rm`. The number decides
+     whether a per-session container is M19's last phase or a later
+     milestone's; it also decides a usability question, since only a
+     persistent container lets an agent `pip install` something and then use
+     it.
+  2. **gVisor under rootless.** `--runtime=runsc` is a one-flag middle ground
+     between a shared kernel and Docker Sandboxes' microVM. Spend an hour
+     measuring whether it runs under rootless dockerd on the daemon host and
+     what it costs; record the numbers; decide nothing else here.
 
-- **11 container-hardening-flags (PROPOSED, not in scope)** — four `docker run`
+- **11 container-hardening-flags** (in scope 2026-08-30) — four `docker run`
   flags `run_args` does not set today. Prompted by a read of
   `docker/compose-for-agents` (2026-08-30) and then **measured against the real
   `daemoneye-agent-base` image on the daemon host**, because that repo turned
@@ -173,10 +229,49 @@ Phase intents:
   the phase's real acceptance test — that expectation is *supposed* to change
   here, unlike in phases 04 and 05 where it was pinned as unchanged.
 
+  **Three more items folded in 2026-08-30**, each a design-doc promise the
+  code does not keep (measured: the greps are empty):
+  5. **`FROM alpine@sha256:…`** — `containers/Dockerfile` is `FROM alpine:3.22`,
+     a tag; the design says the base image is pinned by digest.
+  6. **A `container_run` event at spawn** (job id, session, image id,
+     network mode). `events.jsonl` today carries only `job_start`,
+     `job_complete` and `gc_window` for a background job — nothing records
+     that a container ran, or which. This is the audit anchor phase-10's live
+     checks need, and it is also exit-criterion material above.
+  7. **The >90-day image staleness warning** in `retention_warnings()`, and
+     `requires_tools` runbook frontmatter with a fail-fast check — both named
+     in the design's image-lifecycle section, neither present.
+
   **One anti-pattern worth naming, from the same read:** every gateway in that
   repo sets `use_api_socket: true` — the Docker API socket mounted into a
   container, which is root-equivalent on the host. An agent sandbox must never
   grant it, and it is presented there as the ordinary way to do this.
+
+- **12 workspace-mount-policy** (added 2026-08-30) — the biggest usability gap
+  the Docker Sandboxes comparison exposed. A sandboxed background command
+  today lands in an empty `/de/work` tmpfs with **no host path mounted at
+  all**: the AI's `cd ~/src/foo && cargo test` does not fail loudly, it runs in
+  a container that has never heard of `~/src/foo`. D4 anticipates a
+  "per-profile mount set" and nothing implements it. Adds
+  `workspace = "none" | "clone" | "direct"` to the sandbox profile:
+  - **`none`** (default) — exactly today. Nothing changes for a profile that
+    does not opt in.
+  - **`clone`** — the pane's working directory is copied into the job's
+    staging volume by the same root helper `stage_args` already uses for
+    scripts, `chown 1000:1000`, mounted **read-only** at a fixed path, and the
+    command's cwd is set there. The volume is removed with the job like the
+    script volume is. Build this first, and pin it with a live measurement:
+    a real `cargo test` in a real checkout succeeds under `clone`.
+  - **`direct`** — a read-write bind of the host directory. **Do not draft
+    this without measuring the uid mapping first.** Under rootless, a host
+    directory owned by host uid 1000 appears *root-owned* inside the
+    container, so the uid-1000 agent almost certainly cannot write it; that is
+    the exact reason `clone` exists and why it comes first. If the measurement
+    confirms it, `direct` is out of scope for M19 and this bullet says so.
+  Docker Sandboxes ships the equivalent as `direct` (default) and `--clone`,
+  and its own security page calls the direct default the critical gap (git
+  hooks, Makefiles and CI files are live-editable). We invert the default.
+  Depends on phase-02's staging mechanism; independent of the proxy chain.
 
 ## Notes
 
@@ -206,6 +301,33 @@ Phase intents:
   so a config that sets `mount_scripts = "rw"` is silently ignored. Either
   wire it or delete the field in the phase-10 sweep; a config key that does
   nothing is worse than no key.
+
+- **Docker Sandboxes comparison, 2026-08-30 — PE decision: incorporate.**
+  `docs.docker.com/ai/sandboxes/` was read in full (architecture, security,
+  policy, credentials, monitoring, MCP gateway, CLI) and each claim checked
+  against this repo's code. The two are different shapes: sbx is a **microVM
+  per agent** (separate kernel, `sudo` inside, its own dockerd, host workspace
+  bind-mounted read-write by default, Docker-Desktop-shaped, needs a
+  hypervisor and an interactive user); daemoneye is a **rootless container per
+  command** (shared kernel, uid-mapped, non-root, no host path mounted,
+  `--network=none`, headless). A microVM is not an option for a daemon on a
+  server, and the shared kernel is the weaker boundary against a kernel
+  exploit — which is why phase-11's container-level hardening matters more
+  here than it would there. Things daemoneye already does **better** than
+  sbx's defaults, so nobody regresses them: no network by default (sbx's
+  "Balanced" preset ships `*.googleapis.com`); zero host filesystem exposure;
+  non-root with a uid-mapping gate; digest lockfile with refuse-on-mismatch;
+  one shared image cache where sbx's per-sandbox caches grow disk unbounded.
+  What was taken, and where it landed: sentinel credential injection → 08;
+  rule syntax, deny-over-allow, audit record shape → 08; HTTP-only egress
+  stated as the contract → 06; workspace mount policy → new phase-12; cold
+  start latency and gVisor measurements → 10; digest pin, `container_run`
+  event, staleness/`requires_tools` → 11. **What was deliberately not taken:**
+  `sudo` inside the sandbox, root-run kit installs, and a workspace mounted
+  read-write by default. sbx's MCP gateway keeps local stdio servers on the
+  host *outside* isolation and says so; daemoneye's broker-native tools have
+  the same posture, already documented in `CLAUDE.md` — a parallel, not a
+  gap.
 
 - **`container:shell` (interactive tty relay) stays deferred** — still an open
   question in the design doc, and nothing in M18 settled it.
