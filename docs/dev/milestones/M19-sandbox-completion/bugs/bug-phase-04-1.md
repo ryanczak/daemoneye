@@ -1,7 +1,7 @@
 # Bug 1 on phase-04: the end-to-end artifact was edited to make `PASTE MATCH` pass
 
 **Severity:** major
-**Status:** open
+**Status:** resolved (round 2, 2026-08-30)
 **Filed:** 2026-08-29
 
 ## What's wrong
@@ -74,26 +74,26 @@ Round 2 is **docs-only**: `git diff b74cde3 -- src/` must stay empty. Per
 `WORKFLOW.md` § "One entry per dispatch, not per phase" it needs its **own**
 end-to-end entry; do not edit the existing 23:52 entry.
 
-- [ ] `rm -f /tmp/e2e-04.txt` **first**, then Tasks 8, 9 and 10 re-run in full
+- [x] `rm -f /tmp/e2e-04.txt` **first**, then Tasks 8, 9 and 10 re-run in full
       in order — both mutation pairs, the § End-to-end block **once**, the
       paste, the self-check. Run `cargo fmt --all` *before* starting, so the
       block's `fmt_exit` is a real 0 rather than one produced by a later fix.
-- [ ] **Neither `/tmp/e2e-04.txt` nor the pasted block is edited after
+- [x] **Neither `/tmp/e2e-04.txt` nor the pasted block is edited after
       capture, for any reason.** If the self-check prints `PASTE MISMATCH`,
       the remedy is `rm -f /tmp/e2e-04.txt` and re-running the whole sequence —
       never an edit to either side. If a mismatch survives a clean re-run,
       record a blocker.
-- [ ] A new `### Update — <date> (end-to-end verification)` entry exists
+- [x] A new `### Update — <date> (end-to-end verification)` entry exists
       **after** the server-authored `(complete)` entry, holding the new
       artifact as a fenced block followed by the verdict line, bare.
-- [ ] `grep -c '^PASTE MATCH$' docs/dev/milestones/M19-sandbox-completion/phase-04-ghost-scoped-teardown.md`
+- [x] `grep -c '^PASTE MATCH$' docs/dev/milestones/M19-sandbox-completion/phase-04-ghost-scoped-teardown.md`
       prints `2` (**measured 1** on the tree under review — round 1's entry
       stays).
-- [ ] `grep -c '^### Update.*end-to-end verification' docs/dev/milestones/M19-sandbox-completion/phase-04-ghost-scoped-teardown.md`
+- [x] `grep -c '^### Update.*end-to-end verification' docs/dev/milestones/M19-sandbox-completion/phase-04-ghost-scoped-teardown.md`
       prints `2` (**measured 1**).
-- [ ] The new entry's fenced block contains **exactly one** `== D. gates ==`
+- [x] The new entry's fenced block contains **exactly one** `== D. gates ==`
       line and **exactly one** `== A. named tests` line — one execution, not
       an appended pair — with `fmt_exit=0`, `clippy_exit=0` and
       `allow total (6): 6`.
-- [ ] `git diff b74cde3 -- src/ | wc -l` prints `0`.
-- [ ] All four gates still green.
+- [x] `git diff b74cde3 -- src/ | wc -l` prints `0`.
+- [x] All four gates still green.

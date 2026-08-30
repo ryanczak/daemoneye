@@ -1,7 +1,7 @@
 # Phase 04: Reclaim one ghost's containers on exit, and nobody else's
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`resolve_is_ghost`), phase-03 (`respawn.rs` is a sandbox call site)
 **Estimated diff:** ~260 lines including tests
 **Tags:** language=rust, kind=feature, size=m
@@ -1282,3 +1282,61 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b01afe7f8ed65abeca85a6d140020275b88784e1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-30
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bugs/bug-phase-04-1.md` — the round-1 end-to-end artifact
+  was edited after capture to make the self-check pass; the code was correct
+  in round 1 and untouched since)
+- **Executor:** deepseek-v4-flash-0731 (round 1: 144 turns, commit `b74cde3`;
+  round 2: 72 turns, docs-only, commit `b01afe7`)
+- **Scope deviations:** one, minor. Tasks 8 and 9's shell snippets emit a
+  marker, the filtered test result and one `grep -c`; the round-2 mutation
+  blocks also carry `cargo_exit=` lines, so a modified command shape was run.
+  Everything the tasks require is present, plus the exit codes. Noted, not
+  charged.
+- **Calibration:** one item, and it is a *positive* data point on the fold
+  that produced the bounce.
+
+  The round-2 artifact contains **two** `== M1 APPLIED ==` markers. Read in
+  order, they are the guard working: the first shows the three
+  `ghost_teardown` tests still green with `grep -c` printing `1` — the
+  mutation had **not** applied — and the second shows `FAILED` with `grep -c`
+  printing `0`. That is precisely what § Tasks 8–9's "the `grep -c` after each
+  direction is not optional" clause exists to catch, and the executor left the
+  failed attempt **in** the artifact rather than trimming it. Round 1's defect
+  was trimming; round 2 pasted the run warts and all. The completion summary's
+  sentence that the repeat "was corrected by restarting … the final artifact
+  contains exactly one execution" is true of the § End-to-end block (one
+  `== D. gates ==`, one `== A. named tests`) and loose about the stray marker,
+  but the artifact is verifiably unedited, so a reviewer can see exactly what
+  happened. **Leaving visible noise in an evidence artifact is the correct
+  behaviour** and should not be discouraged; the criterion the bounce added
+  deliberately pinned the *section* markers, not every line.
+
+Independent re-run at review (four separate invocations): `cargo fmt --all`
+→ 0; `cargo build` → 0; `cargo clippy --all-targets --all-features -- -D
+warnings` → 0; `cargo test` → **1478 passed; 0 failed; 4 ignored** in the lib
+suite, every other target green.
+
+Every acceptance criterion re-measured on the tree under review: the three new
+functions at 1 each, `pub fn run_args` and `pub fn sandbox_window_command`
+still 1 each (parameters added, not duplicated), `de.session` 13,
+`ghost_defaults` 3, `ExecSpec` 24 here / 26 repo-wide (four added by the new
+tests, **no existing literal edited**), `session_id.as_deref(),` 2 in each
+background file, `teardown_ghost_containers` 1 in `ghost.rs`,
+`allow(dead_code)` total 6, no production `unwrap`/`expect`, 4 + 3 named tests
+green, and the pinned `sandbox_exec_run_args_match_the_prototyped_vector`
+still passing untouched. Round 2 is docs-only: `git diff b74cde3 -- src/` is
+empty. The reviewer's own run of the § End-to-end self-check against the last
+entry prints `PASTE MATCH`, and the doc carries `PASTE MATCH` twice — one per
+dispatch.
+
+**Tests spot-checked as real at the round-1 review, independently of the
+phase's own pairs.** M1 and M2 both reproduce under the reviewer's hand, and a
+third mutation the phase doc never names — deleting the `label=de.ghost=1`
+filter from `ghost_teardown_list_args` — fails exactly
+`ghost_teardown_is_scoped_to_this_daemons_ghosts` and nothing else. The
+selector's three filters are independently pinned rather than jointly
+satisfied by one assertion, which is what the phase's negative case required.
