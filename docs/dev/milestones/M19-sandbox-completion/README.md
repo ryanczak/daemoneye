@@ -77,7 +77,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 03 | ghost-container-execution ([phase-03-ghost-container-execution.md](phase-03-ghost-container-execution.md)) | **done** (approved_first_try, 2026-08-29) |
 | 04 | ghost-scoped-teardown ([phase-04-ghost-scoped-teardown.md](phase-04-ghost-scoped-teardown.md)) | **done** (approved_after_1, 2026-08-30) |
 | 05 | container-status-ipc ([phase-05-container-status-ipc.md](phase-05-container-status-ipc.md)) | **done** (approved_first_try, 2026-08-30) |
-| 06 | proxy-network-and-image ([phase-06-proxy-network-and-image.md](phase-06-proxy-network-and-image.md)) | in-progress (started 2026-08-30) |
+| 06 | proxy-network-and-image ([phase-06-proxy-network-and-image.md](phase-06-proxy-network-and-image.md)) | review                           |
 | 07 | proxy-profile-wiring | todo (not drafted) |
 | 08 | proxy-allowlist-and-audit | todo (not drafted) |
 | 09 | escape-hatch | todo (not drafted) |
