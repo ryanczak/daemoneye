@@ -506,6 +506,9 @@ pub struct SandboxConfig {
     /// Image the agent containers run. Default: "daemoneye-agent-base".
     #[serde(default = "default_sandbox_image")]
     pub image: String,
+    /// Image the egress proxy container runs. Default: "daemoneye-egress-proxy".
+    #[serde(default = "default_sandbox_proxy_image")]
+    pub proxy_image: String,
     /// Working directory / scratch mount point inside the container.
     /// Default: "/de/work".
     #[serde(default = "default_sandbox_workdir")]
@@ -536,6 +539,10 @@ fn default_sandbox_image() -> String {
     "daemoneye-agent-base".to_string()
 }
 
+fn default_sandbox_proxy_image() -> String {
+    "daemoneye-egress-proxy".to_string()
+}
+
 fn default_sandbox_workdir() -> String {
     "/de/work".to_string()
 }
@@ -554,6 +561,7 @@ impl Default for SandboxConfig {
             enabled: false,
             runtime: default_sandbox_runtime(),
             image: default_sandbox_image(),
+            proxy_image: default_sandbox_proxy_image(),
             workdir: default_sandbox_workdir(),
             run_as: default_sandbox_run_as(),
             docker_host: default_sandbox_docker_host(),

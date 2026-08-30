@@ -244,6 +244,7 @@ prompt = "sre"
 # enabled     = false                    # master feature flag
 # runtime     = "docker"                 # only supported value today
 # image       = "daemoneye-agent-base"   # tag pinned by digest in sandbox.lock
+# proxy_image = "daemoneye-egress-proxy"  # egress proxy image, pinned in proxy.lock (M19)
 # workdir     = "/de/work"               # container scratch mount point
 # run_as      = "1000:1000"              # NEVER container root: under rootless
 #                                        # Docker container root IS the daemon's

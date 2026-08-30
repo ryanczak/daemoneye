@@ -1,7 +1,7 @@
 # Phase 06: The egress proxy image, its lock, and the network sweep
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (independent of 01–05; first of the 06 → 07 → 08 chain)
 **Estimated diff:** ~260 lines including tests, plus two new files under `containers/proxy/`
 **Tags:** language=rust, kind=feature, size=m
@@ -933,3 +933,73 @@ editing the block.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-30 15:58 (started)
+
+Executor started phase-06. Implementing per the spec: proxy image/conf files,
+`proxy_image` config field (types.rs + config.toml), path-taking lock
+variants, network sweep, `sandbox build` dual-build, and the six tests, then
+running the two mutation pairs and capturing the end-to-end evidence.
+
+### Update — 2026-08-30 16:10 (end-to-end verification)
+
+Full transcript, mechanically captured (`cat /tmp/e2e-06.txt`):
+
+```text
+== M1 APPLIED ==
+test daemon::executor::container::tests::sandbox_proxy_network_list_args_filter_by_label ... FAILED
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 1489 filtered out; finished in 0.00s
+2
+== M1 RESTORED ==
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1489 filtered out; finished in 0.00s
+3
+== M2 APPLIED ==
+test daemon::executor::container::tests::sandbox_proxy_conf_denies_by_default_and_reads_the_mounted_filter ... FAILED
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 1489 filtered out; finished in 0.00s
+0
+== M2 RESTORED ==
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1489 filtered out; finished in 0.00s
+1
+== A. named tests (expect 6 ok) ==
+test daemon::executor::container::tests::sandbox_proxy_conf_denies_by_default_and_reads_the_mounted_filter ... ok
+test daemon::executor::container::tests::sandbox_proxy_lock_lives_beside_the_image_lock ... ok
+test daemon::executor::container::tests::sandbox_proxy_dockerfile_runs_unprivileged_and_bakes_the_conf ... ok
+test daemon::executor::container::tests::sandbox_proxy_network_list_args_filter_by_label ... ok
+test daemon::executor::container::tests::sandbox_proxy_network_rm_args_are_empty_for_an_empty_slice ... ok
+test daemon::executor::container::tests::sandbox_proxy_lock_round_trips_through_an_arbitrary_path ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1489 filtered out; finished in 0.00s
+cargo_exit=0
+== B. full suite, all targets ==
+test result: ok. 1491 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 3.92s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+cargo_exit=0
+== C. gates ==
+fmt_exit=0
+clippy_exit=0
+== D. structural greps ==
+containers/proxy files (2):     2
+conf deny-by-default (1):       1
+dockerfile USER 1000 (1):       1
+proxy_image types.rs (4):       4
+proxy_image config.toml (1):    1
+fn sweep_network_list_args (1): 1
+fn network_rm_args (1):         1
+fn proxy_lock_path (1):         1
+fn read_lock_from (1):          1
+fn write_lock_to (1):           1
+label filter lines (3):         3
+sweep calls network list (1):   1
+removed_networks (2):           2
+build_image sites (3):          3
+proxy_lock_path in cli (3):     3
+allow total (6):                6
+prod unwrap container.rs (0):   0
+prod unwrap sandbox.rs (0):     0
+```
+
+PASTE MATCH

@@ -231,21 +231,37 @@ pub fn lock_path() -> std::path::PathBuf {
     crate::config::etc_dir().join("sandbox.lock")
 }
 
+/// Path to the egress proxy image's lock: `etc/proxy.lock`. A second file
+/// rather than a second key, because `parse_lock` rejects an unknown key set
+/// and every existing `sandbox.lock` must keep parsing.
+pub fn proxy_lock_path() -> std::path::PathBuf {
+    crate::config::etc_dir().join("proxy.lock")
+}
+
 /// Read and parse the lock. `None` when the file is absent or malformed —
 /// the caller distinguishes "no lock yet" from "bad lock" by its own logic.
 pub fn read_lock() -> Option<SandboxLock> {
-    let text = std::fs::read_to_string(lock_path()).ok()?;
+    read_lock_from(&lock_path())
+}
+
+/// [`read_lock`] for an arbitrary lock file.
+pub fn read_lock_from(path: &std::path::Path) -> Option<SandboxLock> {
+    let text = std::fs::read_to_string(path).ok()?;
     parse_lock(&text)
 }
 
 /// Write `lock` to `lock_path()`, creating `etc/` if needed.
 pub fn write_lock(lock: &SandboxLock) -> std::io::Result<()> {
+    write_lock_to(&lock_path(), lock)
+}
+
+/// [`write_lock`] for an arbitrary lock file.
+pub fn write_lock_to(path: &std::path::Path, lock: &SandboxLock) -> std::io::Result<()> {
     use std::io::Write;
-    let path = lock_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut f = std::fs::File::create(&path)?;
+    let mut f = std::fs::File::create(path)?;
     f.write_all(render_lock(lock).as_bytes())?;
     f.flush()
 }
@@ -614,6 +630,37 @@ pub fn sweep_container_rm_args(cfg: &SandboxConfig, ids: &[String]) -> Vec<Strin
     args
 }
 
+/// argv listing every egress network this daemon's sandbox created. The
+/// label filter is the whole selector: a user's own networks carry no
+/// `de.sandbox` label and must never be listed here.
+pub fn sweep_network_list_args(cfg: &SandboxConfig) -> Vec<String> {
+    vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "network".to_string(),
+        "ls".to_string(),
+        "-q".to_string(),
+        "--filter".to_string(),
+        "label=de.sandbox=1".to_string(),
+    ]
+}
+
+/// argv removing the given networks. Must run **after** their containers are
+/// gone: docker refuses to remove a network with active endpoints.
+pub fn network_rm_args(cfg: &SandboxConfig, ids: &[String]) -> Vec<String> {
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let mut args = vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "network".to_string(),
+        "rm".to_string(),
+    ];
+    args.extend(ids.iter().cloned());
+    args
+}
+
 /// argv listing every volume name known to the runtime.
 pub fn sweep_volume_list_args(cfg: &SandboxConfig) -> Vec<String> {
     vec![
@@ -866,6 +913,36 @@ pub fn sweep_sandbox_leftovers(cfg: &SandboxConfig) {
         }
     };
 
+    // Networks go after containers and before volumes: a network with an
+    // attached container cannot be removed (measured — "has active endpoints").
+    cmd = Command::new(&cfg.runtime);
+    cmd.args(sweep_network_list_args(cfg));
+    let network_ids: Vec<String> = match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+        Ok(out) => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect(),
+        Err(e) => {
+            log::warn!("sandbox network sweep list failed: {e}");
+            Vec::new()
+        }
+    };
+    let removed_networks = if network_ids.is_empty() {
+        0
+    } else {
+        cmd = Command::new(&cfg.runtime);
+        cmd.args(network_rm_args(cfg, &network_ids));
+        match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
+            Ok(_) => network_ids.len(),
+            Err(e) => {
+                log::warn!("sandbox network sweep remove failed: {e}");
+                network_ids.len()
+            }
+        }
+    };
+
     cmd = Command::new(&cfg.runtime);
     cmd.args(sweep_volume_list_args(cfg));
     let listed_volumes = match bounded_output_with(&mut cmd, Duration::from_secs(30)) {
@@ -897,8 +974,9 @@ pub fn sweep_sandbox_leftovers(cfg: &SandboxConfig) {
     };
 
     log::info!(
-        "sandbox sweep removed {} orphaned container(s) and {} stale staging volume(s)",
+        "sandbox sweep removed {} orphaned container(s), {} egress network(s) and {} stale staging volume(s)",
         removed_containers,
+        removed_networks,
         removed_volumes
     );
 }
@@ -2606,5 +2684,96 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].session, None);
         assert!(!got[0].is_ghost);
+    }
+
+    #[test]
+    fn sandbox_proxy_network_list_args_filter_by_label() {
+        let cfg = SandboxConfig::default();
+        let args = sweep_network_list_args(&cfg);
+        assert_eq!(args.first().map(String::as_str), Some("--host"), "{args:?}");
+        assert!(args.iter().any(|a| a == "network"), "{args:?}");
+        assert!(args.iter().any(|a| a == "ls"), "{args:?}");
+        assert!(
+            args.iter().any(|a| a == "label=de.sandbox=1"),
+            "without the label filter a user's own networks would be swept: {args:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_proxy_network_rm_args_are_empty_for_an_empty_slice() {
+        let cfg = SandboxConfig::default();
+        assert!(network_rm_args(&cfg, &[]).is_empty());
+        let args = network_rm_args(&cfg, &["n1".to_string(), "n2".to_string()]);
+        assert!(args.iter().any(|a| a == "network"), "{args:?}");
+        assert!(args.iter().any(|a| a == "rm"), "{args:?}");
+        assert_eq!(
+            &args[args.len() - 2..],
+            &["n1".to_string(), "n2".to_string()]
+        );
+    }
+
+    #[test]
+    fn sandbox_proxy_lock_lives_beside_the_image_lock() {
+        let a = lock_path();
+        let b = proxy_lock_path();
+        assert_ne!(a, b, "two images, two locks");
+        assert_eq!(a.parent(), b.parent(), "same etc/ directory");
+        assert!(b.ends_with("proxy.lock"), "{b:?}");
+    }
+
+    #[test]
+    fn sandbox_proxy_lock_round_trips_through_an_arbitrary_path() {
+        let dir = std::env::temp_dir().join(format!("de-proxy-lock-{}", std::process::id()));
+        let path = dir.join("nested").join("proxy.lock");
+        let lock = SandboxLock {
+            image: "daemoneye-egress-proxy".to_string(),
+            image_id: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            built_at: 42,
+        };
+        write_lock_to(&path, &lock).expect("write creates parents");
+        let back = read_lock_from(&path).expect("parses back");
+        assert_eq!(back.image, lock.image);
+        assert_eq!(back.image_id, lock.image_id);
+        assert_eq!(back.built_at, 42);
+        assert!(read_lock_from(&dir.join("absent.lock")).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sandbox_proxy_conf_denies_by_default_and_reads_the_mounted_filter() {
+        // The conf is baked into the image; the allowlist is mounted per job.
+        // Measured 2026-08-30: an empty filter file with these settings answers
+        // every request `403 Filtered`, for GET and for CONNECT alike.
+        let conf = include_str!("../../../containers/proxy/tinyproxy.conf");
+        assert!(
+            conf.lines().any(|l| l.trim() == "FilterDefaultDeny Yes"),
+            "{conf}"
+        );
+        assert!(
+            conf.lines().any(|l| l.trim() == "FilterType fnmatch"),
+            "{conf}"
+        );
+        assert!(
+            conf.lines()
+                .any(|l| l.trim() == "Filter \"/etc/tinyproxy/filter\""),
+            "the daemon mounts the allowlist at exactly this path: {conf}"
+        );
+        assert!(conf.lines().any(|l| l.trim() == "Port 8888"), "{conf}");
+        assert!(
+            !conf.contains("Upstream"),
+            "no upstream: the proxy is the only door, not a hop"
+        );
+    }
+
+    #[test]
+    fn sandbox_proxy_dockerfile_runs_unprivileged_and_bakes_the_conf() {
+        let df = include_str!("../../../containers/proxy/Dockerfile");
+        assert!(df.lines().any(|l| l.trim() == "USER 1000:1000"), "{df}");
+        assert!(
+            df.contains("tinyproxy.conf /etc/tinyproxy/tinyproxy.conf"),
+            "{df}"
+        );
+        assert!(df.contains("apk add --no-cache tinyproxy"), "{df}");
     }
 }
