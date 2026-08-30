@@ -1,7 +1,7 @@
 # Phase 04: Reclaim one ghost's containers on exit, and nobody else's
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** in-progress (bounced 2026-08-29 — see bugs/bug-phase-04-1.md)
 **Depends on:** phase-01 (`resolve_is_ghost`), phase-03 (`respawn.rs` is a sandbox call site)
 **Estimated diff:** ~260 lines including tests
 **Tags:** language=rust, kind=feature, size=m
@@ -641,6 +641,17 @@ record a blocker naming the criterion.
 
 ### Task 10 — Capture the end-to-end evidence
 
+**The block appends (`>> /tmp/e2e-04.txt`). If you need to run it a second
+time — for any reason — `rm -f /tmp/e2e-04.txt` first and run the whole
+sequence again from Task 8.** Two executions otherwise leave two copies in the
+file, the paste holds one, and the self-check prints `PASTE MISMATCH`.
+**Never edit `/tmp/e2e-04.txt` or the pasted block to reconcile them** — the
+`PASTE MATCH` check is worth exactly nothing if either side can be adjusted
+until they agree, and what an edit removes is usually the failing line that
+mattered. Run `cargo fmt --all` **before** the block so `fmt_exit` is a real
+`0`, not one produced by a later fix. (This paragraph is the round-1 defect,
+`bugs/bug-phase-04-1.md`.)
+
 Run the block in § End-to-end verification **verbatim and unmodified**, then
 paste the resulting `/tmp/e2e-04.txt` into a new Update Log entry headed
 `### Update — <date> (end-to-end verification)`. The server-authored
@@ -699,9 +710,21 @@ change, not derived from the spec text.**
 - [ ] All four gates green: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 - [ ] The § End-to-end entry contains the literal line `PASTE MATCH` (bare,
-      with no surrounding backticks):
+      with no surrounding backticks). **Refreshed at the 2026-08-29 bounce
+      (bug-phase-04-1): round 2 needs its own entry, so**
       `grep -c '^PASTE MATCH$' docs/dev/milestones/M19-sandbox-completion/phase-04-ghost-scoped-teardown.md`
-      prints `1`.
+      prints `2` (**measured 1** — round 1's entry stays; do not edit it), and
+      `grep -c '^### Update.*end-to-end verification' <this doc>` prints `2`
+      (**measured 1**).
+- [ ] **Added at the 2026-08-29 bounce.** The new entry's fenced block holds
+      **one** execution, not an appended pair: it contains exactly one
+      `== D. gates ==` line and exactly one `== A. named tests` line, with
+      `fmt_exit=0`, `clippy_exit=0` and `allow total (6): 6`. Achieve this by
+      `rm -f /tmp/e2e-04.txt` **before** re-running Tasks 8–10, and by running
+      `cargo fmt --all` before the block so its `fmt_exit` is a real `0`.
+- [ ] **Added at the 2026-08-29 bounce.** Round 2 is docs-only:
+      `git diff b74cde3 -- src/ | wc -l` prints `0`. The code approved in
+      round 1 is correct and must not be touched.
 
 ## Test plan
 
