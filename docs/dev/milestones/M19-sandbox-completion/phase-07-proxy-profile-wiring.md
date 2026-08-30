@@ -1154,3 +1154,89 @@ editing the block.
 
 Started phase-07: flipping status to in-progress, then implementing Tasks 1-7 (the pure builders, lifecycle, run_args guard, run.rs resolution + proxy startup/teardown) before running the M1-M3 mutation pairs and the E2E block.
 
+### Update — 2026-08-30 23:25 (end-to-end verification)
+
+All three mutation pairs applied and restored through `patch`; each mutation
+failed exactly the one named test and the `grep -c` after each direction read
+the value the task states. Full transcript below.
+
+```
+== M1 APPLIED ==
+test daemon::executor::container::tests::sandbox_egress_network_is_created_internal_and_labelled ... FAILED
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 1495 filtered out
+0
+== M1 RESTORED ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1495 filtered out
+1
+== M2 APPLIED ==
+test daemon::executor::container::tests::sandbox_egress_mode_fails_closed_for_every_other_input ... FAILED
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 1495 filtered out
+0
+== M2 RESTORED ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1495 filtered out
+1
+== M3 APPLIED ==
+test daemon::executor::container::tests::sandbox_egress_env_reaches_the_agent_only_on_a_proxy_network ... FAILED
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 1495 filtered out
+0
+== M3 RESTORED ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1495 filtered out
+1
+== A. named tests (expect 8 ok) ==
+test daemon::executor::container::tests::sandbox_egress_env_names_the_proxy_in_all_four_spellings ... ok
+test daemon::executor::container::tests::sandbox_egress_leg_and_teardown_target_the_proxy_container ... ok
+test daemon::executor::container::tests::sandbox_egress_network_is_created_internal_and_labelled ... ok
+test daemon::executor::container::tests::sandbox_egress_names_are_distinct_and_job_scoped ... ok
+test daemon::executor::container::tests::sandbox_egress_env_reaches_the_agent_only_on_a_proxy_network ... ok
+test daemon::executor::container::tests::sandbox_egress_mode_is_proxy_only_for_a_profile_that_asks_for_it ... ok
+test daemon::executor::container::tests::sandbox_egress_proxy_labels_mirror_the_agent_containers ... ok
+test daemon::executor::container::tests::sandbox_egress_mode_fails_closed_for_every_other_input ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1495 filtered out
+cargo_exit=0
+== B. full suite, all targets ==
+test result: ok. 1499 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+cargo_exit=0
+== C. gates ==
+fmt_exit=0
+clippy_exit=0
+== D. structural greps ==
+fn resolve_network_mode (1): 1
+fn proxy_network_name (1): 1
+fn proxy_container_name (1): 1
+fn proxy_filter_path (1): 1
+fn network_create_args (1): 1
+fn proxy_run_args (1): 1
+fn network_connect_args (1): 1
+fn proxy_rm_args (1): 1
+fn proxy_env_args (1): 1
+fn start_proxy (1): 1
+fn remove_proxy (1): 1
+fn proxy_step (1): 1
+enum NetworkMode (1):           1
+PROXY_PORT (2):                 2
+--internal (1):                 1
+fail-closed arm (1):            1
+env guard (1):                  1
+ExecSpec sites in container (26):26
+ExecSpec none literals (25):    25
+run.rs none literals (0):       0
+run.rs &network (1):            1
+run.rs profile_name (2):        2
+run.rs proxy_started (4):       4
+run.rs remove_proxy (2):        2
+run.rs start_proxy (1):         1
+run.rs resolve_network_mode (1):1
+respawn untouched (1):          1
+allow total (6):                6
+prod unwrap container.rs (0):   0
+prod unwrap run.rs (0):         0
+files changed (2):              3
+```
+
+PASTE MATCH

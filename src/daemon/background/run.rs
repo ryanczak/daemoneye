@@ -59,6 +59,16 @@ pub async fn run_background_in_window(
         .and_then(|id| with_sessions(&sessions, |store| store.get(id).map(|e| e.is_ghost)));
     let is_ghost = crate::daemon::resolve_is_ghost(session_id.as_deref(), entry_is_ghost);
 
+    // The sandbox profile this job runs under is the ghost's agent name; an
+    // interactive session has none and so resolves to the default profile.
+    let profile_name = session_id.as_deref().and_then(|id| {
+        with_sessions(&sessions, |store| {
+            store
+                .get(id)
+                .and_then(|e| e.ghost_config.as_ref().and_then(|g| g.agent.clone()))
+        })
+    });
+
     let prefix = if let Some(sid) = &session_id {
         if is_ghost {
             // Use the prefix registered on the session entry so webhook-triggered,
@@ -211,12 +221,46 @@ pub async fn run_background_in_window(
         cmd
     };
 
+    // Stand up this job's egress proxy when its profile asks for one. Same
+    // fail-closed shape as staging above: a command whose proxy cannot be
+    // started is refused and its window reclaimed, never run unproxied.
+    let mut proxy_started = false;
+    let network = if config.sandbox.enabled
+        && crate::daemon::executor::container::resolve_network_mode(
+            &config.sandbox,
+            profile_name.as_deref(),
+        ) == crate::daemon::executor::container::NetworkMode::Proxy
+    {
+        let (cfg_p, job_p, sid_p) = (config.sandbox.clone(), job_id.clone(), session_id.clone());
+        let started = tokio::task::spawn_blocking(move || {
+            crate::daemon::executor::container::start_proxy(
+                &cfg_p,
+                &job_p,
+                is_ghost,
+                sid_p.as_deref(),
+            )
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("sandbox egress task failed: {e}")));
+        if let Err(message) = started {
+            log::warn!("refusing sandboxed background command: {message}");
+            let (s6, wn6) = (session.to_string(), win_name.clone());
+            let _ = tmux::off_runtime("kill-job-window", move || tmux::kill_job_window(&s6, &wn6))
+                .await;
+            return message;
+        }
+        proxy_started = true;
+        crate::daemon::executor::container::proxy_network_name(&job_id)
+    } else {
+        "none".to_string()
+    };
+
     let sandboxed_cmd;
     let cmd: &str = {
         if config.sandbox.enabled {
             let spec = crate::daemon::executor::container::ExecSpec {
                 job_id: &job_id,
-                network: "none",
+                network: &network,
                 is_ghost,
                 command: cmd,
             };
@@ -409,7 +453,10 @@ pub async fn run_background_in_window(
             if config.sandbox.enabled {
                 let (cfg_v, job_v) = (config.sandbox.clone(), job_id.clone());
                 tokio::task::spawn_blocking(move || {
-                    crate::daemon::executor::container::remove_stage_volume(&cfg_v, &job_v)
+                    crate::daemon::executor::container::remove_stage_volume(&cfg_v, &job_v);
+                    if proxy_started {
+                        crate::daemon::executor::container::remove_proxy(&cfg_v, &job_v);
+                    }
                 });
             }
 
@@ -549,7 +596,13 @@ pub async fn run_background_in_window(
                         crate::daemon::executor::container::remove_stage_volume(
                             &sandbox_bg,
                             &job_id_bg,
-                        )
+                        );
+                        if proxy_started {
+                            crate::daemon::executor::container::remove_proxy(
+                                &sandbox_bg,
+                                &job_id_bg,
+                            );
+                        }
                     });
                 }
 

@@ -603,6 +603,232 @@ pub fn remove_stage_volume(cfg: &SandboxConfig, job_id: &str) {
     }
 }
 
+/// The port the proxy image's tinyproxy listens on. Baked into
+/// `containers/proxy/tinyproxy.conf` as `Port 8888`; the agent reaches it
+/// through `HTTP(S)_PROXY`, so the two must agree.
+pub const PROXY_PORT: u16 = 8888;
+
+/// Which network a job's container is attached to, resolved from its profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkMode {
+    /// `--network=none` — the default, and categorically stronger than any
+    /// filtering.
+    None,
+    /// A dedicated `--internal` network carrying an egress proxy container.
+    Proxy,
+}
+
+/// Resolve a job's network mode from its profile name.
+///
+/// **Fails closed.** No profile name, a name with no `[sandbox.profile.*]`
+/// entry, and any `network` value other than `"proxy"` all resolve to
+/// [`NetworkMode::None`]: a job that cannot be matched to a profile must not
+/// silently acquire egress.
+pub fn resolve_network_mode(cfg: &SandboxConfig, profile: Option<&str>) -> NetworkMode {
+    let Some(name) = profile else {
+        return NetworkMode::None;
+    };
+    match cfg.profile.get(name) {
+        Some(p) if p.network == "proxy" => NetworkMode::Proxy,
+        _ => NetworkMode::None,
+    }
+}
+
+/// Per-job egress network name: `de-net-<job_id>`.
+pub fn proxy_network_name(job_id: &str) -> String {
+    format!("de-net-{job_id}")
+}
+
+/// Per-job proxy container name: `de-px-<job_id>`. This doubles as the host
+/// name the agent reaches it by — docker's embedded DNS answers for
+/// containers on the same user-defined network, and for nothing else.
+pub fn proxy_container_name(job_id: &str) -> String {
+    format!("de-px-{job_id}")
+}
+
+/// Daemon-side path of the per-job allowlist mounted into the proxy at
+/// `/etc/tinyproxy/filter`. Phase-08 renders its contents; an empty file is
+/// deny-all, which is why this phase can mount one safely.
+pub fn proxy_filter_path(job_id: &str) -> std::path::PathBuf {
+    crate::config::var_run_dir()
+        .join("proxy")
+        .join(job_id)
+        .join("filter")
+}
+
+/// argv creating the job's egress network. `--internal` is the isolation
+/// mechanism: measured, a container on it reaches the proxy by name and
+/// nothing else — not the LAN, not the gateway, not the host loopback.
+pub fn network_create_args(cfg: &SandboxConfig, job_id: &str) -> Vec<String> {
+    vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "network".to_string(),
+        "create".to_string(),
+        "--internal".to_string(),
+        "--label".to_string(),
+        "de.sandbox=1".to_string(),
+        proxy_network_name(job_id),
+    ]
+}
+
+/// argv running the job's proxy container on its network.
+///
+/// The labels mirror [`run_args`] exactly, because ghost teardown selects on
+/// `de.sandbox=1` **and** `de.ghost=1` **and** `de.session=<id>`: a proxy
+/// missing any of them survives its own ghost's exit.
+pub fn proxy_run_args(
+    cfg: &SandboxConfig,
+    job_id: &str,
+    filter_path: &std::path::Path,
+    is_ghost: bool,
+    session_id: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "run".to_string(),
+        "-d".to_string(),
+        "--rm".to_string(),
+        "--name".to_string(),
+        proxy_container_name(job_id),
+        "--network".to_string(),
+        proxy_network_name(job_id),
+        "--user".to_string(),
+        cfg.run_as.clone(),
+        "-v".to_string(),
+        format!("{}:/etc/tinyproxy/filter:ro", filter_path.display()),
+    ];
+    args.push("--label".to_string());
+    args.push("de.sandbox=1".to_string());
+    if is_ghost {
+        args.push("--label".to_string());
+        args.push("de.ghost=1".to_string());
+    }
+    if let Some(sid) = session_id {
+        args.push("--label".to_string());
+        args.push(format!("de.session={sid}"));
+    }
+    args.push(cfg.proxy_image.clone());
+    args
+}
+
+/// argv giving the proxy its egress leg. `docker run` takes one `--network`,
+/// so the second attachment is a separate command after the container exists.
+/// Measured: with it the proxy reaches the LAN and the internet, and still
+/// reaches neither the host loopback nor `172.17.0.1`.
+pub fn network_connect_args(cfg: &SandboxConfig, job_id: &str) -> Vec<String> {
+    vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "network".to_string(),
+        "connect".to_string(),
+        "bridge".to_string(),
+        proxy_container_name(job_id),
+    ]
+}
+
+/// argv removing the job's proxy container. Must precede the network's
+/// removal: docker refuses to remove a network with active endpoints.
+pub fn proxy_rm_args(cfg: &SandboxConfig, job_id: &str) -> Vec<String> {
+    vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "rm".to_string(),
+        "-f".to_string(),
+        proxy_container_name(job_id),
+    ]
+}
+
+/// The `-e` pairs pointing an agent container at its job's proxy. All four
+/// spellings are set because the tools an agent runs disagree about case.
+pub fn proxy_env_args(job_id: &str) -> Vec<String> {
+    let url = format!("http://{}:{}", proxy_container_name(job_id), PROXY_PORT);
+    let mut args = Vec::new();
+    for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+        args.push("-e".to_string());
+        args.push(format!("{key}={url}"));
+    }
+    args
+}
+
+/// Run one docker subcommand for the proxy lifecycle, mapping a spawn failure
+/// or a non-zero exit to an operator-facing message.
+fn proxy_step(cfg: &SandboxConfig, what: &str, args: Vec<String>) -> Result<(), String> {
+    let mut cmd = Command::new(&cfg.runtime);
+    cmd.args(args);
+    match bounded_output_with(&mut cmd, Duration::from_secs(60)) {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => Err(format!(
+            "sandbox egress {what} failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+        Err(e) => Err(format!("sandbox egress {what} failed: {e}")),
+    }
+}
+
+/// Stand up the job's egress network and proxy container.
+///
+/// Order is forced by the runtime: the network exists before the proxy joins
+/// it, and the proxy exists before its egress leg can be attached. The filter
+/// is written **before** the proxy starts because tinyproxy refuses to boot
+/// when its `Filter` path is absent (measured: `filter file: No such file or
+/// directory`, container dead on arrival). An empty file is deny-all.
+///
+/// Fails closed: on any error the partial state is reclaimed and the caller
+/// refuses the command rather than running it unproxied.
+pub fn start_proxy(
+    cfg: &SandboxConfig,
+    job_id: &str,
+    is_ghost: bool,
+    session_id: Option<&str>,
+) -> Result<(), String> {
+    let filter = proxy_filter_path(job_id);
+    if let Some(parent) = filter.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        return Err(format!("sandbox egress filter directory failed: {e}"));
+    }
+    if let Err(e) = std::fs::write(&filter, b"") {
+        return Err(format!("sandbox egress filter write failed: {e}"));
+    }
+    proxy_step(cfg, "network create", network_create_args(cfg, job_id))?;
+    let started = proxy_step(
+        cfg,
+        "proxy run",
+        proxy_run_args(cfg, job_id, &filter, is_ghost, session_id),
+    )
+    .and_then(|()| proxy_step(cfg, "network connect", network_connect_args(cfg, job_id)));
+    if let Err(message) = started {
+        remove_proxy(cfg, job_id);
+        return Err(message);
+    }
+    Ok(())
+}
+
+/// Reclaim the job's proxy container, its network and its filter directory.
+/// Best-effort and idempotent — it runs on completion paths, where a failure
+/// must not mask the job's own result. Container first: docker refuses to
+/// remove a network that still has an active endpoint.
+pub fn remove_proxy(cfg: &SandboxConfig, job_id: &str) {
+    if let Err(message) = proxy_step(cfg, "proxy remove", proxy_rm_args(cfg, job_id)) {
+        log::debug!("{message}");
+    }
+    if let Err(message) = proxy_step(
+        cfg,
+        "network remove",
+        network_rm_args(cfg, &[proxy_network_name(job_id)]),
+    ) {
+        log::warn!("{message}");
+    }
+    if let Some(dir) = proxy_filter_path(job_id).parent()
+        && let Err(e) = std::fs::remove_dir_all(dir)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("sandbox egress filter cleanup failed for job {job_id}: {e}");
+    }
+}
+
 /// argv listing every container this daemon's sandbox created, running or not.
 pub fn sweep_container_list_args(cfg: &SandboxConfig) -> Vec<String> {
     vec![
@@ -1035,6 +1261,9 @@ pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec, session_id: Option<&str>) 
     if let Some(sid) = session_id {
         args.push("--label".to_string());
         args.push(format!("de.session={sid}"));
+    }
+    if spec.network != "none" {
+        args.extend(proxy_env_args(spec.job_id));
     }
     args.push("--workdir".to_string());
     args.push(cfg.workdir.clone());
@@ -2775,5 +3004,189 @@ mod tests {
             "{df}"
         );
         assert!(df.contains("apk add --no-cache tinyproxy"), "{df}");
+    }
+
+    fn cfg_with_profile(network: &str) -> SandboxConfig {
+        let mut cfg = SandboxConfig::default();
+        cfg.profile.insert(
+            "researcher".to_string(),
+            crate::config::SandboxProfile {
+                network: network.to_string(),
+                proxy_allow: vec!["example.com".to_string()],
+            },
+        );
+        cfg
+    }
+
+    #[test]
+    fn sandbox_egress_mode_is_proxy_only_for_a_profile_that_asks_for_it() {
+        let cfg = cfg_with_profile("proxy");
+        assert_eq!(
+            resolve_network_mode(&cfg, Some("researcher")),
+            NetworkMode::Proxy
+        );
+    }
+
+    #[test]
+    fn sandbox_egress_mode_fails_closed_for_every_other_input() {
+        // The negative cases are the point: each of these is a way a job could
+        // silently acquire egress it was never granted.
+        let cfg = cfg_with_profile("proxy");
+        assert_eq!(resolve_network_mode(&cfg, None), NetworkMode::None);
+        assert_eq!(
+            resolve_network_mode(&cfg, Some("analyst")),
+            NetworkMode::None,
+            "a profile name with no config entry must not inherit another's network"
+        );
+        assert_eq!(resolve_network_mode(&cfg, Some("")), NetworkMode::None);
+        assert_eq!(
+            resolve_network_mode(&cfg, Some("RESEARCHER")),
+            NetworkMode::None,
+            "profile lookup is exact, not case-insensitive"
+        );
+        for network in ["none", "Proxy", "proxy ", "bridge", ""] {
+            assert_eq!(
+                resolve_network_mode(&cfg_with_profile(network), Some("researcher")),
+                NetworkMode::None,
+                "network = {network:?} must not enable egress"
+            );
+        }
+    }
+
+    #[test]
+    fn sandbox_egress_names_are_distinct_and_job_scoped() {
+        assert_eq!(proxy_network_name("42-1712937600"), "de-net-42-1712937600");
+        assert_eq!(proxy_container_name("42-1712937600"), "de-px-42-1712937600");
+        assert_ne!(proxy_network_name("7-1"), proxy_container_name("7-1"));
+        assert_ne!(proxy_network_name("7-1"), proxy_network_name("7-2"));
+        assert!(
+            proxy_filter_path("7-1").ends_with("proxy/7-1/filter"),
+            "{:?}",
+            proxy_filter_path("7-1")
+        );
+        assert_ne!(proxy_filter_path("7-1"), proxy_filter_path("7-2"));
+    }
+
+    #[test]
+    fn sandbox_egress_network_is_created_internal_and_labelled() {
+        let cfg = SandboxConfig::default();
+        let args = network_create_args(&cfg, "7-1");
+        assert!(
+            args.iter().any(|a| a == "--internal"),
+            "without --internal the agent reaches the LAN directly: {args:?}"
+        );
+        assert!(args.iter().any(|a| a == "de.sandbox=1"), "{args:?}");
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("de-net-7-1"),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_egress_proxy_labels_mirror_the_agent_containers() {
+        let cfg = SandboxConfig::default();
+        let filter = std::path::Path::new("/tmp/de/filter");
+        let ghost = proxy_run_args(&cfg, "7-1", filter, true, Some("ghost-abc"));
+        // Ghost teardown ANDs all three; a proxy missing any one outlives its
+        // own ghost.
+        assert!(ghost.iter().any(|a| a == "de.sandbox=1"), "{ghost:?}");
+        assert!(ghost.iter().any(|a| a == "de.ghost=1"), "{ghost:?}");
+        assert!(
+            ghost.iter().any(|a| a == "de.session=ghost-abc"),
+            "{ghost:?}"
+        );
+        assert!(
+            ghost
+                .iter()
+                .any(|a| a == "/tmp/de/filter:/etc/tinyproxy/filter:ro"),
+            "the filter must be mounted read-only or the proxy will not start: {ghost:?}"
+        );
+        assert_eq!(
+            ghost.last().map(String::as_str),
+            Some("daemoneye-egress-proxy")
+        );
+
+        let interactive = proxy_run_args(&cfg, "7-1", filter, false, None);
+        assert!(
+            !interactive.iter().any(|a| a == "de.ghost=1"),
+            "an interactive job's proxy must not be reclaimable by a ghost teardown: {interactive:?}"
+        );
+        assert!(
+            !interactive.iter().any(|a| a.starts_with("de.session=")),
+            "{interactive:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_egress_leg_and_teardown_target_the_proxy_container() {
+        let cfg = SandboxConfig::default();
+        let connect = network_connect_args(&cfg, "7-1");
+        assert!(connect.iter().any(|a| a == "connect"), "{connect:?}");
+        assert!(
+            connect.iter().any(|a| a == "bridge"),
+            "the egress leg is the bridge network: {connect:?}"
+        );
+        assert_eq!(connect.last().map(String::as_str), Some("de-px-7-1"));
+
+        let rm = proxy_rm_args(&cfg, "7-1");
+        assert!(rm.iter().any(|a| a == "-f"), "{rm:?}");
+        assert_eq!(rm.last().map(String::as_str), Some("de-px-7-1"));
+    }
+
+    #[test]
+    fn sandbox_egress_env_names_the_proxy_in_all_four_spellings() {
+        let args = proxy_env_args("7-1");
+        for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+            assert!(
+                args.iter()
+                    .any(|a| a == &format!("{key}=http://de-px-7-1:8888")),
+                "{key} missing or wrong: {args:?}"
+            );
+        }
+        assert_eq!(args.iter().filter(|a| *a == "-e").count(), 4, "{args:?}");
+    }
+
+    #[test]
+    fn sandbox_egress_env_reaches_the_agent_only_on_a_proxy_network() {
+        let cfg = SandboxConfig::default();
+        let proxied = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "7-1",
+                network: "de-net-7-1",
+                is_ghost: false,
+                command: "true",
+            },
+            None,
+        );
+        assert!(
+            proxied
+                .iter()
+                .any(|a| a == "HTTP_PROXY=http://de-px-7-1:8888"),
+            "{proxied:?}"
+        );
+        assert!(
+            proxied
+                .windows(2)
+                .any(|w| w[0] == "--network" && w[1] == "de-net-7-1"),
+            "{proxied:?}"
+        );
+
+        let isolated = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "7-1",
+                network: "none",
+                is_ghost: false,
+                command: "true",
+            },
+            None,
+        );
+        assert!(
+            !isolated.iter().any(|a| a.starts_with("HTTP_PROXY=")),
+            "a --network=none job has no proxy to point at: {isolated:?}"
+        );
+        assert!(!isolated.iter().any(|a| a == "-e"), "{isolated:?}");
     }
 }
