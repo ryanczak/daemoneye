@@ -1,7 +1,7 @@
 # Phase 05: `Request::ContainerStatus` and a SANDBOX section in `daemoneye status`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (`de.session` label) — independent of 01–03
 **Estimated diff:** ~330 lines including tests
 **Tags:** language=rust, kind=feature, size=m
@@ -1176,3 +1176,44 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 342f823264074251bd1bdd06047b9393feb8aeef
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731 (127 turns, commit `342f823`)
+- **Scope deviations:** none. The production diff is **byte-identical** to
+  the architect's prototype (`diff` of the two `src/` diffs is empty), the
+  status flip touched only the `**Status:**` line (one `**Status:**`, one
+  `**Milestone:**` after it), and no existing test's assertions changed.
+- **Calibration:** none new — and one confirmation. This is the first phase
+  dispatched with every claim in the summary pinned to a command in the doc,
+  three mutation pairs whose failure counts were measured before dispatch,
+  and the repeat-run rule in Task 10. The summary made no claim the artifact
+  contradicts, the artifact holds exactly one execution, and the executor
+  filed no blocker because none was needed. Three phases of fold, one clean
+  run: hold, do not add.
+
+Independent re-run at review (four separate invocations): `cargo fmt --all`
+→ 0; `cargo build` → 0; `cargo clippy --all-targets --all-features -- -D
+warnings` → 0; `cargo test` → **1485 passed; 0 failed; 4 ignored** in the lib
+suite, every other target green.
+
+Every acceptance criterion re-measured on the tree under review: the format
+constant and three new fns, both wire structs, the request variant, response
+variant and name arm, the two exhaustive-match arms in `ask.rs`/`stream.rs`,
+handler and dispatch, the three `status.rs` sites, five `ipc_tests.rs`
+references, `{{json .Config.Labels}}` at 1, `if ids.is_empty()` at 3,
+`allow(dead_code)` total 6, no production `unwrap`/`expect`, 7 named tests
+green, the pinned `run_args` vector still passing. The reviewer's own run of
+the § End-to-end self-check against the last entry prints `PASTE MATCH`; the
+pasted block holds one `== A. named tests` and one `== C. gates ==` line, and
+all three `APPLIED` markers show exactly the named failure.
+
+**Tests spot-checked as real with two mutations the phase doc does not
+name.** Deriving `is_ghost` from nothing (`false`) and dropping the 12-char id
+truncation each fail exactly
+`container_status_parses_a_ghost_and_an_interactive_record` and nothing else.
+Together with the phase's own M1–M3 that is five independent breakages, five
+distinct single-test failures: the parser's fields are pinned separately, not
+jointly by one assertion.
