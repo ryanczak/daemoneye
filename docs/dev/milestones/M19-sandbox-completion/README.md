@@ -70,6 +70,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 08 | proxy-allowlist-and-audit | todo (not drafted) |
 | 09 | escape-hatch | todo (not drafted) |
 | 10 | live-verification-and-close | todo (not drafted) |
+| 11 | container-hardening-flags | **proposed** (not drafted, **not yet in scope** — PE decision) |
 
 **Ordering.** 01 is first and deliberately small: it closes a *known* coverage
 gap before 03/04 start depending on the value it produces. 02 is independent
@@ -77,6 +78,11 @@ of 01. 03 depends on 01; 04 depends on 03. 05 is independent of everything
 else. 06 → 07 → 08 is a hard chain (no wiring without a network; no allowlist
 without wiring). 09 is independent but scheduled late deliberately. 10 is the
 close-out.
+
+**11 is proposed, not scheduled** — it sits last in the table only because it
+was added last. If the PE takes it into scope it runs **before** 10, which
+stays the close-out. It is independent of every other phase and of the proxy
+chain.
 
 Phase intents:
 
@@ -131,6 +137,46 @@ Phase intents:
   runs a command on the host.
 - **10 live-verification-and-close** — the two unrun M18 live checks plus this
   milestone's own, then the doc sweep and retrospective.
+
+- **11 container-hardening-flags (PROPOSED, not in scope)** — four `docker run`
+  flags `run_args` does not set today. Prompted by a read of
+  `docker/compose-for-agents` (2026-08-30) and then **measured against the real
+  `daemoneye-agent-base` image on the daemon host**, because that repo turned
+  out to be an orchestration showcase rather than a hardening reference: across
+  its 25 compose files, `read_only`/`cap_drop` appear in 3 — all the
+  third-party Sock Shop demo app, not one agent service — `security_opt`,
+  `no-new-privileges`, `pids_limit`, `ulimits` and `tmpfs` appear **zero**
+  times, and two services run `privileged: true`. Nothing there is worth
+  copying. The gaps below are ours, found by looking:
+
+  1. **`--memory-swap`.** Docker defaults it to 2× `--memory`, so today's
+     `--memory 1g` permits 2 GiB total. Measured:
+     `docker run --memory 512m …` → `MemorySwap=1073741824`. Set it equal to
+     `limits.memory`.
+  2. **`--read-only` plus a `/tmp` tmpfs.** Measured working with the current
+     image and `sh -lc`: `/de/work` stays writable, the root filesystem is not
+     (`touch /rootfs-probe` → `Read-only file system`).
+  3. **`--cap-drop=ALL` and `--security-opt=no-new-privileges`.** Measured
+     effective in-kernel, not merely accepted by the CLI:
+     `CapBnd: 0000000000000000`, `NoNewPrivs: 1`. The second is the one with
+     teeth — the process is already uid 1000, but Alpine ships setuid busybox
+     links, and this closes that escalation path.
+  4. **`--pull=never`.** Without it docker resolves a missing image against
+     `docker.io` (measured: *"failed to resolve reference
+     docker.io/library/…"*). `sandbox_preflight` does fail closed on a missing
+     image, but its verdict is cached in a `OnceLock` for the daemon's
+     lifetime, so an image deleted *after* startup leaves a window where a run
+     would reach the registry. This closes it locally at no cost.
+
+  **Cost:** ~40 lines plus tests, all inside `run_args`. It edits
+  `sandbox_exec_run_args_match_the_prototyped_vector`'s pinned vector, which is
+  the phase's real acceptance test — that expectation is *supposed* to change
+  here, unlike in phases 04 and 05 where it was pinned as unchanged.
+
+  **One anti-pattern worth naming, from the same read:** every gateway in that
+  repo sets `use_api_socket: true` — the Docker API socket mounted into a
+  container, which is root-equivalent on the host. An agent sandbox must never
+  grant it, and it is presented there as the ordinary way to do this.
 
 ## Notes
 
