@@ -79,11 +79,13 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 05 | container-status-ipc ([phase-05-container-status-ipc.md](phase-05-container-status-ipc.md)) | **done** (approved_first_try, 2026-08-30) |
 | 06 | proxy-network-and-image ([phase-06-proxy-network-and-image.md](phase-06-proxy-network-and-image.md)) | **done** (approved_first_try, 2026-08-30) |
 | 07 | proxy-profile-wiring ([phase-07-proxy-profile-wiring.md](phase-07-proxy-profile-wiring.md)) | **done** (approved_first_try, 2026-08-30) |
-| 08 | proxy-allowlist-and-audit | todo (not drafted) |
+| 08 | proxy-allowlist ([phase-08-proxy-allowlist.md](phase-08-proxy-allowlist.md)) | todo (drafted 2026-08-30) |
 | 09 | escape-hatch | todo (not drafted) |
 | 10 | live-verification-and-close | todo (not drafted) |
 | 11 | container-hardening-flags | todo (not drafted; **taken into scope 2026-08-30**) |
 | 12 | workspace-mount-policy | todo (not drafted; **added 2026-08-30**) |
+| 13 | proxy-audit | todo (not drafted; **split out of 08, 2026-08-30**) |
+| 14 | proxy-credentials | todo (not drafted; **split out of 08, 2026-08-30**) |
 
 **Ordering.** 01 is first and deliberately small: it closes a *known* coverage
 gap before 03/04 start depending on the value it produces. 02 is independent
@@ -91,6 +93,16 @@ of 01. 03 depends on 01; 04 depends on 03. 05 is independent of everything
 else. 06 → 07 → 08 is a hard chain (no wiring without a network; no allowlist
 without wiring). 09 is independent but scheduled late deliberately. 10 is the
 close-out.
+
+**08 was split into three at drafting (2026-08-30).** Its README intent line
+below bundles the allowlist, the `events.jsonl` audit record and sentinel
+credential injection; measured against a working prototype, the allowlist
+alone is ~330 lines, and all three together are far past one executor session.
+08 keeps the allowlist (and closes the CONNECT-port hole the drafting
+measurements found); **13 proxy-audit** and **14 proxy-credentials** carry the
+other two, both scheduled before the phase-10 close-out. The milestone's exit
+criteria are unchanged — they are met by 08 + 13 + 14 together. This is the
+same narrowing 06 took, for the same reason.
 
 **11 and 12 were added after the original decomposition** (PE decision
 2026-08-30, from the Docker Sandboxes comparison in § Notes) and sit last in

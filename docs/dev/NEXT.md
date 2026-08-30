@@ -2905,3 +2905,68 @@ Phase-07 drafting notes:
 - The whole § End-to-end block was extracted from the doc and **run verbatim
   against the clean tree**: all 31 structural lines report their documented
   before-values, so no criterion is self-satisfying and none passes early.
+
+**phase-07 — proxy-profile-wiring: done (approved_first_try) 2026-08-30**,
+commit `1b8532b` + approval `0b13bb5`. 1491 → 1499 lib tests. Executor's
+source was **byte-identical to the architect's reverted prototype** bar one
+dropped doc comment. Reviewer added two mutations of its own (proxy losing
+`de.ghost=1`; `proxy_env_args` losing the lowercase `https_proxy` that `curl`
+reads), each caught by exactly one named test — five of eight new tests proven
+discriminating. **Architect-side criterion defect, third of the milestone:**
+`git diff --name-only | wc -l` prints `2` is unsatisfiable, because Task 11
+requires the evidence entry to be written into the phase doc before the block
+that counts files runs; the honest value is 3. Validated on a clean tree (0)
+and on the prototype (2) but never on the state the executor would be in.
+Corrected. **Calibration held at 2 occurrences, not folded:** phase-06 and
+phase-07 summaries both generalised past their own evidence (a false
+"flaky grep"; "nothing else deviated" while the pasted evidence carried a
+mismatch). Both caught only by re-running the evidence.
+
+**Active phase: phase-08 — proxy-allowlist**
+(`docs/dev/milestones/M19-sandbox-completion/phase-08-proxy-allowlist.md`,
+status: todo, drafted 2026-08-30). Dispatch with
+`/rexymcp:dispatch phase-08`. Renders `proxy_allow` / `proxy_deny` into the
+filter phase-07 mounts empty.
+
+**Phase-08 was split into three, and the milestone gained two phases.** The
+README's 08 intent bundles allowlist + audit record + sentinel credentials.
+Measured against a working prototype the allowlist alone is ~330 lines, so 08
+keeps the allowlist and the other two become **13 proxy-audit** and **14
+proxy-credentials**, both before the phase-10 close-out. Exit criteria
+unchanged — met by 08 + 13 + 14 together. Same narrowing 06 took.
+
+Phase-08 drafting notes:
+
+- **A real egress hole was found by measuring, and 08 closes it.** With no
+  `ConnectPort` directive, tinyproxy opens CONNECT to **any** port on an
+  allowlisted host: the proxy log shows it dialling `example.com:22`, `:25`
+  and `:3306`. The `000` those return is a connection *timeout*, not a
+  refusal. An agent allowed one HTTPS host could have tunnelled SSH to it —
+  so the README's "egress is HTTP(S) only" contract was **false as shipped by
+  06/07**. `ConnectPort 443` + `ConnectPort 563` fixes it (verified: one
+  `opensock` line, for 443; ordinary HTTPS still 200), and a test pins both
+  lines through `include_str!`.
+- **The rule model is measured, not designed.** A tinyproxy filter line is
+  fnmatch against the **host alone**: `example.com` matches only itself,
+  `*.example.com` matches subdomains but **not** the apex (so allowing both
+  takes two rules), and a `host:port` line matches **nothing**. Hence
+  `parse_proxy_rule` accepts `:80`/`:443` and refuses every other port rather
+  than rendering the bare host — which would silently grant more than asked.
+- **"Deny beats allow" cannot be expressed narrowly**, because the filter is
+  an allow list with no exception form. A deny landing inside a wildcard
+  allow therefore **drops the whole wildcard** — blunt, but the only
+  rendering that does not leave the denied host reachable. Pinned with both
+  boundaries (a sibling deny leaves the wildcard; an apex deny does not drop
+  `*.apex`).
+- **M2 fails two tests, not one, and the spec says so.** Deleting the port
+  gate trips both `..._refuses_every_rule_it_cannot_enforce` and
+  `..._denies_everything_when_nothing_survives`. Measured; had I assumed
+  "one" the executor would have been told to file a blocker on a correct tree.
+- **I made the mistake the phase docs warn the executor about.** Restoring a
+  mutation with `git checkout <file>` destroyed ~300 lines of uncommitted
+  prototype. Rebuilt from saved fragments (tree afterwards byte-identical to
+  the pre-loss diff), then re-ran every mutation with inverse patches only.
+  It is now § Gotchas 2 of phase-08, stated as something that really happens.
+- Prototype: 1499 → **1507**, four gates green, ~330 lines. Every criterion
+  validated by running the § End-to-end block verbatim against the clean tree
+  — all 19 discriminating lines report `0`.
