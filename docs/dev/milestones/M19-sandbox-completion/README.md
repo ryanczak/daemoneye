@@ -64,7 +64,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 02 | staging-integration ([phase-02-staging-integration.md](phase-02-staging-integration.md)) | **done** (approved_after_1, 2026-08-29) |
 | 03 | ghost-container-execution ([phase-03-ghost-container-execution.md](phase-03-ghost-container-execution.md)) | **done** (approved_first_try, 2026-08-29) |
 | 04 | ghost-scoped-teardown ([phase-04-ghost-scoped-teardown.md](phase-04-ghost-scoped-teardown.md)) | **done** (approved_after_1, 2026-08-30) |
-| 05 | container-status-ipc | todo (not drafted) |
+| 05 | container-status-ipc ([phase-05-container-status-ipc.md](phase-05-container-status-ipc.md)) | todo (drafted 2026-08-30) |
 | 06 | proxy-network-and-image | todo (not drafted) |
 | 07 | proxy-profile-wiring | todo (not drafted) |
 | 08 | proxy-allowlist-and-audit | todo (not drafted) |
@@ -107,7 +107,15 @@ Phase intents:
   ghost sharing a name prefix does not match), repeated `--filter` clauses are
   ANDed, and `rm -f` reclaims a still-running container.
 - **05 container-status-ipc** — `Request::ContainerStatus` +
-  `daemoneye status` output.
+  `daemoneye status` output. **Measured while drafting (2026-08-30):** the
+  obvious listing (`docker ps --format '{{.Labels}}'`) joins label pairs with
+  `,` and cannot be split back, so a ghost whose alert name contains a comma
+  is silently mis-attributed; `docker inspect --format '… {{json
+  .Config.Labels}}'` is unambiguous and keeps a newline-bearing value on one
+  line. `docker inspect` with no arguments is a usage error, and the empty
+  list is the common case. The report adds `enabled` and `image_detail` to the
+  design's named shape, because the milestone's exit criterion asks for the
+  lockfile comparison and it has nowhere else to live.
 - **06 proxy-network-and-image** — a dedicated user-defined docker network
   and a proxy container image, plus the argv builders that create and tear
   them down. Pure-decision-logic-first, exactly as `container.rs` is built.

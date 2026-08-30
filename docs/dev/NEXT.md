@@ -2763,3 +2763,54 @@ clauses AND, `rm -f` reclaims a running container, a label value containing
 `=` or a space round-trips (so **no** sanitizer is needed for the webhook-
 supplied alert name inside a ghost session id), and `-v name:` volumes carry
 no labels (so volumes stay on per-job removal).
+
+**phase-04 — ghost-scoped-teardown: done (approved_after_1) 2026-08-30**,
+commits `b74cde3` (code) + `b01afe7` (round-2 evidence) + `1a058d8`
+(approval). Every sandboxed container now carries `de.session=<id>`, a
+ghost-scoped teardown runs on `trigger_ghost_turn`'s exit path, and
+`[sandbox.ghost_defaults] destroy_on_exit` is read for the first time.
+bug-phase-04-1 was evidence integrity, not code: the § E2E block appends, it
+was run twice (the first with `fmt_exit=1`), and `/tmp/e2e-04.txt` was edited
+down to one run so the self-check would pass. Round 2 re-captured cleanly.
+**Positive calibration:** round 2's artifact keeps a *visible failed patch
+attempt* — the first `== M1 APPLIED ==` shows tests green with `grep -c` 1,
+the second shows FAILED with 0 — which is the after-each-direction guard
+working, left in rather than trimmed. Task 10 of every later phase now carries
+the repeat-run rule (`rm -f` the artifact; never edit either side).
+
+**Active phase: phase-05 — container-status-ipc**
+(`docs/dev/milestones/M19-sandbox-completion/phase-05-container-status-ipc.md`,
+status: todo, drafted 2026-08-30). `Request::ContainerStatus` →
+`Response::ContainerStatus`, the collector behind it, and a `SANDBOX` section
+in `daemoneye status`.
+
+**Prototyped end-to-end before the doc was written**, which produced three
+facts the spec would otherwise have got wrong:
+
+1. **Never parse `docker ps --format '{{.Labels}}'`.** It joins label pairs
+   with `,`, so `de.session=ghost-disk,full=x-abc` splits into a wrong session
+   plus an invented label. `docker inspect --format '{{.Id}} {{.State.Status}}
+   {{.Config.Image}} {{json .Config.Labels}}'` is unambiguous, and a newline
+   inside a value comes back escaped so the record stays on one line — a
+   tab-separated format splits it across two.
+2. **Adding a `Response` variant breaks two exhaustive matches** in
+   `src/cli/commands/ask.rs:103` and `src/cli/commands/stream.rs:353`. Only
+   the compiler says so; the spec pre-injects the error text and the unique
+   `| Response::PaneList { .. }` anchor in each file.
+3. **`docker inspect` with no arguments is a usage error (exit 1)** and the
+   empty list is the common case, so `status_inspect_args` returns an empty
+   vector and the caller skips the spawn.
+
+Three mutation pairs, each measured to fail exactly one named test. **M1's
+first candidate anchor was rejected by measurement:** `    if ids.is_empty() {`
+occurs three times in `container.rs` and even the three-line `return
+Vec::new();` form occurs twice, so that pair needs a seven-line `old_str`
+reaching `"inspect".to_string(),` (measured unique) and is now M3. One
+acceptance criterion was also wrong on first write — `grep -c '{{.Labels}}'`
+reads **2** on a correct tree (both in comments explaining why that form is
+not used), so the pin is `grep -c '{{json .Config.Labels}}'` = 1.
+
+The report carries `enabled` and `image_detail` beyond the design's named
+shape, because the milestone exit criterion asks for the lockfile comparison;
+recorded for the phase-10 doc sweep. The rendered section and the live IPC
+round-trip are architect-verified at milestone close against a real daemon.
