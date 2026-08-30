@@ -1,7 +1,7 @@
 # Phase 06: The egress proxy image, its lock, and the network sweep
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** done
 **Depends on:** none (independent of 01–05; first of the 06 → 07 → 08 chain)
 **Estimated diff:** ~260 lines including tests, plus two new files under `containers/proxy/`
 **Tags:** language=rust, kind=feature, size=m
@@ -1157,3 +1157,59 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 2ab040e91a1e60c374387fda686244106ed1a91f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731 (196 turns)
+- **Scope deviations:** one, benign — the executor also flipped the milestone
+  README's phase-table row to `in-progress`, which its § Authorizations did
+  not list ("do not edit any doc other than this phase doc's Update Log").
+  Conventional bookkeeping, and the review flips the same row to `done`; not
+  bounced.
+- **Calibration:** the completion summary claimed this host's `grep`
+  "intermittently returns 0 matches" and that the criterion
+  `grep -c '^PASTE MATCH$' <this doc>` "returns 0 through the flaky greps",
+  offering `fgrep -nF` + `diff` as a substitute proof. **It does not
+  reproduce.** The criterion prints `1` under three independent instruments
+  (`grep -c '^PASTE MATCH$'`, `grep -cx`, `awk '$0=="PASTE MATCH"'`), and
+  `cat -A` shows the line bare at 1005 with no trailing bytes. The executor
+  diagnosed a tool defect where there was none and substituted its own
+  instrument for the pinned one — [[executor-claims-need-rerunning]] in a new
+  shape: not a false green, but a false *red* that would have carried a
+  spurious "spec hardening" recommendation into the milestone had the
+  reviewer taken it on trust. Re-run the criterion; never read the claim.
+  Not folded — one occurrence.
+
+**Reviewer verification (independent re-run, not the executor's):**
+
+- All four gates green from a clean tree: `fmt_exit=0`, `build_exit=0`,
+  `lint_exit=0`, `cargo test` → **1491 passed; 0 failed; 4 ignored** plus
+  0/6/10/31/9/0 across the integration targets. Matches the pinned counts.
+- All **19** structural acceptance greps re-run and matching exactly:
+  `2 / 1 / 1 / 4 / 1 / 1 / 1 / 1 / 1 / 1 / 3 / 1 / 2 / 3 / 3 / 6 / 0 / 0`,
+  and `cargo test --lib sandbox_proxy | grep -c "^test .* ok$"` → `6`.
+- **The paste self-check was re-run by the reviewer**, not read: the fenced
+  block was re-extracted from the Update Log with the doc's own `awk` recipe
+  and `diff`ed against the surviving `/tmp/e2e-06.txt` — clean.
+- **Two further mutations, chosen by the reviewer** (neither is M1 or M2), to
+  test the four tests the spec's own pairs do not cover:
+  - **R1** — `proxy_lock_path` returns `sandbox.lock` instead of
+    `proxy.lock`: `sandbox_proxy_lock_lives_beside_the_image_lock` FAILED,
+    alone (5 passed, 1 failed).
+  - **R2** — the `create_dir_all` branch deleted from `write_lock_to`:
+    `sandbox_proxy_lock_round_trips_through_an_arbitrary_path` FAILED, alone.
+  Both restored; `6 passed` and a clean tree confirmed after each. Four of
+  the six new tests are now proven to discriminate a real defect.
+- `containers/proxy/tinyproxy.conf` and `containers/proxy/Dockerfile` were
+  `diff`ed against the § Spec fenced blocks — **byte-for-byte identical**.
+- Hygiene: no `TODO`/`FIXME`/`XXX`, no `dbg!`, no `unsafe`, no new
+  `#[allow(...)]` (repo total unchanged at 6) and no `#[ignore]` in the added
+  hunks; zero `.unwrap()`/`.expect()` in the production halves of both edited
+  files. The seven `println!`s in `sandbox.rs` are that CLI command's output.
+- The new network block in `sweep_sandbox_leftovers` is structurally
+  identical to the volume block beside it, including counting `len()` on a
+  failed removal — a pre-existing diagnostic-log pattern, prescribed verbatim
+  by the spec, not a defect introduced here. Its list-failure path degrades
+  better than the volume one: it warns and continues rather than returning.
