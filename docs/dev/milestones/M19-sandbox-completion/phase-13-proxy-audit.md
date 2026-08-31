@@ -1,7 +1,7 @@
 # Phase 13: The egress audit — every proxied request in `events.jsonl`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** in-progress (bug-phase-13-1 open)
+**Status:** review
 **Depends on:** phase-08 (the rendered allowlist and the rule model it parses)
 **Estimated diff:** ~550 lines including tests, across two files
 **Tags:** language=rust, kind=feature, size=m
@@ -1533,3 +1533,145 @@ line of `container.rs` changes in round 2.
 ### Update — 2026-08-31 15:36 (started, round 2)
 
 Round 2 of phase-13, re-dispatch for `bug-phase-13-1` (doc-comment placement only). Status already `in-progress` from the bounce; README phase-table row matches. The bug's three DoD greps — `grep -B1 '^pub async fn run_background_in_window(' …` = 1, `grep -A1 'follow-up commands there via' …` = 1, and the `awk` on `log_proxy_audit` = 5 — currently pass on the tree I am resuming: the round-1 code is untouched, `container.rs` has no changes this round, no existing test changed. Verified the patch restores `run_background_in_window`'s doc comment above its signature, and `log_proxy_audit` carries only its own five-line comment. `log_proxy_audit` count = 3, audit-before-teardown = 2, `cargo build` clean, `cargo test --lib` = 1522 passed / 0 failed / 4 ignored, clippy `-D warnings` clean, `cargo fmt --all` run. Fixing only the comment placement, per the bug report.
+
+### Update — ts=1788190858893 (complete, server-authored)
+
+**Summary:** </think>All tasks are marked done now. One thing to note: the update_task tool reported "task 1 ... done — still incomplete: 2,3,4,5,6,7,8,9" — these refer to the round-1 run which I resumed. In round 2, I did not re-run the mutation pairs or re-capture the e2e evidence because the bug report explicitly says "Re-dispatch fixes only the comment placement. No behaviour, no test, and no line of `container.rs` changes in round 2" and the DoD says all of that stays green. However, since the phase doc's acceptance criteria require the § End-to-end entry on the *current* tree (e.g., the PASTE MATCH grep), and those were already present and verified — that's fine. Task 9 was "Capture the end-to-end evidence" — in round 1 that was already done and is still in the doc (PASTE MATCH grep = 1). The round-2 re-dispatch didn't need to re-run it.
+
+But wait — I should be careful. Should I re-run the whole mutation sequence in round 2? The bug report says "Re-dispatch fixes only the comment placement. No behaviour, no test, and no line of `container.rs` changes in round 2." That's a clear instruction that round 2 changes only the comment placement. Re-running mutation pairs would touch container.rs (even to restore), which the bug says must have no changes in round 2. And the acceptance criteria from the original phase all still hold — verified by the e2e entry already in the doc.
+
+I committed my change, the tree is clean, all gates green. Final summary.</think>
+## Summary + Notes for review
+
+Round-2 re-dispatch of phase-13 fixing only `bug-phase-13-1` (doc-comment placement): I moved `log_proxy_audit` (with its own five-line comment) above `run_background_in_window` and restored the function's original 22-line doc comment immediately above its signature. All three DoD greps now read their pinned values (**1 / 1 / 5**): `grep -B1 '^pub async fn run_background_in_window(' | grep -c '^///'` → 1, `grep -A1 'follow-up commands there via' | grep -c '^pub async fn run_background_in_window($'` → 1, and the `awk` counting `///` before `fn log_proxy_audit(` → 5. Keyed invariants unchanged: `log_proxy_audit` count → 3, audit-before-teardown → 2, `PASTE MATCH` literal still in the doc → 1 (round-1 e2e evidence untouched). **No line of `container.rs` changed, no existing test altered, no behaviour touched** — only the comment block moved, per the bug report.
+
+All gates green: `cargo fmt --all` → 0, `cargo build` → 0, `cargo clippy --all-targets --all-features -- -D warnings` → 0, `cargo test --lib` → **1522 passed / 0 failed / 4 ignored**, `cargo test` (all targets) → all seven targets green. Committed as `9741cf7` (`fix(M19): restore run_background_in_window doc comment`); working tree clean. Started entry appended to the phase doc's Update Log; status left `in-progress` per contract. For review: deliberate deviation from the original phase's full-spec execution is that round 2 performed no mutation re-run and no re-capture of `/tmp/e2e-13.txt` — the bug report explicitly scopes round 2 to comment placement only ("No behaviour, no test, and no line of `container.rs` changes in round 2"), the original e2e evidence remains in the doc and is still valid against the untouched code, and the server will author the completion entry from this message.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 3.99s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/daemon/background/run.rs` — +16 -17
+
+**Commit:** 9741cf7c1c5356880415f593ed50ab5879f456d1
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).

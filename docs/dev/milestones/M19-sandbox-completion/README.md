@@ -84,7 +84,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 10 | live-verification-and-close | todo (not drafted) |
 | 11 | container-hardening-flags | todo (not drafted; **taken into scope 2026-08-30**) |
 | 12 | workspace-mount-policy | todo (not drafted; **added 2026-08-30**) |
-| 13 | proxy-audit ([phase-13-proxy-audit.md](phase-13-proxy-audit.md)) | in-progress (bounced round 1, [bug-phase-13-1](bugs/bug-phase-13-1.md), 2026-08-31) |
+| 13 | proxy-audit ([phase-13-proxy-audit.md](phase-13-proxy-audit.md)) | review                                                                              |
 | 14 | proxy-credentials | todo (not drafted; **split out of 08, 2026-08-30**) |
 
 **Ordering.** 01 is first and deliberately small: it closes a *known* coverage
