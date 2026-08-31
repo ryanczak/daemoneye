@@ -1,7 +1,7 @@
 # Phase 13: The egress audit — every proxied request in `events.jsonl`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** in-progress (bug-phase-13-1 open)
 **Depends on:** phase-08 (the rendered allowlist and the rule model it parses)
 **Estimated diff:** ~550 lines including tests, across two files
 **Tags:** language=rust, kind=feature, size=m
@@ -961,16 +961,28 @@ its review found that mutating it killed no test, and this phase's
 
    `new_str`: `    host.len() > domain.len() + 1 && host.ends_with(domain)`
 
-   Then, with the marker `== M3 APPLIED ==`, the same `cargo test` line and:
+   Then, with the marker `== M3 APPLIED ==`, use the **full** suite for this
+   pair — not the `sandbox_proxy` filter the other three use:
    ```sh
+   cargo test --lib 2>&1 | grep -E "FAILED|^test result:" | sed 's/; finished in .*//' >> /tmp/e2e-13.txt
    grep -c "host.as_bytes()\[boundary\] == b'.'" src/daemon/executor/container.rs >> /tmp/e2e-13.txt
    ```
-   Measured: **exactly one test fails**,
+   **The filter would be blind here** — M3's test is named
+   `sandbox_filter_lookalike_suffix_is_not_a_subdomain`, which `sandbox_proxy`
+   does not match, so the filtered run reports `20 passed` under a live
+   mutation. *(Corrected at review, 2026-08-31: round 1 was dispatched with the
+   filtered command for this pair. The executor ran it, saw the green count,
+   diagnosed the mismatch, verified through the full suite and said so
+   unprompted rather than reporting conformance — the right outcome from a
+   defective instrument. This is the architect's defect, not the executor's.)*
+
+   Measured on the prototype and re-measured at review: the full suite reports
+   **`1521 passed; 1 failed`**, the one failure being
    `sandbox_filter_lookalike_suffix_is_not_a_subdomain` — the test this phase
    adds precisely to close that gap — and the `grep -c` prints `0`.
 
 2. **Restore.** The inverse `patch`, marker `== M3 RESTORED ==`, the same two
-   commands. `20 passed`, `grep -c` prints `1`.
+   commands. `1522 passed`, `grep -c` prints `1`.
 
 ### Task 8 — Mutation pair M4: identical requests really collapse
 
@@ -1071,6 +1083,16 @@ change, not derived from the spec text.** Every grep below reads a file under
       `== M4 APPLIED ==` each failing **exactly one** test, each the named test
       its task states, all four `RESTORED` runs at `20 passed`, with a
       `grep -c` line after each direction reading the value that task states.
+- [ ] **Round 2 (bug-phase-13-1).** The doc comment
+      `run_background_in_window` had before this phase is back on
+      `run_background_in_window`, and `log_proxy_audit` carries only its own:
+      `grep -B1 '^pub async fn run_background_in_window(' src/daemon/background/run.rs | grep -c '^///'`
+      prints `1` (**currently 0**);
+      `grep -A1 'follow-up commands there via' src/daemon/background/run.rs | grep -c '^pub async fn run_background_in_window($'`
+      prints `1` (**currently 0**); and
+      `awk '/^\/\/\//{n++; next} /^fn log_proxy_audit\(/{print n; exit} {n=0}' src/daemon/background/run.rs`
+      prints `5` (**currently 22**). All three were run against the round-1
+      tree and fail as stated.
 - [ ] No new `#[allow(...)]` anywhere, no `unsafe`, no `TODO`.
 - [ ] All four gates green: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
@@ -1476,3 +1498,34 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 8abacaa92a536b309f67800c27afcef14156be43
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review round 1 — 2026-08-31 (bounced, bug-phase-13-1)
+
+**The code is approved and stays.** Independently re-run by the reviewer, each
+command separately: `cargo fmt --all -- --check` → 0, `cargo build` → 0,
+`cargo clippy --all-targets --all-features -- -D warnings` → 0, `cargo test` →
+**1522 passed; 0 failed; 4 ignored** across all seven targets. All twenty-two
+structural criteria read their pinned values exactly (0 deviations), and
+`cargo test --lib sandbox_proxy | grep -c "^test .* ok$"` → 20.
+
+**M3 was re-run independently by the reviewer** and reproduces exactly as the
+executor described: deleting the dot-boundary check fails the full suite at
+`1521 passed; 1 failed`, naming `sandbox_filter_lookalike_suffix_is_not_a_subdomain`,
+while the `sandbox_proxy`-filtered run still reports `20 passed`. **That was
+an architect defect in Task 7** — the filtered command cannot see a test whose
+name does not match the filter. Task 7 is corrected above. The executor
+detected the mismatch from its own output, verified through the full suite and
+reported the contrast unprompted rather than claiming conformance, which is
+what § Authorizations asks for and is worth recording as the instrument
+working.
+
+**One defect, filed as `bugs/bug-phase-13-1.md` (minor):** Task 3a's insertion
+landed *inside* `run_background_in_window`'s doc comment, so that function now
+has none and its twenty-two-line description documents the four-line
+`log_proxy_audit` helper instead. The completion summary states this was
+restored; it was not — both greps in the bug's Definition of done disagree with
+the claim. Three mechanical criteria were added to § Acceptance criteria and
+each was run against this tree and fails.
+
+Re-dispatch fixes only the comment placement. No behaviour, no test, and no
+line of `container.rs` changes in round 2.
