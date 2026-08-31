@@ -231,6 +231,10 @@ pub async fn run_background_in_window(
             profile_name.as_deref(),
         ) == crate::daemon::executor::container::NetworkMode::Proxy
     {
+        let filter = crate::daemon::executor::container::filter_for_profile(
+            &config.sandbox,
+            profile_name.as_deref(),
+        );
         let (cfg_p, job_p, sid_p) = (config.sandbox.clone(), job_id.clone(), session_id.clone());
         let started = tokio::task::spawn_blocking(move || {
             crate::daemon::executor::container::start_proxy(
@@ -238,6 +242,7 @@ pub async fn run_background_in_window(
                 &job_p,
                 is_ghost,
                 sid_p.as_deref(),
+                &filter,
             )
         })
         .await

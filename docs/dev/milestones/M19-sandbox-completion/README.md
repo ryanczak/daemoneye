@@ -79,7 +79,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 05 | container-status-ipc ([phase-05-container-status-ipc.md](phase-05-container-status-ipc.md)) | **done** (approved_first_try, 2026-08-30) |
 | 06 | proxy-network-and-image ([phase-06-proxy-network-and-image.md](phase-06-proxy-network-and-image.md)) | **done** (approved_first_try, 2026-08-30) |
 | 07 | proxy-profile-wiring ([phase-07-proxy-profile-wiring.md](phase-07-proxy-profile-wiring.md)) | **done** (approved_first_try, 2026-08-30) |
-| 08 | proxy-allowlist ([phase-08-proxy-allowlist.md](phase-08-proxy-allowlist.md)) | todo (drafted 2026-08-30) |
+| 08 | proxy-allowlist ([phase-08-proxy-allowlist.md](phase-08-proxy-allowlist.md)) | in-progress (2026-08-31) |
 | 09 | escape-hatch | todo (not drafted) |
 | 10 | live-verification-and-close | todo (not drafted) |
 | 11 | container-hardening-flags | todo (not drafted; **taken into scope 2026-08-30**) |

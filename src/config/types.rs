@@ -452,6 +452,10 @@ pub struct SandboxProfile {
     /// "none". Default: empty.
     #[serde(default)]
     pub proxy_allow: Vec<String>,
+    /// Hostnames this profile may never reach, even when an allow rule would
+    /// cover them. Deny always beats allow. Default: empty.
+    #[serde(default)]
+    pub proxy_deny: Vec<String>,
 }
 
 fn default_sandbox_profile_network() -> String {
@@ -463,6 +467,7 @@ impl Default for SandboxProfile {
         Self {
             network: default_sandbox_profile_network(),
             proxy_allow: Vec::new(),
+            proxy_deny: Vec::new(),
         }
     }
 }

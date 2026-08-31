@@ -737,6 +737,7 @@ mod tests {
                 SandboxProfile {
                     network: "proxy".to_string(),
                     proxy_allow: Vec::new(),
+                    proxy_deny: Vec::new(),
                 },
             )]),
             ..SandboxConfig::default()

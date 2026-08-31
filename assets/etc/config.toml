@@ -263,7 +263,13 @@ prompt = "sre"
 # [sandbox.profile.researcher]
 # network      = "proxy"    # "none" (default, no route out) or "proxy" (egress
 #                           # via the containerized proxy on a shared network)
-# proxy_allow  = ["crates.io"]   # only consulted when network = "proxy"
+# proxy_allow  = ["crates.io", "*.crates.io"]  # only consulted when network =
+#                           # "proxy". Exact host, or "*.domain" for subdomains
+#                           # (which does NOT include the domain itself); an
+#                           # optional :80 / :443 suffix is allowed.
+# proxy_deny   = []         # hosts this profile may never reach; deny always
+#                           # beats allow, and a deny inside a wildcard allow
+#                           # drops that wildcard
 #
 # [sandbox.ghost_defaults]
 # destroy_on_exit = true   # destroy the container on ghost exit, every path

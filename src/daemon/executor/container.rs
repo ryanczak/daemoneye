@@ -656,6 +656,144 @@ pub fn proxy_filter_path(job_id: &str) -> std::path::PathBuf {
         .join("filter")
 }
 
+/// One parsed egress rule from `proxy_allow` / `proxy_deny`.
+///
+/// The variants are exactly what tinyproxy's filter can express, measured
+/// 2026-08-30: a filter line is an fnmatch pattern tested against the **host
+/// alone**, so `example.com` matches only `example.com`, `*.example.com`
+/// matches its subdomains but **not** the apex, and a `host:port` line
+/// matches nothing at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProxyRule {
+    /// Exactly this host.
+    Host(String),
+    /// Every subdomain of this domain — not the domain itself.
+    Subdomains(String),
+    /// Cannot be enforced; carries the operator-facing reason.
+    Unsupported(String),
+}
+
+/// Parse one rule. Fails closed: anything not certainly expressible becomes
+/// [`ProxyRule::Unsupported`] and is dropped from the rendered filter rather
+/// than approximated into a broader grant.
+///
+/// A `host:port` suffix is accepted for ports **80** and **443** only — the
+/// two the proxy can actually reach (`ConnectPort 443`/`563` caps CONNECT,
+/// measured). Any other port is unsupported: rendering just the host would
+/// silently grant more than was asked for.
+pub fn parse_proxy_rule(rule: &str) -> ProxyRule {
+    let text = rule.trim();
+    if text.is_empty() {
+        return ProxyRule::Unsupported("empty rule".to_string());
+    }
+    if text.contains('/') || text.split_whitespace().count() > 1 {
+        return ProxyRule::Unsupported(format!(
+            "{text:?} is not a hostname — rules are hosts, not URLs"
+        ));
+    }
+    let (host, port) = match text.rsplit_once(':') {
+        Some((h, p)) => match p.parse::<u16>() {
+            Ok(port) => (h, Some(port)),
+            Err(_) => {
+                return ProxyRule::Unsupported(format!("{text:?} has an unparseable port"));
+            }
+        },
+        None => (text, None),
+    };
+    if let Some(port) = port
+        && port != 80
+        && port != 443
+    {
+        return ProxyRule::Unsupported(format!(
+            "{text:?} names port {port}; only 80 and 443 are reachable through the proxy"
+        ));
+    }
+    if host.is_empty() {
+        return ProxyRule::Unsupported(format!("{text:?} has no host"));
+    }
+    if let Some(domain) = host.strip_prefix("*.") {
+        if domain.is_empty() || domain.contains('*') {
+            return ProxyRule::Unsupported(format!("{text:?} is not a usable wildcard"));
+        }
+        return ProxyRule::Subdomains(domain.to_string());
+    }
+    if host.contains('*') {
+        return ProxyRule::Unsupported(format!(
+            "{text:?} — the only wildcard form is a leading \"*.\""
+        ));
+    }
+    ProxyRule::Host(host.to_string())
+}
+
+/// Is `host` a strict subdomain of `domain`?
+fn is_subdomain_of(host: &str, domain: &str) -> bool {
+    host.len() > domain.len() + 1 && host.ends_with(domain) && {
+        let boundary = host.len() - domain.len() - 1;
+        host.as_bytes()[boundary] == b'.'
+    }
+}
+
+/// Does `deny` forbid anything `allow` would grant?
+///
+/// A deny that lands **inside** a wildcard allow returns true, which drops the
+/// whole wildcard. tinyproxy's filter is an allow list with no exception form,
+/// so a narrower grant cannot be expressed — losing the wildcard is the only
+/// way "deny beats allow" can be honoured without leaking the denied host.
+fn deny_covers(deny: &ProxyRule, allow: &ProxyRule) -> bool {
+    match (deny, allow) {
+        (ProxyRule::Host(d), ProxyRule::Host(a)) => d == a,
+        (ProxyRule::Host(d), ProxyRule::Subdomains(a)) => is_subdomain_of(d, a),
+        (ProxyRule::Subdomains(d), ProxyRule::Host(a)) => is_subdomain_of(a, d),
+        (ProxyRule::Subdomains(d), ProxyRule::Subdomains(a)) => a == d || is_subdomain_of(a, d),
+        _ => false,
+    }
+}
+
+/// Render a profile's rules into the file mounted at `/etc/tinyproxy/filter`.
+///
+/// One fnmatch pattern per line, in the order the allow list gave them, with
+/// duplicates removed. An empty result is **deny-all**, which is what an empty
+/// `proxy_allow`, an all-unsupported list, and a fully-denied list each
+/// correctly produce.
+pub fn render_proxy_filter(allow: &[String], deny: &[String]) -> String {
+    let denials: Vec<ProxyRule> = deny.iter().map(|r| parse_proxy_rule(r)).collect();
+    for rule in &denials {
+        if let ProxyRule::Unsupported(why) = rule {
+            log::warn!("sandbox egress deny rule ignored: {why}");
+        }
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for rule in allow.iter().map(|r| parse_proxy_rule(r)) {
+        let line = match &rule {
+            ProxyRule::Host(h) => h.clone(),
+            ProxyRule::Subdomains(d) => format!("*.{d}"),
+            ProxyRule::Unsupported(why) => {
+                log::warn!("sandbox egress allow rule ignored: {why}");
+                continue;
+            }
+        };
+        if denials.iter().any(|d| deny_covers(d, &rule)) {
+            log::warn!("sandbox egress allow rule {line:?} dropped: a deny rule covers it");
+            continue;
+        }
+        if !lines.contains(&line) {
+            lines.push(line);
+        }
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!("{}\n", lines.join("\n"))
+}
+
+/// The filter text for the profile `name`, or deny-all when it has none.
+pub fn filter_for_profile(cfg: &SandboxConfig, name: Option<&str>) -> String {
+    match name.and_then(|n| cfg.profile.get(n)) {
+        Some(p) => render_proxy_filter(&p.proxy_allow, &p.proxy_deny),
+        None => String::new(),
+    }
+}
+
 /// argv creating the job's egress network. `--internal` is the isolation
 /// mechanism: measured, a container on it reaches the proxy by name and
 /// nothing else — not the LAN, not the gateway, not the host loopback.
@@ -782,21 +920,22 @@ pub fn start_proxy(
     job_id: &str,
     is_ghost: bool,
     session_id: Option<&str>,
+    filter: &str,
 ) -> Result<(), String> {
-    let filter = proxy_filter_path(job_id);
-    if let Some(parent) = filter.parent()
+    let path = proxy_filter_path(job_id);
+    if let Some(parent) = path.parent()
         && let Err(e) = std::fs::create_dir_all(parent)
     {
         return Err(format!("sandbox egress filter directory failed: {e}"));
     }
-    if let Err(e) = std::fs::write(&filter, b"") {
+    if let Err(e) = std::fs::write(&path, filter.as_bytes()) {
         return Err(format!("sandbox egress filter write failed: {e}"));
     }
     proxy_step(cfg, "network create", network_create_args(cfg, job_id))?;
     let started = proxy_step(
         cfg,
         "proxy run",
-        proxy_run_args(cfg, job_id, &filter, is_ghost, session_id),
+        proxy_run_args(cfg, job_id, &path, is_ghost, session_id),
     )
     .and_then(|()| proxy_step(cfg, "network connect", network_connect_args(cfg, job_id)));
     if let Err(message) = started {
@@ -3013,6 +3152,7 @@ mod tests {
             crate::config::SandboxProfile {
                 network: network.to_string(),
                 proxy_allow: vec!["example.com".to_string()],
+                proxy_deny: Vec::new(),
             },
         );
         cfg
@@ -3188,5 +3328,170 @@ mod tests {
             "a --network=none job has no proxy to point at: {isolated:?}"
         );
         assert!(!isolated.iter().any(|a| a == "-e"), "{isolated:?}");
+    }
+
+    #[test]
+    fn sandbox_filter_parses_the_three_supported_rule_forms() {
+        assert_eq!(
+            parse_proxy_rule("example.com"),
+            ProxyRule::Host("example.com".to_string())
+        );
+        assert_eq!(
+            parse_proxy_rule("  example.com  "),
+            ProxyRule::Host("example.com".to_string()),
+            "surrounding whitespace is trimmed, not rejected"
+        );
+        assert_eq!(
+            parse_proxy_rule("*.example.com"),
+            ProxyRule::Subdomains("example.com".to_string())
+        );
+        assert_eq!(
+            parse_proxy_rule("example.com:443"),
+            ProxyRule::Host("example.com".to_string())
+        );
+        assert_eq!(
+            parse_proxy_rule("*.example.com:80"),
+            ProxyRule::Subdomains("example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn sandbox_filter_refuses_every_rule_it_cannot_enforce() {
+        // Each of these would otherwise be approximated into a *broader*
+        // grant than the operator wrote. Measured 2026-08-30: a tinyproxy
+        // filter line matches the host alone, so a port cannot be enforced
+        // there, and `ConnectPort 443`/`563` is what caps CONNECT.
+        for bad in [
+            "",
+            "   ",
+            "https://example.com/",
+            "example.com/path",
+            "example.com example.org",
+            "example.com:22",
+            "example.com:8443",
+            "example.com:notaport",
+            "*",
+            "*.",
+            "ex*ple.com",
+            ":443",
+        ] {
+            assert!(
+                matches!(parse_proxy_rule(bad), ProxyRule::Unsupported(_)),
+                "{bad:?} must not parse into a usable rule, got {:?}",
+                parse_proxy_rule(bad)
+            );
+        }
+    }
+
+    #[test]
+    fn sandbox_filter_renders_one_pattern_per_line_in_order() {
+        let out = render_proxy_filter(
+            &[
+                "crates.io".to_string(),
+                "*.crates.io".to_string(),
+                "crates.io".to_string(),
+                "docs.rs:443".to_string(),
+            ],
+            &[],
+        );
+        assert_eq!(out, "crates.io\n*.crates.io\ndocs.rs\n", "{out:?}");
+    }
+
+    #[test]
+    fn sandbox_filter_deny_beats_an_exactly_matching_allow() {
+        let out = render_proxy_filter(
+            &["a.example.com".to_string(), "b.example.com".to_string()],
+            &["a.example.com".to_string()],
+        );
+        assert_eq!(out, "b.example.com\n", "{out:?}");
+    }
+
+    #[test]
+    fn sandbox_filter_a_deny_inside_a_wildcard_drops_the_whole_wildcard() {
+        // tinyproxy's filter is an allow list with no exception form, so the
+        // narrower grant cannot be expressed. Dropping the wildcard is the
+        // only rendering that does not leak the denied host.
+        let out = render_proxy_filter(
+            &["*.example.com".to_string(), "other.org".to_string()],
+            &["secret.example.com".to_string()],
+        );
+        assert_eq!(out, "other.org\n", "{out:?}");
+        assert!(
+            !out.contains("example.com"),
+            "the denied host must not remain reachable through the wildcard: {out:?}"
+        );
+        // A deny that is merely a *sibling* of the wildcard leaves it intact.
+        let unrelated = render_proxy_filter(
+            &["*.example.com".to_string()],
+            &["secret.example.org".to_string()],
+        );
+        assert_eq!(unrelated, "*.example.com\n", "{unrelated:?}");
+        // The apex is not inside its own wildcard — `*.d` never matches `d`.
+        let apex =
+            render_proxy_filter(&["*.example.com".to_string()], &["example.com".to_string()]);
+        assert_eq!(apex, "*.example.com\n", "{apex:?}");
+    }
+
+    #[test]
+    fn sandbox_filter_denies_everything_when_nothing_survives() {
+        // An empty filter file is deny-all (measured), so each of these is a
+        // profile that can reach nothing — never an open door.
+        assert_eq!(render_proxy_filter(&[], &[]), "");
+        assert_eq!(
+            render_proxy_filter(&["example.com:22".to_string()], &[]),
+            "",
+            "an all-unsupported allow list must not fall back to permitting anything"
+        );
+        assert_eq!(
+            render_proxy_filter(&["example.com".to_string()], &["example.com".to_string()]),
+            ""
+        );
+        assert_eq!(
+            render_proxy_filter(
+                &["*.example.com".to_string()],
+                &["*.example.com".to_string()]
+            ),
+            ""
+        );
+    }
+
+    #[test]
+    fn sandbox_filter_for_an_unknown_profile_is_deny_all() {
+        let mut cfg = cfg_with_profile("proxy");
+        cfg.profile
+            .get_mut("researcher")
+            .expect("seeded above")
+            .proxy_deny = vec!["bad.example.com".to_string()];
+        assert_eq!(
+            filter_for_profile(&cfg, Some("researcher")),
+            "example.com\n"
+        );
+        assert_eq!(
+            filter_for_profile(&cfg, Some("analyst")),
+            "",
+            "a profile with no config entry reaches nothing"
+        );
+        assert_eq!(filter_for_profile(&cfg, None), "");
+    }
+
+    #[test]
+    fn sandbox_filter_conf_caps_connect_to_tls_ports() {
+        // Without these two lines tinyproxy opens CONNECT to *any* port on an
+        // allowlisted host — measured 2026-08-30, it dialled example.com:22,
+        // :25 and :3306. That would make the milestone's "HTTP(S) only"
+        // contract false.
+        let conf = include_str!("../../../containers/proxy/tinyproxy.conf");
+        assert!(
+            conf.lines().any(|l| l.trim() == "ConnectPort 443"),
+            "{conf}"
+        );
+        assert!(
+            conf.lines().any(|l| l.trim() == "ConnectPort 563"),
+            "{conf}"
+        );
+        assert!(
+            !conf.lines().any(|l| l.trim() == "ConnectPort 22"),
+            "{conf}"
+        );
     }
 }

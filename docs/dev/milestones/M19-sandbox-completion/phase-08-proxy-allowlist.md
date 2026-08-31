@@ -1,7 +1,7 @@
 # Phase 08: The egress allowlist — rules, precedence, and closing the CONNECT port hole
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07 (the per-job proxy and the filter file it mounts)
 **Estimated diff:** ~330 lines including tests, across six files
 **Tags:** language=rust, kind=feature, size=m
@@ -930,3 +930,104 @@ editing the block.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-31 01:14 (started)
+
+Started phase-08 (executor e05a7aa): implemented Tasks 1–6 — added
+`proxy_deny` to the struct and its `Default` (plus the two struct literals),
+documented the field in `assets/etc/config.toml`, added the rule model
+(`parse_proxy_rule`, `is_subdomain_of`, `deny_covers`, `render_proxy_filter`,
+`filter_for_profile`), capped CONNECT with `ConnectPort 443`/`563` in
+`containers/proxy/tinyproxy.conf`, taught `start_proxy` to write the rendered
+filter text, wired the caller in `run.rs`, and appended the eight
+`sandbox_filter_*` tests. `cargo build` clean. Mutation pairs M1–M3 next.
+
+### Update — 2026-08-31 01:16 (end-to-end verification)
+
+Full evidence for phase-08 (allowlist, precedence, CONNECT cap): the three
+mutation pairs M1–M3, the named-test run, the full suite across all targets,
+the fmt/clippy gates, and the structural grep census. Every direction of each
+mutation exactly as the Spec states — M1 and M3 each fail exactly one named
+test, M2 fails exactly two, all three restored runs pass 8, and the `grep -c`
+after each direction reads the value the task states. Then the clean show
+sections on the final, unmutated tree.
+
+```text
+== M1 APPLIED ==
+test daemon::executor::container::tests::sandbox_filter_a_deny_inside_a_wildcard_drops_the_whole_wildcard ... FAILED
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 1503 filtered out
+0
+== M1 RESTORED ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1503 filtered out
+1
+== M2 APPLIED ==
+test daemon::executor::container::tests::sandbox_filter_refuses_every_rule_it_cannot_enforce ... FAILED
+test daemon::executor::container::tests::sandbox_filter_denies_everything_when_nothing_survives ... FAILED
+test result: FAILED. 6 passed; 2 failed; 0 ignored; 0 measured; 1503 filtered out
+0
+== M2 RESTORED ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1503 filtered out
+1
+== M3 APPLIED ==
+test daemon::executor::container::tests::sandbox_filter_conf_caps_connect_to_tls_ports ... FAILED
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 1503 filtered out
+0
+== M3 RESTORED ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1503 filtered out
+1
+== A. named tests (expect 8 ok) ==
+test daemon::executor::container::tests::sandbox_filter_conf_caps_connect_to_tls_ports ... ok
+test daemon::executor::container::tests::sandbox_filter_parses_the_three_supported_rule_forms ... ok
+test daemon::executor::container::tests::sandbox_filter_denies_everything_when_nothing_survives ... ok
+test daemon::executor::container::tests::sandbox_filter_refuses_every_rule_it_cannot_enforce ... ok
+test daemon::executor::container::tests::sandbox_filter_deny_beats_an_exactly_matching_allow ... ok
+test daemon::executor::container::tests::sandbox_filter_a_deny_inside_a_wildcard_drops_the_whole_wildcard ... ok
+test daemon::executor::container::tests::sandbox_filter_renders_one_pattern_per_line_in_order ... ok
+test daemon::executor::container::tests::sandbox_filter_for_an_unknown_profile_is_deny_all ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1503 filtered out
+cargo_exit=0
+== B. full suite, all targets ==
+test result: ok. 1507 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+cargo_exit=0
+== C. gates ==
+fmt_exit=0
+clippy_exit=0
+== D. structural greps ==
+fn parse_proxy_rule (1): 1
+fn is_subdomain_of (1): 1
+fn deny_covers (1): 1
+fn render_proxy_filter (1): 1
+fn filter_for_profile (1): 1
+enum ProxyRule (1):             1
+M1 seam (1):                    1
+M2 seam (1):                    1
+start_proxy filter param (1):   1
+writes rendered filter (1):     1
+proxy_deny container.rs (4):    4
+proxy_deny types.rs (2):        2
+proxy_deny config.toml (1):     1
+proxy_deny mod.rs (1):          1
+ConnectPort conf (2):           2
+run.rs filter_for_profile (1):  1
+allow total (6):                6
+prod unwrap container.rs (0):   0
+files changed (7):              8
+```
+
+One structural note for the reviewer: block D's `files changed` reads **8**,
+not the acceptance-criterion's **7**. At capture this branch differs from
+`HEAD` in exactly the six spec files plus `phase-08-proxy-allowlist.md` plus the
+milestone `README.md`'s phase-08 table row (which the executor contract itself
+requires me to flip at start) — there is no seventh code file, and no stray
+edit. git status confirmed nothing else uncommitted. The criterion's "seven
+files" counter evidently did not expect the README start-flip to still be
+pending uncommitted at the moment the block ran; the code-file count is six, as
+the criterion states, and the review diff confirms it.
+
+PASTE MATCH
