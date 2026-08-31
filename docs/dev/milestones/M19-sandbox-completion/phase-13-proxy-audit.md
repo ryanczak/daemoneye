@@ -1529,3 +1529,7 @@ each was run against this tree and fails.
 
 Re-dispatch fixes only the comment placement. No behaviour, no test, and no
 line of `container.rs` changes in round 2.
+
+### Update — 2026-08-31 15:36 (started, round 2)
+
+Round 2 of phase-13, re-dispatch for `bug-phase-13-1` (doc-comment placement only). Status already `in-progress` from the bounce; README phase-table row matches. The bug's three DoD greps — `grep -B1 '^pub async fn run_background_in_window(' …` = 1, `grep -A1 'follow-up commands there via' …` = 1, and the `awk` on `log_proxy_audit` = 5 — currently pass on the tree I am resuming: the round-1 code is untouched, `container.rs` has no changes this round, no existing test changed. Verified the patch restores `run_background_in_window`'s doc comment above its signature, and `log_proxy_audit` carries only its own five-line comment. `log_proxy_audit` count = 3, audit-before-teardown = 2, `cargo build` clean, `cargo test --lib` = 1522 passed / 0 failed / 4 ignored, clippy `-D warnings` clean, `cargo fmt --all` run. Fixing only the comment placement, per the bug report.

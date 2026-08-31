@@ -16,23 +16,6 @@ use std::time::Duration;
 // Chat-session background execution
 // ---------------------------------------------------------------------------
 
-/// Run a command in a dedicated tmux window (`de-bg-*`) on the daemon host.
-///
-/// Returns **immediately** after sending the command.  A background task
-/// monitors for completion via two paths:
-///
-/// - **Path A — pane died**: the shell exited (`pane-died` hook → `BG_DONE_TX`
-///   broadcast).  Output is captured, a `[Background Task Completed]` context
-///   message is injected, and the window is GC'd.
-/// - **Path B — exit marker found**: the command finished but the shell is still
-///   alive.  A `DAEMONEYE_EXIT_<id>:<N>` marker appended to the command detects
-///   this by scanning the pane scrollback every second.  Output is captured,
-///   context is injected, and the window is left open for follow-up commands.
-///
-/// The AI receives `[Background Task Completed]` asynchronously in its next
-/// turn.  The returned string includes the pane ID so the AI can direct
-/// follow-up commands there via `target="<pane_id>"`.
-///
 /// Drain the job proxy's log into `events.jsonl`, one record per request.
 ///
 /// Called at both completion sites **before** `remove_proxy`: a removed
@@ -51,6 +34,22 @@ fn log_proxy_audit(
     }
 }
 
+/// Run a command in a dedicated tmux window (`de-bg-*`) on the daemon host.
+///
+/// Returns **immediately** after sending the command.  A background task
+/// monitors for completion via two paths:
+///
+/// - **Path A — pane died**: the shell exited (`pane-died` hook → `BG_DONE_TX`
+///   broadcast).  Output is captured, a `[Background Task Completed]` context
+///   message is injected, and the window is GC'd.
+/// - **Path B — exit marker found**: the command finished but the shell is still
+///   alive.  A `DAEMONEYE_EXIT_<id>:<N>` marker appended to the command detects
+///   this by scanning the pane scrollback every second.  Output is captured,
+///   context is injected, and the window is left open for follow-up commands.
+///
+/// The AI receives `[Background Task Completed]` asynchronously in its next
+/// turn.  The returned string includes the pane ID so the AI can direct
+/// follow-up commands there via `target="<pane_id>"`.
 pub async fn run_background_in_window(
     session: &str,
     _tool_id: &str,
