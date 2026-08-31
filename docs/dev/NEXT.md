@@ -2970,3 +2970,34 @@ Phase-08 drafting notes:
 - Prototype: 1499 → **1507**, four gates green, ~330 lines. Every criterion
   validated by running the § End-to-end block verbatim against the clean tree
   — all 19 discriminating lines report `0`.
+
+**phase-08 — proxy-allowlist: done (approved_first_try) 2026-08-31**, commit
+`90e74c5` + approval pending below. 1499 → 1507 lib tests. Executor's source
+was **byte-identical to the architect's reverted prototype**, no exceptions.
+`ConnectPort 443`/`563` is in the image conf, so the milestone's "egress is
+HTTP(S) only" contract is now true rather than assumed.
+
+**Carry to phase-13 (architect omission, not an executor defect):** the
+reviewer's own mutation showed that removing the dot-boundary check from
+`is_subdomain_of` (`src/daemon/executor/container.rs`) kills **no** test.
+Measured consequence: allow `*.example.com` + deny `evilexample.com` then
+renders `""` instead of the grant — it **over-denies** in both directions and
+cannot over-grant, so the seam is fail-closed and the finding is minor. The
+code is correct; the eight tests were specified verbatim by the architect and
+implemented exactly. Add `sandbox_filter_lookalike_suffix_is_not_a_subdomain`
+with the next change to this module.
+
+**Instrument retired: `git diff --name-only | wc -l` as an acceptance
+criterion.** Two misfires in two phases — `3` against a pinned `2` (07), `8`
+against a pinned `7` (08) — both on correct trees, because the value depends
+on how many doc commits the executor has already made. Replaced in phase-08
+with `git diff --name-only | grep -cE '^(src|containers|assets)/'`, which
+counts only what a phase authorises. Use that form from now on.
+
+**A spec change answered a 2-occurrence calibration pattern, so it does not
+need folding.** Phase-06 and phase-07 both shipped summaries that generalised
+past their own evidence. Phase-08's § Authorizations added "if a pasted number
+disagrees with the value the criterion states, say so in your summary rather
+than reporting overall conformance" — and this run opened by naming the
+mismatch unprompted, with its structural cause. Worth remembering as the
+cheaper lever: a targeted Authorizations line, not a WORKFLOW.md fold.
