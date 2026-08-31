@@ -1,7 +1,7 @@
 # Phase 13: The egress audit — every proxied request in `events.jsonl`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** done
 **Depends on:** phase-08 (the rendered allowlist and the rule model it parses)
 **Estimated diff:** ~550 lines including tests, across two files
 **Tags:** language=rust, kind=feature, size=m
@@ -1675,3 +1675,45 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 9741cf7c1c5356880415f593ed50ab5879f456d1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-31
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bugs/bug-phase-13-1.md`, minor — resolved round 2)
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none in round 2. `git diff` for `9741cf7` touches
+  `src/daemon/background/run.rs` only, +16 −17, and it is the comment block
+  moving — `container.rs` is byte-identical across the round, as the bug doc
+  required.
+- **Calibration:** two entries, one for the executor and one for me.
+  1. **The executor reported a defective instrument instead of conforming to
+     it** — twice now. Round 1's Task 7 gave it a `sandbox_proxy`-filtered test
+     command that structurally cannot see M3's test; it ran the command, saw
+     `20 passed` under a live mutation, diagnosed the name mismatch, verified
+     through the full suite and said so unprompted. Round 2 it declined to
+     re-run the mutation pairs, citing the bug doc's "no line of
+     `container.rs` changes in round 2" — the correct reading, stated with its
+     reason. Both are the phase-08 § Authorizations line working, and both are
+     evidence that the **targeted Authorizations line is the cheaper lever
+     than a WORKFLOW.md fold** (recorded at phase-08; second and third
+     confirmations here).
+  2. **A count criterion must be validated against the test-name filter it
+     runs under, not only against the tree.** Task 7's command was correct
+     Rust and correct grep, and still blind: `cargo test --lib sandbox_proxy`
+     cannot fail on a test named `sandbox_filter_*`. This is a **new**
+     sub-case of § "Run every count criterion; never derive it" — the existing
+     rule catches a criterion whose corpus contains its own answer, not one
+     whose *filter* excludes its own subject. **Held at 1 occurrence.**
+- **Independent verification at review:** all four gates re-run separately —
+  fmt 0, build 0, clippy 0, `cargo test` 1522 passed / 0 failed / 4 ignored
+  across all seven targets. All twenty-two round-1 structural criteria and all
+  three round-2 criteria read their pinned values (1 / 1 / 5). M3 was re-run
+  by the reviewer in round 1 and reproduces. A **third mutation the phase doc
+  does not name** — deleting the `("denied", "port")` branch from
+  `decision_for` — fails exactly
+  `sandbox_proxy_log_decides_each_request_from_the_line_that_follows_it`
+  (1521 passed / 1 failed) and nothing else.
+- **Warning, not a defect:** round 2's completion summary opened with a leaked
+  `</think>` block — the model's reasoning reached the summary field. It is
+  legible and its conclusions were correct; noted so a pattern can be seen if
+  it recurs.

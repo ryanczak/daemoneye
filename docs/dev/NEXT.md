@@ -3059,3 +3059,55 @@ Phase-13 drafting notes:
 - All 21 lines of the § End-to-end structural block were run against the clean
   tree: every discriminating line reads its stated "before" value, and the
   five unchanged ones read their stated unchanged value.
+
+**phase-13 — proxy-audit: done (approved_after_1) 2026-08-31**, commits
+`8abacaa` (round 1) + `9741cf7` (round 2) + approval below. 1507 → **1522**
+lib tests. Every sandboxed egress request now lands in `events.jsonl` as a
+`proxy_request` record — host, port, method, decision, reason, matched rule,
+`proxy_type: "forward"`, repeat count — drained from the job proxy's log at
+teardown, before `remove_proxy` takes the container's log with it.
+
+Round-1 source was **byte-identical to the architect's reverted prototype**.
+The single bounce (`bug-phase-13-1`, minor) was a doc comment: Task 3a's
+insertion landed *inside* `run_background_in_window`'s doc block, so that
+function lost its documentation and its 22-line description came to document
+a 4-line helper. Round 2 moved the comment and touched nothing else —
+`container.rs` byte-identical across the round.
+
+**Two calibration entries, one each side.**
+
+1. **The targeted § Authorizations line is the cheaper lever, confirmed twice
+   more.** Round 1: Task 7 handed the executor a `sandbox_proxy`-filtered test
+   command that structurally cannot see M3's test (named `sandbox_filter_*`);
+   it ran the command, saw `20 passed` under a live mutation, diagnosed the
+   name mismatch, verified through the full suite and reported the contrast
+   unprompted. Round 2: it declined to re-run the mutation pairs, citing the
+   bug doc's "no line of `container.rs` changes in round 2" — the correct
+   reading, with its reason stated. That is the phase-08 Authorizations line
+   ("if a pasted number disagrees with the value the criterion states, say
+   so") working for the second and third time. **Recorded as settled: prefer a
+   targeted Authorizations line to a WORKFLOW.md fold.**
+2. **New sub-case, held at 1 occurrence: a count criterion must be validated
+   against the test-name filter it runs under, not only against the tree.**
+   Task 7's command was correct grep over a correct tree and still blind.
+   § "Run every count criterion; never derive it" catches a criterion whose
+   *corpus* contains its own answer; it does not catch one whose *filter*
+   excludes its own subject. The drafting check that would have caught it:
+   after writing a `cargo test --lib <filter>` criterion, confirm the test it
+   is meant to discriminate actually matches `<filter>`.
+
+**Warning, not a defect:** round 2's completion summary opened with a leaked
+`</think>` block — the model's reasoning reached the summary field. Legible,
+conclusions correct; noted so a pattern can be seen if it recurs.
+
+**Reviewer's independent verification:** all four gates re-run separately
+(1522 passed / 0 failed / 4 ignored across seven targets), all 22 round-1 and
+3 round-2 structural criteria at their pinned values, M3 re-run and
+reproducing, plus a **third mutation the phase doc does not name** — deleting
+the `("denied", "port")` branch from `decision_for` — failing exactly
+`sandbox_proxy_log_decides_each_request_from_the_line_that_follows_it`.
+
+Remaining M19 phases: 09 escape-hatch, 10 live-verification-and-close,
+11 container-hardening-flags, 12 workspace-mount-policy, 14 proxy-credentials
+— none drafted. 14 completes the 08 split (08 + 13 + 14 together meet the
+milestone's egress exit criterion); 10 stays the close-out.

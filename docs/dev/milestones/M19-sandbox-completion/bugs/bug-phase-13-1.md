@@ -1,7 +1,7 @@
 # Bug 1 on phase-13: `run_background_in_window`'s doc comment was absorbed into `log_proxy_audit`
 
 **Severity:** minor
-**Status:** open
+**Status:** resolved (round 2, 2026-08-31, commit `9741cf7`)
 **Filed:** 2026-08-31
 
 ## What's wrong
@@ -80,16 +80,16 @@ call sites, none looked at what sat between them.
 
 Each command is run against the current tree first and **fails** as shown:
 
-- [ ] `grep -B1 '^pub async fn run_background_in_window(' src/daemon/background/run.rs | grep -c '^///'`
+- [x] `grep -B1 '^pub async fn run_background_in_window(' src/daemon/background/run.rs | grep -c '^///'`
       prints `1` (**currently 0**).
-- [ ] `grep -A1 'follow-up commands there via' src/daemon/background/run.rs | grep -c '^pub async fn run_background_in_window($'`
+- [x] `grep -A1 'follow-up commands there via' src/daemon/background/run.rs | grep -c '^pub async fn run_background_in_window($'`
       prints `1` (**currently 0**) — the last line of the original doc comment
       is immediately followed by the function it documents.
-- [ ] `awk '/^\/\/\//{n++; next} /^fn log_proxy_audit\(/{print n; exit} {n=0}' src/daemon/background/run.rs`
+- [x] `awk '/^\/\/\//{n++; next} /^fn log_proxy_audit\(/{print n; exit} {n=0}' src/daemon/background/run.rs`
       prints `5` (**currently 22**) — the helper carries its own doc comment
       and only its own.
-- [ ] `grep -c 'log_proxy_audit' src/daemon/background/run.rs` still prints `3`
+- [x] `grep -c 'log_proxy_audit' src/daemon/background/run.rs` still prints `3`
       and `sed -n '/pub async fn run_background_in_window/,$p' src/daemon/background/run.rs | awk '/log_proxy_audit/{p=1} /container::remove_proxy\(/{if(p){n++;p=0}} END{print n+0}'`
       still prints `2` — the fix moves a comment, not a call.
-- [ ] `cargo test --lib` still reports **1522** passing, `0 failed`, `4
+- [x] `cargo test --lib` still reports **1522** passing, `0 failed`, `4
       ignored`, and all four gates stay green.
