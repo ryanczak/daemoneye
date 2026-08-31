@@ -3001,3 +3001,61 @@ disagrees with the value the criterion states, say so in your summary rather
 than reporting overall conformance" — and this run opened by naming the
 mismatch unprompted, with its structural cause. Worth remembering as the
 cheaper lever: a targeted Authorizations line, not a WORKFLOW.md fold.
+
+**Active phase: phase-13 — proxy-audit**
+(`docs/dev/milestones/M19-sandbox-completion/phase-13-proxy-audit.md`,
+status: todo, drafted 2026-08-31). Dispatch with
+`/rexymcp:dispatch phase-13`. Drains each job proxy's log at teardown into
+`events.jsonl` — host, port, method, decision, reason, matched rule,
+`proxy_type`, repeat count.
+
+**Ordering choice:** 13 was drafted ahead of 09, 11 and 12 because it is the
+continuation of the chain that just landed (06 → 07 → 08 → **13** → 14) and
+the proxy's live behaviour was measurable in one drafting session. 09, 11 and
+12 are independent of it and of each other; 10 stays the close-out.
+
+Phase-13 drafting notes:
+
+- **Prototyped, mutated and run against a live proxy before speccing, then
+  reverted.** 1507 → **1522** (15 tests), four gates green, ~550 lines across
+  two files. Five mutations run; four discriminate exactly one named test
+  each and are specced as pairs. The fifth (deleting the path-stripping split)
+  fails **six** tests — too wide to be a useful discriminator, so the seam is
+  pinned by a `grep -cF` criterion and the six names are recorded in § Test
+  plan as architect evidence rather than asked of the executor.
+- **The parser's design came from a concurrency measurement, not from
+  reading.** tinyproxy's decision lines carry **no** file descriptor, so exact
+  attribution is impossible from the log. Under twelve-way concurrency every
+  refusal still appeared on the line immediately after its own `Request` line
+  (the filter and port checks are synchronous), while the allow path
+  interleaves freely. Hence the rule: a request is denied only if the **next**
+  line is one of the two refusal forms *and* that form's own guard — the host
+  it names, or the port it names — matches this request. Any other next line
+  means allowed, which is correct no matter whose line it is.
+- **A real egress gap was measured and is deliberately *not* closed here.**
+  `GET http://example.com:8080/` succeeds through an allowlist of
+  `example.com`: `ConnectPort` caps the CONNECT method only, and a filter line
+  cannot express a port. Recorded in the README as a milestone gap; the audit
+  record's `port` field is what makes it visible meanwhile.
+- **The audit must not become a secret sink.** The proxy logs the whole
+  absolute URI — captured verbatim: `GET http://example.com/secret?token=abc`.
+  `mask_json_value` would not catch a bearer token in a query parameter, so
+  the record carries host, port and method only, and two tests assert on the
+  **serialized event** rather than on a struct field.
+- **Order is the phase's real failure mode**, and it has a mechanical
+  criterion rather than prose: `docker rm` takes the container's log with it,
+  so an audit after `remove_proxy` writes zero records with a green suite. An
+  `awk` over `run.rs` pins audit-before-teardown at **2** (0 today).
+- **`container.rs` keeps its zero `log_event` calls** — the module stays pure
+  decisions plus one spawn per operation, and the event is written from
+  `run.rs` beside `job_complete`. Pinned as an unchanged-at-0 criterion so the
+  executor cannot "helpfully" move it.
+- **The phase-08 carry landed**: `sandbox_filter_lookalike_suffix_is_not_a_subdomain`
+  is in this phase's test block, and mutating the dot boundary in
+  `is_subdomain_of` now fails exactly that test (it failed none before).
+- **The built proxy image on the daemon host was stale** and the first probe
+  read as a phase-08 regression that did not exist. Rebuilt, re-measured,
+  confirmed. Recorded in the README for the phase-10 live checks.
+- All 21 lines of the § End-to-end structural block were run against the clean
+  tree: every discriminating line reads its stated "before" value, and the
+  five unchanged ones read their stated unchanged value.

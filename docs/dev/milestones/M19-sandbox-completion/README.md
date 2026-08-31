@@ -84,7 +84,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 10 | live-verification-and-close | todo (not drafted) |
 | 11 | container-hardening-flags | todo (not drafted; **taken into scope 2026-08-30**) |
 | 12 | workspace-mount-policy | todo (not drafted; **added 2026-08-30**) |
-| 13 | proxy-audit | todo (not drafted; **split out of 08, 2026-08-30**) |
+| 13 | proxy-audit ([phase-13-proxy-audit.md](phase-13-proxy-audit.md)) | todo (drafted 2026-08-31) |
 | 14 | proxy-credentials | todo (not drafted; **split out of 08, 2026-08-30**) |
 
 **Ordering.** 01 is first and deliberately small: it closes a *known* coverage
@@ -367,6 +367,25 @@ Phase intents:
   host *outside* isolation and says so; daemoneye's broker-native tools have
   the same posture, already documented in `CLAUDE.md` — a parallel, not a
   gap.
+
+- **Gap found drafting phase-13 (2026-08-31): `ConnectPort` caps CONNECT
+  only, so plain HTTP still reaches any port on an allowlisted host.**
+  Measured live: with filter `example.com`, `GET http://example.com:8080/`
+  succeeds — tinyproxy opens a socket to 8080 and relays. `ConnectPort 443` /
+  `563` (phase-08) governs the CONNECT method alone, and a filter line cannot
+  express a port (also measured, phase-08), so this is **not** fixable by
+  rendering the filter differently. The milestone's "egress is HTTP(S) only"
+  contract therefore holds for tunnels and not for plain HTTP. Not in any
+  phase's scope: phase-13 makes it *visible* (the audit record carries the
+  port) but does not close it. Closing it needs either an upstream filter the
+  proxy image does not have today or a different proxy — a decision for the
+  phase-10 sweep or a later milestone.
+
+- **Live note (2026-08-31): the built `daemoneye-egress-proxy` on the daemon
+  host can be older than `containers/proxy/`.** The image built during 06/07
+  predated phase-08's `ConnectPort` lines, and a probe against it showed
+  CONNECT to port 22 succeeding — a regression that was not there. Phase-10's
+  live checks must rebuild before they measure.
 
 - **`container:shell` (interactive tty relay) stays deferred** — still an open
   question in the design doc, and nothing in M18 settled it.
