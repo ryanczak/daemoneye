@@ -32,6 +32,25 @@ use std::time::Duration;
 /// The AI receives `[Background Task Completed]` asynchronously in its next
 /// turn.  The returned string includes the pane ID so the AI can direct
 /// follow-up commands there via `target="<pane_id>"`.
+///
+/// Drain the job proxy's log into `events.jsonl`, one record per request.
+///
+/// Called at both completion sites **before** `remove_proxy`: a removed
+/// container takes its log with it. Blocking, so it runs inside the same
+/// `spawn_blocking` as the teardown it precedes.
+fn log_proxy_audit(
+    cfg: &crate::config::SandboxConfig,
+    job_id: &str,
+    session: Option<&str>,
+    rules: &(Vec<String>, Vec<String>),
+) {
+    for record in
+        crate::daemon::executor::container::collect_proxy_audit(cfg, job_id, &rules.0, &rules.1)
+    {
+        log_event("proxy_request", record.to_event(job_id, session));
+    }
+}
+
 pub async fn run_background_in_window(
     session: &str,
     _tool_id: &str,
@@ -68,6 +87,10 @@ pub async fn run_background_in_window(
                 .and_then(|e| e.ghost_config.as_ref().and_then(|g| g.agent.clone()))
         })
     });
+    let proxy_rules = crate::daemon::executor::container::proxy_rules_for_profile(
+        &config.sandbox,
+        profile_name.as_deref(),
+    );
 
     let prefix = if let Some(sid) = &session_id {
         if is_ghost {
@@ -457,9 +480,12 @@ pub async fn run_background_in_window(
 
             if config.sandbox.enabled {
                 let (cfg_v, job_v) = (config.sandbox.clone(), job_id.clone());
+                let rules_v = proxy_rules.clone();
+                let sid_v = session_id.clone();
                 tokio::task::spawn_blocking(move || {
                     crate::daemon::executor::container::remove_stage_volume(&cfg_v, &job_v);
                     if proxy_started {
+                        log_proxy_audit(&cfg_v, &job_v, sid_v.as_deref(), &rules_v);
                         crate::daemon::executor::container::remove_proxy(&cfg_v, &job_v);
                     }
                 });
@@ -597,12 +623,20 @@ pub async fn run_background_in_window(
                 .unwrap_or_default();
 
                 if sandbox_bg.enabled {
+                    let rules_bg = proxy_rules.clone();
+                    let sid_audit = session_id_bg.clone();
                     tokio::task::spawn_blocking(move || {
                         crate::daemon::executor::container::remove_stage_volume(
                             &sandbox_bg,
                             &job_id_bg,
                         );
                         if proxy_started {
+                            log_proxy_audit(
+                                &sandbox_bg,
+                                &job_id_bg,
+                                sid_audit.as_deref(),
+                                &rules_bg,
+                            );
                             crate::daemon::executor::container::remove_proxy(
                                 &sandbox_bg,
                                 &job_id_bg,

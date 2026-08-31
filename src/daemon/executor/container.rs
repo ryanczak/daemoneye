@@ -794,6 +794,277 @@ pub fn filter_for_profile(cfg: &SandboxConfig, name: Option<&str>) -> String {
     }
 }
 
+/// Which profile rule governed a host, if any.
+///
+/// Deny beats allow, exactly as [`render_proxy_filter`] renders it, so a host
+/// covered by both reports the deny.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleMatch {
+    /// The `proxy_allow` entry, verbatim, that permits this host.
+    Allow(String),
+    /// The `proxy_deny` entry, verbatim, that forbids it.
+    Deny(String),
+    /// Nothing in either list names it — the deny-by-default case.
+    None,
+}
+
+impl RuleMatch {
+    /// The audit record's `rule` field: `"allow:<rule>"`, `"deny:<rule>"` or
+    /// `"none"`. One string, so a reader can grep a rule out of the log.
+    pub fn label(&self) -> String {
+        match self {
+            RuleMatch::Allow(r) => format!("allow:{r}"),
+            RuleMatch::Deny(r) => format!("deny:{r}"),
+            RuleMatch::None => "none".to_string(),
+        }
+    }
+}
+
+/// Does one parsed rule name `host`?
+///
+/// Mirrors what tinyproxy's filter actually matches (measured 2026-08-30):
+/// [`ProxyRule::Host`] is exact, [`ProxyRule::Subdomains`] excludes the apex,
+/// and [`ProxyRule::Unsupported`] never reaches the filter so it never matches.
+fn rule_names_host(rule: &ProxyRule, host: &str) -> bool {
+    match rule {
+        ProxyRule::Host(h) => h == host,
+        ProxyRule::Subdomains(d) => is_subdomain_of(host, d),
+        ProxyRule::Unsupported(_) => false,
+    }
+}
+
+/// The rule that governed `host`, for the audit record.
+///
+/// Deny is checked first because [`render_proxy_filter`] drops any allow a
+/// deny covers; reporting the allow would name a line that was never written
+/// to the filter.
+pub fn match_proxy_rule(host: &str, allow: &[String], deny: &[String]) -> RuleMatch {
+    for rule in deny {
+        if rule_names_host(&parse_proxy_rule(rule), host) {
+            return RuleMatch::Deny(rule.trim().to_string());
+        }
+    }
+    for rule in allow {
+        if rule_names_host(&parse_proxy_rule(rule), host) {
+            return RuleMatch::Allow(rule.trim().to_string());
+        }
+    }
+    RuleMatch::None
+}
+
+/// One audited egress request.
+///
+/// Deliberately **host, port and method only** — never the path or query.
+/// Measured 2026-08-30: the proxy logs the full absolute URI
+/// (`GET http://example.com/secret?token=abc HTTP/1.1`), so keeping the target
+/// would turn `events.jsonl` into a secret sink.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProxyAudit {
+    /// `GET`, `CONNECT`, … as the client sent it.
+    pub method: String,
+    /// Destination host, with any userinfo stripped.
+    pub host: String,
+    /// Destination port, defaulted from the scheme when the URI omits it.
+    pub port: u16,
+    /// `"allowed"` or `"denied"`.
+    pub decision: &'static str,
+    /// `"allowed"`, `"filtered"` (host not in the filter) or `"port"`
+    /// (CONNECT to a port `ConnectPort` does not permit).
+    pub reason: &'static str,
+    /// The governing rule, or `RuleMatch::None`.
+    pub rule: RuleMatch,
+    /// How many identical consecutive requests this record stands for; 1 for
+    /// a single request.
+    pub repeats: u32,
+}
+
+impl ProxyAudit {
+    /// The `events.jsonl` payload for this record.
+    ///
+    /// `proxy_type` is `"forward"` and exists from the first release so that a
+    /// later transparent proxy is a new value rather than a schema change
+    /// (M19 README, 06 intent).
+    pub fn to_event(&self, job_id: &str, session: Option<&str>) -> serde_json::Value {
+        serde_json::json!({
+            "session": session.unwrap_or("-"),
+            "job_id": job_id,
+            "proxy_type": "forward",
+            "method": self.method,
+            "host": self.host,
+            "port": self.port,
+            "decision": self.decision,
+            "reason": self.reason,
+            "rule": self.rule.label(),
+            "repeats": self.repeats,
+        })
+    }
+}
+
+/// Pull `(method, host, port)` out of one tinyproxy `Request` line.
+///
+/// The two shapes, measured verbatim:
+///
+/// ```text
+/// CONNECT   Aug 31 03:32:20.545 [1]: Request (file descriptor 4): GET http://example.com/ HTTP/1.1
+/// CONNECT   Aug 31 03:32:20.590 [1]: Request (file descriptor 4): CONNECT example.com:443 HTTP/1.1
+/// ```
+fn parse_request_line(line: &str) -> Option<(String, String, u16)> {
+    let rest = line.split_once("]: Request (file descriptor ")?.1;
+    let rest = rest.split_once("): ")?.1;
+    let mut parts = rest.split_whitespace();
+    let method = parts.next()?;
+    let target = parts.next()?;
+    let (authority, default_port) = if method == "CONNECT" {
+        (target, 443u16)
+    } else {
+        let after_scheme = match target.split_once("://") {
+            Some(("https", rest)) => return split_authority(method, rest, 443),
+            Some((_, rest)) => rest,
+            None => target,
+        };
+        (after_scheme, 80u16)
+    };
+    split_authority(method, authority, default_port)
+}
+
+/// Split `[user:pw@]host[:port][/path]` into host and port.
+fn split_authority(
+    method: &str,
+    authority: &str,
+    default_port: u16,
+) -> Option<(String, String, u16)> {
+    let authority = authority.split(['/', '?', '#']).next()?;
+    let authority = match authority.rsplit_once('@') {
+        Some((_, host)) => host,
+        None => authority,
+    };
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) => match p.parse::<u16>() {
+            Ok(port) => (h, port),
+            Err(_) => (authority, default_port),
+        },
+        None => (authority, default_port),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some((method.to_string(), host.to_string(), port))
+}
+
+/// The decision for a request, read off the line that follows it.
+///
+/// Measured 2026-08-30 under twelve-way concurrency: a refusal is emitted
+/// **immediately** after its own `Request` line, because the filter and port
+/// checks are synchronous, while the allow path's lines interleave freely.
+/// Both refusal forms are guarded by host or port, so a refusal belonging to a
+/// different request cannot be mis-attributed unless it names the same host or
+/// port — in which case the decision would have been the same anyway.
+fn decision_for(next: Option<&str>, host: &str, port: u16) -> (&'static str, &'static str) {
+    let Some(next) = next else {
+        return ("allowed", "allowed");
+    };
+    if next.ends_with(&format!("Proxying refused on filtered domain \"{host}\"")) {
+        return ("denied", "filtered");
+    }
+    if next.ends_with(&format!("Refused CONNECT method on port {port}")) {
+        return ("denied", "port");
+    }
+    ("allowed", "allowed")
+}
+
+/// Parse a job proxy's whole log into audit records, collapsing identical
+/// consecutive requests into one record with a `repeats` count.
+///
+/// Lines that are not requests — the boot banner, `Connect (file descriptor
+/// …)`, `opensock`, `Closed connection` — produce nothing.
+pub fn parse_proxy_log(log: &str) -> Vec<ProxyAudit> {
+    let lines: Vec<&str> = log.lines().collect();
+    let mut out: Vec<ProxyAudit> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let Some((method, host, port)) = parse_request_line(line) else {
+            continue;
+        };
+        let (decision, reason) = decision_for(lines.get(i + 1).copied(), &host, port);
+        if let Some(last) = out.last_mut()
+            && last.method == method
+            && last.host == host
+            && last.port == port
+            && last.decision == decision
+            && last.reason == reason
+        {
+            last.repeats += 1;
+            continue;
+        }
+        out.push(ProxyAudit {
+            method,
+            host,
+            port,
+            decision,
+            reason,
+            rule: RuleMatch::None,
+            repeats: 1,
+        });
+    }
+    out
+}
+
+/// Parse the log and attribute each record to the rule that governed it.
+pub fn audit_proxy_log(log: &str, allow: &[String], deny: &[String]) -> Vec<ProxyAudit> {
+    let mut records = parse_proxy_log(log);
+    for record in &mut records {
+        record.rule = match_proxy_rule(&record.host, allow, deny);
+    }
+    records
+}
+
+/// argv reading the job proxy's log. Must run **before** [`remove_proxy`] —
+/// a removed container's log is gone with it.
+pub fn proxy_logs_args(cfg: &SandboxConfig, job_id: &str) -> Vec<String> {
+    vec![
+        "--host".to_string(),
+        cfg.docker_host.clone(),
+        "logs".to_string(),
+        proxy_container_name(job_id),
+    ]
+}
+
+/// Read the job proxy's log and return its audit records.
+///
+/// The one spawn site for the audit; a docker failure yields no records and a
+/// warning rather than failing the job, because the command has already run.
+pub fn collect_proxy_audit(
+    cfg: &SandboxConfig,
+    job_id: &str,
+    allow: &[String],
+    deny: &[String],
+) -> Vec<ProxyAudit> {
+    let out = std::process::Command::new(&cfg.runtime)
+        .args(proxy_logs_args(cfg, job_id))
+        .output();
+    match out {
+        Ok(o) => {
+            let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&o.stderr));
+            audit_proxy_log(&text, allow, deny)
+        }
+        Err(e) => {
+            log::warn!("sandbox egress audit unavailable for {job_id}: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// The `proxy_allow` / `proxy_deny` lists for the profile `name`.
+pub fn proxy_rules_for_profile(
+    cfg: &SandboxConfig,
+    name: Option<&str>,
+) -> (Vec<String>, Vec<String>) {
+    match name.and_then(|n| cfg.profile.get(n)) {
+        Some(p) => (p.proxy_allow.clone(), p.proxy_deny.clone()),
+        None => (Vec::new(), Vec::new()),
+    }
+}
+
 /// argv creating the job's egress network. `--internal` is the isolation
 /// mechanism: measured, a container on it reaches the proxy by name and
 /// nothing else — not the LAN, not the gateway, not the host loopback.
@@ -3492,6 +3763,253 @@ mod tests {
         assert!(
             !conf.lines().any(|l| l.trim() == "ConnectPort 22"),
             "{conf}"
+        );
+    }
+
+    /// A verbatim excerpt of a real job proxy's log, captured on the daemon
+    /// host 2026-08-31 with filter `example.com` + `*.wikipedia.org`. Every
+    /// parser test below reads a slice of this rather than an invented shape.
+    const PROXY_LOG: &str = concat!(
+        "NOTICE    Aug 31 03:32:11.169 [1]: Initializing tinyproxy ...\n",
+        "INFO      Aug 31 03:32:11.169 [1]: Starting main loop. Accepting connections.\n",
+        "CONNECT   Aug 31 03:32:20.545 [1]: Connect (file descriptor 4): 172.18.0.3\n",
+        "CONNECT   Aug 31 03:32:20.545 [1]: Request (file descriptor 4): GET http://example.com/ HTTP/1.1\n",
+        "INFO      Aug 31 03:32:20.545 [1]: No upstream proxy for example.com\n",
+        "INFO      Aug 31 03:32:20.545 [1]: opensock: opening connection to example.com:80\n",
+        "CONNECT   Aug 31 03:32:20.590 [1]: Request (file descriptor 4): CONNECT example.com:443 HTTP/1.1\n",
+        "INFO      Aug 31 03:32:20.590 [1]: No upstream proxy for example.com\n",
+        "CONNECT   Aug 31 03:32:20.681 [1]: Request (file descriptor 4): GET http://www.example.com/ HTTP/1.1\n",
+        "NOTICE    Aug 31 03:32:20.681 [1]: Proxying refused on filtered domain \"www.example.com\"\n",
+        "CONNECT   Aug 31 03:32:20.683 [1]: Request (file descriptor 4): CONNECT en.wikipedia.org:443 HTTP/1.1\n",
+        "INFO      Aug 31 03:32:20.683 [1]: No upstream proxy for en.wikipedia.org\n",
+        "CONNECT   Aug 31 03:32:20.787 [1]: Request (file descriptor 4): CONNECT example.com:22 HTTP/1.1\n",
+        "INFO      Aug 31 03:32:20.787 [1]: Refused CONNECT method on port 22\n",
+    );
+
+    #[test]
+    fn sandbox_proxy_log_reads_method_host_and_port_from_every_request() {
+        let records = parse_proxy_log(PROXY_LOG);
+        let seen: Vec<(String, String, u16)> = records
+            .iter()
+            .map(|r| (r.method.clone(), r.host.clone(), r.port))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("GET".to_string(), "example.com".to_string(), 80),
+                ("CONNECT".to_string(), "example.com".to_string(), 443),
+                ("GET".to_string(), "www.example.com".to_string(), 80),
+                ("CONNECT".to_string(), "en.wikipedia.org".to_string(), 443),
+                ("CONNECT".to_string(), "example.com".to_string(), 22),
+            ],
+            "boot, opensock and Connect lines must produce nothing"
+        );
+    }
+
+    #[test]
+    fn sandbox_proxy_log_decides_each_request_from_the_line_that_follows_it() {
+        let records = parse_proxy_log(PROXY_LOG);
+        let seen: Vec<(&str, &str)> = records.iter().map(|r| (r.decision, r.reason)).collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("allowed", "allowed"),
+                ("allowed", "allowed"),
+                ("denied", "filtered"),
+                ("allowed", "allowed"),
+                ("denied", "port"),
+            ]
+        );
+    }
+
+    #[test]
+    fn sandbox_proxy_log_ignores_a_refusal_that_names_another_host() {
+        // Guarded by host: a filtered-domain line for someone else leaves this
+        // request allowed, which is what the concurrency measurement requires.
+        let log = concat!(
+            "CONNECT   Aug 31 03:33:16.785 [1]: Request (file descriptor 4): GET http://example.com/ HTTP/1.1\n",
+            "NOTICE    Aug 31 03:33:16.785 [1]: Proxying refused on filtered domain \"blocked.test\"\n",
+        );
+        let records = parse_proxy_log(log);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].decision, "allowed");
+    }
+
+    #[test]
+    fn sandbox_proxy_log_ignores_a_port_refusal_for_another_port() {
+        let log = concat!(
+            "CONNECT   Aug 31 03:33:53.374 [1]: Request (file descriptor 4): CONNECT example.com:443 HTTP/1.1\n",
+            "INFO      Aug 31 03:33:53.374 [1]: Refused CONNECT method on port 22\n",
+        );
+        assert_eq!(parse_proxy_log(log)[0].decision, "allowed");
+    }
+
+    #[test]
+    fn sandbox_proxy_log_collapses_identical_consecutive_requests() {
+        let one = "CONNECT   Aug 31 03:32:20.788 [1]: Request (file descriptor 4): GET http://example.com/ HTTP/1.1\nINFO      Aug 31 03:32:20.788 [1]: No upstream proxy for example.com\n";
+        let log = format!("{one}{one}{one}");
+        let records = parse_proxy_log(&log);
+        assert_eq!(records.len(), 1, "three identical requests collapse to one");
+        assert_eq!(records[0].repeats, 3);
+    }
+
+    #[test]
+    fn sandbox_proxy_log_does_not_collapse_across_a_different_request() {
+        let get = "CONNECT   Aug 31 03:32:20.788 [1]: Request (file descriptor 4): GET http://example.com/ HTTP/1.1\n";
+        let other = "CONNECT   Aug 31 03:32:20.789 [1]: Request (file descriptor 4): GET http://en.wikipedia.org/ HTTP/1.1\n";
+        let records = parse_proxy_log(&format!("{get}{other}{get}"));
+        assert_eq!(records.len(), 3);
+        assert!(records.iter().all(|r| r.repeats == 1));
+    }
+
+    #[test]
+    fn sandbox_proxy_log_defaults_the_port_from_the_scheme_and_keeps_an_explicit_one() {
+        let log = concat!(
+            "CONNECT   Aug 31 03:33:53.416 [1]: Request (file descriptor 4): GET https://example.com/ HTTP/1.1\n",
+            "CONNECT   Aug 31 03:33:53.417 [1]: Request (file descriptor 4): GET http://example.com:8080/ HTTP/1.1\n",
+        );
+        let ports: Vec<u16> = parse_proxy_log(log).iter().map(|r| r.port).collect();
+        assert_eq!(
+            ports,
+            vec![443, 8080],
+            "8080 is reachable over plain HTTP today — the port field is what makes that visible"
+        );
+    }
+
+    #[test]
+    fn sandbox_proxy_audit_never_records_the_path_or_query() {
+        // Measured verbatim: the proxy logs the whole absolute URI, so a token
+        // in a query string is one careless field away from events.jsonl.
+        let log = "CONNECT   Aug 31 03:33:53.378 [1]: Request (file descriptor 4): GET http://example.com/secret?token=abc HTTP/1.1\n";
+        let records = parse_proxy_log(log);
+        assert_eq!(records[0].host, "example.com");
+        let event = records[0].to_event("42-1", Some("s1")).to_string();
+        assert!(!event.contains("token"), "{event}");
+        assert!(!event.contains("secret"), "{event}");
+    }
+
+    #[test]
+    fn sandbox_proxy_audit_strips_userinfo_from_the_host() {
+        let log = "CONNECT   Aug 31 03:33:53.378 [1]: Request (file descriptor 4): GET http://user:pw@example.com/ HTTP/1.1\n";
+        let records = parse_proxy_log(log);
+        assert_eq!(records[0].host, "example.com");
+        assert!(!records[0].to_event("42-1", None).to_string().contains("pw"));
+    }
+
+    #[test]
+    fn sandbox_proxy_rule_match_prefers_deny_over_allow() {
+        let allow = vec!["*.example.com".to_string()];
+        let deny = vec!["evil.example.com".to_string()];
+        assert_eq!(
+            match_proxy_rule("evil.example.com", &allow, &deny),
+            RuleMatch::Deny("evil.example.com".to_string())
+        );
+        assert_eq!(
+            match_proxy_rule("good.example.com", &allow, &deny),
+            RuleMatch::Allow("*.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn sandbox_proxy_rule_match_reports_none_for_an_unlisted_host() {
+        let allow = vec!["example.com".to_string()];
+        assert_eq!(
+            match_proxy_rule("elsewhere.test", &allow, &[]),
+            RuleMatch::None
+        );
+        assert_eq!(
+            match_proxy_rule("www.example.com", &allow, &[]),
+            RuleMatch::None,
+            "an exact rule does not cover a subdomain"
+        );
+        assert_eq!(RuleMatch::None.label(), "none");
+    }
+
+    #[test]
+    fn sandbox_filter_lookalike_suffix_is_not_a_subdomain() {
+        // Carried from phase-08's review: removing the dot-boundary check in
+        // is_subdomain_of killed no test. This is that test.
+        assert!(is_subdomain_of("a.example.com", "example.com"));
+        assert!(!is_subdomain_of("evilexample.com", "example.com"));
+        assert!(!is_subdomain_of("example.com", "example.com"));
+        assert_eq!(
+            match_proxy_rule("evilexample.com", &["*.example.com".to_string()], &[]),
+            RuleMatch::None
+        );
+    }
+
+    #[test]
+    fn sandbox_proxy_audit_event_names_the_rule_and_the_proxy_type() {
+        let records = audit_proxy_log(
+            PROXY_LOG,
+            &["example.com".to_string(), "*.wikipedia.org".to_string()],
+            &[],
+        );
+        let denied = records
+            .iter()
+            .find(|r| r.host == "www.example.com")
+            .expect("the filtered request is audited");
+        let event = denied.to_event("42-1712937600", Some("s1"));
+        assert_eq!(event["decision"], "denied");
+        assert_eq!(event["reason"], "filtered");
+        assert_eq!(event["rule"], "none");
+        assert_eq!(event["proxy_type"], "forward");
+        assert_eq!(event["job_id"], "42-1712937600");
+        assert_eq!(event["session"], "s1");
+        assert_eq!(event["repeats"], 1);
+        let allowed = records
+            .iter()
+            .find(|r| r.host == "en.wikipedia.org")
+            .expect("the wildcard-allowed request is audited");
+        assert_eq!(
+            allowed.to_event("42-1", None)["rule"],
+            "allow:*.wikipedia.org"
+        );
+        assert_eq!(allowed.to_event("42-1", None)["session"], "-");
+    }
+
+    #[test]
+    fn sandbox_proxy_logs_args_read_the_jobs_own_proxy_container() {
+        let cfg = SandboxConfig {
+            docker_host: "unix:///run/user/1000/docker.sock".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            proxy_logs_args(&cfg, "42-1712937600"),
+            vec![
+                "--host".to_string(),
+                "unix:///run/user/1000/docker.sock".to_string(),
+                "logs".to_string(),
+                "de-px-42-1712937600".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn sandbox_proxy_rules_for_profile_falls_back_to_no_rules() {
+        let mut cfg = SandboxConfig::default();
+        cfg.profile.insert(
+            "web".to_string(),
+            crate::config::SandboxProfile {
+                network: "proxy".to_string(),
+                proxy_allow: vec!["example.com".to_string()],
+                proxy_deny: vec!["evil.example.com".to_string()],
+            },
+        );
+        assert_eq!(
+            proxy_rules_for_profile(&cfg, Some("web")),
+            (
+                vec!["example.com".to_string()],
+                vec!["evil.example.com".to_string()]
+            )
+        );
+        assert_eq!(
+            proxy_rules_for_profile(&cfg, Some("absent")),
+            (Vec::new(), Vec::new())
+        );
+        assert_eq!(
+            proxy_rules_for_profile(&cfg, None),
+            (Vec::new(), Vec::new())
         );
     }
 }

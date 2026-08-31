@@ -1,7 +1,7 @@
 # Phase 13: The egress audit — every proxied request in `events.jsonl`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-08 (the rendered allowlist and the rule model it parses)
 **Estimated diff:** ~550 lines including tests, across two files
 **Tags:** language=rust, kind=feature, size=m
@@ -1237,3 +1237,102 @@ editing the block.
 - `CLAUDE.md`, `README.md`, the design doc — the phase-10 doc sweep.
 
 ## Update Log
+
+### Update — 2026-08-31 03:48 (started)
+
+Started executing phase-13. Status flipped `todo` → `in-progress`; README row updated. Baseline on the tree at `8ead961`: `cargo test --lib` → 1507 passed, 0 failed, 4 ignored; `sandbox_proxy` filter → 6 tests; every new symbol absent from `container.rs` (0/0 for all eight); `allow(dead_code)` total → 6. Proceeding with Spec Tasks 1–9.
+
+### Update — 2026-08-31 04:09 (end-to-end verification)
+
+Ran Tasks 5–9 exactly as specified: four mutation pairs applied and restored via `patch`, each marker appended, each `grep -c` appended after every direction, then the § End-to-end block verbatim. Full transcript follows.
+
+```text
+== M1 APPLIED ==
+test daemon::executor::container::tests::sandbox_proxy_log_ignores_a_refusal_that_names_another_host ... FAILED
+test result: FAILED. 19 passed; 1 failed; 0 ignored; 0 measured; 1506 filtered out
+0
+== M1 RESTORED ==
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1506 filtered out
+1
+== M2 APPLIED ==
+test daemon::executor::container::tests::sandbox_proxy_rule_match_prefers_deny_over_allow ... FAILED
+test result: FAILED. 19 passed; 1 failed; 0 ignored; 0 measured; 1506 filtered out
+1
+== M2 RESTORED ==
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1506 filtered out
+1
+== M3 APPLIED ==
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1506 filtered out
+0
+== M3 RESTORED ==
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1506 filtered out
+1
+== M4 APPLIED ==
+test daemon::executor::container::tests::sandbox_proxy_log_collapses_identical_consecutive_requests ... FAILED
+test result: FAILED. 19 passed; 1 failed; 0 ignored; 0 measured; 1506 filtered out
+0
+== M4 RESTORED ==
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1506 filtered out
+1
+== A. named tests (expect 20 ok) ==
+test daemon::executor::container::tests::sandbox_proxy_conf_denies_by_default_and_reads_the_mounted_filter ... ok
+test daemon::executor::container::tests::sandbox_proxy_dockerfile_runs_unprivileged_and_bakes_the_conf ... ok
+test daemon::executor::container::tests::sandbox_proxy_lock_lives_beside_the_image_lock ... ok
+test daemon::executor::container::tests::sandbox_proxy_log_does_not_collapse_across_a_different_request ... ok
+test daemon::executor::container::tests::sandbox_proxy_log_ignores_a_refusal_that_names_another_host ... ok
+test daemon::executor::container::tests::sandbox_proxy_log_ignores_a_port_refusal_for_another_port ... ok
+test daemon::executor::container::tests::sandbox_proxy_audit_strips_userinfo_from_the_host ... ok
+test daemon::executor::container::tests::sandbox_proxy_audit_event_names_the_rule_and_the_proxy_type ... ok
+test daemon::executor::container::tests::sandbox_proxy_log_defaults_the_port_from_the_scheme_and_keeps_an_explicit_one ... ok
+test daemon::executor::container::tests::sandbox_proxy_log_decides_each_request_from_the_line_that_follows_it ... ok
+test daemon::executor::container::tests::sandbox_proxy_audit_never_records_the_path_or_query ... ok
+test daemon::executor::container::tests::sandbox_proxy_log_collapses_identical_consecutive_requests ... ok
+test daemon::executor::container::tests::sandbox_proxy_log_reads_method_host_and_port_from_every_request ... ok
+test daemon::executor::container::tests::sandbox_proxy_network_list_args_filter_by_label ... ok
+test daemon::executor::container::tests::sandbox_proxy_logs_args_read_the_jobs_own_proxy_container ... ok
+test daemon::executor::container::tests::sandbox_proxy_network_rm_args_are_empty_for_an_empty_slice ... ok
+test daemon::executor::container::tests::sandbox_proxy_rule_match_reports_none_for_an_unlisted_host ... ok
+test daemon::executor::container::tests::sandbox_proxy_rule_match_prefers_deny_over_allow ... ok
+test daemon::executor::container::tests::sandbox_proxy_lock_round_trips_through_an_arbitrary_path ... ok
+test daemon::executor::container::tests::sandbox_proxy_rules_for_profile_falls_back_to_no_rules ... ok
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1506 filtered out
+cargo_exit=0
+== B. full suite, all targets ==
+test result: ok. 1522 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+cargo_exit=0
+== C. gates ==
+fmt_exit=0
+clippy_exit=0
+== D. structural greps ==
+pub fn parse_proxy_log (1): 1
+pub fn match_proxy_rule (1): 1
+pub fn audit_proxy_log (1): 1
+pub fn collect_proxy_audit (1): 1
+pub fn proxy_logs_args (1): 1
+pub fn proxy_rules_for_profile (1): 1
+enum RuleMatch (1):             1
+struct ProxyAudit (1):          1
+fn is_subdomain_of (1):         1
+log_event in container.rs (0):  0
+M1 seam (1):                    1
+M2 seam (1):                    1
+M3 seam (1):                    1
+M4 seam (1):                    1
+path stripped (1):              1
+run.rs log_proxy_audit (3):     3
+run.rs proxy_request (1):       1
+audit before teardown (2):      2
+allow total (6):                6
+prod unwrap container.rs (0):   0
+code files changed (2):         2
+```
+
+Self-check verdict:
+
+PASTE MATCH
