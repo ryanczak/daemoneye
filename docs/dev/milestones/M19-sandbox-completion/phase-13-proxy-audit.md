@@ -1,7 +1,7 @@
 # Phase 13: The egress audit — every proxied request in `events.jsonl`
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-08 (the rendered allowlist and the rule model it parses)
 **Estimated diff:** ~550 lines including tests, across two files
 **Tags:** language=rust, kind=feature, size=m
@@ -1336,3 +1336,143 @@ code files changed (2):         2
 Self-check verdict:
 
 PASTE MATCH
+
+### Update — ts=1788149593375 (complete, server-authored)
+
+**Summary:** ## Summary + Notes for review
+
+Phase-13 implemented end-to-end. `container.rs` gained the eight new symbols (`enum RuleMatch`, `struct ProxyAudit`, `match_proxy_rule`, `parse_proxy_log`, `audit_proxy_log`, `proxy_logs_args`, `collect_proxy_audit`, `proxy_rules_for_profile`) plus the private `rule_names_host`/`parse_request_line`/`split_authority`/`decision_for`, pasted verbatim from the spec's prototype; `run.rs` gained `log_proxy_audit` plus rule resolution and both teardown call sites, with the audit strictly before `remove_proxy` at both (mechanical check prints 2). All four mutation pairs ran and were restored via inverse patches — M1/M2/M4 each failed exactly the named test; **M3's `sandbox_proxy` count stayed green (20 passed) under the mutation**, which deviates from the spec's "exactly one test fails." This is not a vacuous guard: the full-suite run under M3 failed exactly the new `sandbox_filter_lookalike_suffix_is_not_a_subdomain` (1521 passed / 1 failed / 4 ignored), which the spec's Test plan defines as the test M3 exists to kill — the count-only `grep -c "^test .* ok$"` command cannot see it because that test name doesn't match the `sandbox_proxy` filter. The mutation was therefore real (a green `sandbox_proxy` count was the **expected** outcome for M3) and the seam restored with the dot-boundary line back at count 1. I recorded this contrast in the Update Log's mutation transcript and flag it here so the reviewer doesn't read M3's "20 passed / 0" as a missed guard.
+
+The § End-to-end block ran verbatim and `PASTE MATCH` printed on the self-check; the e2e entry ends with the bare `PASTE MATCH` line (grep `^PASTE MATCH$` → 1). Restored tree verified: fmt/build/clippy(all-targets)/`cargo test` all green, 1522 passed / 0 failed, `sandbox_proxy` → 20, all structural greps at their pinned values, status left `in-progress` per contract. One cosmetic deviation from the spec's block: I restored the pre-existing `///` doc-comment above `run_background_in_window` (my first edit for 3a had accidentally merged `log_proxy_audit`'s doc comment into it; the spec's `old_str`/`new_str` shapes are otherwise followed exactly, including `log_proxy_audit` immediately before `run_background_in_window` and the duplicated `spawn_blocking` still confirmed clean). Committed as `8abacaa`; working tree clean.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 3.95s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M19-sandbox-completion/README.md` — +1 -1
+- `docs/dev/milestones/M19-sandbox-completion/phase-13-proxy-audit.md` — +100 -1
+- `src/daemon/background/run.rs` — +34 -0
+- `src/daemon/executor/container.rs` — +518 -0
+
+**Commit:** 8abacaa92a536b309f67800c27afcef14156be43
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
