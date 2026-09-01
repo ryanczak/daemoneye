@@ -426,6 +426,16 @@ pub async fn run_background_in_window(
             "pane": pane_id,
         }),
     );
+    if let Some(payload) = crate::daemon::executor::container::container_run_event(
+        &config.sandbox,
+        crate::daemon::executor::container::read_lock().as_ref(),
+        &job_id,
+        &win_name,
+        &network,
+        session_id.as_deref(),
+    ) {
+        log_event("container_run", payload);
+    }
 
     // Inline completion wait (3 s): the async block borrows complete_rx / died_rx
     // by &mut without moving them, so after .await the receivers are still owned

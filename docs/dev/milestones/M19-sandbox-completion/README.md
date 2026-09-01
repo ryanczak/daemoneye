@@ -86,7 +86,7 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 08 | proxy-allowlist ([phase-08-proxy-allowlist.md](phase-08-proxy-allowlist.md)) | **done** (approved_first_try, 2026-08-31) |
 | 09 | escape-hatch | todo (not drafted) |
 | 10 | live-verification-and-close | todo (not drafted) |
-| 11 | container-hardening-flags ([phase-11-container-hardening-flags.md](phase-11-container-hardening-flags.md)) | todo (drafted 2026-08-31) |
+| 11 | container-hardening-flags ([phase-11-container-hardening-flags.md](phase-11-container-hardening-flags.md)) | in-progress |
 | 12 | workspace-mount-policy | todo (not drafted; **added 2026-08-30**) |
 | 13 | proxy-audit ([phase-13-proxy-audit.md](phase-13-proxy-audit.md)) | **done** (approved_after_1, 2026-08-31) |
 | 14 | proxy-credentials | **deferred out of M19** (PE decision 2026-08-31; mechanism disproved by measurement) |

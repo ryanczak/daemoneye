@@ -1,7 +1,7 @@
 # Phase 11: Container hardening — the flags, the digest pin, and a spawn record
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** todo
+**Status:** in-progress
 **Depends on:** nothing (independent of the proxy chain and of 02's staging)
 **Estimated diff:** ~230 lines including tests, across four files
 **Tags:** language=rust, kind=feature, size=m
@@ -905,3 +905,100 @@ editing the block.
 - `CLAUDE.md`, `README.md`, the design doc — the phase-10 doc sweep.
 
 ## Update Log
+
+### Update — 2026-09-01 01:23 (progress)
+
+Started phase 11: flipped Status to in-progress, updated the milestone README
+table row. Implementing the six hardening items (memory-swap, read-only + tmpfs,
+cap-drop, no-new-privileges, pull=never, digest pin, container_run event) per
+Spec tasks 1–5, then the four mutation pairs 6–9 and the evidence capture task 10.
+
+### Update — 2026-09-01 01:28 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim from the repo root after all
+four mutation pairs were restored. Every mutation pair fails the named test set
+the spec states (M1/M3/M4: exactly one; M2: exactly three), each RESTORED run is
+green, and every structural grep matches the § Acceptance criteria values —
+including `cargo test --lib` reporting 1529 passed (up from 1522). The full
+block output, mutation markers included:
+
+```text
+== M1 APPLIED ==
+test daemon::executor::container::tests::sandbox_run_args_cap_swap_at_the_memory_limit ... FAILED
+test result: FAILED. 125 passed; 1 failed; 4 ignored; 0 measured; 1403 filtered out
+1
+== M1 RESTORED ==
+test result: ok. 126 passed; 0 failed; 4 ignored; 0 measured; 1403 filtered out
+2
+== M2 APPLIED ==
+test daemon::executor::container::tests::sandbox_exec_run_args_match_the_prototyped_vector ... FAILED
+test daemon::executor::container::tests::sandbox_run_args_carry_every_hardening_flag ... FAILED
+test daemon::executor::container::tests::sandbox_run_args_give_a_read_only_root_two_writable_tmpfs ... FAILED
+test result: FAILED. 123 passed; 3 failed; 4 ignored; 0 measured; 1403 filtered out
+0
+== M2 RESTORED ==
+test result: ok. 126 passed; 0 failed; 4 ignored; 0 measured; 1403 filtered out
+1
+== M3 APPLIED ==
+test daemon::executor::container::tests::sandbox_container_run_event_is_absent_when_the_sandbox_is_off ... FAILED
+test result: FAILED. 125 passed; 1 failed; 4 ignored; 0 measured; 1403 filtered out
+3
+== M3 RESTORED ==
+test result: ok. 126 passed; 0 failed; 4 ignored; 0 measured; 1403 filtered out
+4
+== M4 APPLIED ==
+test daemon::executor::container::tests::sandbox_images_pin_their_base_by_digest ... FAILED
+test result: FAILED. 125 passed; 1 failed; 4 ignored; 0 measured; 1403 filtered out
+0
+== M4 RESTORED ==
+test result: ok. 126 passed; 0 failed; 4 ignored; 0 measured; 1403 filtered out
+1
+== A. named tests ==
+test daemon::executor::container::tests::sandbox_run_args_cap_swap_at_the_memory_limit ... ok
+test daemon::executor::container::tests::sandbox_run_args_carry_every_hardening_flag ... ok
+test daemon::executor::container::tests::sandbox_run_args_give_a_read_only_root_two_writable_tmpfs ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1530 filtered out
+cargo_exit=0
+test daemon::executor::container::tests::sandbox_container_run_event_is_absent_when_the_sandbox_is_off ... ok
+test daemon::executor::container::tests::sandbox_container_run_event_survives_a_missing_lock ... ok
+test daemon::executor::container::tests::sandbox_container_run_event_names_the_image_and_the_network ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1530 filtered out
+cargo_exit=0
+test daemon::executor::container::tests::sandbox_images_pin_their_base_by_digest ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1532 filtered out
+cargo_exit=0
+== B. full suite, all targets ==
+test result: ok. 1529 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+cargo_exit=0
+== C. gates ==
+fmt_exit=0
+clippy_exit=0
+== D. structural greps ==
+memory-swap flag (1):           1
+read-only flag (1):             1
+no-new-privileges (1):          1
+pull never (1):                 1
+cap-drop ALL (1):               1
+mode=1777 (3):                  3
+tmpfs in run_args (2):          2
+M1 seam (2):                    2
+container_run_event fn (1):     1
+run.rs container_run (2):       2
+agent digest (1):               1
+proxy digest (1):               1
+agent tag (0):                  0
+proxy tag (0):                  0
+allow total (6):                6
+prod unwrap container.rs (0):   0
+code files changed (4):         4
+```
+
+PASTE MATCH
+
+

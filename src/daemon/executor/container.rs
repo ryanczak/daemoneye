@@ -1650,14 +1650,37 @@ pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec, session_id: Option<&str>) 
         spec.network.to_string(),
         "--memory".to_string(),
         cfg.limits.memory.clone(),
+        // Docker defaults --memory-swap to 2x --memory, so the documented 1g
+        // cap actually permits 2 GiB. Equal values disable swap entirely.
+        "--memory-swap".to_string(),
+        cfg.limits.memory.clone(),
         "--pids-limit".to_string(),
         cfg.limits.pids.to_string(),
         "--cpus".to_string(),
         cfg.limits.cpus.to_string(),
+        // The image's filesystem is not a scratch space: /de/work and /tmp are
+        // the only writable paths, both tmpfs, both owned by the run_as uid.
+        "--read-only".to_string(),
+        "--cap-drop".to_string(),
+        "ALL".to_string(),
+        // The process is already uid 1000, but Alpine ships setuid busybox
+        // links; this is what closes that escalation path.
+        "--security-opt".to_string(),
+        "no-new-privileges".to_string(),
+        // sandbox_preflight caches its verdict for the daemon's lifetime, so an
+        // image deleted after startup would otherwise be resolved against a
+        // registry. Fail locally instead.
+        "--pull".to_string(),
+        "never".to_string(),
         "--tmpfs".to_string(),
         format!(
             "{}:rw,size={},mode=0700,uid={},gid={}",
             cfg.workdir, cfg.limits.scratch, uid, gid
+        ),
+        "--tmpfs".to_string(),
+        format!(
+            "/tmp:rw,size={},mode=1777,uid={uid},gid={gid}",
+            cfg.limits.scratch
         ),
         "-v".to_string(),
         format!("{}:/de/scripts:ro", stage_volume_name(spec.job_id)),
@@ -1682,6 +1705,37 @@ pub fn run_args(cfg: &SandboxConfig, spec: &ExecSpec, session_id: Option<&str>) 
     args.push("-lc".to_string());
     args.push(spec.command.to_string());
     args
+}
+
+/// The `container_run` event payload for a sandboxed job, or `None` when the
+/// sandbox is off and no container will exist.
+///
+/// The image id comes from the **lockfile**, not from a fresh `image inspect`:
+/// [`sandbox_preflight`] refuses to run anything when the live image differs
+/// from the lock, so whenever a job reaches this point the two agree, and the
+/// lock is readable without spawning a process.
+///
+/// This is the audit anchor a live check binds to — a `docker ps` snapshot
+/// races the `--rm` teardown, a record does not.
+pub fn container_run_event(
+    cfg: &SandboxConfig,
+    lock: Option<&SandboxLock>,
+    job_id: &str,
+    job_name: &str,
+    network: &str,
+    session: Option<&str>,
+) -> Option<serde_json::Value> {
+    if !cfg.enabled {
+        return None;
+    }
+    Some(serde_json::json!({
+        "session": session.unwrap_or("-"),
+        "job_id": job_id,
+        "job_name": job_name,
+        "image": cfg.image,
+        "image_id": lock.map_or("unknown", |l| l.image_id.as_str()),
+        "network": network,
+    }))
 }
 
 /// The command string a `de-bg-*` window should run for `raw_cmd`.
@@ -2032,12 +2086,23 @@ mod tests {
                 "none",
                 "--memory",
                 "1g",
+                "--memory-swap",
+                "1g",
                 "--pids-limit",
                 "256",
                 "--cpus",
                 "2",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges",
+                "--pull",
+                "never",
                 "--tmpfs",
                 "/de/work:rw,size=2g,mode=0700,uid=1000,gid=1000",
+                "--tmpfs",
+                "/tmp:rw,size=2g,mode=1777,uid=1000,gid=1000",
                 "-v",
                 "de-stage-j1:/de/scripts:ro",
                 "--label",
@@ -4011,5 +4076,162 @@ mod tests {
             proxy_rules_for_profile(&cfg, None),
             (Vec::new(), Vec::new())
         );
+    }
+
+    /// Every flag this phase adds, as an adjacent (flag, value) pair or a bare
+    /// switch. Measured effective against the real image on the daemon host
+    /// 2026-08-31 — see the phase doc's § Live measurements.
+    #[test]
+    fn sandbox_run_args_carry_every_hardening_flag() {
+        let cfg = SandboxConfig::default();
+        let args = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: false,
+                command: "echo hi",
+            },
+            None,
+        );
+        let pair = |flag: &str, value: &str| args.windows(2).any(|w| w[0] == flag && w[1] == value);
+        assert!(pair("--memory-swap", "1g"), "{args:?}");
+        assert!(pair("--cap-drop", "ALL"), "{args:?}");
+        assert!(pair("--security-opt", "no-new-privileges"), "{args:?}");
+        assert!(pair("--pull", "never"), "{args:?}");
+        assert!(args.iter().any(|a| a == "--read-only"), "{args:?}");
+    }
+
+    #[test]
+    fn sandbox_run_args_cap_swap_at_the_memory_limit() {
+        // Docker defaults --memory-swap to 2x --memory. Measured: without the
+        // flag a 1g container reports MemorySwap=2147483648; with it, 1g.
+        // The value must track limits.memory, not be a second literal.
+        let mut cfg = SandboxConfig::default();
+        cfg.limits.memory = "512m".to_string();
+        let args = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: false,
+                command: "echo hi",
+            },
+            None,
+        );
+        let swap = args
+            .windows(2)
+            .find(|w| w[0] == "--memory-swap")
+            .map(|w| w[1].clone());
+        assert_eq!(swap.as_deref(), Some("512m"), "{args:?}");
+    }
+
+    #[test]
+    fn sandbox_run_args_give_a_read_only_root_two_writable_tmpfs() {
+        // --read-only without a writable /tmp breaks ordinary tooling, so the
+        // two arrive together or not at all. /de/work stays 0700 and private;
+        // /tmp is 1777 because that is what programs expect of it.
+        let cfg = SandboxConfig::default();
+        let args = run_args(
+            &cfg,
+            &ExecSpec {
+                job_id: "j1",
+                network: "none",
+                is_ghost: false,
+                command: "echo hi",
+            },
+            None,
+        );
+        let mounts: Vec<&String> = args
+            .windows(2)
+            .filter(|w| w[0] == "--tmpfs")
+            .map(|w| &w[1])
+            .collect();
+        assert_eq!(mounts.len(), 2, "{args:?}");
+        assert!(
+            mounts[0].starts_with("/de/work:rw,") && mounts[0].contains("mode=0700"),
+            "{mounts:?}"
+        );
+        assert!(
+            mounts[1].starts_with("/tmp:rw,") && mounts[1].contains("mode=1777"),
+            "{mounts:?}"
+        );
+        assert!(args.iter().any(|a| a == "--read-only"), "{args:?}");
+    }
+
+    #[test]
+    fn sandbox_images_pin_their_base_by_digest() {
+        // The design pins the base image by digest; a moving tag would let a
+        // rebuild change the contents under a lock that still matches.
+        for (name, text) in [
+            ("agent", include_str!("../../../containers/Dockerfile")),
+            (
+                "proxy",
+                include_str!("../../../containers/proxy/Dockerfile"),
+            ),
+        ] {
+            let from = text
+                .lines()
+                .find(|l| l.starts_with("FROM "))
+                .unwrap_or_else(|| panic!("{name} Dockerfile has no FROM line"));
+            assert!(
+                from.contains("@sha256:"),
+                "{name} Dockerfile pins a tag, not a digest: {from}"
+            );
+            assert!(
+                !from.contains(':') || from.split("@sha256:").count() == 2,
+                "{name}: {from}"
+            );
+        }
+    }
+
+    #[test]
+    fn sandbox_container_run_event_names_the_image_and_the_network() {
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let lock = SandboxLock {
+            image: "daemoneye-agent-base".to_string(),
+            image_id: "sha256:".to_string() + &"a".repeat(64),
+            built_at: 42,
+        };
+        let event = container_run_event(
+            &cfg,
+            Some(&lock),
+            "42-1712937600",
+            "de-bg-42-1712937600-cargo-build",
+            "de-net-42-1712937600",
+            Some("s1"),
+        )
+        .expect("an enabled sandbox produces a record");
+        assert_eq!(event["session"], "s1");
+        assert_eq!(event["job_id"], "42-1712937600");
+        assert_eq!(event["job_name"], "de-bg-42-1712937600-cargo-build");
+        assert_eq!(event["image"], "daemoneye-agent-base");
+        assert_eq!(event["image_id"], lock.image_id);
+        assert_eq!(event["network"], "de-net-42-1712937600");
+    }
+
+    #[test]
+    fn sandbox_container_run_event_is_absent_when_the_sandbox_is_off() {
+        // No container exists, so no record claims one did.
+        let cfg = SandboxConfig::default();
+        assert!(!cfg.enabled);
+        assert!(container_run_event(&cfg, None, "j1", "de-bg-j1", "none", None).is_none());
+    }
+
+    #[test]
+    fn sandbox_container_run_event_survives_a_missing_lock() {
+        // The lock is normally present — preflight refuses without one — but a
+        // record that panics is worse than one that says "unknown".
+        let cfg = SandboxConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let event = container_run_event(&cfg, None, "j1", "de-bg-j1", "none", None)
+            .expect("an enabled sandbox produces a record");
+        assert_eq!(event["image_id"], "unknown");
+        assert_eq!(event["session"], "-");
     }
 }
