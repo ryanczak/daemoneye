@@ -1,7 +1,7 @@
 # Phase 11: Container hardening — the flags, the digest pin, and a spawn record
 
 **Milestone:** M19 — Sandbox Completion
-**Status:** review
+**Status:** done
 **Depends on:** nothing (independent of the proxy chain and of 02's staging)
 **Estimated diff:** ~230 lines including tests, across four files
 **Tags:** language=rust, kind=feature, size=m
@@ -1150,3 +1150,43 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 6534f89b59bc2bd62555c7b5f08a6b299244fcc2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** none. Four code files edited, exactly as authorized;
+  the production diff is byte-identical to the architect's reverted prototype,
+  and the only existing test touched is the pinned argv vector Task 1 names.
+- **Calibration:** none, and one thing worth recording as *working*.
+  **`bug-phase-13-1` was carried into § Authorizations as a forward-looking
+  gotcha and the regression did not recur** — Task 2's anchor was a
+  doc-comment line precisely so an insertion could not orphan it, and
+  `grep -B1 '^pub async fn run_background_in_window(' … | grep -c '^///'`
+  still prints `1`. A bug filed one phase earlier, re-expressed as a spec
+  constraint rather than a standing rule, cost two sentences and held.
+- **Independent verification at review:** all four gates re-run separately —
+  fmt 0, build 0, clippy 0, `cargo test` 1529 passed / 0 failed / 4 ignored
+  across all seven targets. Every structural criterion reads its pinned value
+  (1/1/1/1/1/3/2/2/1/2/1/1/0/0/6/0), both named-test filters report `3`, and
+  the § End-to-end entry carries a bare `PASTE MATCH`.
+- **Real-artifact verification (DoD box 3), run by the reviewer against the
+  committed files rather than the prototype:** both Dockerfiles build from the
+  pinned digest, and the agent image's id is
+  `sha256:0d02bebdab9c4ef019dc9e3d430fe7546f396e3402af10b347664e7ee4e918dc` —
+  **exactly** the `image_id` in `~/.daemoneye/etc/sandbox.lock`, so
+  `sandbox_preflight` still passes and this phase requires no operator action,
+  as § Live measurements 5 predicted. The committed flag set was then run
+  against the real image: `CapBnd: 0000000000000000`, `NoNewPrivs: 1`, both
+  tmpfs writable, `touch /ro` → `Read-only file system`.
+- **A third mutation the phase doc does not name** — rendering the record's
+  `"image"` field from `cfg.runtime` instead of `cfg.image` — fails exactly
+  `sandbox_container_run_event_names_the_image_and_the_network`
+  (1528 passed / 1 failed) and nothing else.
+- **One narration inaccuracy, no defect:** the completion summary says M4's
+  restore "required two `patch` calls (the Task-4 digest pin also applies to
+  `containers/proxy/Dockerfile`)". M4 mutates only `containers/Dockerfile`;
+  the proxy file's digest reads `1` and its tag `0` throughout the captured
+  evidence, so nothing was disturbed. Noted rather than filed — the claim is
+  about the executor's own steps, not about the tree, and the tree is right.

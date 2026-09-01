@@ -3186,3 +3186,39 @@ intent (image staleness warning + `requires_tools`) needs a phase of its own,
 and **the proxy image is never verified against `proxy.lock` at run time** —
 `proxy.lock` does not exist on the daemon host at all, and nothing in
 `start_proxy` reads it.
+
+**phase-11 — container-hardening-flags: done (approved_first_try) 2026-08-31**,
+commit `6534f89` + approval below. 1522 → **1529** lib tests. Sandboxed
+containers now run with swap capped at the memory limit, a read-only root plus
+two writable tmpfs, all capabilities dropped, `no-new-privileges`, and
+`--pull=never`; both images pin their base by digest; and every sandboxed
+spawn writes a `container_run` record — job id, session, image, image id,
+network — which is the audit anchor phase-10's live checks bind to.
+
+Executor's source was **byte-identical to the architect's reverted prototype**.
+All four mutation pairs behaved exactly as specced, including M2's set of
+three and M1/M3's "the lower number is the mutated one" seams.
+
+**The phase-13 bug did not recur, and that is the calibration note.**
+`bug-phase-13-1` (an insertion orphaning the doc comment above
+`run_background_in_window`) was carried into phase-11's § Authorizations as a
+forward-looking gotcha, and Task 2's anchor was chosen to be a doc-comment
+line so the same insertion could not repeat it. It didn't:
+`grep -B1 '^pub async fn run_background_in_window(' … | grep -c '^///'` still
+prints `1`. **A bug re-expressed as a spec constraint for the very next phase
+cost two sentences and held** — cheaper than a WORKFLOW.md rule, and the same
+lever as the § Authorizations line recorded at phase-13 close.
+
+**Reviewer's real-artifact verification** (DoD box 3, run against the
+*committed* files rather than the prototype): both Dockerfiles build from the
+pinned digest, and the agent image's id is exactly the `image_id` already in
+`~/.daemoneye/etc/sandbox.lock` — so preflight still passes and the phase
+requires no operator action, as drafting predicted. The committed flag set was
+then run against the real image: `CapBnd: 0000000000000000`, `NoNewPrivs: 1`,
+both tmpfs writable, `touch /ro` → `Read-only file system`. Plus a third
+mutation the doc does not name (`"image"` rendered from `cfg.runtime`) failing
+exactly one named test.
+
+Remaining M19 phases: **09 escape-hatch**, **12 workspace-mount-policy**,
+**10 live-verification-and-close** — none drafted. 14 is deferred out of the
+milestone. 10 stays the close-out.
