@@ -39,7 +39,11 @@ done).
   proxy profile needs never enters the container**: the agent holds a
   sentinel, the proxy substitutes the real value on the way out, and
   `docker inspect` / the container's environment show only the sentinel
-  (phase-08, adopted from Docker Sandboxes 2026-08-30).
+  (phase-08, adopted from Docker Sandboxes 2026-08-30). **Struck 2026-08-31
+  on PE decision — see § Notes, "Sentinel credential injection is not
+  implementable on tinyproxy". M19's egress story is the allowlist (08) plus
+  the audit (13); a credential-bearing profile stays unsupported rather than
+  half-supported.**
 - A profile declaring `workspace = "clone"` runs the command over a
   **read-only, uid-1000-owned copy** of the pane's working directory, staged
   by the same root helper that stages scripts; `workspace = "none"` (the
@@ -82,10 +86,10 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 08 | proxy-allowlist ([phase-08-proxy-allowlist.md](phase-08-proxy-allowlist.md)) | **done** (approved_first_try, 2026-08-31) |
 | 09 | escape-hatch | todo (not drafted) |
 | 10 | live-verification-and-close | todo (not drafted) |
-| 11 | container-hardening-flags | todo (not drafted; **taken into scope 2026-08-30**) |
+| 11 | container-hardening-flags ([phase-11-container-hardening-flags.md](phase-11-container-hardening-flags.md)) | todo (drafted 2026-08-31) |
 | 12 | workspace-mount-policy | todo (not drafted; **added 2026-08-30**) |
 | 13 | proxy-audit ([phase-13-proxy-audit.md](phase-13-proxy-audit.md)) | **done** (approved_after_1, 2026-08-31) |
-| 14 | proxy-credentials | todo (not drafted; **split out of 08, 2026-08-30**) |
+| 14 | proxy-credentials | **deferred out of M19** (PE decision 2026-08-31; mechanism disproved by measurement) |
 
 **Ordering.** 01 is first and deliberately small: it closes a *known* coverage
 gap before 03/04 start depending on the value it produces. 02 is independent
@@ -386,6 +390,63 @@ Phase intents:
   predated phase-08's `ConnectPort` lines, and a probe against it showed
   CONNECT to port 22 succeeding — a regression that was not there. Phase-10's
   live checks must rebuild before they measure.
+
+- **Sentinel credential injection is not implementable on tinyproxy — PE
+  decision 2026-08-31: phase-14 is deferred out of M19.** The mechanism
+  adopted from Docker Sandboxes on 2026-08-30 (*"the agent holds a sentinel,
+  the proxy substitutes the real value on the way out"*) was measured against
+  the real proxy image while drafting, and fails three ways:
+
+  1. **`AddHeader` adds; it never replaces.** With
+     `AddHeader "Authorization" "Bearer REAL-SECRET-VALUE"` in the conf, a
+     request carrying `Authorization: Bearer de-cred-SENTINEL` reached the
+     origin **with the sentinel unchanged**. Substitution is not an operation
+     tinyproxy has.
+  2. **`AddHeader` is global and static.** One value for every allowed host,
+     so the secret would be sent to *every* allowlisted destination rather
+     than the one domain it belongs to — strictly weaker than the env var it
+     was meant to replace.
+  3. **HTTPS, the only realistic case for an API credential, is a byte
+     tunnel.** Through `CONNECT` the origin received no `Authorization` and
+     not even `Via`, while the plain-HTTP request in the same run carried
+     both; tinyproxy logs `Not sending client headers to remote machine`.
+
+  Making it work needs **TLS interception** — a different proxy
+  (mitmproxy / squid with `ssl_bump`), a per-daemon CA, that CA installed in
+  the agent image's trust store, and a per-job cert cache. That is two or
+  more phases, a new image, and a real security trade: the proxy would then
+  read every byte the agent sends to every host. It is a design decision for
+  a later milestone, not a completion task. **The exit criterion above is
+  struck accordingly**; 08 + 13 stand on their own.
+
+  Recorded because the reasoning that adopted it is the lesson: the mechanism
+  came from reading another product's docs, and *every* claim in that read was
+  checked against **this repo's code** — but not against **this repo's proxy
+  binary**. Docker Sandboxes can do this because its proxy intercepts TLS;
+  ours cannot because it does not. A capability is a fact about the
+  implementation you have, not about the design you copied.
+
+- **Phase-11 narrowed at drafting (2026-08-31), and item 7 needs a phase of
+  its own.** The 11 intent lists seven items; the drafted phase is items 1–6
+  (the four `run_args` flags, the digest pin, the `container_run` event) at
+  ~230 lines. **Item 7 — the >90-day image staleness warning in
+  `retention_warnings()` and `requires_tools` runbook frontmatter with a
+  fail-fast check — is not in it.** Neither is a `run_args` flag and
+  `requires_tools` is a runbook-parsing feature with its own design (what a
+  missing tool should do to a ghost already mid-run). Same narrowing 06, 08
+  and 13 took, for the same reason.
+
+- **Gap found drafting phase-11 (2026-08-31): the proxy image is never
+  verified against `proxy.lock` at run time.** `sandbox_preflight` refuses to
+  run the *agent* image when its id differs from `sandbox.lock`, but
+  `proxy_lock_path()` is read only by the `sandbox build` CLI —
+  `grep -rn proxy_lock_path src/` finds no reader in `start_proxy`. Measured on
+  the daemon host: `~/.daemoneye/etc/proxy.lock` **does not exist at all**,
+  while the proxy image does, so a job's proxy today runs whatever image
+  carries that name. Closing it is a behaviour change with a real design
+  question — what a *missing* lock should do to an existing install — so it is
+  not in phase-11's scope. Either wire it or say plainly in the phase-10 sweep
+  that the proxy image is unverified.
 
 - **`container:shell` (interactive tty relay) stays deferred** — still an open
   question in the design doc, and nothing in M18 settled it.

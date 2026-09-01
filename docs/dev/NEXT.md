@@ -3111,3 +3111,78 @@ Remaining M19 phases: 09 escape-hatch, 10 live-verification-and-close,
 11 container-hardening-flags, 12 workspace-mount-policy, 14 proxy-credentials
 — none drafted. 14 completes the 08 split (08 + 13 + 14 together meet the
 milestone's egress exit criterion); 10 stays the close-out.
+
+**Active phase: phase-11 — container-hardening-flags**
+(`docs/dev/milestones/M19-sandbox-completion/phase-11-container-hardening-flags.md`,
+status: todo, drafted 2026-08-31). Dispatch with
+`/rexymcp:dispatch phase-11`. Four `docker run` flags `run_args` does not set,
+a digest-pinned base image, and a `container_run` event at spawn.
+
+**PE DECISION 2026-08-31 — phase-14 is deferred out of M19; the exit criterion
+is struck.** Drafting 14 began by measuring its mechanism against the real
+proxy, and the design adopted from Docker Sandboxes on 2026-08-30 does not
+port:
+
+1. **`AddHeader` adds; it never replaces.** With
+   `AddHeader "Authorization" "Bearer REAL-SECRET-VALUE"` in the conf, a
+   request carrying `Authorization: Bearer de-cred-SENTINEL` reached the
+   origin **with the sentinel unchanged**. Substitution is not an operation
+   tinyproxy has.
+2. **`AddHeader` is global and static** — one value for every allowed host, so
+   the secret would go to *every* allowlisted destination. Weaker than the env
+   var it replaces.
+3. **HTTPS is a byte tunnel.** Through `CONNECT` the origin received no
+   `Authorization` and not even `Via`, while the plain-HTTP request in the same
+   run carried both; tinyproxy logs `Not sending client headers to remote
+   machine`.
+
+Making it work needs TLS interception — a different proxy, a per-daemon CA in
+the agent image's trust store, a per-job cert cache, and the trade that the
+proxy then reads every byte the agent sends. That is a later milestone's design
+decision, not a completion task. **M19's egress story is 08 (allowlist) + 13
+(audit).** The lesson is worth carrying: every claim in the Docker Sandboxes
+read was checked against *this repo's code* and none against *this repo's
+proxy binary*. A capability is a fact about the implementation you have, not
+about the design you copied.
+
+Phase-11 drafting notes:
+
+- **Prototyped, mutated, and the flag set run against real containers before
+  speccing, then reverted.** 1522 → **1529** (7 tests), ~230 lines across four
+  files, four gates green. Six mutations run; four discriminate cleanly and are
+  specced as pairs (three fail exactly one named test, M2 exactly three — the
+  *set* is pinned, not a count). The two that don't are covered by grep
+  criteria with their measured blast radius written into § Test plan.
+- **Every flag was verified in-kernel or in `docker inspect`, with its contrast
+  case.** `CapBnd: 0000000000000000`, `NoNewPrivs: 1`, `ReadonlyRootfs=true`;
+  `MemorySwap` is 2 GiB without the flag and 1 GiB with it; `--pull never`
+  turns a missing image into a local `No such image` where the default reaches
+  for `docker.io`. The toolchain still works under `--read-only` (python3, git,
+  curl all fine) because `/tmp` gets its own 1777 tmpfs.
+- **The digest pin forces no rebuild, and that was checked rather than
+  assumed.** `alpine:3.22` currently resolves to the pinned digest, so both
+  images build to byte-identical ids — the agent image's is exactly the
+  `image_id` already in `sandbox.lock`, so preflight keeps passing. Had they
+  differed, every sandboxed command would have been refused until
+  `daemoneye sandbox build` ran.
+- **The record's image id comes from the lockfile, not a probe** — preflight
+  already refuses when live ≠ lock, so at the spawn site the two agree and no
+  process needs spawning.
+- **Two criterion counts were wrong until I ran them.** I wrote M3's seam as
+  2 → 1; `grep -c 'if !cfg.enabled {'` is actually **4 → 3**, because three
+  other functions in the file carry the same guard. Corrected before the doc
+  landed. This is the sub-case recorded at phase-13 close, arriving again in
+  the same shape: a mechanical criterion is not validated until it is *run*
+  in both directions.
+- **§ Authorizations carries `bug-phase-13-1` forward as a forward-looking
+  gotcha** — check what sits immediately above an insertion point, because a
+  `///` block attaches to whatever item follows it. Task 2's anchor is a
+  doc-comment line for exactly that reason.
+- All 17 lines of the § End-to-end structural block were run against the clean
+  tree: every discriminating line reads its stated "before" value.
+
+**Two gaps recorded in the README rather than absorbed:** item 7 of the 11
+intent (image staleness warning + `requires_tools`) needs a phase of its own,
+and **the proxy image is never verified against `proxy.lock` at run time** —
+`proxy.lock` does not exist on the daemon host at all, and nothing in
+`start_proxy` reads it.
