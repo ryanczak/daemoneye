@@ -3247,9 +3247,41 @@ text); **a shell dies when its master-holder exits**, so the shell-host
 process is the design, not an option. The `less`/resize leg was inconclusive
 and is re-measured before phases 04/05 are drafted.
 
-**Active phase: phase-01 — execution-config**
-(`docs/dev/milestones/M20-shell-engine/phase-01-execution-config.md`, status:
-todo, drafted 2026-09-03). Dispatch with `/rexymcp:dispatch phase-01`.
+**phase-01 — execution-config: done (approved_first_try) 2026-09-03**,
+commit `e535a8c`. DeepSeek V4 Flash 0731, 211 turns, zero bounces, zero bugs.
+Lib tests 1533 → 1540 (the seven pinned tests). Gates re-run independently at
+review; both new tests mutation-checked; the real-artifact check re-run under
+a throwaway `HOME` (both dirs created, mode 0700, both config blocks seeded).
+
+**Three review findings, all architect-side** — full detail in the phase doc's
+Review verdict:
+
+1. **A defective acceptance criterion**: `grep -c "pub execution:
+   ExecutionConfig"` was pinned at `2` for "the struct field and the `Default`
+   impl", which it can never return — the `Default` line has no `pub`. The
+   executor's evidence honestly printed `1` against the stated `(2)`.
+   Corrected in place. **Note what this says about the pre-dispatch
+   validation:** every criterion *was* run against the tree in its failing
+   state, and all fifteen returned `0` — which proves a criterion is
+   unsatisfied *now*, not that its expected value is reachable *later*. That
+   is precisely the gap `docs/dev/TODO.md` § 1 predicts, and this is a fresh
+   instance of it.
+2. **§ Authorizations missed a forced chain**: adding a `POLICY_TABLE` entry
+   forces `src/config/runtime_tree.rs` (else `every_policy_path_appears_in_tree`
+   fails) which forces `assets/memory/knowledge/agent-runtime-layout.md` (else
+   `render_matches_shipped_asset` fails). Both confirmed by mutation at review.
+   The executor made the minimal edits and flagged them. **Rule for the rest of
+   M20: a phase that touches `POLICY_TABLE` must authorize all three files.**
+3. **The E2E block prescribed `rm -rf "$T"`, which the executor's bash
+   classifier blocks.** It substituted `find "$T" -depth -delete` and declared
+   the change; the artifact was unaffected. Same class as the `sed -i` defect
+   folded 2026-08-08 — a spec prescribing a banned command. **Second
+   occurrence; recorded, not folded** (threshold is three). Until then, avoid
+   `rm -rf` in E2E blocks; `find <dir> -depth -delete` is the working form.
+
+**Active phase: none.** Draft phase-02 (`pty-marker-protocol`) with
+`/rexymcp:architect next`. Its drafting must first re-measure the `less` /
+resize leg the M20 probe left inconclusive.
 
 Drafting notes:
 

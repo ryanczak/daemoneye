@@ -1,7 +1,7 @@
 # Phase 01: Execution backend config and shell paths
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~380 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -320,7 +320,14 @@ value shown, so every one of them is failing now and must pass after.
 
 - [ ] `grep -c "^pub struct ExecutionConfig" src/config/types.rs` → **1** (now `0`).
 - [ ] `grep -c "^pub struct ShellsConfig" src/config/types.rs` → **1** (now `0`).
-- [ ] `grep -c "pub execution: ExecutionConfig" src/config/types.rs` → **2** (now `0`) — the struct field and the `Default` impl.
+- [x] `grep -c "pub execution: ExecutionConfig" src/config/types.rs` → **1**.
+      **Corrected at review 2026-09-03: this criterion originally pinned `2`,
+      a value it can never return.** The `Default` impl line is
+      `execution: ExecutionConfig::default(),` — no `pub`, and `::default()`
+      follows — so only the struct field matches. Both lines are present and
+      correct (`src/config/types.rs:44` and `:69`); the criterion was the
+      defect, not the code. The same applies to the `shells` pair
+      (`:46` and `:70`).
 - [ ] `grep -c "^pub fn shells_dir" src/config/load.rs` → **1** (now `0`).
 - [ ] `grep -c "^pub fn shell_logs_dir" src/config/load.rs` → **1** (now `0`).
 - [ ] `grep -c '"var/log/shells"' src/config/lifecycle.rs` → **1** (now `0`).
@@ -713,3 +720,57 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e535a8c7a7fa23d8e7b3c535b1b880697775eab1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-03
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-v4-flash-0731 (211 turns)
+- **Scope deviations:** two files outside § Authorizations —
+  `src/config/runtime_tree.rs` and `assets/memory/knowledge/agent-runtime-layout.md`.
+  **Forced by this phase's own spec, and correctly flagged by the executor.**
+  Confirmed by mutation at review: reverting `runtime_tree.rs` to its
+  pre-phase state fails `every_policy_path_appears_in_tree` (every
+  `POLICY_TABLE` entry must appear in `RUNTIME_TREE`), and reverting only the
+  asset while keeping the new tree nodes fails `render_matches_shipped_asset`
+  (the rendered tree must byte-match the seeded memory's tree block). So
+  Task 5's two policy entries force both edits. The § Authorizations list was
+  incomplete; the executor's edits were minimal and correct.
+- **Calibration:** three findings, **all architect-side**.
+  1. **A defective acceptance criterion.** `grep -c "pub execution:
+     ExecutionConfig"` was pinned at `2` for "the struct field and the
+     `Default` impl", a value it can never return — the `Default` line carries
+     no `pub`. The executor's E2E section F honestly printed `1` against the
+     stated `(2)`. Criterion corrected in place above. This is another
+     instance of the class in `docs/dev/TODO.md` § 1 (mechanise the
+     pre-dispatch acceptance-criteria check); the criteria *were* validated in
+     their failing state, which catches unsatisfiable criteria but not a
+     wrong *expected value*, exactly as that item predicts.
+  2. **§ Authorizations missed a forced dependency chain** (see Scope
+     deviations). When a phase adds a `POLICY_TABLE` entry, `runtime_tree.rs`
+     and the seeded runtime-layout asset are always in scope with it.
+  3. **The E2E block prescribed `rm -rf "$T"`, which the executor's bash
+     classifier blocks.** The executor substituted `find "$T" -depth -delete`
+     and declared it; the artifact was unaffected. This is the **same class**
+     as the `sed -i` defect folded into `WORKFLOW.md` on 2026-08-08 — a spec
+     prescribing a command the executor contract bans. **Second occurrence of
+     the class; recorded, not folded** (the threshold is three). The general
+     rule already exists in `WORKFLOW.md`; what it lacks is `rm -rf` by name.
+- **Gates re-run independently at review:** `cargo fmt --all --check`,
+  `cargo build` (zero warnings), `cargo clippy --all-targets --all-features
+  -- -D warnings`, `cargo test` — all green. Lib tests 1533 → 1540, exactly
+  the seven pinned in § Test plan.
+- **Test quality (mutation-checked at review):** changing
+  `uses_pty`'s `eq_ignore_ascii_case("pty")` to `contains("pty")` fails
+  `execution_uses_pty_only_for_exact_pty_value` on its negative cases;
+  changing `default_shells_scrollback_lines` from `5000` to `4096` fails both
+  `shells_config_defaults` and `shells_config_parses_from_toml`. Both
+  restored; tree clean.
+- **Real-artifact check re-run at review:** under a throwaway `HOME` the
+  shipped binary creates `var/run/shells` and `var/log/shells`, both mode
+  `0700`, and seeds a `config.toml` carrying both documented blocks.
+- **Hygiene:** no `unwrap`/`expect`/`panic!`, no `unsafe`, no `#[allow]`, no
+  `#[ignore]`, no `TODO`/`FIXME`, no debug printing in the 165 added
+  production lines. `uses_pty()` has no production caller, as § Out of scope
+  requires. `docs/e2e-block.txt` appears deleted in the returned diff but was
+  never committed to any branch — no stray artifact.

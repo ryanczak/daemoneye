@@ -157,7 +157,7 @@ line-number facts go stale and each landing shifts the next Current state).
 
 | #  | Phase | Status | Scope (one line) |
 |----|-------|--------|------------------|
-| 01 | execution-config ([phase-01-execution-config.md](phase-01-execution-config.md)) | **in-progress** | `[execution] backend` + `[shells]` (per-owner cap, exited retention, log retention) config schema, validation, `assets/etc/config.toml` docs, `shells_dir()` / `shell_logs_dir()` / `shell_run_dir()` path constructors, lifecycle-policy rows. Hermetic — no PTY. |
+| 01 | execution-config ([phase-01-execution-config.md](phase-01-execution-config.md)) | **done** (approved_first_try, 2026-09-03) | `[execution] backend` + `[shells]` (per-owner cap, exited retention, log retention) config schema, validation, `assets/etc/config.toml` docs, `shells_dir()` / `shell_logs_dir()` / `shell_run_dir()` path constructors, lifecycle-policy rows. Hermetic — no PTY. |
 | 02 | pty-marker-protocol | todo (not drafted) | `src/shell/pty.rs`: `portable-pty` spawn, the split-nonce wrapper for bash/zsh/fish, the pure marker parser with the echo-first negative test, exit-code extraction, `\x1f` stripping. One real-PTY test against `bash`. |
 | 03 | asciicast-log | todo (not drafted) | `src/shell/log.rs`: asciicast v2 writer (header, `o`/`i`/`m` events, per-read flush) + `.meta.json` command index + reader that slices command N. Pure over byte streams; fixtures from phase-02's real capture. |
 | 04 | screen-model | todo (not drafted) | `src/shell/screen.rs`: `vt100::Parser` wrapper; `ansi.rs` annotation and `status.rs` classification re-pointed at grid cells; scrollback depth from config. Fixture-driven, no PTY. |
