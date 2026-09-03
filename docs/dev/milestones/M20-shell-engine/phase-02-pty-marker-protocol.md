@@ -1,7 +1,7 @@
 # Phase 02: PTY spawn and the marker protocol
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced 2026-09-03 — see `bugs/bug-02-1.md`)
 **Depends on:** none (phase-01 is independent; this phase reads no config)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -301,9 +301,16 @@ value shown.
 - [ ] `test -f src/shell/pty.rs && echo yes` → **yes** (file absent now).
 - [ ] `grep -c "DE_''BEG" src/shell/pty.rs` → **at least 1** (now `0`) — the
       split quote of F2 is present in the builder.
-- [ ] `grep -c "fn parse_outcome" src/shell/pty.rs` → **1** (now `0`).
-- [ ] `grep -c "fn wrap_command" src/shell/pty.rs` → **1** (now `0`).
-- [ ] `grep -c "fn strip_markers" src/shell/pty.rs` → **1** (now `0`).
+- [x] `grep -cE "^pub fn parse_outcome\(" src/shell/pty.rs` → **1**.
+- [x] `grep -cE "^pub fn wrap_command\(" src/shell/pty.rs` → **1**.
+- [x] `grep -cE "^pub fn strip_markers\(" src/shell/pty.rs` → **1**.
+      **All three corrected at review 2026-09-03.** They originally read
+      `grep -c "fn <name>"` pinned at **1**, a value the tree cannot produce:
+      the pinned test names (`parse_outcome_returns_none_…`,
+      `wrap_command_splits_…`, `strip_markers_removes_…`) also contain
+      `fn <name>`, so the round-1 tree measured **7 / 3 / 2**. The code was
+      right and the criteria were wrong. Anchoring on `^pub fn <name>(` counts
+      definitions only and measures **1 / 1 / 1** on that same tree.
 - [ ] **No `unwrap`/`expect`/`panic!` outside test code in the new module:**
       `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/shell/pty.rs | grep -cE '\.(unwrap|expect)\(|panic!\('`
       → **0**. **The `^` anchor is load-bearing.** Without it the pattern also
@@ -325,6 +332,17 @@ value shown.
       `cargo test --lib shell::` already matches **43** pre-existing tests in
       `daemon::utils::shell::` and reports `ok` on the current tree, so a
       criterion phrased over `shell::` would pass before any code was written.
+- [ ] **(round 2, bug-02-1)** `cargo test --lib pty_run_times_out` reports a
+      passing `pty_run_times_out_on_a_silent_command`. Confirmed failing at
+      review: `0 passed; 0 failed; … 1550 filtered out`.
+- [ ] **(round 2, bug-02-1)** `PtyShell::run` returns `Err` within a bounded
+      margin of its `timeout` for a command that emits nothing — measured at
+      review as `timeout=2s elapsed=20.1s result=Ok(exit 0)`, which is the
+      behaviour that must change.
+- [ ] **(round 2, bug-02-1)** `cargo test --lib shell::pty::` completes in
+      **under 60 seconds** with `0 failed`. At review a reviewer mutation of
+      the marker made this run hang until a 10-minute external kill instead of
+      failing at the test's own 10-second timeout.
 - [ ] All four gates pass: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 
@@ -365,7 +383,14 @@ them as byte literals rather than inventing new ones:
   nonce's markers and a foreign nonce's marker keeps the foreign bytes and
   drops ours.
 
-One real-PTY test:
+Two real-PTY tests (the second added in round 2 by bug-02-1):
+
+- `pty_run_times_out_on_a_silent_command` — spawn a real shell, call `run`
+  with a command that emits nothing for far longer than the budget (`sleep 20`
+  against a short timeout is the measured case), and assert **both** that the
+  result is `Err` **and** that the elapsed wall time is well under the
+  command's own duration. Asserting only `Err` would pass on the current
+  broken code path if the command ever ended on its own.
 
 - `pty_bash_roundtrip_returns_real_exit_code` — spawn `bash`, run
   `echo hello; sh -c 'exit 42'` (F7: **never** `(exit 42)`), assert
@@ -394,9 +419,9 @@ echo "== F. structural greps (each must print the stated number) =="
 echo -n "portable-pty dep        (1): "; grep -c '^portable-pty' Cargo.toml
 echo -n "lib.rs module decl      (1): "; grep -c '^pub mod shell;' src/lib.rs
 echo -n "split-quote BEG        (>=1): "; grep -c "DE_''BEG" src/shell/pty.rs
-echo -n "fn wrap_command         (1): "; grep -c "fn wrap_command" src/shell/pty.rs
-echo -n "fn parse_outcome        (1): "; grep -c "fn parse_outcome" src/shell/pty.rs
-echo -n "fn strip_markers        (1): "; grep -c "fn strip_markers" src/shell/pty.rs
+echo -n "pub fn wrap_command     (1): "; grep -cE "^pub fn wrap_command\(" src/shell/pty.rs
+echo -n "pub fn parse_outcome    (1): "; grep -cE "^pub fn parse_outcome\(" src/shell/pty.rs
+echo -n "pub fn strip_markers    (1): "; grep -cE "^pub fn strip_markers\(" src/shell/pty.rs
 echo -n "unsafe in pty.rs        (0): "; grep -vE '^\s*(//|///|//!|\*)' src/shell/pty.rs | grep -c 'unsafe'
 echo -n "unwrap/expect/panic pre-test (0): "
 awk '/^#\[cfg\(test\)\]/{exit} {print}' src/shell/pty.rs | grep -cE '\.(unwrap|expect)\(|panic!\('
@@ -470,6 +495,27 @@ divergent line.
   consumer is dead scaffolding.
 - **Masking.** Output is returned raw; the masking filter is applied by the
   caller at the point it reaches a model, which is phase-07's concern.
+
+## Notes for executor — round 2
+
+Round 1 was **approved on substance and bounced on one defect**. The parser,
+the wrapper, the split-quote handling and all ten tests are correct and stay
+as they are; two mutations at review confirmed they discriminate. Do **not**
+rewrite them.
+
+The one thing to fix is `bugs/bug-02-1.md`: `PtyShell::run` never enforces its
+`timeout` when the command is silent. Read that bug doc first — it carries the
+measured evidence and the constraint the solution must satisfy.
+
+Three criteria in § Acceptance criteria were **wrong in round 1 and have been
+corrected**; they now read `^pub fn <name>(` and measure `1`. Your round-1 code
+already satisfies them. They are marked `[x]` and need no work.
+
+One process item: the round-1 end-to-end entry pasted the self-check *command*
+but not its *verdict line*. The artifact was byte-exact — the reviewer ran the
+check and it printed `PASTE MATCH` — but the verdict has to appear in the entry
+so the check does not fall to the reviewer. Round 2's entry needs the literal
+verdict line in it.
 
 ## Update Log
 

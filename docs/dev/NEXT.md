@@ -3279,9 +3279,49 @@ Review verdict:
    occurrence; recorded, not folded** (threshold is three). Until then, avoid
    `rm -rf` in E2E blocks; `find <dir> -depth -delete` is the working form.
 
-**Active phase: phase-02 — pty-marker-protocol**
-(`docs/dev/milestones/M20-shell-engine/phase-02-pty-marker-protocol.md`,
-status: todo, drafted 2026-09-03). Dispatch with `/rexymcp:dispatch phase-02`.
+**Active phase: phase-02 — pty-marker-protocol** (status: **in-progress**,
+bounced 2026-09-03 on `bug-02-1`). Re-dispatch with
+`/rexymcp:dispatch phase-02`.
+
+**Round 1 (DeepSeek V4 Flash 0731, 146 turns): approved on substance, bounced
+on one defect.** All four gates green independently at review, lib 1540 → 1550
+(the ten pinned tests), no `unwrap`/`expect`/`panic!`/`unsafe`/`#[allow]` in
+279 production lines, and two reviewer mutations confirmed the tests
+discriminate. Paste fidelity was genuine — the reviewer ran the self-check
+against the surviving artifact and it printed `PASTE MATCH`.
+
+**bug-02-1 (major): `PtyShell::run` never enforces its timeout.** `remaining`
+is computed from the deadline and then used only for an `is_zero()` test; it is
+never applied to the blocking `read`, so a command that emits nothing runs past
+its budget. Two measurements: through the crate's public API,
+`run("sleep 20", 2s)` returned **`Ok` after 20.1 s**; and a reviewer mutation
+of the marker made `cargo test --lib shell::pty::` **hang until a 10-minute
+external kill** instead of failing at the test's own 10-second timeout. The
+second is the M8/M10 lesson resurfacing — a starved read must fail fast, not
+hang the suite.
+
+**Architect defects found in the same review:**
+
+- **Three acceptance criteria were unsatisfiable, and this is the second phase
+  in a row.** They read `grep -c "fn <name>"` pinned at **1**, but the pinned
+  *test* names contain `fn <name>` too, so the tree measured 7 / 3 / 2. The
+  code was right. Corrected to `^pub fn <name>(`, which measures 1 / 1 / 1 on
+  the very same tree. Phase-01's identical class (`pub execution:` pinned at 2,
+  reachable 1) makes **two occurrences**; `docs/dev/TODO.md` § 1 is the
+  standing item and this is now a trend, one short of the fold threshold. The
+  root cause both times: validating that a criterion *fails now* does not
+  validate that its *expected value is reachable later*.
+- **The spec named a behaviour without a mechanism that could deliver it.**
+  Task 5 said "on timeout return an `Err`" and described a read loop that
+  cannot honour it. Recorded in the bug doc's Root cause as the
+  architect-side half.
+- **No test was specced for the timeout contract**, which is why it shipped
+  broken and is what round 2 adds. Telemetry failure class:
+  `missing_spec_test`.
+
+Minor: round 1's evidence entry pasted the self-check *command* but not its
+*verdict line*, so the check fell to the reviewer. Called out in the phase
+doc's round-2 notes.
 
 Drafting measurements (all executed on scrappy; probe sources kept in
 `M20-shell-engine/probes/`, and the seven facts are quoted in the phase doc's
