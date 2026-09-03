@@ -3233,10 +3233,20 @@ fast-forwarded into `master`; crate bumped to 1.0.0; **`v1.0.0` tagged at
 
 ## DaemonEye 2.0 (plan of record 2026-09-03, `docs/design/daemoneye-2.0.md`)
 
-No milestone scoped yet. The plan proposes M20–M29; PE decisions of
-2026-09-03 are in its § 8. **Next action:** scope M20 — Shell engine — with
-`/rexymcp:architect` on `master`. Its first phase is a measurement phase
-(`portable-pty`, `vt100`, a throwaway shell-host prototype, a daemon restart)
-so no later spec cites an unexecuted PTY fact. 2.0 proceeds on `master`
-behind an `[execution] backend = "tmux" | "pty"` flag; there is no `v2`
-branch.
+The plan proposes M20–M29; PE decisions of 2026-09-03 are in its § 8. 2.0
+proceeds on `master` behind an `[execution] backend = "tmux" | "pty"` flag;
+there is no `v2` branch.
+
+## M20 — Shell Engine (scoped 2026-09-03, **awaiting PE sign-off**)
+
+Milestone README: `docs/dev/milestones/M20-shell-engine/README.md` — nine
+phases proposed, none drafted. Pre-drafting measurements are recorded there:
+`portable-pty` 0.9.0 + `vt100` 0.16.2 spawn/marker/colour all work; **the PTY
+echo matches a naive marker first** (fixed by a split nonce in the typed
+text); **a shell dies when its master-holder exits**, so the shell-host
+process is the design, not an option. The `less`/resize leg was inconclusive
+and is re-measured before phases 04/05 are drafted.
+
+**Active phase: none.** On PE sign-off, draft phase-01 (`execution-config`)
+with `/rexymcp:architect next`.
+

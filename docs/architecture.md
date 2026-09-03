@@ -441,5 +441,14 @@ memory search real (BM25-ranked FTS5 over `var/index/memory.db`, maintained on
 every write, with `reconcile_index()` covering the fresh-install case), landed
 four drift gates, and fixed three latent defects found along the way.
 
-No milestone is scoped. The carried list is empty apart from
-`hooks_land_on_private_server`, a flake that has not reproduced in 300 runs.
+### DaemonEye 2.0 — M20 Shell Engine (scoped 2026-09-03)
+
+`v1.0.0` (2026-09-03) is the last tmux-based release; M18/M19 (container
+sandbox) are merged. DaemonEye 2.0 — plan of record
+[`docs/design/daemoneye-2.0.md`](design/daemoneye-2.0.md) — replaces the
+tmux substrate of § 1.4 with daemon-owned PTY shells held by detached
+shell-host processes, SSH to remote hosts from local PTYs, asciicast v2 shell
+logs, and the rexyMCP run/turn model. M20 delivers the shell engine behind
+`[execution] backend = "tmux" | "pty"` (default `tmux`); milestone README
+`docs/dev/milestones/M20-shell-engine/README.md`. Until M26 removes tmux,
+§§ 1–4 above describe the `tmux` backend and remain accurate.
