@@ -8,8 +8,8 @@ deterministic marker protocol with real exit codes — behind an
 from a real `daemoneye chat` turn runs on the new substrate with tmux
 untouched.
 
-**Status:** planning — scoped 2026-09-03, awaiting PE sign-off before phase-01
-is drafted.
+**Status:** in-progress — scoped 2026-09-03; phase-01 drafted 2026-09-03 on
+PE direction (`/rexymcp:architect next`).
 
 **Depends on:** M19 — Sandbox Completion (closed 2026-09-03 at the 2.0
 boundary). First milestone of DaemonEye 2.0; plan of record
@@ -157,7 +157,7 @@ line-number facts go stale and each landing shifts the next Current state).
 
 | #  | Phase | Status | Scope (one line) |
 |----|-------|--------|------------------|
-| 01 | execution-config | todo (not drafted) | `[execution] backend` + `[shells]` (per-owner cap, exited retention, log retention) config schema, validation, `assets/etc/config.toml` docs, `shells_dir()` / `shell_logs_dir()` / `shell_run_dir()` path constructors, lifecycle-policy rows. Hermetic — no PTY. |
+| 01 | execution-config ([phase-01-execution-config.md](phase-01-execution-config.md)) | **todo** (drafted 2026-09-03) | `[execution] backend` + `[shells]` (per-owner cap, exited retention, log retention) config schema, validation, `assets/etc/config.toml` docs, `shells_dir()` / `shell_logs_dir()` / `shell_run_dir()` path constructors, lifecycle-policy rows. Hermetic — no PTY. |
 | 02 | pty-marker-protocol | todo (not drafted) | `src/shell/pty.rs`: `portable-pty` spawn, the split-nonce wrapper for bash/zsh/fish, the pure marker parser with the echo-first negative test, exit-code extraction, `\x1f` stripping. One real-PTY test against `bash`. |
 | 03 | asciicast-log | todo (not drafted) | `src/shell/log.rs`: asciicast v2 writer (header, `o`/`i`/`m` events, per-read flush) + `.meta.json` command index + reader that slices command N. Pure over byte streams; fixtures from phase-02's real capture. |
 | 04 | screen-model | todo (not drafted) | `src/shell/screen.rs`: `vt100::Parser` wrapper; `ansi.rs` annotation and `status.rs` classification re-pointed at grid cells; scrollback depth from config. Fixture-driven, no PTY. |

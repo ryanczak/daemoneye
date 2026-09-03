@@ -3247,6 +3247,38 @@ text); **a shell dies when its master-holder exits**, so the shell-host
 process is the design, not an option. The `less`/resize leg was inconclusive
 and is re-measured before phases 04/05 are drafted.
 
-**Active phase: none.** On PE sign-off, draft phase-01 (`execution-config`)
-with `/rexymcp:architect next`.
+**Active phase: phase-01 — execution-config**
+(`docs/dev/milestones/M20-shell-engine/phase-01-execution-config.md`, status:
+todo, drafted 2026-09-03). Dispatch with `/rexymcp:dispatch phase-01`.
+
+Drafting notes:
+
+- **All 15 mechanical acceptance criteria were validated against the current
+  tree in their failing state** — every one returns `0` today. The two
+  path-audit criteria are deliberately split into a quoted `source` string and
+  a trailing-comma vec line, because `path_audit.rs` contains both forms for
+  every constructor and a single grep cannot tell them apart; verified against
+  the existing `etc_dir` pair (1 and 1).
+- **The `constructors` vec in `inventory_contains_all_config_constructors`
+  (`src/config/path_audit.rs:554`) is hand-maintained**, so an `INVENTORY`
+  entry added without the matching vec line leaves the gate vacuously green.
+  Both edits are separate criteria for that reason.
+- **`is_covered()` covers subdirectories**, so `var/run/shells` inherits the
+  `var/run` entry and Direction A would pass without it, while
+  `var/log/shells` has no covering parent and fails without its own entry.
+  The spec requires both anyway — the `var/run/shells` entry exists to record
+  that shells are exempt from `var/run`'s `ClearAtStartup` intent.
+- **Measured: no daemon-free subcommand loads `Config`.** A deliberate type
+  error in `[limits]` left `daemoneye costs` exiting `0`, because it reads the
+  event log directly. So the E2E block proves the real binary creates both
+  directories and seeds the documented blocks, and says plainly that
+  config *parsing* is unit-tested here and verified against the running binary
+  in phase-07 and at the M20 close. The executor is told not to hunt for a CLI
+  that prints the resolved config.
+- **Section B of the E2E block can lie**: `cargo test --lib execution` today
+  prints `test result: ok. 0 passed … 1533 filtered out` with `exit=0` and no
+  matching test. The pass condition is the named test lines, not the exit code.
+- **The PASTE MATCH self-check was validated both ways** against a copy of the
+  phase doc: byte-exact → `PASTE MATCH`; one line retyped → `PASTE MISMATCH`
+  naming the divergence.
 
