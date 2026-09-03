@@ -1030,3 +1030,19 @@ Takeover was rejected: the executor has not yet attempted `bug-02-2` even
 once, so there is no evidence it cannot reach the work. Resume was rejected:
 the run produced no partial work to resume from, and its context carries the
 trap that caused the stall.
+
+### Update — 2026-09-03 (escalation, round 4)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** round 4 (142 turns) hard-failed on a `NoProgressStall` after
+doing most of the work — both spec'd tests (`pty_runs_many_commands_on_one_shell`,
+`pty_shell_is_usable_after_a_timeout`) are on disk as an uncommitted +71/-1
+and match the spec, and it fixed the `(exit 42)` fixture to `sh -c 'exit 42'`
+(F7). It then built a probe crate and ran the **identical** command ~40 times
+with no edit between, until the 60-call read-only stall fired. The one
+production edit (`bug-02-2`) was never made. The partial work is exactly what
+was asked for and the run demonstrably understood the defect, so resume with a
+pointed hint beats a re-dispatch that discards the tests. PE raised
+`read_only_stall_threshold` 60 → 200 in `rexymcp.toml` for this resume; noted
+that the stall was an identical-probe loop, not a diagnosis converging, so the
+guidance forbids re-probing and names the exact edit.
