@@ -6,6 +6,13 @@ I wrote DaemonEye after discovering OpenClaw and being completely blown away by 
 
 **Linux only.** DaemonEye uses `fork(2)`, Unix domain sockets, and Linux-specific tmux hooks — it will not build or run on macOS or Windows.
 
+> **Where this is going.** `v1.0.0` is the last tmux-based release. DaemonEye
+> 2.0 replaces the tmux substrate with daemon-owned PTY shells (local, and
+> SSH to remote hosts), works from any terminal, and ports the run/turn model,
+> governor and structured turn logs proven in rexyMCP. The plan of record is
+> [`docs/design/daemoneye-2.0.md`](docs/design/daemoneye-2.0.md); this README
+> describes 1.x until each 2.0 milestone lands and is updated with it.
+
 ---
 
 ## Quickstart
@@ -214,14 +221,20 @@ When a class flag is `true`, approval is pre-granted for the entire class at ses
 
 ---
 
-### 🔒 Container-Sandboxed Agents (in progress)
+### 🔒 Container-Sandboxed Agents (opt-in)
 
-> **Status: milestone-complete, feature not shipped.** M18 is done: background
-> command execution runs inside a rootless Docker container when enabled. The
-> sandbox remains **behind `[sandbox] enabled = false`**, so current behaviour
-> is unchanged and no container runtime is required to build, test, or run
-> DaemonEye today. The remaining work — script staging, the escape hatch, and
-> the egress proxy — is M19.
+> **Status as of v1.0.0:** M18 and M19 are merged. When `[sandbox] enabled =
+> true`, background commands and ghost-shell commands run inside a rootless
+> Docker container as an unprivileged uid, approved scripts are staged into
+> the container per run, a `network = "proxy"` profile gets HTTP(S) egress
+> only through a containerized proxy with a per-profile allowlist and an
+> `events.jsonl` audit record per request, every container spawn is recorded,
+> and `daemoneye status` reports runtime, image-vs-lockfile and live
+> containers. The sandbox stays **off by default**, so no container runtime
+> is required to build, test, or run DaemonEye. Not yet shipped: the
+> escape hatch and the workspace mount — both carried into DaemonEye 2.0 (see
+> [`docs/design/daemoneye-2.0.md`](docs/design/daemoneye-2.0.md)). Build the
+> image with `daemoneye sandbox build`.
 
 Every approval prompt above is a *behavioural* control: it depends on the
 operator reading the command correctly. None of it stops a
@@ -393,6 +406,7 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye daemon --log-file FILE` | Write the daemon log to `FILE` instead of `~/.daemoneye/var/log/daemon.log` |
 | `daemoneye daemon --session NAME` | Override the managed tmux session name from config |
 | `daemoneye stop` | Stop the daemon gracefully |
+| `daemoneye sandbox build` | Build the agent (and proxy) container images from `containers/` and record their ids in `~/.daemoneye/etc/*.lock` |
 | `daemoneye ping` | Check whether the daemon is running |
 | `daemoneye status` | Daemon status: uptime, sessions, ghost shells, cost today, redactions, circuit state |
 | `daemoneye logs` | Tail `daemon.log` |
