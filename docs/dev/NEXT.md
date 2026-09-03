@@ -3375,6 +3375,28 @@ re-dispatch** (entry in the phase doc).
   to preserve rather than rewrite, a falsifiable finish condition
   (`13 passed, not 14`) and a self-run mutation check.
 
+**phase-02 — pty-marker-protocol: done (approved_after_4) 2026-09-03**,
+landing commit `3e06009`. Five rounds: two review bounces, two
+`NoProgressStall` hard-fails, then a **resume** that completed in 90 turns —
+the shortest of the five. Three bugs, all resolved. Lib 1540 → 1549;
+`shell::pty::` 13 passed in 2.00 s.
+
+Verified independently at review through the crate's public API, which is the
+door both blockers surfaced at: six sequential commands on one healthy shell
+all succeed, a timeout leaves the shell fully usable, a timed-out command's
+late output does not leak into the next result, and the shell survives the
+SIGTERM. Two mutations confirm the tests discriminate, including one of mine
+showing the new signal helper is load-bearing. Append-only discipline held —
+round 5's doc diff has zero deletion lines.
+
+**What worked, for the next stall.** Two consecutive `NoProgressStall`s, and
+neither was about code the executor could not write. R3 spent its budget on
+documentation surgery; R4 wrote both tests correctly and then ran an identical
+probe command ~40 times. The lever that landed it was **resume with the exact
+edit named and probing forbidden**, not another re-dispatch. Raising
+`read_only_stall_threshold` 60 → 200 gave that resume room to finish rather
+than room to loop.
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,

@@ -1,7 +1,7 @@
 # Phase 02: PTY spawn and the marker protocol
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** none (phase-01 is independent; this phase reads no config)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1046,22 +1046,6 @@ pointed hint beats a re-dispatch that discards the tests. PE raised
 `read_only_stall_threshold` 60 → 200 in `rexymcp.toml` for this resume; noted
 that the stall was an identical-probe loop, not a diagnosis converging, so the
 guidance forbids re-probing and names the exact edit.
-### Update — 2026-09-03 (escalation, round 4)
-
-**Chosen lever:** resume (`continue_phase`)
-**Rationale:** round 4 (142 turns) hard-failed on a `NoProgressStall` after
-doing most of the work — both spec'd tests (`pty_runs_many_commands_on_one_shell`,
-`pty_shell_is_usable_after_a_timeout`) are on disk as an uncommitted +71/-1
-and match the spec, and it fixed the `(exit 42)` fixture to `sh -c 'exit 42'`
-(F7). It then built a probe crate and ran the **identical** command ~40 times
-with no edit between, until the 60-call read-only stall fired. The one
-production edit (`bug-02-2`) was never made. The partial work is exactly what
-was asked for and the run demonstrably understood the defect, so resume with a
-pointed hint beats a re-dispatch that discards the tests. PE raised
-`read_only_stall_threshold` 60 → 200 in `rexymcp.toml` for this resume; noted
-that the stall was an identical-probe loop, not a diagnosis converging, so the
-guidance forbids re-probing and names the exact edit.
-
 ### Update — 2026-09-03 (started)
 
 Resuming round 5 of phase-02 with the round-4 committed work already on disk
@@ -1275,3 +1259,83 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3e060096c069f9671f9466b597774439a3aeca7c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-03
+
+- **Verdict:** approved_after_4
+- **Rounds:** 5. R1 bounced (`bug-02-1`), R2 bounced (`bug-02-2`, `bug-02-3`),
+  R3 `hard_fail` NoProgressStall → refined re-dispatch, R4 `hard_fail`
+  NoProgressStall → **resume**, R5 (resume, 90 turns) complete and approved.
+- **Bugs filed:** 3 — all resolved. `bug-02-1` and `bug-02-2` fixed by the
+  executor; `bug-02-3` resolved by the architect and taken out of scope.
+- **Executor:** deepseek-v4-flash-0731
+- **Scope deviations:** one, declared and accepted. `terminate_foreground` is a
+  new production helper the spec did not name: `portable-pty` exposes no
+  signal API, and `bug-02-2` requires a timed-out `run` to leave nothing
+  consuming the shell. It is load-bearing — see the mutation below.
+
+**Gates re-run independently at review:** `cargo fmt --all --check`,
+`cargo build` (zero warnings, forced rebuild), `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` — all green. Lib 1547 → 1549,
+exactly the two tests the bounce asked for. `shell::pty::` reports 13 passed
+in 2.00 s, matching the `13, not 14` finish condition and well under the 60 s
+cap.
+
+**Hygiene:** 335 production lines with no `unwrap`/`expect`/`panic!`, no
+`unsafe`, no `#[allow]`/`#[ignore]`, no `TODO`, no debug printing. The module
+still has **no production caller**, as § Out of scope requires.
+
+**Behaviour verified independently through the public API** — the same door
+that exposed both prior blockers, using a throwaway crate with a path
+dependency:
+
+| Check | Result |
+|---|---|
+| Six sequential commands on one healthy shell | all `Ok` with their own output (was `Ok`/`ERR` alternating) |
+| Timeout, then three more commands on the same shell | all `Ok` (was poisoned) |
+| Late output from a timed-out command leaking into the next result | clean — nothing leaked |
+| Shell alive after the timeout SIGTERM | yes, next command returned a real exit `33` |
+
+That third row is the one the executor's design claim rested on, and it holds:
+the SIGTERM kills the timed-out command before it can emit.
+
+**Mutation-checked at review (a claimed mutation is not one):**
+
+- The executor's claimed check reproduces — substituting `std::io::empty()`
+  for the reader fails `pty_runs_many_commands_on_one_shell` (and three
+  others).
+- **Mine:** making `terminate_foreground` a no-op fails
+  `pty_shell_is_usable_after_a_timeout`, and the module's suite time jumps
+  from 2.00 s to 10.39 s because the timed-out `sleep 30` keeps holding the
+  terminal. The signal is genuinely load-bearing and genuinely covered.
+
+Both restored; tree clean.
+
+**Append-only discipline held.** `git diff` of round 5's commit against this
+document contains **zero** deletion lines — the `bug-02-3` lesson stuck. The
+round-1 entry still reports its own `10 passed` / `1546 passed`. Paste
+fidelity verified by the reviewer against the surviving artifact:
+`PASTE MATCH`, and this round's entry carries the literal verdict line, which
+round 1's did not.
+
+- **Calibration:**
+  1. **A minor wart, recorded not bounced.** The timeout path calls
+     `self.terminate_foreground()?` *before* building the timeout error, so if
+     the `kill` binary could not be spawned the caller would see
+     `kill -- -<pgid> failed` instead of `timed out after …`. Unreachable on
+     any normal Linux host (the project is Linux-only and `kill(1)` is
+     universal), and `.status()` does not error on a non-zero exit — only on a
+     spawn failure. Worth a one-line fix if this code is touched again; not
+     worth a round six. A `nix::sys::signal::killpg` alternative exists but
+     would need a new crate feature.
+  2. **Two `NoProgressStall`s in a row, and neither was about the code.** R3
+     spent its whole budget on `bug-02-3`'s documentation surgery; R4 wrote
+     both tests correctly and then ran an identical probe command ~40 times.
+     The lever that worked was **resume with the edit named**, not a further
+     re-dispatch — R5 landed in 90 turns, the shortest of the five.
+  3. **The architect's share is the larger one.** Three defective acceptance
+     criteria (see § Acceptance criteria), a bounce that bundled a code
+     blocker with architect record-keeping, and a Test plan that never
+     exercised the module's primary use — a long-lived shell running many
+     commands — which is precisely why `bug-02-2` shipped past a green suite
+     twice. Telemetry failure class: `missing_spec_test`.
