@@ -12,6 +12,7 @@ pub mod ipc;
 pub mod scheduler;
 pub mod scripts;
 pub mod session_store;
+pub mod shell;
 pub mod webhook;
 
 pub(crate) mod header;

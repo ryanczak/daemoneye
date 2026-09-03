@@ -22,6 +22,9 @@ futures-util = "0.3"
 libc = "0.2"
 log = "0.4"
 nix = { version = "0.31.3", features = ["fs"] }
+# PTY spawn/resize behind a safe API — chosen so no `unsafe` (openpty, forkpty,
+# TIOCSCTTY) enters this crate; STANDARDS.md §1 forbids it in phase work.
+portable-pty = "0.9"
 regex = "1"
 reqwest = { version = "0.13.4", features = ["json", "stream"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
