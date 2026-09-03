@@ -94,6 +94,16 @@ pub static INVENTORY: &[InventoryEntry] = &[
         source: "config::pane_logs_dir()",
     },
     InventoryEntry {
+        path: "var/run/shells",
+        status: PathStatus::Current,
+        source: "config::shells_dir()",
+    },
+    InventoryEntry {
+        path: "var/log/shells",
+        status: PathStatus::Current,
+        source: "config::shell_logs_dir()",
+    },
+    InventoryEntry {
         path: "var/log/pipe",
         status: PathStatus::Current,
         source: "config::pipe_log_dir()",
@@ -579,6 +589,8 @@ mod tests {
             crate::config::sessions_dir,
             crate::config::scripts_dir,
             crate::config::runbooks_dir,
+            crate::config::shells_dir,
+            crate::config::shell_logs_dir,
             Config::schedules_path,
         ];
 

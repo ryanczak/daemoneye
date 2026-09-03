@@ -36,6 +36,16 @@ pub fn pane_logs_dir() -> PathBuf {
     config_dir().join("var/log/panes")
 }
 
+/// Directory where per-shell runtime state lives: `~/.daemoneye/var/run/shells/`.
+pub fn shells_dir() -> PathBuf {
+    var_run_dir().join("shells")
+}
+
+/// Directory where shell session recordings are stored: `~/.daemoneye/var/log/shells/`.
+pub fn shell_logs_dir() -> PathBuf {
+    var_log_dir().join("shells")
+}
+
 /// `~/.daemoneye/var/index/` — derived indexes (FTS5 memory index).
 pub fn var_index_dir() -> PathBuf {
     config_dir().join("var/index")

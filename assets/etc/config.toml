@@ -275,6 +275,28 @@ prompt = "sre"
 # destroy_on_exit = true   # destroy the container on ghost exit, every path
 # mount_scripts   = "ro"   # mount mode for the staged script volume
 
+# ── Execution ────────────────────────────────────────────────────────────────
+
+# [execution]
+# Execution substrate for agent shells. Today only tmux exists; "pty" is the
+# 2.0 substrate. Nothing reads this value yet — it becomes live in phase-07.
+# backend = "tmux"            # "tmux" (default) or "pty" (the 2.0 substrate)
+
+# ── Shells ───────────────────────────────────────────────────────────────────
+
+# [shells]
+# Settings for the PTY-backed shell engine. Nothing here takes effect yet;
+# later M20 phases consume these values.
+#
+# max_per_owner        = 5      # max concurrent shells one owner (a chat
+#                               # session, a ghost) may hold; 0 = unlimited
+# exited_retention_secs = 300   # how long an exited shell stays listed before
+#                               # it is reaped
+# log_retention_days   = 7      # days to keep var/log/shells/*.cast;
+#                               # 0 = keep forever
+# scrollback_lines     = 5000   # rows of scrollback the screen model retains
+#                               # per shell
+
 # ── Daemon ───────────────────────────────────────────────────────────────────
 
 # [daemon]

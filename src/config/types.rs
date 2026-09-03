@@ -40,6 +40,10 @@ pub struct Config {
     pub retention: RetentionConfig,
     #[serde(default)]
     pub sandbox: SandboxConfig,
+    #[serde(default)]
+    pub execution: ExecutionConfig,
+    #[serde(default)]
+    pub shells: ShellsConfig,
 }
 
 impl Default for Config {
@@ -62,6 +66,8 @@ impl Default for Config {
             logging: LoggingConfig::default(),
             retention: RetentionConfig::default(),
             sandbox: SandboxConfig::default(),
+            execution: ExecutionConfig::default(),
+            shells: ShellsConfig::default(),
         }
     }
 }
@@ -617,6 +623,104 @@ impl SandboxConfig {
                      proxy_allow — it can reach nothing and is equivalent to \"none\""
                 );
             }
+        }
+    }
+}
+
+/// Execution backend selection (`[execution]`).
+/// `backend` defaults to `"tmux"`; `"pty"` is the 2.0 substrate. Nothing reads
+/// the value yet — phase-07 is the first consumer.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ExecutionConfig {
+    /// `"tmux"` (default, today's behaviour) or `"pty"` (the 2.0 substrate).
+    #[serde(default = "default_execution_backend")]
+    pub backend: String,
+}
+
+fn default_execution_backend() -> String {
+    "tmux".to_string()
+}
+
+impl Default for ExecutionConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_execution_backend(),
+        }
+    }
+}
+
+impl ExecutionConfig {
+    /// True iff the backend value, after trimming and lowercasing, is exactly
+    /// `"pty"`. Everything else — including the default `"tmux"` and any typo —
+    /// is false, so a typo silently keeps today's tmux behaviour rather than
+    /// half-enabling a substrate that does not exist yet.
+    pub fn uses_pty(&self) -> bool {
+        self.backend.trim().eq_ignore_ascii_case("pty")
+    }
+
+    /// Warn when the normalised backend is neither `"tmux"` nor `"pty"`.
+    /// Never panics and never returns a value.
+    pub fn validate(&self) {
+        let normalised = self.backend.trim().to_ascii_lowercase();
+        if normalised != "tmux" && normalised != "pty" {
+            log::warn!(
+                "[execution] backend = {:?} is invalid — supported values are \"tmux\" and \
+                 \"pty\". Keeping today's tmux behaviour.",
+                self.backend
+            );
+        }
+    }
+}
+
+/// Shell-engine settings (`[shells]`).
+/// These values control the PTY-backed shell engine shipped by M20; nothing
+/// in the daemon reads them yet.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ShellsConfig {
+    /// Max concurrent shells one owner (a chat session, a ghost) may hold.
+    /// 0 = unlimited. Default: 5.
+    #[serde(default = "default_shells_max_per_owner")]
+    pub max_per_owner: u32,
+    /// How long an exited shell stays listed before it is reaped.
+    /// Default: 300 seconds.
+    #[serde(default = "default_shells_exited_retention_secs")]
+    pub exited_retention_secs: u64,
+    /// Days to keep `var/log/shells/*.cast`. 0 = keep forever. Default: 7.
+    #[serde(default = "default_shells_log_retention_days")]
+    pub log_retention_days: u32,
+    /// Rows of scrollback the screen model retains per shell.
+    /// Default: 5000.
+    #[serde(default = "default_shells_scrollback_lines")]
+    pub scrollback_lines: u32,
+}
+
+/// Default per-owner concurrent shell cap (5).
+fn default_shells_max_per_owner() -> u32 {
+    5
+}
+
+/// Default exited-shell retention (300 s = 5 min).
+fn default_shells_exited_retention_secs() -> u64 {
+    300
+}
+
+/// Default shell recording retention (7 days).
+fn default_shells_log_retention_days() -> u32 {
+    7
+}
+
+/// Default scrollback depth (5000 rows per shell).
+fn default_shells_scrollback_lines() -> u32 {
+    5000
+}
+
+impl Default for ShellsConfig {
+    fn default() -> Self {
+        Self {
+            max_per_owner: default_shells_max_per_owner(),
+            exited_retention_secs: default_shells_exited_retention_secs(),
+            log_retention_days: default_shells_log_retention_days(),
+            scrollback_lines: default_shells_scrollback_lines(),
         }
     }
 }

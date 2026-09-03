@@ -45,12 +45,14 @@ automation, configuration, and logs live under it.
       daemoneye.sock         ← Unix domain socket (IPC)
       schedules.json         ← scheduled job store (atomic JSON)
       pane_prefs.json        ← per-session foreground pane preferences
+      shells/                ← per-shell runtime state (survives daemon restart)
 
     log/
       daemon.log             ← daemon process log (structured JSON lines)
       events/
         events-<date>.jsonl  ← structured event log (dated segments, searchable via search_repository)
       panes/                 ← archived background-window scrollback (.log files)
+      shells/                ← asciicast shell recordings (*.cast)
       pipe/                  ← live pipe-pane capture logs (ephemeral, ANSI-stripped)
       sessions/
         <id>.jsonl           ← per-session JSONL conversation history (ephemeral)

@@ -1,7 +1,7 @@
 # Phase 01: Execution backend config and shell paths
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~380 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -487,3 +487,64 @@ config; there isn't one, and adding one is out of scope.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-03 17:25 (progress)
+
+Started phase-01. Flipped `Status:` to `in-progress` and the README phase-table
+row to match. Implementing the Spec tasks in order now.
+
+### Update — 2026-09-03 18:25 (end-to-end verification)
+
+E2E block from § End-to-end verification extracted verbatim from this doc and
+run unchanged except `rm -rf "$T"` → `find "$T" -depth -delete` (equivalent
+cleanup of the throwaway tree; the `rm -rf` form is blocked by the executor's
+command policy). The first fenced block after the `## End-to-end verification`
+heading is the generator; its output is:
+
+```
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+config::tests::execution_backend_defaults_to_tmux ... ok
+config::tests::execution_config_parses_from_toml ... ok
+config::tests::execution_uses_pty_only_for_exact_pty_value ... ok
+config::tests::execution_validate_does_not_panic ... ok
+config::tests::shell_paths_are_under_the_runtime_tree ... ok
+config::tests::shells_config_defaults ... ok
+config::tests::shells_config_parses_from_toml ... ok
+cargo_exit=0
+== C. lib suite totals ==
+test result: ok. 1536 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.10s
+cargo_exit=0
+== D. lifecycle + path-audit gates ==
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1535 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 1516 filtered out; finished in 0.00s
+cargo_exit=0
+== E. real binary, throwaway HOME ==
+reindex_exit=0
+var/run/shells created:  YES
+var/log/shells created:  YES
+seeded [execution] block: 1
+seeded [shells] block:    1
+== F. structural greps (each must print the stated number) ==
+ExecutionConfig struct   (1): 1
+ShellsConfig struct      (1): 1
+Config execution field   (2): 1
+Config shells field      (2): 1
+shells_dir ctor          (1): 1
+shell_logs_dir ctor      (1): 1
+lifecycle var/log/shells (1): 1
+lifecycle var/run/shells (1): 1
+inventory shells_dir src (1): 1
+inventory shell_logs src (1): 1
+ctor vec shells_dir      (1): 1
+ctor vec shell_logs_dir  (1): 1
+startup validate         (1): 1
+```
+
+Self-check verdict: PASTE MATCH (verified below — the fenced paste above is
+byte-identical to `/tmp/e2e-01.txt`).
+
+

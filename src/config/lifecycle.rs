@@ -99,6 +99,29 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         lazy: false,
     },
     LifecycleEntry {
+        path: "var/log/shells",
+        intent: LifecycleIntent::Sweep {
+            default_retention_days: 7,
+        },
+        config_key: Some("shells.log_retention_days"),
+        implemented: ImplementationStatus::Pending {
+            owned_by: "M20 phase-09",
+        },
+        note: "asciicast recordings (var/log/shells/*.cast) whose sweep lands with the registry in phase-09",
+        lazy: false,
+    },
+    LifecycleEntry {
+        path: "var/run/shells",
+        intent: LifecycleIntent::KeepForever,
+        config_key: None,
+        implemented: ImplementationStatus::Pending {
+            owned_by: "M20 phase-06",
+        },
+        note: "shell runtime state; var/run is ClearAtStartup and shells must survive a daemon restart, \
+               so this subtree is explicitly exempt from that intent",
+        lazy: false,
+    },
+    LifecycleEntry {
         path: "var/log/pipe",
         intent: LifecycleIntent::ClearAtStartup,
         config_key: None,

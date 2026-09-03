@@ -257,6 +257,12 @@ pub static RUNTIME_TREE: TreeNode = TreeNode {
                             blank_before: false,
                             children: &[],
                         },
+                        TreeNode {
+                            name: "shells/",
+                            note: Some("per-shell runtime state (survives daemon restart)"),
+                            blank_before: false,
+                            children: &[],
+                        },
                     ],
                 },
                 TreeNode {
@@ -286,6 +292,12 @@ pub static RUNTIME_TREE: TreeNode = TreeNode {
                         TreeNode {
                             name: "panes/",
                             note: Some("archived background-window scrollback (.log files)"),
+                            blank_before: false,
+                            children: &[],
+                        },
+                        TreeNode {
+                            name: "shells/",
+                            note: Some("asciicast shell recordings (*.cast)"),
                             blank_before: false,
                             children: &[],
                         },

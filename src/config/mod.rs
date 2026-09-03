@@ -749,4 +749,110 @@ mod tests {
         assert!(prof.proxy_allow.is_empty());
         sbx.validate(); // must not panic
     }
+
+    // ── ExecutionConfig and ShellsConfig (M20 phase-01) ─────────────────────
+
+    #[test]
+    fn execution_backend_defaults_to_tmux() {
+        let exec = ExecutionConfig::default();
+        assert_eq!(exec.backend, "tmux");
+        assert!(!Config::default().execution.uses_pty());
+    }
+
+    #[test]
+    fn execution_uses_pty_only_for_exact_pty_value() {
+        for value in ["pty", "PTY", " pty "] {
+            assert!(
+                ExecutionConfig {
+                    backend: value.to_string()
+                }
+                .uses_pty()
+            );
+        }
+        for value in ["tmux", "", "ptyx", "p ty", "docker", "Pty!"] {
+            assert!(
+                !ExecutionConfig {
+                    backend: value.to_string()
+                }
+                .uses_pty()
+            );
+        }
+    }
+
+    #[test]
+    fn execution_config_parses_from_toml() {
+        let with_pty: Config = toml::from_str("[execution]\nbackend = \"pty\"\n").unwrap();
+        assert!(with_pty.execution.uses_pty());
+
+        let empty: Config = toml::from_str("").unwrap();
+        assert_eq!(empty.execution.backend, "tmux");
+    }
+
+    #[test]
+    fn execution_validate_does_not_panic() {
+        for backend in ["tmux", "pty", "nonsense"] {
+            ExecutionConfig {
+                backend: backend.to_string(),
+            }
+            .validate(); // must not panic
+        }
+    }
+
+    #[test]
+    fn shells_config_defaults() {
+        let shells = ShellsConfig::default();
+        assert_eq!(shells.max_per_owner, 5);
+        assert_eq!(shells.exited_retention_secs, 300);
+        assert_eq!(shells.log_retention_days, 7);
+        assert_eq!(shells.scrollback_lines, 5000);
+    }
+
+    #[test]
+    fn shells_config_parses_from_toml() {
+        let all: Config = toml::from_str(
+            "[shells]\nmax_per_owner = 12\nexited_retention_secs = 999\n\
+             log_retention_days = 30\nscrollback_lines = 8000\n",
+        )
+        .unwrap();
+        assert_eq!(all.shells.max_per_owner, 12);
+        assert_eq!(all.shells.exited_retention_secs, 999);
+        assert_eq!(all.shells.log_retention_days, 30);
+        assert_eq!(all.shells.scrollback_lines, 8000);
+
+        let partial: Config = toml::from_str("[shells]\nmax_per_owner = 12\n").unwrap();
+        assert_eq!(partial.shells.max_per_owner, 12);
+        assert_eq!(
+            partial.shells.exited_retention_secs, 300,
+            "exited_retention_secs must still default"
+        );
+        assert_eq!(
+            partial.shells.log_retention_days, 7,
+            "log_retention_days must still default"
+        );
+        assert_eq!(
+            partial.shells.scrollback_lines, 5000,
+            "scrollback_lines must still default"
+        );
+    }
+
+    #[test]
+    fn shell_paths_are_under_the_runtime_tree() {
+        let _guard = crate::test_home_guard();
+        let shells = shells_dir();
+        let logs = shell_logs_dir();
+        let base = config_dir();
+        assert!(
+            shells.ends_with("var/run/shells"),
+            "shells_dir() = {shells:?}"
+        );
+        assert!(
+            logs.ends_with("var/log/shells"),
+            "shell_logs_dir() = {logs:?}"
+        );
+        assert!(
+            shells.starts_with(&base),
+            "{shells:?} must start with {base:?}"
+        );
+        assert!(logs.starts_with(&base), "{logs:?} must start with {base:?}");
+    }
 }
