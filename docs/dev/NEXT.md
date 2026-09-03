@@ -3397,6 +3397,42 @@ edit named and probing forbidden**, not another re-dispatch. Raising
 `read_only_stall_threshold` 60 → 200 gave that resume room to finish rather
 than room to loop.
 
+**Active phase: phase-03 — asciicast-log**
+(`docs/dev/milestones/M20-shell-engine/phase-03-asciicast-log.md`, status:
+todo, drafted 2026-09-03). Dispatch with `/rexymcp:dispatch phase-03`.
+
+Scope: `src/shell/log.rs` — an asciicast v2 writer, a `.meta.json` command
+index keyed by byte range, and a reader that slices command N out of the cast.
+Pure over byte streams with an injected timestamp; no PTY, no clock call, no
+production caller (phase-05 is the first). `"r"` resize events are deliberately
+excluded — phase-05 owns resize and adds that method with its caller.
+
+Drafting work, applying the phase-02 lessons:
+
+- **The format spec was fetched and pasted inline**, since the executor has no
+  web access: header fields, the `[time, code, data]` event shape, and all four
+  event codes with the spec's own examples.
+- **Three facts measured rather than assumed.** `serde_json` already escapes
+  the unit-separator and ANSI bytes our marker protocol emits, so nothing needs
+  hand-escaping. Float times always serialise with a decimal point. And the
+  load-bearing one: `std::str::from_utf8` distinguishes an *incomplete* trailing
+  sequence (`error_len() == None`, carry it) from *genuinely invalid* bytes
+  (`error_len() == Some(n)`, consume them). Without that discriminator the
+  writer either corrupts every split character or carries a bad byte forever —
+  and phase-02 measured that a 4096-byte PTY read does split characters.
+- **The headline test is the module's primary use**, not a unit slice: write a
+  three-command session and read each command back byte-exact. That is the
+  direct answer to phase-02's blocker, where a test plan that only exercised
+  one command at a time let a broken second command ship past a green suite
+  twice.
+- **The test filter is `shell::log::`, not `log::`** — measured, a bare `log::`
+  already matches **16** pre-existing tests and reports `ok` today. Same trap
+  as phase-02's `shell::`, caught before dispatch this time.
+- **Every criterion greps a source file, never this document**, so the
+  self-matching class below cannot recur here.
+- The doc contains **zero control bytes**, so the paste-fidelity check has
+  nothing unpastable in it.
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,
