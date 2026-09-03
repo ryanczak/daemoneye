@@ -6,7 +6,10 @@ egress through a proxy it cannot bypass, an operator can see and steer sandbox
 state from the chat surface, and a command that genuinely needs the host has
 one explicit, audited way out.
 
-**Status:** in-progress — **opened 2026-08-29 on PE sign-off.**
+**Status:** **closed 2026-09-03 at the 2.0 boundary (PE direction)** — opened
+2026-08-29 on PE sign-off. Ten phases done; 09/12 re-homed into DaemonEye 2.0
+(M21/M22), 10 not run — see § Retrospective. Merged to `master` and tagged
+`v1.0.0` at `029ab1a`.
 
 **Depends on:** M18 — Container-sandboxed Agents (closed 2026-08-29, 10 phases
 done).
@@ -44,7 +47,7 @@ done).
   implementable on tinyproxy". M19's egress story is the allowlist (08) plus
   the audit (13); a credential-bearing profile stays unsupported rather than
   half-supported.**
-- A profile declaring `workspace = "clone"` runs the command over a
+- ~~(re-homed to 2.0 M22 with phase-12, 2026-09-03)~~ A profile declaring `workspace = "clone"` runs the command over a
   **read-only, uid-1000-owned copy** of the pane's working directory, staged
   by the same root helper that stages scripts; `workspace = "none"` (the
   default) mounts nothing, exactly as today. A sandboxed `cargo test` in the
@@ -52,12 +55,15 @@ done).
 - Every sandboxed container run is recorded in `events.jsonl` at spawn —
   job id, session, image id, network mode — so a live check can be anchored
   to a record rather than to a `docker ps` snapshot (phase-11).
-- A command the operator explicitly escalates runs on the host with the
-  escape recorded in `events.jsonl`; one that is not escalated cannot.
+- ~~A command the operator explicitly escalates runs on the host with the
+  escape recorded in `events.jsonl`; one that is not escalated cannot.~~
+  **Re-homed to 2.0 M21 with phase-09 (2026-09-03).**
 - **Live checks, architect-run at close** (the M14/M18 convention — through
   the user's door, session JSONL as the evidence anchor): the startup sweep
   runs through a real daemon; an AI-driven background command completes in a
-  container from a real `daemoneye chat` turn.
+  container from a real `daemoneye chat` turn. **Not run at close (2026-09-03)
+  — carried to 2.0 M20/M21, where the same checks are re-stated against PTY
+  shells. See § Retrospective.**
 - All four gates green: `cargo fmt --all`, `cargo build`,
   `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 
@@ -84,10 +90,10 @@ Proposed decomposition; each drafted on demand via `/rexymcp:architect next`.
 | 06 | proxy-network-and-image ([phase-06-proxy-network-and-image.md](phase-06-proxy-network-and-image.md)) | **done** (approved_first_try, 2026-08-30) |
 | 07 | proxy-profile-wiring ([phase-07-proxy-profile-wiring.md](phase-07-proxy-profile-wiring.md)) | **done** (approved_first_try, 2026-08-30) |
 | 08 | proxy-allowlist ([phase-08-proxy-allowlist.md](phase-08-proxy-allowlist.md)) | **done** (approved_first_try, 2026-08-31) |
-| 09 | escape-hatch | todo (not drafted) |
-| 10 | live-verification-and-close | todo (not drafted) |
+| 09 | escape-hatch | **re-homed** to 2.0 M21 (PE decision 2026-09-03) — becomes an approval classification on `open_shell { transport: Local }` from a sandboxed run; never drafted here |
+| 10 | live-verification-and-close | **not run** (closed 2026-09-03 without the live sweep — see § Retrospective) |
 | 11 | container-hardening-flags ([phase-11-container-hardening-flags.md](phase-11-container-hardening-flags.md)) | **done** (approved_first_try, 2026-08-31) |
-| 12 | workspace-mount-policy | todo (not drafted; **added 2026-08-30**) |
+| 12 | workspace-mount-policy | **re-homed** to 2.0 M22 (PE decision 2026-09-03) — becomes a `[hosts.<h>] sandbox_profile` / workspace option; never drafted here |
 | 13 | proxy-audit ([phase-13-proxy-audit.md](phase-13-proxy-audit.md)) | **done** (approved_after_1, 2026-08-31) |
 | 14 | proxy-credentials | **deferred out of M19** (PE decision 2026-08-31; mechanism disproved by measurement) |
 
@@ -506,3 +512,71 @@ Phase intents:
   `grep -ci "Prove it applied"` returned 0 because local words that rule as
   "a `grep -c` of the mutated text after each direction". A blind instrument
   reporting clean is § "Run every count criterion"'s own second corollary.
+
+## Retrospective — closed 2026-09-03 at the 2.0 boundary (PE direction)
+
+**Shipped:** scripts reach sandboxed commands (per-run staging, module
+`#[allow(dead_code)]` retired); ghosts run in containers with no unsandboxed
+door out and a ghost-scoped teardown; container status over IPC and in
+`daemoneye status`; a proxy image + `--internal` network, `network = "proxy"`
+profile wiring, a per-profile allowlist with the CONNECT-port hole closed, and
+an `events.jsonl` audit record per request with the rule that matched;
+hardening flags (`CapBnd` zero, `NoNewPrivs`, read-only rootfs, sized tmpfs)
+and a `container_run` spawn record. Sentinel credential injection (14) was
+disproved by measurement on tinyproxy and deferred; the escape hatch (09) and
+workspace mount (12) were never drafted.
+
+| # | Phase | Verdict | Bugs |
+|---|---|---|---|
+| 01 | is-ghost-predicate | approved_first_try | — |
+| 02 | staging-integration | approved_after_1 | 1 |
+| 03 | ghost-container-execution | approved_first_try | 1 |
+| 04 | ghost-scoped-teardown | approved_after_1 | 1 |
+| 05 | container-status-ipc | approved_first_try | — |
+| 06 | proxy-network-and-image | approved_first_try | — |
+| 07 | proxy-profile-wiring | approved_first_try | — |
+| 08 | proxy-allowlist | approved_first_try | — |
+| 11 | container-hardening-flags | approved_first_try | — |
+| 13 | proxy-audit | approved_after_1 | 1 |
+
+Ten phases, seven approved first try, four bug docs, all resolved. Executor
+throughout: DeepSeek V4 Flash 0731 via rexyMCP.
+
+### Why it closed here, and what that costs
+
+The PE decided on 2026-09-03 to take DaemonEye to 2.0 — a tmux-free daemon
+that owns PTY shells (`docs/design/daemoneye-2.0.md`). Two of the three
+remaining phases only make sense against that substrate: the escape hatch is
+an approval classification on opening a host shell from a sandboxed run, and
+the workspace mount is a host-profile option. Drafting them against the
+`de-bg-*` window model would have produced code M26 deletes. They are
+re-homed, not dropped, and the 2.0 plan names the milestone each lands in.
+
+**What is honestly not done: the live sweep.** Phase-10's checks — the
+startup sweep through a real daemon and an AI-driven background command
+completing in a container from a real `daemoneye chat` turn — were not run.
+The M14 and M18 retrospectives both record that live checks found defects
+no green suite could, so this is a real gap, recorded rather than papered
+over. The mitigation is structural: M20's exit criterion already requires a
+sandboxed command end to end from chat on the PTY backend, and M21 re-states
+the escape-hatch check. The container backend that survives into 2.0 is
+`container.rs`'s argv builders and decision logic, which *are* covered by the
+reviewer's real-artifact runs recorded in the phase docs (image id matches the
+lockfile, `CapBnd: 0000000000000000`, `touch /ro` → read-only, tinyproxy
+`403 Filtered` on both GET and CONNECT).
+
+### Calibration
+
+- **Measurement before speccing kept paying.** Phases 05, 06 and 13 each
+  record a design or intent line that was wrong until the drafting
+  measurement corrected it (`docker ps` label joining, the `--internal`
+  network's real isolation, the sentinel mechanism). No new WORKFLOW.md fold —
+  the rule from M18 held as written.
+- **A bug re-expressed as a spec constraint for the very next phase held**
+  (`bug-phase-13-1` → phase-11 § Authorizations). Two sentences, cheaper than a
+  rule; second occurrence of the pattern, one short of the fold threshold.
+- **Two design gaps found while drafting were never scheduled**: scheduled
+  `ActionOn::Script` jobs are not sandboxed (§ Notes, 2026-08-29), and
+  `[sandbox.ghost_defaults]` is parsed by nothing. Both are carried into 2.0:
+  the run manager (M24) gives scheduled jobs the same shell path as every
+  other run, and the ghost defaults become `Budget`/profile fields there.

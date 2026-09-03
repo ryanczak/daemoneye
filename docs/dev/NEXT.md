@@ -3222,3 +3222,21 @@ exactly one named test.
 Remaining M19 phases: **09 escape-hatch**, **12 workspace-mount-policy**,
 **10 live-verification-and-close** — none drafted. 14 is deferred out of the
 milestone. 10 stays the close-out.
+
+**M19 closed 2026-09-03 at the 2.0 boundary (PE direction).** Ten phases
+done (seven first try, four bugs, all resolved); 09 escape-hatch and 12
+workspace-mount re-homed into DaemonEye 2.0 (M21/M22); 10 live-verification
+**not run** — the gap is recorded in the M19 README retrospective and carried
+to M20/M21's exit criteria. `m19-sandbox-completion` (which contained M18)
+fast-forwarded into `master`; crate bumped to 1.0.0; **`v1.0.0` tagged at
+`029ab1a`** as the last tmux-based release. Both pushed to `origin`.
+
+## DaemonEye 2.0 (plan of record 2026-09-03, `docs/design/daemoneye-2.0.md`)
+
+No milestone scoped yet. The plan proposes M20–M29; PE decisions of
+2026-09-03 are in its § 8. **Next action:** scope M20 — Shell engine — with
+`/rexymcp:architect` on `master`. Its first phase is a measurement phase
+(`portable-pty`, `vt100`, a throwaway shell-host prototype, a daemon restart)
+so no later spec cites an unexecuted PTY fact. 2.0 proceeds on `master`
+behind an `[execution] backend = "tmux" | "pty"` flag; there is no `v2`
+branch.
