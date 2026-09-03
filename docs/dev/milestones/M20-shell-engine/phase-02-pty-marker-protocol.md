@@ -1,7 +1,7 @@
 # Phase 02: PTY spawn and the marker protocol
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress (round 3 hard_fail → refined re-dispatch 2026-09-03; only `bugs/bug-02-2.md` remains, `bug-02-3` resolved by the architect)
+**Status:** review
 **Depends on:** none (phase-01 is independent; this phase reads no config)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1133,3 +1133,145 @@ diff /tmp/pasted-02.txt /tmp/e2e-02.txt && echo "PASTE MATCH" || echo "PASTE MIS
 ```
 
 Verdict: **PASTE MATCH**
+
+### Update — ts=1788473654006 (complete, server-authored)
+
+**Summary:** Summary + Notes for review
+
+**What I built (round 5, bug-02-2):** `PtyShell::run` no longer takes or re-seats the reader on any exit path — the reader is cloned **once** at spawn into a worker thread feeding one channel, and `run` drains that channel with `recv_timeout`. The success path leaves the reader untouched (no more false "PTY closed"), and the timeout path SIGTERMs the timed-out command's foreground process group via the platform `kill(1)` (portable-pty exposes no signal API) so a timed-out command cannot keep the shell occupied or keep producing bytes the next `run` must race. Both symptoms trace to one root cause — reader ownership — and the fix keeps `src/shell/` free of `unsafe` and of `.unwrap()`/`.expect()`/`panic!()` in production paths.
+
+**Mutation check (done per guidance, result in the E2E Update Log entry):** temporarily substituting `std::io::empty()` as the reader source made `pty_runs_many_commands_on_one_shell` FAIL (all five runs reported "PTY closed"); restoring the single real reader made it pass.
+
+**E2E:** all four gates pass (`fmt`, `build`, `clippy -D warnings`, `test`); the phase-02 E2E block was run verbatim and `/tmp/e2e-02.txt` pasted byte-exact into a new `(end-to-end verification)` entry; the PASTE MATCH self-check printed `PASTE MATCH`. `shell::pty::` reports exactly **13 passed, 0 failed** in **2.00s** (well under the 60s cap); the full lib suite is 1549 passed / 4 ignored; real-PTY test passes standalone; section-F structural greps all print the stated numbers. The `(exit 42)` → `sh -c 'exit 42'` fixture fix (F7) and the second `run` on the roundtrip test were on disk from round 4 and preserved.
+
+**Notes for review:** I added one production helper `terminate_foreground` (a plain wrapper the spec's Task 5 `kill` is not; needed because `recv_timeout` on a long-lived reader returns cleanly without it, and bug-02-2 requires a timed-out `run` not leave the command running). `kill -- -<pgid>` is used because the `-pgid` form is parsed by util-linux `kill(1)` as a signal number. The reader-thread handle is stored (so the thread outlives any borrow of the shell in tests); it terminates when the master drops on `PtyShell` drop. The suite runs at 2.0s for the silent-command test plus per-timeout SIGTERM, comfortably under the 60s gate, and nothing else in scope changed — no new caller of `src/shell/` was added, as the phase intends.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 4.82s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_injects_on_next_run ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-8c18edd2d30379d8)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-b2f1c28bf4c4197b)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-048e9975683f8cb9)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-8a4b8b748b6f7929)
+     Running tests/integration.rs (target/debug/deps/integration-eafefa557c9e5334)
+     Running tests/isolation.rs (target/debug/deps/isolation-79b57d391bf57809)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M20-shell-engine/phase-02-pty-marker-protocol.md` — +87 -0
+- `src/shell/pty.rs` — +48 -45
+
+**Commit:** 3e060096c069f9671f9466b597774439a3aeca7c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
