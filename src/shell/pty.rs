@@ -8,6 +8,8 @@
 use anyhow::Context;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// A per-command marker nonce. 128 bits of randomness rendered as 32 hex
@@ -57,6 +59,7 @@ pub fn wrap_command(cmd: &str, nonce: &Nonce, shell_name: &str) -> String {
 }
 
 /// What a completed command produced.
+#[derive(Debug)]
 pub struct CommandOutcome {
     /// Bytes strictly between the two markers, with the framing CRLF the
     /// protocol itself contributes removed. Not lossy-decoded here.
@@ -219,31 +222,58 @@ impl PtyShell {
             .map_err(|e| anyhow::anyhow!("{e}"))
             .context("flush wrapped command to PTY")?;
 
+        // The reader is a blocking OS fd, so an unbounded read would park past
+        // the deadline on a silent command. `take_reader` moves it to a worker
+        // thread that owns the blocking read and delivers each chunk on a
+        // channel; reading the channel's rx end is what we bound.
+        let (reader_handle, rx) = take_reader(&mut self.reader);
         let mut buf: Vec<u8> = Vec::new();
         let start = Instant::now();
-        let mut chunk = [0u8; 4096];
         loop {
             let remaining = timeout
                 .checked_sub(start.elapsed())
                 .unwrap_or(Duration::ZERO);
             if remaining.is_zero() {
+                drop(rx);
+                drop(reader_handle); // worker will exit on its own once the shell writes or dies
+                self.refresh_reader()?;
                 return Err(anyhow::anyhow!(
                     "timed out after {timeout:?} waiting for command output: {cmd:?}"
                 ));
             }
-            let read = self
-                .reader
-                .read(&mut chunk)
-                .map_err(|e| anyhow::anyhow!("{e}"));
-            match read {
-                Ok(0) => return Err(anyhow::anyhow!("PTY closed while running {cmd:?}")),
-                Ok(n) => buf.extend_from_slice(&chunk[..n]),
-                Err(e) => return Err(e.context("read from PTY")),
+            match rx.recv_timeout(remaining) {
+                Ok(chunk) => buf.extend_from_slice(&chunk),
+                Err(RecvTimeoutError::Timeout) => {
+                    drop(rx);
+                    drop(reader_handle); // worker will exit on its own once the shell writes or dies
+                    self.refresh_reader()?;
+                    return Err(anyhow::anyhow!(
+                        "timed out after {timeout:?} waiting for command output: {cmd:?}"
+                    ));
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.refresh_reader()?;
+                    return Err(anyhow::anyhow!("PTY closed while running {cmd:?}"));
+                }
             }
             if let Some(outcome) = parse_outcome(&buf, &nonce) {
+                drop(rx);
+                drop(reader_handle); // worker finished once it delivered the end marker
                 return Ok(outcome);
             }
         }
+    }
+
+    /// Re-seat `reader` with a fresh clone from the master so the next `run`
+    /// has a live fd (the previous one lives in a detached worker until the
+    /// shell writes again).
+    fn refresh_reader(&mut self) -> anyhow::Result<()> {
+        self.reader = self
+            .master
+            .try_clone_reader()
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .context("re-seat reader clone")?;
+        Ok(())
     }
 
     /// Resize the PTY.
@@ -275,6 +305,29 @@ impl PtyShell {
             .context("wait for shell child")?;
         Ok(())
     }
+}
+
+/// Move `reader` to a worker thread that reads until EOF/error, sending each
+/// chunk on a synchronous channel; the caller is handed the receiver so it can
+/// bound each wait with `recv_timeout`.
+fn take_reader(reader: &mut Box<dyn Read + Send>) -> (JoinHandle<()>, mpsc::Receiver<Vec<u8>>) {
+    let mut reader = std::mem::replace(reader, Box::new(std::io::empty()));
+    let (tx, rx) = mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx.send(chunk[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    (handle, rx)
 }
 
 #[cfg(test)]
@@ -412,6 +465,25 @@ mod tests {
         assert_eq!(
             text,
             "lead  between  tail \x1fDE_END feedfacefeedface 0\x1f end"
+        );
+    }
+
+    #[test]
+    fn pty_run_times_out_on_a_silent_command() {
+        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
+        let started = Instant::now();
+        let budget = Duration::from_secs(2);
+        let result = shell.run("sleep 20", budget);
+        let elapsed = started.elapsed();
+        assert!(result.is_err(), "a silent command must time out and Err");
+        assert!(
+            elapsed < Duration::from_secs(8),
+            "the read must be bounded, not wait out the command: elapsed={elapsed:?} budget={budget:?}"
+        );
+        let msg = format!("{result:?}");
+        assert!(
+            msg.contains("timed out") && msg.contains("sleep 20"),
+            "error must name the timeout and command: {msg}"
         );
     }
 
