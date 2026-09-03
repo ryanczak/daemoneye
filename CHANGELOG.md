@@ -4,6 +4,24 @@ All notable changes to DaemonEye are documented here.
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-09-03
+
+The last tmux-based release. Tagged on the merge of `m19-sandbox-completion`
+(which contains M18) into `master`; DaemonEye 2.0 (`docs/design/daemoneye-2.0.md`)
+replaces the tmux substrate with daemon-owned PTY shells from here.
+
+- **Milestones M4–M19 shipped under rexyMCP** — context management (M4),
+  UX & stability (M5), verification & hygiene (M6), memory search (M7), test
+  reliability (M8), operator tooling (M9), residual hygiene (M10), unified
+  knowledge index (M11), full-view tmux integration (M12), chat UX (M13), live
+  verification (M14), chat reliability (M15), LLM stream robustness (M16),
+  transcript view (M17), container-sandboxed agents (M18), sandbox completion
+  (M19, phases 09/10/12 carried into 2.0). Each has a retrospective in
+  `docs/dev/milestones/M<n>-*/README.md`.
+- **Container sandbox** — rootless Docker backend for background commands
+  and ghost shells, per-run script staging, proxy-only egress with an
+  allowlist and audit, container status in `daemoneye status`, hardening flags.
+
 ### M3 — Polish & Maintenance (10 phases, complete 2026-06-28)
 
 Post-M2 debt paydown — correctness/hermeticity bugs, user-facing rough edges, and codebase health — with no behavior regressions.
