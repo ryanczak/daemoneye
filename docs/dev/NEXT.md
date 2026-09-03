@@ -3356,6 +3356,37 @@ commands. My Test plan specced it that way in both rounds. Round 3 adds
 **Also architect-side:** nothing in the phase doc said the Update Log is
 append-only. It says so now, in the round-3 notes.
 
+**Round 3 (60 turns): `hard_fail` — `NoProgressStall`, empty diff, zero files
+changed.** The executor spent its entire budget on `bug-02-3`'s documentation
+surgery (`git show` / `diff` / `sed` / `python3` against the phase doc, over
+and over) and **never opened `src/shell/pty.rs`**. Escalation lever: **refined
+re-dispatch** (entry in the phase doc).
+
+- **`bug-02-3` is resolved by the architect** and removed from executor scope.
+  Round 1's entry and its server-authored `(complete)` entry were restored
+  verbatim from `3712c74` (198 lines) with a superseded note above them; round
+  2's entries untouched. It was record-keeping on the architect's own document
+  with no telemetry value, and its shape — splicing an old block into a file
+  that changed around it, with no `sed -i` or `>` available to the executor —
+  is precisely what stalled the run. **Bounce work must be shaped for the
+  executor's tool set, not just stated.**
+- **Round 4 carries exactly one task**, `bug-02-2`, with a loud header saying
+  green gates are expected and are not evidence of completion, a list of what
+  to preserve rather than rewrite, a falsifiable finish condition
+  (`13 passed, not 14`) and a self-run mutation check.
+
+**A third self-matching grep criterion, and this hits the fold threshold.**
+`bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
+— which the criterion's own quoted text in § Acceptance criteria also matches,
+so it returned **2**, not the **1** it pinned, and could never have been
+satisfied. Anchoring (`^fn …`) returns 1. With phase-01's `pub execution:`
+(pinned 2, max 1) and round 1's three `fn <name>` counts (pinned 1, actual
+7/3/2), that is **three occurrences of one class**: *validating that a
+criterion fails now does not validate that its expected value is reachable
+later.* `WORKFLOW.md` § Calibration puts the fix threshold at three, and
+`docs/dev/TODO.md` § 1 is the standing item. **PE decision needed on whether
+to fold** — the architect does not amend `WORKFLOW.md` unilaterally.
+
 Drafting measurements (all executed on scrappy; probe sources kept in
 `M20-shell-engine/probes/`, and the seven facts are quoted in the phase doc's
 § "Measured facts"):
