@@ -49,8 +49,10 @@ executed, not reasoned about, per the M18 rule:
   resize propagation (`stty size` after `master.resize`), alt-screen programs
   (`less`, `vim`) in the grid, `fish` marker syntax (`set __de_ec $status`),
   8-bit/UTF-8 split across reads, and the shell-host socket protocol itself.
-  The probe source is in the architect's scratchpad, not the repo; phase
-  docs quote the relevant lines.
+  The probe source is kept at `probes/ptyprobe.rs` (+ `Cargo.toml.txt`) in
+  this directory so the measurements are reproducible (`cargo run` in a
+  scratch crate; `ptyprobe orphan` for the SIGHUP leg); phase docs quote the
+  relevant lines rather than pointing at it.
 
 **Exit criteria:**
 
