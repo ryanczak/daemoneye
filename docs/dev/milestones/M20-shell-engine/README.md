@@ -158,7 +158,7 @@ line-number facts go stale and each landing shifts the next Current state).
 | #  | Phase | Status | Scope (one line) |
 |----|-------|--------|------------------|
 | 01 | execution-config ([phase-01-execution-config.md](phase-01-execution-config.md)) | **done** (approved_first_try, 2026-09-03) | `[execution] backend` + `[shells]` (per-owner cap, exited retention, log retention) config schema, validation, `assets/etc/config.toml` docs, `shells_dir()` / `shell_logs_dir()` / `shell_run_dir()` path constructors, lifecycle-policy rows. Hermetic — no PTY. |
-| 02 | pty-marker-protocol | todo (not drafted) | `src/shell/pty.rs`: `portable-pty` spawn, the split-nonce wrapper for bash/zsh/fish, the pure marker parser with the echo-first negative test, exit-code extraction, `\x1f` stripping. One real-PTY test against `bash`. |
+| 02 | pty-marker-protocol ([phase-02-pty-marker-protocol.md](phase-02-pty-marker-protocol.md)) | **todo** (drafted 2026-09-03) | `src/shell/pty.rs`: `portable-pty` spawn, the split-nonce wrapper for bash/zsh/fish, the pure marker parser with the echo-first negative test, exit-code extraction, `\x1f` stripping. One real-PTY test against `bash`. |
 | 03 | asciicast-log | todo (not drafted) | `src/shell/log.rs`: asciicast v2 writer (header, `o`/`i`/`m` events, per-read flush) + `.meta.json` command index + reader that slices command N. Pure over byte streams; fixtures from phase-02's real capture. |
 | 04 | screen-model | todo (not drafted) | `src/shell/screen.rs`: `vt100::Parser` wrapper; `ansi.rs` annotation and `status.rs` classification re-pointed at grid cells; scrollback depth from config. Fixture-driven, no PTY. |
 | 05 | shell-host-process | todo (not drafted) | `daemoneye shell-host --id sN` subcommand: owns the PTY, writes the log, serves `var/run/shells/sN.sock` (peer-uid checked) with input / resize / signal / subscribe frames; detached spawn via the existing fork path; readiness pipe. **Architect-authored if new `unsafe` is required.** |
@@ -177,7 +177,18 @@ line-number facts go stale and each landing shifts the next Current state).
 - **The `less`/resize leg of the probe was inconclusive** (the probe's own
   read loop timed out rather than the feature failing). Re-measure before
   drafting phase-04 (alt-screen in the grid) and phase-05 (resize frames);
-  do not cite either behaviour in a spec until then.
+  do not cite either behaviour in a spec until then. **Still outstanding after
+  phase-02 drafting** — that round measured the marker protocol, not the
+  screen, and deliberately left `vt100` out of phase-02.
+
+- **Phase-02 drafting added a BEGIN marker to the design (2026-09-03).** The
+  2.0 plan's § 2.1 describes only an end marker. Measurement showed the PTY
+  echoes the typed command ahead of the output, so a lone end marker leaves no
+  reliable left edge for the output; extracting strictly between a
+  `\x1fDE_BEG <nonce>\x1f` and the end marker does. The begin marker also
+  gives phase-03's asciicast `"m"` events their command-start boundary for
+  free. `docs/design/daemoneye-2.0.md` § 2.1 should be amended at the phase-09
+  documentation sweep.
 - **Scheduled `ActionOn::Script` jobs and `[sandbox.ghost_defaults]`** are
   carried out of M19 unscheduled; neither is M20's concern — the run manager
   (M24) gives scheduled jobs the same shell path as every other run.

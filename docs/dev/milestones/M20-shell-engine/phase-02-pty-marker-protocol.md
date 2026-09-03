@@ -1,0 +1,478 @@
+# Phase 02: PTY spawn and the marker protocol
+
+**Milestone:** M20 — Shell Engine
+**Status:** todo
+**Depends on:** none (phase-01 is independent; this phase reads no config)
+**Estimated diff:** ~430 lines
+**Tags:** language=rust, kind=feature, size=m
+
+## Goal
+
+Add `src/shell/` with the two primitives every later M20 phase builds on: a
+PTY-backed shell spawned through `portable-pty`, and the **marker protocol**
+that returns a command's real exit code and its exact output bytes. Both the
+wrapper builder and the parser are pure functions, so almost all of the
+behaviour is testable without a PTY.
+
+Nothing calls this module yet. It is a library with tests, not a wiring
+change — `run_terminal_command` keeps using tmux until phase-07.
+
+## Architecture references
+
+Read before starting:
+
+- `docs/design/daemoneye-2.0.md` § 2.1, the "Command execution — the marker
+  protocol" paragraph — why this replaces the `DE_EXIT` latch and the three-way
+  completion heuristic.
+- `docs/dev/milestones/M20-shell-engine/README.md` § "Design decisions on
+  record" — the split-nonce rule and the `Transport` enum's shape.
+
+## Pre-flight
+
+1. Read `docs/dev/STANDARDS.md` top to bottom.
+2. Read the architecture references above.
+3. Read this entire phase doc before touching any code.
+4. Confirm the repo is on a clean branch with no uncommitted changes.
+
+## Current state
+
+- **`src/shell/` does not exist.** `src/lib.rs:5-25` declares the module list;
+  `pub mod` for crate-public modules (`agents`, `ai`, `cli`, `config`, …) and
+  `pub(crate) mod` for internal ones (`header`, `memory`, `tmux`, `util`, …).
+- **No PTY crate is in the tree.** `Cargo.toml` has no `portable-pty`; nothing
+  in `src/` can turn a raw byte stream into a terminal screen. Terminal
+  emulation is entirely outsourced to the tmux server today.
+- The closest existing analogue is the 1.x background wrapper at
+  `src/daemon/background/run.rs:167-173`, which appends
+  `"; __de_ec=$?; <exe> notify complete <pane_id> $__de_ec <session>"` to the
+  command and relies on an IPC callback. This phase replaces the callback with
+  an in-band marker.
+- `shell_exit_var()` at `src/daemon/background/helpers.rs:14-19` already maps a
+  shell name to its exit variable and is the rule this phase reuses:
+
+  ```rust
+  pub(super) fn shell_exit_var(shell_name: &str) -> &'static str {
+      match shell_name.trim() {
+          "fish" | "csh" | "tcsh" => "$status",
+          _ => "$?",
+      }
+  }
+  ```
+
+  It is `pub(super)` inside `daemon::background`, so this phase writes its own
+  copy in `src/shell/` rather than widening that one's visibility.
+- `uuid` is already a dependency; the existing idiom for a compact hex id is
+  `uuid::Uuid::new_v4().simple()` (`src/daemon/ghost.rs:185`).
+
+## Measured facts — all executed on scrappy 2026-09-03, none reasoned about
+
+These were produced by the probes kept in `probes/` in this directory —
+`ptyprobe.rs` (F1, F2 across the three shells), `probe-bytes.rs` (F3),
+`probe-wrap.rs` (F4), `probe-full.rs` (F1 combined, F6, F7) — built as a
+scratch crate from `probes/Cargo.toml.txt` with `portable-pty` 0.9.0 on
+rustc 1.95.0, edition 2024. **Every number and byte
+string below came out of a real PTY.** Build the spec to these, not to what
+seems likely.
+
+### F1. The complete wrapper, verified identical in bash, zsh and fish
+
+Typed into the PTY (one line, `\n`-terminated):
+
+```
+printf '\x1fDE_''BEG <nonce>\x1f\n'; <cmd>; printf '\n\x1fDE_''END <nonce> %s\x1f\n' <exit_var>
+```
+
+Results with `<cmd>` = `echo hello; sh -c 'exit 42'`:
+
+| shell | `<exit_var>` | parsed exit | bytes between the markers |
+|---|---|---|---|
+| bash | `$?` | `42` | `"\r\nhello\r\n\r\n"` |
+| zsh | `$?` | `42` | `"\r\nhello\r\n\r\n"` |
+| fish | `$status` | `42` | `"\r\nhello\r\n\r\n"` |
+
+### F2. The split-quote is load-bearing, and why
+
+`'DE_''BEG'` is two adjacent single-quoted strings, which **all three shells**
+concatenate to `DE_BEG`. So the bytes the PTY **echoes** contain `DE_''BEG`
+and only the bytes `printf` **writes** contain `DE_BEG`. Measured with the
+naive (unsplit) form first: the search found the needle **in the echo**, before
+the command had run, and returned `exit_code=Some("%s\\x1f\\n' $?")` — the tail
+of the echoed command line. With the split form,
+`echo_contains_joined_marker=false` in all three shells.
+
+### F3. Exact raw bytes on the wire
+
+For `printf 'no-trailing-newline'; (exit 42); printf '\n\x1fDE_''END n0nc3 %s\x1f\n' $?`
+the master side read, with control bytes escaped:
+
+```
+matt@scrappy:~$ printf 'no-trailing-newline'; (exit 42); printf '\n\x1fDE_''END n0nc3 %s\x1f\n' $?\r\nno-trailing-newline\r\n\x1fDE_END n0nc3 42\x1f\r\n
+```
+
+Three things to read off it:
+
+- The PTY applies **ONLCR**: every `\n` the shell writes arrives as `\r\n`. The
+  end marker line is `\x1fDE_END <nonce> <code>\x1f\r\n`.
+- The **leading `\n` in the END `printf` is required**: the command's output
+  had no trailing newline, and that `\n` is what puts the marker on its own
+  line. Do not drop it.
+- The prompt and the echoed command precede everything. This is why F4's BEGIN
+  marker exists.
+
+### F4. Output is framed by the BEGIN marker, not by "skip to the first newline"
+
+The echoed command line and the prompt sit in front of the output. Extracting
+strictly between `\x1fDE_BEG <nonce>\x1f` and `\x1fDE_END <nonce> ` gave
+`"\r\nxxxxxxxxxx\r\n\r\n"` for a command whose echo was 200+ characters at 80
+columns — the output and nothing else. (Measured aside: at `TERM=dumb` the long
+echo arrived as **one** logical line, so a "skip to first `\r\n`" rule happened
+to work here — but it depends on readline's line editing and terminal width,
+and the BEGIN marker does not. Use the marker.)
+
+### F5. A 4096-byte read splits multi-byte characters
+
+400 repetitions of `é世界😀` (4942 bytes) were read from the PTY and then
+chunked at 4096 bytes: **both chunks failed `std::str::from_utf8`**, while the
+whole buffer was valid UTF-8. So the parser must scan an **accumulated byte
+buffer**. A per-read `String::from_utf8_lossy(&chunk)` corrupts every boundary,
+and — worse — the marker itself can straddle two reads.
+
+### F6. A forged marker must not be honoured
+
+A command whose own output printed `\x1fDE_END feedfacefeedface 0\x1f` (a
+**different** nonce) while exiting 7 was parsed correctly as exit `7` **only
+because the search matched the full end marker including this run's nonce**.
+In the same measurement, extracting output by "split on the first `\x1f`"
+truncated the captured output to `"\r\n"` — the forged `\x1f` cut it short.
+**So both the exit-code search and the output extraction must key on the full
+`\x1fDE_END <nonce> ` string, never on a bare `\x1f`.**
+
+### F7. `(exit N)` is not portable — a fixture trap, not a wrapper problem
+
+`echo hello; (exit 42)` hangs fish, because `(...)` is **command substitution**
+in fish, not a subshell — the probe timed out on fish until the fixture was
+changed. The wrapper is fine; the *test command* was not. Every fixture command
+in this phase must be portable: use `sh -c 'exit 42'`, or `false`, never
+`(exit N)`.
+
+## Spec
+
+### Task 1 — Add the `portable-pty` dependency
+
+In `Cargo.toml`, add to `[dependencies]`, keeping the file's existing
+alphabetical-ish grouping and its habit of commenting a pin when the reason is
+not obvious:
+
+```toml
+# PTY spawn/resize behind a safe API — chosen so no `unsafe` (openpty, forkpty,
+# TIOCSCTTY) enters this crate; STANDARDS.md §1 forbids it in phase work.
+portable-pty = "0.9"
+```
+
+`vt100` is **not** added here — that is phase-04.
+
+### Task 2 — Create the module and declare it
+
+Create `src/shell/mod.rs` and `src/shell/pty.rs`, and add `pub mod shell;` to
+`src/lib.rs` alongside the other `pub mod` lines at `src/lib.rs:5-15`. It is
+`pub`, not `pub(crate)`, because integration tests are a separate crate.
+
+`src/shell/mod.rs` holds the module doc and re-exports what `pty.rs` makes
+public. Keep it thin.
+
+### Task 3 — The nonce and the wrapper builder, in `src/shell/pty.rs`
+
+```rust
+/// A per-command marker nonce. 128 bits of randomness rendered as 32 hex
+/// characters, so a command's own output cannot plausibly collide with it.
+pub struct Nonce(String);
+```
+
+- `Nonce::new()` → `uuid::Uuid::new_v4().simple().to_string()` (the idiom at
+  `src/daemon/ghost.rs:185`). Add `as_str()`.
+- `pub fn exit_var(shell_name: &str) -> &'static str` — the same mapping as
+  `src/daemon/background/helpers.rs:14`: `"fish" | "csh" | "tcsh"` → `"$status"`,
+  everything else → `"$?"`. Match on the **trimmed** name, and match the shell's
+  **basename** so `/usr/bin/fish` maps to `$status` (the existing helper takes a
+  bare name; this one must tolerate a path, because a `Shell` will carry
+  `$SHELL`). Pin the basename behaviour in tests.
+- `pub fn wrap_command(cmd: &str, nonce: &Nonce, shell_name: &str) -> String` —
+  produces exactly F1's line, `\n`-terminated, with the split quote in both
+  markers. Worked example of the required output, for
+  `cmd = "echo hi"`, `nonce = "abc"`, `shell_name = "bash"`:
+
+  ```
+  printf '\x1fDE_''BEG abc\x1f\n'; echo hi; printf '\n\x1fDE_''END abc %s\x1f\n' $?
+  ```
+
+  (followed by a single `\n`). Note the literal two-single-quote sequence in
+  both markers — that is F2, and it is the whole point. In Rust source the
+  `\x1f` is `\u{1f}`.
+
+### Task 4 — The parser, pure over bytes
+
+```rust
+/// What a completed command produced.
+pub struct CommandOutcome {
+    /// Bytes strictly between the two markers, with the framing CRLF the
+    /// protocol itself contributes removed. Not lossy-decoded here.
+    pub output: Vec<u8>,
+    /// The command's real exit status.
+    pub exit_code: i32,
+}
+
+/// Scan an accumulated buffer for this run's completed command.
+/// Returns `None` while the end marker has not arrived yet.
+pub fn parse_outcome(buf: &[u8], nonce: &Nonce) -> Option<CommandOutcome>
+```
+
+Required behaviour, each point traceable to a measured fact above:
+
+1. Operates on `&[u8]`, never on a per-read `String` (F5). Locate both markers
+   by **byte-substring search** for the full framed strings
+   `\x1fDE_BEG <nonce>\x1f` and `\x1fDE_END <nonce> `.
+2. Returns `None` unless **both** markers are present and the end marker
+   follows the begin marker.
+3. The exit code is the ASCII digits between the end marker and the next
+   `\x1f` **after it**; a value that does not parse as `i32` yields `None`
+   rather than a wrong code.
+4. `output` is the bytes between the end of the begin marker and the start of
+   the end marker, with **one** leading `\r\n` and **one** trailing `\r\n`
+   removed if present — that pair is contributed by the protocol's own
+   `printf`s (F3), not by the command. Do not trim further; a command's own
+   blank lines are its output.
+5. **Never keys on a bare `\x1f`** (F6). A `\x1f` inside the command's output
+   is ordinary output.
+6. A marker bearing a **different** nonce is ignored entirely (F6).
+7. The buffer may contain the echoed command line before the begin marker
+   (F3/F4); everything before the begin marker is discarded.
+
+Also `pub fn strip_markers(buf: &[u8], nonce: &Nonce) -> Vec<u8>` — the same
+input with every marker sequence for this nonce removed, for the display path.
+`\x1f` bytes that are **not** part of a marker for this nonce are left alone.
+
+### Task 5 — `PtyShell`: spawn, write, read
+
+In `src/shell/pty.rs`, a struct that owns the pair, the child and the reader:
+
+- `PtyShell::spawn(shell: &str, size: (u16, u16)) -> anyhow::Result<Self>` —
+  `native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0,
+  pixel_height: 0 })`, build a `CommandBuilder`, `spawn_command`, **drop the
+  slave** (required, or the reader never sees EOF), take a cloned reader and a
+  writer.
+- `run(&mut self, cmd: &str, timeout: Duration) -> anyhow::Result<CommandOutcome>`
+  — generate a nonce, write `wrap_command(...)`, then accumulate reads into a
+  `Vec<u8>` and call `parse_outcome` after **each** read until it returns
+  `Some` or the deadline passes. On timeout return an `Err` naming the timeout
+  and the command; do not return a fabricated exit code.
+- `resize(&self, rows: u16, cols: u16) -> anyhow::Result<()>`.
+- `kill(&mut self)` / `wait(&mut self)` as thin wrappers.
+
+**Error handling:** every fallible call propagates with `anyhow::Context`. No
+`.unwrap()`, `.expect()` or `panic!()` anywhere in `src/shell/` outside
+`#[cfg(test)]` — STANDARDS.md §2. Note that `portable-pty` returns
+`Box<dyn Error + Send + Sync>` from several calls, which does **not** implement
+`std::error::Error` for `?` into `anyhow` directly; convert with
+`.map_err(|e| anyhow::anyhow!("{e}"))` and add context.
+
+### Task 6 — Write the tests named in § Test plan
+
+The parser tests are pure and must not spawn anything. Exactly **one** test
+spawns a real PTY (`pty_bash_roundtrip_returns_real_exit_code`), runs against
+`bash`, and is **not** `#[ignore]`d — bash is present wherever this suite runs.
+Give it a 10-second timeout so a wedged PTY fails the suite instead of hanging
+it (the M10 lesson: a starved read must fail fast, not hang the run).
+
+### Task 7 — Capture the end-to-end evidence
+
+Run the block in § End-to-end verification **verbatim and unmodified**, then
+paste the resulting `/tmp/e2e-02.txt` into a new Update Log entry headed
+`### Update — <date> (end-to-end verification)`. The server-authored
+`(complete)` entry does not satisfy this. Then run the PASTE MATCH self-check
+in that same section and paste its verdict line into the same entry.
+
+## Acceptance criteria
+
+Each was run against the current tree while drafting and returns the "before"
+value shown.
+
+- [ ] `grep -c '^portable-pty' Cargo.toml` → **1** (now `0`).
+- [ ] `grep -c '^pub mod shell;' src/lib.rs` → **1** (now `0`).
+- [ ] `test -f src/shell/pty.rs && echo yes` → **yes** (file absent now).
+- [ ] `grep -c "DE_''BEG" src/shell/pty.rs` → **at least 1** (now `0`) — the
+      split quote of F2 is present in the builder.
+- [ ] `grep -c "fn parse_outcome" src/shell/pty.rs` → **1** (now `0`).
+- [ ] `grep -c "fn wrap_command" src/shell/pty.rs` → **1** (now `0`).
+- [ ] `grep -c "fn strip_markers" src/shell/pty.rs` → **1** (now `0`).
+- [ ] **No `unwrap`/`expect`/`panic!` outside test code in the new module:**
+      `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/shell/pty.rs | grep -cE '\.(unwrap|expect)\(|panic!\('`
+      → **0**. **The `^` anchor is load-bearing.** Without it the pattern also
+      matches a *doc comment* that mentions `#[cfg(test)]`, and awk exits
+      there. Measured on `src/config/lifecycle.rs`, whose header comment says
+      "not `#[cfg(test)]`" at line 8: the unanchored form printed **7** lines
+      of a 613-line file — a vacuous guard — while the anchored form printed
+      **284**, stopping at the real attribute on line 285.
+- [ ] No `unsafe` outside comments:
+      `grep -vE '^\s*(//|///|//!|\*)' src/shell/pty.rs | grep -c 'unsafe'` → **0**.
+      The comment strip is deliberate — this phase's own rationale mentions
+      `unsafe` in prose, and a bare `grep -c unsafe` would fail on a doc
+      comment. Validated on `src/main.rs`: bare grep `4`, comment-stripped `3`.
+- [ ] Every test named in § Test plan appears as a passing line in
+      `cargo test --lib`.
+- [ ] `cargo test --lib shell::pty::` reports **9 or more** passing tests and
+      `0 failed` (now: `0 passed; 0 failed; … 1540 filtered out`).
+      **Use `shell::pty::`, not `shell::`.** Measured while drafting:
+      `cargo test --lib shell::` already matches **43** pre-existing tests in
+      `daemon::utils::shell::` and reports `ok` on the current tree, so a
+      criterion phrased over `shell::` would pass before any code was written.
+- [ ] All four gates pass: `cargo fmt --all`, `cargo build`,
+      `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
+
+## Test plan
+
+Names pinned; placement is not — put them in a `#[cfg(test)] mod tests` at the
+**bottom** of `src/shell/pty.rs` (the repo convention, enforced by an earlier
+milestone's cleanup). Every name begins `shell::` once qualified, so the E2E
+block can select them.
+
+Pure parser tests — the fixtures are the measured byte strings above, so write
+them as byte literals rather than inventing new ones:
+
+- `wrap_command_splits_the_marker_word` — the produced string contains
+  `DE_''BEG` and `DE_''END` and does **not** contain the joined `DE_BEG ` or
+  `DE_END ` forms. This is F2, and it is the test that stops the echo bug
+  coming back.
+- `wrap_command_uses_status_for_fish_and_question_for_others` — `fish` and
+  `/usr/bin/fish` both yield `$status`; `bash`, `zsh`, `/bin/bash` and `sh`
+  yield `$?`.
+- `parse_outcome_returns_none_before_the_end_marker` — a buffer holding only
+  the echo plus the begin marker yields `None`.
+- `parse_outcome_ignores_the_echoed_command_line` — feed the **F3 byte string
+  verbatim** (prompt + echo containing `DE_''END` + real marker) and assert
+  `exit_code == 42` and `output == b"no-trailing-newline"`. This is the
+  regression guard for the measured first-probe failure.
+- `parse_outcome_extracts_output_between_markers` — the F1 case: output is
+  `b"hello"` and the exit code is `42`, from a buffer built with both markers.
+- `parse_outcome_ignores_a_foreign_nonce` — a buffer whose only end marker
+  carries a different nonce yields `None`; the same buffer with this run's
+  marker appended yields the right code (F6).
+- `parse_outcome_keeps_a_unit_separator_inside_output` — output containing a
+  bare `\x1f` that is not part of a marker survives into `output`, and the exit
+  code is still correct (F6's negative half).
+- `parse_outcome_rejects_a_non_numeric_exit_field` — an end marker whose code
+  field is `abc` yields `None`, not a defaulted `0`.
+- `strip_markers_removes_only_this_nonces_markers` — a buffer with this
+  nonce's markers and a foreign nonce's marker keeps the foreign bytes and
+  drops ours.
+
+One real-PTY test:
+
+- `pty_bash_roundtrip_returns_real_exit_code` — spawn `bash`, run
+  `echo hello; sh -c 'exit 42'` (F7: **never** `(exit 42)`), assert
+  `exit_code == 42` and that `String::from_utf8_lossy(&outcome.output)`
+  contains `hello`. 10-second timeout.
+
+## End-to-end verification
+
+Run this block verbatim from the repo root. It writes `/tmp/e2e-02.txt`.
+
+```sh
+{
+echo "== A. build =="
+cargo build 2>&1 | tail -2; echo "cargo_exit=${PIPESTATUS[0]}"
+echo "== B. named tests (each line is one pinned test) =="
+cargo test --lib 2>&1 | grep -E "^test shell::.* ok$" | sed 's/^test //' | sort
+echo "cargo_exit=${PIPESTATUS[0]}"
+echo "== C. shell::pty:: module totals (NOT shell:: — that matches 43 existing) =="
+cargo test --lib shell::pty:: 2>&1 | grep -E "^test result:"; echo "cargo_exit=${PIPESTATUS[0]}"
+echo "== D. lib suite totals =="
+cargo test --lib 2>&1 | grep -E "^test result:"; echo "cargo_exit=${PIPESTATUS[0]}"
+echo "== E. real PTY test, named and isolated =="
+cargo test --lib pty_bash_roundtrip_returns_real_exit_code 2>&1 | grep -E "^test |^test result:"
+echo "cargo_exit=${PIPESTATUS[0]}"
+echo "== F. structural greps (each must print the stated number) =="
+echo -n "portable-pty dep        (1): "; grep -c '^portable-pty' Cargo.toml
+echo -n "lib.rs module decl      (1): "; grep -c '^pub mod shell;' src/lib.rs
+echo -n "split-quote BEG        (>=1): "; grep -c "DE_''BEG" src/shell/pty.rs
+echo -n "fn wrap_command         (1): "; grep -c "fn wrap_command" src/shell/pty.rs
+echo -n "fn parse_outcome        (1): "; grep -c "fn parse_outcome" src/shell/pty.rs
+echo -n "fn strip_markers        (1): "; grep -c "fn strip_markers" src/shell/pty.rs
+echo -n "unsafe in pty.rs        (0): "; grep -vE '^\s*(//|///|//!|\*)' src/shell/pty.rs | grep -c 'unsafe'
+echo -n "unwrap/expect/panic pre-test (0): "
+awk '/^#\[cfg\(test\)\]/{exit} {print}' src/shell/pty.rs | grep -cE '\.(unwrap|expect)\(|panic!\('
+} > /tmp/e2e-02.txt 2>&1
+cat /tmp/e2e-02.txt
+```
+
+Paste the contents of `/tmp/e2e-02.txt` into your Update Log entry as a fenced
+block, then run the self-check and paste its verdict line into the same entry:
+
+```sh
+D=docs/dev/milestones/M20-shell-engine/phase-02-pty-marker-protocol.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-02.txt
+diff /tmp/pasted-02.txt /tmp/e2e-02.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+**Sections B, C and E can all report success with nothing having run.**
+Measured on the current tree while drafting: `cargo test --lib shell::pty::`
+prints `test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1540
+filtered out` and exits `0`. A zero exit proves nothing in any of the three —
+the pass conditions are the **named test lines** in B and E, and a count of
+nine or more in C.
+
+**Section F on an absent file does not print `0` — it errors.** Measured:
+`grep -c "fn parse_outcome" src/shell/pty.rs` against the current tree emits
+`ugrep: warning: src/shell/pty.rs: No such file or directory` on stderr and
+exits **2**, printing no count. Because the block redirects `2>&1`, that
+warning would land in the artifact. Seeing a clean column of numbers in
+section F is therefore itself evidence the file exists; a warning line there
+means the phase is not done.
+
+The PASTE MATCH self-check was validated both ways while drafting a sibling
+phase, against a copy of the doc: a byte-exact paste printed `PASTE MATCH`, and
+the same paste with one line retyped printed `PASTE MISMATCH` naming the
+divergent line.
+
+## Authorizations
+
+- Create `src/shell/mod.rs` and `src/shell/pty.rs`.
+- Edit `src/lib.rs` (the one `pub mod shell;` line) and `Cargo.toml` /
+  `Cargo.lock`.
+- **May add one dependency: `portable-pty = "0.9"`.** This is the only new
+  dependency authorized. `vt100` belongs to phase-04; do not add it here.
+- Run `cargo fmt --all`, `cargo build`,
+  `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
+- May **not** touch `docs/architecture.md`, `CLAUDE.md` or `README.md` —
+  M20's documentation updates land in phase-09.
+- May **not** touch `src/tmux/`, `src/daemon/background/` or
+  `src/daemon/executor/`. Nothing calls `src/shell/` in this phase.
+
+## Out of scope
+
+- **Wiring `PtyShell` to anything.** No `run_terminal_command` change, no
+  registry, no config read — `ExecutionConfig::uses_pty()` gets its first
+  caller in phase-07, not here. A module with tests and no production caller is
+  the intended end state; do not add `#[allow(dead_code)]` to quiet anything,
+  and do not invent a caller to justify the code.
+- **`vt100`, screens, grids, scrollback, or ANSI interpretation** (phase-04).
+  `parse_outcome` returns raw bytes; it does not decode, annotate or strip
+  colour.
+- **asciicast, logging, or any file writing** (phase-03). This phase writes no
+  files.
+- **The shell-host process, sockets, adoption, or restart survival** (phase-05
+  and phase-06).
+- **Interactive-command detection, pause/resume/cancel signals** (phase-08).
+  `PtyShell::kill` is a plain wrapper, not a signal protocol.
+- **SSH or any remote transport** (phase-21). `PtyShell::spawn` takes a local
+  shell path and nothing else. Do not add a `Transport` enum in this phase —
+  the milestone README reserves it, and adding it with one variant and no
+  consumer is dead scaffolding.
+- **Masking.** Output is returned raw; the masking filter is applied by the
+  caller at the point it reaches a model, which is phase-07's concern.
+
+## Update Log
+
+(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+
+<!-- entries appended below this line -->

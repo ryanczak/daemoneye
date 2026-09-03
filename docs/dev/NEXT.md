@@ -3279,9 +3279,50 @@ Review verdict:
    occurrence; recorded, not folded** (threshold is three). Until then, avoid
    `rm -rf` in E2E blocks; `find <dir> -depth -delete` is the working form.
 
-**Active phase: none.** Draft phase-02 (`pty-marker-protocol`) with
-`/rexymcp:architect next`. Its drafting must first re-measure the `less` /
-resize leg the M20 probe left inconclusive.
+**Active phase: phase-02 — pty-marker-protocol**
+(`docs/dev/milestones/M20-shell-engine/phase-02-pty-marker-protocol.md`,
+status: todo, drafted 2026-09-03). Dispatch with `/rexymcp:dispatch phase-02`.
+
+Drafting measurements (all executed on scrappy; probe sources kept in
+`M20-shell-engine/probes/`, and the seven facts are quoted in the phase doc's
+§ "Measured facts"):
+
+- **The complete wrapper works identically in bash, zsh and fish** — exit `42`
+  and byte-identical output `"\r\nhello\r\n\r\n"` in all three, with
+  `$status` for fish and `$?` for the others.
+- **A BEGIN marker was added to the design.** The 2.0 plan describes only an
+  end marker; measurement showed the PTY echoes the typed command ahead of the
+  output, leaving no reliable left edge. Recorded in the M20 README for the
+  phase-09 doc sweep.
+- **The split-quote is load-bearing and was proven by its failure.** The naive
+  form matched the echo before the command ran and returned the tail of the
+  echoed line as the "exit code".
+- **A 4096-byte read splits multi-byte characters** — both chunks of a 4942-byte
+  UTF-8 stream failed `from_utf8` while the whole buffer was valid. The parser
+  must scan accumulated bytes.
+- **A forged marker with a different nonce is ignored only if the search keys
+  on the full end marker.** Splitting on a bare `\x1f` truncated the captured
+  output in the same measurement.
+- **`(exit N)` hangs fish** — it is command substitution there. Fixtures use
+  `sh -c 'exit 42'`.
+
+Four defects in the first draft were caught by validating the criteria rather
+than assuming, and all four are the phase-01 review's lesson applied:
+
+1. **`cargo test --lib shell::` already matches 43 pre-existing tests** in
+   `daemon::utils::shell::` and reports `ok` today, so a criterion phrased over
+   it would pass before any code existed. Changed to `shell::pty::`, which
+   matches 0.
+2. **An unanchored `awk '/#\[cfg\(test\)\]/{exit}'` is a vacuous guard** — a
+   *doc comment* mentioning `#[cfg(test)]` stops it. Measured on
+   `src/config/lifecycle.rs`: unanchored printed 7 lines of 613, anchored
+   printed 284. The criterion now anchors at `^`.
+3. **A bare `grep -c unsafe` would fail on a doc comment**, and this phase's
+   rationale mentions `unsafe` in prose. The criterion now strips comment
+   lines first.
+4. **`grep -c` on an absent file errors (exit 2) rather than printing `0`**, so
+   the E2E prose claiming otherwise was wrong; corrected, and a warning line in
+   section F is now itself a documented failure signal.
 
 Drafting notes:
 
