@@ -683,3 +683,67 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f4268bc89034f90bc775a63dfb2c610998f2aac7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-03 23:31 (progress, rebound)
+
+Bug-03-1 fix landed on the round-2 state: `flush_carry` now actually resolves
+an outstanding carry instead of being a vacuous no-op — it emits the carried
+bytes lossily as an `"o"` event (with the `mark` time) immediately before the
+marker line, so they land inside the finishing command's byte range. The
+constant `first_byte: 45` in
+`cast_preserves_ansi_and_unit_separator_bytes` was replaced with the
+writer-derived `byte_len()` offsets (`grep -c 'first_byte: 45'` now returns 0).
+Added the pinned test `cast_flushes_a_dangling_carry_before_a_marker`
+(repo convention, bottom of `src/shell/log.rs`), verified via
+`cargo test --lib shell::log::` → **12 passed, 0 failed** (11 + the new one,
+not 13; no scope added) and `shell::pty::` stays at 13/13. Mutation-check:
+a reviewer-style neuter of `flush_carry` (made it a no-op) failed
+`cast_flushes_a_dangling_carry_before_a_marker` with `0 passed; 1 failed`,
+then the restore brought it back green. The E2E block was re-run verbatim from
+a script file; its output is in the next entry. Full lib suite 1561 passed,
+the four gates are clean. Committing shortly.
+
+### Update — 2026-09-03 23:32 (end-to-end verification)
+
+The block from § End-to-end verification, run verbatim from the repo root:
+
+```
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.84s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::log::tests::cast_and_meta_round_trip_a_three_command_session ... ok
+shell::log::tests::cast_carries_a_split_multibyte_character ... ok
+shell::log::tests::cast_does_not_carry_genuinely_invalid_bytes ... ok
+shell::log::tests::cast_event_line_shape ... ok
+shell::log::tests::cast_flushes_a_dangling_carry_before_a_marker ... ok
+shell::log::tests::cast_header_is_valid_asciicast_v2 ... ok
+shell::log::tests::cast_marker_and_input_events_use_their_codes ... ok
+shell::log::tests::cast_preserves_ansi_and_unit_separator_bytes ... ok
+shell::log::tests::meta_path_for_replaces_and_appends ... ok
+shell::log::tests::meta_round_trips_through_save_and_load ... ok
+shell::log::tests::read_command_output_rejects_an_unknown_index ... ok
+shell::log::tests::read_command_output_skips_a_malformed_line ... ok
+cargo_exit=0
+== C. shell::log:: totals ==
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1553 filtered out; finished in 0.00s
+cargo_exit=0
+== D. phase-02 untouched (must still be 13 passed) ==
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1552 filtered out; finished in 2.00s
+cargo_exit=0
+== E. lib suite totals ==
+test result: ok. 1561 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.89s
+cargo_exit=0
+== F. structural greps (each must print the stated number) ==
+log.rs exists           (1): 1
+mod log declaration     (1): 1
+pub struct CastWriter   (1): 1
+pub struct MetaIndex    (1): 1
+pub fn read_command_out (1): 1
+error_len discriminator(>=1): 1
+unsafe in log.rs        (0): 0
+unwrap/expect/panic pre-test (0): 0
+```
+
+PASTE MATCH self-check verdict line: `PASTE MATCH`

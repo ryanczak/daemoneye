@@ -55,7 +55,7 @@ impl CastWriter {
     }
 
     pub fn mark(&mut self, at: Duration, label: &str) -> Result<()> {
-        self.flush_carry()?;
+        self.flush_carry(at)?;
         let line = format!(
             "[{}, \"m\", {}]\n",
             fmt_time(at),
@@ -99,12 +99,27 @@ impl CastWriter {
         Ok(())
     }
 
-    fn flush_carry(&mut self) -> Result<()> {
-        if !self.carry.is_empty() {
-            self.write_output(Duration::ZERO, &[])
-        } else {
-            Ok(())
+    fn flush_carry(&mut self, at: Duration) -> Result<()> {
+        if self.carry.is_empty() {
+            return Ok(());
         }
+        // The carry is, by construction, an incomplete sequence: no more input
+        // will arrive for the finishing command, so it can never be completed.
+        // Emit it lossily rather than hold it, so the accepted bytes land in
+        // this command's range instead of polluting the next write.
+        let text = String::from_utf8_lossy(&self.carry).into_owned();
+        self.carry.clear();
+        if text.is_empty() {
+            return Ok(());
+        }
+        let line = format!(
+            "[{}, \"o\", {}]\n",
+            fmt_time(at),
+            serde_json::to_string(&text)?
+        );
+        self.file.write_all(line.as_bytes())?;
+        self.file.flush()?;
+        Ok(())
     }
 }
 
@@ -294,9 +309,11 @@ mod tests {
         let path = cast(dir.path());
         let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
         let payload = b"a\x1fb\r\n\x1b[31mred\x1b[0m";
+        let first_byte = w.byte_len();
         w.write_output(Duration::from_secs_f64(1.0), payload)
             .unwrap();
-        let len = std::fs::metadata(&path).unwrap().len();
+        w.mark(Duration::from_secs_f64(2.0), "end").unwrap();
+        let end_byte = w.byte_len();
         drop(w);
         let meta = MetaIndex {
             shell_id: "s7".into(),
@@ -308,8 +325,8 @@ mod tests {
                 started: 0.0,
                 ended: 1.0,
                 exit_code: 0,
-                first_byte: 45,
-                end_byte: len,
+                first_byte,
+                end_byte,
             }],
         };
         let out = read_command_output(&path, &meta, 0).unwrap();
@@ -539,5 +556,59 @@ mod tests {
             let got = read_command_output(&path, &meta_loaded, i).unwrap();
             assert_eq!(got, sessions[i as usize].1, "command {i} output");
         }
+    }
+
+    #[test]
+    fn cast_flushes_a_dangling_carry_before_a_marker() {
+        let dir = tempdir().unwrap();
+        let path = cast(dir.path());
+        let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+        w.mark(Duration::ZERO, "start 0").unwrap();
+        let first_byte = w.byte_len();
+        // "é" is 2 bytes; feeding only the first two bytes of "ABéZ" leaves
+        // the "é" second byte dangling.
+        let raw = b"AB\xc3".to_vec();
+        w.write_output(Duration::from_secs_f64(1.0), &raw).unwrap();
+        let mid = w.byte_len();
+        w.mark(Duration::from_secs_f64(1.1), "end 0").unwrap();
+        assert!(mid < w.byte_len(), "mark must emit the carried bytes");
+        let end_byte = w.byte_len();
+        w.mark(Duration::from_secs_f64(2.0), "start 1").unwrap();
+        let first_byte1 = w.byte_len();
+        w.write_output(Duration::from_secs_f64(2.1), b"ZZZ")
+            .unwrap();
+        let end_byte1 = w.byte_len();
+        drop(w);
+        let meta = MetaIndex {
+            shell_id: "s7".into(),
+            cast: path.file_name().unwrap().to_string_lossy().into_owned(),
+            started_unix: 0,
+            commands: vec![
+                CommandRecord {
+                    index: 0,
+                    command: "dangling".into(),
+                    started: 0.0,
+                    ended: 1.0,
+                    exit_code: 0,
+                    first_byte,
+                    end_byte,
+                },
+                CommandRecord {
+                    index: 1,
+                    command: "next".into(),
+                    started: 2.0,
+                    ended: 2.1,
+                    exit_code: 0,
+                    first_byte: first_byte1,
+                    end_byte: end_byte1,
+                },
+            ],
+        };
+        let got = read_command_output(&path, &meta, 0).unwrap();
+        let mut want = b"AB".to_vec();
+        want.extend_from_slice("\u{FFFD}".as_bytes());
+        assert_eq!(got, want, "command 0 must keep all its bytes");
+        let next = read_command_output(&path, &meta, 1).unwrap();
+        assert_eq!(next, b"ZZZ", "command 1 must not be polluted");
     }
 }
