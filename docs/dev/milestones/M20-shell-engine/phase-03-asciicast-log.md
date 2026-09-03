@@ -1,7 +1,7 @@
 # Phase 03: asciicast v2 shell log and its command index
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none in code (phase-02's `src/shell/` exists; this phase adds a
 sibling module and does not call it)
 **Estimated diff:** ~420 lines
@@ -445,3 +445,54 @@ line retyped printed `PASTE MISMATCH` naming the divergent line.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-03 23:01 (progress)
+
+Started phase-03: flipped status to `in-progress`, updated the milestone README
+row, and wrote `src/shell/log.rs` + the `mod log;` / `pub use` changes in
+`src/shell/mod.rs`. All 11 `shell::log::` tests pass, `shell::pty::` stays at
+13/13, and build + clippy are clean. Working through the end-to-end capture now.
+
+### Update — 2026-09-03 23:05 (end-to-end verification)
+
+The block from § End-to-end verification, run verbatim from the repo root:
+
+```
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.62s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::log::tests::cast_and_meta_round_trip_a_three_command_session ... ok
+shell::log::tests::cast_carries_a_split_multibyte_character ... ok
+shell::log::tests::cast_does_not_carry_genuinely_invalid_bytes ... ok
+shell::log::tests::cast_event_line_shape ... ok
+shell::log::tests::cast_header_is_valid_asciicast_v2 ... ok
+shell::log::tests::cast_marker_and_input_events_use_their_codes ... ok
+shell::log::tests::cast_preserves_ansi_and_unit_separator_bytes ... ok
+shell::log::tests::meta_path_for_replaces_and_appends ... ok
+shell::log::tests::meta_round_trips_through_save_and_load ... ok
+shell::log::tests::read_command_output_rejects_an_unknown_index ... ok
+shell::log::tests::read_command_output_skips_a_malformed_line ... ok
+cargo_exit=0
+== C. shell::log:: totals ==
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1553 filtered out; finished in 0.00s
+cargo_exit=0
+== D. phase-02 untouched (must still be 13 passed) ==
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1551 filtered out; finished in 2.00s
+cargo_exit=0
+== E. lib suite totals ==
+test result: ok. 1560 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.79s
+cargo_exit=0
+== F. structural greps (each must print the stated number) ==
+log.rs exists           (1): 1
+mod log declaration     (1): 1
+pub struct CastWriter   (1): 1
+pub struct MetaIndex    (1): 1
+pub fn read_command_out (1): 1
+error_len discriminator(>=1): 1
+unsafe in log.rs        (0): 0
+unwrap/expect/panic pre-test (0): 0
+```
+
+PASTE MATCH self-check: `PASTE MATCH`
