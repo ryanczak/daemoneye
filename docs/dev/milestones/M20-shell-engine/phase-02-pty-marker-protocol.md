@@ -1,7 +1,7 @@
 # Phase 02: PTY spawn and the marker protocol
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress (bounced 2026-09-03 round 2 — see `bugs/bug-02-2.md`, `bugs/bug-02-3.md`)
+**Status:** in-progress (round 3 hard_fail → refined re-dispatch 2026-09-03; only `bugs/bug-02-2.md` remains, `bug-02-3` resolved by the architect)
 **Depends on:** none (phase-01 is independent; this phase reads no config)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -354,9 +354,16 @@ value shown.
       failing at review: `0 passed; … 1551 filtered out`.
 - [ ] **(round 3, bug-02-2)** `pty_run_times_out_on_a_silent_command` still
       passes — round 2's timeout fix is preserved, not reverted.
-- [ ] **(round 3, bug-02-3)** Round 1's end-to-end entry is restored from
-      `3536573`: `grep -c 'fn parse_outcome        (1): 7'` on this doc returns
-      **1** (now `0`).
+- [x] **(bug-02-3 — done by the architect 2026-09-03, not executor work.)**
+      Round 1's end-to-end entry and its server-authored `(complete)` entry are
+      restored verbatim from `3712c74`, with a superseded note added above the
+      restored block. `grep -c '^fn parse_outcome        (1): 7'` on this doc
+      returns **1**.
+      **The criterion needed the `^` anchor.** As first written it greppped for
+      an unanchored `fn parse_outcome        (1): 7`, which the criterion's own
+      text in this section also matches — so it counted **2**, not the 1 it
+      pinned, and could never have been satisfied as stated. The evidence line
+      begins at column 0; the criterion text is indented.
 - [ ] All four gates pass: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 
@@ -531,26 +538,64 @@ check and it printed `PASTE MATCH` — but the verdict has to appear in the entr
 so the check does not fall to the reviewer. Round 2's entry needs the literal
 verdict line in it. **Round 2 did this correctly.**
 
-## Notes for executor — round 3
+## Notes for executor — round 4
 
-Round 2's timeout fix is **correct and stays**: a silent command now returns
-`Err` at its budget, verified independently at review. Do not revert it.
+**Read this header before anything else.**
 
-Two defects to fix, both with measured evidence in their bug docs — read those
-first.
+**There is exactly ONE piece of work left in this phase: `bugs/bug-02-2.md`.**
+It is a code fix in `src/shell/pty.rs`. Nothing else in this phase needs
+changing.
 
-- **`bugs/bug-02-2.md` (blocker)** — the reader is not restored on `run`'s
-  success path, so **every second command on a healthy shell fails** with a
-  false "PTY closed", and after a timeout the detached worker keeps eating the
-  stream. Measured six sequential commands on one shell: Ok, ERR, Ok, ERR, Ok,
-  ERR. The commands *ran*; their output was lost.
-- **`bugs/bug-02-3.md` (major)** — round 1's evidence entry was rewritten with
-  round 2's numbers. Restore it from `3536573` with `git show`, do not retype.
+**Do not touch this document's Update Log or any Markdown under `docs/`.**
+`bug-02-3` is **already resolved** — the architect restored round 1's entry on
+2026-09-03. Round 3 spent its entire 60-turn budget on that documentation
+task, using `git show` / `diff` / `sed` / `python3` against this file, and
+never opened `src/shell/pty.rs`. That work is done; re-attempting it is the
+one way to repeat round 3's stall. Your only Markdown edit is the end-to-end
+entry your own run produces, appended at the bottom.
+
+**What is already correct and must be preserved, not rewritten:**
+
+- The whole marker protocol: `Nonce`, `exit_var`, `wrap_command`,
+  `parse_outcome`, `strip_markers`. Two reviewer mutations confirmed the tests
+  discriminate. Leave them alone.
+- Round 2's timeout behaviour. `pty_run_times_out_on_a_silent_command` must
+  still pass. Do **not** revert it to fix `bug-02-2`.
+- All 11 existing tests pass right now, and all four gates are green. **Green
+  gates and a clean tree are expected here and are NOT evidence the phase is
+  done** — the defect is a behaviour no current test exercises.
+
+**The one defect, restated (full evidence in `bugs/bug-02-2.md`):**
+`PtyShell::run` moves the reader into a per-call worker thread via
+`take_reader`, which leaves `std::io::empty()` behind. The **success** path
+drops the worker and returns *without* calling `refresh_reader()`, so the next
+`run` reads 0 bytes immediately and reports a false `"PTY closed"`. That error
+path *does* re-seat, which is why the failure alternates. Measured, six
+commands on one healthy shell with no timeout involved:
+
+```
+run1: Ok    run2: ERR "PTY closed"    run3: Ok
+run4: ERR "PTY closed"    run5: Ok    run6: ERR "PTY closed"
+```
+
+Separately, on the timeout path the detached worker keeps a **live** reader
+clone, so `refresh_reader` just adds a second reader racing it for the same
+bytes; the shell stays poisoned until the timed-out command ends. Both
+symptoms are one root cause: the reader's ownership across `run` calls.
+
+**Finish condition you can check yourself.** `cargo test --lib shell::pty::`
+must report **13 passed, 0 failed** — 11 today plus exactly the two new tests
+named in § Test plan (`pty_runs_many_commands_on_one_shell`,
+`pty_shell_is_usable_after_a_timeout`). **13, not 14** — a higher number means
+you added scope this phase did not ask for.
+
+**Mutation-check your own fix before reporting.** Once it passes, revert just
+the line that re-seats the reader, confirm `pty_runs_many_commands_on_one_shell`
+fails, restore it, and state that result in your Update Log entry.
 
 **The Update Log is append-only.** Each dispatch adds its own entry; earlier
 entries are never edited, even to make the document consistent. A superseded
-entry is supposed to look superseded. This was not stated before round 2 and
-is stated now.
+entry is supposed to look superseded.
 
 ## Update Log
 
@@ -626,7 +671,7 @@ Ran the phase-02 E2E block verbatim from the repo root; `/tmp/e2e-02.txt`
 
 ```sh
 == A. build ==
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
 cargo_exit=0
 == B. named tests (each line is one pinned test) ==
 shell::pty::tests::parse_outcome_extracts_output_between_markers ... ok
@@ -636,28 +681,27 @@ shell::pty::tests::parse_outcome_keeps_a_unit_separator_inside_output ... ok
 shell::pty::tests::parse_outcome_rejects_a_non_numeric_exit_field ... ok
 shell::pty::tests::parse_outcome_returns_none_before_the_end_marker ... ok
 shell::pty::tests::pty_bash_roundtrip_returns_real_exit_code ... ok
-shell::pty::tests::pty_run_times_out_on_a_silent_command ... ok
 shell::pty::tests::strip_markers_removes_only_this_nonces_markers ... ok
 shell::pty::tests::wrap_command_splits_the_marker_word ... ok
 shell::pty::tests::wrap_command_uses_status_for_fish_and_question_for_others ... ok
 cargo_exit=0
 == C. shell::pty:: module totals (NOT shell:: — that matches 43 existing) ==
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1540 filtered out; finished in 2.00s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1540 filtered out; finished in 0.07s
 cargo_exit=0
 == D. lib suite totals ==
-test result: ok. 1547 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.82s
+test result: ok. 1546 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.14s
 cargo_exit=0
 == E. real PTY test, named and isolated ==
 test shell::pty::tests::pty_bash_roundtrip_returns_real_exit_code ... ok
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1550 filtered out; finished in 0.08s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1549 filtered out; finished in 0.07s
 cargo_exit=0
 == F. structural greps (each must print the stated number) ==
 portable-pty dep        (1): 1
 lib.rs module decl      (1): 1
 split-quote BEG        (>=1): 5
-pub fn wrap_command     (1): 1
-pub fn parse_outcome    (1): 1
-pub fn strip_markers    (1): 1
+fn wrap_command         (1): 3
+fn parse_outcome        (1): 7
+fn strip_markers        (1): 2
 unsafe in pty.rs        (0): 0
 unwrap/expect/panic pre-test (0): 0
 ```
@@ -671,11 +715,9 @@ tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/paste
 diff /tmp/pasted-02.txt /tmp/e2e-02.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
 ```
 
-Verdict: **PASTE MATCH**
-
 ### Update — ts=1788460977707 (complete, server-authored)
 
-**Summary:** Committed clean, working tree empty. All acceptance criteria pass in this bounce round too: the `^pub fn <name>(` anchored greps all measure `1`, `shell::pty::` reports **11 passed / 0 failed** with the new `pty_run_times_out_on_a_silent_command`, and the PASTE MATCH self-check returns `PASTE MATCH`. `PtyShell::run` now returns `Err` naming the timeout and command (measured at review as `timeout=2s elapsed=20.1s result=Ok(exit 0)`; now `Err` after ~2s).
+**Summary:** Committed clean, working tree empty. All acceptance criteria pass, including the section-F greps (literal `DE_''BEG` present 5 times) and the PASTE MATCH self-check returning `PASTE MATCH`.
 
 ## Summary
 
@@ -821,6 +863,8 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
 
+> **Superseded by the round-2 entry above, and restored 2026-09-03 from `3712c74` after `bug-02-3`.** The numbers below are what the *round-1* tree produced; round 2 changed them and the round-3 dispatch overwrote this entry in place. Captured evidence is append-only — a superseded entry stays as it was captured.
+
 ### Update — ts=1788466524785 (complete, server-authored)
 
 **Summary:** ## Summary + Notes for review
@@ -960,3 +1004,29 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 014c8777a0847c92c3c82fb36e33c4ad3f9627ff
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-03 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** round 3 hard-failed with a `NoProgressStall` (60 consecutive
+read-only calls, **empty diff, zero files changed**) after spending its whole
+budget on `bug-02-3`'s documentation surgery and never opening
+`src/shell/pty.rs` — a task-shape problem in the bounce, not an executor
+limit on the code work, which it has not yet attempted once.
+
+Two refinements, both aimed at that:
+
+1. **`bug-02-3` is removed from executor scope** and was done by the architect
+   (`git show 3712c74` → restore, 198 lines). It is record-keeping on the
+   architect's own document with no model-vs-spec telemetry value, and its
+   shape — splicing an old block into a file that changed around it, with no
+   `sed -i`/`>` available — is exactly what stalled the run.
+2. **The round-4 notes name exactly one remaining task**, state that green
+   gates and a clean tree are expected and are not evidence of completion,
+   list what must be preserved rather than rewritten, and give a falsifiable
+   finish condition (`13 passed, not 14`) plus a self-run mutation check.
+
+Takeover was rejected: the executor has not yet attempted `bug-02-2` even
+once, so there is no evidence it cannot reach the work. Resume was rejected:
+the run produced no partial work to resume from, and its context carries the
+trap that caused the stall.
