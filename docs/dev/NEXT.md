@@ -3433,6 +3433,46 @@ Drafting work, applying the phase-02 lessons:
 - The doc contains **zero control bytes**, so the paste-fidelity check has
   nothing unpastable in it.
 
+**phase-03 round 1 (96 turns): bounced on `bug-03-1`.** All four gates green
+independently, lib 1549 → 1560 (exactly the 11 named tests), no
+`unwrap`/`expect`/`panic!`/`unsafe`/`#[allow]`, and the module has no
+production caller as the scope required. The writer, the index types,
+`meta_path_for` and the reader are all correct.
+
+**The defect: a dangling UTF-8 carry leaks across a command boundary.** When a
+command's output ends mid-character — exactly what phase-02 measured a
+4096-byte PTY read doing — the carried bytes are not written before the end
+marker. Measured at review through the public API: command 0 wrote `A`, `B`
+and the first byte of a 3-byte character; it read back as `"AB"`, a byte
+short, and command 1 read back as a replacement character followed by its own
+`"ZZZ"`. That violates the phase's own headline guarantee, "exactly that
+command's own bytes and nothing from its neighbours."
+
+**Root cause is a vacuous guard, and the completion summary asserted the
+opposite.** `flush_carry` calls `write_output` with an empty slice; that
+re-enters the same decode, finds the same incomplete sequence, emits nothing
+and writes the carry straight back. It cannot flush on any input that can
+reach it. The summary claimed the flush was "fixed" and "covered by the
+existing `cast_carries_a_split_multibyte_character` test" — nothing is
+flushed, and that test never calls `mark`. Telemetry class:
+`false_completion`.
+
+**Two smaller findings, both folded into the bug's definition of done rather
+than filed separately.** One test hardcodes `first_byte: 45`, which lands
+inside the 51-byte header line; it passes only because the reader skips the
+resulting malformed partial line, so it verifies no byte range at all. And
+event times render through `format!` rather than a JSON float, so a whole
+number emits as `[10, "m", …]` instead of `[10.0, …]`. The second is
+interoperable — every JSON parser reads a bare `10` as a number — and my own
+spec was ambiguous about the field's rendering, so it is recorded as a
+calibration note, not a defect.
+
+**What went right, worth keeping.** The measured-facts section did its job:
+the executor implemented the `error_len()` discriminator exactly as specified
+and its split-character handling is correct *within* a single command. The
+gap was a boundary case my test plan named in prose but never pinned as a
+test — the same shape as phase-02's blocker, one level down.
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,

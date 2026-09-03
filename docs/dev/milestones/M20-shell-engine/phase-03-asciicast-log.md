@@ -1,7 +1,7 @@
 # Phase 03: asciicast v2 shell log and its command index
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced 2026-09-03 — see `bugs/bug-03-1.md`)
 **Depends on:** none in code (phase-02's `src/shell/` exists; this phase adds a
 sibling module and does not call it)
 **Estimated diff:** ~420 lines
@@ -302,6 +302,20 @@ phase specifies rather than from intent.
       tests elsewhere in the tree.
 - [ ] `cargo test --lib shell::pty::` still reports **13 passed, 0 failed** —
       phase-02 is untouched.
+- [ ] **(round 2, bug-03-1)** `cargo test --lib cast_flushes_a_dangling`
+      reports a passing `cast_flushes_a_dangling_carry_before_a_marker`.
+      Confirmed failing at review: `0 passed; … 1564 filtered out`.
+- [ ] **(round 2, bug-03-1)** A command whose output ends mid-character reads
+      back with **all** its own bytes, and its neighbour's slice contains
+      **none** of them. Measured at review as `cmd0 = "AB"` (a byte short) and
+      `cmd1 = "<U+FFFD>ZZZ"` (polluted) — that is the behaviour that must
+      change.
+- [ ] **(round 2, bug-03-1)** `grep -c 'first_byte: 45' src/shell/log.rs`
+      returns **0** (now `1`). That offset lands inside the 51-byte header
+      line, so the test carrying it passes only through the skip-malformed
+      path and verifies no byte range at all.
+- [ ] **(round 2, bug-03-1)** `cargo test --lib shell::log::` reports **12 or
+      more** passing, `0 failed` (11 today).
 - [ ] All four gates pass: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 
@@ -439,6 +453,35 @@ line retyped printed `PASTE MISMATCH` naming the divergent line.
   this module treats bytes as bytes.
 - **Reading `"i"` input back out.** `read_command_output` returns `"o"`
   payloads only, as specified.
+
+## Notes for executor — round 2
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** All four gates pass right now and all 11 tests pass; the
+defect is a behaviour no current test exercises.
+
+**There is exactly ONE defect to fix: `bugs/bug-03-1.md`.** Read it first — it
+carries the measured evidence.
+
+**What is already correct and must be preserved, not rewritten:** the
+`CastWriter` shape, the `MetaIndex` / `CommandRecord` types, `meta_path_for`
+(both extension cases), `read_command_output`, and all 11 existing tests. Two
+of them were mutation-checked at review and discriminate properly. Leave them
+alone apart from the one `first_byte: 45` fix the bug names.
+
+**Finish condition you can check yourself:** `cargo test --lib shell::log::`
+must report **12 passed, 0 failed** — 11 today plus exactly the one new test
+the bug names. **12, not 13** — a higher number means scope this phase did not
+ask for.
+
+**Mutation-check your own fix before reporting.** Once the new test passes,
+neuter the carry-resolving code, confirm
+`cast_flushes_a_dangling_carry_before_a_marker` fails, restore it, and state
+that result in your Update Log entry. This matters especially here: the code
+being replaced *looked* like it handled this case and provably did not.
+
+**The Update Log is append-only.** Add your own entry at the bottom; never
+edit an earlier one.
 
 ## Update Log
 
