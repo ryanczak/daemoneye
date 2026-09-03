@@ -1,7 +1,7 @@
 # Phase 03: asciicast v2 shell log and its command index
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress (bounced 2026-09-03 — see `bugs/bug-03-1.md`)
+**Status:** review
 **Depends on:** none in code (phase-02's `src/shell/` exists; this phase adds a
 sibling module and does not call it)
 **Estimated diff:** ~420 lines
@@ -747,3 +747,143 @@ unwrap/expect/panic pre-test (0): 0
 ```
 
 PASTE MATCH self-check verdict line: `PASTE MATCH`
+
+### Update — ts=1788479273584 (complete, server-authored)
+
+**Summary:** All tasks complete. Final state check confirms the completion checklist boxes: status lines already `in-progress` (this is the round-2 bounce, so they were already correct; left untouched), no `(complete)` entry written by me, `cargo fmt --all` actually run immediately before `git add`, all four gates green, working tree clean, and commit `66bd02a` contains every touched file.
+
+## Summary + Notes for review
+
+**Built/status:** Round-2 rebound of phase-03 fully executed — bug-03-1's single defect is fixed. The vacuous `flush_carry` was replaced with a real resolution: it emits the dangling carry lossily as an `"o"` event at the `mark` time, immediately before the marker line, so the bytes land inside the finishing command's byte range. `cast_preserves_ansi_and_unit_separator_bytes` no longer hardcodes `first_byte: 45` (that offset sat inside the 51-byte header line); it now takes offsets from `byte_len()` like the other tests. Added the pinned test `cast_flushes_a_dangling_carry_before_a_marker` at the bottom of `src/shell/log.rs` per convention. `shell::log::` is **12 passed, 0 failed** (exactly 11 + 1, not 13 — no scope creep), `shell::pty::` stays **13/13**, full lib suite **1561 passed, 0 failed**. E2E block re-run verbatim, output pasted into a fresh `(end-to-end verification)` entry, PASTE MATCH self-check printed `PASTE MATCH`. Mutation-check performed: a reviewer-style neuter of `flush_carry` made `cast_flushes_a_dangling_carry_before_a_marker` fail (`0 passed; 1 failed`), then restore brought it back green — stated in the Update Log. Committed as `66bd02a` (`fix(shell): resolve dangling UTF-8 carry before a command's marker`), working tree clean, status left `in-progress`.
+
+**For review:** the fix chooses lossy emission of the carried bytes (U+FFFD substitution) at the `mark` time — the bug explicitly forbade dropping them silently, and this is the only way to get them into the finishing command's range without inventing bytes. The bytes the writer accepted are not preserved byte-exact (0xc3 → U+FFFD at read-back) — unavoidable for invalid UTF-8 before a marker, and the same substitution the spec's F3 branch already applies, so serialization remains lossless JSON. Deviation: none of substance; the `_at`→`at` on `flush_carry` is internal. Note the E2E block was executed from a script file (the block's single quotes can't live in a `bash -c` string) — the bytes executed were verbatim from the doc, confirmed by PASTE MATCH.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 4.77s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-8c18edd2d30379d8)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-b2f1c28bf4c4197b)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-048e9975683f8cb9)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-8a4b8b748b6f7929)
+     Running tests/integration.rs (target/debug/deps/integration-eafefa557c9e5334)
+     Running tests/isolation.rs (target/debug/deps/isolation-79b57d391bf57809)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M20-shell-engine/phase-03-asciicast-log.md` — +64 -0
+- `src/shell/log.rs` — +80 -9
+
+**Commit:** 66bd02a1162c2897b8752c5edb2149dbbe7854bb
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
