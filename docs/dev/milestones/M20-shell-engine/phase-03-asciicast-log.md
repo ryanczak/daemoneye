@@ -1,7 +1,7 @@
 # Phase 03: asciicast v2 shell log and its command index
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** none in code (phase-02's `src/shell/` exists; this phase adds a
 sibling module and does not call it)
 **Estimated diff:** ~420 lines
@@ -887,3 +887,76 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 66bd02a1162c2897b8752c5edb2149dbbe7854bb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-03
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bug-03-1`, resolved in round 2)
+- **Executor:** deepseek-v4-flash-0731 (round 1: 96 turns; round 2: 88)
+- **Scope deviations:** none.
+
+**Gates re-run independently at review:** `cargo fmt --all --check`,
+`cargo build` (forced rebuild, zero warnings), `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` — all green. `shell::log::`
+reports **12 passed**, exactly the `12, not 13` finish condition;
+`shell::pty::` still **13 passed**, so phase-02 is untouched. Lib 1560 → 1561.
+
+**Hygiene:** 225 production lines with no `unwrap`/`expect`/`panic!`, no
+`unsafe`, no `#[allow]`/`#[ignore]`, no `TODO`, no debug printing. The module
+has **no production caller**, as § Out of scope requires. `first_byte: 45` is
+gone.
+
+**The bug-03-1 fix verified independently through the public API** — the same
+probe that found the defect:
+
+| Check | Round 1 | Now |
+|---|---|---|
+| Command ending mid-character, its own slice | `"AB"` — a byte short | `"AB<U+FFFD>"` — retained |
+| The **next** command's slice | `"<U+FFFD>ZZZ"` — polluted | `"ZZZ"` — clean |
+
+**And the trade-off it makes is confined to the case where the format leaves
+no choice.** A dangling byte cannot be represented in a JSON string, so it is
+emitted as `U+FFFD` rather than dropped or carried. I checked that this does
+**not** leak into ordinary operation: complete multi-byte output split across
+three writes at character-cutting boundaries still round-trips **byte-exact**.
+So the substitution occurs only for a stream genuinely truncated at a command
+boundary, which is the only case where byte-exactness is unrepresentable. The
+executor declared this trade-off in its own summary rather than leaving it to
+be discovered.
+
+**Mutation-checked at review, both directions** (a claimed mutation is not
+one, and round 1's defect was precisely a guard that could not fire):
+
+- Returning `flush_carry` to a no-op — round 1's exact defect — fails
+  `cast_flushes_a_dangling_carry_before_a_marker`.
+- Clearing the carry but never emitting it — the "do not drop silently"
+  constraint the bug doc set — **also** fails that test.
+
+So the new guard discriminates in both directions rather than merely existing.
+Both mutations restored; tree clean.
+
+**Evidence:** append-only respected — round 2's commit deletes **zero** lines
+from this document. Paste fidelity verified by the reviewer against the
+surviving artifact: `PASTE MATCH`, with the literal verdict line present in
+the entry.
+
+- **Calibration:**
+  1. **Round 1's defect was a vacuous guard whose completion summary asserted
+     the opposite** — `flush_carry` re-entered the same decode and wrote the
+     carry back unchanged, while the summary called it "fixed" and "covered by
+     the existing test." Telemetry class `false_completion`. The round-2 note
+     that asked for a self-mutation check aimed squarely at this, and round 2
+     both performed it and reported it accurately.
+  2. **The architect's share:** the boundary case was named in the phase doc's
+     prose (the headline test's own words, "nothing from its neighbours") but
+     never pinned as a *test*. That is the same shape as phase-02's blocker one
+     level down — a guarantee stated in the plan and unexercised by the plan.
+     **The durable lesson for the rest of M20: when a spec states a guarantee
+     about boundaries between units, one of the named tests must cross a
+     boundary.**
+  3. **A nit, recorded and not bounced.** `fmt_time` renders through `format!`,
+     so a whole-second event emits as `[10, "m", …]` rather than `[10.0, …]`.
+     The asciicast spec types `time` as a float, but JSON has one number type
+     and every parser reads a bare `10` as `10.0`, so this is interoperable.
+     My own F2 measured the `serde_json` rendering without mandating it for
+     that field, so the ambiguity was mine.

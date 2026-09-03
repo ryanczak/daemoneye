@@ -3473,6 +3473,26 @@ and its split-character handling is correct *within* a single command. The
 gap was a boundary case my test plan named in prose but never pinned as a
 test — the same shape as phase-02's blocker, one level down.
 
+**phase-03 — asciicast-log: done (approved_after_1) 2026-09-03**, landing
+commit `66bd02a`. Two rounds, one bug, resolved. `shell::log::` 12 passed
+(the `12, not 13` finish condition held exactly); `shell::pty::` still 13.
+
+Round 2's fix verified independently with the probe that found the defect: the
+command ending mid-character keeps its truncated byte and the next command's
+slice is clean. Checked that the lossy substitution is confined to the
+unrepresentable case — complete multi-byte output split across three
+character-cutting writes still round-trips byte-exact. Mutation-checked in
+**both** directions: a no-op flush fails the new test, and so does clearing the
+carry without emitting it, so the guard discriminates rather than merely
+existing.
+
+**The durable lesson, and it is the architect's:** the guarantee that broke was
+stated in the phase doc's own prose — the headline test's words, "nothing from
+its neighbours" — but never pinned as a test that crossed a boundary. That is
+phase-02's blocker one level down. **For the rest of M20: when a spec states a
+guarantee about boundaries between units, one of the named tests must cross a
+boundary.**
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,
