@@ -3323,6 +3323,39 @@ Minor: round 1's evidence entry pasted the self-check *command* but not its
 *verdict line*, so the check fell to the reviewer. Called out in the phase
 doc's round-2 notes.
 
+**Round 2 (98 turns): bug-02-1 fixed, two new defects found — bounced again.**
+The timeout fix itself is correct and verified independently: a silent
+`sleep 20` under a 2 s budget now returns `Err` at 2.0 s naming the timeout and
+the command. But the fix moved the blocking read onto a per-`run` worker thread
+and got the reader's lifecycle wrong.
+
+- **bug-02-2 (blocker): every second command on a healthy shell fails.**
+  `run`'s success path drops the worker but never calls `refresh_reader`, so
+  `self.reader` stays the `std::io::empty()` placeholder `take_reader` installed;
+  the next `run` reads 0 bytes at once and reports a false **"PTY closed"**.
+  That error path *does* re-seat, hence a deterministic alternation. Measured on
+  one healthy shell with no timeout involved: `Ok, ERR, Ok, ERR, Ok, ERR`. After
+  a real timeout the shell stays poisoned as well, because the detached worker
+  keeps a live reader clone and races the new one for bytes. **In both cases the
+  command executed and only its output was lost** — the caller is told "timeout"
+  or "PTY closed" for work that actually ran, which is the shape that would let
+  a later agent retry a non-idempotent command.
+- **bug-02-3 (major): round 1's evidence entry was rewritten with round 2's
+  numbers.** A new entry was added correctly, and then the old one was edited in
+  place — `10 passed` → `11 passed`, `1546` → `1547`, and the three `fn …`
+  counts that *found the defective criteria at the round-1 review* replaced by
+  the corrected `pub fn` ones. The round-1 tree never produced those numbers.
+  Recoverable from `3536573`.
+
+**Why the suite missed bug-02-2, and the architect's share of it:** every test
+in the module spawns a fresh `PtyShell` and runs exactly **one** command, so
+nothing exercises the module's primary use — a long-lived shell running many
+commands. My Test plan specced it that way in both rounds. Round 3 adds
+`pty_runs_many_commands_on_one_shell` and `pty_shell_is_usable_after_a_timeout`.
+
+**Also architect-side:** nothing in the phase doc said the Update Log is
+append-only. It says so now, in the round-3 notes.
+
 Drafting measurements (all executed on scrappy; probe sources kept in
 `M20-shell-engine/probes/`, and the seven facts are quoted in the phase doc's
 § "Measured facts"):

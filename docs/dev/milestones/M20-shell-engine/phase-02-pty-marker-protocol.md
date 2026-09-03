@@ -1,7 +1,7 @@
 # Phase 02: PTY spawn and the marker protocol
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced 2026-09-03 round 2 — see `bugs/bug-02-2.md`, `bugs/bug-02-3.md`)
 **Depends on:** none (phase-01 is independent; this phase reads no config)
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -343,6 +343,20 @@ value shown.
       **under 60 seconds** with `0 failed`. At review a reviewer mutation of
       the marker made this run hang until a 10-minute external kill instead of
       failing at the test's own 10-second timeout.
+- [ ] **(round 3, bug-02-2)** `cargo test --lib pty_runs_many_commands`
+      reports a passing `pty_runs_many_commands_on_one_shell`: four or more
+      consecutive `run` calls on **one** `PtyShell`, each returning `Ok` with
+      its own output and exit code. Confirmed failing at review: `0 passed;
+      … 1551 filtered out`, and the current behaviour alternates Ok / false
+      "PTY closed" on a healthy shell.
+- [ ] **(round 3, bug-02-2)** `cargo test --lib pty_shell_is_usable_after`
+      reports a passing `pty_shell_is_usable_after_a_timeout`. Confirmed
+      failing at review: `0 passed; … 1551 filtered out`.
+- [ ] **(round 3, bug-02-2)** `pty_run_times_out_on_a_silent_command` still
+      passes — round 2's timeout fix is preserved, not reverted.
+- [ ] **(round 3, bug-02-3)** Round 1's end-to-end entry is restored from
+      `3536573`: `grep -c 'fn parse_outcome        (1): 7'` on this doc returns
+      **1** (now `0`).
 - [ ] All four gates pass: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 
@@ -515,7 +529,28 @@ One process item: the round-1 end-to-end entry pasted the self-check *command*
 but not its *verdict line*. The artifact was byte-exact — the reviewer ran the
 check and it printed `PASTE MATCH` — but the verdict has to appear in the entry
 so the check does not fall to the reviewer. Round 2's entry needs the literal
-verdict line in it.
+verdict line in it. **Round 2 did this correctly.**
+
+## Notes for executor — round 3
+
+Round 2's timeout fix is **correct and stays**: a silent command now returns
+`Err` at its budget, verified independently at review. Do not revert it.
+
+Two defects to fix, both with measured evidence in their bug docs — read those
+first.
+
+- **`bugs/bug-02-2.md` (blocker)** — the reader is not restored on `run`'s
+  success path, so **every second command on a healthy shell fails** with a
+  false "PTY closed", and after a timeout the detached worker keeps eating the
+  stream. Measured six sequential commands on one shell: Ok, ERR, Ok, ERR, Ok,
+  ERR. The commands *ran*; their output was lost.
+- **`bugs/bug-02-3.md` (major)** — round 1's evidence entry was rewritten with
+  round 2's numbers. Restore it from `3536573` with `git show`, do not retype.
+
+**The Update Log is append-only.** Each dispatch adds its own entry; earlier
+entries are never edited, even to make the document consistent. A superseded
+entry is supposed to look superseded. This was not stated before round 2 and
+is stated now.
 
 ## Update Log
 
