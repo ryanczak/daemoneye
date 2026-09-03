@@ -150,14 +150,15 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-/// A PTY-backed shell. Owns the master, a cloned reader, the writer, and the
-/// spawned child.
+/// A PTY-backed shell. Owns the master, the writer, and the spawned child,
+/// plus a long-lived reader thread and the channel it feeds.
 pub struct PtyShell {
     shell: String,
     master: Box<dyn MasterPty + Send>,
-    reader: Box<dyn Read + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    reader_rx: mpsc::Receiver<Vec<u8>>,
+    _reader_handle: Option<JoinHandle<()>>,
 }
 
 impl PtyShell {
@@ -184,26 +185,27 @@ impl PtyShell {
         // Without dropping the slave, the master never sees EOF.
         drop(pair.slave);
 
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|e| anyhow::anyhow!("{e}"))
-            .context("try_clone_reader failed")?;
-        let writer = pair
-            .master
+        let master = pair.master;
+        let writer = master
             .take_writer()
             .map_err(|e| anyhow::anyhow!("{e}"))
             .context("take_writer failed")?;
+        let reader = master
+            .try_clone_reader()
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .context("try_clone_reader failed")?;
+
+        let (reader_handle, reader_rx) = take_reader(reader);
 
         Ok(Self {
             shell: shell.to_string(),
-            master: pair.master,
-            reader,
+            master,
             writer,
             child,
+            reader_rx,
+            _reader_handle: Some(reader_handle),
         })
     }
-
     /// Run `cmd` in the shell, returning its output and real exit code.
     ///
     /// Generates a fresh nonce, writes the wrapped command, then accumulates
@@ -222,11 +224,10 @@ impl PtyShell {
             .map_err(|e| anyhow::anyhow!("{e}"))
             .context("flush wrapped command to PTY")?;
 
-        // The reader is a blocking OS fd, so an unbounded read would park past
-        // the deadline on a silent command. `take_reader` moves it to a worker
-        // thread that owns the blocking read and delivers each chunk on a
-        // channel; reading the channel's rx end is what we bound.
-        let (reader_handle, rx) = take_reader(&mut self.reader);
+        // The reader thread belongs to the shell, so the bytes a timed-out
+        // command keeps producing stay in this channel unread instead of
+        // racing a re-seated reader; the marker for this run's nonce claims
+        // only this run's bytes, and earlier bytes precede its begin marker.
         let mut buf: Vec<u8> = Vec::new();
         let start = Instant::now();
         loop {
@@ -234,45 +235,46 @@ impl PtyShell {
                 .checked_sub(start.elapsed())
                 .unwrap_or(Duration::ZERO);
             if remaining.is_zero() {
-                drop(rx);
-                drop(reader_handle); // worker will exit on its own once the shell writes or dies
-                self.refresh_reader()?;
+                self.terminate_foreground()?;
                 return Err(anyhow::anyhow!(
                     "timed out after {timeout:?} waiting for command output: {cmd:?}"
                 ));
             }
-            match rx.recv_timeout(remaining) {
+            match self.reader_rx.recv_timeout(remaining) {
                 Ok(chunk) => buf.extend_from_slice(&chunk),
                 Err(RecvTimeoutError::Timeout) => {
-                    drop(rx);
-                    drop(reader_handle); // worker will exit on its own once the shell writes or dies
-                    self.refresh_reader()?;
+                    self.terminate_foreground()?;
                     return Err(anyhow::anyhow!(
                         "timed out after {timeout:?} waiting for command output: {cmd:?}"
                     ));
                 }
                 Err(RecvTimeoutError::Disconnected) => {
-                    self.refresh_reader()?;
                     return Err(anyhow::anyhow!("PTY closed while running {cmd:?}"));
                 }
             }
             if let Some(outcome) = parse_outcome(&buf, &nonce) {
-                drop(rx);
-                drop(reader_handle); // worker finished once it delivered the end marker
                 return Ok(outcome);
             }
         }
     }
 
-    /// Re-seat `reader` with a fresh clone from the master so the next `run`
-    /// has a live fd (the previous one lives in a detached worker until the
-    /// shell writes again).
-    fn refresh_reader(&mut self) -> anyhow::Result<()> {
-        self.reader = self
-            .master
-            .try_clone_reader()
-            .map_err(|e| anyhow::anyhow!("{e}"))
-            .context("re-seat reader clone")?;
+    /// Send SIGTERM to the current foreground process group so a timed-out
+    /// command cannot keep occupying the shell. portable-pty exposes no
+    /// signal-sending API, so the platform `kill(1)` is invoked with the
+    /// negative PGID. The shell itself sits in its own process group and is
+    /// untouched.
+    fn terminate_foreground(&self) -> anyhow::Result<()> {
+        let Some(pgid) = self.master.process_group_leader() else {
+            return Ok(());
+        };
+        if pgid > 0 {
+            std::process::Command::new("kill")
+                .arg("--")
+                .arg(format!("-{pgid}"))
+                .status()
+                .map_err(|e| anyhow::anyhow!("{e}"))
+                .context(format!("kill -- -{pgid} failed"))?;
+        }
         Ok(())
     }
 
@@ -307,13 +309,14 @@ impl PtyShell {
     }
 }
 
-/// Move `reader` to a worker thread that reads until EOF/error, sending each
-/// chunk on a synchronous channel; the caller is handed the receiver so it can
-/// bound each wait with `recv_timeout`.
-fn take_reader(reader: &mut Box<dyn Read + Send>) -> (JoinHandle<()>, mpsc::Receiver<Vec<u8>>) {
-    let mut reader = std::mem::replace(reader, Box::new(std::io::empty()));
+/// Move `reader` to a thread that reads until EOF/error, sending each chunk on
+/// a synchronous channel; the caller keeps the receiver for the shell's whole
+/// lifetime so every wait is bounded by `recv_timeout` and no second reader is
+/// ever added alongside it.
+fn take_reader(reader: Box<dyn Read + Send>) -> (JoinHandle<()>, mpsc::Receiver<Vec<u8>>) {
     let (tx, rx) = mpsc::channel();
     let handle = std::thread::spawn(move || {
+        let mut reader = reader;
         let mut chunk = [0u8; 4096];
         loop {
             match reader.read(&mut chunk) {
@@ -380,7 +383,9 @@ mod tests {
     #[test]
     fn parse_outcome_ignores_the_echoed_command_line() {
         let n = nonce("n0nc3");
-        let mut buf = b"matt@scrappy:~$ printf '\\x1fDE_''BEG n0nc3\\x1f\\n'; printf 'no-trailing-newline'; (exit 42); printf '\\n\\x1fDE_''END n0nc3 %s\\x1f\\n' $?\r\n".to_vec();
+        let mut buf =
+            b"matt@scrappy:~$ printf '\\x1fDE_''BEG n0nc3\\x1f\\n'; printf 'no-trailing-newline'; sh -c 'exit 42'; printf '\\n\\x1fDE_''END n0nc3 %s\\x1f\\n' $?\r\n"
+                .to_vec();
         buf.extend_from_slice(b"\x1fDE_BEG n0nc3\x1f\r\n");
         buf.extend_from_slice(b"no-trailing-newline\r\n");
         buf.extend_from_slice(b"\x1fDE_END n0nc3 42\x1f\r\n");
@@ -499,5 +504,73 @@ mod tests {
             text.contains("hello"),
             "output must contain hello: {text:?}"
         );
+        let again = shell
+            .run(
+                "printf 'second\\n'; sh -c 'exit 7'",
+                Duration::from_secs(10),
+            )
+            .expect("the same shell runs a second command");
+        assert_eq!(again.exit_code, 7);
+        let second = String::from_utf8_lossy(&again.output);
+        assert!(
+            second.contains("second"),
+            "second run's own output: {second:?}"
+        );
+    }
+
+    #[test]
+    fn pty_runs_many_commands_on_one_shell() {
+        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
+        for (i, expected_code) in [0, 0, 42, 7, 0].iter().enumerate() {
+            let cmd = format!("printf 'out{i}\\n'; sh -c 'exit {expected_code}'");
+            let outcome = shell
+                .run(&cmd, Duration::from_secs(10))
+                .unwrap_or_else(|e| panic!("run {i} failed on a healthy shell: {e}"));
+            assert_eq!(outcome.exit_code, *expected_code, "exit code for run {i}");
+            let text = String::from_utf8_lossy(&outcome.output);
+            assert!(
+                text.contains(&format!("out{i}")),
+                "run {i} must return its own output: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pty_shell_is_usable_after_a_timeout() {
+        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
+        let logs = [false, true, false];
+        for (i, expect_timeout) in logs.iter().enumerate() {
+            let cmd = if *expect_timeout {
+                "sleep 30".to_string()
+            } else {
+                format!("printf 'ok{i}\\n'; sh -c 'exit 0'")
+            };
+            let budget = if *expect_timeout {
+                Duration::from_millis(300)
+            } else {
+                Duration::from_secs(10)
+            };
+            let before = Instant::now();
+            let result = shell.run(&cmd, budget);
+            let elapsed = before.elapsed();
+            if *expect_timeout {
+                assert!(
+                    result.is_err(),
+                    "run {i} with sleep 30 under a {budget:?} budget must Err"
+                );
+                assert!(
+                    elapsed < Duration::from_secs(2),
+                    "run {i} must fail fast, not wait out the command: elapsed={elapsed:?}"
+                );
+                continue;
+            }
+            let outcome = result.unwrap_or_else(|e| panic!("run {i} after a timeout failed: {e}"));
+            assert_eq!(outcome.exit_code, 0, "run {i} exit code");
+            let text = String::from_utf8_lossy(&outcome.output);
+            assert!(
+                text.contains(&format!("ok{i}")),
+                "run {i} must return its own output: {text:?}"
+            );
+        }
     }
 }

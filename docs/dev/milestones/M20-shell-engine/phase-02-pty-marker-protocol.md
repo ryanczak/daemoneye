@@ -1046,3 +1046,90 @@ pointed hint beats a re-dispatch that discards the tests. PE raised
 `read_only_stall_threshold` 60 → 200 in `rexymcp.toml` for this resume; noted
 that the stall was an identical-probe loop, not a diagnosis converging, so the
 guidance forbids re-probing and names the exact edit.
+### Update — 2026-09-03 (escalation, round 4)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** round 4 (142 turns) hard-failed on a `NoProgressStall` after
+doing most of the work — both spec'd tests (`pty_runs_many_commands_on_one_shell`,
+`pty_shell_is_usable_after_a_timeout`) are on disk as an uncommitted +71/-1
+and match the spec, and it fixed the `(exit 42)` fixture to `sh -c 'exit 42'`
+(F7). It then built a probe crate and ran the **identical** command ~40 times
+with no edit between, until the 60-call read-only stall fired. The one
+production edit (`bug-02-2`) was never made. The partial work is exactly what
+was asked for and the run demonstrably understood the defect, so resume with a
+pointed hint beats a re-dispatch that discards the tests. PE raised
+`read_only_stall_threshold` 60 → 200 in `rexymcp.toml` for this resume; noted
+that the stall was an identical-probe loop, not a diagnosis converging, so the
+guidance forbids re-probing and names the exact edit.
+
+### Update — 2026-09-03 (started)
+
+Resuming round 5 of phase-02 with the round-4 committed work already on disk
+(two spec'd tests, the `(exit 42)` → `sh -c 'exit 42'` fixture fix, the
+second `run` on the roundtrip test) and `bug-02-2` the only remaining defect.
+Reworked `PtyShell` so the reader is owned once for the shell's whole
+lifetime: spawn takes a single reader clone into a worker thread feeding one
+channel, `run` drains that channel with `recv_timeout` and never takes or
+re-seats the reader, and a timed-out command's process group is SIGTERMed via
+the platform `kill(1)` (portable-pty exposes no signal API) so it cannot keep
+the shell occupied after `run` returns. The reader's ownership no longer
+depends on which exit path `run` takes.
+
+### Update — 2026-09-03 (end-to-end verification)
+
+Round 5 (bug-02-2): one long-lived reader thread per `PtyShell` owned across
+the shell's lifetime, `run` draining it with `recv_timeout`; timed-out
+commands are SIGTERMed as a process group so they cannot keep the shell.
+Ran the phase-02 E2E block verbatim from the repo root; `/tmp/e2e-02.txt` (its
+entire contents, mechanically captured) follows:
+
+```sh
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::pty::tests::parse_outcome_extracts_output_between_markers ... ok
+shell::pty::tests::parse_outcome_ignores_a_foreign_nonce ... ok
+shell::pty::tests::parse_outcome_ignores_the_echoed_command_line ... ok
+shell::pty::tests::parse_outcome_keeps_a_unit_separator_inside_output ... ok
+shell::pty::tests::parse_outcome_rejects_a_non_numeric_exit_field ... ok
+shell::pty::tests::parse_outcome_returns_none_before_the_end_marker ... ok
+shell::pty::tests::pty_bash_roundtrip_returns_real_exit_code ... ok
+shell::pty::tests::pty_runs_many_commands_on_one_shell ... ok
+shell::pty::tests::pty_run_times_out_on_a_silent_command ... ok
+shell::pty::tests::pty_shell_is_usable_after_a_timeout ... ok
+shell::pty::tests::strip_markers_removes_only_this_nonces_markers ... ok
+shell::pty::tests::wrap_command_splits_the_marker_word ... ok
+shell::pty::tests::wrap_command_uses_status_for_fish_and_question_for_others ... ok
+cargo_exit=0
+== C. shell::pty:: module totals (NOT shell:: — that matches 43 existing) ==
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1540 filtered out; finished in 2.00s
+cargo_exit=0
+== D. lib suite totals ==
+test result: ok. 1549 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.81s
+cargo_exit=0
+== E. real PTY test, named and isolated ==
+test shell::pty::tests::pty_bash_roundtrip_returns_real_exit_code ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1552 filtered out; finished in 0.07s
+cargo_exit=0
+== F. structural greps (each must print the stated number) ==
+portable-pty dep        (1): 1
+lib.rs module decl      (1): 1
+split-quote BEG        (>=1): 5
+pub fn wrap_command     (1): 1
+pub fn parse_outcome    (1): 1
+pub fn strip_markers    (1): 1
+unsafe in pty.rs        (0): 0
+unwrap/expect/panic pre-test (0): 0
+```
+
+PASTE MATCH self-check:
+
+```sh
+D=docs/dev/milestones/M20-shell-engine/phase-02-pty-marker-protocol.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-02.txt
+diff /tmp/pasted-02.txt /tmp/e2e-02.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Verdict: **PASTE MATCH**
