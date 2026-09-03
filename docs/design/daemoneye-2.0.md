@@ -510,6 +510,15 @@ running against both until parity. The tmux backend is deleted in one phase
 at the end, with the `doc_truth`-style tests that pin the tool table and
 CLAUDE.md flipping in the same commit.
 
+**README.md stays current as we go (PE rule, 2026-09-03).** Every milestone
+close, and any phase that changes a user-visible command, slash command,
+config section, tool or key binding, updates `README.md` in the same commit
+series — not in one sweep at M26. `tests/doc_truth.rs` guards only the AI
+tools tables; the feature prose, CLI table, slash-command table, key tables
+and config sections are the architect's responsibility at each close. Until
+M26 the README describes 1.x behind a "Where this is going" note; M26
+rewrites it.
+
 **Tests.** The M6 isolation harness (throwaway `HOME`, private tmux server)
 becomes throwaway `HOME` + a private PTY; most existing tests are unaffected
 because they never touched tmux. New pure seams to test without a PTY:
