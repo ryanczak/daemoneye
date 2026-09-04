@@ -679,3 +679,74 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** cd48dbfd51ec0ce8ca8dcddb73c03e1bd459e71d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-04 01:00 (end-to-end verification)
+
+```
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::screen::tests::screen_annotates_a_red_run_as_one_error_marker ... ok
+shell::screen::tests::screen_contents_is_the_visible_screen_not_the_scrollback ... ok
+shell::screen::tests::screen_does_not_merge_a_colour_run_across_a_row_boundary ... ok
+shell::screen::tests::screen_feeds_bytes_split_mid_sequence ... ok
+shell::screen::tests::screen_leaves_unmapped_colours_as_plain_text ... ok
+shell::screen::tests::screen_maps_all_six_colour_codes ... ok
+shell::screen::tests::screen_preserves_cursor_positioned_columns ... ok
+shell::screen::tests::screen_reports_the_alternate_screen ... ok
+shell::screen::tests::screen_summary_uses_the_shared_classifier ... ok
+shell::screen::tests::screen_trims_marker_text_and_drops_empty_runs2 ... ok
+shell::screen::tests::screen_trims_marker_text_and_drops_empty_runs ... ok
+cargo_exit=0
+== C. shell::screen:: totals ==
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1565 filtered out; finished in 0.00s
+cargo_exit=0
+== D. phases 02 and 03 untouched (13 then 12) ==
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1563 filtered out; finished in 2.00s
+cargo_exit=0
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1564 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite totals ==
+test result: ok. 1572 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.87s
+cargo_exit=0
+== F. structural greps (each must print the stated number) ==
+vt100 dependency        (1): 1
+screen.rs exists        (1): 1
+mod screen declaration  (1): 1
+pub struct ShellScreen  (1): 1
+pub fn annotated        (1): 1
+calls tmux::status     (>=1): 4
+does NOT copy classify  (0): 0
+src/tmux untouched      (0): 0
+unsafe in screen.rs     (0): 0
+unwrap/expect/panic pre-test (0): 0
+```
+
+PASTE MATCH
+
+### Update — 2026-09-04 01:01 (started, round 2 — bug-04-1)
+
+Name: executor (phase-04 round-2 dispatch 2026-09-04). Fixed the single
+defect + the test the bug named, exactly:
+
+1. `screen_preserves_cursor_positioned_columns` added — feeds `NAME ESC[6C
+   SIZE ESC[6C MODE` on a 1×40 screen and asserts `annotated() == contents()`
+   (byte-equal, so the internal-column assertion subsumes it). Bug-04-1's
+   measured failure was `NAMESIZEMODE` vs `NAME      SIZE      MODE`.
+2. The interior-gap fix in `annotated_row`: `!cell.has_contents()` now pushes
+   a space into the span buffer instead of `continue`-ing, so an interior
+   blank cell contributes to the row's layout while `flush_span`'s trim still
+   drops the trailing run. Trailing-blank trimming untouched.
+3. `screen_does_not_merge_a_colour_run_across_a_row_boundary` corrected to
+   the spec's same-colour case: a red run wrapping row 0 → row 1 at 4 columns
+   yields `"[ERROR: abcd]\n[ERROR: efgh]"`, exactly the two-markers-not-one
+   guarantee the spec named. `EFGH` no longer appears in the file (grep: 0).
+4. **Mutation-check passed:** reverting the interior-gap handling to
+   `continue` makes `screen_preserves_cursor_positioned_columns` fail
+   (`0 passed; 1 failed`), and restoring it makes it pass again — the new
+   test genuinely pins the fixed behaviour.
+
+`shell::screen::` is at **11 passed, 0 failed** (10 + the one new test);
+`shell::pty::` at 13 and `shell::log::` at 12, unchanged. All four gates
+clean. src/tmux/ untouched. E2E captured above.

@@ -106,6 +106,10 @@ impl ShellScreen {
                 None => break,
             };
             if !cell.has_contents() {
+                // Interior blanks are part of the row's visible layout (a
+                // program may position columns with ESC[nC rather than write
+                // spaces); trailing blanks are removed by flush_span's trim.
+                text.push(' ');
                 continue;
             }
             let ccolor = cell_color(cell.fgcolor());
@@ -206,13 +210,29 @@ mod tests {
 
     #[test]
     fn screen_does_not_merge_a_colour_run_across_a_row_boundary() {
-        // 4 columns: a red run fills row 0; a green run fills row 1. They must
-        // NOT merge into one marker spanning the newline — rows are separate,
-        // so this is two markers.
+        // 4 columns: the same red run fills row 0 then continues at column 0
+        // of row 1. Rows are separate, so this must be two markers, not one
+        // spanning the newline — the colour does not change, only the row does.
         let mut s = screen(2, 4);
-        s.feed(b"\x1b[31mabcd\x1b[32mEFGH");
+        s.feed(b"\x1b[31mabcdefgh");
         let out = s.annotated();
-        assert_eq!(out, "[ERROR: abcd]\n[OK: EFGH]", "rows must not merge");
+        assert_eq!(out, "[ERROR: abcd]\n[ERROR: efgh]", "rows must not merge");
+    }
+
+    #[test]
+    fn screen_preserves_cursor_positioned_columns() {
+        // Columns laid out with ESC[nC, not literal spaces — the grid holds
+        // the gap and annotated() must render it the same way contents() does.
+        let mut s = screen(1, 40);
+        s.feed(b"NAME\x1b[6CSIZE\x1b[6CMODE");
+        let annotated = s.annotated();
+        let contents = s.contents();
+        assert_eq!(
+            annotated, contents,
+            "annotated() must agree with contents() on column positions"
+        );
+        assert!(annotated.starts_with("NAME"), "annotated: {annotated:?}");
+        assert!(annotated.contains("SIZE"), "annotated: {annotated:?}");
     }
 
     #[test]
