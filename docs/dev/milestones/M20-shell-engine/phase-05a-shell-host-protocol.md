@@ -1,7 +1,7 @@
 # Phase 05a: the shell-host wire protocol and socket server
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced 2026-09-03 — see `bugs/bug-05a-1.md`)
 **Depends on:** none in code. `src/shell/` exists from phases 02-04; this phase
 adds two sibling modules and calls none of them.
 **Estimated diff:** ~430 lines
@@ -261,6 +261,15 @@ returns the "before" value shown.
       `cargo test --lib shell::log::` → **12 passed**,
       `cargo test --lib shell::screen::` → **11 passed** — phases 02-04 are
       untouched.
+- [ ] **(round 2, bug-05a-1)** `cargo test --lib host_answers_a_request_split`
+      reports a passing `host_answers_a_request_split_around_a_chunk`.
+      Confirmed failing at review: `0 passed; … 1588 filtered out`.
+- [ ] **(round 2, bug-05a-1)** A well-formed request sent in two writes with a
+      chunk between them is answered correctly. Measured at review as
+      `{"type":"Error","message":"malformed frame: expected value at line 1
+      column 1"}` — that is the behaviour that must change.
+- [ ] **(round 2, bug-05a-1)** `cargo test --lib shell::host::` reports **8 or
+      more** passing, `0 failed` (7 today).
 - [ ] All four gates pass: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 
@@ -412,6 +421,35 @@ line retyped printed `PASTE MISMATCH` naming the divergent line.
 - **Reconnect, retry or backpressure policy.** A dropped subscriber simply
   ends that connection; the broadcast channel's lag behaviour is 05b's problem
   when it has real volume to measure.
+
+## Notes for executor — round 2
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** All four gates pass right now and all 12 tests pass; the
+defect is a concurrency behaviour no current test exercises.
+
+**There is exactly ONE defect to fix: `bugs/bug-05a-1.md`.** Read it first — it
+carries the measured transcript and names the tokio guarantee that is being
+violated.
+
+**What is already correct and must be preserved, not rewritten:** the whole of
+`proto.rs` (all five tests pass and the wire format matches the spec
+byte-for-byte), the peer-check widening, `bind` with its stale-file removal and
+explicit `0o700`, the malformed-frame and backend-error handling, and the
+existing seven `host_*` tests. Only the read loop in `handle_connection`
+changes.
+
+**Finish condition you can check yourself:** `cargo test --lib shell::host::`
+must report **8 passed, 0 failed** — 7 today plus exactly the one new test the
+bug names. **8, not 9** — a higher number means scope this phase did not ask
+for. `shell::proto::` stays at 5, and phases 02-04 stay at 13 / 12 / 11.
+
+**Mutation-check your own fix before reporting.** Once the new test passes,
+revert the read-loop change, confirm `host_answers_a_request_split_around_a_chunk`
+fails, restore it, and state that result in your Update Log entry.
+
+**The Update Log is append-only.** Add your own entry at the bottom; never
+edit an earlier one.
 
 ## Update Log
 

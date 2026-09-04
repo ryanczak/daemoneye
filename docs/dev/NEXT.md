@@ -3631,6 +3631,40 @@ choice to carry bytes as a JSON array rather than base64: it costs roughly 4x
 on the wire, and it is the only lossless option without a new dependency,
 because PTY output is not guaranteed valid UTF-8.
 
+**phase-05a round 1 (175 turns): bounced on `bug-05a-1`.** All four gates
+green independently, 12 tests added (7 host + 5 proto), all structural criteria
+met, no new `unsafe`, and the peer check was widened rather than copied — the
+criterion checking both halves passed, with `SO_PEERCRED` appearing zero times
+in the new module.
+
+**The defect: a subscribed connection loses request frames.** Once a client
+subscribes, a well-formed request that arrives split across two reads is
+silently discarded when an output chunk wins the race. Measured at review:
+
+```
+request split : "{\"type\":\"" then "Status\"}\n"
+(chunk pushed while the request frame is half-read)
+  reply 1: {"type":"Chunk", ...}
+  reply 2: {"type":"Error","message":"malformed frame: expected value at line 1 column 1"}
+```
+
+`tokio::io::AsyncBufReadExt::read_until` is documented as **not cancellation
+safe**, and the loop races it against the chunk receiver in `tokio::select!`,
+then calls `line.clear()` at the top of every iteration. The partial frame is
+appended to the buffer, the chunk branch wins, and the clear throws it away.
+
+This matters because streaming output *while* accepting input is the whole
+point of `Subscribe` — it is exactly what the 2.0 plan's attached mode does.
+
+**The pattern across three phases in a row, and it is mine.** Phase-03 lost
+bytes at a *command* boundary. Phase-04 collapsed layout at a *cell* boundary
+and its named boundary test used the wrong fixture. Phase-05a corrupts frames
+at a *concurrency* boundary. Each time the guarantee was stated in the phase
+doc's prose and each time my test plan named a test that did not cross the
+boundary in question. **The rule needs strengthening from "one named test must
+cross the boundary" to "name the two things that can happen at once, and test
+them happening at once."**
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,
