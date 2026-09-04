@@ -8,9 +8,18 @@
 use anyhow::Context;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
-use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::TryRecvError;
+
+/// Broadcast capacity in chunks (one chunk is one PTY read, at most 4096
+/// bytes). A subscriber further behind than this is `Lagged`, never blocked.
+pub const STREAM_CAPACITY: usize = 1024;
+
+/// How long `run()` sleeps between polls of its subscription. `broadcast` has
+/// no timed blocking receive, so the timed wait is a `try_recv` poll loop.
+const RUN_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// A per-command marker nonce. 128 bits of randomness rendered as 32 hex
 /// characters, so a command's own output cannot plausibly collide with it.
@@ -151,13 +160,14 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// A PTY-backed shell. Owns the master, the writer, and the spawned child,
-/// plus a long-lived reader thread and the channel it feeds.
+/// plus a long-lived reader thread that publishes every chunk it reads onto a
+/// broadcast, so any number of consumers can [`subscribe`](Self::subscribe).
 pub struct PtyShell {
     shell: String,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
-    reader_rx: mpsc::Receiver<Vec<u8>>,
+    stream_tx: broadcast::Sender<Vec<u8>>,
     _reader_handle: Option<JoinHandle<()>>,
 }
 
@@ -195,16 +205,51 @@ impl PtyShell {
             .map_err(|e| anyhow::anyhow!("{e}"))
             .context("try_clone_reader failed")?;
 
-        let (reader_handle, reader_rx) = take_reader(reader);
+        let (stream_tx, _initial_rx) = broadcast::channel(STREAM_CAPACITY);
+        let reader_handle = take_reader(reader, stream_tx.clone());
 
         Ok(Self {
             shell: shell.to_string(),
             master,
             writer,
             child,
-            reader_rx,
+            stream_tx,
             _reader_handle: Some(reader_handle),
         })
+    }
+
+    /// A receiver for every chunk the PTY produces from now on. Each
+    /// subscriber sees the same bytes; one that falls more than
+    /// [`STREAM_CAPACITY`] chunks behind receives `Lagged` on its next read.
+    pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
+        self.stream_tx.subscribe()
+    }
+
+    /// Write raw bytes to the shell as a user typing would.
+    pub fn write_input(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.writer
+            .write_all(bytes)
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .context("write input to PTY")?;
+        self.writer
+            .flush()
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .context("flush input to PTY")
+    }
+
+    /// The shell process id, if the platform reports one.
+    pub fn pid(&self) -> Option<u32> {
+        self.child.process_id()
+    }
+
+    /// `true` while the shell child has not exited.
+    pub fn is_alive(&mut self) -> anyhow::Result<bool> {
+        Ok(self
+            .child
+            .try_wait()
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .context("try_wait shell child")?
+            .is_none())
     }
     /// Run `cmd` in the shell, returning its output and real exit code.
     ///
@@ -213,6 +258,9 @@ impl PtyShell {
     /// On timeout returns an `Err` naming the timeout and the command — never
     /// a fabricated exit code.
     pub fn run(&mut self, cmd: &str, timeout: Duration) -> anyhow::Result<CommandOutcome> {
+        // Subscribe before writing, so no byte of this command's output can
+        // precede the subscription.
+        let mut rx = self.subscribe();
         let nonce = Nonce::new();
         let wrapped = wrap_command(cmd, &nonce, &self.shell);
         self.writer
@@ -224,9 +272,9 @@ impl PtyShell {
             .map_err(|e| anyhow::anyhow!("{e}"))
             .context("flush wrapped command to PTY")?;
 
-        // The reader thread belongs to the shell, so the bytes a timed-out
-        // command keeps producing stay in this channel unread instead of
-        // racing a re-seated reader; the marker for this run's nonce claims
+        // The reader thread belongs to the shell; bytes a timed-out command
+        // keeps producing reach later subscriptions (or nobody) instead of
+        // racing a re-seated reader. The marker for this run's nonce claims
         // only this run's bytes, and earlier bytes precede its begin marker.
         let mut buf: Vec<u8> = Vec::new();
         let start = Instant::now();
@@ -240,15 +288,22 @@ impl PtyShell {
                     "timed out after {timeout:?} waiting for command output: {cmd:?}"
                 ));
             }
-            match self.reader_rx.recv_timeout(remaining) {
+            match rx.try_recv() {
                 Ok(chunk) => buf.extend_from_slice(&chunk),
-                Err(RecvTimeoutError::Timeout) => {
+                Err(TryRecvError::Empty) => {
+                    std::thread::sleep(RUN_POLL_INTERVAL.min(remaining));
+                    continue;
+                }
+                Err(TryRecvError::Lagged(n)) => {
+                    // A dropped chunk could have carried the end marker, so
+                    // this command's outcome is unknowable: fail it and free
+                    // the shell rather than wait out the timeout in silence.
                     self.terminate_foreground()?;
                     return Err(anyhow::anyhow!(
-                        "timed out after {timeout:?} waiting for command output: {cmd:?}"
+                        "output subscription lagged by {n} chunks while running {cmd:?}"
                     ));
                 }
-                Err(RecvTimeoutError::Disconnected) => {
+                Err(TryRecvError::Closed) => {
                     return Err(anyhow::anyhow!("PTY closed while running {cmd:?}"));
                 }
             }
@@ -259,21 +314,30 @@ impl PtyShell {
     }
 
     /// Send SIGTERM to the current foreground process group so a timed-out
-    /// command cannot keep occupying the shell. portable-pty exposes no
-    /// signal-sending API, so the platform `kill(1)` is invoked with the
-    /// negative PGID. The shell itself sits in its own process group and is
-    /// untouched.
+    /// command cannot keep occupying the shell.
     fn terminate_foreground(&self) -> anyhow::Result<()> {
+        self.signal_foreground("TERM")
+    }
+
+    /// Send `sig` — a `kill(1)` signal name such as `INT`, `TERM`, `STOP` or
+    /// `CONT` — to the current foreground process group. portable-pty exposes
+    /// no signal-sending API, so the platform `kill(1)` is invoked with the
+    /// negative PGID. The shell itself sits in its own process group and is
+    /// untouched; when no job is in the foreground the group is the shell's
+    /// own, and an interactive shell ignores `INT`/`TERM`.
+    pub fn signal_foreground(&self, sig: &str) -> anyhow::Result<()> {
         let Some(pgid) = self.master.process_group_leader() else {
             return Ok(());
         };
         if pgid > 0 {
             std::process::Command::new("kill")
+                .arg("-s")
+                .arg(sig)
                 .arg("--")
                 .arg(format!("-{pgid}"))
                 .status()
                 .map_err(|e| anyhow::anyhow!("{e}"))
-                .context(format!("kill -- -{pgid} failed"))?;
+                .context(format!("kill -s {sig} -- -{pgid} failed"))?;
         }
         Ok(())
     }
@@ -309,28 +373,25 @@ impl PtyShell {
     }
 }
 
-/// Move `reader` to a thread that reads until EOF/error, sending each chunk on
-/// a synchronous channel; the caller keeps the receiver for the shell's whole
-/// lifetime so every wait is bounded by `recv_timeout` and no second reader is
-/// ever added alongside it.
-fn take_reader(reader: Box<dyn Read + Send>) -> (JoinHandle<()>, mpsc::Receiver<Vec<u8>>) {
-    let (tx, rx) = mpsc::channel();
-    let handle = std::thread::spawn(move || {
+/// Move `reader` to a thread that reads until EOF/error, publishing each chunk
+/// on the broadcast. The thread is the only reader of the PTY for the shell's
+/// whole lifetime; consumers subscribe rather than read.
+fn take_reader(reader: Box<dyn Read + Send>, tx: broadcast::Sender<Vec<u8>>) -> JoinHandle<()> {
+    std::thread::spawn(move || {
         let mut reader = reader;
         let mut chunk = [0u8; 4096];
         loop {
             match reader.read(&mut chunk) {
-                Ok(0) => break,
+                Ok(0) | Err(_) => break,
+                // `send` errs only when no subscriber exists at that instant;
+                // those bytes belong to nobody, so dropping them is correct
+                // and the reader keeps going.
                 Ok(n) => {
-                    if tx.send(chunk[..n].to_vec()).is_err() {
-                        break;
-                    }
+                    let _ = tx.send(chunk[..n].to_vec());
                 }
-                Err(_) => break,
             }
         }
-    });
-    (handle, rx)
+    })
 }
 
 #[cfg(test)]

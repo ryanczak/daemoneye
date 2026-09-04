@@ -1,7 +1,7 @@
 # Phase 05b: the PTY-backed shell host backend
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05a (`ShellBackend`, done) and phase-02/03/04 (`PtyShell`,
 `CastWriter`, `ShellScreen`, all done).
 **Estimated diff:** ~450 lines
@@ -31,15 +31,19 @@ Read before starting:
 1. Read `docs/dev/STANDARDS.md` top to bottom.
 2. Read the architecture references above.
 3. Read this entire phase doc before touching any code.
-4. Confirm the repo is on a clean branch with no uncommitted changes.
+4. **The tree is deliberately dirty**: `src/shell/pty.rs` (Task 1, done) and
+   the two M20 docs. That is the expected starting state, not a problem to
+   fix — do not revert, stash or re-derive any of it.
 
 ## Current state
 
 - `src/shell/` holds `mod.rs`, `pty.rs`, `log.rs`, `screen.rs`, `proto.rs`,
   `host.rs`. Test counts today: `pty` **13**, `log` **12**, `screen` **11**,
   `host` **8**, `proto` **5**.
-- **`PtyShell` cannot stream, and this is the phase's central problem.** Its
-  output arrives on a private field:
+- **Task 1 has landed on disk (architect-verified 2026-09-03, see § Notes
+  for executor). `PtyShell` now streams.** The paragraph below describes the
+  tree *before* that change and is kept for the record; do not re-derive it.
+  Before Task 1, output arrived on a private field:
 
   ```rust
   pub struct PtyShell {
@@ -106,26 +110,47 @@ viewport.
 
 ## Spec
 
-### Task 1 — Give `PtyShell` a public output stream
+### Task 1 — Give `PtyShell` a public output stream — **ALREADY DONE, DO NOT REDO**
 
-In `src/shell/pty.rs`, replace the private single-consumer channel with a
-broadcast so several consumers can read the same output.
+**This task is on disk, unverified-by-you but verified by the architect:**
+`cargo test --lib shell::pty::` reports **13 passed** and clippy is clean on
+the tree you are handed. `git diff src/shell/pty.rs` shows it. Read it, do not
+rewrite it. Your first action on `pty.rs` is **none**; your first gate is the
+one in Task 2.
 
-- Change the reader thread to publish into a
-  `tokio::sync::broadcast::Sender<Vec<u8>>` held by the shell.
-- Add `pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>>`.
-- **`run()` must keep working exactly as it does today.** Its 13 tests are the
-  contract: it takes its own subscription at the start of the call and drains
-  that. All 13 must still pass unchanged — do not edit them.
-- Broadcast capacity: use **1024** chunks. State it as a named `const` with a
-  one-line comment, so the number is visible rather than buried.
+What landed, so Task 2 can rely on it without reading further:
 
-**Gotcha, measured in phase-05a:** a `broadcast::Receiver` that falls behind
-yields `RecvError::Lagged(n)` rather than an error you can ignore silently.
-`run()` must treat `Lagged` as a **failure of that command**, not skip it — a
-dropped chunk could be the one carrying the end marker, and silently continuing
-would hang until the timeout with no explanation. Return an `Err` naming the
-lag.
+- `pub const STREAM_CAPACITY: usize = 1024` — the broadcast capacity.
+- The reader thread publishes every chunk on a
+  `tokio::sync::broadcast::Sender<Vec<u8>>`; a `send` with no subscriber is
+  ignored, never fatal.
+- `pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>>`.
+- `run()` subscribes **before** writing the command and drains with a
+  `try_recv` poll loop (5 ms sleep on `Empty`), because `broadcast::Receiver`
+  has **no `recv_timeout`** — it has `recv().await`, `try_recv()` and
+  `blocking_recv()` only. This is the wall both prior runs hit; it is solved.
+  `Lagged(n)` fails the command with an `Err` naming the lag.
+- Four helpers Task 2 needs, all `pub`:
+
+  ```rust
+  pub fn write_input(&mut self, bytes: &[u8]) -> anyhow::Result<()>   // write + flush
+  pub fn pid(&self) -> Option<u32>                                     // child.process_id()
+  pub fn is_alive(&mut self) -> anyhow::Result<bool>                   // child.try_wait().is_none()
+  pub fn signal_foreground(&self, sig: &str) -> anyhow::Result<()>     // kill -s <sig> -- -<pgid>
+  ```
+
+  `signal_foreground` is `terminate_foreground` generalised: `kill(1)` with
+  `-s <NAME>` and the **negative** foreground PGID from
+  `master.process_group_leader()`. `terminate_foreground` now calls it with
+  `"TERM"`. Task 2's `signal()` maps `ShellSignal::{Int,Term,Stop,Cont}` to
+  `"INT"`/`"TERM"`/`"STOP"`/`"CONT"` and calls it. **Nothing else is needed
+  for signals** — no `nix`, no `libc`, no crate reading.
+
+**Hard rule for this and every later phase:** never run `kill` from the shell
+against `-1`, a negative pid, or a process you did not spawn. The first run of
+this phase executed `kill -s INT -- -1` as a probe and took down the
+operator's desktop. Signal behaviour is exercised only through the pinned
+`backend_*` tests against the PTY child.
 
 ### Task 2 — `src/shell/backend.rs`: `PtyBackend`
 
@@ -155,6 +180,54 @@ three of:
 but not the log leaves the transcript wrong; one that reaches the log but not
 the screen leaves `status` stale. This is the phase's central guarantee and
 § Test plan pins it.
+
+**The pump is a `std::thread`, not a tokio task.** `CastWriter` and
+`ShellScreen` are synchronous, and `broadcast::Receiver::blocking_recv` panics
+inside a runtime, so a plain thread is the shape that needs no runtime handle
+and holds no mutex across an `.await`. Shape (adapt names, keep the structure):
+
+```rust
+pub struct PtyBackend {
+    shell: Mutex<PtyShell>,          // input / resize / signal / status
+    log: Mutex<CastWriter>,          // "i" events from input(); "o" from the pump
+    screen: Mutex<ShellScreen>,      // replaced wholesale on resize (F2)
+    out_tx: broadcast::Sender<Vec<u8>>, // what subscribe() hands out
+    started: Instant,                // the time base every log event uses
+    scrollback: usize,               // so resize can rebuild the screen
+    _pump: JoinHandle<()>,
+}
+
+// use tokio::sync::broadcast::{self, error::RecvError};
+// in spawn(), after building shell/log/screen and `let mut rx = shell.subscribe();`
+let this = Arc::new(Self { /* … */ });
+let pump = {
+    let this = Arc::clone(&this);
+    std::thread::spawn(move || loop {
+        match rx.blocking_recv() {
+            Ok(chunk) => {
+                let _ = this.out_tx.send(chunk.clone());               // 1. subscribers
+                let _ = this                                           // 2. cast log
+                    .log
+                    .lock()
+                    .unwrap_or_log()
+                    .write_output(this.started.elapsed(), &chunk);
+                this.screen.lock().unwrap_or_log().feed(&chunk);       // 3. screen
+            }
+            Err(RecvError::Lagged(_)) => continue, // the pump keeps going; § Test plan pins this
+            Err(RecvError::Closed) => break,
+        }
+    })
+};
+```
+
+`_pump` cannot be a field initialised after `Arc::new` without interior
+mutability; the simplest fix is to not store the handle at all (the thread
+ends when the PTY closes). Either is acceptable. Lock sites use
+`.unwrap_or_log()` (`crate::util::UnpoisonExt`) per CLAUDE.md, never
+`.unwrap()`.
+
+`status()` uses `shell.is_alive()` for `state`, `screen.size()` for
+`rows`/`cols`, and `shell.pid()` for `pid`.
 
 Trait methods:
 
@@ -306,9 +379,9 @@ against a missing path warns on stderr and exits `2`. The block redirects
 ## Authorizations
 
 - Create `src/shell/backend.rs`; edit `src/shell/mod.rs`.
-- **Edit `src/shell/pty.rs` for Task 1 only** — the broadcast change and the
-  new `subscribe`. Its 13 existing tests must keep passing **unedited**; adding
-  tests there is allowed, editing the existing ones is not.
+- **Do not edit `src/shell/pty.rs`.** Task 1 is landed; its 13 tests must
+  still pass **unedited** at the end. Adding a test there is allowed only if a
+  Task 2 defect traces back to it, and then the Update Log must say why.
 - Run the four gate commands.
 - **No new dependencies.**
 - May **not** touch `src/shell/log.rs`, `screen.rs`, `proto.rs` or `host.rs`,
@@ -334,3 +407,130 @@ against a missing path warns on stderr and exits `2`. The block redirects
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-09-03
+
+**Task 1 is already on disk and green; start at Task 2.** Two prior runs of
+this phase (sessions `6a9a3720`, interrupted by a host reboot at turn 38, and
+`6a9a3deb`, stopped by the operator at turn 102) never left exploration: both
+found that `tokio::sync::broadcast::Receiver` has no `recv_timeout` and spent
+their turns reading `nix`, `libc` and `portable-pty` sources looking for a way
+around it. The second run's only edit called `recv_timeout` on a broadcast
+receiver anyway and did not compile. That is a spec gap — Task 1 asked for a
+replacement without saying how a synchronous `run()` waits with a deadline —
+so the architect executed Task 1 (`try_recv` poll loop) and verified it:
+`shell::pty::` **13 passed**, build and clippy clean. Task 1's section now
+records exactly what landed, and Task 2 gained a pump skeleton and the four
+`PtyShell` helpers it needs. There is no crate source left to read: every API
+this phase touches is named in § Spec.
+
+### Update — 2026-09-03 21:30 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the same design-discovery wall stalled two runs in a row and
+nothing on disk was reusable, so the architect owns that discovery (Task 1,
+executed and verified) and the executor gets the mechanical remainder with a
+worked pump skeleton; takeover would forfeit the scorecard data point on a
+phase whose remaining tasks are exactly the shape this executor clears.
+
+### Update — 2026-09-04 03:15 (progress)
+
+Executor `p05b-r1` picked up the phase. Work plan: Task 1 rewires `PtyShell`'s
+reader thread onto a `tokio::sync::broadcast` channel (capacity 1024, named
+const), adds `subscribe()`, and keeps `run()`'s 13 tests green unedited;
+Task 2 creates `src/shell/backend.rs` with `PtyBackend` (one pump task feeding
+broadcast + cast log + screen, trait methods over the live shell); Task 3 adds
+the seven pinned `backend_*` tests; Task 4 captures the E2E evidence block
+verbatim and runs the PASTE MATCH self-check.
+
+### Update — 2026-09-04 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the spec held — session `6a9a48eb` died on a transient
+infrastructure fault (`backend error: Request failed: error sending request for
+url (http://brain:8888/v1/chat/completions)`) at turn 27 with the executor
+mid-orientation and about to write `src/shell/backend.rs`, so there is nothing
+to refine and nothing to take over.
+
+**Read this before starting: the tree is exactly as the 2026-09-03 notes above
+describe it, and nothing new is on disk.** Session `6a9a48eb` was the third run
+of this phase and the first to get a fair trial of the refined spec. It changed
+**zero files** before the endpoint dropped. Re-verified by the architect at
+escalation: `cargo build` clean, `cargo test --lib shell::pty::` **13 passed**,
+and `src/shell/backend.rs` **does not exist**. Task 1 remains done (architect-
+executed); **start at Task 2**.
+
+Its 27 turns were healthy orientation, not a stall — the novelty sampler
+reported 19–20 distinct targets in a 24-call window, context peaked at 26% of
+249k, and the final completion before the fault was a full implementation plan
+for `PtyBackend`. Nothing in that run indicates a spec gap, so § Spec, §
+Acceptance criteria and the § Test plan are unchanged.
+
+**Infrastructure note:** the dead run pointed at `brain:8888`, which is down.
+The endpoint is now `brain:8000`, serving `deepseek-ai/DeepSeek-V4-Flash-0731`;
+`rexymcp.toml` was corrected by the PE and the architect verified a live
+completion against it before resuming. This is not a code-facing fact — it is
+recorded so a future reader does not mistake the fault for a phase defect.
+
+### Update — 2026-09-04 22:10 (progress)
+
+Executor `p05b-r2` started at Task 2 (Task 1 already on disk and green, so no
+progress entry exists for it before this one). Created `src/shell/backend.rs`
+(`PtyBackend`, one pump thread feeding subscriber broadcast → cast log `"o"`
+→ screen for every chunk), declared `mod backend;` + `pub use
+backend::PtyBackend;` in `src/shell/mod.rs`, and wrote the seven pinned
+`backend_*` tests. All four gates pass and `shell::backend::` reports 7
+passed; `pty` stays 13.
+
+### Update — 2026-09-04 23:20 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim from the repo root;
+`/tmp/e2e-05b.txt` follows exactly as captured:
+
+```sh
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::backend::tests::backend_fans_one_chunk_out_to_subscriber_log_and_screen ... ok
+shell::backend::tests::backend_lagged_subscriber_does_not_break_the_pump ... ok
+shell::backend::tests::backend_records_input_as_an_i_event ... ok
+shell::backend::tests::backend_resize_replaces_the_screen_and_does_not_reflow ... ok
+shell::backend::tests::backend_signal_targets_the_foreground_group_not_the_shell ... ok
+shell::backend::tests::backend_status_reports_running_then_exited ... ok
+shell::backend::tests::backend_streams_while_input_is_written ... ok
+cargo_exit=0
+== C. shell::backend:: totals ==
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1589 filtered out; finished in 20.61s
+cargo_exit=0
+== D. earlier phases untouched (13, 12, 11, 8, 5) ==
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1583 filtered out; finished in 2.00s
+cargo_exit=0
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1584 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1585 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1588 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite totals ==
+test result: ok. 1592 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 24.35s
+cargo_exit=0
+== F. structural greps (each must print the stated number) ==
+backend.rs exists       (1): 1
+mod backend declaration (1): 1
+pub struct PtyBackend   (1): 1
+PtyShell::subscribe     (1): 1
+no set_size in backend  (0): 0
+no unsafe in backend    (0): 0
+unwrap/expect/panic pre-test (0): 0
+```
+
+PASTE MATCH self-check: after pasting the block above, the § End-to-end
+self-check was run and printed:
+
+```
+PASTE MATCH
+```
+
