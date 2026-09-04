@@ -162,13 +162,31 @@ line-number facts go stale and each landing shifts the next Current state).
 | 03 | asciicast-log ([phase-03-asciicast-log.md](phase-03-asciicast-log.md)) | **done** (approved_after_1, 2026-09-03; 1 bug, resolved) | `src/shell/log.rs`: asciicast v2 writer (header, `o`/`i`/`m` events, per-read flush) + `.meta.json` command index + reader that slices command N. Pure over byte streams; fixtures from phase-02's real capture. |
 | 04 | screen-model ([phase-04-screen-model.md](phase-04-screen-model.md)) | **done** (approved_after_1, 2026-09-03; 1 bug, resolved) | `src/shell/screen.rs`: `vt100::Parser` wrapper; `ansi.rs` annotation and `status.rs` classification re-pointed at grid cells; scrollback depth from config. Fixture-driven, no PTY. |
 | 05a | shell-host-protocol ([phase-05a-shell-host-protocol.md](phase-05a-shell-host-protocol.md)) | **done** (approved_after_1, 2026-09-03; 1 bug, resolved) | `src/shell/proto.rs` + `src/shell/host.rs`: the newline-delimited JSON frame set (subscribe / input / resize / signal / status), a socket server that binds `var/run/shells/sN.sock`, checks peer uid and dispatches to a `ShellBackend` trait. Hermetic — fake backend, no PTY, no fork. |
-| 05b | shell-host-process | todo (not drafted) | The `daemoneye shell-host --id sN` binary: owns the PTY, writes the cast log, drives the screen, serves 05a's protocol; detached spawn and the readiness pipe. **Architect-authored — needs new `unsafe` (fork/setsid) or a measured safe alternative.** Resize must rebuild the screen from the log, not call `set_size` (see § Notes). |
+| 05b | shell-host-backend ([phase-05b-shell-host-backend.md](phase-05b-shell-host-backend.md)) | **todo** (drafted 2026-09-03) | A public raw-output stream on `PtyShell`, and `PtyBackend` implementing 05a's `ShellBackend` over PTY + cast log + screen. Real PTY, no fork, no CLI. Resize recreates the screen rather than calling `set_size` (see § Notes). |
+| 05c | shell-host-binary | todo (not drafted) | The `daemoneye shell-host --id sN` subcommand plus detached spawn and readiness. **No longer architect-authored — a safe alternative was measured (see § Notes).** |
 | 06 | shell-registry | todo (not drafted) | `src/shell/registry.rs`: `ShellId`, `Owner`, per-owner caps, startup adoption by scanning `var/run/shells/`, dead-socket sweep, exited-shell GC under the lifecycle policy. |
 | 07 | run-terminal-command-pty | todo (not drafted) | Route `run_terminal_command` through the registry when `backend = "pty"` (local host only, wait-for-marker), masked + annotated result, real exit code in the tool result and in the `events.jsonl` command record. First phase that runs a command on the new substrate from chat. |
 | 08 | interactive-and-signals | todo (not drafted) | `is_interactive_command()` → return immediately with the shell id; pause / resume / cancel on the shell API (`SIGSTOP` / `SIGCONT` / `SIGINT` to the foreground pgrp); state transitions `Idle → Running → Paused → Exited`. |
 | 09 | restart-survival-and-close | todo (not drafted) | Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
 
 ## Notes
+
+- **Phase 05b was split again at drafting (2026-09-03) into 05b and 05c**, on a
+  real seam found by measurement rather than by guessing at size. Two findings
+  drove it:
+  1. **The architect-authorship reservation is lifted.** The README reserved
+     05b because detaching a child looked to need `fork`/`setsid`, which
+     STANDARDS forbids an executor from writing. Measured instead:
+     `std::os::unix::process::CommandExt::process_group(0)` — safe and stable —
+     puts the child in **its own process group** (measured pgid == pid, versus
+     a control child that inherited the parent's), and an orphaned child
+     survives its parent's exit either way. **No `unsafe` is required**, so
+     05c is dispatchable like any other phase.
+  2. **`PtyShell` cannot stream.** Its output arrives on a *private*
+     `mpsc::Receiver` consumed by `run()`, and `mpsc` is single-consumer — so a
+     host that must feed subscribers, the cast log and the screen at once
+     cannot use it as it stands. 05b adds a public stream and builds the
+     backend on it; 05c then only has to wire a binary around that.
 
 - **Carries into phase-05b (recorded at 05a close, 2026-09-03):**
   1. **A deterministic seam for the concurrency guard.**

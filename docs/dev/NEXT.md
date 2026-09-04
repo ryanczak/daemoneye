@@ -3693,6 +3693,37 @@ look like a boundary when writing a test list. **The rule is now: name the two
 things that can happen at once, and require a test where they do.** In force
 from phase-05b.
 
+**Active phase: phase-05b — shell-host-backend**
+(`docs/dev/milestones/M20-shell-engine/phase-05b-shell-host-backend.md`,
+status: todo, drafted 2026-09-03). Dispatch with `/rexymcp:dispatch phase-05b`.
+
+**Phase 05b was split again into 05b and 05c**, on a seam found by measuring
+rather than by guessing at size. Two findings drove it, and the first changes
+who can do the work:
+
+1. **The architect-authorship reservation is lifted.** The milestone reserved
+   the shell-host because detaching a child looked to need `fork`/`setsid`,
+   which the standards forbid an executor from writing. Measured instead:
+   `CommandExt::process_group(0)` — safe and stable — puts the child in **its
+   own process group** (pgid equal to its own pid, against a control child that
+   inherited the parent's), and an orphaned child outlives its parent either
+   way. **No `unsafe` is needed**, so 05c is an ordinary dispatchable phase.
+   A first attempt at this measurement showed the child dying; that was my own
+   harness cleaning up the process group, and re-measuring across separate
+   invocations with a heartbeat file showed both children surviving. Worth
+   recording because the wrong reading would have forced a takeover.
+2. **`PtyShell` cannot stream.** Its output arrives on a *private*
+   single-consumer channel that `run()` drains, so a host needing to feed
+   subscribers, the cast log and the screen at once cannot use it as it stands.
+   05b adds a public broadcast and builds the backend on it; 05c then only
+   wires a binary around that.
+
+**The milestone's hardest lesson is applied directly in the test plan.** The
+headline test asserts one chunk reaching **all three** consumers in a single
+test rather than three tests asserting one each, and a second test writes input
+**while** output streams. That is the strengthened rule from the 05a close:
+name the two things that happen at once, and test them happening at once.
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,
