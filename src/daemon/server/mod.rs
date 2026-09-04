@@ -33,7 +33,7 @@ use tokio::net::UnixStream;
 /// Return the effective UID of the process on the far end of `sock`, or `None`
 /// if the kernel would not/could not answer (closed connection, non-Linux,
 /// etc.).  The caller treats `None` as "reject".
-fn peer_euid<S: std::os::fd::AsRawFd>(sock: &S) -> Option<u32> {
+pub(crate) fn peer_euid<S: std::os::fd::AsRawFd>(sock: &S) -> Option<u32> {
     let fd = sock.as_raw_fd();
     // SAFETY: `cred` is a plain C struct; getsockopt writes at most its own size.
     let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
@@ -67,7 +67,7 @@ fn peer_euid<S: std::os::fd::AsRawFd>(sock: &S) -> Option<u32> {
 /// Reject connections whose peer euid differs from the daemon's euid.
 /// Returns `Err` (caller should drop the connection) when identity cannot be
 /// established or the peer is not our own user.
-fn check_peer_identity<S: std::os::fd::AsRawFd>(stream: &S) -> anyhow::Result<()> {
+pub(crate) fn check_peer_identity<S: std::os::fd::AsRawFd>(stream: &S) -> anyhow::Result<()> {
     let daemon_euid = unsafe { libc::geteuid() };
     match peer_euid(stream) {
         Some(uid) if uid == daemon_euid => Ok(()),
