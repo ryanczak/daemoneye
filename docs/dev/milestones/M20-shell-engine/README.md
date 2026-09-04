@@ -161,7 +161,7 @@ line-number facts go stale and each landing shifts the next Current state).
 | 02 | pty-marker-protocol ([phase-02-pty-marker-protocol.md](phase-02-pty-marker-protocol.md)) | **done** (approved_after_4, 2026-09-03; 5 rounds, 3 bugs all resolved, landed on a resume) | `src/shell/pty.rs`: `portable-pty` spawn, the split-nonce wrapper for bash/zsh/fish, the pure marker parser with the echo-first negative test, exit-code extraction, `\x1f` stripping. One real-PTY test against `bash`. |
 | 03 | asciicast-log ([phase-03-asciicast-log.md](phase-03-asciicast-log.md)) | **done** (approved_after_1, 2026-09-03; 1 bug, resolved) | `src/shell/log.rs`: asciicast v2 writer (header, `o`/`i`/`m` events, per-read flush) + `.meta.json` command index + reader that slices command N. Pure over byte streams; fixtures from phase-02's real capture. |
 | 04 | screen-model ([phase-04-screen-model.md](phase-04-screen-model.md)) | **done** (approved_after_1, 2026-09-03; 1 bug, resolved) | `src/shell/screen.rs`: `vt100::Parser` wrapper; `ansi.rs` annotation and `status.rs` classification re-pointed at grid cells; scrollback depth from config. Fixture-driven, no PTY. |
-| 05a | shell-host-protocol ([phase-05a-shell-host-protocol.md](phase-05a-shell-host-protocol.md)) | **in-progress** (bounced 2026-09-03, [bug-05a-1](bugs/bug-05a-1.md)) | `src/shell/proto.rs` + `src/shell/host.rs`: the newline-delimited JSON frame set (subscribe / input / resize / signal / status), a socket server that binds `var/run/shells/sN.sock`, checks peer uid and dispatches to a `ShellBackend` trait. Hermetic — fake backend, no PTY, no fork. |
+| 05a | shell-host-protocol ([phase-05a-shell-host-protocol.md](phase-05a-shell-host-protocol.md)) | **done** (approved_after_1, 2026-09-03; 1 bug, resolved) | `src/shell/proto.rs` + `src/shell/host.rs`: the newline-delimited JSON frame set (subscribe / input / resize / signal / status), a socket server that binds `var/run/shells/sN.sock`, checks peer uid and dispatches to a `ShellBackend` trait. Hermetic — fake backend, no PTY, no fork. |
 | 05b | shell-host-process | todo (not drafted) | The `daemoneye shell-host --id sN` binary: owns the PTY, writes the cast log, drives the screen, serves 05a's protocol; detached spawn and the readiness pipe. **Architect-authored — needs new `unsafe` (fork/setsid) or a measured safe alternative.** Resize must rebuild the screen from the log, not call `set_size` (see § Notes). |
 | 06 | shell-registry | todo (not drafted) | `src/shell/registry.rs`: `ShellId`, `Owner`, per-owner caps, startup adoption by scanning `var/run/shells/`, dead-socket sweep, exited-shell GC under the lifecycle policy. |
 | 07 | run-terminal-command-pty | todo (not drafted) | Route `run_terminal_command` through the registry when `backend = "pty"` (local host only, wait-for-marker), masked + annotated result, real exit code in the tool result and in the `events.jsonl` command record. First phase that runs a command on the new substrate from chat. |
@@ -169,6 +169,19 @@ line-number facts go stale and each landing shifts the next Current state).
 | 09 | restart-survival-and-close | todo (not drafted) | Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
 
 ## Notes
+
+- **Carries into phase-05b (recorded at 05a close, 2026-09-03):**
+  1. **A deterministic seam for the concurrency guard.**
+     `host_answers_a_request_split_around_a_chunk` catches its regression only
+     about two thirds of the time (measured: 8 failures in 12 runs with the bug
+     reintroduced). Making it deterministic needs either a real-clock sleep —
+     which this project deliberately removed from its suite — or a seam in the
+     backend that forces the interleaving. 05b builds the real backend and is
+     the natural place for that seam.
+  2. **Who may unlink a socket.** `host::bind` removes whatever occupies the
+     path unconditionally, so a second host claiming the same id would unlink a
+     live host's socket. Id assignment belongs to the phase-06 registry; decide
+     the ownership guard there, the way the daemon's instance flock does it.
 
 - **Phase 05 was split at drafting (2026-09-03) into 05a and 05b**, the same
   narrowing M18 and M19 each took. As scoped it bundled a wire protocol, a

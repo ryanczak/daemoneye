@@ -1,7 +1,7 @@
 # Bug 1 on phase-05a: a subscribed connection loses request frames to a cancelled read
 
 **Severity:** major
-**Status:** open
+**Status:** resolved (round 2, 2026-09-03, commit `396482c`)
 **Filed:** 2026-09-03
 
 ## What's wrong
@@ -99,3 +99,27 @@ chunk stream at all. Separating the connection into a reader half and a writer
 half that share the write side is one shape that satisfies this; there are
 others. Do not fix it by refusing to accept requests while subscribed — that
 removes the capability the attached mode needs.
+
+## Resolution — 2026-09-03 (round 2, commit `396482c`)
+
+The read loop no longer clears its buffer wholesale. It drains complete
+newline-delimited frames and keeps any trailing partial for the next read, so a
+frame that was half-read when a chunk won the race survives.
+
+Verified independently at review on the **original** failing case — a small
+`Status` frame split around a chunk, which is not what the new test uses — ten
+trials, ten correct answers, where round 1 returned `malformed frame`.
+
+**The guard is probabilistic, and that is recorded rather than hidden.**
+Restoring the old wholesale clear and running the new test twelve times, it
+failed 8 of 12, matching the executor's self-reported 9 of 15. A deterministic
+version would need a real-clock sleep, which this project deliberately removed
+from its suite, or a test seam in the backend. Carried to phase-05b, which
+builds the real backend and is the natural home for such a seam.
+
+**Also cleared at review, not a defect:** the drain loop slices `&line[..end]`
+rather than `&line[offset..end]`, which would concatenate frames if the buffer
+held two. Pipelined requests were tested and dispatch correctly, because
+`read_until` stops at the first newline so two complete frames never coexist in
+the buffer. Fragile under an unstated invariant; worth tightening when the file
+is next touched.

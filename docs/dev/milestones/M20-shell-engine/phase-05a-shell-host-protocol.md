@@ -1,7 +1,7 @@
 # Phase 05a: the shell-host wire protocol and socket server
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** none in code. `src/shell/` exists from phases 02-04; this phase
 adds two sibling modules and calls none of them.
 **Estimated diff:** ~430 lines
@@ -919,3 +919,78 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 396482cac5457a4c957d9277c4a559972fbed9e9
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-03
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bug-05a-1`, resolved in round 2)
+- **Executor:** deepseek-v4-flash-0731 (round 1: 175 turns; round 2: 450)
+- **Scope deviations:** none. Round 2 changed only the read loop and added
+  exactly the one test the bug named.
+
+**Gates re-run independently at review:** all four green, zero build warnings.
+`shell::host::` **8 passed**, exactly the `8, not 9` finish condition;
+`shell::proto::` 5; phases 02-04 still 13 / 12 / 11. Lib 1584 → 1585.
+
+**Hygiene:** no `unwrap`/`expect`/`panic!` outside tests, **no new `unsafe`**,
+no `#[allow]`/`#[ignore]`/`TODO`/debug printing. The peer check is called
+three times and `SO_PEERCRED` appears **zero** times in the new module — the
+security boundary stayed single-sourced, which was the point of widening
+rather than copying.
+
+**The fix verified independently, on the original failing case.** My round-1
+probe used a *small* `Status` frame; the executor's new test uses a 4 KiB
+`Input` frame. I re-ran the small-frame case ten times against the fixed tree:
+
+| | round 1 | now |
+|---|---|---|
+| Small frame split around a chunk | `Error: malformed frame` | **10/10 answered correctly** |
+
+**A second concern I chased and cleared.** The drain loop dispatches
+`&line[..end]` rather than `&line[offset..end]`, which would concatenate two
+frames if the buffer ever held both. I tested pipelined frames — two requests
+in a single write — and both were dispatched correctly, because `read_until`
+stops at the first newline, so the buffer can never hold two complete frames.
+The slice is **fragile rather than wrong**: it is correct only under an
+invariant the loop does not state. Worth tightening the next time this file is
+touched; not a defect today.
+
+**Mutation-checked at review, and the result is a caveat worth recording.**
+Restoring the round-1 wholesale clear and running the new test twelve times:
+it failed **8 of 12**. That closely matches the executor's own honestly
+reported 9 of 15 — it did not overstate its check.
+
+So the guard is real but **probabilistic: roughly a two-thirds chance of
+catching this regression on any single run.** I am approving rather than
+bouncing a third time, for three reasons: the behaviour itself is verified
+fixed deterministically; the executor disclosed the flakiness rather than
+hiding it; and the obvious way to make the guard deterministic is a real-clock
+sleep, which this project **deliberately removed from its suite** in an earlier
+milestone. That tension is a design question, not a typo. Carried in the
+milestone README for phase-05b, which builds the real backend and is the
+natural place for a test seam that forces the interleaving without sleeping.
+
+**Evidence:** append-only respected (round 2's commit deletes zero lines from
+this document), and paste fidelity verified by the reviewer against the
+surviving artifact — `PASTE MATCH`.
+
+- **Calibration:**
+  1. **Third phase running where the defect sat on a boundary my test plan
+     named in prose but never crossed.** Phase-03: a command boundary.
+     Phase-04: a cell boundary, with a named test whose fixture could not fail.
+     Phase-05a: a concurrency boundary. The rule recorded after phase-03 —
+     "one named test must cross the boundary" — was not enough, because two
+     things happening *at once* do not look like a boundary when you write a
+     test list. **Strengthened to: name the two things that can happen
+     simultaneously, and require a test where they do.** Applied from
+     phase-05b onward.
+  2. **A 450-turn round is worth noting** against 46 and 88 for the two
+     previous round-2 fixes. The difference was the flaky guard: the executor
+     spent much of the budget measuring its own mutation rate, which is
+     exactly the diligence asked for, and it reported the number accurately.
+  3. **`bind` removes whatever occupies the path unconditionally.** My own
+     § Measured facts gestured at a guard ("removes only when the caller has
+     said it owns the id") that Task 3 never specified, so the implementation
+     correctly followed the task. Whether a live host's socket can be unlinked
+     by a second host claiming the same id belongs to phase-06's registry,
+     which is what owns id assignment. Carried.

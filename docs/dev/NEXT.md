@@ -3665,6 +3665,34 @@ boundary in question. **The rule needs strengthening from "one named test must
 cross the boundary" to "name the two things that can happen at once, and test
 them happening at once."**
 
+**phase-05a — shell-host-protocol: done (approved_after_1) 2026-09-03**,
+landing commit `396482c`. Two rounds, one bug, resolved. `shell::host::` 8
+passed (the `8, not 9` finish condition held exactly), `shell::proto::` 5,
+phases 02-04 unchanged at 13 / 12 / 11. No new `unsafe`, and the peer check
+stayed single-sourced — three calls, zero occurrences of the kernel constant in
+the new module.
+
+Verified independently on the **original** failing case, which is not the case
+the new test uses: a small frame split around a chunk now answers correctly ten
+times out of ten, where round 1 returned a malformed-frame error.
+
+**One caveat recorded rather than bounced.** The new guard is probabilistic —
+restoring the bug and running it twelve times, it failed 8. The executor
+reported that itself rather than hiding it. A deterministic version needs
+either a real-clock sleep, which this project removed from its suite on
+purpose, or a backend test seam. That is a design question, carried to
+phase-05b in the milestone README along with a second carry about who may
+unlink a live socket.
+
+**Four phases done, and the milestone's clearest lesson is now sharp.** Three
+in a row had their defect on a boundary the phase doc named in prose and no
+test crossed: a command boundary, a cell boundary, a concurrency boundary. The
+rule I recorded after phase-03 was "one named test must cross the boundary".
+That was insufficient, because two things happening *simultaneously* do not
+look like a boundary when writing a test list. **The rule is now: name the two
+things that can happen at once, and require a test where they do.** In force
+from phase-05b.
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,
