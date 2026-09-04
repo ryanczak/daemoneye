@@ -1,7 +1,7 @@
 # Phase 04: the vt100 screen model
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none in code — `src/shell/` exists from phases 02 and 03; this
 phase adds a third sibling module and calls neither.
 **Estimated diff:** ~360 lines
@@ -432,3 +432,64 @@ line retyped printed `PASTE MISMATCH` naming the divergent line.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-04 00:14 (started)
+
+Name: executor (phase-04 dispatch 2026-09-04). Implemented the five Spec tasks
+in order — `vt100 = "0.16"` pinned in `Cargo.toml` next to `zeroize`;
+`src/shell/screen.rs` created and declared as `mod screen;` plus `pub use
+screen::ShellScreen;` in `src/shell/mod.rs`; `ShellScreen::new/feed/contents/
+size/cursor/is_alt_screen` (all thin) ; `annotated()` building markers per F1
+with per-row flushing (`flush_span`); `summary()` delegating to
+`crate::tmux::status::{classify, summarize}`. All 10 pinned tests written and
+passing (`cargo test --lib shell::screen::`: 10 passed; 0 failed). One
+correction en route: F2 measured on this tree that after eight CRLF lines a
+3-row screen actually holds only `line7\nline8` (each `\n` scrolls its row
+up; the trailing `\r` leaves the last row empty) and the F2-only assertion
+was adjusted — the `!contains("line1")` + `contains("line8")` pin stands
+unchanged. Gate commands all clean; E2E capture runs next.
+
+### Update — 2026-09-04 00:16 (end-to-end verification)
+
+```
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.71s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::screen::tests::screen_annotates_a_red_run_as_one_error_marker ... ok
+shell::screen::tests::screen_contents_is_the_visible_screen_not_the_scrollback ... ok
+shell::screen::tests::screen_does_not_merge_a_colour_run_across_a_row_boundary ... ok
+shell::screen::tests::screen_feeds_bytes_split_mid_sequence ... ok
+shell::screen::tests::screen_leaves_unmapped_colours_as_plain_text ... ok
+shell::screen::tests::screen_maps_all_six_colour_codes ... ok
+shell::screen::tests::screen_reports_the_alternate_screen ... ok
+shell::screen::tests::screen_summary_uses_the_shared_classifier ... ok
+shell::screen::tests::screen_trims_marker_text_and_drops_empty_runs2 ... ok
+shell::screen::tests::screen_trims_marker_text_and_drops_empty_runs ... ok
+cargo_exit=0
+== C. shell::screen:: totals ==
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1565 filtered out; finished in 0.00s
+cargo_exit=0
+== D. phases 02 and 03 untouched (13 then 12) ==
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1562 filtered out; finished in 2.00s
+cargo_exit=0
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1563 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite totals ==
+test result: ok. 1571 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.78s
+cargo_exit=0
+== F. structural greps (each must print the stated number) ==
+vt100 dependency        (1): 1
+screen.rs exists        (1): 1
+mod screen declaration  (1): 1
+pub struct ShellScreen  (1): 1
+pub fn annotated        (1): 1
+calls tmux::status     (>=1): 4
+does NOT copy classify  (0): 0
+src/tmux untouched      (0): 0
+unsafe in screen.rs     (0): 0
+unwrap/expect/panic pre-test (0): 0
+```
+
+PASTE MATCH

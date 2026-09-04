@@ -41,6 +41,10 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "i
 toml = "1.1"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
+# Terminal emulation for the shell screen model — turns a raw PTY byte stream
+# into a cell grid, so colour is read off parsed cells instead of re-parsing
+# escape sequences out of a string.
+vt100 = "0.16"
 
 [dev-dependencies]
 filetime = "0.2"

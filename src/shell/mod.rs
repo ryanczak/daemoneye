@@ -6,8 +6,10 @@
 
 mod log;
 mod pty;
+mod screen;
 
 pub use log::{CastWriter, CommandRecord, MetaIndex, meta_path_for, read_command_output};
 pub use pty::{
     CommandOutcome, Nonce, PtyShell, exit_var, parse_outcome, strip_markers, wrap_command,
 };
+pub use screen::ShellScreen;
