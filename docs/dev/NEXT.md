@@ -3493,6 +3493,46 @@ phase-02's blocker one level down. **For the rest of M20: when a spec states a
 guarantee about boundaries between units, one of the named tests must cross a
 boundary.**
 
+**Active phase: phase-04 — screen-model**
+(`docs/dev/milestones/M20-shell-engine/phase-04-screen-model.md`, status: todo,
+drafted 2026-09-03). Dispatch with `/rexymcp:dispatch phase-04`.
+
+Scope: `src/shell/screen.rs` — a terminal-emulator wrapper giving a live
+screen, a grid-cell semantic annotator replacing the string-based one, and a
+one-line status summary that **calls** the existing pure classifier rather than
+copying it. Hermetic and fixture-driven; no PTY, no clock, no config read, no
+production caller. Adds one dependency.
+
+**The outstanding measurement is done, and it changed a design assumption.**
+The milestone had carried "re-measure the alt-screen and resize leg before
+drafting phases 04 and 05" since scoping. Four facts now measured:
+
+- **`set_size` does not reflow.** 26 characters at 20 columns read back as one
+  logical line; after widening to 30 they read back as **two** lines broken at
+  the old width. Widening corrupts text already on screen, so **resize cannot
+  be a `set_size` call on a populated grid — phase-05 has to rebuild the
+  screen from the cast log.** Recorded in the milestone README.
+- The six colour codes map to specific indexed colours, pairing exactly with
+  the existing string classifier's code pairs.
+- `contents()` is the **visible screen only**; scrollback is a view offset.
+  That confirms the split the design rests on: the screen is the viewport, the
+  cast log is the transcript.
+- The alternate-screen flag tracks the alt-screen escapes.
+
+**Applying the phase-03 lesson.** The rule recorded there — when a spec states
+a guarantee about boundaries, one named test must cross a boundary — is
+honoured directly: `screen_does_not_merge_a_colour_run_across_a_row_boundary`
+is a named test, and so is a run-grouping negative that catches
+one-marker-per-cell, and an escape sequence split across two feeds.
+
+**One drafting correction worth recording**, since architect defects have been
+the recurring theme: my first draft quoted the filtered-test count as 1561 when
+the tree prints 1565, and justified the qualified test filter by claiming a
+bare `screen::` was a live trap. Measured: it matches nothing today, unlike
+`log::` (16) and `shell::` (43). Both corrected before dispatch — an
+inaccurate measured value in a spec is the same defect class as an unreachable
+criterion.
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,

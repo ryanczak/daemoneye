@@ -160,7 +160,7 @@ line-number facts go stale and each landing shifts the next Current state).
 | 01 | execution-config ([phase-01-execution-config.md](phase-01-execution-config.md)) | **done** (approved_first_try, 2026-09-03) | `[execution] backend` + `[shells]` (per-owner cap, exited retention, log retention) config schema, validation, `assets/etc/config.toml` docs, `shells_dir()` / `shell_logs_dir()` / `shell_run_dir()` path constructors, lifecycle-policy rows. Hermetic — no PTY. |
 | 02 | pty-marker-protocol ([phase-02-pty-marker-protocol.md](phase-02-pty-marker-protocol.md)) | **done** (approved_after_4, 2026-09-03; 5 rounds, 3 bugs all resolved, landed on a resume) | `src/shell/pty.rs`: `portable-pty` spawn, the split-nonce wrapper for bash/zsh/fish, the pure marker parser with the echo-first negative test, exit-code extraction, `\x1f` stripping. One real-PTY test against `bash`. |
 | 03 | asciicast-log ([phase-03-asciicast-log.md](phase-03-asciicast-log.md)) | **done** (approved_after_1, 2026-09-03; 1 bug, resolved) | `src/shell/log.rs`: asciicast v2 writer (header, `o`/`i`/`m` events, per-read flush) + `.meta.json` command index + reader that slices command N. Pure over byte streams; fixtures from phase-02's real capture. |
-| 04 | screen-model | todo (not drafted) | `src/shell/screen.rs`: `vt100::Parser` wrapper; `ansi.rs` annotation and `status.rs` classification re-pointed at grid cells; scrollback depth from config. Fixture-driven, no PTY. |
+| 04 | screen-model ([phase-04-screen-model.md](phase-04-screen-model.md)) | **todo** (drafted 2026-09-03) | `src/shell/screen.rs`: `vt100::Parser` wrapper; `ansi.rs` annotation and `status.rs` classification re-pointed at grid cells; scrollback depth from config. Fixture-driven, no PTY. |
 | 05 | shell-host-process | todo (not drafted) | `daemoneye shell-host --id sN` subcommand: owns the PTY, writes the log, serves `var/run/shells/sN.sock` (peer-uid checked) with input / resize / signal / subscribe frames; detached spawn via the existing fork path; readiness pipe. **Architect-authored if new `unsafe` is required.** |
 | 06 | shell-registry | todo (not drafted) | `src/shell/registry.rs`: `ShellId`, `Owner`, per-owner caps, startup adoption by scanning `var/run/shells/`, dead-socket sweep, exited-shell GC under the lifecycle policy. |
 | 07 | run-terminal-command-pty | todo (not drafted) | Route `run_terminal_command` through the registry when `backend = "pty"` (local host only, wait-for-marker), masked + annotated result, real exit code in the tool result and in the `events.jsonl` command record. First phase that runs a command on the new substrate from chat. |
@@ -174,12 +174,16 @@ line-number facts go stale and each landing shifts the next Current state).
   probe disproved the obvious marker search within one run — the echo gotcha
   would otherwise have shipped as a "works on my machine" spec and bounced
   phase-02.
-- **The `less`/resize leg of the probe was inconclusive** (the probe's own
-  read loop timed out rather than the feature failing). Re-measure before
-  drafting phase-04 (alt-screen in the grid) and phase-05 (resize frames);
-  do not cite either behaviour in a spec until then. **Still outstanding after
-  phase-02 drafting** — that round measured the marker protocol, not the
-  screen, and deliberately left `vt100` out of phase-02.
+- ~~**The `less`/resize leg of the probe was inconclusive.**~~ **Measured
+  2026-09-03 while drafting phase-04**, and one result changes a design
+  assumption: `Screen::set_size` does **not** reflow — a soft-wrapped row
+  becomes a hard line break at the *old* width, so widening the terminal
+  corrupts text already on screen. Resize therefore cannot be a `set_size`
+  call on a populated grid; **phase-05 must rebuild the screen from the cast
+  log instead.** Also measured: the six SGR colour codes map to
+  `Idx(1|9|3|11|2|10)`; `contents()` is the visible screen only, with
+  scrollback reachable as a view offset; and `alternate_screen()` tracks the
+  alt-screen escapes. Full table in phase-04 § Measured facts.
 
 - **Phase-02 drafting added a BEGIN marker to the design (2026-09-03).** The
   2.0 plan's § 2.1 describes only an end marker. Measurement showed the PTY
