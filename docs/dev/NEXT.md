@@ -3533,6 +3533,38 @@ bare `screen::` was a live trap. Measured: it matches nothing today, unlike
 inaccurate measured value in a spec is the same defect class as an unreachable
 criterion.
 
+**phase-04 round 1 (90 turns): bounced on `bug-04-1`.** All four gates green
+independently, lib 1561 → 1571 (10 tests), all acceptance criteria met, no
+`unwrap`/`expect`/`panic!`/`unsafe`, `src/tmux/` byte-for-byte untouched, and
+the status classifier is called rather than copied — the criterion checking
+both halves passed.
+
+**The defect: the annotated view collapses cursor-positioned columns.**
+`annotated()` skips every blank grid cell, including interior ones, so column
+layout done by moving the cursor rather than writing spaces runs together.
+Measured at review:
+
+```
+columns positioned with ESC[nC:
+  contents()  = "NAME      SIZE      MODE"
+  annotated() = "NAMESIZEMODE"
+```
+
+`ls`, `top`, `git status` and most table renderers position columns exactly
+that way, and `annotated()` is the view the model reads — so an agent would
+see unparseable run-together text. The spec said *trailing* blanks are
+trimmed; interior ones are part of the row.
+
+**A second, smaller finding folded into the same bug's DoD.** The test named
+`screen_does_not_merge_a_colour_run_across_a_row_boundary` feeds red on row 0
+and **green** on row 1, so the colour change alone forces the split and the
+test cannot discriminate the same-colour case its name claims. **The behaviour
+is correct** — verified at review, a same-colour run across the boundary
+yields two markers — but the guard is decorative. This is the milestone's own
+recorded lesson, one phase later: *a guarantee needs a test that actually
+crosses the boundary*, and a test can carry the right name while exercising
+the wrong case.
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,

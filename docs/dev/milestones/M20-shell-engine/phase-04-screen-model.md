@@ -1,7 +1,7 @@
 # Phase 04: the vt100 screen model
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced 2026-09-03 — see `bugs/bug-04-1.md`)
 **Depends on:** none in code — `src/shell/` exists from phases 02 and 03; this
 phase adds a third sibling module and calls neither.
 **Estimated diff:** ~360 lines
@@ -285,6 +285,20 @@ code this phase specifies.
 - [ ] `cargo test --lib shell::pty::` still reports **13 passed** and
       `cargo test --lib shell::log::` still reports **12 passed** — phases 02
       and 03 are untouched.
+- [ ] **(round 2, bug-04-1)** `cargo test --lib screen_preserves_cursor`
+      reports a passing `screen_preserves_cursor_positioned_columns`.
+      Confirmed failing at review: `0 passed; … 1575 filtered out`.
+- [ ] **(round 2, bug-04-1)** `annotated()` and `contents()` agree on column
+      positions within a row. Measured at review as
+      `contents() = "NAME      SIZE      MODE"` versus
+      `annotated() = "NAMESIZEMODE"` for columns positioned with `ESC[nC` —
+      that is the behaviour that must change.
+- [ ] **(round 2, bug-04-1)** The boundary test uses a **same-colour** run, as
+      § Test plan specified: `grep -c 'EFGH' src/shell/screen.rs` returns
+      **0** (now `2` — the fixture appears in both the feed and the expected
+      string).
+- [ ] **(round 2, bug-04-1)** `cargo test --lib shell::screen::` reports **11
+      or more** passing, `0 failed` (10 today).
 - [ ] All four gates pass: `cargo fmt --all`, `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`.
 
@@ -426,6 +440,35 @@ line retyped printed `PASTE MISMATCH` naming the divergent line.
   substrate, not a replacement wired into the old one.
 - **Masking.** The screen returns what the terminal shows; masking happens
   where bytes reach a model, which is phase-07's concern.
+
+## Notes for executor — round 2
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** All four gates pass right now and all 10 tests pass; the
+defect is a behaviour no current test exercises.
+
+**There is exactly ONE defect to fix: `bugs/bug-04-1.md`.** Read it first — it
+carries the measured evidence.
+
+**What is already correct and must be preserved, not rewritten:** the colour
+mapping, the marker grouping, the trimming of empty runs, the alt-screen
+reporting, the split-sequence handling, and `summary()`'s delegation to the
+shared classifier. **The same-colour cross-row behaviour is already correct
+too** — verified at review, `ESC[31mabcdefgh` at 4 columns yields
+`"[ERROR: abcd]\n[ERROR: efgh]"`. The fix there is to the *test*, not the code.
+
+**Finish condition you can check yourself:** `cargo test --lib
+shell::screen::` must report **11 passed, 0 failed** — 10 today plus exactly
+the one new test the bug names. **11, not 12** — a higher number means scope
+this phase did not ask for. `shell::pty::` stays at 13 and `shell::log::` at 12.
+
+**Mutation-check your own fix before reporting.** Once the new test passes,
+revert the interior-gap handling, confirm
+`screen_preserves_cursor_positioned_columns` fails, restore it, and state that
+result in your Update Log entry.
+
+**The Update Log is append-only.** Add your own entry at the bottom; never
+edit an earlier one.
 
 ## Update Log
 
