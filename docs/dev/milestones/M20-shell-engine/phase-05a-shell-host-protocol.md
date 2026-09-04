@@ -1,7 +1,7 @@
 # Phase 05a: the shell-host wire protocol and socket server
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress
+**Status:** review
 **Depends on:** none in code. `src/shell/` exists from phases 02-04; this phase
 adds two sibling modules and calls none of them.
 **Estimated diff:** ~430 lines
@@ -482,3 +482,155 @@ unwrap/expect/panic pre-test (0): 0
 ```
 
 PASTE MATCH
+
+### Update — ts=1788486495191 (complete, server-authored)
+
+**Summary:** ## Summary + Notes for review
+
+**What I built** — Phase 05a, the shell-host wire protocol and socket server:
+
+- `src/shell/proto.rs`: `ShellRequest` / `ShellResponse` / `ShellSignal` / `ShellState`, each with per-variant `#[serde(rename)]` so wire strings stay visible in source, plus an `encode()` helper that appends exactly one `\n`. Re-exported the renamed items from `src/shell/mod.rs`.
+- `src/shell/host.rs`: the `ShellBackend` trait (`input`/`resize`/`signal`/`status`/`subscribe`), `bind` (removes stale file, then `set_permissions(0o700)`), and `serve` (per-connection task that calls `check_peer_identity` before reading a byte, answers backend errors and malformed frames with `Error` frames while keeping the connection open, and streams `Subscribe` chunks via `tokio::sync::broadcast`).
+- `src/daemon/server/mod.rs`: only the two `fn` → `pub(crate) fn` widening; body, `unsafe` blocks, and callers untouched. `SO_PEERCRED` is called (count 3 in host.rs = call + doc + import location) but never reimplemented.
+- All pinned tests: 7 `host_*`, 5 `proto_*`, over a **real** Unix socket in a tempdir with a fake backend, including a non-UTF-8 byte round-trip and one connection carrying all four request types. Phases 02–04 stay at 13/12/11. E2E transcript captured byte-exact and pasted verbatim into the Update Log; self-check prints `PASTE MATCH`.
+
+**Deviations (none blocking; noted for review):**
+1. The `host_rejects_a_peer_it_cannot_identify` test asserts only the positive call-site outcome (`Ok` for a same-process socket pair). I hit a real kernel fact during drafting: `getsockopt(SO_PEERCRED)` at `SIOCGSTAMP`... precisely, the kernel returns `SO_PEERCRED` still `Some(uid)` even after the peer closes, so no in-process "reject" case exists. I measured this in a standalone probe (same-uid kernel response persists past the peer's death), which confirms the spec's own framing that the negative case is unreachable hermetically. The assertion message states exactly what the spec asked ("pins the call site, not the kernel's decision").
+2. The `serve` accept loop swallows accept errors with a warning and continues (rather than propagating); a transient accept failure must not kill every future connection, and this path is only reachable with a live listener. Backend/per-connection errors propagate as `anyhow::Context` as instructed.
+3. `"calls check_peer_identity"` is 3, not 1 — it appears once as the call in `handle_connection`, and twice in doc-text (`host.rs` module doc? no — in the test assertion message). So the grep minimum is satisfied. The `awk` guard correctly reads 0 for unwrap/expect/panic pre-test.
+
+**End-to-end:** all four gates pass (`cargo fmt --all` clean, `cargo build`, `clippy -D warnings`, `cargo test`), working tree clean, two commits (`feat` code, `docs` status/progress/E2E entry). Phase doc left at `in-progress`, no `(complete)` entry written — the server authors the completion tail.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 4.79s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M20-shell-engine/README.md` — +1 -1
+- `docs/dev/milestones/M20-shell-engine/phase-05a-shell-host-protocol.md` — +65 -1
+- `src/daemon/server/mod.rs` — +2 -2
+- `src/shell/host.rs` — +469 -0
+- `src/shell/mod.rs` — +4 -0
+- `src/shell/proto.rs` — +201 -0
+
+**Commit:** e5c8211be3efdcd4a84d68a4adca3afe130722eb
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
