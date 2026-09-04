@@ -161,13 +161,23 @@ line-number facts go stale and each landing shifts the next Current state).
 | 02 | pty-marker-protocol ([phase-02-pty-marker-protocol.md](phase-02-pty-marker-protocol.md)) | **done** (approved_after_4, 2026-09-03; 5 rounds, 3 bugs all resolved, landed on a resume) | `src/shell/pty.rs`: `portable-pty` spawn, the split-nonce wrapper for bash/zsh/fish, the pure marker parser with the echo-first negative test, exit-code extraction, `\x1f` stripping. One real-PTY test against `bash`. |
 | 03 | asciicast-log ([phase-03-asciicast-log.md](phase-03-asciicast-log.md)) | **done** (approved_after_1, 2026-09-03; 1 bug, resolved) | `src/shell/log.rs`: asciicast v2 writer (header, `o`/`i`/`m` events, per-read flush) + `.meta.json` command index + reader that slices command N. Pure over byte streams; fixtures from phase-02's real capture. |
 | 04 | screen-model ([phase-04-screen-model.md](phase-04-screen-model.md)) | **done** (approved_after_1, 2026-09-03; 1 bug, resolved) | `src/shell/screen.rs`: `vt100::Parser` wrapper; `ansi.rs` annotation and `status.rs` classification re-pointed at grid cells; scrollback depth from config. Fixture-driven, no PTY. |
-| 05 | shell-host-process | todo (not drafted) | `daemoneye shell-host --id sN` subcommand: owns the PTY, writes the log, serves `var/run/shells/sN.sock` (peer-uid checked) with input / resize / signal / subscribe frames; detached spawn via the existing fork path; readiness pipe. **Architect-authored if new `unsafe` is required.** |
+| 05a | shell-host-protocol ([phase-05a-shell-host-protocol.md](phase-05a-shell-host-protocol.md)) | **todo** (drafted 2026-09-03) | `src/shell/proto.rs` + `src/shell/host.rs`: the newline-delimited JSON frame set (subscribe / input / resize / signal / status), a socket server that binds `var/run/shells/sN.sock`, checks peer uid and dispatches to a `ShellBackend` trait. Hermetic — fake backend, no PTY, no fork. |
+| 05b | shell-host-process | todo (not drafted) | The `daemoneye shell-host --id sN` binary: owns the PTY, writes the cast log, drives the screen, serves 05a's protocol; detached spawn and the readiness pipe. **Architect-authored — needs new `unsafe` (fork/setsid) or a measured safe alternative.** Resize must rebuild the screen from the log, not call `set_size` (see § Notes). |
 | 06 | shell-registry | todo (not drafted) | `src/shell/registry.rs`: `ShellId`, `Owner`, per-owner caps, startup adoption by scanning `var/run/shells/`, dead-socket sweep, exited-shell GC under the lifecycle policy. |
 | 07 | run-terminal-command-pty | todo (not drafted) | Route `run_terminal_command` through the registry when `backend = "pty"` (local host only, wait-for-marker), masked + annotated result, real exit code in the tool result and in the `events.jsonl` command record. First phase that runs a command on the new substrate from chat. |
 | 08 | interactive-and-signals | todo (not drafted) | `is_interactive_command()` → return immediately with the shell id; pause / resume / cancel on the shell API (`SIGSTOP` / `SIGCONT` / `SIGINT` to the foreground pgrp); state transitions `Idle → Running → Paused → Exited`. |
 | 09 | restart-survival-and-close | todo (not drafted) | Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
 
 ## Notes
+
+- **Phase 05 was split at drafting (2026-09-03) into 05a and 05b**, the same
+  narrowing M18 and M19 each took. As scoped it bundled a wire protocol, a
+  socket server, PTY ownership, log and screen wiring, detached spawn and a
+  readiness handshake — far past one executor session, and phase-02 showed
+  what an oversized phase costs here. **05a is hermetic and executor-shaped**
+  (frames, server, peer-uid check, dispatch trait, fake backend). **05b holds
+  everything needing a real PTY or a fork**, and is the one the README already
+  reserved for architect authorship.
 
 - **Carry into phase-07 (recorded at phase-04 close, 2026-09-03): where does a
   gap belong relative to an annotation marker?** `annotated()` preserves

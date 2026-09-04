@@ -3593,6 +3593,44 @@ plain text is still absorbed into the marker. The bug's own DoD asked for
 my constraint was over-strong. Where a gap belongs relative to a marker is a
 design question, recorded in the milestone README for phase-07 to decide.
 
+**Active phase: phase-05a — shell-host-protocol**
+(`docs/dev/milestones/M20-shell-engine/phase-05a-shell-host-protocol.md`,
+status: todo, drafted 2026-09-03). Dispatch with
+`/rexymcp:dispatch phase-05a`.
+
+**Phase 05 was split at drafting**, the same narrowing M18 and M19 each took.
+As scoped it bundled a wire protocol, a socket server, PTY ownership, log and
+screen wiring, a detached spawn and a readiness handshake — several sessions of
+work, and phase-02 already showed what an oversized phase costs here. The split
+also falls on a hard line: **everything needing a `fork` or a real PTY cannot
+be executor-authored**, because STANDARDS forbids new `unsafe`.
+
+- **05a (this phase)** is hermetic: the frame set, a socket server, the
+  peer-uid check, and a `ShellBackend` trait whose only implementor is a test
+  fake. Real Unix socket, temp directory, no PTY, no fork.
+- **05b** holds the `daemoneye shell-host` binary, PTY ownership, detached
+  spawn and the readiness pipe. Still architect-authored, as the milestone
+  README already reserved.
+
+Drafting facts, measured rather than assumed:
+
+- **The socket's privacy comes only from the umask.** A bind under the default
+  umask produces mode **755**; under the `umask(0o077)` that `main()` sets it
+  is 700. So 05a sets the mode explicitly after bind, and a named test asserts
+  it — the guarantee no longer depends on how the process was started.
+- **Binding over an existing socket path fails** with `AddrInUse`, so a stale
+  file must be removed first, exactly as the daemon does.
+- **The peer-uid check is widened, not copied.** It already exists as a private
+  function containing reviewed `unsafe`; the phase changes two visibility
+  keywords and calls it. A criterion checks both halves — the module must
+  reference the check and must not contain `SO_PEERCRED`. A security boundary
+  with two implementations drifts.
+
+The wire format is pinned byte-for-byte in the doc, including the deliberate
+choice to carry bytes as a JSON array rather than base64: it costs roughly 4x
+on the wire, and it is the only lossless option without a new dependency,
+because PTY output is not guaranteed valid UTF-8.
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,
