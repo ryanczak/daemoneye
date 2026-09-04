@@ -3565,6 +3565,34 @@ recorded lesson, one phase later: *a guarantee needs a test that actually
 crosses the boundary*, and a test can carry the right name while exercising
 the wrong case.
 
+**phase-04 — screen-model: done (approved_after_1) 2026-09-03**, landing
+commit `d952fd4`. Two rounds, one bug, resolved. Round 2 took **46 turns**, the
+fastest of the milestone. `shell::screen::` 11 passed (the `11, not 12` finish
+condition held exactly); siblings unchanged at 13 and 12; `src/tmux/`
+byte-for-byte untouched.
+
+Verified independently: cursor-positioned columns now render as
+`"NAME      SIZE      MODE"` matching `contents()`, where they collapsed to
+`"NAMESIZEMODE"`. Mutation-checked twice — reverting the gap fix fails the new
+test, and merging rows fails the corrected boundary test, which the round-1
+fixture could not have caught.
+
+**The lesson this phase adds, one turn past phase-03's.** Phase-03 taught that
+a guarantee needs a test crossing the boundary. Phase-04 showed a test can
+carry exactly the right *name* and still exercise the wrong *case*: the
+boundary test fed red on one row and green on the next, so the colour change
+alone forced the split and it could never fail for the stated reason. The
+behaviour was already correct, so nothing looked wrong. **What caught it was
+reading the fixture, not the name** — worth doing on every named guard from
+here.
+
+**One residual carried, not re-bounced.** A gap between a coloured run and
+plain text is still absorbed into the marker. The bug's own DoD asked for
+`annotated()` and `contents()` to agree on column positions, which is
+**unachievable in general** since the marker text shifts every later column —
+my constraint was over-strong. Where a gap belongs relative to a marker is a
+design question, recorded in the milestone README for phase-07 to decide.
+
 **A third self-matching grep criterion, and this hits the fold threshold.**
 `bug-02-3`'s own DoD greppped for an unanchored `fn parse_outcome        (1): 7`
 — which the criterion's own quoted text in § Acceptance criteria also matches,

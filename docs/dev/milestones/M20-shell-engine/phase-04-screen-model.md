@@ -1,7 +1,7 @@
 # Phase 04: the vt100 screen model
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** none in code — `src/shell/` exists from phases 02 and 03; this
 phase adds a third sibling module and calls neither.
 **Estimated diff:** ~360 lines
@@ -910,3 +910,73 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** d952fd40d063989e80a3abed2421bbaa23f8400c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-03
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bug-04-1`, resolved in round 2)
+- **Executor:** deepseek-v4-flash-0731 (round 1: 90 turns; round 2: 46 — the
+  fastest run of the milestone)
+- **Scope deviations:** none. Round 2 changed exactly the two things the bug
+  named and added no test beyond the one it specified.
+
+**Gates re-run independently at review:** `cargo fmt --all --check`,
+`cargo build` (forced rebuild, zero warnings), `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` — all green. `shell::screen::`
+reports **11 passed**, exactly the `11, not 12` finish condition;
+`shell::pty::` still 13 and `shell::log::` still 12; `src/tmux/` byte-for-byte
+untouched. Lib 1571 → 1572.
+
+**Hygiene:** no `unwrap`/`expect`/`panic!`, no `unsafe`, no `#[allow]`, no
+`TODO`, no debug printing. `EFGH` — the old fixture — is gone.
+
+**The bug-04-1 fix verified independently through the public API:**
+
+| Check | Round 1 | Now |
+|---|---|---|
+| Columns positioned with a cursor-forward escape | `"NAMESIZEMODE"` | `"NAME      SIZE      MODE"`, matching `contents()` |
+| Trailing gap | — | still trimmed; no trailing spaces |
+| Same-colour run across a row boundary | untested | two markers, verified |
+| Blank row between two text rows | — | preserved as an empty line |
+
+**Mutation-checked at review, both the executor's claim and my own:**
+
+- Reverting the interior-gap handling fails
+  `screen_preserves_cursor_positioned_columns` — the executor's claimed check
+  reproduces.
+- Merging rows in `annotated()` fails
+  `screen_does_not_merge_a_colour_run_across_a_row_boundary`. **The fixture
+  correction made that guard real**: it now discriminates the same-colour case
+  its name claims, which the round-1 red/green version could not.
+
+Both restored; tree clean. Evidence: append-only respected (round 2's commit
+deletes zero lines from this document), and paste fidelity verified by the
+reviewer against the surviving artifact — `PASTE MATCH`.
+
+- **Calibration:**
+  1. **A residual of bug-04-1, recorded as a carry rather than a third round.**
+     A gap that sits *between a coloured run and plain text* is still lost:
+     `contents()` gives `"red      plain"` while `annotated()` gives
+     `"[ERROR: red]plain"`. The blank cells join the open colour span and are
+     then removed by `flush_span`'s trim.
+     **This is partly my own bad constraint.** `bug-04-1`'s definition of done
+     said "`annotated()` and `contents()` must agree on column positions within
+     a row" — which is **unachievable in general**, because inserting
+     `[ERROR: ` and `]` shifts every column after it. The round-1 case worked
+     only because it contained no markers. Where a gap belongs relative to a
+     marker (`[ERROR: red]      plain` versus the current form) is a design
+     question, not a typo, and it deserves deciding with phase-07 — the first
+     consumer that actually shows this text to a model. Carried in the
+     milestone README's Notes.
+  2. **A test can carry exactly the right name and exercise the wrong case.**
+     Round 1's boundary test was named for the same-colour guarantee and fed
+     two different colours, so the colour change alone forced the split. The
+     behaviour was already correct, so nothing failed and nothing looked
+     wrong. This is one turn of the screw past phase-03's lesson: there, a
+     guarantee had no test; here, it had a test that could not fail for the
+     stated reason. **The check that caught it was reading the fixture, not
+     the name.**
+  3. **Two architect accuracy slips, both caught before dispatch and both
+     mine:** a filtered-test count quoted as 1561 when the tree printed 1565,
+     and a fixture occurrence count given as 1 when it was 2. Same class as
+     the unreachable-criterion trend already recorded.
