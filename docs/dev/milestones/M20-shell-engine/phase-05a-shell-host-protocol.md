@@ -672,3 +672,93 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e5c8211be3efdcd4a84d68a4adca3afe130722eb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-04 02:06 (progress, round 2)
+
+Resumed phase-05a for **bug-05a-1** only. Root cause confirmed from the bug
+report: `read_until` is cancellation-unsafe, the chunk branch of the
+`tokio::select!` could preempt a half-read frame, and the unconditional
+`line.clear()` at the top of the loop discarded the partial bytes — the rest of
+the frame arrived alone and answered `malformed frame`.
+
+Fixed in `src/shell/host.rs` `handle_connection`: the loop no longer clears
+`line` wholesale. After each read (or chunk-preemption), it drains *complete*
+newline-delimited frames from the buffer and keeps the trailing partial for
+the next read; the per-frame dispatch moved into a `handle_line` helper. The
+whole frame set is preserved at every chunk interleave, so a subscribed
+connection answers every request correctly while streaming — and the wire,
+`proto.rs`, the peer-check widening, `bind`, and the other seven `host_*`
+tests are all untouched.
+
+New pinned test `host_answers_a_request_split_around_a_chunk` on a subscribed
+connection: a **large** Input frame (4 KiB payload — a tiny Status frame would
+complete in a single poll and never exercise the preemption) sent in two
+writes with a chunk pushed between them; the client must receive the chunk
+**and** `{"type":"Ok"}`, never an `Error` frame, with the full payload
+dispatched exactly once. `#[tokio::test(flavor = "multi_thread",
+worker_threads = 2)]` so the producer and server task race on real worker
+threads the way the reviewer's APIs did.
+
+**Mutation check (per round-2 instructions):** reverted the read-loop change
+back to the committed original + appended only the new test. The original code
+lost the partial and answered the split frame incorrectly — under the fixed
+test the revert **failed** in 9 of 15 runs (the remaining 6 were passes where
+the single-threaded scheduling happened to let the read complete before the
+chunk); with the fix in place the test passes 15/15 and the whole `shell::host::`
+suite is 8/8. The revert was discarded after the check.
+
+### Update — 2026-09-04 02:10 (end-to-end verification)
+
+Ran the phase's E2E block verbatim from the repo root; below is the literal
+contents of `/tmp/e2e-05a.txt`.
+
+```text
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.36s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::host::tests::host_answers_a_backend_error_with_an_error_frame ... ok
+shell::host::tests::host_answers_a_request_split_around_a_chunk ... ok
+shell::host::tests::host_answers_malformed_input_with_an_error_frame ... ok
+shell::host::tests::host_binds_the_socket_private ... ok
+shell::host::tests::host_rejects_a_peer_it_cannot_identify ... ok
+shell::host::tests::host_replaces_a_stale_socket_file ... ok
+shell::host::tests::host_round_trips_every_request_over_a_real_socket ... ok
+shell::host::tests::host_subscribe_streams_chunks_until_the_client_disconnects ... ok
+shell::proto::tests::proto_bytes_survive_a_non_utf8_round_trip ... ok
+shell::proto::tests::proto_encode_never_emits_an_internal_newline ... ok
+shell::proto::tests::proto_request_frames_match_the_pinned_wire_format ... ok
+shell::proto::tests::proto_response_frames_match_the_pinned_wire_format ... ok
+shell::proto::tests::proto_signal_and_state_use_their_wire_strings ... ok
+cargo_exit=0
+== C. shell::host:: and shell::proto:: totals ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1581 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1584 filtered out; finished in 0.00s
+cargo_exit=0
+== D. phases 02-04 untouched (13, 12, 11) ==
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1576 filtered out; finished in 2.00s
+cargo_exit=0
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1577 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1578 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite totals ==
+test result: ok. 1585 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.82s
+cargo_exit=0
+== F. structural greps (each must print the stated number) ==
+proto.rs + host.rs exist (1): 1
+mod proto declaration    (1): 1
+mod host declaration     (1): 1
+pub enum ShellRequest    (1): 1
+pub enum ShellResponse   (1): 1
+pub trait ShellBackend   (1): 1
+calls check_peer_identity(>=1): 3
+does NOT reimpl peercred (0): 0
+peer check widened       (1): 1
+no new unsafe            (0): 0
+unwrap/expect/panic pre-test (0): 0
+```
+
+PASTE MATCH

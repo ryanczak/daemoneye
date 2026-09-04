@@ -75,7 +75,11 @@ async fn handle_connection<B: ShellBackend>(
     let mut line: Vec<u8> = Vec::new();
     let mut chunks: Option<broadcast::Receiver<Vec<u8>>> = None;
     loop {
-        line.clear();
+        // `read_until` is not cancellation-safe (tokio docs): dropping its
+        // future in the chunk branch below leaves whatever it had appended to
+        // `line`, so a frame is never cleared wholesale — complete frames are
+        // drained from the buffer, the trailing partial is kept for the next
+        // read.
         let read_fut = reader.read_until(b'\n', &mut line);
         let n = match chunks.as_mut() {
             None => read_fut.await,
@@ -97,16 +101,31 @@ async fn handle_connection<B: ShellBackend>(
             },
         }
         .context("reading request frame")?;
+
+        // parse every complete frame currently in `line`, keeping any
+        // trailing partial for the next read.
+        let mut offset = 0;
+        while offset < line.len() {
+            let Some(rel) = line[offset..].iter().position(|b| *b == b'\n') else {
+                break;
+            };
+            let end = offset + rel + 1;
+            let result = handle_line(&mut writer, &backend, &line[..end], &mut chunks).await;
+            if let Err(e) = result {
+                log::warn!("shell host: {e:#}");
+            }
+            offset = end;
+        }
+        if offset > 0 {
+            line.drain(..offset);
+        }
         if n == 0 {
             return Ok(());
-        }
-        if let Err(e) = process_line(&mut writer, &backend, &line, &mut chunks).await {
-            log::warn!("shell host: {e:#}");
         }
     }
 }
 
-async fn process_line<B: ShellBackend>(
+async fn handle_line<B: ShellBackend>(
     writer: &mut (impl AsyncWriteExt + Unpin + ?Sized),
     backend: &Arc<B>,
     line: &[u8],
@@ -465,5 +484,59 @@ mod tests {
              the daemon's own boundary; this test pins the call site, not the \
              kernel's decision",
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn host_answers_a_request_split_around_a_chunk() {
+        let server = start_server().await;
+        let client = UnixStream::connect(&server.path).await.unwrap();
+        let (reader, mut writer) = client.into_split();
+        let mut reader = BufReader::new(reader);
+
+        write_request(&mut writer, &ShellRequest::Subscribe).await;
+        assert_eq!(read_response(&mut reader).await, ShellResponse::Ok);
+
+        // A large Input frame is split across two writes with a chunk pushed
+        // between them. The first half contains no newline, so the server's
+        // read must pend on more bytes; the chunk can then win the select
+        // while the frame is only half read (read_until is not
+        // cancellation-safe, so the partial must survive for the second
+        // write). A small Status frame would complete in a single poll and
+        // never exercise this path.
+        let payload: Vec<u8> = vec![b'a'; 4096];
+        let request = encode(&ShellRequest::Input {
+            bytes: payload.clone(),
+        })
+        .unwrap();
+        let split = request.len() - 2;
+        writer
+            .write_all(&request.as_bytes()[..split])
+            .await
+            .unwrap();
+        server.backend.push(b"OUTPUT-CHUNK".to_vec());
+        let chunk = read_response(&mut reader).await;
+        assert_eq!(
+            chunk,
+            ShellResponse::Chunk {
+                bytes: b"OUTPUT-CHUNK".to_vec()
+            },
+            "the chunk must arrive before the request's answer"
+        );
+        writer
+            .write_all(&request.as_bytes()[split..])
+            .await
+            .unwrap();
+        assert_eq!(
+            read_response(&mut reader).await,
+            ShellResponse::Ok,
+            "the split request must be answered correctly, not with an Error frame"
+        );
+        assert_eq!(
+            server.backend.calls(),
+            vec![Call::Input(payload)],
+            "the full Input must be dispatched exactly once"
+        );
+        drop(writer);
+        tokio::task::yield_now().await;
     }
 }
