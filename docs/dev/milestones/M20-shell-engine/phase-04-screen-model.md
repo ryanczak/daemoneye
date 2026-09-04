@@ -1,7 +1,7 @@
 # Phase 04: the vt100 screen model
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress (bounced 2026-09-03 — see `bugs/bug-04-1.md`)
+**Status:** review
 **Depends on:** none in code — `src/shell/` exists from phases 02 and 03; this
 phase adds a third sibling module and calls neither.
 **Estimated diff:** ~360 lines
@@ -750,3 +750,163 @@ defect + the test the bug named, exactly:
 `shell::screen::` is at **11 passed, 0 failed** (10 + the one new test);
 `shell::pty::` at 13 and `shell::log::` at 12, unchanged. All four gates
 clean. src/tmux/ untouched. E2E captured above.
+
+### Update — ts=1788484427980 (complete, server-authored)
+
+**Summary:** </think>The file looks correct. Notice the `screen_preserves_cursor_positioned_columns` test asserts `annotated == contents`. Let me double-check the contents. `NAME ESC[6C SIZE ESC[6C MODE` on a 40-col screen. contents() = "NAME      SIZE      MODE" — 6 spaces? Actually ESC[6C moves cursor forward 6 columns, so there are 6 blank columns between. And annotated() should equal contents() exactly as bug required.
+
+All good. Working tree clean, commit done, tasks marked done.
+
+Let me do the final completion checklist:
+- [x] Phase doc Status: says `in-progress` (bounced) — yes, it stays in-progress.
+- [x] Milestone README phase-table row still says `in-progress` (unchanged).
+- [x] Did NOT hand-write `(complete)` Update Log entry — the server does.
+- [x] `cargo fmt --all` was run immediately before `git add` — yes.
+
+Wait — order check. I ran `cargo fmt --all` which formats. But the LAST `cargo fmt --all` I ran was AFTER the write of doc changes but before commit? Let me check: I ran `cargo fmt --all && git status --short` (turn with d952fd4 commit prep... actually the last `cargo fmt --all` was run in the bash call right before `git add -A` commit). Yes, I ran `cargo fmt --all` immediately before `git add`/commit. Good.
+
+Also — did `cargo fmt --all` change anything in screen.rs? git status showed only the two modified files before commit, and commit included only those two. Good.
+
+- [x] All verification commands ran clean (build, clippy, test, fmt).
+- [x] Final message substantive Summary + Notes for review — that's THIS final message.
+- [x] git status --short shows nothing — clean, confirmed.
+- [x] git log -1 --stat shows the commit includes every file I touched — screen.rs and phase doc.
+
+All checks complete. Write the summary.</think>
+## Summary + Notes for review
+
+**Fixed bug-04-1 in `src/shell/screen.rs`** (one commit `d952fd4`, `fix(shell):`): `annotated_row` now pushes a space into the span buffer for `!cell.has_contents()` cells instead of `continue`-ing, so interior blanks — which cursor-forward/`ESC[nG`-positioned columns rely on — survive into `annotated()` while `flush_span`'s trim keeps the trailing run trimmed. Added the pinned `screen_preserves_cursor_positioned_columns` test (feeds `NAME ESC[6C SIZE ESC[6C MODE` on a 1×40 screen, asserts `annotated() == contents()` byte-equal, covering bug-04-1's measured `NAMESIZEMODE` failure). Corrected `screen_does_not_merge...` to the spec's same-colour case (`ESC[31mabcdefgh` at 4 cols ⇒ `"[ERROR: abcd]\n[ERROR: efgh]"`); `EFGH` no longer appears anywhere in the file (grep: 0).
+
+**Mutation-check executed and recorded:** reverted the interior-gap handling to `continue` → `screen_preserves_cursor_positioned_columns` failed (`0 passed; 1 failed`), restored it → passing again, so the test genuinely pins the fixed behaviour.
+
+**Verification:** `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` all clean; `shell::screen::` **11 passed, 0 failed** (finish condition), `shell::pty::` 13 and `shell::log::` 12 unchanged; `src/tmux/` byte-for-byte untouched. E2E block run verbatim and captured in the phase doc's own `(end-to-end verification)` Update Log entry with the block's literal output; the PASTE MATCH self-check printed `PASTE MATCH` (redirected, byte-exact). No scope added beyond the bug: no resize, no scrollback manipulation, no new test beyond the one named.
+
+**Executor:** deepseek-v4-flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 4.85s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M20-shell-engine/phase-04-screen-model.md` — +71 -0
+- `src/shell/screen.rs` — +25 -5
+
+**Commit:** d952fd40d063989e80a3abed2421bbaa23f8400c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
