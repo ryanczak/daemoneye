@@ -1,7 +1,7 @@
 # Phase 05b: the PTY-backed shell host backend
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced on bug-05b-1)
 **Depends on:** phase-05a (`ShellBackend`, done) and phase-02/03/04 (`PtyShell`,
 `CastWriter`, `ShellScreen`, all done).
 **Estimated diff:** ~450 lines
@@ -286,6 +286,51 @@ value shown.
       contract is unchanged. `shell::host::` **8**, `shell::log::` **12**,
       `shell::screen::` **11**, `shell::proto::` **5**.
 - [ ] All four gates pass.
+
+### Round 2 — bug-05b-1 (added 2026-09-04)
+
+**Read this first: all four gates are green, the tree is clean, and that is
+expected. It is NOT evidence this phase is done.** Round 1's production code in
+`src/shell/backend.rs` is **approved as it stands** — the pump, `PtyBackend`,
+all six trait methods, `subscribe()` on `PtyShell`, and `mod backend;`. Do not
+redesign, re-derive or reformat any of it. Every criterion below is about the
+`#[cfg(test)] mod tests` block only.
+
+There is **exactly one kind of work left**: four existing tests assert things
+that are true even when the behaviour they name is broken. Full mechanism and
+the two mutation transcripts are in `bugs/bug-05b-1.md`.
+
+- [ ] **The signal test must stop being vacuous.** Replace
+      `.signal_foreground(signal_name(sig))` in `ShellBackend::signal` with
+      `.is_alive().map(|_| ())`; then
+      `cargo test --lib shell::backend::tests::backend_signal` must report
+      **FAILED** (it reports `ok. 1 passed` today). Restore the line afterwards.
+      PTY echo puts the typed probe text into the cast whether or not the
+      command ran, so `cast.contains(...)` on a typed line proves nothing —
+      assert on output the command alone can produce.
+- [ ] **The fan-out test must stop racing.** Insert
+      `std::thread::sleep(std::time::Duration::from_millis(50));` between
+      `out_tx.send(chunk.clone())` and the `log` write in the pump; then
+      `cargo test --lib shell::backend::tests::backend_fans_one_chunk` must
+      report **ok. 1 passed** (it FAILS today). Remove the sleep afterwards.
+      The fix is the polling loop the same test already uses for the screen —
+      copy that shape for the cast read.
+- [ ] `awk '/fn backend_streams_while_input_is_written/,/^    }$/' src/shell/backend.rs | grep -c 'backend\.input('`
+      → **2 or more** (now `1`). One `input()` call cannot be "while".
+- [ ] `awk '/fn backend_lagged_subscriber_does_not_break_the_pump/,/^    }$/' src/shell/backend.rs | grep -c 'drop(_rx_slow)'`
+      → **0** (now `1`).
+- [ ] `awk '/fn backend_lagged_subscriber_does_not_break_the_pump/,/^    }$/' src/shell/backend.rs | grep -c 'rx_slow, '`
+      → **1 or more** (now `0`).
+- [ ] `cargo test --lib shell::backend::` reports **7 passed, 0 failed** —
+      **7, not 8.** This round adds no tests; it strengthens four. A rising
+      count is scope creep.
+- [ ] `shell::pty::` **13**, `shell::host::` **8**, `shell::log::` **12**,
+      `shell::screen::` **11**, `shell::proto::` **5** — all unchanged.
+- [ ] All four gates still pass.
+
+**Mutation-check both transcripts yourself before reporting**, and state the
+observed output for each. A claimed mutation check is verified independently at
+review.
 
 ## Test plan
 
@@ -674,3 +719,23 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 88e8bbe7491ec3ed4747224a86ca32c5523efb2d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-09-04 (bounced, bug-05b-1)
+
+Run `6a9b3295`, 219 turns, 4/4 tasks, +571/-0 across 3 files. All four gates
+re-run independently at review and green: `cargo fmt --all --check` 0,
+`cargo build` 0, `cargo clippy --all-targets --all-features -- -D warnings` 0
+(forced recompile), `cargo test` **1592 passed, 0 failed, 4 ignored**.
+
+All 15 mechanical acceptance criteria met exactly, including every pinned
+per-module count: `backend` **7** (≥6), `pty` **13**, `host` **8**, `log` **12**,
+`screen` **11**, `proto` **5**. Production hygiene is clean — no `unsafe`, no
+`set_size`, no `unwrap`/`expect`/`panic!` outside tests, no `#[allow]`, no
+`#[ignore]`, no `TODO`/`dbg!`/`println!`.
+
+**Bounced on test quality, not on behaviour.** Four of the seven pinned tests
+assert something that stays true when the behaviour they name is broken; two
+were proven so by mutation at review. The signal test passes with `signal()`
+neutered, and the fan-out test fails once a 50 ms window is opened between the
+pump's `send` and its log write. Details in `bugs/bug-05b-1.md`; the outstanding
+work is restated as criteria in § Acceptance criteria § Round 2.
