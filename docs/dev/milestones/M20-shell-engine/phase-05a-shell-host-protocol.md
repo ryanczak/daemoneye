@@ -1,7 +1,7 @@
 # Phase 05a: the shell-host wire protocol and socket server
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none in code. `src/shell/` exists from phases 02-04; this phase
 adds two sibling modules and calls none of them.
 **Estimated diff:** ~430 lines
@@ -418,3 +418,67 @@ line retyped printed `PASTE MISMATCH` naming the divergent line.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-04 01:32 (progress)
+
+Started phase-05a. Task 1 done (widened `peer_euid` / `check_peer_identity` to
+`pub(crate)`), Task 2-3 done (`src/shell/proto.rs` frame types, `src/shell/host.rs`
+server with the `ShellBackend` trait), Task 4 done (all pinned tests written and
+passing, including the real-socket round-trip and the broadcast-stream test).
+Noted during work: the daemon's peer check reuses SO_PEERCRED and is not
+reimplemented; only the visibility was changed. Writing the E2E entry next.
+
+### Update — 2026-09-04 01:35 (end-to-end verification)
+
+Ran the E2E block verbatim from the repo root; below is the literal contents
+of `/tmp/e2e-05a.txt`.
+
+```text
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.49s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::host::tests::host_answers_a_backend_error_with_an_error_frame ... ok
+shell::host::tests::host_answers_malformed_input_with_an_error_frame ... ok
+shell::host::tests::host_binds_the_socket_private ... ok
+shell::host::tests::host_rejects_a_peer_it_cannot_identify ... ok
+shell::host::tests::host_replaces_a_stale_socket_file ... ok
+shell::host::tests::host_round_trips_every_request_over_a_real_socket ... ok
+shell::host::tests::host_subscribe_streams_chunks_until_the_client_disconnects ... ok
+shell::proto::tests::proto_bytes_survive_a_non_utf8_round_trip ... ok
+shell::proto::tests::proto_encode_never_emits_an_internal_newline ... ok
+shell::proto::tests::proto_request_frames_match_the_pinned_wire_format ... ok
+shell::proto::tests::proto_response_frames_match_the_pinned_wire_format ... ok
+shell::proto::tests::proto_signal_and_state_use_their_wire_strings ... ok
+cargo_exit=0
+== C. shell::host:: and shell::proto:: totals ==
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1581 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1583 filtered out; finished in 0.00s
+cargo_exit=0
+== D. phases 02-04 untouched (13, 12, 11) ==
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1575 filtered out; finished in 2.00s
+cargo_exit=0
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1576 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1577 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite totals ==
+test result: ok. 1584 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.80s
+cargo_exit=0
+== F. structural greps (each must print the stated number) ==
+proto.rs + host.rs exist (1): 1
+mod proto declaration    (1): 1
+mod host declaration     (1): 1
+pub enum ShellRequest    (1): 1
+pub enum ShellResponse   (1): 1
+pub trait ShellBackend   (1): 1
+calls check_peer_identity(>=1): 3
+does NOT reimpl peercred (0): 0
+peer check widened       (1): 1
+no new unsafe            (0): 0
+unwrap/expect/panic pre-test (0): 0
+```
+
+PASTE MATCH
