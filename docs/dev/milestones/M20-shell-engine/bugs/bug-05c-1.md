@@ -1,7 +1,7 @@
 # Bug 1 on phase-05c: the HOME/PATH race is only half-fixed — `shell::backend::` still spawns unguarded
 
 **Severity:** major
-**Status:** open
+**Status:** resolved 2026-09-05 (verified at review: 0 failures in 10 runs, on top of 22 clean at escalation)
 **Filed:** 2026-09-05
 
 ## What's wrong

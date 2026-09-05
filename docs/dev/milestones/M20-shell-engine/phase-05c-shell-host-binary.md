@@ -1,7 +1,7 @@
 # Phase 05c: the `daemoneye shell-host` binary, detached spawn and readiness
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** phase-05a (`bind`, `serve`, `ShellBackend`) and phase-05b
 (`PtyBackend`), both done.
 **Estimated diff:** ~400 lines
@@ -1129,3 +1129,63 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** bb4aeabc867a329d970fd17e30269cad57f68490
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-05
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 rounds that did not land — round 1 `hard_fail`
+  (`NoProgressStall`, 200 read-only calls) resolved by refined re-dispatch, and
+  round 2 bounced on `bug-05c-1`. Round 3 landed. 1 bug filed, resolved.
+- **Executor:** deepseek-ai/DeepSeek-V4-Flash-0731 (rounds: 200+ / 35 / 42 turns)
+- **Scope deviations:** none. Round 3 was `+1/-0` in `src/shell/backend.rs`,
+  exactly the one authorized line.
+- **Calibration:** see § Notes below — both defects this phase hit were
+  architect-side.
+
+**Gates re-run independently at review, all green:** `cargo fmt --all --check`
+0, `cargo build` 0 (forced recompile, no warnings), `cargo clippy
+--all-targets --all-features -- -D warnings` 0, configured `cargo test` clean
+3/3. Module counts exact: `launch` **8 — 8, not 9**, `pty` **13**, `log`
+**12**, `screen` **11**, `host` **8**, `proto` **5**, `backend` **7**. Guards
+at **1** in `backend.rs` and **4** in `pty.rs`.
+
+**The race is closed, verified at a sample size that can actually see it.**
+`cargo test --lib shell::` **0 failures in 10 runs** at review, on top of the
+22 clean runs the architect measured on this same fix — **32 clean against a
+~17% baseline** (3 failures in 18 unfixed). Round 2's mistake was accepting 5
+clean runs at that rate; this is the correction.
+
+**An exhaustive spawn-site audit was done this time**, since round 2's defect
+was an incomplete enumeration. Every path reaching `PtyShell::spawn` /
+`PtyBackend::spawn` in the tree: four guarded test sites in `pty.rs`, the
+guarded helper in `backend.rs`, the `launch` real-PTY test (which holds its own
+guard via `test_home()` — bound as `_guard`, so it lives for the test body),
+and two production call sites. No unguarded test-side spawn remains.
+
+**The F3 negative guard was mutation-checked and is real.** Degrading
+`await_ready` to return `Ok` on a successful `connect`,
+`launch_await_ready_rejects_a_bound_but_unserved_socket` **FAILED** — which is
+the whole point of the measurement that drove this phase's design.
+
+**End-to-end verified against the real binary at review**, not read from the
+Update Log: socket mode `srwx------`, live round-trip
+`{"type":"Status","state":"Running","rows":24,"cols":80,"pid":1005380}`,
+`Error: shell s1 is already hosted (PID 1005345)` on a duplicate id, and
+`Error: Invalid shell id: '../evil'` on a traversal attempt. **The 05a carry —
+"who may unlink a live socket" — is settled and demonstrated live.**
+
+## Notes
+
+- **Both defects in this phase were the architect's, and both were
+  enumeration failures.** The round-2 spec gap (tests race `HOME` against
+  `PATH`) was a gotcha not pre-injected; the round-3 bug was prescribing a fix
+  against an incomplete list of spawn sites, because a grep for
+  `PtyShell::spawn` never surfaced the `backend` tests reaching the same code
+  through `PtyBackend::spawn`. The executor did exactly what each round asked
+  and deviated from neither. **The lesson is to enumerate call paths by what
+  they reach, not by the symbol they name** — and to size a flake's
+  verification against its measured rate before trusting a clean run.
+- **A rexyMCP bookkeeping artifact, not a phase defect:** the *server-authored*
+  completion entry in the Update Log captured raw model deliberation including
+  a stray `</think>` tag. The executor's own entry immediately above it is
+  clean and accurate. Recorded for the rexyMCP side; nothing to fix here.
