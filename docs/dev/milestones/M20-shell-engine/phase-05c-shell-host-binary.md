@@ -1,7 +1,7 @@
 # Phase 05c: the `daemoneye shell-host` binary, detached spawn and readiness
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05a (`bind`, `serve`, `ShellBackend`) and phase-05b
 (`PtyBackend`), both done.
 **Estimated diff:** ~400 lines
@@ -321,6 +321,76 @@ value shown.
       `shell::backend::` **7**.
 - [ ] All four gates pass.
 
+### Round 2 — the HOME/PATH race (added at the 2026-09-05 escalation)
+
+**Read this first: your round-1 work is on disk, correct, and approved as it
+stands.** `src/shell/launch.rs` (319 lines), the `mod launch;` line, the
+`ShellHost` variant and its `async_main` arm are all **done** — all eight
+pinned `launch_*` tests exist and pass, and every structural criterion above
+already returns its target value. Do **not** rewrite, re-derive or reformat
+any of it. Your own progress note was right: what remained was the gates and
+the E2E block.
+
+Running those gates found **one defect**, and it is a real one:
+`cargo test --lib` fails intermittently — measured **2 failures in 4 runs** —
+in a *pre-existing phase-02 test*:
+
+```
+thread 'shell::pty::tests::pty_shell_is_usable_after_a_timeout' panicked at src/shell/pty.rs:601:59:
+bash available in the test env: spawn_command failed
+Caused by:
+    No such file or directory (os error 2)
+```
+
+**`bash` is not missing — the environment is being torn out from under the
+lookup.** The new `launch_*` tests call `std::env::set_var("HOME", …)` while
+other threads are inside `PtyShell::spawn`, which resolves `bash` through
+`PATH`. glibc's `setenv` may reallocate `environ`, so a concurrent `getenv`
+can read a torn pointer and return nothing — the spawn then reports
+"No such file or directory". This is exactly why `std::env::set_var` is
+`unsafe` in edition 2024, and it is **not** a fault in your code: the spec told
+you to take `test_home_guard()` and you did. The guard only serializes tests
+that *take* it, and the `shell::pty::` tests read the environment without
+taking it. That gap was the architect's.
+
+Confirmed by measurement, not inference:
+
+```
+single-threaded (--test-threads=1):  2 runs, 2 clean
+parallel (default):                  4 runs, 1 FAILED (2 tests)
+```
+
+**The fix, verified by the architect before prescribing it.** Add the guard to
+the four `shell::pty::` tests that spawn, so they participate in the same
+mutex. Each of the four sites currently reads:
+
+```rust
+        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
+```
+
+and becomes:
+
+```rust
+        let _home = crate::test_home_guard();
+        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
+```
+
+Measured with that change applied: `cargo test --lib shell::` **5 runs, 5
+clean**, and the full `cargo test --lib` **3 runs, 3 clean** — with no
+slowdown (`shell::` stayed at 3.3–3.5 s).
+
+- [ ] `grep -c 'let _home = crate::test_home_guard();' src/shell/pty.rs` → **4**
+      (now `0`).
+- [ ] `cargo test --lib` run **three times in a row**, each reporting
+      `0 failed`. Paste all three `test result:` lines. One clean run does not
+      settle a race — the bug reproduced at 1-in-4.
+- [ ] `cargo test --lib shell::launch::` still reports **8 passed — 8, not 9.**
+      This round fixes a race and adds no tests; a rising count is scope creep.
+- [ ] `shell::pty::` still **13**, and the other modules unchanged
+      (`log` 12, `screen` 11, `host` 8, `proto` 5, `backend` 7).
+- [ ] The § End-to-end verification block is run and pasted, with the
+      `PASTE MATCH` verdict line — this is the step you had not reached.
+
 ## Test plan
 
 Names pinned; placement is not — `#[cfg(test)] mod tests` at the bottom of
@@ -492,9 +562,15 @@ You may edit, and nothing else:
 - `src/main.rs` refers to the library crate — check how the existing arms
   name it and follow that, rather than assuming a `crate::` path.
 
-**Do not** change `src/shell/host.rs`, `backend.rs`, `pty.rs`, `log.rs`,
-`screen.rs` or `proto.rs`. If you believe one needs a change, stop and say so
-in the Update Log instead — that is a spec bug, not your call to make.
+**Do not** change `src/shell/host.rs`, `backend.rs`, `log.rs`, `screen.rs` or
+`proto.rs`. If you believe one needs a change, stop and say so in the Update
+Log instead — that is a spec bug, not your call to make.
+
+**`src/shell/pty.rs` is authorized for ONE test-only edit**, added at the
+2026-09-05 escalation and scoped exactly to what § "Round 2" describes: adding
+`let _home = crate::test_home_guard();` as the first line of the four `#[test]`
+functions that call `PtyShell::spawn("bash", (24, 80))`. Nothing else in that
+file may change — no production code, no new tests, no renames.
 
 **Do not run `tmux kill-server`, `kill -- -1`, or any signal to a process group
 or to PID -1.** Section G's cleanup kills exactly the one pid it started.
@@ -516,3 +592,52 @@ or to PID -1.** Section G's cleanup kills exactly the one pid it started.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-05 05:52 (progress)
+
+Started 05c. Built `src/shell/launch.rs` (validate_shell_id, path helpers,
+run_host, await_ready, spawn_detached), wired it into `src/shell/mod.rs` and
+added the `ShellHost` CLI subcommand + async_main arm in `src/main.rs`.
+`cargo test --lib shell::launch::` reports 8 passed, 0 failed. Structural
+greps all match the spec (mod launch = 1, ShellHost variant = 1, arm = 1,
+process_group(0) = 1, InstanceLock reused, no flock re-implementation, no
+unsafe/no unwrap/expect/panic in pre-test code). Next: full gates and the
+end-to-end verification block.
+
+### Update — 2026-09-05 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the phase is all but finished — 319 lines of `launch.rs`, all
+eight pinned tests passing, build/clippy/fmt clean — but the gates the executor
+never reached expose a real defect it was not authorized to fix, so a plain
+resume would carry the same wall forward.
+
+**What the stall actually was.** `NoProgressStall` at 200 consecutive read-only
+calls. The executor's own last progress note had it exactly right — *"Next:
+full gates and the end-to-end verification block"* — and then it read instead
+of running them. Nothing was lost: every file it wrote is on disk and is kept.
+
+**Gates run by the architect against the partial tree**, per the escalate
+skill's `NoProgressStall` rule:
+
+```
+cargo build                          exit 0
+cargo clippy --all-targets --all-features -- -D warnings   exit 0
+cargo fmt --all --check              exit 0
+cargo test --lib shell::launch::     8 passed, 0 failed   (all 8 pinned names present)
+cargo test --lib                     1599 passed, 1 FAILED   <- intermittent
+```
+
+**The one defect, and it is the architect's spec gap, not the executor's
+error.** The new tests mutate `HOME` while other threads resolve `bash` through
+`PATH` inside `PtyShell::spawn`; a concurrent `setenv`/`getenv` race makes the
+spawn report "No such file or directory". Measured 2 failures in 4 parallel
+runs, 0 in 2 single-threaded runs. The spec told the executor to take
+`test_home_guard()` and it did — the guard simply does not cover the
+`shell::pty::` tests that read the environment without taking it. § Acceptance
+criteria § Round 2 carries the mechanism, the measurements, and the fix, which
+the architect ran (5/5 and 3/3 clean, no slowdown) before prescribing it.
+
+**One authorization widened:** `src/shell/pty.rs` was on the do-not-touch list;
+it is now open for exactly the four-line test-only guard insertion, and nothing
+else. That omission is what would have made a plain resume stall again.
