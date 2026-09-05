@@ -3808,3 +3808,111 @@ Drafting notes:
   phase doc: byte-exact → `PASTE MATCH`; one line retyped → `PASTE MISMATCH`
   naming the divergence.
 
+
+**phase-05b — shell-host-backend: done (approved_after_1) 2026-09-04**,
+landing commit `0d8f582`, approval `765ff02`. Round 1 (219 turns) produced
+correct production code with all four gates green and every mechanical
+criterion met, and was bounced on `bug-05b-1`: four of the seven pinned tests
+asserted things that stayed true when the behaviour they named was broken.
+Round 2 (176 turns) strengthened all four, added none — `shell::backend::`
+held at **7, not 8** — and left production code untouched.
+
+**Two of the four defects were only findable by mutation, not by reading.**
+The signal test passed with `signal()` neutered: `ShellState::Running` is true
+either way, and PTY echo put the typed probe text into the cast whether or not
+the command ran. The fan-out test failed the moment a 50 ms window opened
+between the pump's `send` and its log write — it had been passing only because
+the test thread was slower than the pump. The other two were readable: the
+"streams while input is written" test called `input()` once and then read
+passively, and the lagged-subscriber test dropped the slow subscriber before
+saturating. **All three mutation criteria were re-run independently at review**
+— the executor's two transcripts reproduced exactly, and a third
+(`STREAM_CAPACITY` 1024 → 4194304, so nothing can lag) was added at review and
+confirmed the lag guard is real.
+
+**The fixes reused the milestone's own idiom rather than inventing one:** both
+the signal and simultaneity tests now defend against PTY echo with phase-02's
+split-nonce (`post-''signal-probe`, `inter''leaved`), and the fan-out cast
+assertion copies the bounded-polling shape its own step 3 already used for the
+screen. One beneficial scope deviation: `quiet()` now returns after 30 ms of
+silence instead of always running to its deadline, cutting `shell::backend::`
+from **20.61 s to 3.49 s**.
+
+**A note for the milestone retrospective.** This is the fifth consecutive phase
+whose defect sat on a boundary the phase doc named in prose. The strengthened
+rule put in force *for this very phase* — name the two things that can happen
+at once and test them happening at once — was quoted in its own test plan and
+still produced a simultaneity test with one input call. Naming a rule in the
+doc is not enough to make it happen; what worked was a **mutation criterion the
+executor can evaluate**, which is the M12 fold ("the executor responds to
+conditions it can evaluate, not instructions it can agree with") applied to
+test quality. Held at one occurrence, not proposed as a fold.
+
+**Infrastructure note:** the endpoint moved to `brain:8000` and the model id in
+`rexymcp.toml` is now the full `deepseek-ai/DeepSeek-V4-Flash-0731` — the short
+`deepseek-v4-flash-0731` returns a 404 from that endpoint. A phase-05b run was
+lost to the dead `brain:8888` before this was corrected.
+
+**Active phase: phase-05c — shell-host-binary**
+(`docs/dev/milestones/M20-shell-engine/phase-05c-shell-host-binary.md`,
+status: todo, drafted 2026-09-04). Dispatch with `/rexymcp:dispatch phase-05c`.
+
+Drafting measurements, all executed on scrappy (probe sources kept in
+`M20-shell-engine/probes/`, and the six facts are quoted in the phase doc's
+§ "Measured facts"):
+
+- **`CommandExt::process_group(0)` gives the child its own group and needs no
+  `unsafe`** — measured `child_pgid == child_pid` (336681/336681) against a
+  control child that inherited the parent's group (336754/336753). This is what
+  lifted the architect-authorship reservation, re-confirmed rather than taken
+  from the README.
+- **The child outlives the parent** — heartbeats continued past the parent's
+  exit, reparented to init (`ppid_now=1372`).
+- **The load-bearing one: `connect()` succeeding does NOT mean the host is
+  serving.** A bound, listening, never-`accept()`ed Unix socket completes a
+  client `connect()` *and* accepts a write, because the connection sits in the
+  listen backlog — measured at 0.01 ms, with the reply then timing out. So
+  readiness must be a full `Status` round-trip, and that is pinned as a negative
+  test (`launch_await_ready_rejects_a_bound_but_unserved_socket`). A
+  connect-only implementation would report ready against a half-started host.
+- **`ensure_dirs()` already creates both shell directories at 0700** under a
+  throwaway `HOME`, so the phase must *not* add `create_dir_all` calls.
+- **`socat` is not installed on this host**, which would have blocked the E2E
+  block as first drafted. Section G was rewritten around `python3`
+  (`/usr/bin/python3`) and the replacement client was run verbatim against a
+  fake responder before the doc was committed.
+
+Drafting notes:
+
+- **The 05a carry is settled.** "Who may unlink a live socket" is answered by
+  reusing `InstanceLock` (`src/daemon/instance.rs:65`) on
+  `var/run/shells/<id>.lock`, acquired *before* `bind()` — because
+  `host::bind` deliberately unlinks whatever occupies the path on the premise
+  that "the caller owns the id", and the lock is what makes that premise true.
+  This mirrors the daemon invariant already in `CLAUDE.md`. Two paired criteria
+  enforce reuse over reinvention: `InstanceLock` must appear and
+  `FlockArg`/`flock` must not.
+- **The no-`unsafe` criterion is scoped to pre-test code**, unlike 05b's
+  whole-file version. These tests must mutate `HOME`, and `std::env::set_var`
+  is `unsafe` in edition 2024 — a whole-file criterion would have been
+  unsatisfiable. That is the phase-01 / `bug-02-3` class caught at drafting
+  rather than at review.
+- **All criteria were run against the current tree in their failing state** —
+  `launch.rs` absent, `mod launch` 0, `ShellHost` variant 0, `Commands::ShellHost`
+  0, and `cargo test --lib shell::launch::` matching **0** tests. The E2E block
+  was `bash -n` syntax-checked and the nested-quoting of its python client was
+  run verbatim.
+- **`shell::launch::` was chosen deliberately** as the test filter: it matches
+  0 today. (The lesson from phase-05b's drafting, where `shell::` already
+  matched 43 pre-existing tests and would have passed before any code existed.)
+
+**Two items still open for the PE**, both carried from the phase-05b close:
+
+1. **M20 itself is still awaiting sign-off** on its 2026-09-03 scoping.
+2. **The calibration fold is at threshold** — three occurrences of *"validating
+   that a criterion fails now does not validate that its expected value is
+   reachable later"* (phase-01's `pub execution:`, `bug-02-3`'s unanchored
+   `fn parse_outcome`, phase-05b round 1's three `fn <name>` counts).
+   `WORKFLOW.md` § Calibration puts the fix threshold at three and
+   `docs/dev/TODO.md` § 1 is the standing item. The architect does not amend
+   `WORKFLOW.md` unilaterally.
