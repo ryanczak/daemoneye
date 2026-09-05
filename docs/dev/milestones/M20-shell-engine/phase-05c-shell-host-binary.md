@@ -1,7 +1,7 @@
 # Phase 05c: the `daemoneye shell-host` binary, detached spawn and readiness
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced on bug-05c-1)
 **Depends on:** phase-05a (`bind`, `serve`, `ShellBackend`) and phase-05b
 (`PtyBackend`), both done.
 **Estimated diff:** ~400 lines
@@ -390,6 +390,67 @@ slowdown (`shell::` stayed at 3.3–3.5 s).
       (`log` 12, `screen` 11, `host` 8, `proto` 5, `backend` 7).
 - [ ] The § End-to-end verification block is run and pasted, with the
       `PASTE MATCH` verdict line — this is the step you had not reached.
+
+### Round 3 — bug-05c-1: the same race, through the other door
+
+**Read this first: everything else in this phase is finished and approved.**
+`src/shell/launch.rs`, the `mod launch;` line, the `ShellHost` variant and its
+`async_main` arm, all eight `launch_*` tests, the four `pty.rs` guards, and the
+end-to-end run are **all done and verified at review** — section G was re-run
+independently and the real binary answered correctly (`srwx------`, a live
+`Status` round-trip, `Error: shell s1 is already hosted (PID …)`, and
+`Error: Invalid shell id: '../evil'`). Do **not** redo, rewrite or re-verify
+any of it.
+
+**There is exactly one edit left**, and it is one line.
+
+Round 2's guard was applied correctly but the architect's list of spawn sites
+was incomplete: the `backend` tests reach the same `PATH` lookup through
+`PtyBackend::spawn` rather than `PtyShell::spawn`, so a grep for the latter
+never showed them. The failing test moved from `shell::pty::` to
+`shell::backend::` instead of disappearing — measured **3 failures in 18 runs**
+of `cargo test --lib shell::` on the tree as it stands.
+
+`src/shell/backend.rs:177` currently reads:
+
+```rust
+    fn spawn_backend(dir: &tempfile::TempDir) -> Arc<PtyBackend> {
+        PtyBackend::spawn("bash", 24, 80, 100, &cast_path(dir), 0).expect("bash available")
+    }
+```
+
+and becomes:
+
+```rust
+    fn spawn_backend(dir: &tempfile::TempDir) -> Arc<PtyBackend> {
+        let _home = crate::test_home_guard();
+        PtyBackend::spawn("bash", 24, 80, 100, &cast_path(dir), 0).expect("bash available")
+    }
+```
+
+The guard may drop when the helper returns — it only has to be held *across the
+spawn*, which is where the `PATH` read happens. Measured with this applied:
+**0 failures in 22 runs**, no slowdown (`shell::` stays at ~3.3 s).
+
+`src/shell/backend.rs` is authorized for **this one line only** — no other
+change to that file.
+
+- [ ] `grep -c 'let _home = crate::test_home_guard();' src/shell/backend.rs`
+      → **1** (now `0`).
+- [ ] `grep -c 'let _home = crate::test_home_guard();' src/shell/pty.rs`
+      → **4**, unchanged.
+- [ ] `cargo test --lib shell::` **ten times in a row**, every run `0 failed`.
+      Paste all ten `test result:` lines. Three runs is not enough at a 17%
+      failure rate — that is precisely the error being corrected here, so do
+      not shorten it.
+- [ ] `cargo test --lib shell::launch::` still **8 — 8, not 9.**
+- [ ] `shell::backend::` **7**, `shell::pty::` **13**, `log` **12**,
+      `screen` **11**, `host` **8**, `proto` **5**.
+- [ ] All four gates pass.
+
+**You do not need to re-run the § End-to-end verification block.** It was run
+in round 2 and independently re-verified at review; this round changes only a
+test helper.
 
 ## Test plan
 
@@ -854,3 +915,37 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 66fd7ce78d6392787d46db8fb14af372d04dcdce
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-09-05 (bounced, bug-05c-1)
+
+Run `6a9c3670`, 35 turns, 5/5 tasks, `+4/-0` in `src/shell/pty.rs` only —
+exactly the prescribed guard insertion, no scope creep. Landing commit
+`66fd7ce`.
+
+All four gates re-run independently and green: `cargo fmt --all --check` 0,
+`cargo build` 0 (forced recompile, no warnings), `cargo clippy --all-targets
+--all-features -- -D warnings` 0, and the configured `cargo test` clean **10
+runs out of 10**. Every structural criterion met: `launch.rs` present,
+`mod launch` 1, `ShellHost` variant 1, `Commands::ShellHost` 1,
+`process_group(0)` 1, `InstanceLock` 3, `FlockArg|flock` 0, no `unsafe` /
+`unwrap` / `expect` / `panic!` in pre-test code, no `TODO` / `dbg!` /
+`#[allow]`. Module counts exact: `launch` 8, `pty` 13, `log` 12, `screen` 11,
+`host` 8, `proto` 5, `backend` 7.
+
+**The end-to-end evidence was re-run independently, not read.** The real binary
+under a throwaway `HOME` produced socket mode `srwx------`, a live round-trip
+`{"type":"Status","state":"Running","rows":24,"cols":80,"pid":1005380}`,
+`Error: shell s1 is already hosted (PID 1005345)` for a second host on the same
+id, and `Error: Invalid shell id: '../evil'` for a traversal attempt. The 05a
+carry is settled and demonstrated against the running binary.
+
+**Bounced on one defect, and it is the architect's.** The round-2 race fix was
+applied exactly as specified and is correct as far as it goes, but the list of
+spawn sites it named was incomplete — the `backend` tests reach the same `PATH`
+lookup through `PtyBackend::spawn`, which a grep for `PtyShell::spawn` never
+surfaced. The failing test moved from `shell::pty::` to `shell::backend::`
+rather than going away: **3 failures in 18 runs** of `cargo test --lib shell::`.
+The round-2 verification was also too weak to catch it — five clean runs at a
+~17% rate is a ~40% chance of seeing nothing, and it saw nothing. Mechanism,
+measurements and the one-line fix are in `bugs/bug-05c-1.md`; the outstanding
+work is restated in § Acceptance criteria § Round 3.
