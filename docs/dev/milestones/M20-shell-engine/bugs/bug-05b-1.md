@@ -1,7 +1,7 @@
 # Bug 1 on phase-05b: three of the seven pinned tests do not exercise the case they are named for
 
 **Severity:** major
-**Status:** open
+**Status:** resolved 2026-09-04 (verified at review by three independent mutation checks)
 **Filed:** 2026-09-04
 
 ## What's wrong

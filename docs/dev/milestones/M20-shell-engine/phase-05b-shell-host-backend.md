@@ -1,7 +1,7 @@
 # Phase 05b: the PTY-backed shell host backend
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** phase-05a (`ShellBackend`, done) and phase-02/03/04 (`PtyShell`,
 `CastWriter`, `ShellScreen`, all done).
 **Estimated diff:** ~450 lines
@@ -939,3 +939,47 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0d8f582cee8f25de41aeed77576c41263060ef3d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-04
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bug-05b-1` — four pinned tests did not exercise their case)
+- **Executor:** deepseek-ai/DeepSeek-V4-Flash-0731 (round 1: 219 turns; round 2: 176 turns)
+- **Scope deviations:** one, beneficial and in-scope. `quiet()` was rewritten to
+  return after 30 ms of silence instead of always running to its deadline. Not
+  requested by the bug, but required by the lagged test's new shape, and it cuts
+  `shell::backend::` from **20.61 s to 3.49 s**.
+- **Calibration:** none new. See § Notes below.
+
+**Gates re-run independently at review, all green:** `cargo fmt --all --check`
+0, `cargo build` 0 (forced recompile, no warnings), `cargo clippy --all-targets
+--all-features -- -D warnings` 0, `cargo test` **1592 passed, 0 failed, 4
+ignored**. Per-module counts exact and unchanged: `backend` **7 — not 8**,
+`pty` **13**, `host` **8**, `log` **12**, `screen` **11**, `proto` **5**. The
+round-2 finish condition held: four tests strengthened, none added.
+
+**All three mutation criteria re-run independently — the executor's two
+transcripts reproduce exactly, and a third was added at review:**
+
+1. `signal_foreground(signal_name(sig))` → `is_alive().map(|_| ())`:
+   `backend_signal…` **FAILED** with `the post-signal command's output must
+   stream`. (Round 1 passed this mutation — the vacuity is fixed.)
+2. 50 ms sleep between `out_tx.send` and the log write:
+   `backend_fans_one_chunk…` **ok. 1 passed**. (Round 1 failed — the race is
+   fixed.)
+3. *Added at review, not claimed by the executor:* `STREAM_CAPACITY` 1024 →
+   4194304 so nothing can lag: `backend_lagged…` **FAILED** with `slow
+   subscriber: expected Lagged, got Ok([...])`. The lagged guard genuinely
+   requires the lag.
+
+**The fixes use the milestone's own idiom rather than inventing one.** Both the
+signal and simultaneity tests defend against PTY echo with phase-02's
+split-nonce (`post-''signal-probe`, `inter''leaved`) — the echo shows the split
+form, only real command output holds the contiguous marker. The fan-out cast
+assertion copies the polling shape its own step 3 already used for the screen.
+
+**Notes.** `backend_lagged…`'s `post-lag-probe` marker is deliberately *not*
+split-nonced, and that is correct: the property under test is that the fast
+subscriber still receives current chunks, and an echoed chunk travels the same
+`send → log → screen` path, so matching the echo still proves subscriber
+liveness. The same reasoning covers the fan-out marker.
