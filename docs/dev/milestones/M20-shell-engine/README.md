@@ -164,7 +164,8 @@ line-number facts go stale and each landing shifts the next Current state).
 | 05a | shell-host-protocol ([phase-05a-shell-host-protocol.md](phase-05a-shell-host-protocol.md)) | **done** (approved_after_1, 2026-09-03; 1 bug, resolved) | `src/shell/proto.rs` + `src/shell/host.rs`: the newline-delimited JSON frame set (subscribe / input / resize / signal / status), a socket server that binds `var/run/shells/sN.sock`, checks peer uid and dispatches to a `ShellBackend` trait. Hermetic — fake backend, no PTY, no fork. |
 | 05b | shell-host-backend ([phase-05b-shell-host-backend.md](phase-05b-shell-host-backend.md)) | **done** (approved_after_1, 2026-09-04; 1 bug, resolved) | A public raw-output stream on `PtyShell`, and `PtyBackend` implementing 05a's `ShellBackend` over PTY + cast log + screen. Real PTY, no fork, no CLI. Resize recreates the screen rather than calling `set_size` (see § Notes). |
 | 05c | shell-host-binary ([phase-05c-shell-host-binary.md](phase-05c-shell-host-binary.md)) | **done** (approved_after_2, 2026-09-05; 1 hard_fail escalation + 1 bounce, 1 bug resolved) | The `daemoneye shell-host --id sN` subcommand, detached spawn via `process_group(0)`, and a `Status`-round-trip readiness check. Settles the 05a carry: an `InstanceLock` per shell id is what authorizes unlinking its socket. |
-| 06 | shell-registry | todo (not drafted) | `src/shell/registry.rs`: `ShellId`, `Owner`, per-owner caps, startup adoption by scanning `var/run/shells/`, dead-socket sweep, exited-shell GC under the lifecycle policy. |
+| 06a | shell-registry-core ([phase-06a-shell-registry-core.md](phase-06a-shell-registry-core.md)) | **todo** (drafted 2026-09-05) | `src/shell/registry.rs`: `ShellId`, `Owner`, `ShellRegistry` mirroring `SessionStore`'s newtype+accessor shape, hole-filling id allocation, per-owner caps, and `spawn_for` — which reserves the slot under the lock and spawns **outside** it. |
+| 06b | shell-registry-adoption | todo (not drafted) | Startup adoption by scanning `var/run/shells/`, the stale socket/lock sweep, exited-shell GC under `shells.exited_retention_secs`, and flipping the `var/run/shells` lifecycle row from `Pending`. |
 | 07 | run-terminal-command-pty | todo (not drafted) | Route `run_terminal_command` through the registry when `backend = "pty"` (local host only, wait-for-marker), masked + annotated result, real exit code in the tool result and in the `events.jsonl` command record. First phase that runs a command on the new substrate from chat. |
 | 08 | interactive-and-signals | todo (not drafted) | `is_interactive_command()` → return immediately with the shell id; pause / resume / cancel on the shell API (`SIGSTOP` / `SIGCONT` / `SIGINT` to the foreground pgrp); state transitions `Idle → Running → Paused → Exited`. |
 | 09 | restart-survival-and-close | todo (not drafted) | Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
@@ -252,3 +253,41 @@ line-number facts go stale and each landing shifts the next Current state).
   the `Transport` enum ships with `Local` only and a doc comment naming the
   two variants M21 (`Ssh`) and a later phase (`Container`) add, so the enum
   is additive from day one.
+
+- **Phase 06 was split at drafting (2026-09-05) into 06a and 06b**, the same
+  narrowing 05 took twice. As scoped it bundled the id/owner model, per-owner
+  caps, startup adoption, a stale-socket sweep and exited-shell GC — comfortably
+  past the ~500-line guideline, and phase-02 already showed what an oversized
+  phase costs here. The seam is clean: **06a is what the registry *is*** (types,
+  allocation, caps, spawn-and-track), **06b is what it *does* at startup and
+  over time** (adoption, sweep, GC). 06b also owns flipping the
+  `var/run/shells` lifecycle row, because it is the phase that implements the
+  behaviour that row describes — flipping it in 06a would make the table claim
+  something untrue.
+
+- **Measured for 06b while drafting 06a (2026-09-05) — the liveness oracle.**
+  Run against the real `daemoneye shell-host` binary under a throwaway `HOME`:
+
+  | state | `flock` on `<id>.lock` | `connect()` to `<id>.sock` | files on disk |
+  |---|---|---|---|
+  | host alive | **BLOCKED** | succeeds | `.lock` + `.sock` |
+  | host killed | **ACQUIRED** | `ECONNREFUSED` | `.lock` + `.sock` **both remain** |
+
+  Three things follow, and 06b's spec must carry them:
+
+  1. **Nothing cleans up after a dead host.** Both the socket and the lock file
+     survive the process, so the presence of `<id>.sock` proves nothing about
+     liveness. That is exactly what the sweep is for.
+  2. **The flock is the oracle, not `connect()`.** `connect()` happens to give
+     `ECONNREFUSED` for a *fully dead* host, but phase-05c measured the case
+     where it lies: a socket that is bound and listening but not yet accepting
+     completes a client `connect()` and even accepts a write. A host mid-startup
+     is indistinguishable from a healthy one by connect alone. This also matches
+     the standing `CLAUDE.md` invariant — *instance ownership is decided only by
+     the `InstanceLock` flock*, and liveness probes are reports, never
+     authorizations.
+  3. **A probe that acquires the lock must release it immediately** and must not
+     be treated as authorization to delete anything on its own.
+
+  Also re-confirmed: `bind()` over a stale socket path without unlinking fails
+  with `EADDRINUSE`, which is why `host::bind` unlinks first.

@@ -3916,3 +3916,100 @@ Drafting notes:
    `WORKFLOW.md` § Calibration puts the fix threshold at three and
    `docs/dev/TODO.md` § 1 is the standing item. The architect does not amend
    `WORKFLOW.md` unilaterally.
+
+**phase-05c — shell-host-binary: done (approved_after_2) 2026-09-05**, landing
+commits `66fd7ce` (round 2) + `bb4aeab` (round 3), approval `bda0beb`. Three
+dispatch rounds: round 1 `hard_fail` (`NoProgressStall`, 200 read-only calls)
+→ refined re-dispatch; round 2 `complete` → bounced on `bug-05c-1`; round 3
+landed with a one-line diff.
+
+**The phase itself is solid and was verified against the real binary at
+review**, not read from the Update Log: socket mode `srwx------`, a live
+round-trip `{"type":"Status","state":"Running","rows":24,"cols":80,"pid":…}`,
+`Error: shell s1 is already hosted (PID …)` for a duplicate id, and
+`Error: Invalid shell id: '../evil'` for a traversal attempt. **The 05a carry —
+"who may unlink a live socket" — is settled and demonstrated live:** an
+`InstanceLock` per shell id, acquired before `bind()`. The F3 negative guard was
+mutation-checked (degrading `await_ready` to succeed on `connect` alone makes
+`launch_await_ready_rejects_a_bound_but_unserved_socket` FAIL).
+
+**Both defects in this phase were architect-side, and both were enumeration
+failures.** Round 1's stall exposed a spec gap I had not pre-injected: the new
+tests `set_var("HOME")` while other threads resolve `bash` through `PATH` inside
+`PtyShell::spawn`, and glibc's `setenv` can realloc `environ` under a concurrent
+`getenv`. Round 2's bug was worse — I prescribed a fix against an **incomplete
+list of spawn sites**, because a grep for `PtyShell::spawn` never surfaced the
+`backend` tests reaching the same code through `PtyBackend::spawn`. The failing
+test moved rather than disappearing. The executor did exactly what each round
+asked and deviated from neither.
+
+**Two lessons, both recorded in the phase doc's § Notes:**
+
+1. **Enumerate call paths by what they reach, not by the symbol they name.**
+2. **Size a flake's verification against its measured rate before trusting a
+   clean run.** I accepted 5 clean runs at what turned out to be a ~17%
+   per-run failure rate — a ~40% chance of seeing nothing, and it saw nothing.
+   The final fix was verified at **32 clean runs against 3 failures in 18
+   unfixed**.
+
+**A rexyMCP-side observation, not a repo defect:** the server-authored
+completion entry in the 05c phase doc captured raw model deliberation including
+a stray `</think>` tag. The executor's own Update Log entry above it is clean.
+Worth stripping think-blocks from that summary field.
+
+**Active phase: phase-06a — shell-registry-core**
+(`docs/dev/milestones/M20-shell-engine/phase-06a-shell-registry-core.md`,
+status: todo, drafted 2026-09-05). Dispatch with `/rexymcp:dispatch phase-06a`.
+
+**Phase 06 was split at drafting into 06a and 06b** — the same narrowing 05 took
+twice, on the seam between *what the registry is* (types, hole-filling
+allocation, per-owner caps, `spawn_for`) and *what it does at startup and over
+time* (adoption, stale-socket sweep, exited GC, the lifecycle-row flip). As
+scoped, 06 was comfortably past the ~500-line guideline.
+
+Drafting measurements (recorded in the milestone README for 06b, since that is
+the phase that consumes them):
+
+- **The flock is the liveness oracle; the socket file proves nothing.** Against
+  the real binary: a live host **blocks** an `flock` on `<id>.lock`; a killed
+  host's lock is **acquirable** — and **both `.lock` and `.sock` remain on
+  disk**, because nothing cleans up after a dead host.
+- **`connect()` is not a substitute.** It gives `ECONNREFUSED` for a fully dead
+  host, but phase-05c measured the case where it lies — a bound-but-not-yet-
+  accepting socket completes the connect and accepts a write, so a host
+  mid-startup is indistinguishable from a healthy one.
+- Re-confirmed: `bind()` over a stale path without unlinking fails
+  `EADDRINUSE`.
+
+Drafting notes:
+
+- **The load-bearing pre-injection is the non-reentrant-lock deadlock.** The
+  registry has the same shape as `SessionStore` and the same hazard: `spawn_for`
+  must reserve its slot **inside** the lock and call `spawn_detached` **outside**
+  it, since the spawn waits up to ten seconds for readiness. The codebase
+  already carries the assertion and the reasoning
+  (`src/daemon/session.rs:490`, `docs/design/daemon-stalls.md § 1.5c`), both
+  quoted in the phase doc, along with the `#[cfg(test)] try_lock` escape hatch
+  `SessionStore` uses for exactly this kind of proof.
+- **A self-matching criterion was caught at drafting rather than at review.**
+  The E2E leak check was first written as `pgrep -fc 'daemoneye shell-host'`,
+  which reports **1 on a completely clean tree** — `pgrep -f` matches its own
+  invoking shell, whose command line contains the pattern. Replaced with a
+  `ps -eo comm,args` form filtering on the executable name, and validated in
+  both directions: `0` clean, `1` with one real host up, `0` after killing it.
+  That is the fourth occurrence of the self-matching/unreachable-criterion
+  class, and the first caught before dispatch.
+- **All criteria were run against the current tree in their failing state**, and
+  `shell::registry::` was chosen as the test filter because it matches **0**
+  today. The E2E block passed `bash -n`.
+- **Section E of the E2E runs the lib suite three times**, because this phase's
+  tests spawn real hosts under a mutated `HOME` — the exact shape that produced
+  `bug-05c-1` at a ~1-in-6 rate, which a single green run would have missed.
+
+**Two items still open for the PE**, unchanged:
+
+1. **M20 itself is still awaiting sign-off** on its 2026-09-03 scoping.
+2. **The calibration fold is at threshold** — now with a fourth occurrence
+   (05c's `pgrep` self-match, caught at drafting). `WORKFLOW.md` § Calibration
+   puts the fix threshold at three; `docs/dev/TODO.md` § 1 is the standing item.
+   The architect does not amend `WORKFLOW.md` unilaterally.
