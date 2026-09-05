@@ -536,6 +536,7 @@ mod tests {
 
     #[test]
     fn pty_run_times_out_on_a_silent_command() {
+        let _home = crate::test_home_guard();
         let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
         let started = Instant::now();
         let budget = Duration::from_secs(2);
@@ -555,6 +556,7 @@ mod tests {
 
     #[test]
     fn pty_bash_roundtrip_returns_real_exit_code() {
+        let _home = crate::test_home_guard();
         let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
         let outcome = shell
             .run("echo hello; sh -c 'exit 42'", Duration::from_secs(10))
@@ -581,6 +583,7 @@ mod tests {
 
     #[test]
     fn pty_runs_many_commands_on_one_shell() {
+        let _home = crate::test_home_guard();
         let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
         for (i, expected_code) in [0, 0, 42, 7, 0].iter().enumerate() {
             let cmd = format!("printf 'out{i}\\n'; sh -c 'exit {expected_code}'");
@@ -598,6 +601,7 @@ mod tests {
 
     #[test]
     fn pty_shell_is_usable_after_a_timeout() {
+        let _home = crate::test_home_guard();
         let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
         let logs = [false, true, false];
         for (i, expect_timeout) in logs.iter().enumerate() {

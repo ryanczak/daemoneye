@@ -1,6 +1,6 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use daemoneye::{agents, ai, cli, config, daemon, scripts, session_store};
+use daemoneye::{agents, ai, cli, config, daemon, scripts, session_store, shell};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -50,6 +50,19 @@ enum Commands {
     },
     /// Check whether the daemon is running
     Ping,
+    /// Run a shell host for one PTY-backed shell (internal; normally spawned by the daemon)
+    ShellHost {
+        /// Shell id, e.g. s1
+        #[arg(long, value_name = "ID")]
+        id: String,
+        /// Shell to run (default: $SHELL, else bash)
+        #[arg(long, value_name = "SHELL")]
+        shell: Option<String>,
+        #[arg(long, default_value_t = 24)]
+        rows: u16,
+        #[arg(long, default_value_t = 80)]
+        cols: u16,
+    },
     /// Show daemon status (uptime, sessions, provider, circuit breaker)
     Status,
     /// Stop the background daemon
@@ -386,6 +399,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Ping => {
             cli::run_ping().await?;
+        }
+        Commands::ShellHost {
+            id,
+            shell,
+            rows,
+            cols,
+        } => {
+            let shell = shell
+                .or_else(|| std::env::var("SHELL").ok())
+                .unwrap_or_else(|| "bash".to_string());
+            shell::run_host(&id, &shell, rows, cols).await?;
         }
         Commands::Status => {
             cli::run_status().await?;

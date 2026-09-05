@@ -6,6 +6,7 @@
 
 mod backend;
 mod host;
+mod launch;
 mod log;
 mod proto;
 mod pty;
@@ -13,6 +14,7 @@ mod screen;
 
 pub use backend::PtyBackend;
 pub use host::{ShellBackend, bind, serve};
+pub use launch::{await_ready, cast_path, lock_path, run_host, socket_path, spawn_detached};
 pub use log::{CastWriter, CommandRecord, MetaIndex, meta_path_for, read_command_output};
 pub use proto::{ShellRequest, ShellResponse, ShellSignal, ShellState, encode};
 pub use pty::{

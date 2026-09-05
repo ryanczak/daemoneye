@@ -641,3 +641,64 @@ the architect ran (5/5 and 3/3 clean, no slowdown) before prescribing it.
 **One authorization widened:** `src/shell/pty.rs` was on the do-not-touch list;
 it is now open for exactly the four-line test-only guard insertion, and nothing
 else. That omission is what would have made a plain resume stall again.
+
+### Update — 2026-09-05 15:38 (progress)
+
+Resume after the 2026-09-05 escalation. Applied the round-2 fix: added
+`let _home = crate::test_home_guard();` as the first line of the four
+`PtyShell::spawn("bash", (24, 80))` tests in `src/shell/pty.rs` (count = 4).
+No other changes — `src/shell/launch.rs`, `mod launch;`, the `ShellHost`
+variant and its `async_main` arm are carried forward as-is. Gates and E2E run
+below.
+
+### Update — 2026-09-05 15:38 (end-to-end verification)
+
+```
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.85s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::launch::tests::launch_await_ready_rejects_a_bound_but_unserved_socket ... ok
+shell::launch::tests::launch_await_ready_succeeds_against_a_status_responder ... ok
+shell::launch::tests::launch_paths_live_under_the_configured_dirs ... ok
+shell::launch::tests::launch_run_host_rejects_an_invalid_id_before_binding ... ok
+shell::launch::tests::launch_run_host_serves_status_over_its_socket ... ok
+shell::launch::tests::launch_second_host_for_the_same_id_is_refused ... ok
+shell::launch::tests::launch_validate_shell_id_accepts_canonical_ids ... ok
+shell::launch::tests::launch_validate_shell_id_rejects_traversal_and_junk ... ok
+cargo_exit=0
+== C. shell::launch:: totals ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1596 filtered out; finished in 1.12s
+cargo_exit=0
+== D. earlier phases untouched (13, 12, 11, 8, 5, 7) ==
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 2.51s
+cargo_exit=0
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1592 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1593 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1596 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1599 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1597 filtered out; finished in 3.46s
+cargo_exit=0
+== E. lib suite totals ==
+test result: ok. 1600 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 17.75s
+cargo_exit=0
+== F. structural greps (each must print the stated number) ==
+launch.rs exists         (1): 1
+mod launch declaration   (1): 1
+ShellHost enum variant   (1): 1
+Commands::ShellHost arm  (1): 1
+process_group(0)         (1): 1
+InstanceLock reused     (>=1): 3
+no second lock scheme    (0): 0
+no unsafe pre-test       (0): 0
+unwrap/expect/panic pre-test (0): 0
+== G. the real binary answers on a real socket ==
+socket mode (srwx------): srwx------
+status round-trip: {"type":"Status","state":"Running","rows":24,"cols":80,"pid":831978}
+second host refused (nonzero exit): exit=1
+```
