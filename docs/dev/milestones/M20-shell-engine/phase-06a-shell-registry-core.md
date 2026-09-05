@@ -1,7 +1,7 @@
 # Phase 06a: the shell registry core — ids, owners and per-owner caps
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05c (`spawn_detached`, `socket_path`, `validate_shell_id`),
 done.
 **Estimated diff:** ~420 lines
@@ -64,6 +64,34 @@ pub exited_retention_secs: u64,  // phase-06b
 pub log_retention_days: u32,     // phase-09
 pub scrollback_lines: u32,       // already used by run_host
 ```
+
+## Measured facts — executed 2026-09-05, not reasoned about
+
+**F1 — `spawn_detached` CANNOT be exercised from a unit test, and this is why
+`spawn_for` takes the spawn as a parameter.** `launch::spawn_detached`
+re-invokes `std::env::current_exe()` with `["shell-host", "--id", …]`. Under
+`cargo test`, `current_exe()` is the **libtest binary**
+(`target/debug/deps/daemoneye-<hash>`), not the `daemoneye` CLI — and that
+binary has no `shell-host` subcommand. Measured directly:
+
+```
+$ target/debug/deps/daemoneye-010209eb8f68e87e shell-host --id s0 --shell bash --rows 24 --cols 80
+Terminated          <- killed by `timeout 10`; exit 143
+```
+
+It never binds a socket. A test that reached the real `spawn_detached` would
+therefore hang for `await_ready`'s full 10-second deadline, fail, **and leak a
+stuck test-binary process** — which § E2E section G would then correctly flag.
+The seam is not a stylistic preference; the real path is untestable in-process.
+
+(Phase-05c never hit this because its one real-PTY test calls `run_host`
+**in-process**; `spawn_detached` was only ever exercised through the real
+binary in that phase's E2E block.)
+
+**F2 — the seam compiles on this toolchain.** rustc **1.95.0**, edition 2024.
+An `FnOnce(ShellId) -> impl Future<Output = anyhow::Result<()>>` parameter was
+compiled and run in both directions (stub returning `Ok`, stub returning `Err`)
+before being specced.
 
 ## Spec
 
@@ -185,28 +213,40 @@ pub fn check_owner_cap(
 `allocate_index` must fill **holes**: given `{0, 1, 3}` it returns `2`, not `4`.
 Given `{}` it returns `0`.
 
-Then the one async entry point, and the ordering is the spec:
+Then the one async entry point. **It takes the spawn as a parameter** — see
+§ "Measured facts" F1 for why it cannot call `spawn_detached` directly:
 
 ```rust
-pub async fn spawn_for(
+pub async fn spawn_for<F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
-    shell: &str,
-    rows: u16,
-    cols: u16,
     max_per_owner: u32,
+    spawn: F,
 ) -> anyhow::Result<ShellId>
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
 ```
+
+Verified to compile on this toolchain (rustc 1.95.0, edition 2024) in both the
+success and failure directions before this was specced.
+
+The ordering is the spec:
 
 1. **Inside** one `with_shells` closure: run `check_owner_cap`, compute the
    occupied index set, call `allocate_index`, and **reserve** the id by
    inserting its `ShellRecord`. Return the id from the closure.
-2. **After the closure returns** — lock released — call
-   `super::launch::spawn_detached(id.as_str(), shell, rows, cols).await`.
-3. If the spawn fails, take the lock a **second** time to remove the reserved
-   record, then return the error. Reserving before spawning is what stops two
-   concurrent callers racing onto the same index; removing on failure is what
-   stops a failed spawn leaking the slot.
+2. **After the closure returns** — lock released — `spawn(id.clone()).await`.
+3. If the spawn returns `Err`, take the lock a **second** time to remove the
+   reserved record, then return the error. Reserving before spawning is what
+   stops two concurrent callers racing onto the same index; removing on failure
+   is what stops a failed spawn leaking the slot.
+
+The production caller (phase-07, **not this phase**) will pass a closure
+wrapping `launch::spawn_detached`; this phase's tests pass stubs. Nothing in
+this phase calls `spawn_detached`, and `shell`/`rows`/`cols` are therefore not
+parameters of `spawn_for` — they belong to whatever the caller's closure
+captures.
 
 ## Acceptance criteria
 
@@ -231,6 +271,8 @@ value shown.
       `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/shell/registry.rs | grep -cE '\.(unwrap|expect)\(|panic!\('`
       → **0**. (`unwrap_or_log` and `unwrap_or_else` are not matched by this
       pattern and are both fine.)
+- [ ] **The real spawn is not called from this phase (F1):**
+      `grep -c 'spawn_detached' src/shell/registry.rs` → **0**.
 - [ ] `cargo test --lib shell::registry::` reports **8 or more** passing,
       `0 failed` (now: `0 passed; … 1604 filtered out`).
 - [ ] Earlier phases unchanged: `shell::launch::` **8**, `shell::pty::` **13**,
@@ -266,37 +308,33 @@ for — do not replace it with a test that merely checks the lock is free
 - `registry_check_owner_cap_zero_means_unlimited` — cap `0` allows a further
   shell even with several already held.
 - `registry_spawn_for_does_not_hold_the_lock_across_the_spawn` — **the
-  simultaneity test.** Under a temp `HOME`, call `spawn_for`; from another
-  thread (or between polls) assert `try_lock()` **succeeds** while the spawn is
-  still in flight. Bound every wait. If holding `try_lock` for the whole spawn
-  is awkward, assert instead that a second `with_shells` call completes while
-  the spawn is outstanding — either shape proves the lock is not held across
-  it; a test that only checks the lock after `spawn_for` returns does not and
-  is not acceptable.
-- `registry_spawn_for_releases_the_slot_when_the_spawn_fails` — force a spawn
-  failure (an unspawnable shell name such as `"definitely-not-a-real-shell"` is
-  the simplest lever) and assert the map is left with **no** record for the id
-  that was reserved. Also assert the next `allocate_index` returns that same
-  index, proving the slot is genuinely free rather than merely absent.
+  simultaneity test, and the seam is what makes it deterministic.** Pass a stub
+  spawn closure that *blocks until the test releases it* — e.g. it awaits a
+  `tokio::sync::oneshot` receiver, or polls an `AtomicBool` the test sets. While
+  that stub is suspended, assert from the test that the registry is reachable:
+  either `try_lock()` succeeds, or a `with_shells` call completes. Then release
+  the stub and let `spawn_for` finish. **A test that only checks the lock after
+  `spawn_for` returns does not prove this and is not acceptable** — the whole
+  claim is that the lock is free *during* the spawn.
+- `registry_spawn_for_releases_the_slot_when_the_spawn_fails` — pass a stub
+  that returns `Err(anyhow::anyhow!("boom"))`, and assert the map is left with
+  **no** record for the id that was reserved. Also assert the next
+  `allocate_index` over the resulting occupied set returns that same index,
+  proving the slot is genuinely free rather than merely absent.
 
-Tests that touch `shells_dir()` mutate `HOME` and **must** take the RAII guard
-first — and, per `bug-05c-1`, **any test that reaches a PTY spawn must hold it
-across the spawn.** `spawn_for` spawns a real host, so the guard is required:
+**With the seam, none of these tests should need `HOME`, a temp dir, a real
+process, or a PTY.** Every one of them operates on the registry map and pure
+functions, with stub spawn closures. If you find yourself reaching for
+`test_home_guard()` or `Config::ensure_dirs()`, stop — that is a signal you are
+about to call the real `spawn_detached`, which F1 says cannot work here.
 
-```rust
-let _guard = crate::test_home_guard();
-let dir = tempfile::tempdir().unwrap();
-unsafe { std::env::set_var("HOME", dir.path()); }
-crate::config::Config::ensure_dirs().ok();
-```
+Should a test nonetheless need `HOME` (it should not), use
+`crate::test_home_guard()` — **not** the raw `TEST_HOME_LOCK`, which does not
+recover from poisoning — bound to a named variable (`_guard`, not bare `_`,
+which drops immediately), with a distinct temp dir per test.
 
-Use `crate::test_home_guard()`, **not** the raw `TEST_HOME_LOCK` — the accessor
-recovers from poisoning. Bind it to a named variable (`_guard`, not bare `_`,
-which drops immediately). Give each test a distinct temp dir.
-
-**Kill every host you spawn.** A leaked `daemoneye shell-host` outlives the test
-run — that is the whole point of `process_group(0)`. Capture the id and remove
-its socket/lock, or keep the spawned shell short-lived. Do **not** use
+**Spawn no real processes in this phase.** Section G of the E2E block asserts
+zero stray hosts, and with stub closures that is automatic. Do **not** use
 `pkill`/`killall` or any signal to a process group.
 
 ## End-to-end verification
@@ -326,6 +364,7 @@ echo -n "pub fn with_shells        (1): "; grep -cE '^pub fn with_shells' src/sh
 echo -n "validator reused         (>=1): "; grep -c 'validate_shell_id' src/shell/registry.rs
 echo -n "no re-implemented grammar (0): "; grep -cE 's\[0-9\]|is_ascii_digit|chars\(\)\.all' src/shell/registry.rs
 echo -n "validator stays unexported(0): "; grep -c 'validate_shell_id' src/shell/mod.rs
+echo -n "no real spawn_detached    (0): "; grep -c 'spawn_detached' src/shell/registry.rs
 echo -n "no unsafe pre-test        (0): "
 awk '/^#\[cfg\(test\)\]/{exit} {print}' src/shell/registry.rs | grep -vE '^\s*(//|///|//!|\*)' | grep -c 'unsafe'
 echo -n "unwrap/expect/panic pre-test (0): "
@@ -418,3 +457,67 @@ signal to a process group or to PID -1.** Kill only pids you captured yourself.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-09-05
+
+**Start fresh; nothing of yours is on disk.** The previous run (session
+`6a9c59cc`, 75 turns) died on an infrastructure fault —
+`BackendError: "error decoding response body"` — with 0/4 tasks done and no
+source written. Only the two `Status:` flips landed.
+
+**But it was not a wasted run, and the spec has changed because of it.** Its
+last dozen calls were spent spawning and killing `target/debug/deps/daemoneye-*`
+pids, which is the executor discovering — correctly — that the phase as
+originally written could not be built. § "Measured facts" F1 now records what
+it was running into: `spawn_detached` re-invokes `current_exe()`, which under
+`cargo test` is the **libtest binary**, not the CLI, so the two tests that
+called `spawn_for` could never have passed. That was the architect's defect,
+not yours.
+
+**What changed:** `spawn_for` now takes the spawn as a parameter
+(`F: FnOnce(ShellId) -> Fut`), verified to compile on rustc 1.95.0 / edition
+2024 before being specced. Your tests pass **stub closures** — so the
+simultaneity test becomes deterministic (a stub that blocks until the test
+releases it) and the failure test becomes trivial (a stub returning `Err`).
+Nothing in this phase spawns a real process, needs `HOME`, or needs a PTY, and
+a new criterion pins `spawn_detached` at **0** occurrences in
+`src/shell/registry.rs`.
+
+**Do not go looking for a way to invoke the real binary from a test.** F1 is
+the answer: there isn't one, and the seam is the design.
+
+### Update — 2026-09-05 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the run died on infrastructure (`BackendError: "error decoding
+response body"`, 75 turns, 0/4 tasks, no source on disk), but reading what it
+was doing exposed a real spec defect — two pinned tests that could never have
+passed — so a plain resume would have carried the same wall forward.
+
+**What the run was actually hitting.** Its last dozen tool calls spawn and kill
+`target/debug/deps/daemoneye-*` pids. That is the executor discovering that
+`spawn_for` → `launch::spawn_detached` → `std::env::current_exe()` resolves to
+the **libtest binary** under `cargo test`, which has no `shell-host`
+subcommand. Measured at escalation:
+
+```
+$ target/debug/deps/daemoneye-010209eb8f68e87e shell-host --id s0 --shell bash --rows 24 --cols 80
+Terminated          <- killed by `timeout 10`; exit 143
+```
+
+It never binds a socket, so `await_ready` would burn its full 10-second
+deadline, fail, and leak a stuck process. **Phase-05c never surfaced this
+because its one real-PTY test calls `run_host` in-process** — `spawn_detached`
+was only ever exercised through the real binary in that phase's E2E block.
+
+**The refinement:** `spawn_for` now takes the spawn as a parameter
+(`F: FnOnce(ShellId) -> Fut`), compiled and run in both directions on rustc
+1.95.0 / edition 2024 before being specced. Tests use stub closures, which
+makes the simultaneity test *deterministic* rather than dependent on a real
+process — and incidentally answers the open design question recorded at the
+05a close about needing a backend test seam. A new criterion pins
+`spawn_detached` at **0** occurrences in `src/shell/registry.rs`.
+
+**Executor conduct was good and is worth recording:** it did not fake a passing
+test or quietly drop the requirement. It went looking for the mechanism, which
+is what surfaced the defect.
