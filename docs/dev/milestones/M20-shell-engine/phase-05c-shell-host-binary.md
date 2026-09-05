@@ -1,7 +1,7 @@
 # Phase 05c: the `daemoneye shell-host` binary, detached spawn and readiness
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress (bounced on bug-05c-1)
+**Status:** review
 **Depends on:** phase-05a (`bind`, `serve`, `ShellBackend`) and phase-05b
 (`PtyBackend`), both done.
 **Estimated diff:** ~400 lines
@@ -957,3 +957,175 @@ the four `pty.rs` guards unchanged, count = 4). `cargo test --lib shell::` ran
 8, `pty` 13, `log` 12, `screen` 11, `host` 8, `proto` 5, `backend` 7). All
 four gates green. E2E was already run in round 2 and independently re-verified
 at review; per the round-3 note it was not re-run.
+
+### Update — ts=1788630524770 (complete, server-authored)
+
+**Summary:** </think>The work is done. Let me verify the completeness checklist:
+
+- [x] Phase doc's Status line still says `in-progress` — yes (line 4: "in-progress (bounced on bug-05c-1)")
+- [x] Milestone README phase-table row still `in-progress` — yes (line 166: "**in-progress**")
+- [x] No `(complete)` Update Log entry hand-written — correct
+- [x] cargo fmt --all run immediately before git add — yes
+- [x] All verification commands ran clean — yes
+- [x] Final message substantive — writing now
+- [x] git status --short shows nothing — confirmed CLEAN
+- [x] git log -1 --stat includes every file — yes (backend.rs + phase doc)
+
+Wait — the phase doc says round 3 explicitly says "You do not need to re-run the § End-to-end verification block." But I did run it as part of my re-verification for confidence. That's fine — but I should NOT add a new E2E entry to the doc, because the doc already has a completed E2E entry from round 2 and the round-3 note says don't re-run. Actually, I DID re-run it (for my own gate verification, per the contract's E2E requirement). The round-3 note says "You do not need to re-run" — it doesn't forbid it. But adding a second E2E entry would not be an authorization from the spec, and the round-3 criterion doesn't require it.
+
+Hmm, but the Definition of Done requires a real e2e verification entry. However, this is a bounce where the E2E was already done in round 2 and independently re-verified at review. The round-3 note explicitly says "You do not need to re-run the § End-to-end verification block. It was run in round 2 and independently re-verified at review; this round changes only a test helper." So the DoD box for E2E is already satisfied by the existing round-2 entry, which the reviewer confirmed.
+
+I ran the E2E block anyway as extra confidence (it passed: srwx------, correct roundtrip, exit=1 refused). I should mention in my summary that I also re-ran it for confidence and it still passes. But I should NOT add another E2E entry to the doc since the existing one is verified and the round-3 note says not to re-run. Actually, I already have the output. Since I ran it and it produced real evidence, should I paste it as a progress note? The spec says the E2E entry already exists and is verified. Adding another would be redundant but not harmful. However, the completion entry the server writes will be from my summary. 
+
+Let me think about the risk: the DoD requires that the e2e evidence lives in its own Update Log entry authored by whoever ran the phase. The round-2 entry exists (from the 15:38 run), and round 3 explicitly says not to re-run it. So the existing entry suffices. I've run it again at 17:52 to confirm it still holds (since my round-3 change touched a test helper, not production code, this is belt-and-suspenders). 
+
+I think the cleanest approach: mention in summary that the E2E was re-confirmed during this run (with the exit=1, srwx------, roundtrip). I won't add a second E2E entry to the doc because the spec says the E2E block does not need re-running and the existing verified entry stands. Actually — the E2E evidence needed in the Update Log is already present from round 2, which the reviewer re-verified independently.
+
+Let me also confirm the grep literals are all in place — done in section F above.
+
+Now write the summary. Working tree is clean. Done.</think>
+All round-3 work is complete and committed. Let me run through the completion checklist against the phase doc's round-3 criteria:
+
+- [x] `grep -c 'let _home = crate::test_home_guard();' src/shell/backend.rs` → **1** (was 0)
+- [x] `src/shell/pty.rs` guard count → **4**, unchanged
+- [x] `cargo test --lib shell::` **ten times in a row, every run `0 failed`** (107 passed each; previously 3-in-18 failed)
+- [x] `shell::launch::` stays at exactly **8** (8, not 9)
+- [x] Other modules unchanged: `backend` 7, `pty` 13, `log` 12, `screen` 11, `host` 8, `proto` 5
+- [x] All four gates pass: fmt (run), build (0 warnings), clippy `-D warnings` (0), full `cargo test` (1600 passed; 0 failed)
+- [x] `src/shell/backend.rs` changed by exactly one line
+- [x] Committed; working tree clean
+
+## Summary + Notes for review
+
+Resumed 05c per the Round-3 (`bug-05c-1`) re-dispatch, which called for exactly one edit: the one-line guard insertion in `src/shell/backend.rs`'s `spawn_backend` test helper (`let _home = crate::test_home_guard();` before `PtyBackend::spawn`). Nothing else touched — `launch.rs`, `mod launch;`, the `ShellHost` variant/arm, the four `pty.rs` guards, and the round-2 E2E entry were all carried forward untouched. The race is closed: previously **3 failures in 18 runs** of `cargo test --lib shell::`; with the guard, **10 consecutive runs, each `0 failed`** (all ten `test result:` lines pasted into the round-3 criterion trajectory above, 107 passed per run). Module counts hold at the spec's exact numbers (launch 8, pty 13, log 12, screen 11, host 8, proto 5, backend 7) and all four gates pass clean.
+
+I also re-ran the full E2E block as belt-and-suspenders — it passed even though round 3 deemed it optional: socket mode `srwx------`, live round-trip `{"type":"Status","state":"Running","rows":24,"cols":80,"pid":1051770}`, and a second `shell-host --id s1` refused with `exit=1` (the InstanceLock firing). The existing round-2 E2E entry in the Update Log remains the canonical one the reviewer already re-verified; I did not duplicate it. Committed as `bb4aeab` (`test(shell)`), one functional change plus the progress Update Log entry naming this run. No deviations, no new tests, no scope creep — `shell::backend::` still exactly 7. Phase status left `in-progress` in both the phase doc and the milestone README row for the server to finalize.
+
+**Executor:** deepseek-ai/DeepSeek-V4-Flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 7.28s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test minimal_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/shell/backend.rs` — +1 -0
+
+**Commit:** bb4aeabc867a329d970fd17e30269cad57f68490
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
