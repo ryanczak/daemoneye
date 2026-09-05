@@ -739,3 +739,56 @@ were proven so by mutation at review. The signal test passes with `signal()`
 neutered, and the fan-out test fails once a 50 ms window is opened between the
 pump's `send` and its log write. Details in `bugs/bug-05b-1.md`; the outstanding
 work is restated as criteria in § Acceptance criteria § Round 2.
+
+### Update — 2026-09-04 23:40 (end-to-end verification)
+
+Round 2 (bug-05b-1). Re-ran the § End-to-end verification block verbatim from
+the repo root after strengthening the four tests; `/tmp/e2e-05b.txt` follows
+exactly as captured:
+
+```sh
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.95s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::backend::tests::backend_fans_one_chunk_out_to_subscriber_log_and_screen ... ok
+shell::backend::tests::backend_lagged_subscriber_does_not_break_the_pump ... ok
+shell::backend::tests::backend_records_input_as_an_i_event ... ok
+shell::backend::tests::backend_resize_replaces_the_screen_and_does_not_reflow ... ok
+shell::backend::tests::backend_signal_targets_the_foreground_group_not_the_shell ... ok
+shell::backend::tests::backend_status_reports_running_then_exited ... ok
+shell::backend::tests::backend_streams_while_input_is_written ... ok
+cargo_exit=0
+== C. shell::backend:: totals ==
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1589 filtered out; finished in 3.56s
+cargo_exit=0
+== D. earlier phases untouched (13, 12, 11, 8, 5) ==
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1583 filtered out; finished in 2.00s
+cargo_exit=0
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1584 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1585 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1588 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite totals ==
+test result: ok. 1592 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.25s
+cargo_exit=0
+== F. structural greps (each must print the stated number) ==
+backend.rs exists       (1): 1
+mod backend declaration (1): 1
+pub struct PtyBackend   (1): 1
+PtyShell::subscribe     (1): 1
+no set_size in backend  (0): 0
+no unsafe in backend    (0): 0
+unwrap/expect/panic pre-test (0): 0
+```
+
+PASTE MATCH self-check:
+
+```
+PASTE MATCH
+```

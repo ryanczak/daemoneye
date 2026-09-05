@@ -196,35 +196,73 @@ mod tests {
                 Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {
+                    // A chunk we never got could have carried the marker, but
+                    // the marker's *output* chunk — the one the command's own
+                    // stdout produced — is emitted later, so keep going; a
+                    // lagged subscriber is exactly the pump-survival case the
+                    // lagged test pins. Dropping out here would make this
+                    // fan-out test racy with channel capacity.
+                    continue;
+                }
                 Err(tokio::sync::broadcast::error::TryRecvError::Closed) => return None,
             }
         }
     }
 
-    /// Drain any immediately-available chunks until the stream is momentarily
-    /// quiet, bounded by the deadline.
+    /// Block only long enough to drain whatever output is in flight: return
+    /// once `try_recv` has come up empty for a short quiet period, so a
+    /// caller drains the current burst without waiting out the deadline.
     fn quiet(rx: &mut broadcast::Receiver<Vec<u8>>, deadline: std::time::Instant) {
+        let mut silent_since: Option<std::time::Instant> = None;
         loop {
             if std::time::Instant::now() >= deadline {
                 return;
             }
-            let mut found = false;
-            while let Ok(chunk) = rx.try_recv() {
-                found = true;
-                let _ = chunk;
+            match rx.try_recv() {
+                Ok(_) => silent_since = None,
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+                    let now = std::time::Instant::now();
+                    match silent_since {
+                        None => silent_since = Some(now),
+                        Some(t) if now.duration_since(t) >= Duration::from_millis(30) => return,
+                        Some(_) => {}
+                    }
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) | Err(_) => {
+                    silent_since = None;
+                }
             }
-            if !found {
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            std::thread::sleep(Duration::from_millis(2));
         }
     }
 
     /// Join the pump's output to raw bytes for grep-ability; also proves the
     /// cast contains an `"o"` event carrying the bytes (the fan-out guarantee).
-    fn cast_output(backend: &PtyBackend, dir: &tempfile::TempDir) -> String {
-        drop(backend.shell.lock().unwrap_or_log());
+    fn cast_output(_backend: &PtyBackend, dir: &tempfile::TempDir) -> String {
         std::fs::read_to_string(cast_path(dir)).expect("cast log readable on disk")
+    }
+
+    /// True if some `"o"` event payload contains `needle`.
+    fn cast_has_o_text(contents: &str, needle: &str) -> bool {
+        for line in contents.lines().skip(1) {
+            if !line.starts_with('[') {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let Some(arr) = v.as_array() else {
+                continue;
+            };
+            if arr.len() == 3
+                && arr[1].as_str() == Some("o")
+                && arr[2].as_str().is_some_and(|s| s.contains(needle))
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Assert `needle` appears in a cast-generated `"o"` event payload.
@@ -258,9 +296,12 @@ mod tests {
 
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         // A uniquely-marked command so the assertion binds to this run's
-        // output, not to the initial prompt.
+        // output, not to the initial prompt. The marker is split with `''`
+        // so the typed-command echo cannot forge it: the echo shows
+        // `FAN''OUT_51_99`, only the actual output holds the contiguous
+        // `FANOUT_51_99`.
         let marker = "FANOUT_51_99";
-        let cmd = format!("printf '\\n{marker} out\\n'; sh -c 'exit 3'");
+        let cmd = "printf '\\nFAN''OUT_51_99 out\\n'; sh -c 'exit 3'\n".to_string();
         tokio::runtime::Runtime::new()
             .expect("runtime")
             .block_on(backend.input(cmd.as_bytes()))
@@ -277,13 +318,26 @@ mod tests {
             "subscriber must receive the marker bytes: {got_str:?}"
         );
 
-        // 2. the cast file contains them as an "o" event
-        let cast = cast_output(&backend, &dir);
+        // 2. the cast file contains them as an "o" event. The pump writes
+        //    subscribers → log → screen per chunk, so the marker reaching
+        //    the subscriber does not (yet) prove it reached the log — poll
+        //    the cast to a bounded deadline, the way step 3 polls the screen.
+        let cast_deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut cast;
+        loop {
+            cast = cast_output(&backend, &dir);
+            if cast_has_o_text(&cast, marker) {
+                break;
+            }
+            if std::time::Instant::now() >= cast_deadline {
+                assert_cast_has_o(&cast, marker, "cast");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
         assert_cast_has_o(&cast, marker, "cast");
 
-        // 3. status()'s screen reflects them: pump order is subscribers →
-        //    log → screen, so after the marker reached the subscriber it is
-        //    about to reach the screen; poll until it does.
+        // 3. status()'s screen reflects them: poll until the marker is
+        //    visible on the live screen.
         let screen_deadline = std::time::Instant::now() + Duration::from_secs(10);
         let visible = loop {
             if backend.screen_contents().contains(marker) {
@@ -339,57 +393,101 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let backend = spawn_backend(&dir);
         let mut rx = backend.subscribe();
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
 
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
-        // Write input while output is streaming: a command that prints once,
-        // then prints again — interleaving the "while streaming" writes.
-        let command = "printf 'first-part\\n'; sleep 0.15; printf 'second-part\\n'";
-        tokio::runtime::Runtime::new()
-            .expect("runtime")
-            .block_on(backend.input(command.as_bytes()))
+        // A command that streams output with a pause, so the second input is
+        // written while the first command's output is still streaming.
+        let command1 = "printf 'first-part\\n'; sleep 0.3; printf 'second-part\\n'\n";
+        rt.block_on(backend.input(command1.as_bytes()))
             .expect("write command");
 
-        // The subscriber keeps receiving bytes while the command streams.
-        let got = recv_until(&mut rx, deadline, |c| {
+        // Wait for the stream to start, then write more input while it is
+        // still streaming (before second-part appears). The marker is split
+        // with `''` so the typed-command echo cannot forge it: the echo shows
+        // `inter''leaved`, only the command's real output holds the
+        // contiguous `interleaved`.
+        recv_until(&mut rx, deadline, |c| {
+            String::from_utf8_lossy(c).contains("first-part")
+        })
+        .expect("first frame must stream");
+        let command2 = "printf 'inter''leaved\\n'\n";
+        rt.block_on(backend.input(command2.as_bytes()))
+            .expect("write while streaming");
+
+        // Both the streaming command's tail and the interleaved input's
+        // effect must reach the subscriber downstream.
+        let got_second = recv_until(&mut rx, deadline, |c| {
             String::from_utf8_lossy(c).contains("second-part")
         })
-        .expect("no streamed chunk was lost");
-        let got_str = String::from_utf8_lossy(&got);
+        .expect("the streaming command's tail must not be lost");
         assert!(
-            got_str.contains("second-part"),
-            "the streamed output must reach the subscriber: {got_str:?}"
+            String::from_utf8_lossy(&got_second).contains("second-part"),
+            "streaming tail reaches the subscriber"
         );
+        let got_int = recv_until(
+            &mut rx,
+            std::time::Instant::now() + Duration::from_secs(10),
+            |c| String::from_utf8_lossy(c).contains("interleaved"),
+        )
+        .expect("the interleaved input must reach the shell");
+        assert!(
+            String::from_utf8_lossy(&got_int).contains("interleaved"),
+            "interleaved input effect reaches the subscriber"
+        );
+    }
+
+    /// Assert that `rx` — a subscriber that never read during a flood — now
+    /// reports `Lagged` on its next read, which is what the pump's
+    /// `continue` on `Lagged` exists to survive.
+    fn assert_lagged(rx: &mut broadcast::Receiver<Vec<u8>>, label: &str) {
+        match rx.try_recv() {
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                assert!(n > 0, "{label} must report a nonzero lag");
+            }
+            other => panic!("{label}: expected Lagged, got {other:?}"),
+        }
     }
 
     #[test]
     fn backend_lagged_subscriber_does_not_break_the_pump() {
         let dir = tempfile::tempdir().unwrap();
         let backend = spawn_backend(&dir);
-        let mut _rx_slow = backend.subscribe();
+        let mut rx_slow = backend.subscribe();
         let mut rx_fast = backend.subscribe();
 
         // First, let the fast subscriber drain the initial prompt fragment.
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         quiet(&mut rx_fast, deadline);
-        drop(_rx_slow);
 
-        // Saturate the channel so the kept subscriptions fall behind. We
-        // don't know the exact payload size per chunk, so we write enough
-        // small command lines to overflow STREAM_CAPACITY (1024).
+        // Flood the shell with output so the slow subscriber — which never
+        // reads — falls past STREAM_CAPACITY, while the fast subscriber is
+        // drained continuously so it stays current.
         let rt = tokio::runtime::Runtime::new().expect("runtime");
-        rt.block_on(async {
-            for _ in 0..2000 {
-                let _ = backend.input(b"x\n").await;
-            }
+        let flood = "printf 'FLOOD_START\\n'; yes | head -c 10000000\n";
+        rt.block_on(backend.input(flood.as_bytes()))
+            .expect("write flood command");
+
+        // Drain the fast subscriber while the flood streams, so it never
+        // lags; wait for the flood to settle back to the prompt.
+        let _ = recv_until(&mut rx_fast, deadline, |c| {
+            String::from_utf8_lossy(c).contains("FLOOD_START")
         });
+        quiet(
+            &mut rx_fast,
+            std::time::Instant::now() + Duration::from_secs(20),
+        );
+
+        // The slow subscriber has been behind the whole flood: reading from
+        // it now must report Lagged rather than silently drop or stall the
+        // pump.
+        assert_lagged(&mut rx_slow, "slow subscriber");
 
         // The fast subscriber still receives current chunks after the slow
-        // one has been dropped.
-        let probe = "printf 'post-lag-probe\\n'";
-        tokio::runtime::Runtime::new()
-            .expect("runtime")
-            .block_on(backend.input(probe.as_bytes()))
-            .expect("write command");
+        // one has lagged.
+        let probe = "printf 'post-lag-probe\\n'\n";
+        rt.block_on(backend.input(probe.as_bytes()))
+            .expect("write probe");
         let got = recv_until(
             &mut rx_fast,
             std::time::Instant::now() + Duration::from_secs(20),
@@ -442,7 +540,10 @@ mod tests {
             .expect("Int ok");
 
         // The shell must still be alive: run a further command successfully.
-        let probe = "printf 'post-signal-probe\\n'\n";
+        // The marker is split with `''` so the typed-command echo cannot
+        // forge it: the echo shows `post-''signal-probe`, only the command's
+        // real output holds the contiguous `post-signal-probe`.
+        let probe = "printf 'post-''signal-probe\\n'\n";
         rt.block_on(backend.input(probe.as_bytes()))
             .expect("run after signal");
         std::thread::sleep(Duration::from_millis(300));
@@ -454,10 +555,17 @@ mod tests {
             } => {}
             other => panic!("shell must still be running after Int, got {other:?}"),
         }
-        let cast = cast_output(&backend, &dir);
+        let probe_marker = "post-signal-probe";
+        let got = recv_until(
+            &mut rx,
+            std::time::Instant::now() + Duration::from_secs(10),
+            |c| String::from_utf8_lossy(c).contains(probe_marker),
+        )
+        .expect("the post-signal command's output must stream");
+        let got_str = String::from_utf8_lossy(&got);
         assert!(
-            cast.contains("post-signal-probe"),
-            "the post-signal command must have run in the live shell: {cast}"
+            got_str.contains(probe_marker),
+            "the post-signal output must reach the subscriber: {got_str:?}"
         );
     }
 
