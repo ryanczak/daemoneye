@@ -948,4 +948,12 @@ rather than going away: **3 failures in 18 runs** of `cargo test --lib shell::`.
 The round-2 verification was also too weak to catch it — five clean runs at a
 ~17% rate is a ~40% chance of seeing nothing, and it saw nothing. Mechanism,
 measurements and the one-line fix are in `bugs/bug-05c-1.md`; the outstanding
-work is restated in § Acceptance criteria § Round 3.
+### Update — 2026-09-05 17:50 (progress)
+
+Round-3 bug-05c-1 fix applied: added `let _home = crate::test_home_guard();`
+as the first line of `spawn_backend` in `src/shell/backend.rs` (grep count = 1;
+the four `pty.rs` guards unchanged, count = 4). `cargo test --lib shell::` ran
+**ten times in a row, every run `0 failed`**; module counts unchanged (`launch`
+8, `pty` 13, `log` 12, `screen` 11, `host` 8, `proto` 5, `backend` 7). All
+four gates green. E2E was already run in round 2 and independently re-verified
+at review; per the round-3 note it was not re-run.

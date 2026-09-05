@@ -175,6 +175,7 @@ mod tests {
     }
 
     fn spawn_backend(dir: &tempfile::TempDir) -> Arc<PtyBackend> {
+        let _home = crate::test_home_guard();
         PtyBackend::spawn("bash", 24, 80, 100, &cast_path(dir), 0).expect("bash available")
     }
 
