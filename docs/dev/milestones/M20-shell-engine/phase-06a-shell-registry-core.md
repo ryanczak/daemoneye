@@ -458,6 +458,76 @@ signal to a process group or to PID -1.** Kill only pids you captured yourself.
 
 <!-- entries appended below this line -->
 
+### Update — 2026-09-05 12:44 (progress)
+
+Started phase 06a as a fresh dispatch (per the Notes, the prior run died on an
+infrastructure fault with no source on disk). Implemented all four tasks in
+`src/shell/registry.rs` (323 lines): `ShellId` delegating to
+`super::launch::validate_shell_id`, `Owner` with `key()` prefixing the kind,
+`ShellRegistry` mirroring `SessionStore`'s newtype+`with_shells` shape plus a
+`#[cfg(test)] try_lock` escape hatch, and `allocate_index` /
+`check_owner_cap` / `spawn_for` with reserve-under-lock / spawn-outside-lock /
+unreserve-on-failure. Added `mod registry;` and a `pub use` line to
+`src/shell/mod.rs`. All eight pinned tests pass
+(`cargo test --lib shell::registry::` → 8 passed, 0 failed); clippy is clean
+after scoping the simultaneity test's guard (it flagged `await_holding_lock`,
+fixed by a brace block) and dropping a unit-value let. Formatting, all four
+gates and the structural greps verified; E2E block runs next.
+
+### Update — 2026-09-05 12:44 (end-to-end verification)
+
+```
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::registry::tests::registry_allocate_index_fills_holes ... ok
+shell::registry::tests::registry_check_owner_cap_counts_only_that_owner ... ok
+shell::registry::tests::registry_check_owner_cap_zero_means_unlimited ... ok
+shell::registry::tests::registry_owner_keys_do_not_collide_across_kinds ... ok
+shell::registry::tests::registry_shell_id_parse_delegates_to_the_shared_validator ... ok
+shell::registry::tests::registry_shell_id_round_trips_index_and_string ... ok
+shell::registry::tests::registry_spawn_for_does_not_hold_the_lock_across_the_spawn ... ok
+shell::registry::tests::registry_spawn_for_releases_the_slot_when_the_spawn_fails ... ok
+cargo_exit=0
+== C. shell::registry:: totals ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1604 filtered out; finished in 0.00s
+cargo_exit=0
+== D. earlier phases untouched (8, 13, 12, 11, 8, 5, 7) ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1604 filtered out; finished in 1.11s
+cargo_exit=0
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1599 filtered out; finished in 2.51s
+cargo_exit=0
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1600 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1601 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1604 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1607 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1605 filtered out; finished in 3.55s
+cargo_exit=0
+== E. lib suite, three consecutive runs (see the note below) ==
+test result: ok. 1608 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.25s
+test result: ok. 1608 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.32s
+test result: ok. 1608 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.29s
+== F. structural greps (each must print the stated number) ==
+registry.rs exists        (1): 1
+mod registry declaration  (1): 1
+pub struct ShellRegistry  (1): 1
+pub fn with_shells        (1): 1
+validator reused         (>=1): 2
+no re-implemented grammar (0): 0
+validator stays unexported(0): 0
+no real spawn_detached    (0): 0
+no unsafe pre-test        (0): 0
+unwrap/expect/panic pre-test (0): 0
+== G. no shell-host leaked by the test run ==
+stray daemoneye shell-host processes (0): 0
+```
+
+
 ### Notes for executor — 2026-09-05
 
 **Start fresh; nothing of yours is on disk.** The previous run (session

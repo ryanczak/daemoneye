@@ -10,6 +10,7 @@ mod launch;
 mod log;
 mod proto;
 mod pty;
+mod registry;
 mod screen;
 
 pub use backend::PtyBackend;
@@ -19,5 +20,9 @@ pub use log::{CastWriter, CommandRecord, MetaIndex, meta_path_for, read_command_
 pub use proto::{ShellRequest, ShellResponse, ShellSignal, ShellState, encode};
 pub use pty::{
     CommandOutcome, Nonce, PtyShell, exit_var, parse_outcome, strip_markers, wrap_command,
+};
+pub use registry::{
+    Owner, ShellId, ShellRecord, ShellRegistry, allocate_index, check_owner_cap, spawn_for,
+    with_shells,
 };
 pub use screen::ShellScreen;
