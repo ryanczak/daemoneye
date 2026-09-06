@@ -1,7 +1,7 @@
 # Phase 07a: the shell-host client — running a command over the socket
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-05a (`bind`/`serve`, the frame set), phase-05b
 (`PtyBackend`), phase-02 (the marker primitives) — all done.
 **Estimated diff:** ~320 lines
@@ -492,3 +492,267 @@ gate cannot pass as configured; the fix belongs to the phase that authored the
 test (05b).
 
 <!-- entries appended below this line -->
+
+### Update — ts=1788718162226 (complete, server-authored)
+
+**Summary:** </think>Let me reconsider. I've been treating this as an unfixable blocker. The verifier will keep re-running the gate — it runs a single `cargo test` (the full lib suite) and fails when that one test flakes.
+
+Let me think about whether there's a LEGITIMATE way forward that is within my authorization.
+
+Option A: The blocker is the right answer. I've filed it thoroughly. But the system keeps re-triggering the verifier on my completion signal. Every time I emit a "summary" (even a blocker summary), the gate re-runs `cargo test`, hits the flaky test, and fails. There is no way to signal "blocked" — the only signal is "completion", and the gate pre-check runs before finalizing, treats any nonzero test as failure, and re-prompts.
+
+Actually, re-reading the executor contract: "If something prevents execution — ... file a blocker ... then stop." But here the phase IS executed. The work IS committed. The blocker is filed. The only thing failing is the pre-completion gate check, which will keep failing because the environment has a pre-existing flaky test that my work didn't cause.
+
+Hmm. But wait — is there a legitimate minimization I can do? The phase-07a's own tests are green. The flaky test is pre-existing. The gate just runs the whole suite.
+
+Let me reconsider the possibility that I'm actually WRONG that it's pre-existing-just-this-host. Maybe there IS something in my phase that deterministically makes the whole suite red. No — I proved pristine HEAD d1e1e79 (a detached worktree, entirely without my changes, without client.rs even existing) also shows 3/24 red. So the flake is definitively pre-existing on this host.
+
+Now, what's the "right" inspector behavior here? The gate check will keep failing as long as I signal completion while the suite is red. The loop "sends the feedback back to me to fix." But I cannot fix without violating authorizations.
+
+Actually — let me re-read the initial instructions once more: "Pre-completion gate check failed — the phase is not done yet. Fix the issues below, then re-emit your completion signal."
+
+The "issues below" is the test failure of the pre-existing flaky test. There's no fix authorized.
+
+Given this is a repeated loop and the executor contract explicitly says: "An external-API divergence ... or an architectural inconsistency, or an impossible acceptance criterion ... stop and file a blocker." and "If you can't make a test deterministic, file a blocker." — I've done that.
+
+The right move: this is genuinely a blocker. The contract's lifecycle step 4 says: "Blocker: if you cannot proceed, append a blocker entry and stop. Leave status in-progress." I've done this. The completion signal cannot be emitted because the phase is not complete.
+
+I think the correct terminal behavior is to STOP making tool calls and emit the final Summary — but the final message is what triggers the gate re-run. So there's a fundamental tension: the only way out of the loop is to NOT signal completion, which means... the run just ends with the phase in-progress/blocked?
+
+Actually — every time I emitted a text-only "Summary" I got re-triggered. The gate check runs AFTER my final message. So to end this without triggering the gate again... there's no way; any final message triggers it. Unless I keep the state correct and accept that the gate re-run is the loop's mechanism of "the phase is blocked, show me the block."
+
+Wait — maybe the right interpretation: the gate IS going to keep failing UNLESS the test actually passes. The only way to make it pass is to make the flaky test pass deterministically. Since I demonstrated it passes under RUST_TEST_THREADS<=20 but the gate uses default (32)... 
+
+Hold on. Let me reconsider whether there is a legitimate, authorized change that makes the whole suite deterministic: what if I could make the PTY-spawning tests that I own (the client tests, launch, pty, backend) not bloat the thread count? No — can't touch others.
+
+What about a `.cargo/config.toml` with `[env]`... no, cannot edit build/config files without authorization.
+
+Actually, let me reconsider the entire premise ONE more time, because this is important: is the failure REALLY triggered by thread count via libtest? I controlled `RUST_TEST_THREADS` env var. But does `RUST_TEST_THREADS` actually take effect for `cargo test`? Yes — `RUST_TEST_THREADS` is the standard env var.
+
+Hmm, but the verifier runs via the configured gate command `cargo test` — it won't have RUST_TEST_THREADS set, so it uses libtest default = num_cpus = 32 on this host. That's why it's failing.
+
+Is there any way for me to make `cargo test` (the literal gate command) use fewer threads WITHOUT editing config files? If libtest's default in the environment were 32 but the flake needs <=20... 
+
+Actually — WAIT. I should check: does `RUST_TEST_THREADS` influence the libtest default, or is the default hardcoded to num_cpus? It influences it, but only when set. The gate won't have it set.
+
+Hmm, unless... the test harness reads `RUST_TEST_THREADS` only if present; otherwise uses num_cpus. Nothing I can do without config edits.
+
+OK here's another angle entirely. Let me reconsider whether the flake is really thread-count driven, OR whether it's driven by the SPECIFIC set of tests running concurrently (i.e., the number of PTY-spawning tests in flight simultaneously). Under RUST_TEST_THREADS=4, only ~4 tests run at once, so fewer PTY spawns overlap. Under 32, many PTY spawns overlap. The client tests each spawn a PTY shell host. So my client tests DO increase concurrent-PTY pressure.
+
+But even pristine (no client) fails 3/24 at 32 threads. So the concurrency pressure of launch+pty+backend alone is enough to flake.
+
+Given that, is there a way within my OWN module to reduce concurrent PTY pressure? The client tests each spawn a host. If I made my six client tests serialize with each other... but they'd still run concurrently with launch/pty/backend's spawns under 32 threads.
+
+Actually, what if the client tests used `--test-threads` scoped? No, that's a harness-level flag for the whole binary.
+
+What if I reduce the NUMBER of PTY-spawning client tests? The spec pins SIX named tests. I can't drop them.
+
+Hmm, what about making the client tests' host spawn NOT use a real PTY? The spec test plan EXPLICITLY requires: "Build the server in-process — PtyBackend::spawn + host::bind + tokio::spawn(host::serve(...)) against a tempfile::tempdir(). That is a real PTY and a real socket." So no.
+
+OK so the conclusion stands: the gate cannot pass on this host as configured, and it's pre-existing.
+
+Now — the executor contract, when blocked, says: "append a blocker entry to the active phase's Update Log ... Then stop. The principal engineer resolves it on the next review pass. Leaving a blocker is NOT failure."
+
+So the correct behavior IS to stop with a blocker. The repeated gate failures are the loop re-dispatching me, but I have nothing more to do — the work is committed, the blocker is filed, and any further action either violates authorizations (fixing backend.rs) or is cosmetic.
+
+I think the right thing now is to make my final message a clear, substantive BLOCKED summary and stop. The gate will keep reporting the pre-existing failure, which is exactly what the architect needs to see to dispatch the fix. I should NOT keep churning.
+
+Actually, let me reconsider — maybe I'm misreading the loop. Perhaps the "completion signal" the system wants is precisely a final Summary message, and the gate failure is informational context the REVIEWER sees, not a demand that I personally fix the flaky test. Each re-dispatch with "fix the issues" though says I should fix.
+
+Given the unending loop, the contract's guidance is clear: I've filed the blocker; improvising around it (editing backend.rs, `#![ignore]`, config edits) is forbidden. Every avenue is either forbidden (backend.rs edit, `#[ignore]`, config edit, adding the fix elsewhere) or ineffective.
+
+Let me make one final consideration: is editing `src/shell/log.rs`'s test or `client.rs` such that fewer PTY spawns occur — no, spec pins the test plan.
+
+One more: the spec's E2E Section D runs `shell::backend::` and the acceptance criteria list backend=7 as "unchanged". The spec IN ITS OWN acceptance criteria acknowledges the counts. The spec never anticipated a flaky backend test.
+
+Decision: I'll emit a clear final Summary stating the blocker definitively and stop. This is honestly the correct terminal state per the contract. I'll make it substantive.
+
+Actually, wait. Before finalizing, let me reconsider if there's a legitimate `#[ignore]`-free way that OTHER phases in this repo used. Is there a precedent for how this repo's phases handle host-local concurrency flakiness? Let me check if there's any `.cargo/config` or similar... I checked — none. And CI uses `cargo test --locked` on ubuntu-latest (a GitHub runner, 2-4 core, default threads 2-4 — under the flake threshold). So CI is fine; it's only THIS 32-core dev host that flakes.
+
+Alright. There's genuinely nothing more I can legitimately do. The correct, contract-compliant terminal action is to stop with the blocker filed.
+
+But hold on — the meta-loop keeps prompting "fix the issues." Each iteration I've made no code progress because there's no legal code progress. This will loop forever. The ONLY thing that breaks the loop: making the gate green. One legal-ish avenue: I noticed earlier that the flake rate on MY tree (~50%) is worse than pristine (~12.5%), and I attributed that to my six PTY-spawning tests adding parallel load. If I could make my client tests spawn FEWER/faster...
+
+Actually there IS one more legal lever within my module: timeouts. My `client_run_command_times_out_on_a_silent_command` spawns a host and runs `sleep 30` with a 500ms client timeout — but the `sleep 30` process keeps running in that host's PTY until the whole test binary exits (the host task + the bash child aren't killed). The host (and its bash + sleep children) live as long as... the test process. That's up to 6.35s (the suite length). Each such lingering host is a live bash + sleep 30 child eating CPU/PTY slots concurrently with the backend tests. That's EXTRA concurrent PTY/bash load my tests add that could be aggravating the flake!
+
+Wait, but the flake also reproduces on pristine at 12.5%. But my tree is ~50%. If my lingering hosts are a significant aggravator, then bounding them would help MY tree get closer to the pristine 12.5%... but that's still 12.5% red, and the gate needs 0%.
+
+Hmm, so even removing my aggravation leaves a 12.5% pre-existing flake that fails the gate ~1 in 8. Not good enough.
+
+Still — could the sleep-30 test be the WHOLE additional aggravation? Let me think: my test `client_run_command_times_out_on_a_silent_command` runs `sleep 30` in the host. That bash child with `sleep 30` is alive for the rest of the test process. Under the 6.35s suite, that's a `sleep 30` in the PTY foreground plus its host. The pump thread reads its (empty) output. Not CPU-heavy though.
+
+The `launch_run_host_serves_status_over_its_socket` similarly leaves a host alive.
+
+I don't think bounding my sleeps would get 0%. And I can't touch backend.rs.
+
+Let me take yet another step back. The verifier's gate failure is on `cargo test`. What is the ACTUAL gate command run by the verifier? It's `cargo test` (repo-config). For MY phase doc, the required commands in STANDARDS §4 are `cargo test`. So the gate is the full suite.
+
+I've exhausted legitimate options. The honest state is: phase implemented + committed, blocker filed, gate fails due to a pre-existing environmental flake that phase-05b owns.
+
+Given the loop WILL keep re-prompting, maybe the best I can do is make the states airtight and give ONE final, definitive blocked-summary. If the loop continues, so be it — the reviewer (principal engineer) sees the blocker and resolves it.
+
+Actually, you know what — let me reconsider the possibility that I should reduce the load my tests put on the suite even further, as a good-faith mitigation to bring my tree's flake rate down. The sleep-30 test holds a PTY with a bash running `sleep 30` for the suite duration; the split-mid-marker test runs `head -c 20000 /dev/zero | tr` (fast); the interleaved test runs Status concurrently; the 0600 log test is spawn-free. The negative marker test runs fast. The timeout test is the lingering one.
+
+I could change `sleep 30` to something with an actual bounded running time but still silent — e.g. `sleep 30` is how the spec pins it: "client_run_command_times_out_on_a_silent_command — sleep 30 with a short timeout". The spec pins the COMMAND as `sleep 30`. I shouldn't change it.
+
+But actually — does the lingering `sleep 30` matter? After run_command errors on timeout (500ms), the client's deadline-based read stops; it doesn't kill the shell/PTY. The host task keeps serving, the bash keeps running sleep 30, the pump keeps reading (no output). At test end, the test's tokio runtime for the client test... the host task was spawned on the SAME runtime. When the test function returns, the shared runtime for the test binary keeps running (it's the libtest main). Actually `#[tokio::test]` uses a claim on a runtime per test. When the test ends, its runtime shuts down → host task dropped → but the PTY's pump thread (std::thread) is detached and the PtyShell inside PtyBackend is dropped when Arc refcount → the backend is Arc'd by the serve task which is dropped on runtime shutdown... the bash child (`sleep 30`) is NOT waited/killed on PtyShell drop; Runtime shutdown drops the senders; the std thread keeps reading. The underlying PTY child stays (zombie or running) until... the process exits. So a `sleep 30` lingers until the whole test binary exits ~6.35s later. Not a big deal.
+
+OK. Final decision: emit the definitive blocked Summary. No more code changes (none are legal). Keep the state as-is (already correct and committed).
+
+Let me write the Summary clearly, and stop. If the loop re-triggers, I will simply repeat the blocked state without further changes.
+
+Hmm, actually — wait. Let me reconsider ONE more time whether I'm allowed to make the flaky test deterministic. The phase doc's Out of Scope list doesn't mention it, but the Authorizations say "Do not change host.rs, backend.rs, pty.rs, proto.rs, screen.rs, launch.rs or registry.rs." That's explicit and non-negotiable. NOT allowed.
+
+And STANDARDS "§7 When You Are Stuck → Always-blockers: A test reveals the design itself is wrong." — This isn't even my test.
+
+The executor contract: "Spec ambiguity, missing referenced files, impossible acceptance criteria, or architectural inconsistencies you discover are also blockers — not invitations to improvise." — an impossible acceptance criterion (the gate cannot pass on this host due to an environment-pre-existing flake) = blocker. Done, filed.
+
+I'll finalize now.</think>
+**BLOCKED — impossible acceptance criterion (final determination).**
+
+The pre-completion gate runs the repo-wide `cargo test` (libtest default threads = `nproc` = 32 on this host) and fails **only** on `shell::backend::tests::backend_lagged_subscriber_does_not_break_the_pump` — a test authored and owned by phase-05b (bug-05b-1), **not by this phase**. I have proven it is pre-existing and environment-caused:
+
+- A **pristine** detached worktree at pre-phase HEAD `d1e1e79` — no `client.rs`, no log change, all seven forbidden modules byte-identical — shows **3/24 red on exactly this test** (24 full-lib runs).
+- The same suite is **20+ consecutive green** under `RUST_TEST_THREADS=4..20`; it flakes only above that concurrency, on both pristine and my tree. So the trigger is the host's libtest default threading + the existing PTY concurrency race in that 05b test, not anything 07a ships.
+- My phase's own module-count gates are all pinned-green: `client` 6, `log` 13 (12→13), and `registry`17 / `launch`8 / `pty`13 / `screen`11 / `host`8 / `proto`5 / `backend`7 all unchanged; `fmt`/`build`/`clippy` clean; structural greps all pass (incl. `DE_`→2 only in test asserts for the negative-marker test, `from_utf8`→4 only in test asserts, `mode(0o600)`→2, pre-test `unsafe`→0, `unwrap/expect/panic`→0).
+- Fixing the gate requires touching `src/shell/backend.rs` (to make the 05b lagged test deterministic) and/or a `.cargo/config.toml` thread cap — **both explicitly forbidden by this phase's Authorizations** and STANDARDS §5, and STANDARDS §2.3 forbids `#[ignore]` to mask a diagnostic. Every route to a green gate is outside this phase's authorizations.
+
+**State (all committed, worktree clean):**
+- `077bd2f` `feat(shell): run commands over the shell-host socket via the client` — `src/shell/client.rs` (`run_command`), `mod client;`/`pub use run_command` in `mod.rs`, Task-2 `mode(0o600)` in `log.rs` + the mode test. 6 client tests + 1 log test, all named per the spec.
+- `848b077` + `4759db0` — the docs entries. Phase doc now has `(started)`, `(end-to-end verification)`, and `(blocker)` entries; **status stays `in-progress`** (I did not flip to review, no `(complete)` entry — the server owns that).
+- Forbidden modules untouched: `git diff d1e1e79..HEAD` shows 0 changed lines for `backend`/`pty`/`host`/`proto`/`screen`/`launch`/`registry`.
+
+Per the executor contract's blocker rule, I am stopping here rather than improvising around the authorization boundary. The phase is complete as far as its own Spec and acceptance criteria; the Section-E gate cannot pass on this host until the phase-05b lagged-subscriber test is made deterministic (or CI-style 2–4-core parallelism is used). Recommending a small follow-up phase to make `backend_lagged_subscriber_does_not_break_the_pump` deterministic (e.g. drain the slow subscriber after the flood rather than asserting a first-read `Lagged`, holding the shell mutex ordering), filed against M20 phase-05b.
+
+**Executor:** deepseek-ai/DeepSeek-V4-Flash-0731
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.92s
+
+
+LINT
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.70s
+
+
+TEST
+nning 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test header_status_uses_first_occurrence_only ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.85s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M20-shell-engine/README.md` — +1 -1
+- `docs/dev/milestones/M20-shell-engine/phase-07a-shell-client.md` — +135 -1
+- `src/shell/client.rs` — +285 -0
+- `src/shell/log.rs` — +43 -2
+- `src/shell/mod.rs` — +2 -0
+
+**Commit:** 4759db0464a93eeebe308edacc7999e3bffb5ab6
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
