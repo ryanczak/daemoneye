@@ -1,6 +1,6 @@
 # Bug 1 on phase-07a: the phase's own client tests turn the `cargo test` gate red
 
-**Status:** open
+**Status:** fixed
 **Severity:** blocker
 **Filed:** 2026-09-06
 
@@ -93,3 +93,6 @@ stays off-limits.
       is allowed but must leave those tests green.
 - [ ] `git diff d1e1e79 -- src/shell/backend.rs` touches only test code: the
       awk-extracted pre-`#[cfg(test)]` region is unchanged.
+
+**Closed:** 2026-09-06 at review — verified independently; see the phase doc's
+Review verdict entry.

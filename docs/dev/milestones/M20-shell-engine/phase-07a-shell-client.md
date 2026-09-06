@@ -1,7 +1,7 @@
 # Phase 07a: the shell-host client — running a command over the socket
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** phase-05a (`bind`/`serve`, the frame set), phase-05b
 (`PtyBackend`), phase-02 (the marker primitives) — all done.
 **Estimated diff:** ~320 lines
@@ -939,3 +939,54 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b2ee361e2335847914b5615e95931aae1e4f4859
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-06
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-07a-1 blocker, bug-07a-2 major — both now closed)
+- **Executor:** deepseek-ai/DeepSeek-V4-Flash-0731
+- **Scope deviations:** none. The `backend.rs` edit is confined to the
+  `#[cfg(test)]` module the bounce explicitly authorized; the pre-`#[cfg(test)]`
+  region is byte-identical to `d1e1e79` (verified by awk-extracted diff).
+- **Calibration:** the `assert_lagged` doc comment claims the caller "syncs on
+  the flood's own completion marker first, so ... the subscriber is provably
+  more than `STREAM_CAPACITY` chunks behind". There is no completion marker —
+  the caller syncs on `FLOOD_START` plus `quiet()`'s 30 ms silence heuristic, so
+  "provably" overstates it. The code does not rely on the claim (the bounded
+  poll is what makes the assertion deterministic), so this is a comment
+  inaccuracy in test code, not a defect. Recorded, not bounced.
+
+**Verified at review, independently re-run:**
+
+- All four gates green: `fmt`, `build`, `clippy --all-targets --all-features
+  -D warnings`, `cargo test`.
+- **bug-07a-1 closed.** 20/20 full-lib runs report `ok, 0 failed` at the
+  default 32-thread libtest concurrency — no `RUST_TEST_THREADS` cap, no skip
+  filter (was 19/20 `FAILED` at the bounce). The full `cargo test` gate passes
+  three consecutive times, 1624 passed each.
+- **The fix is not a mask.** Mutating the pump's `Err(RecvError::Lagged(_)) =>
+  continue` to `break` (`backend.rs:85`) makes
+  `backend_lagged_subscriber_does_not_break_the_pump` fail
+  (`slow subscriber: never reported Lagged within the wait`). The test still
+  guards the pump-survival behaviour it exists to pin. `shell::backend::` is 7,
+  `#[ignore]` count 0, `#[allow]` count 0.
+- **bug-07a-2 closed.** The 18:45 `(end-to-end verification)` entry's fenced
+  block was diffed against an independent re-run of the spec's E2E block at
+  review: it differs in **three wall-clock timings only** (`0.08s`/`0.06s`,
+  `3.58s`/`3.56s`, `6.30s`/`6.33s`). That is what a mechanical capture looks
+  like. Section B now carries the ` ... ok` suffixes the real command emits —
+  their absence in the superseded 15:05 entry was itself evidence of hand
+  editing.
+- **The client tests are real.** Mutating the accumulation
+  (`buf.extend_from_slice(&bytes)` → `buf = bytes.clone()`, `client.rs:91`)
+  fails 4 of the 6 client tests, including the exit-code, marker-stripping and
+  chunk-split cases.
+- **Task 2's test is real.** Injected into a pristine worktree at `d1e1e79`
+  against the unpatched `File::create`, `log_cast_and_meta_are_created_mode_0600`
+  fails (`cast file must carry the explicit 0600 mode`). The umask in this
+  shell is `0022`, so the assertion genuinely discriminates.
+- Counts: `client` **6**, `log` **13** (12 → 13), and `registry` 17 /
+  `launch` 8 / `pty` 13 / `screen` 11 / `host` 8 / `proto` 5 / `backend` 7
+  unchanged. No `TODO`/`FIXME`/`XXX`, no `dbg!`/`println!`, no `unsafe`, and
+  zero `unwrap`/`expect`/`panic!` in the production region of every changed
+  file (the five in `log.rs` are all inside the new test).

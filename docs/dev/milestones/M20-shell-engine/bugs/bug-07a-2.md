@@ -1,6 +1,6 @@
 # Bug 2 on phase-07a: the end-to-end transcript is paraphrased, not captured
 
-**Status:** open
+**Status:** fixed
 **Severity:** major
 **Filed:** 2026-09-06
 
@@ -63,3 +63,6 @@ evidence-artifact defects rather than code defects.
       entry. (Now: the entry states `PASTE MISMATCH`.)
 - [ ] Any interpretation of the transcript appears as prose outside the fenced
       block, not as substituted lines inside it.
+
+**Closed:** 2026-09-06 at review — verified independently; see the phase doc's
+Review verdict entry.
