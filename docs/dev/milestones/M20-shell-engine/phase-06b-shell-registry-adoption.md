@@ -1,7 +1,7 @@
 # Phase 06b: startup adoption and the stale-host sweep
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06a (`ShellId`, `Owner`, `ShellRegistry`, `with_shells`)
 and phase-05c (`socket_path`, `lock_path`, `cast_path`), both done.
 **Estimated diff:** ~380 lines
