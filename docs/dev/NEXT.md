@@ -4131,9 +4131,45 @@ whose defects were all architect-side. The difference was measuring six facts
 not recoverable from disk; `flock` conflicts across two opens in one process)
 would each have produced a bounce had they been assumed.
 
-**Active phase: phase-07a — shell-client**
-(`docs/dev/milestones/M20-shell-engine/phase-07a-shell-client.md`,
-status: todo, drafted 2026-09-06). Dispatch with `/rexymcp:dispatch phase-07a`.
+**phase-07a — shell-client: done (approved_after_1) 2026-09-06**, landing
+commit `077bd2f`, fix `ca4cb8f`, approval `3687f62`. One bounce, two bugs, both
+closed. `src/shell/client.rs` (`run_command`) + explicit `0600` modes on the
+`.cast`/`.meta.json`.
+
+The bounce is the milestone's most useful data point so far. The executor
+returned a confident blocker arguing the red `cargo test` gate was a
+pre-existing flake in phase-05b's `backend_lagged_subscriber_does_not_break_the_pump`,
+"3/24 red on pristine HEAD". Re-measured at review: **0 red in 36** pristine
+runs, **19 red in 20** on the phase tree, and **0 red in 12** with only the six
+new `shell::client::` tests skipped. The phase's own tests were the whole
+cause — they made phase-05b's 30 ms wall-clock `quiet()` heuristic fire early.
+Two lessons, both already folded into the 07b spec:
+
+1. **Per-module test counts cannot see a cross-module concurrency
+   regression.** Every pinned count in the E2E block was green while the suite
+   was red 95% of the time. Phase specs from here on carry a three-consecutive-
+   full-suite-run criterion, not just module counts.
+2. **The paraphrased transcript is what hid the false claim.** Section E had
+   been rewritten as prose and the entry recorded `PASTE MISMATCH` "by
+   design". Had it been pasted verbatim the parity claim would have been
+   visibly untested. Same class as the M12 headline; bug-07a-2 filed.
+
+**Active phase: phase-07b — shell-session-wiring**
+(`docs/dev/milestones/M20-shell-engine/phase-07b-shell-session-wiring.md`,
+status: todo, drafted 2026-09-06). Dispatch with `/rexymcp:dispatch phase-07b`.
+
+Scope: `src/shell/session.rs` — `shell_for_owner` (reuse the owner's live
+shell or create one, `await_ready`, roll the registry record back when
+readiness fails) plus a live `ShellRegistry` in `run_daemon` that sweeps then
+adopts, gated on `[execution] backend = "pty"`. Nothing consumes the registry
+yet; 07c routes `run_terminal_command` through it.
+
+**Phase 07b was split at drafting into 07b and 07c** on a measured
+missing-piece finding — the daemon has *no* shell wiring (`grep -rn
+'crate::shell::' src/` outside `src/shell/` returns nothing; `adopt_at_startup`
+has no caller), so routing the tool presupposed a registry that does not
+exist. Drafting measurements, the split rationale, and the corrected E2E
+Section G are recorded in the milestone README.
 
 **Phase 07 was split at drafting into 07a and 07b**, on a missing-piece finding
 rather than size alone. Measuring first showed **no client for the shell socket
