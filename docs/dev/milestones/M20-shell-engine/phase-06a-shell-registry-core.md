@@ -1,7 +1,7 @@
 # Phase 06a: the shell registry core — ids, owners and per-owner caps
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** phase-05c (`spawn_detached`, `socket_path`, `validate_shell_id`),
 done.
 **Estimated diff:** ~420 lines
@@ -752,3 +752,73 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7a8f6763bc63bdb040beef86482efa064ec7ab68
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-05
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 round that did not land — a `hard_fail`
+  (`BackendError: "error decoding response body"`, 75 turns, 0/4 tasks, no
+  source) whose triage exposed an architect spec defect, resolved by refined
+  re-dispatch. No bug doc filed; the defect was in the spec, not the code.
+- **Executor:** deepseek-ai/DeepSeek-V4-Flash-0731 (75 / 76 turns)
+- **Scope deviations:** none. `registry.rs` +334, `mod.rs` +5, nothing else
+  touched. `lifecycle.rs` correctly left alone for 06b.
+- **Calibration:** see § Notes.
+
+**Gates re-run independently at review, all green:** `cargo fmt --all --check`
+0, `cargo build` 0 (forced recompile, no warnings), `cargo clippy
+--all-targets --all-features -- -D warnings` 0, `cargo test --lib` **1608
+passed / 0 failed** on **three consecutive runs**, configured `cargo test`
+clean. Module counts exact: `registry` **8**, `launch` **8**, `pty` **13**,
+`log` **12**, `screen` **11**, `host` **8**, `proto` **5**, `backend` **7**.
+All twelve structural criteria hit their target values, including `0`
+occurrences of `spawn_detached` and `0` stray hosts.
+
+**`shell::registry::` runs in 0.00s** — fully hermetic, no processes, no
+`HOME`, no PTY. That is what the test seam bought, and it is the clearest sign
+the refinement was the right call.
+
+**The load-bearing constraint is guarded twice, and I verified both halves:**
+
+1. **Lock not held across the spawn — enforced by the type system.** Attempting
+   the violation does not compile: a `std::sync::MutexGuard` held across
+   `.await` makes the future non-`Send`, which `tokio::spawn` rejects
+   (`the trait Send is not implemented for MutexGuard<'_, HashMap<String,
+   ShellRecord>>`). Stronger than a test.
+2. **Slot reserved *before* the spawn — caught by the test.** Mutating
+   `spawn_for` to insert the record *after* the spawn instead of before makes
+   `registry_spawn_for_does_not_hold_the_lock_across_the_spawn` **FAIL** with
+   `the slot must be reserved before the spawn runs`. That is the real race
+   bug (two concurrent callers landing on one index) and it is genuinely
+   guarded.
+
+Also mutation-checked: removing the failure cleanup makes
+`registry_spawn_for_releases_the_slot_when_the_spawn_fails` **FAIL**.
+
+**Fixtures read, not just names** — the standing lesson from phase-04. The
+simultaneity test signals from inside the stub, waits for that signal, and
+asserts `try_lock()` succeeds *while the stub is suspended*, then releases it.
+It proves the lock is free **during** the spawn, not merely after. The id
+negative-case test asserts all eleven rejected inputs individually with the
+input named in the message, and the owner test uses the **same** id string
+`"x"` for both kinds, which is the collision case that matters.
+
+## Notes
+
+- **The failed first round was not wasted, and its triage is the story of this
+  phase.** It died on infrastructure, but its last dozen tool calls were
+  spawning and killing `target/debug/deps/daemoneye-*` pids — the executor
+  correctly discovering that `spawn_for` → `spawn_detached` →
+  `current_exe()` resolves to the **libtest binary** under `cargo test`, so the
+  two tests that called `spawn_for` could never have passed. Reading *what the
+  run was doing* rather than only *why it stopped* is what surfaced it.
+- **Third consecutive phase whose defect was architect-side, and the shape is
+  now consistent: speccing against an API's name rather than its behaviour in
+  the context it would actually run in.** 05c round 2 prescribed a fix against
+  an incomplete list of spawn sites; 05c round 3 enumerated by symbol instead
+  of by call path; 06a specced a call that cannot work in the harness that
+  would run it. Held for the M20 retrospective — the mitigation that has
+  worked every time is executing the thing before writing it down.
+- **The seam answers an open question carried since the 05a close** about
+  needing a backend test seam for deterministic concurrency tests. It does, and
+  it is now proven in use.
