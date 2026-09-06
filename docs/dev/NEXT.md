@@ -4013,3 +4013,48 @@ Drafting notes:
    (05c's `pgrep` self-match, caught at drafting). `WORKFLOW.md` § Calibration
    puts the fix threshold at three; `docs/dev/TODO.md` § 1 is the standing item.
    The architect does not amend `WORKFLOW.md` unilaterally.
+
+## M20 sign-off and the calibration decision (2026-09-06)
+
+**Both standing PE items are now closed.**
+
+**1. M20 scoping: signed off.** Reviewed against the tree after six phases —
+goal, non-goals and exit criteria unchanged and holding. Recorded in the
+milestone README. Two things the sign-off surfaced:
+
+- **The milestone is twelve phases, not the nine originally scoped** (05 →
+  05a/05b/05c, 06 → 06a/06b). Both splits came from measured seams, not
+  estimation.
+- **One exit criterion had lost its owner in the splits** — the *masking* half
+  of "output reaching the model is masked, the `.cast` at rest is raw and
+  `0600`". It is now **phase-07's**, which is where shell output first becomes
+  a tool result. The `0600` half was measured at sign-off and already holds,
+  even under `umask 022`, because `main()` sets `umask(0o077)` and the
+  shell-host runs through the same `main()` — but it holds *by umask*, not by
+  an explicit mode, so phase-07 also sets the mode explicitly, the way
+  `host::bind` does for the socket.
+
+**2. The criterion-defect pattern: no `WORKFLOW.md` fold.** I went to write the
+prose fold and found `docs/dev/TODO.md` § 1 already forecloses it. That item was
+logged at the M5 close with **eight** occurrences and states that the rule was
+already written, already unfollowed by an architect who had read it, and that
+*"adding a paragraph restating it would be the fourth attempt at the same
+intervention."* M20's four are occurrences **9–12 of an already-diagnosed
+pattern**, not a new one at threshold three, and the remedy — a mechanical
+pre-dispatch check — belongs in the **rexyMCP repo**, not here.
+
+Appended to TODO § 1 instead, with two shapes M5 did not have (**unreachable
+expected value**; **self-match**, where the probe matches its own context) and
+the distinction that explains why dry-running has not been enough: **running a
+criterion pre-dispatch proves it fails *now*, not that it can pass *later*.**
+All four of #9–#12 failed correctly before dispatch and were still defective, so
+the sketched check needs a fourth category beyond "does not run / is ambiguous".
+
+**A residual defect found while verifying, and fixed** (`13721ff`): phase-01's
+`2 → 1` correction had been applied to § Acceptance criteria but not to its E2E
+block, which still echoed the label `(2)` against a criterion that is in fact
+satisfied at 1.
+
+**Next: phase-06b — shell-registry-adoption**, undrafted. The flock-vs-`connect()`
+liveness measurements it needs are already recorded in the milestone README.
+Draft with `/rexymcp:architect next`.

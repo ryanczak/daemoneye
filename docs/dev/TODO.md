@@ -81,3 +81,48 @@ Open questions worth deciding before building anything:
 **Note:** this would be a change to rexyMCP itself, not to DaemonEye. It is logged
 here because DaemonEye is where the evidence accumulated; the work belongs in the
 rexyMCP repo.
+
+### M20 evidence — occurrences 9–12 (appended 2026-09-06, PE decision)
+
+M20 produced four more, reviewed at the milestone sign-off. **Deliberately not
+folded as prose into `WORKFLOW.md`:** this item already establishes that the rule
+was stated and unfollowed, and that a restating paragraph would be the fourth
+attempt at the same intervention. These are logged as evidence for the mechanical
+check, not as a new pattern at threshold three.
+
+| # | Where | Criterion | Pinned | Actual | Shape |
+|---|---|---|---|---|---|
+| 9 | phase-01 | `grep -c "pub execution: ExecutionConfig" src/config/types.rs` | 2 | max **1** | unreachable value |
+| 10 | bug-02-3 | unanchored `grep -c 'fn parse_outcome …'` | 1 | **2** | self-match |
+| 11 | phase-05b r1 | three `grep -c 'fn <name>'` counts | 1 each | **7 / 3 / 2** | unreachable value |
+| 12 | phase-06a | `pgrep -fc 'daemoneye shell-host'` | 0 | **1** on a clean tree | self-match |
+
+Verified at sign-off rather than relayed: `types.rs:44` `pub execution:
+ExecutionConfig,` matches and `:69` `execution: ExecutionConfig::default(),`
+does not, so 2 was unreachable; and `fn parse_outcome` appears **7** times in
+`src/shell/pty.rs` and **5** times in `bug-02-3.md` itself, so the unanchored
+grep could never return 1.
+
+**Two shapes M5 did not have**, both worth a check knowing about:
+
+- **Unreachable expected value** (#9, #11). The criterion runs and returns a
+  number; that number simply cannot become the pinned one.
+- **Self-match** (#10, #12). The probe matches its own context — the criterion's
+  text inside the doc it lives in, or the `pgrep` pattern inside the command line
+  of the shell running it. This generalises past greps to any probe executed in
+  an environment that contains the probe.
+
+**The distinction this evidence sharpens, and the reason dry-running has not been
+enough:** running a criterion pre-dispatch proves it **fails now**. It does not
+prove it **can pass later**. Those are different checks, and only the first has
+ever been done by hand. Every one of #9–#12 failed correctly before dispatch; all
+four were still defective. A pre-dispatch check that only reports *runs and fails
+now* would have passed all four — so the check's category 3 (**does not run / is
+ambiguous**) needs a fourth category: *runs, fails now, but the expected value is
+unreachable or the probe matches itself*.
+
+**One positive data point.** #12 was caught **before** dispatch, because the
+criterion was run in the context it would actually execute in — a `bash -c`
+wrapper whose own command line contained the pattern. The practice works when
+applied; it is not reliably applied by hand, which is the argument for
+mechanising it rather than restating it.

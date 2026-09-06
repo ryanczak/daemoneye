@@ -8,8 +8,31 @@ deterministic marker protocol with real exit codes — behind an
 from a real `daemoneye chat` turn runs on the new substrate with tmux
 untouched.
 
-**Status:** in-progress — scoped 2026-09-03; phase-01 drafted 2026-09-03 on
-PE direction (`/rexymcp:architect next`).
+**Status:** in-progress — scoped 2026-09-03; **PE sign-off 2026-09-06**.
+
+**Sign-off record (2026-09-06).** Reviewed against the tree after six phases:
+the goal, non-goals and exit criteria are unchanged and hold. Two structural
+changes since scoping, both from measured seams rather than estimation — phase
+05 split into 05a/05b/05c, phase 06 into 06a/06b — so the milestone is **twelve
+phases, not nine**. Every "not yet measured" item from the original list has
+since been measured, including the `less`/resize leg that was inconclusive at
+scoping.
+
+One gap was found and closed at sign-off: after the two splits, the **masking**
+half of the "output reaching the model is masked, the `.cast` at rest is raw and
+`0600`" criterion had **no owning phase**. It is now phase-07's (see the phase
+table). The `0600` half was measured at sign-off and already holds — and holds
+even under `umask 022`, because `main()` sets `umask(0o077)` unconditionally and
+the shell-host runs through the same `main()`:
+
+```
+-rw------- s1-1788698980.cast     (default umask)
+-rw------- s1-1788698981.cast     (umask 022)
+```
+
+It holds *by umask* rather than by an explicit mode, which is the same
+fragility phase-05a deliberately removed for the socket. Phase-07 also sets the
+mode explicitly.
 
 **Depends on:** M19 — Sandbox Completion (closed 2026-09-03 at the 2.0
 boundary). First milestone of DaemonEye 2.0; plan of record
@@ -166,7 +189,7 @@ line-number facts go stale and each landing shifts the next Current state).
 | 05c | shell-host-binary ([phase-05c-shell-host-binary.md](phase-05c-shell-host-binary.md)) | **done** (approved_after_2, 2026-09-05; 1 hard_fail escalation + 1 bounce, 1 bug resolved) | The `daemoneye shell-host --id sN` subcommand, detached spawn via `process_group(0)`, and a `Status`-round-trip readiness check. Settles the 05a carry: an `InstanceLock` per shell id is what authorizes unlinking its socket. |
 | 06a | shell-registry-core ([phase-06a-shell-registry-core.md](phase-06a-shell-registry-core.md)) | **done** (approved_after_1, 2026-09-05; 1 hard_fail escalation, no bug filed) | `src/shell/registry.rs`: `ShellId`, `Owner`, `ShellRegistry` mirroring `SessionStore`'s newtype+accessor shape, hole-filling id allocation, per-owner caps, and `spawn_for` — which reserves the slot under the lock and spawns **outside** it. |
 | 06b | shell-registry-adoption | todo (not drafted) | Startup adoption by scanning `var/run/shells/`, the stale socket/lock sweep, exited-shell GC under `shells.exited_retention_secs`, and flipping the `var/run/shells` lifecycle row from `Pending`. |
-| 07 | run-terminal-command-pty | todo (not drafted) | Route `run_terminal_command` through the registry when `backend = "pty"` (local host only, wait-for-marker), masked + annotated result, real exit code in the tool result and in the `events.jsonl` command record. First phase that runs a command on the new substrate from chat. |
+| 07 | run-terminal-command-pty | todo (not drafted) | Route `run_terminal_command` through the registry when `backend = "pty"` (local host only, wait-for-marker), masked + annotated result, real exit code in the tool result and in the `events.jsonl` command record. First phase that runs a command on the new substrate from chat. **Owns the masking exit criterion** (PE decision 2026-09-06): a seeded secret must appear raw in the `.cast` and masked in the tool result. Also sets the `.cast` mode explicitly rather than relying on the process umask, as `host::bind` does for the socket. |
 | 08 | interactive-and-signals | todo (not drafted) | `is_interactive_command()` → return immediately with the shell id; pause / resume / cancel on the shell API (`SIGSTOP` / `SIGCONT` / `SIGINT` to the foreground pgrp); state transitions `Idle → Running → Paused → Exited`. |
 | 09 | restart-survival-and-close | todo (not drafted) | Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
 
