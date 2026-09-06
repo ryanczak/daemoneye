@@ -407,7 +407,7 @@ rm -rf "$T"
 echo "== F. structural greps (each must print the stated number) =="
 echo -n "ExecutionConfig struct   (1): "; grep -c "^pub struct ExecutionConfig" src/config/types.rs
 echo -n "ShellsConfig struct      (1): "; grep -c "^pub struct ShellsConfig" src/config/types.rs
-echo -n "Config execution field   (2): "; grep -c "pub execution: ExecutionConfig" src/config/types.rs
+echo -n "Config execution field   (1): "; grep -c "pub execution: ExecutionConfig" src/config/types.rs
 echo -n "Config shells field      (2): "; grep -c "pub shells: ShellsConfig" src/config/types.rs
 echo -n "shells_dir ctor          (1): "; grep -c "^pub fn shells_dir" src/config/load.rs
 echo -n "shell_logs_dir ctor      (1): "; grep -c "^pub fn shell_logs_dir" src/config/load.rs
