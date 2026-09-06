@@ -425,4 +425,12 @@ signal to a process group or to PID -1.** This phase spawns no processes at all.
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
+### Update — 2026-09-06 13:26 (started)
+
+Executing phase-06b — startup adoption and the stale-host sweep. Pre-flight
+passed: `master` clean, and `cargo test --lib shell::` reports the pinned
+counts (`registry` 8, `launch` 8, `pty` 13, `log` 12, `screen` 11, `host` 8,
+`proto` 5, `backend` 7). Implementing the five Spec tasks in order, then the
+E2E block.
+
 <!-- entries appended below this line -->
