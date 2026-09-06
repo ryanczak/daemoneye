@@ -1,7 +1,7 @@
 # Phase 07a: the shell-host client — running a command over the socket
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced 2026-09-06 — bug-07a-1 blocker, bug-07a-2 major)
 **Depends on:** phase-05a (`bind`/`serve`, the frame set), phase-05b
 (`PtyBackend`), phase-02 (the marker primitives) — all done.
 **Estimated diff:** ~320 lines
@@ -177,9 +177,16 @@ is the `run_command` count, the test totals, and the `log` count moving 12 → 1
 - [ ] **The marker protocol is reused, not reinvented:**
       `grep -c 'wrap_command' src/shell/client.rs` → **1 or more**,
       `grep -c 'parse_outcome' src/shell/client.rs` → **1 or more**, and
-      `grep -c 'DE_' src/shell/client.rs` → **0**.
+      `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/shell/client.rs | grep -c 'DE_'`
+      → **0**. *(Corrected at review 2026-09-06: the criterion was drafted
+      without the pre-test filter the `unsafe`/`unwrap` criteria already use,
+      so it counted the `DE_BEG`/`DE_END` strings in the negative-case test's
+      own assertions — which are required by the test plan. Production code is
+      what must be free of marker literals.)*
 - [ ] **Chunks are accumulated, not decoded individually:**
-      `grep -c 'from_utf8' src/shell/client.rs` → **0** (F3).
+      `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/shell/client.rs | grep -c 'from_utf8'`
+      → **0** (F3). *(Same correction: `String::from_utf8_lossy` in test
+      assertions is not a per-chunk decode in the read loop.)*
 - [ ] `grep -c 'mode(0o600)' src/shell/log.rs` → **2** (now `0`) — the `.cast`
       and the `.meta.json`.
 - [ ] No `unsafe` in non-test code:
@@ -196,6 +203,30 @@ is the `run_command` count, the test totals, and the `log` count moving 12 → 1
       `shell::pty::` **13**, `shell::screen::` **11**, `shell::host::` **8**,
       `shell::proto::` **5**, `shell::backend::` **7**.
 - [ ] All four gates pass.
+
+**Added at review, 2026-09-06 (bug-07a-1 — the blocker).** Each was run against
+the current tree and returns the "now" value shown.
+
+- [ ] `for r in $(seq 1 20); do cargo test --lib 2>&1 | grep -E '^test result:' | head -1; done`
+      reports `ok` **20 times, 0 failed**, with no `RUST_TEST_THREADS` cap and
+      no skip filter (now: **19 of 20 report `FAILED`**, all on
+      `shell::backend::tests::backend_lagged_subscriber_does_not_break_the_pump`).
+- [ ] `cargo test` — the full gate as `rexymcp.toml` runs it — passes three
+      consecutive times (now: fails ~3 runs in 5).
+- [ ] `shell::backend::` still reports **7** passing, `0 failed` — the flaky
+      test is made deterministic, not deleted or `#[ignore]`d.
+- [ ] `grep -c '#\[ignore\]' src/shell/backend.rs` → **0** (now `0`; a
+      preservation criterion).
+- [ ] `git diff d1e1e79 -- src/shell/backend.rs` touches **test code only**:
+      the awk-extracted pre-`#[cfg(test)]` region is byte-identical to
+      `d1e1e79`.
+
+**Added at review, 2026-09-06 (bug-07a-2 — the evidence artifact).**
+
+- [ ] The `(end-to-end verification)` entry's fenced block is the byte-for-byte
+      contents of `/tmp/e2e-07a.txt` from one run of the block as written, and
+      the self-check prints **PASTE MATCH** (now: the entry states
+      `PASTE MISMATCH` and Section E is prose).
 
 ## Test plan
 
@@ -333,8 +364,17 @@ You may edit, and nothing else:
   they need (Task 2), plus the one new test
 - this phase doc's Update Log
 
-**Do not** change `host.rs`, `backend.rs`, `pty.rs`, `proto.rs`, `screen.rs`,
-`launch.rs` or `registry.rs`. In particular, **do not add frames to the wire
+- `src/shell/backend.rs` — **test code only**, widened at review 2026-09-06 for
+  bug-07a-1: the `#[cfg(test)]` module, specifically
+  `backend_lagged_subscriber_does_not_break_the_pump` and the `quiet()` /
+  `assert_lagged()` / `recv_until()` helpers it uses. **Production code in
+  `backend.rs` remains off-limits** — the pre-`#[cfg(test)]` region must come
+  out byte-identical to `d1e1e79`. Do not `#[ignore]` or delete the test;
+  `shell::backend::` must still report 7.
+
+**Do not** change `host.rs`, `pty.rs`, `proto.rs`, `screen.rs`,
+`launch.rs` or `registry.rs`, and do not touch `backend.rs` outside its test
+module. In particular, **do not add frames to the wire
 protocol** — F1 proves the existing `Subscribe` + `Input` shape carries a full
 command round trip.
 
