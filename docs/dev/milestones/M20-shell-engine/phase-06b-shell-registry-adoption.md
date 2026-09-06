@@ -434,3 +434,84 @@ counts (`registry` 8, `launch` 8, `pty` 13, `log` 12, `screen` 11, `host` 8,
 E2E block.
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-06 14:04 (end-to-end verification)
+
+```text
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.05s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::registry::tests::registry_adopt_inserts_live_hosts_with_owner_adopted ... ok
+shell::registry::tests::registry_adopt_skips_dead_hosts ... ok
+shell::registry::tests::registry_adopt_uses_zero_when_no_cast_file_matches ... ok
+shell::registry::tests::registry_allocate_index_fills_holes ... ok
+shell::registry::tests::registry_check_owner_cap_counts_only_that_owner ... ok
+shell::registry::tests::registry_check_owner_cap_zero_means_unlimited ... ok
+shell::registry::tests::registry_host_is_alive_fails_closed_on_an_unreadable_lock ... ok
+shell::registry::tests::registry_host_is_alive_reports_a_held_lock_as_alive ... ok
+shell::registry::tests::registry_owner_adopted_key_does_not_collide ... ok
+shell::registry::tests::registry_owner_keys_do_not_collide_across_kinds ... ok
+shell::registry::tests::registry_parse_cast_name_accepts_and_rejects ... ok
+shell::registry::tests::registry_scan_shell_ids_ignores_non_shell_entries ... ok
+shell::registry::tests::registry_shell_id_parse_delegates_to_the_shared_validator ... ok
+shell::registry::tests::registry_shell_id_round_trips_index_and_string ... ok
+shell::registry::tests::registry_spawn_for_does_not_hold_the_lock_across_the_spawn ... ok
+shell::registry::tests::registry_spawn_for_releases_the_slot_when_the_spawn_fails ... ok
+shell::registry::tests::registry_sweep_never_touches_a_live_host ... ok
+cargo_exit=0
+== C. shell::registry:: totals ==
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1604 filtered out; finished in 0.00s
+cargo_exit=0
+== D. earlier phases untouched (8, 13, 12, 11, 8, 5, 7) ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1613 filtered out; finished in 1.12s
+cargo_exit=0
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1608 filtered out; finished in 2.50s
+cargo_exit=0
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1609 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1610 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1613 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1616 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1614 filtered out; finished in 3.57s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1617 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.29s
+test result: ok. 1617 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.36s
+test result: ok. 1617 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 9.29s
+== F. structural greps (each must print the stated number) ==
+host_is_alive          (1): 1
+adopt_at_startup       (1): 1
+sweep_stale            (1): 1
+scan_shell_ids         (1): 1
+parse_cast_name        (1): 1
+Owner::Adopted        (>=1): 5
+InstanceLock reused   (>=1): 5
+no second lock scheme  (0): 0
+no grammar re-impl     (0): 0
+phase-06 row flipped   (0): 0
+phase-09 row untouched (1): 1
+no unsafe pre-test     (0): 0
+unwrap/expect/panic pre-test (0): 0
+== G. no shell-host leaked by the test run ==
+stray daemoneye shell-host processes (0): 0
+```
+
+Self-check:
+
+```sh
+D=docs/dev/milestones/M20-shell-engine/phase-06b-shell-registry-adoption.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-06b.txt
+diff /tmp/pasted-06b.txt /tmp/e2e-06b.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+`PASTE MATCH` — the pasted transcript above is byte-identical to the
+mechanically captured `/tmp/e2e-06b.txt`. All structural greps print exactly
+the stated numbers, section E is `0 failed` across three consecutive runs, G
+reports zero stray shell-host processes, and the four gates (build, clippy,
+fmt, test) are clean.

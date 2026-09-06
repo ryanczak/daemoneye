@@ -22,7 +22,7 @@ pub use pty::{
     CommandOutcome, Nonce, PtyShell, exit_var, parse_outcome, strip_markers, wrap_command,
 };
 pub use registry::{
-    Owner, ShellId, ShellRecord, ShellRegistry, allocate_index, check_owner_cap, spawn_for,
-    with_shells,
+    Owner, ShellId, ShellRecord, ShellRegistry, adopt_at_startup, allocate_index, check_owner_cap,
+    host_is_alive, parse_cast_name, scan_shell_ids, spawn_for, sweep_stale, with_shells,
 };
 pub use screen::ShellScreen;

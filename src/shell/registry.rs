@@ -1,10 +1,11 @@
 //! The in-memory shell registry: id grammar, ownership, per-owner caps, and
-//! slot allocation with spawn-outside-the-lock. Startup adoption, the stale
-//! socket/lock sweep and exited-shell GC are phase-06b; this module is the
-//! registry's shape only.
+//! slot allocation with spawn-outside-the-lock, plus startup adoption of the
+//! shells surviving a daemon restart and the sweep of dead hosts' leftovers.
+//! Exited-shell GC is phase-08.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::util::UnpoisonExt;
@@ -49,6 +50,12 @@ impl fmt::Display for ShellId {
 pub enum Owner {
     Chat(String),
     Ghost(String),
+    /// A shell adopted at daemon startup from a live host left behind by a
+    /// previous daemon. Per the measured facts in phase-06b, nothing on disk
+    /// records the original owner, and the owning session is gone by
+    /// definition — so an adopted shell is owned by nobody until a later phase
+    /// re-claims it.
+    Adopted,
 }
 
 impl Owner {
@@ -58,6 +65,7 @@ impl Owner {
         match self {
             Owner::Chat(id) => format!("chat:{id}"),
             Owner::Ghost(id) => format!("ghost:{id}"),
+            Owner::Adopted => "adopted".to_string(),
         }
     }
 }
@@ -181,6 +189,131 @@ where
     Ok(id)
 }
 
+/// Whether the host identified by `lock` is still alive. The flock is the
+/// liveness oracle, not a socket connect: a bound-but-unserved socket is
+/// indistinguishable from a healthy one mid-startup. A `Held` outcome means a
+/// live host holds the lock; `Ok` means nobody does. An unreadable lock fails
+/// **closed** — we could not prove the host dead, and the caller deletes files
+/// based on this answer, so a probe that cannot verify must not report death.
+pub fn host_is_alive(lock: &Path) -> bool {
+    match crate::daemon::instance::InstanceLock::acquire(lock) {
+        Ok(guard) => {
+            drop(guard);
+            false
+        }
+        Err(crate::daemon::instance::AcquireError::Held { .. }) => true,
+        Err(crate::daemon::instance::AcquireError::Io(_)) => true,
+    }
+}
+
+/// Shell ids with a socket in `dir`, sorted by index. Ignores anything whose
+/// stem is not a valid shell id, and anything that is not a `.sock` file.
+pub fn scan_shell_ids(dir: &Path) -> Vec<ShellId> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(stem) = name.strip_suffix(".sock") else {
+            continue;
+        };
+        if let Ok(id) = ShellId::parse(stem) {
+            ids.push(id);
+        }
+    }
+    ids.sort_by_key(|id| id.index());
+    ids
+}
+
+/// `(id, started_unix)` parsed from a cast filename like
+/// `s3-1788699323.cast`, or `None` for anything else. The timestamp part is
+/// parsed as bare digits so `s3-17-9.cast` and `s3-abc.cast` both fail.
+pub fn parse_cast_name(name: &str) -> Option<(ShellId, u64)> {
+    let body = name.strip_suffix(".cast")?;
+    let (id_part, ts_part) = body.rsplit_once('-')?;
+    let id = ShellId::parse(id_part).ok()?;
+    let started_unix = ts_part.parse::<u64>().ok()?;
+    Some((id, started_unix))
+}
+
+/// The most recent `started_unix` recorded for each shell id in `logs` (a cast
+/// named `<id>-<started_unix>.cast`), so adoption does not invent a timestamp.
+/// Empty when the directory is unreadable or has no matching casts.
+fn recover_started_unix(logs: &Path) -> HashMap<String, u64> {
+    let mut by_id = HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(logs) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some((id, ts)) = parse_cast_name(&name.to_string_lossy()) else {
+                continue;
+            };
+            by_id
+                .entry(id.as_str().to_string())
+                .and_modify(|cur| {
+                    if ts > *cur {
+                        *cur = ts;
+                    }
+                })
+                .or_insert(ts);
+        }
+    }
+    by_id
+}
+
+/// Adopt every live shell in `dir` into `reg`; return the ids adopted.
+///
+/// The flock probe is the death decision, and it runs before the registry lock
+/// is taken — the collected ids are inserted in a single `with_shells` call so
+/// the probe is never serialized against the registry. Adoption bypasses
+/// `check_owner_cap`: these shells already exist, and refusing to adopt one
+/// would orphan a live process.
+pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<ShellId> {
+    let started = recover_started_unix(logs);
+    let adopted: Vec<ShellId> = scan_shell_ids(dir)
+        .into_iter()
+        .filter(|id| host_is_alive(&dir.join(format!("{}.lock", id.as_str()))))
+        .collect();
+    with_shells(reg, |store| {
+        for id in &adopted {
+            let started_unix = started.get(id.as_str()).copied().unwrap_or(0);
+            store.insert(
+                id.as_str().to_string(),
+                ShellRecord {
+                    id: id.clone(),
+                    owner: Owner::Adopted,
+                    started_unix,
+                },
+            );
+        }
+    });
+    adopted
+}
+
+/// Remove the socket and lock of every DEAD host in `dir`; return the ids
+/// swept. A live host's files are never removed — the same probe that
+/// authorizes adoption *denies* the deletion here.
+pub fn sweep_stale(dir: &Path) -> Vec<ShellId> {
+    let mut swept = Vec::new();
+    for id in scan_shell_ids(dir) {
+        let lock = dir.join(format!("{}.lock", id.as_str()));
+        if host_is_alive(&lock) {
+            continue;
+        }
+        let _ = std::fs::remove_file(dir.join(format!("{}.sock", id.as_str())));
+        let _ = std::fs::remove_file(&lock);
+        swept.push(id);
+    }
+    swept
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +324,176 @@ mod tests {
             owner,
             started_unix: 0,
         }
+    }
+
+    /// Point the probe / adoption / sweep helpers at a throwaway `dir` and
+    /// `logs` pair (they are plain temp dirs, not the configured ones).
+    fn fixture_dirs() -> (tempfile::TempDir, tempfile::TempDir) {
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap())
+    }
+
+    fn write(dir: &Path, name: &str) {
+        std::fs::write(dir.join(name), "fixture").unwrap();
+    }
+
+    fn make_dir(dir: &Path, name: &str) {
+        std::fs::create_dir(dir.join(name)).unwrap();
+    }
+
+    #[test]
+    fn registry_host_is_alive_reports_a_held_lock_as_alive() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = dir.path().join("s0.lock");
+        let held = crate::daemon::instance::InstanceLock::acquire(&lock).unwrap();
+        assert!(
+            host_is_alive(&lock),
+            "a held lock must read as alive (the flock is the liveness oracle)"
+        );
+        drop(held);
+        assert!(
+            !host_is_alive(&lock),
+            "after the holder drops, the same path must read as dead"
+        );
+    }
+
+    #[test]
+    fn registry_host_is_alive_fails_closed_on_an_unreadable_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = dir.path().join("s0.lock");
+        make_dir(dir.path(), "s0.lock");
+        assert!(
+            host_is_alive(&lock),
+            "a probe that cannot prove death must not report death"
+        );
+    }
+
+    #[test]
+    fn registry_owner_adopted_key_does_not_collide() {
+        let adopted = Owner::Adopted.key();
+        assert_ne!(
+            adopted,
+            Owner::Chat("adopted".into()).key(),
+            "adopted must not collide with a Chat whose id is literally 'adopted'"
+        );
+        assert_ne!(
+            adopted,
+            Owner::Ghost("adopted".into()).key(),
+            "adopted must not collide with a Ghost whose id is literally 'adopted'"
+        );
+        assert_eq!(adopted, "adopted");
+    }
+
+    #[test]
+    fn registry_scan_shell_ids_ignores_non_shell_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "s0.sock",
+            "s2.sock",
+            "evil.sock",
+            "s1.sock.bak",
+            "s1.lock",
+            "S1.sock",
+            "s1234567890.sock",
+        ] {
+            write(dir.path(), name);
+        }
+        make_dir(dir.path(), "s3.sock");
+
+        let scanned = scan_shell_ids(dir.path());
+        let ids: Vec<&str> = scanned.iter().map(|id| id.as_str()).collect();
+        assert_eq!(ids, vec!["s0", "s2"]);
+    }
+
+    #[test]
+    fn registry_parse_cast_name_accepts_and_rejects() {
+        let parsed = parse_cast_name("s3-1788699323.cast");
+        let (id, ts) = parsed.expect("s3-1788699323.cast must parse");
+        assert_eq!(id.as_str(), "s3");
+        assert_eq!(ts, 1788699323);
+
+        for bad in [
+            "s3.cast",
+            "s3-abc.cast",
+            "s3-.cast",
+            "-17.cast",
+            "notashell-17.cast",
+            "s3-17.txt",
+            "s3-17-9.cast",
+        ] {
+            assert!(parse_cast_name(bad).is_none(), "must reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn registry_adopt_inserts_live_hosts_with_owner_adopted() {
+        let (dir, logs) = fixture_dirs();
+        write(dir.path(), "s0.sock");
+        write(logs.path(), "s0-1788699323.cast");
+        let _held =
+            crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+        let reg = ShellRegistry::default();
+        let adopted = adopt_at_startup(&reg, dir.path(), logs.path());
+        assert_eq!(adopted.len(), 1);
+        assert_eq!(adopted[0].as_str(), "s0");
+
+        let guard = reg.try_lock().unwrap();
+        let record = guard.get("s0").expect("s0 must be adopted");
+        assert!(matches!(record.owner, Owner::Adopted));
+        assert_eq!(record.started_unix, 1788699323);
+    }
+
+    #[test]
+    fn registry_adopt_uses_zero_when_no_cast_file_matches() {
+        let (dir, logs) = fixture_dirs();
+        write(dir.path(), "s0.sock");
+        let _held =
+            crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+        let reg = ShellRegistry::default();
+        adopt_at_startup(&reg, dir.path(), logs.path());
+
+        let guard = reg.try_lock().unwrap();
+        let record = guard.get("s0").expect("s0 must be adopted");
+        assert_eq!(record.started_unix, 0, "no matching cast must pin to 0");
+    }
+
+    #[test]
+    fn registry_adopt_skips_dead_hosts() {
+        let (dir, logs) = fixture_dirs();
+        write(dir.path(), "s0.sock");
+
+        let reg = ShellRegistry::default();
+        let adopted = adopt_at_startup(&reg, dir.path(), logs.path());
+        assert!(adopted.is_empty(), "a dead host must not be adopted");
+
+        let guard = reg.try_lock().unwrap();
+        assert!(
+            guard.is_empty(),
+            "no record may be inserted for a dead host"
+        );
+    }
+
+    #[test]
+    fn registry_sweep_never_touches_a_live_host() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "s0.sock");
+        write(dir.path(), "s1.sock");
+        let _held_live =
+            crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+        let swept = sweep_stale(dir.path());
+        assert_eq!(swept.len(), 1);
+        assert_eq!(swept[0].as_str(), "s1");
+
+        assert!(
+            !dir.path().join("s1.sock").exists() && !dir.path().join("s1.lock").exists(),
+            "the dead host's socket and lock must both be removed"
+        );
+        assert!(
+            dir.path().join("s0.sock").exists() && dir.path().join("s0.lock").exists(),
+            "the live host's files must both survive"
+        );
     }
 
     #[test]

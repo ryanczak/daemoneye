@@ -114,11 +114,10 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         path: "var/run/shells",
         intent: LifecycleIntent::KeepForever,
         config_key: None,
-        implemented: ImplementationStatus::Pending {
-            owned_by: "M20 phase-06",
-        },
+        implemented: ImplementationStatus::Implemented,
         note: "shell runtime state; var/run is ClearAtStartup and shells must survive a daemon restart, \
-               so this subtree is explicitly exempt from that intent",
+               so this subtree is explicitly exempt from that intent; stale sockets/locks are swept \
+               by the registry's dead-host sweep (adopt_at_startup/sweep_stale)",
         lazy: false,
     },
     LifecycleEntry {
