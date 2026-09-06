@@ -4058,3 +4058,61 @@ satisfied at 1.
 **Next: phase-06b — shell-registry-adoption**, undrafted. The flock-vs-`connect()`
 liveness measurements it needs are already recorded in the milestone README.
 Draft with `/rexymcp:architect next`.
+
+**Active phase: phase-06b — shell-registry-adoption**
+(`docs/dev/milestones/M20-shell-engine/phase-06b-shell-registry-adoption.md`,
+status: todo, drafted 2026-09-06). Dispatch with `/rexymcp:dispatch phase-06b`.
+
+Scope: `host_is_alive` (the flock probe), `scan_shell_ids`, `parse_cast_name`,
+`adopt_at_startup` and `sweep_stale`, plus flipping the `var/run/shells`
+lifecycle row. Wiring adoption into daemon startup and proving restart survival
+live stays phase-09's headline.
+
+**Two scoping changes made at drafting, both from measurement:**
+
+1. **Exited-shell GC moved from 06b to phase-08** — a dependency-order finding,
+   not a size one. `exited_retention_secs` governs how long an *exited* shell
+   stays listed, but **nothing marks a shell exited yet**: that state model is
+   phase-08's, `ShellRecord` has no state field, and the config value is
+   referenced only by config tests today. No M20 exit criterion is affected —
+   the sweep criterion is about a *host that is gone*, which is 06b's probe.
+2. **06b is hermetic — no child processes at all.** Measured: `flock` conflicts
+   across two opens in the **same process** and releases on close, so a held
+   `InstanceLock` *is* a live host as far as the probe is concerned. That is the
+   real mechanism rather than a fake, and it avoids phase-05c's
+   `current_exe()`-under-`cargo test` wall entirely.
+
+Drafting measurements (six facts quoted in the phase doc's § Measured facts):
+
+- **Exactly what a host leaves on disk**: `<id>.sock`, `<id>.lock` (payload =
+  the **host** pid), `<id>-<started_unix>.cast`.
+- **The flock is the liveness oracle; the socket proves nothing** — both files
+  survive a killed host, and `connect()` lies for a host mid-startup (05c's F3).
+- **The two pids differ and conflating them is a bug**: the lock holds the
+  shell-**host** pid, a `Status` reply returns the shell **child** pid. Neither
+  is used for liveness.
+- **`owner` is not recoverable from disk**, so adoption uses a new
+  `Owner::Adopted`; `started_unix` comes from the cast filename.
+- **Nothing clears `var/run` at startup** — `ClearAtStartup` appears only in
+  `lifecycle.rs` and is implemented nowhere, despite that row being marked
+  `Implemented`. Adoption therefore works today **by accident**. Recorded in the
+  README as a trap: implementing it later would delete `var/run/shells/` and
+  break restart survival unless the exemption is honoured.
+
+Drafting notes:
+
+- **The probe fails closed.** `host_is_alive` returns `true` on an I/O error,
+  because the caller deletes files based on the answer and "could not prove it
+  is dead" must never read as "dead". Pinned as a named negative test — this is
+  the shell-side application of the standing `CLAUDE.md` invariant that liveness
+  probes are reports, never authorizations.
+- **The simultaneity test is `registry_sweep_never_touches_a_live_host`**: one
+  live and one dead host in the *same* directory, asserting the dead one's two
+  files are gone and both of the live one's remain. Two separate tests would not
+  cover the case where the sweep confuses them.
+- **Three criteria are labelled *preservation* criteria**, not targets — they
+  already pass today and exist to catch a regression. Called out explicitly in
+  the doc so a passing value is not mistaken for evidence the phase did work,
+  which is the ambiguity TODO § 1 § "M20 evidence" describes.
+- All criteria were run against the current tree in their failing state, and the
+  E2E block passed `bash -n`.

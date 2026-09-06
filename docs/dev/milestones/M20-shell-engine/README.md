@@ -188,9 +188,9 @@ line-number facts go stale and each landing shifts the next Current state).
 | 05b | shell-host-backend ([phase-05b-shell-host-backend.md](phase-05b-shell-host-backend.md)) | **done** (approved_after_1, 2026-09-04; 1 bug, resolved) | A public raw-output stream on `PtyShell`, and `PtyBackend` implementing 05a's `ShellBackend` over PTY + cast log + screen. Real PTY, no fork, no CLI. Resize recreates the screen rather than calling `set_size` (see § Notes). |
 | 05c | shell-host-binary ([phase-05c-shell-host-binary.md](phase-05c-shell-host-binary.md)) | **done** (approved_after_2, 2026-09-05; 1 hard_fail escalation + 1 bounce, 1 bug resolved) | The `daemoneye shell-host --id sN` subcommand, detached spawn via `process_group(0)`, and a `Status`-round-trip readiness check. Settles the 05a carry: an `InstanceLock` per shell id is what authorizes unlinking its socket. |
 | 06a | shell-registry-core ([phase-06a-shell-registry-core.md](phase-06a-shell-registry-core.md)) | **done** (approved_after_1, 2026-09-05; 1 hard_fail escalation, no bug filed) | `src/shell/registry.rs`: `ShellId`, `Owner`, `ShellRegistry` mirroring `SessionStore`'s newtype+accessor shape, hole-filling id allocation, per-owner caps, and `spawn_for` — which reserves the slot under the lock and spawns **outside** it. |
-| 06b | shell-registry-adoption | todo (not drafted) | Startup adoption by scanning `var/run/shells/`, the stale socket/lock sweep, exited-shell GC under `shells.exited_retention_secs`, and flipping the `var/run/shells` lifecycle row from `Pending`. |
+| 06b | shell-registry-adoption ([phase-06b-shell-registry-adoption.md](phase-06b-shell-registry-adoption.md)) | **todo** (drafted 2026-09-06) | `host_is_alive` (the flock probe, failing **closed**), `scan_shell_ids`, `parse_cast_name`, `adopt_at_startup` (live hosts → `Owner::Adopted`) and `sweep_stale` (dead hosts only). Flips the `var/run/shells` lifecycle row from `Pending`. Hermetic — a held `InstanceLock` *is* a live host to the probe, so no child processes. |
 | 07 | run-terminal-command-pty | todo (not drafted) | Route `run_terminal_command` through the registry when `backend = "pty"` (local host only, wait-for-marker), masked + annotated result, real exit code in the tool result and in the `events.jsonl` command record. First phase that runs a command on the new substrate from chat. **Owns the masking exit criterion** (PE decision 2026-09-06): a seeded secret must appear raw in the `.cast` and masked in the tool result. Also sets the `.cast` mode explicitly rather than relying on the process umask, as `host::bind` does for the socket. |
-| 08 | interactive-and-signals | todo (not drafted) | `is_interactive_command()` → return immediately with the shell id; pause / resume / cancel on the shell API (`SIGSTOP` / `SIGCONT` / `SIGINT` to the foreground pgrp); state transitions `Idle → Running → Paused → Exited`. |
+| 08 | interactive-and-signals | todo (not drafted) | `is_interactive_command()` → return immediately with the shell id; pause / resume / cancel on the shell API (`SIGSTOP` / `SIGCONT` / `SIGINT` to the foreground pgrp); state transitions `Idle → Running → Paused → Exited`. **Also owns exited-shell GC under `shells.exited_retention_secs`** (moved from 06b at drafting, 2026-09-06 — see § Notes). |
 | 09 | restart-survival-and-close | todo (not drafted) | Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
 
 ## Notes
@@ -314,3 +314,32 @@ line-number facts go stale and each landing shifts the next Current state).
 
   Also re-confirmed: `bind()` over a stale socket path without unlinking fails
   with `EADDRINUSE`, which is why `host::bind` unlinks first.
+
+- **Exited-shell GC moved from 06b to 08 at drafting (2026-09-06), on a
+  dependency-order finding rather than on size.** `shells.exited_retention_secs`
+  governs "how long an **exited** shell stays listed before it is reaped" — but
+  **nothing marks a shell exited yet**: the `Idle → Running → Paused → Exited`
+  state model is phase-08's, `ShellRecord` has no state field, and
+  `exited_retention_secs` is referenced only by config tests today. Building a
+  GC over a state that does not exist would invert the dependency. **No M20 exit
+  criterion is affected** — the sweep criterion is about a *host that is gone*
+  (06b's flock probe), not about an exited shell.
+
+- **Measured while drafting 06b (2026-09-06), and this one is a trap for later
+  phases.** `LifecycleIntent::ClearAtStartup` appears **only** in
+  `src/config/lifecycle.rs` — no code implements it, despite the `var/run` row
+  being marked `Implemented`. So adoption works today **by accident**: nothing
+  clears `var/run` at startup, and therefore nothing deletes a surviving
+  shell's socket. If `ClearAtStartup` is ever implemented for `var/run`, it will
+  delete `var/run/shells/` and silently break restart survival — M20's headline
+  requirement — unless the `var/run/shells` exemption is honoured explicitly.
+  Recorded here rather than fixed: the mismatch is pre-existing and out of
+  M20's scope, but any phase that implements it must honour the exemption.
+
+- **`owner` is not recoverable from disk (measured 2026-09-06).** A host leaves
+  a `.sock`, a `.lock` (payload: the *host* pid) and a `.cast`
+  (`<id>-<started_unix>.cast`); a `Status` reply gives state/rows/cols and the
+  *shell child* pid. Nothing records which session owned the shell, so 06b
+  adopts under a new `Owner::Adopted` rather than reconstructing one, and
+  `started_unix` comes from the cast filename. Note the two pids are different
+  and neither is used for liveness — the flock is.
