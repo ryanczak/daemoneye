@@ -1,7 +1,7 @@
 # Phase 06b: startup adoption and the stale-host sweep
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** phase-06a (`ShellId`, `Owner`, `ShellRegistry`, `with_shells`)
 and phase-05c (`socket_path`, `lock_path`, `cast_path`), both done.
 **Estimated diff:** ~380 lines
@@ -656,3 +656,62 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e8b841cf956ae433a5bab10acd439c8555f4b241
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-06
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** deepseek-ai/DeepSeek-V4-Flash-0731 (98 turns)
+- **Scope deviations:** none. `registry.rs` +306, `mod.rs` +2, and a **surgical**
+  `lifecycle.rs` edit — only the `var/run/shells` row's `implemented:` field,
+  with its note extended to name what implements it. `var/log/shells` correctly
+  left `Pending { owned_by: "M20 phase-09" }`.
+- **Calibration:** none.
+
+**Gates re-run independently at review, all green:** `cargo fmt --all --check`
+0, `cargo build` 0 (forced recompile, no warnings), `cargo clippy
+--all-targets --all-features -- -D warnings` 0, `cargo test --lib` **1617
+passed / 0 failed** on **three consecutive runs**, configured `cargo test`
+clean. `shell::registry::` **17** (≥14 required), with all nine pinned new
+names present alongside 06a's eight. Other modules unchanged: `launch` 8,
+`pty` 13, `log` 12, `screen` 11, `host` 8, `proto` 5, `backend` 7. All fifteen
+structural criteria at target, including zero stray hosts.
+
+**Still 0.00s and fully hermetic** — the phase spawned no processes, exactly as
+specced. F3's measured fact (an `flock` conflicts across two opens in the same
+process) carried the whole test design.
+
+**Both safety-critical guards were mutation-checked at review:**
+
+1. **The probe fails closed.** Changing `AcquireError::Io(_) => true` to
+   `false` makes `registry_host_is_alive_fails_closed_on_an_unreadable_lock`
+   **FAIL**. A probe that cannot prove death must not report death — and it
+   genuinely doesn't.
+2. **The sweep never touches a live host.** Removing the
+   `if host_is_alive(&lock) { continue; }` guard makes
+   `registry_sweep_never_touches_a_live_host` **FAIL**. That is the milestone
+   exit criterion — *"swept … without touching a live one"* — actually guarded,
+   not merely asserted.
+
+**Fixtures read, not trusted by name:**
+
+- `registry_sweep_never_touches_a_live_host` puts both hosts in the **same**
+  directory, holds a real `InstanceLock` for the live one, and asserts the dead
+  one's `.sock` **and** `.lock` are gone while both of the live one's survive —
+  plus the returned vec. Two separate tests could not have covered the confusion
+  case.
+- `registry_scan_shell_ids_ignores_non_shell_entries` asserts the **full vec**
+  `["s0", "s2"]`, and includes `s3.sock` as a **directory** — a name-only check
+  would have wrongly accepted it, since `s3` is a valid id.
+
+## Notes
+
+- **The scoping calls made at drafting held.** Moving exited-shell GC to
+  phase-08 kept this phase at 306 lines of source and inside one session; the
+  hermetic test design avoided phase-05c's `current_exe()`-under-`cargo test`
+  wall rather than working around it.
+- **First `approved_first_try` since phase-01.** The four phases between it were
+  all architect-side defects. The difference here was measuring six facts before
+  writing the spec — including two (`owner` is not recoverable from disk; `flock`
+  conflicts within one process) that would each have produced a bounce had they
+  been assumed.
