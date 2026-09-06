@@ -9,6 +9,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -31,7 +32,12 @@ struct Header {
 
 impl CastWriter {
     pub fn create(path: &Path, cols: u16, rows: u16, started_unix: u64) -> Result<Self> {
-        let mut file = File::create(path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
         let header = Header {
             version: 2,
             width: cols,
@@ -152,7 +158,12 @@ pub struct MetaIndex {
 impl MetaIndex {
     pub fn save(&self, path: &Path) -> Result<()> {
         let json = serde_json::to_string_pretty(self)?;
-        let mut file = File::create(path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
         file.write_all(json.as_bytes())?;
         file.write_all(b"\n")?;
         file.flush()?;
@@ -610,5 +621,35 @@ mod tests {
         assert_eq!(got, want, "command 0 must keep all its bytes");
         let next = read_command_output(&path, &meta, 1).unwrap();
         assert_eq!(next, b"ZZZ", "command 1 must not be polluted");
+    }
+
+    #[test]
+    fn log_cast_and_meta_are_created_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let cast_path = cast(dir.path());
+        let meta_path = meta(dir.path());
+        {
+            let w = CastWriter::create(&cast_path, 80, 24, 0).unwrap();
+            let meta = MetaIndex {
+                shell_id: "s7".into(),
+                cast: cast_path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                started_unix: 0,
+                commands: vec![],
+            };
+            meta.save(&meta_path).unwrap();
+            drop(w);
+        }
+        for (path, label) in [(&cast_path, "cast"), (&meta_path, "meta")] {
+            let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "{label} file must carry the explicit 0600 mode, regardless of umask"
+            );
+        }
     }
 }

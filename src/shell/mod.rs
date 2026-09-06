@@ -5,6 +5,7 @@
 //! command's real exit code and its exact output bytes.
 
 mod backend;
+mod client;
 mod host;
 mod launch;
 mod log;
@@ -14,6 +15,7 @@ mod registry;
 mod screen;
 
 pub use backend::PtyBackend;
+pub use client::run_command;
 pub use host::{ShellBackend, bind, serve};
 pub use launch::{await_ready, cast_path, lock_path, run_host, socket_path, spawn_detached};
 pub use log::{CastWriter, CommandRecord, MetaIndex, meta_path_for, read_command_output};

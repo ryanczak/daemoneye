@@ -1,7 +1,7 @@
 # Phase 07a: the shell-host client — running a command over the socket
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05a (`bind`/`serve`, the frame set), phase-05b
 (`PtyBackend`), phase-02 (the marker primitives) — all done.
 **Estimated diff:** ~320 lines
@@ -356,5 +356,9 @@ signal to a process group or to PID -1.**
 ## Update Log
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+
+### Update — 2026-09-06 14:51 (started)
+
+Executing phase-07a. Pre-flight passed: `master` clean, and `cargo test --lib shell::` reports the pinned counts (`registry` 17, `launch` 8, `pty` 13, `log` 12, `screen` 11, `host` 8, `proto` 5, `backend` 7), `shell::client::` 0 tests. Task 1 (`src/shell/client.rs` + `mod client;` + `pub use run_command`) and Task 2 (explicit `mode(0o600)` on the `.cast` and `.meta.json`) are implemented; client tests are green (6 passed) and the log count has moved 12 → 13. Running the E2E block next.
 
 <!-- entries appended below this line -->
