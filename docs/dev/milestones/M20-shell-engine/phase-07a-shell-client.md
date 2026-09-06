@@ -209,12 +209,15 @@ the current tree and returns the "now" value shown.
 
 - [ ] `for r in $(seq 1 20); do cargo test --lib 2>&1 | grep -E '^test result:' | head -1; done`
       reports `ok` **20 times, 0 failed**, with no `RUST_TEST_THREADS` cap and
-      no skip filter (now: **19 of 20 report `FAILED`**, all on
-      `shell::backend::tests::backend_lagged_subscriber_does_not_break_the_pump`).
+      no skip filter (now: **20 of 20 `ok`, 0 failed** — post-fix, measured
+      2026-09-06 18:48).
 - [ ] `cargo test` — the full gate as `rexymcp.toml` runs it — passes three
-      consecutive times (now: fails ~3 runs in 5).
+      consecutive times (now: passes three consecutive times, measured
+      2026-09-06 18:49).
 - [ ] `shell::backend::` still reports **7** passing, `0 failed` — the flaky
-      test is made deterministic, not deleted or `#[ignore]`d.
+      test is made deterministic, not deleted or `#[ignore]`d. (Now: 7, `0
+      failed`; `assert_lagged` now polls `try_recv` until `Lagged` instead of
+      a single read after an inferred quiet period.)
 - [ ] `grep -c '#\[ignore\]' src/shell/backend.rs` → **0** (now `0`; a
       preservation criterion).
 - [ ] `git diff d1e1e79 -- src/shell/backend.rs` touches **test code only**:
@@ -225,8 +228,8 @@ the current tree and returns the "now" value shown.
 
 - [ ] The `(end-to-end verification)` entry's fenced block is the byte-for-byte
       contents of `/tmp/e2e-07a.txt` from one run of the block as written, and
-      the self-check prints **PASTE MATCH** (now: the entry states
-      `PASTE MISMATCH` and Section E is prose).
+      the self-check prints **PASTE MATCH** (now: `PASTE MATCH` in the 18:45
+      entry; Section E is the verbatim three-green-run transcript).
 
 ## Test plan
 
