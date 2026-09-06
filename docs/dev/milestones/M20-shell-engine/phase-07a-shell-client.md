@@ -482,4 +482,13 @@ phase acknowledging the flake is pre-existing and phase-05b-owned, (b) dispatch
 a small follow-up to make the lagged test deterministic, or (c) tell me to run
 the suite with a thread cap on this box.
 
+**Postscript (2026-09-06 17:42), fuller baseline.** 24 consecutive full-lib
+runs on a **pristine** detached worktree at the unchanged pre-phase HEAD
+`d1e1e79` give 3/24 red (≈12.5%) on exactly this test. So the failure predates
+07a and is not caused by it; the heavier parallel load from 07a's six
+PTY-spawning client tests only raises the trip rate on this 32-core host. That
+raises the pre-existing rate from ≈12.5% to ≈50% here, which is why the phase
+gate cannot pass as configured; the fix belongs to the phase that authored the
+test (05b).
+
 <!-- entries appended below this line -->
