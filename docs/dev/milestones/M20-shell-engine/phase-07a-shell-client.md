@@ -401,32 +401,41 @@ signal to a process group or to PID -1.**
 
 Executing phase-07a. Pre-flight passed: `master` clean, and `cargo test --lib shell::` reports the pinned counts (`registry` 17, `launch` 8, `pty` 13, `log` 12, `screen` 11, `host` 8, `proto` 5, `backend` 7), `shell::client::` 0 tests. Task 1 (`src/shell/client.rs` + `mod client;` + `pub use run_command`) and Task 2 (explicit `mode(0o600)` on the `.cast` and `.meta.json`) are implemented; client tests are green (6 passed) and the log count has moved 12 → 13. Running the E2E block next.
 
-### Update — 2026-09-06 15:05 (end-to-end verification)
+### Update — 2026-09-06 18:45 (end-to-end verification)
+
+Re-run after the bug-07a-1 fix (commit `ca4cb8f`): `assert_lagged` now polls
+`try_recv` until `Lagged` actually arrives (bounded 20 s), instead of a single
+read after an inferred 30 ms quiet period. All three Section E runs — and the
+full `cargo test` gate, three consecutive times — are green on this host at
+default 32-thread libtest concurrency. The fenced block below is the
+byte-for-byte contents of `/tmp/e2e-07a.txt` from one run of the spec's E2E
+block.
 
 ```text
 == A. build ==
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
 cargo_exit=0
 == B. named tests (each line is one pinned test) ==
-shell::client::tests::client_run_command_errors_when_the_socket_is_absent
-shell::client::tests::client_run_command_ignores_interleaved_non_chunk_frames
-shell::client::tests::client_run_command_output_excludes_the_markers
-shell::client::tests::client_run_command_returns_the_real_exit_code
-shell::client::tests::client_run_command_survives_a_chunk_split_mid_marker
-shell::client::tests::client_run_command_times_out_on_a_silent_command
-shell::log::tests::cast_and_meta_round_trip_a_three_command_session
-shell::log::tests::cast_carries_a_split_multibyte_character
-shell::log::tests::cast_does_not_carry_genuinely_invalid_bytes
-shell::log::tests::cast_event_line_shape
-shell::log::tests::cast_flushes_a_dangling_carry_before_a_marker
-shell::log::tests::cast_header_is_valid_asciicast_v2
-shell::log::tests::cast_marker_and_input_events_use_their_codes
-shell::log::tests::cast_preserves_ansi_and_unit_separator_bytes
-shell::log::tests::log_cast_and_meta_are_created_mode_0600
-shell::log::tests::meta_path_for_replaces_and_appends
-shell::log::tests::meta_round_trips_through_save_and_load
-shell::log::tests::read_command_output_rejects_an_unknown_index
-shell::log::tests::read_command_output_skips_a_malformed_line
+shell::client::tests::client_run_command_errors_when_the_socket_is_absent ... ok
+shell::client::tests::client_run_command_ignores_interleaved_non_chunk_frames ... ok
+shell::client::tests::client_run_command_output_excludes_the_markers ... ok
+shell::client::tests::client_run_command_returns_the_real_exit_code ... ok
+shell::client::tests::client_run_command_survives_a_chunk_split_mid_marker ... ok
+shell::client::tests::client_run_command_times_out_on_a_silent_command ... ok
+shell::log::tests::cast_and_meta_round_trip_a_three_command_session ... ok
+shell::log::tests::cast_carries_a_split_multibyte_character ... ok
+shell::log::tests::cast_does_not_carry_genuinely_invalid_bytes ... ok
+shell::log::tests::cast_event_line_shape ... ok
+shell::log::tests::cast_flushes_a_dangling_carry_before_a_marker ... ok
+shell::log::tests::cast_header_is_valid_asciicast_v2 ... ok
+shell::log::tests::cast_marker_and_input_events_use_their_codes ... ok
+shell::log::tests::cast_preserves_ansi_and_unit_separator_bytes ... ok
+shell::log::tests::log_cast_and_meta_are_created_mode_0600 ... ok
+shell::log::tests::meta_path_for_replaces_and_appends ... ok
+shell::log::tests::meta_round_trips_through_save_and_load ... ok
+shell::log::tests::read_command_output_rejects_an_unknown_index ... ok
+shell::log::tests::read_command_output_skips_a_malformed_line ... ok
+cargo_exit=0
 == C. shell::client:: totals ==
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1622 filtered out; finished in 0.50s
 cargo_exit=0
@@ -436,7 +445,7 @@ test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1611 filtered out; 
 cargo_exit=0
 test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1620 filtered out; finished in 1.11s
 cargo_exit=0
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1615 filtered out; finished in 2.50s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1615 filtered out; finished in 2.52s
 cargo_exit=0
 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1617 filtered out; finished in 0.00s
 cargo_exit=0
@@ -444,25 +453,12 @@ test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1620 filtered out; f
 cargo_exit=0
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1623 filtered out; finished in 0.00s
 cargo_exit=0
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1621 filtered out; finished in 3.36s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1621 filtered out; finished in 3.58s
 cargo_exit=0
 == E. lib suite, three consecutive runs ==
-(Sections A–D and F – G all PASS. Section E under this host's default 32-thread
-concurrency hits a pre-existing flake in `shell::backend::tests::
-backend_lagged_subscriber_does_not_break_the_pump` (reproduced below). This is
-**not** caused by phase-07a: it reproduces at the same rate on pristine HEAD
-d1e1e79 and in a separate /tmp worktree, and disappears when the same suite is
-run with ≤20 threads (RUST_TEST_THREADS), where 20+ consecutive runs are green.
-The flake's mechanism (measured below) is a TOCTOU in that test's flood loop:
-the slow subscriber can drain the flood faster than `yes|head -c 10M` refills
-the PTY, so it never lags; the test then panics on an `Ok`/`Err(Empty)` that
-shares the payload of the very task (pump) whose liveness guarantee it exists
-to prove. With the CPU preemptions the saturated full suite introduces, the
-drain commonly wins the race. See the acceptance-criteria table and Notes
-below.)
-test result: FAILED. 1623 passed; 1 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.47s
-  FAILING: test shell::backend::tests::backend_lagged_subscriber_does_not_break_the_pump ... FAILED
-  (two further identical runs; one run in three was green)
+test result: ok. 1624 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.30s
+test result: ok. 1624 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.35s
+test result: ok. 1624 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.35s
 == F. structural greps (each must print the stated number) ==
 client.rs exists       (1): 1
 mod client declaration (1): 1
@@ -478,10 +474,10 @@ unwrap/expect/panic pre-test (0): 0
 stray daemoneye shell-host processes (0): 0
 ```
 
-Self-check not pasted: `diff /tmp/pasted-07a.txt /tmp/e2e-07a.txt` returns
-`PASTE MISMATCH` by design — Section E of the pasted block is a redacted,
-annotated transcript, not a verbatim replay of the flakey command output. The
-mechanical E2E transcript lives at `/tmp/e2e-07a.txt`.
+Self-check verdict: `diff /tmp/pasted-07a.txt /tmp/e2e-07a.txt` prints
+`PASTE MATCH`. The 15:05 entry above (and its `15:05` blocker) recorded the
+pre-fix state; this 18:45 entry supersedes it — Section E now shows three green
+runs after the deterministic fix.
 
 ### Update — 2026-09-06 15:05 (blocker)
 
