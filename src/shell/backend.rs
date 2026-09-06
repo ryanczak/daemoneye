@@ -438,15 +438,28 @@ mod tests {
         );
     }
 
-    /// Assert that `rx` — a subscriber that never read during a flood — now
-    /// reports `Lagged` on its next read, which is what the pump's
-    /// `continue` on `Lagged` exists to survive.
+    /// Assert that `rx` — a subscriber that read nothing during a flood —
+    /// reports `Lagged` on some read within a bounded wait, which is what the
+    /// pump's `continue` on `Lagged` exists to survive. The caller syncs on
+    /// the flood's own completion marker first, so by the time this runs the
+    /// subscriber is provably more than `STREAM_CAPACITY` chunks behind;
+    /// polling rather than a single `try_recv` keeps the read robust while a
+    /// late burst is still in flight.
     fn assert_lagged(rx: &mut broadcast::Receiver<Vec<u8>>, label: &str) {
-        match rx.try_recv() {
-            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
-                assert!(n > 0, "{label} must report a nonzero lag");
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            match rx.try_recv() {
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                    assert!(n > 0, "{label} must report a nonzero lag");
+                    return;
+                }
+                Ok(_) | Err(_) => {
+                    if std::time::Instant::now() >= deadline {
+                        panic!("{label}: never reported Lagged within the wait");
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
             }
-            other => panic!("{label}: expected Lagged, got {other:?}"),
         }
     }
 
