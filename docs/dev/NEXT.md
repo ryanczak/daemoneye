@@ -4116,3 +4116,60 @@ Drafting notes:
   which is the ambiguity TODO § 1 § "M20 evidence" describes.
 - All criteria were run against the current tree in their failing state, and the
   E2E block passed `bash -n`.
+
+**phase-06b — shell-registry-adoption: done (approved_first_try) 2026-09-06**,
+landing commit `ffbb57c`, approval `86f2946`. 98 turns, no bounces. `registry`
+17 tests, still 0.00s and fully hermetic. Both safety-critical guards
+mutation-checked at review: the probe fails closed (flipping
+`AcquireError::Io(_) => true` to `false` fails the named test) and the sweep
+never touches a live host (removing the `host_is_alive` guard fails the
+simultaneity test — the milestone exit criterion genuinely guarded).
+
+**First `approved_first_try` since phase-01**, after four consecutive phases
+whose defects were all architect-side. The difference was measuring six facts
+*before* writing the spec rather than during triage — two of them (`owner` is
+not recoverable from disk; `flock` conflicts across two opens in one process)
+would each have produced a bounce had they been assumed.
+
+**Active phase: phase-07a — shell-client**
+(`docs/dev/milestones/M20-shell-engine/phase-07a-shell-client.md`,
+status: todo, drafted 2026-09-06). Dispatch with `/rexymcp:dispatch phase-07a`.
+
+**Phase 07 was split at drafting into 07a and 07b**, on a missing-piece finding
+rather than size alone. Measuring first showed **no client for the shell socket
+exists in production code** — 05a built the server, and the only connect outside
+`#[cfg(test)]` is `await_ready`'s `Status` round-trip. The daemon holds no
+handle to a shell (`ShellRecord` is id/owner/started_unix), so it must reach one
+over the socket. 07a is that client; 07b is the tool wiring. Together they were
+~580 lines.
+
+Drafting measurements (probes compiled into the tree, run, then reverted):
+
+- **The full round trip works today**: one connection, `Subscribe` then `Input`
+  with a marker-wrapped command, accumulating `Chunk` bytes until
+  `parse_outcome` answers → `exit_code=5`, output `"WIRE_OK\r\n"`. This settles
+  that `Subscribe` + `Input` on the **same** connection is the supported shape
+  (what `bug-05a-1` fixed) and that **no new wire frames are needed**.
+- **`PtyShell::run` works while `PtyBackend`'s pump drains the same shell** —
+  `exit_code=7`, clean output, and the cast log still received the bytes.
+  `run()` subscribes to the same broadcast, so both consumers get every chunk.
+- **`.cast` and `.meta.json` are created with `File::create`** (exactly two call
+  sites), so their mode rides on the process umask. 07a sets `0600` explicitly,
+  the way `host::bind` does for the socket — closing the fragility the M20
+  sign-off flagged.
+
+Drafting notes:
+
+- **The client composes existing pure functions rather than re-implementing
+  them**: `Nonce::new`, `wrap_command`, `parse_outcome` are all exported from
+  `shell::pty`. A criterion pins `DE_` at **0** occurrences in `client.rs` —
+  phase-02 spent five rounds on that grammar and a second copy would drift.
+- **A criterion pins `from_utf8` at 0** in the client, because phase-02 measured
+  that a 4096-byte read splits multi-byte UTF-8; chunks must be accumulated as
+  bytes and re-parsed, never decoded individually.
+- **Two criteria are labelled *preservation*** (they pass trivially today since
+  the file does not exist) so a passing value is not mistaken for evidence of
+  work — the ambiguity recorded in TODO § 1 § "M20 evidence".
+- All criteria run against the current tree in their failing state; the E2E
+  block passed `bash -n`; `File::create` confirmed at exactly **2** occurrences
+  so the `mode(0o600)` criterion's expected value of 2 is reachable.
