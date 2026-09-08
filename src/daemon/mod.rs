@@ -732,6 +732,38 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     let cache = Arc::new(SessionCache::new(initial_session.as_deref().unwrap_or("")));
 
+    // The live shell registry: sweep dead hosts' leftovers, then adopt the
+    // shells that survived a daemon restart. Gated on the PTY backend — with
+    // the default `tmux` this block is skipped entirely and startup behaves
+    // byte-for-byte as before (no sweep, no adopt, no directory creation:
+    // `sweep_stale`/`adopt_at_startup` only read what is already there).
+    let _shells = if startup_config.execution.uses_pty() {
+        let swept = crate::shell::sweep_stale(&crate::config::shells_dir());
+        if !swept.is_empty() {
+            let ids: Vec<&str> = swept.iter().map(|id| id.as_str()).collect();
+            log::info!(
+                "shell registry: swept {} dead host(s): {ids:?}",
+                swept.len()
+            );
+        }
+        let reg = crate::shell::ShellRegistry::default();
+        let adopted = crate::shell::adopt_at_startup(
+            &reg,
+            &crate::config::shells_dir(),
+            &crate::config::shell_logs_dir(),
+        );
+        if !adopted.is_empty() {
+            let ids: Vec<&str> = adopted.iter().map(|id| id.as_str()).collect();
+            log::info!(
+                "shell registry: adopted {} surviving shell(s): {ids:?}",
+                adopted.len()
+            );
+        }
+        Some(reg)
+    } else {
+        None
+    };
+
     // N7: seed the initial client viewport dimensions now that the cache exists.
     if let Some(ref sn) = initial_session {
         let s = sn.to_string();

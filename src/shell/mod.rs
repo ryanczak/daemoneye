@@ -13,6 +13,7 @@ mod proto;
 mod pty;
 mod registry;
 mod screen;
+mod session;
 
 pub use backend::PtyBackend;
 pub use client::run_command;
@@ -28,3 +29,4 @@ pub use registry::{
     host_is_alive, parse_cast_name, scan_shell_ids, spawn_for, sweep_stale, with_shells,
 };
 pub use screen::ShellScreen;
+pub use session::{shell_for_owner, spawn_detached_host};
