@@ -585,3 +585,20 @@ backend 8 passed / 1 failed (the blocked leg), `shell::client` 9. Three
 consecutive `cargo test --lib` runs: 1645 passed, 2 failed (both above), 4
 ignored — the third-run flakeClass of bug-07a-1 is not in play; the same two
 fail every run deterministically, matching the blocker's measurements.
+
+### Update — 2026-09-08 11:41 (blocker, addendum)
+
+The pre-completion gate re-failed on the same two tests and nothing else. The
+blocker's core contradiction can be stated in one line now, on the phase doc's
+own pinned tests: `backend_status_is_idle_on_a_fresh_shell` (guards rule 4)
+demands `Idle` for a fresh shell, while `launch_run_host_serves_status_over_its_socket`
+(`launch.rs:302`, outside this phase's write scope) demands `Running` for the
+same fresh-shell `Status` — both cannot pass, for any implementation of
+Task 3. And F1/F2's own probe measurements (bash reclaims the terminal the
+instant a job stops; `CONT` does not return it) mean the fourth leg of
+`backend_status_reports_paused_then_running` (`Running` again after `CONT`) is
+unreachable through rules 1–4 — the job *is* resumed (`/proc` back to `S`),
+but rule 3's discriminator reads the shell's own group. Decision needed on:
+(a) what `Paused`→`CONT` reports (extra discriminator input, or accept `Idle`
+and amend the pinned test), (b) permission to update launch.rs's stale
+literal. Code, README row, and status are left as committed at `7f032e7`.
