@@ -746,7 +746,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                 swept.len()
             );
         }
-        let reg = crate::shell::ShellRegistry::default();
+        let reg = crate::shell::registry().clone();
         let adopted = crate::shell::adopt_at_startup(
             &reg,
             &crate::config::shells_dir(),

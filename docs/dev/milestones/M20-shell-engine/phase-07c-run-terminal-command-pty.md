@@ -1,7 +1,7 @@
 # Phase 07c: `run_terminal_command` on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07a (`client::run_command`), phase-07b
 (`shell_for_owner` + the registry in `run_daemon`) — both done.
 **Estimated diff:** ~320 lines
@@ -561,5 +561,16 @@ cleanup, never `rm -rf`.
 ## Update Log
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+
+### Update — 2026-09-07 19:39 (started by executor-GPT)
+
+Pre-flight verified on `master`, tree clean at `1d29a77`:
+`cargo test --lib shell::` = 137 passed; individual per-module counts and the
+full-lib count match § Current state exactly (registry 17, launch 8, pty 13,
+log 13, screen 11, host 8, proto 5, backend 7, client 6, session 6,
+foreground 13, tmux::ansi 13; full lib 1630 passed / 0 failed / 4 ignored).
+`src/daemon/executor/shell_exec.rs` does not exist. Status flipped to
+`in-progress` here and in the milestone README's phase table. Implementing
+Tasks 1–5 in order.
 
 <!-- entries appended below this line -->

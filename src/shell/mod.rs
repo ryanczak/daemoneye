@@ -4,16 +4,16 @@
 //! shell spawned through `portable-pty`, and the marker protocol that returns a
 //! command's real exit code and its exact output bytes.
 
-mod backend;
-mod client;
-mod host;
-mod launch;
-mod log;
-mod proto;
-mod pty;
-mod registry;
-mod screen;
-mod session;
+pub mod backend;
+pub mod client;
+pub mod host;
+pub mod launch;
+pub mod log;
+pub mod proto;
+pub mod pty;
+pub mod registry;
+pub mod screen;
+pub mod session;
 
 pub use backend::PtyBackend;
 pub use client::run_command;
@@ -29,4 +29,30 @@ pub use registry::{
     host_is_alive, parse_cast_name, scan_shell_ids, spawn_for, sweep_stale, with_shells,
 };
 pub use screen::ShellScreen;
-pub use session::{shell_for_owner, spawn_detached_host};
+pub use session::{login_shell, shell_for_owner, spawn_detached_host};
+
+use std::sync::OnceLock;
+
+static REGISTRY: OnceLock<ShellRegistry> = OnceLock::new();
+
+/// The daemon's single live shell registry. `ShellRegistry` is `Default` and
+/// holds its own `Arc<Mutex<…>>`, so this needs no initialisation step and
+/// has no ordering hazard: the first caller creates it, everyone gets the
+/// same one.
+pub fn registry() -> &'static ShellRegistry {
+    REGISTRY.get_or_init(ShellRegistry::default)
+}
+
+/// The first shell id `owner` currently holds in the daemon's registry, if
+/// any. Read-only convenience over [`registry`] so error paths can name the
+/// shell without reopening the registry lock themselves.
+pub fn registry_lookup<T>(owner: &Owner, f: impl FnOnce(&ShellId) -> T) -> Option<T> {
+    let key = owner.key();
+    let mut result: Option<T> = None;
+    with_shells(registry(), |store| {
+        if let Some(record) = store.values().find(|record| record.owner.key() == key) {
+            result = Some(f(&record.id));
+        }
+    });
+    result
+}

@@ -3,6 +3,7 @@ mod file_ops;
 mod foreground;
 mod knowledge;
 mod schedule;
+mod shell_exec;
 
 use crate::ai::{PendingCall, next_tool_id};
 use crate::daemon::policy::GhostPolicy;
@@ -10,6 +11,7 @@ use crate::daemon::session::{SessionStore, with_sessions};
 use crate::daemon::utils::send_response_split;
 use crate::ipc::{PaneInfo, Request, Response};
 use crate::scheduler::ScheduleStore;
+use crate::shell::registry::Owner;
 use crate::tmux::cache::SessionCache;
 use crate::util::UnpoisonExt;
 use std::sync::Arc;
@@ -293,6 +295,103 @@ where
                      command with background=true so it runs in a container."
                         .to_string(),
                 ));
+            }
+
+            // The PTY shell substrate, when configured. A ghost session, an
+            // explicit `target_pane`, or `backend = "tmux"` (the default)
+            // falls through to `run_foreground` unchanged, so the default
+            // behaviour is byte-for-byte today's.
+            let uses_pty = crate::config::Config::load()
+                .unwrap_or_default()
+                .execution
+                .uses_pty();
+            if uses_pty
+                && !is_ghost
+                && session_id.is_some()
+                && target.as_deref().is_none_or(|t| t.is_empty())
+            {
+                match prompt_and_await_approval(
+                    ApprovalRequest {
+                        id,
+                        cmd,
+                        background: false,
+                        target_pane_hint: None,
+                    },
+                    session_id,
+                    ghost_policy.as_ref(),
+                    tx,
+                    rx,
+                )
+                .await?
+                {
+                    Err(outcome) => return Ok(outcome),
+                    Ok(cmd_id) => {
+                        let owner = Owner::Chat(session_id.unwrap_or_default().to_string());
+                        let max_per_owner = crate::config::Config::load()
+                            .unwrap_or_default()
+                            .shells
+                            .max_per_owner;
+                        let outcome = match shell_exec::run_in_shell(
+                            crate::shell::registry(),
+                            owner.clone(),
+                            cmd,
+                            max_per_owner,
+                        )
+                        .await
+                        {
+                            Ok((shell_id, result)) => {
+                                crate::daemon::stats::finish_command(cmd_id, result.exit_code);
+                                send_response_split(
+                                    tx,
+                                    Response::ToolResult {
+                                        tool_call_id: id.to_string(),
+                                        output: result.text.clone(),
+                                    },
+                                )
+                                .await?;
+                                crate::daemon::utils::log_shell_command(
+                                    session_id,
+                                    shell_id.as_str(),
+                                    cmd,
+                                    "approved",
+                                    result.exit_code,
+                                    &result.text,
+                                );
+                                result.text
+                            }
+                            Err(e) => {
+                                let shell_id =
+                                    crate::shell::registry_lookup(&owner, |id| id.to_string())
+                                        .unwrap_or_else(|| "s?".to_string());
+                                let msg = format!(
+                                    "Error running command in shell {shell_id}: {e:#}. \
+                                     The command may still be running in that shell — \
+                                     do not assume it failed outright; retrying could \
+                                     double-apply its effect."
+                                );
+                                crate::daemon::stats::finish_command(cmd_id, 1);
+                                send_response_split(
+                                    tx,
+                                    Response::ToolResult {
+                                        tool_call_id: id.to_string(),
+                                        output: msg.clone(),
+                                    },
+                                )
+                                .await?;
+                                crate::daemon::utils::log_shell_command(
+                                    session_id,
+                                    &shell_id,
+                                    cmd,
+                                    "shell-error",
+                                    -1,
+                                    &msg,
+                                );
+                                msg
+                            }
+                        };
+                        return Ok(ToolCallOutcome::Result(outcome));
+                    }
+                }
             }
 
             foreground::run_foreground(

@@ -77,12 +77,19 @@ where
     Ok((id, socket))
 }
 
+/// The shell a host is spawned with, and the same name `client::run_command`
+/// must be told so it reads the right exit variable (`$?` vs fish's
+/// `$status`). One function so the two can never disagree.
+pub fn login_shell() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string())
+}
+
 /// The `spawn` argument `shell_for_owner` takes in production: a detached
 /// `daemoneye shell-host` for `id`. Separate from `shell_for_owner` because
 /// `spawn_detached` resolves `current_exe()` and so cannot run under a test
 /// (F4).
 pub async fn spawn_detached_host(id: ShellId, rows: u16, cols: u16) -> anyhow::Result<()> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
+    let shell = login_shell();
     launch::spawn_detached(id.as_str(), &shell, rows, cols).await
 }
 

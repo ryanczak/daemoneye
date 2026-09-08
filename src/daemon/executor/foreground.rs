@@ -33,7 +33,7 @@ const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const REMOTE_CMD_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCAL_CHILD_POLL: Duration = Duration::from_millis(25);
 const LOCAL_CHILD_START_WINDOW: Duration = Duration::from_millis(750);
-const LOCAL_CMD_TIMEOUT: Duration = Duration::from_secs(45);
+pub(super) const LOCAL_CMD_TIMEOUT: Duration = Duration::from_secs(45);
 const LOCAL_SLOW_POLL: Duration = Duration::from_millis(500);
 const POST_CMD_CAPTURE_DELAY: Duration = Duration::from_millis(50);
 const SILENCE_MONITOR_SECS: u32 = 2;
@@ -1306,7 +1306,7 @@ where
 /// and clean (`Some(0)`) — neither is annotated, so a clean or
 /// exit-code-unknown command reads exactly as its output. A non-zero code yields
 /// a one-line note.
-fn exit_status_annotation(exit_status: Option<i32>) -> Option<String> {
+pub(super) fn exit_status_annotation(exit_status: Option<i32>) -> Option<String> {
     match exit_status {
         Some(code) if code != 0 => Some(format!("\n[command exited with status {code}]")),
         _ => None,

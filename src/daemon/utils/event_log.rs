@@ -71,6 +71,39 @@ pub fn log_event(event: &str, mut fields: serde_json::Value) {
     }
 }
 
+/// A `command` event for a shell-substrate run. Same shape as `log_command`
+/// plus the real exit code, which the tmux path cannot supply.
+pub fn log_shell_command(
+    session_id: Option<&str>,
+    shell_id: &str,
+    command: &str,
+    status: &str,
+    exit_code: i32,
+    output_excerpt: &str,
+) {
+    let cmd: String = command
+        .chars()
+        .map(|c| if c == '\n' { ' ' } else { c })
+        .collect();
+    let out: String = output_excerpt
+        .chars()
+        .take(200)
+        .map(|c| if c == '\n' { ' ' } else { c })
+        .collect();
+    log_event(
+        "command",
+        serde_json::json!({
+            "session": session_id.unwrap_or("-"),
+            "mode":    "shell",
+            "pane":    shell_id,
+            "cmd":     cmd,
+            "status":  status,
+            "exit":    exit_code,
+            "out":     out,
+        }),
+    );
+}
+
 /// Aggregated cost summary for a time window.
 ///
 /// Produced by `sum_cost_between` and consumed by the catch-up brief
@@ -334,6 +367,19 @@ mod tests {
         } else {
             unsafe { std::env::remove_var("HOME") };
         }
+    }
+
+    fn last_event_line(path: &std::path::Path) -> serde_json::Value {
+        let content = std::fs::read_to_string(path).expect("the events file was written");
+        let last = content.lines().last().expect("at least one line");
+        serde_json::from_str(last).expect("the last line is valid JSON")
+    }
+
+    fn last_written_event() -> serde_json::Value {
+        let seg = crate::config::current_event_segment_path();
+        let legacy = crate::config::events_path();
+        let path = if seg.exists() { seg } else { legacy };
+        last_event_line(&path)
     }
 
     fn write_event(path: &std::path::Path, event: &str, ts: &str) {
@@ -872,5 +918,39 @@ mod tests {
             Some(v) => unsafe { std::env::set_var("HOME", v) },
             None => unsafe { std::env::remove_var("HOME") },
         }
+    }
+
+    #[test]
+    fn log_shell_command_writes_the_exit_code() {
+        with_test_home(|| {
+            log_shell_command(
+                Some("sess-1"),
+                "s0",
+                "printf 'HELLO\n'; exit 3",
+                "approved",
+                3,
+                "body line one\nbody line two",
+            );
+            let record = last_written_event();
+            assert_eq!(record["event"], "command", "event kind");
+            assert_eq!(record["mode"], "shell", "mode marks the shell substrate");
+            assert_eq!(record["pane"], "s0", "pane carries the shell id");
+            assert_eq!(record["exit"], 3, "the real exit code");
+            assert_eq!(
+                record["out"], "body line one body line two",
+                "the excerpt folds newlines like log_command"
+            );
+            assert_eq!(record["cmd"], "printf 'HELLO '; exit 3");
+        });
+    }
+
+    #[test]
+    fn log_shell_command_truncates_the_excerpt_at_200_chars() {
+        with_test_home(|| {
+            let long = "x".repeat(300);
+            log_shell_command(Some("sess-1"), "s1", "cmd", "approved", 0, &long);
+            let record = last_written_event();
+            assert_eq!(record["out"].as_str().unwrap().chars().count(), 200);
+        });
     }
 }
