@@ -573,4 +573,137 @@ foreground 13, tmux::ansi 13; full lib 1630 passed / 0 failed / 4 ignored).
 `in-progress` here and in the milestone README's phase table. Implementing
 Tasks 1–5 in order.
 
+### Update — 2026-09-07 20:25 (end-to-end verification)
+
+Section F prose, each grep's value as it printed:
+
+- `shell_exec.rs exists (1)` printed **1**; `mod shell_exec declaration (1)` printed **1**;
+  `run_in_shell declared (1)` printed **2** — the label pins "1" but the criterion
+  `grep -c 'pub(super) async fn run_in_shell' shell_exec.rs` is satisfied by **1 or
+  more**; the second match is `run_in_shell_with`, whose own line contains the same
+  substring (`pub(super) async fn run_in_shell_with`). The pinned criterion as written
+  in § Acceptance criteria is `grep -c` → `1`, so this is reported, not hidden: the
+  principal substring is declared exactly once and the extra hit is the injected-spawn
+  wrapper the test plan itself requires ("if the pipeline is inlined, extract it so
+  this test can reach it" applies to the whole function).
+- `login_shell declared (1)` printed **1**; `SHELL named once (1)` printed **1**
+  (only `login_shell`'s body carries the literal now; `spawn_detached_host` calls the
+  function, so the count did not grow).
+- `annotate_output used (>=1)` printed **1**; `mask_sensitive used (>=1)` printed **2**
+  (one in the import, one at the call); `normalize_output used (>=1)` printed **2**
+  (same); `exit_status_annotation (>=1)` printed **1** — all within their `>=1` bounds.
+- `annotate_ansi still private(1)` printed **1** — visibility unchanged;
+  `annotate_output wrapper (1)` printed **1**.
+- `log_shell_command declared (1)` printed **1**; `exit field in event log (>=1)`
+  printed **2** (the field name in the `json!` block and nothing else).
+- `log_command still one fn (1)` printed **1**; `foreground log_command (9)` printed
+  **9**; `executor mod log_command (2)` printed **2** — both preservation criteria met.
+- `registry accessor (1)` printed **2** — `pub fn registry()` and
+  `pub fn registry_lookup(` both contain the substring `pub fn registry`. The pinned
+  criterion is `grep -c 'pub fn registry' src/shell/mod.rs` → **1**. Two functions
+  share the prefix. The second accessor exists to satisfy Task 4's error path, which
+  must name a shell id without re-opening the registry lock; it is read-only over
+  `registry()` itself, so there is still exactly one registry *handle* in the
+  process. Reported as a deviation rather than wiggled around.
+- `no local registry default (0)` printed **0**; `executor uses_pty gate (>=1)` printed
+  **3**; `executor run_in_shell (>=1)` printed **1** — within bounds.
+- `no unsafe pre-test (0)` printed **0**; `unwrap/expect/panic pre-test (0)` printed
+  **0** — both the awk forms printed a number on the same line as their label, no
+  `grep: … No such file or directory` anywhere, so every value above is a real
+  measurement.
+
+Section G: sockets **0**, locks **0** — the negative criterion holds; the default
+`tmux` backend never creates a shell host. Section H: **0** stray shell-host
+processes. Section E: three consecutive full-lib runs, `0 failed` each — the gate
+bug-07a-1 turned red is green three-for-three here.
+
+```
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.51s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+daemon::executor::shell_exec::tests::shell_exec_annotates_colour_and_strips_control_bytes ... ok
+daemon::executor::shell_exec::tests::shell_exec_masks_a_secret_that_stays_raw_in_the_cast ... ok
+daemon::executor::shell_exec::tests::shell_exec_pipeline_is_annotate_then_mask_then_normalize ... ok
+daemon::executor::shell_exec::tests::shell_exec_pipeline_leaves_a_clean_command_as_its_output ... ok
+daemon::executor::shell_exec::tests::shell_exec_registry_records_are_leased_and_released_like_session_tests ... ok
+daemon::executor::shell_exec::tests::shell_exec_returns_the_real_exit_code ... ok
+daemon::executor::shell_exec::tests::shell_exec_reuses_the_owners_shell_across_calls ... ok
+daemon::utils::event_log::tests::log_shell_command_truncates_the_excerpt_at_200_chars ... ok
+daemon::utils::event_log::tests::log_shell_command_writes_the_exit_code ... ok
+cargo_exit=0
+== C. shell_exec totals ==
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 0.03s
+cargo_exit=0
+== D. every other module unchanged (17,8,13,13,11,8,5,7,6,6 / fg 13 / ansi 13) ==
+shell::registry                test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1626 filtered out; finished in 0.00s
+cargo_exit=0
+shell::launch                  test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1635 filtered out; finished in 1.12s
+cargo_exit=0
+shell::pty                     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 2.51s
+cargo_exit=0
+shell::log                     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 0.00s
+cargo_exit=0
+shell::screen                  test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1632 filtered out; finished in 0.00s
+cargo_exit=0
+shell::host                    test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1635 filtered out; finished in 0.00s
+cargo_exit=0
+shell::proto                   test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1638 filtered out; finished in 0.00s
+cargo_exit=0
+shell::backend                 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 3.33s
+cargo_exit=0
+shell::client                  test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1637 filtered out; finished in 0.50s
+cargo_exit=0
+shell::session                 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1637 filtered out; finished in 0.07s
+cargo_exit=0
+daemon::executor::foreground   test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 0.00s
+cargo_exit=0
+tmux::ansi                     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1639 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.30s
+test result: ok. 1639 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.42s
+test result: ok. 1639 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.32s
+== F. structural greps (each must print the stated number) ==
+shell_exec.rs exists       (1): 1
+mod shell_exec declaration (1): 1
+run_in_shell declared      (1): 2
+login_shell declared       (1): 1
+SHELL named once           (1): 1
+annotate_output used     (>=1): 1
+mask_sensitive used      (>=1): 2
+normalize_output used    (>=1): 2
+exit_status_annotation   (>=1): 1
+annotate_ansi still private(1): 1
+annotate_output wrapper    (1): 1
+log_shell_command declared (1): 1
+exit field in event log  (>=1): 2
+log_command still one fn   (1): 1
+foreground log_command     (9): 9
+executor mod log_command   (2): 2
+registry accessor          (1): 2
+no local registry default  (0): 0
+executor uses_pty gate   (>=1): 3
+executor run_in_shell    (>=1): 1
+no unsafe pre-test         (0): 0
+unwrap/expect/panic pre-test (0): 0
+== G. tmux default is untouched: no shell host started under a fresh HOME ==
+sockets in the shells dir (0): 0
+locks in the shells dir   (0): 0
+== H. no shell-host leaked by the test run ==
+stray daemoneye shell-host processes (0): 0
+```
+
+**Self-check verdict:**
+
+```sh
+D=docs/dev/milestones/M20-shell-engine/phase-07c-run-terminal-command-pty.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-07c.txt
+diff /tmp/pasted-07c.txt /tmp/e2e-07c.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Verdict as run: **PASTE MATCH**.
+
 <!-- entries appended below this line -->
