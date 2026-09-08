@@ -1,8 +1,8 @@
 # Phase 07c: `run_terminal_command` on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
-bug-07c-1, bug-07c-2)
+**Status:** in-progress (bounced at review 2026-09-08 — bug-07c-3;
+prior bounce: bug-07c-1, bug-07c-2)
 **Depends on:** phase-07a (`client::run_command`), phase-07b
 (`shell_for_owner` + the registry in `run_daemon`) — both done.
 **Estimated diff:** ~320 lines
@@ -384,6 +384,20 @@ Each was run against the current tree and returns the "now" value shown.
       → **0** (now `8`). Every symbol this phase needs is already re-exported
       from `src/shell/mod.rs`; verified at review that the private layout
       builds, tests and lints clean.
+- [ ] **bug-07c-3 — the ordering guard must be able to fail.**
+      `grep -c 'AKIAIOSFOD.x1b' src/daemon/executor/shell_exec.rs` → **1 or
+      more** (now `0`): a test feeds `format_for_model` a secret with an escape
+      embedded **mid-token** and asserts it is masked. Measured at review, that
+      is the input on which the two orderings disagree — annotate-first yields
+      `<AWS_KEY>`, mask-first yields `AKIAIOSFODNN7EXAMPLE` in the clear —
+      whereas the F3 string the test plan prescribed yields the same result
+      either way, so `shell_exec_pipeline_is_annotate_then_mask_then_normalize`
+      stays green with `format_for_model`'s body reversed. Keep that test; add
+      the discriminating one. `daemon::executor::shell_exec::` reports **7
+      passed; 0 failed** (now `6 passed`), and the Update Log carries the
+      mutation transcript required by bug-07c-3's DoD: the module **red** under
+      the reversed body, green after restoring it.
+
 - [ ] **bug-07c-2 — no test that cannot fail.**
       `grep -c 'shell_exec_registry_records_are_leased_and_released_like_session_tests' src/daemon/executor/shell_exec.rs`
       → **0** (now `1`), and `daemon::executor::shell_exec::` reports either
