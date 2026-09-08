@@ -1,7 +1,7 @@
 # Phase 07c: `run_terminal_command` on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress (re-dispatched 2026-09-08 after review bounce —
+**Status:** review
 bug-07c-1, bug-07c-2)
 **Depends on:** phase-07a (`client::run_command`), phase-07b
 (`shell_for_owner` + the registry in `run_daemon`) — both done.
@@ -1083,3 +1083,144 @@ name; this doc then did the opposite twice. Recorded as `spec_bug`.
 **Re-dispatch:** `/rexymcp:dispatch phase-07c`. Both bugs are mechanical —
 ten `mod` lines, roughly a dozen import lines, and one test either deleted or
 given something that can fail.
+
+### Update — ts=1788884241913 (complete, server-authored)
+
+**Summary:** **Summary — phase-07c re-dispatch complete, both review bugs remediated** (commit `0f901a9`, working tree clean, phase doc left at `in-progress` for the server's completion tail):
+
+- **bug-07c-1 (major) — fixed.** All ten `src/shell/` module declarations are back to private `mod` (`^pub mod` → 0, `^mod ` → 10); the `pub use` re-export block diff from `1d29a77` is exactly the authorized `login_shell` addition, no line removed. Every by-path import in `shell_exec.rs` and the `Owner` import in `executor/mod.rs` was rewritten to the re-exports the module already publishes (`use crate::shell::{Owner, ShellId, ShellRegistry, login_shell, run_command, shell_for_owner, spawn_detached_host}`, and test-scope `bind`/`serve`/`lock_path`/`socket_path`), so the by-path grep over `shell_exec.rs` is **0** and the library's public API is not widened by a byte.
+- **bug-07c-2 (minor) — fixed by removal, not replacement.** The vending test (`…_records_are_leased_and_released_like_session_tests`) is deleted → **`daemon::executor::shell_exec::` now reports 6 passed; 0 failed**. Chosen over a cap-path replacement because the cap behaviour the bug suggests is already pinned with a red assertion in `shell::session::session_honours_the_per_owner_cap` one layer down; a same-level copy would re-test `shell_for_owner` — which this phase composes and does not own — rather than cover anything this phase wrote, and STANDARDS §3.2's converse holds: a test that cannot fail is not coverage. Reasoning recorded in the Update Log as the bug's DoD requires.
+- **End-to-end verification:** the phase's E2E block was re-run from the repo root, captured mechanically to `/tmp/e2e-07c.txt`, and pasted; the self-check prints **PASTE MATCH** (§ F: every line carries its number on the label line — all pinned counts exact, including the two re-pinned call-form greps `run_in_shell(` → 1 and `pub fn registry(` → 1; § D all twelve preserved counts exact; § E three consecutive full-lib runs at `1638 passed; 0 failed` — one below the prior 1639 because that run's seventh was the deleted vending test; § G/H negative criteria 0/0). All four gates pass — `cargo fmt --all`, `cargo build` (zero new warnings), `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` (1638 passed, 0 failed, 4 ignored).
+
+**Notes for review:** (1) The E2E transcript itself was authored before the bugged state existed in *this* run, but it is a fresh mechanical capture of the remediated tree, not the prior one. (2) `cli`/`shell_exec` error path still names the shell id via the authorized `registry_lookup` helper — unchanged from the reviewed state, as the review re-pinned criterion now permits. (3) One clippy-driven touch-up during the run: the test module's import line narrowed to `bind, lock_path, serve, socket_path` (unused `ShellRecord`/`with_shells` after the vending test's deletion) — test-only, within the file the phase owns.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nning 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test docs_document_the_reindex_command ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.30s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M20-shell-engine/README.md` — +1 -1
+- `docs/dev/milestones/M20-shell-engine/phase-07c-run-terminal-command-pty.md` — +149 -2
+- `src/daemon/executor/mod.rs` — +1 -1
+- `src/daemon/executor/shell_exec.rs` — +22 -49
+- `src/shell/mod.rs` — +10 -10
+
+**Commit:** 0f901a9a87b21d96cc973bc208eca504ad3b4487
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
