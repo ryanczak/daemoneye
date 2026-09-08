@@ -706,11 +706,106 @@ mod tests {
                 ShellResponse::Status { state, .. } if state == want => return state,
                 other => {
                     if std::time::Instant::now() >= deadline {
-                        panic!("never observed {want:?}, last state {other:?}");
+                        let (paused, fg, resumed) = {
+                            let shell = backend.shell.lock().unwrap_or_log();
+                            (
+                                shell.paused_pgid(),
+                                shell.has_foreground_job(),
+                                shell.resumed_pgid_alive(),
+                            )
+                        };
+                        panic!(
+                            "never observed {want:?}, last state {other:?}, paused={paused:?}, fg={fg}, resumed={resumed:?}"
+                        );
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
             }
+        }
+    }
+
+    /// Panic-path cleanup for the status tests' `sleep 30`: resume whatever
+    /// the shell paused, then kill the shell's children and the shell by pid —
+    /// the section-G leak check counts every `sleep 30` this suite leaves
+    /// behind. Drop runs on unwind.
+    struct JobGuard {
+        backend: Arc<PtyBackend>,
+    }
+    impl Drop for JobGuard {
+        fn drop(&mut self) {
+            let shell = self.backend.shell.lock().unwrap_or_log();
+            for pgid in [shell.paused_pgid(), shell.resumed_pgid_alive()]
+                .into_iter()
+                .flatten()
+            {
+                let _ = std::process::Command::new("kill")
+                    .arg("-s")
+                    .arg("CONT")
+                    .arg("--")
+                    .arg(format!("-{pgid}"))
+                    .status();
+            }
+            let shell_pid = shell.pid().map(|p| p as i64);
+            drop(shell);
+            for pid in child_pids_of(shell_pid) {
+                let _ = std::process::Command::new("kill")
+                    .arg("-9")
+                    .arg(format!("{pid}"))
+                    .status();
+            }
+            if let Some(pid) = shell_pid {
+                let _ = std::process::Command::new("kill")
+                    .arg("-9")
+                    .arg(format!("{pid}"))
+                    .status();
+            }
+        }
+    }
+
+    /// Wait until the foreground group of `backend`'s shell belongs to the
+    /// exact job `argv` describes: `fg != shell pid` (F1) and the group
+    /// leader's `/proc/<fg>/cmdline` is `argv` NUL-joined. A shell's startup
+    /// rc (e.g. a `PROMPT_COMMAND` hook) can fork a transient child that
+    /// holds the terminal for seconds while the queued line is still
+    /// unread; the pty echoes a write as the line discipline receives it,
+    /// so the *echo* is not evidence the job started — only the leader's
+    /// cmdline is.
+    fn wait_for_fg_cmdline(backend: &Arc<PtyBackend>, argv: &[&str]) {
+        let mut wanted: Vec<u8> = Vec::new();
+        for (i, a) in argv.iter().enumerate() {
+            if i > 0 {
+                wanted.push(0);
+            }
+            wanted.extend_from_slice(a.as_bytes());
+        }
+        wanted.push(0);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let fg = {
+                let shell = backend.shell.lock().unwrap_or_log();
+                shell.current_foreground_pgid()
+            };
+            let hit = match fg {
+                None => false,
+                Some(fg) => {
+                    let pid = {
+                        let shell = backend.shell.lock().unwrap_or_log();
+                        shell.pid().map(i64::from)
+                    };
+                    Some(fg) != pid
+                        && std::fs::read(format!("/proc/{fg}/cmdline"))
+                            .map(|c| c == wanted)
+                            .unwrap_or(false)
+                }
+            };
+            if hit {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the job {argv:?} never took the foreground (last fg {fg:?})"
+            );
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
@@ -721,67 +816,17 @@ mod tests {
         // Running again after CONT.
         let dir = tempfile::tempdir().unwrap();
         let backend = spawn_backend(&dir);
-        // The job must never outlive the test, even through an assertion
-        // panic (Drop runs on unwind): resume whatever this test stopped,
-        // then kill the shell by pid — the section-G leak check counts every
-        // `sleep 30` this suite leaves behind.
-        struct JobGuard {
-            backend: Arc<PtyBackend>,
-        }
-        impl Drop for JobGuard {
-            fn drop(&mut self) {
-                let shell = self.backend.shell.lock().unwrap_or_log();
-                if let Some(pgid) = shell.paused_pgid() {
-                    let _ = std::process::Command::new("kill")
-                        .arg("-s")
-                        .arg("CONT")
-                        .arg("--")
-                        .arg(format!("-{pgid}"))
-                        .status();
-                }
-                let shell_pid = shell.pid().map(|p| p as i64);
-                drop(shell);
-                for pid in child_pids_of(shell_pid) {
-                    let _ = std::process::Command::new("kill")
-                        .arg("-9")
-                        .arg(format!("{pid}"))
-                        .status();
-                }
-                if let Some(pid) = shell_pid {
-                    let _ = std::process::Command::new("kill")
-                        .arg("-9")
-                        .arg(format!("{pid}"))
-                        .status();
-                }
-            }
-        }
+        // The module-level JobGuard resumes and kills the exact job on any
+        // assertion panic — the section-G leak check counts every `sleep 30`
+        // this suite leaves behind.
         let _guard = JobGuard {
             backend: Arc::clone(&backend),
         };
-        let mut rx = backend.subscribe();
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
-        quiet(&mut rx, deadline);
 
         let rt = tokio::runtime::Runtime::new().expect("runtime");
         rt.block_on(backend.input(b"sleep 30\n"))
             .expect("start the foreground job");
-        // The foreground job holds the terminal; wait for it to appear (F1),
-        // then assert Running rather than polling blindly.
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            let has = {
-                let shell = backend.shell.lock().unwrap_or_log();
-                shell.has_foreground_job()
-            };
-            if has {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the sleep 30 job never took the foreground"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        wait_for_fg_cmdline(&backend, &["sleep", "30"]);
         assert_eq!(
             status_until(&backend, ShellState::Running),
             ShellState::Running,
@@ -807,6 +852,57 @@ mod tests {
             "after CONT the resumed job must report Running again"
         );
         let _ = rt;
+    }
+
+    /// bug-08a-2's read-side companion: `Ctrl-p` is a toggle, so the state a
+    /// paused shell reports must go `Running → Paused → Running → Paused`
+    /// across STOP/CONT/STOP, with the second STOP reaching the job through
+    /// the remembered group even though bash holds the terminal after the
+    /// resume.
+    #[test]
+    fn backend_status_toggles_running_paused_more_than_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let _guard = JobGuard {
+            backend: Arc::clone(&backend),
+        };
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(backend.input(b"sleep 30\n"))
+            .expect("start the foreground job");
+        wait_for_fg_cmdline(&backend, &["sleep", "30"]);
+        assert_eq!(
+            status_until(&backend, ShellState::Running),
+            ShellState::Running,
+            "a foreground job must report Running before the first STOP"
+        );
+        rt.block_on(backend.signal(ShellSignal::Stop))
+            .expect("the first STOP");
+        assert_eq!(
+            status_until(&backend, ShellState::Paused),
+            ShellState::Paused,
+            "the first STOP must report Paused"
+        );
+        rt.block_on(backend.signal(ShellSignal::Cont))
+            .expect("the first CONT");
+        assert_eq!(
+            status_until(&backend, ShellState::Running),
+            ShellState::Running,
+            "the first CONT must report Running again"
+        );
+        rt.block_on(backend.signal(ShellSignal::Stop))
+            .expect("the second STOP");
+        assert_eq!(
+            status_until(&backend, ShellState::Paused),
+            ShellState::Paused,
+            "the second STOP must report Paused again"
+        );
+        rt.block_on(backend.signal(ShellSignal::Cont))
+            .expect("the second CONT");
+        assert_eq!(
+            status_until(&backend, ShellState::Running),
+            ShellState::Running,
+            "the second CONT must report Running again"
+        );
     }
 
     #[test]

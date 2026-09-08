@@ -1059,3 +1059,186 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 97965401f2a29b4ada4738ca15ffa623e2b5e8b5
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-08 16:40 (progress — bug-08a-1 and bug-08a-2 fixed)
+
+Resumed the phase on the two open blockers. Both measured at review; both fixed here, with the fix
+sitting where the measurements point.
+
+**bug-08a-1 (flaky `pty_pause_then_resume_actually_restarts_the_job`).** The bare
+`assert!(!shell.has_foreground_job(), …)` after the STOP is now the module's own
+`poll_until` — the check survives verbatim, only its timing changed. Guard kept:
+`grep -cE '^\s+!shell\.has_foreground_job\(\),' src/shell/pty.rs` → 0 while
+`grep -c has_foreground_job src/shell/pty.rs` → 5.
+
+**bug-08a-2 (pause toggles only once).** The `"STOP"` arm reads the group it is
+tracking first — `paused_group_alive()` (the `/proc`-`T` read on the remembered
+group) then `resumed_pgid_alive()` — and only falls back to the terminal's
+foreground group when nothing is remembered, filtered by F1 as before. The single
+`process_group_leader` tty-query call site is untouched (`grep -c` stays 1); the
+arm consults memory, not a second tty query. New tests:
+`pty_pause_resume_pause_toggles_more_than_once` (STOP→CONT→STOP→CONT, `/proc`
+state `T` both stops, `paused_pgid()` re-armed) and
+`backend_status_toggles_running_paused_more_than_once` (the same four legs
+through `PtyBackend::status`, no `/proc` touching).
+
+**A second flake, found while sweeping the toggle test (~23% of runs): STOP
+during the boot window landed on a bash-rc child, not the job.** Instrumented
+watcher on /proc: the spawned bash inherits the dev box's `~/.bashrc`, whose
+`PROMPT_COMMAND` forks a `tmux set-environment` client that holds the terminal's
+fg group for seconds while the queued `sleep 30` line is still unread (the pty
+echoes a write as the line discipline receives it, so "has the echo" is not
+evidence the job started). A `STOP` in that window stopped the transient, the
+`sleep` never existed yet, and rule 3 legitimately reported `Running` forever.
+Fixes, all predicated on the same discriminator (the fg group's leader's
+`/proc` cmdline must be the job we queued):
+
+- test-side: `start_job` (pty) and `wait_for_fg_cmdline` (backend) gate every
+  STOP/CONT transition on "fg leader's cmdline == the queued job", replacing
+  the `has_foreground_job`-only gates;
+- prod-side smallest change that keeps STOP honest in the same window: when
+  the `STOP` arm finds no target (fg unreadable or == the shell's own pid) it
+  re-reads the terminal over a short settle (3 × 20 ms) before giving up —
+  the fork-to-setpgid window reads exactly like an idle shell, and a silent
+  no-op there is precisely the failure bug-08a-2 made loud.
+
+`pty_stop_with_no_foreground_job_remembers_nothing` still passes on the
+no-settle path (a fresh shell's read is stable at the shell's own pid, nothing
+remembered).
+
+**Mutation checks demanded by the re-dispatch note** (both red, both restored
+green — `test result:` lines observed verbatim):
+
+- reverted to the shipped terminal-first STOP →
+  `pty_pause_resume_pause_toggles_more_than_once` red: "the second STOP must
+  re-arm the paused memory for the job … left: Some(…), right: Some(…)";
+  restored → green.
+- substituted the re-deriving CONT →
+  `pty_pause_then_resume_actually_restarts_the_job` red: "the remembered job
+  to resume (state S or R) after CONT not reached within the wait"; restored
+  → green.
+
+**Gates after the two fixes:** `cargo build` clean, `cargo clippy
+--all-targets --all-features -- -D warnings` green, `cargo fmt --all --check`
+green. `cargo test --lib` reported `0 failed` on **twelve consecutive runs** at
+the default thread count (ten required; two more for margin), all
+`1649 passed; 0 failed; 4 ignored`. Per-module: `shell::pty::` 17, backend 10,
+client 9, proto 5, host 8, registry 17, session 6, launch 8, log 13, screen 11.
+Leak checks after the sweeps: stray `sleep 30` = 0, stray daemoneye
+`shell-host` = 0. Full E2E block re-run next, in its own entry.
+### Update — 2026-09-08 16:52 (end-to-end verification)
+
+Executed verbatim from the repo root; `/tmp/e2e-08a.txt` pasted below in full.
+Three gates pass: `cargo build` exit 0, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, `cargo fmt --all --check` exit 0.
+
+```
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.72s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::backend::tests::backend_status_is_idle_on_a_fresh_shell ... ok
+shell::backend::tests::backend_status_reports_paused_then_running ... ok
+shell::backend::tests::backend_status_reports_running_then_exited ... ok
+shell::backend::tests::backend_status_toggles_running_paused_more_than_once ... ok
+shell::client::tests::oneshot::client_send_signal_carries_the_host_error_back ... ok
+shell::client::tests::oneshot::client_send_signal_round_trips ... ok
+shell::client::tests::oneshot::client_status_reports_state ... ok
+shell::pty::pause_resume_tests::pty_cancel_clears_the_paused_group ... ok
+shell::pty::pause_resume_tests::pty_pause_resume_pause_toggles_more_than_once ... ok
+shell::pty::pause_resume_tests::pty_pause_then_resume_actually_restarts_the_job ... ok
+shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing ... ok
+cargo_exit=0
+== C. edited-module totals (pty >=16, backend >=9, client >=7) ==
+shell::pty         test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 3.13s
+cargo_exit=0
+shell::backend     test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1643 filtered out; finished in 1.22s
+cargo_exit=0
+shell::client      test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1644 filtered out; finished in 0.50s
+cargo_exit=0
+== D. untouched modules (proto>=5, host 8, registry 17, session 6, launch 8, log 13, screen 11) ==
+shell::proto       test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1648 filtered out; finished in 0.00s
+cargo_exit=0
+shell::host        test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1645 filtered out; finished in 0.00s
+cargo_exit=0
+shell::registry    test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 0.00s
+cargo_exit=0
+shell::session     test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1647 filtered out; finished in 0.08s
+cargo_exit=0
+shell::launch      test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1645 filtered out; finished in 1.11s
+cargo_exit=0
+shell::log         test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1640 filtered out; finished in 0.00s
+cargo_exit=0
+shell::screen      test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1642 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 10.87s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.37s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.39s
+== F. structural greps (each must print the stated number) ==
+Paused in proto          (>=1): 5
+Idle in proto            (>=1): 5
+paused_pgid accessor       (1): 1
+has_foreground_job         (1): 1
+process_group_leader calls (1): 1
+client send_signal         (1): 1
+client status              (1): 1
+run_command still one fn   (1): 1
+proc read in backend     (>=1): 6
+run_command body preserved (1): 1
+host signal dispatch kept  (1): 1
+no unsafe pre-test         (0): 0
+unwrap/expect/panic pre-test (0): 0
+== G. no shell-host or stray job leaked by the test run ==
+stray daemoneye shell-host processes (0): 0
+stray 'sleep 30' from the tests      (0): 0
+```
+
+Section F, line by line as printed: Paused in proto 5 and Idle in proto 5 (both pins `>= 1`);
+`pub fn paused_pgid` 1; `pub fn has_foreground_job` 1; `process_group_leader` 1 (the single tty
+query site — the pin that must not grow); `pub async fn send_signal` 1; `pub async fn status` 1;
+`pub async fn run_command` 1; `/proc/` in backend 6 (pin `>= 1`; the spec itself notes why the pin
+is on the `/proc/` prefix rather than `stat`); "Subscribe before writing" 1 (`run_command` body
+preserved); host signal dispatch 1; unsafe before `#[cfg(test)]` 0 and unwrap/expect/panic before
+`#[cfg(test)]` 0 across the three edited files.
+
+Section G both zeros: the job guards resume the remembered group and kill the shell and its
+`/proc`-enumerated children **by pid**, so the sweep leaves no stopped `sleep 30` behind even when
+an assertion fires mid-test.
+
+Mutation evidence (both red, then green after restore, each verified in this round):
+
+```
+# STOP arm reverted to the shipped terminal-first form:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1652 filtered out; finished in 0.14s
+#   thread panicked: assertion `left == right` failed: the second STOP must re-arm the paused
+#   memory for the job — left: Some(1483960), right: Some(1483957)
+# restored (memory-first STOP):
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1652 filtered out; finished in 0.14s
+
+# CONT arm substituted with the re-deriving form:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1652 filtered out; finished in 10.15s
+#   thread panicked: the remembered job to resume (state S or R) after CONT not reached within the wait
+# restored (remembered-target CONT):
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1652 filtered out; finished in 0.14s
+```
+
+Twelve consecutive full-lib runs at the default thread count (ten required, two margin), all
+`0 failed; 4 ignored`:
+
+```
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.44s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.48s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.37s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.38s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.37s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.39s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.64s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.38s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.39s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.39s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.41s
+test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.39s
+```
+
+Leak checks after the sweeps: stray `sleep 30` = 0, stray daemoneye `shell-host` = 0.
