@@ -1,7 +1,7 @@
 # Phase 08a: pause, resume and cancel on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced at review 2026-09-08 — bug-08a-1, bug-08a-2)
 **Depends on:** phase-05b (`PtyBackend`), phase-05a (`proto.rs` frame set),
 phase-07a (`client::run_command`) — all done.
 **Estimated diff:** ~300 lines
@@ -286,6 +286,33 @@ Each was run against the current tree and returns the "now" value shown.
       default thread count — no `RUST_TEST_THREADS` cap, no skip filter.
       *(bug-07a-1: a phase's own PTY-spawning tests turned this gate red 19 runs
       in 20 while every per-module count stayed green.)*
+- [ ] **bug-08a-1 — the primary test must not be flaky.** `cargo test --lib`
+      reports `0 failed` on **ten consecutive runs** at the default thread
+      count (ten, not three: at the measured ~27% failure rate a three-run
+      sweep passes cleanly ~39% of the time, so three cannot tell a fix from
+      luck). The instant assertion at `pty.rs:594` becomes a poll —
+      `grep -cE '^\s+!shell\.has_foreground_job\(\),' src/shell/pty.rs` → **0**
+      (now `1`) — while `grep -c 'has_foreground_job' src/shell/pty.rs` stays
+      **5 or more** (now `5`), because the check is what makes this test the F2
+      guard and must not be deleted. The guard must still be **red** against
+      the pre-08a re-deriving `CONT`; paste the red and green `test result:`
+      lines.
+
+- [ ] **bug-08a-2 — pause must toggle more than once.**
+      `grep -c 'fn pty_pause_resume_pause_toggles_more_than_once' src/shell/pty.rs`
+      → **1** (now `0`): STOP → CONT → STOP again drives the job back to
+      `/proc` state `T` and `paused_pgid()` is `Some` again. Measured at review,
+      the second STOP is a silent no-op — the job stays in state `S` and
+      nothing is remembered — because the `"STOP"` arm reads only the terminal
+      foreground group, which bash holds after a resume. `shell::pty::` reports
+      **17 or more** passing (now `16`) and `shell::backend::` **10 or more**
+      (now `9`), the latter covering `Running → Paused → Running → Paused`
+      through `PtyBackend::status`. `grep -c 'process_group_leader'
+      src/shell/pty.rs` stays **1** (now `1`) — consult the remembered group,
+      as `CONT` and `resumed_pgid_alive` already do; do not add a second tty
+      query. `pty_stop_with_no_foreground_job_remembers_nothing` must still
+      pass: remembering a *resumed* group is not inventing one.
+
 - [ ] All four gates pass.
 
 ## Test plan
