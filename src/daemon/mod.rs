@@ -732,11 +732,11 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     let cache = Arc::new(SessionCache::new(initial_session.as_deref().unwrap_or("")));
 
-    // The live shell registry: sweep dead hosts' leftovers, then adopt the
-    // shells that survived a daemon restart. Gated on the PTY backend — with
-    // the default `tmux` this block is skipped entirely and startup behaves
-    // byte-for-byte as before (no sweep, no adopt, no directory creation:
-    // `sweep_stale`/`adopt_at_startup` only read what is already there).
+    // The live shell registry: clear dead hosts' leftovers out of the shells
+    // directory, then re-register the shells that survived a daemon restart.
+    // Gated on the PTY backend — with the default `tmux` this block is
+    // skipped entirely and startup behaves byte-for-byte as before: no
+    // registry at all, and nothing touches the shells directory.
     let _shells = if startup_config.execution.uses_pty() {
         let swept = crate::shell::sweep_stale(&crate::config::shells_dir());
         if !swept.is_empty() {
