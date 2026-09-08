@@ -1238,3 +1238,193 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0f901a9a87b21d96cc973bc208eca504ad3b4487
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-08 09:44 (started by local-inference-lab/GLM on bug-07c-3 re-dispatch)
+
+Pre-flight on `master` at `7bb1894`: tree clean, `cargo test --lib shell::` =
+137 passed / 0 failed, all twelve preserved module counts match § Current
+state exactly, full lib suite 1639 passed / 0 failed / 4 ignored. bug-07c-3
+read in full. Everything the two prior bounces remediated (private `mod`
+layout, no vending test) is intact in the tree; SPARK `cargo fmt --all` re-run
+before any edit as a baseline (no-op, clean).
+
+Remediation plan, one item:
+
+- **bug-07c-3** — add the discriminating test
+  `shell_exec_ordering_guard_masks_a_secret_split_by_an_embedded_escape`
+  (input `"AKIAIOSFOD\x1b[0mNN7EXAMPLE\r\n"`, the secret with an ESC byte
+  embedded **mid-token**), keep
+  `shell_exec_pipeline_is_annotate_then_mask_then_normalize` as the
+  transformation guard it is, and mutation-test the new guard red against the
+  reversed pipeline before restoring the body, pasting both runs below.
+  `format_for_model`'s shipped body is untouched — the bug is coverage, not
+  code.
+
+### Update — 2026-09-08 09:44 (order mutation, red run)
+
+`format_for_model`'s body substituted with the reversed pipeline
+`crate::tmux::annotate_output(&normalize_output(&mask_sensitive(raw)))` —
+annotate **last** instead of annotate **first**:
+
+```
+test daemon::executor::shell_exec::tests::shell_exec_annotates_colour_and_strips_control_bytes ... ok
+test daemon::executor::shell_exec::tests::shell_exec_masks_a_secret_that_stays_raw_in_the_cast ... ok
+test daemon::executor::shell_exec::tests::shell_exec_ordering_guard_masks_a_secret_split_by_an_embedded_escape ... FAILED
+test daemon::executor::shell_exec::tests::shell_exec_pipeline_is_annotate_then_mask_then_normalize ... ok
+test daemon::executor::shell_exec::tests::shell_exec_pipeline_leaves_a_clean_command_as_its_output ... ok
+test daemon::executor::shell_exec::tests::shell_exec_returns_the_real_exit_code ... ok
+test daemon::executor::shell_exec::tests::shell_exec_reuses_the_owners_shell_across_calls ... ok
+thread 'daemon::executor::shell_exec::tests::shell_exec_ordering_guard_masks_a_secret_split_by_an_embedded_escape' (47792) panicked at src/daemon/executor/shell_exec.rs:301:9:
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 0.03s
+```
+
+The new guard is the **only** red test under the reversal; every other test in
+the module stays green, which is exactly the blind spot bug-07c-3 filed — the
+F3-string transformation test cannot observe the order, the mid-token-escape
+one can, and now does.
+
+### Update — 2026-09-08 09:44 (order restored, green run)
+
+Body restored to the shipped order
+`mask_sensitive(&normalize_output(&crate::tmux::annotate_output(raw)))` —
+byte-identical to what review verified last pass — and the module is green
+again:
+
+```
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 0.04s
+```
+
+All other tests below and the twelve preserved module counts re-checked after
+the restore. Proceeding to the end-to-end block.
+
+### Update — 2026-09-08 09:44 (end-to-end verification, bug-07c-3 re-dispatch)
+
+Section F prose, each grep's value as it printed (the numbers in the fenced
+block below are the real captures, not restated claims):
+
+| Grep | Pinned | Printed |
+|---|---|---|
+| `shell_exec.rs exists` | 1 | **1** |
+| `mod shell_exec declaration` | 1 | **1** |
+| `run_in_shell declared` (call form, re-pinned at review) | 1 | **1** |
+| `login_shell declared` | 1 | **1** |
+| `SHELL named once` | 1 | **1** |
+| `annotate_output used` | ≥1 | **2** (the invocation plus its name inside the new guard test's doc comment) |
+| `mask_sensitive used` | ≥1 | **3** (import, call, and the guard's doc comment naming the reversed form) |
+| `normalize_output used` | ≥1 | **3** (same two sources plus the reversal named in the comment) |
+| `exit_status_annotation` | ≥1 | **1** |
+| `annotate_ansi still private` | 1 | **1** |
+| `annotate_output wrapper` | 1 | **1** |
+| `log_shell_command declared` | 1 | **1** |
+| `exit field in event log` | ≥1 | **2** (field name and the `log_shell_command` parameter line) |
+| `log_command still one fn` | 1 | **1** |
+| `foreground log_command` | 9 | **9** |
+| `executor mod log_command` | 2 | **2** |
+| `registry accessor` (call form, re-pinned) | 1 | **1** |
+| `shell mods stay private` | 0 | **0** |
+| `no local registry default` | 0 | **0** |
+| `executor uses_pty gate` | ≥1 | **3** |
+| `executor run_in_shell` | ≥1 | **1** |
+| `no unsafe pre-test` | 0 | **0** |
+| `unwrap/expect/panic pre-test` | 0 | **0** |
+
+Every criterion within its bound; the two re-pinned call-form greps hold at
+exactly 1. The three `>=1` lines went up by one each versus the previous
+verification because the new guard test's doc comment names the reversed
+pipeline — those are prose in a doc comment, not code paths.
+
+```
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+daemon::executor::shell_exec::tests::shell_exec_annotates_colour_and_strips_control_bytes ... ok
+daemon::executor::shell_exec::tests::shell_exec_masks_a_secret_that_stays_raw_in_the_cast ... ok
+daemon::executor::shell_exec::tests::shell_exec_ordering_guard_masks_a_secret_split_by_an_embedded_escape ... ok
+daemon::executor::shell_exec::tests::shell_exec_pipeline_is_annotate_then_mask_then_normalize ... ok
+daemon::executor::shell_exec::tests::shell_exec_pipeline_leaves_a_clean_command_as_its_output ... ok
+daemon::executor::shell_exec::tests::shell_exec_returns_the_real_exit_code ... ok
+daemon::executor::shell_exec::tests::shell_exec_reuses_the_owners_shell_across_calls ... ok
+daemon::utils::event_log::tests::log_shell_command_truncates_the_excerpt_at_200_chars ... ok
+daemon::utils::event_log::tests::log_shell_command_writes_the_exit_code ... ok
+cargo_exit=0
+== C. shell_exec totals ==
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 0.03s
+cargo_exit=0
+== D. every other module unchanged (17,8,13,13,11,8,5,7,6,6 / fg 13 / ansi 13) ==
+shell::registry                test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1626 filtered out; finished in 0.00s
+cargo_exit=0
+shell::launch                  test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1635 filtered out; finished in 1.11s
+cargo_exit=0
+shell::pty                     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 2.56s
+cargo_exit=0
+shell::log                     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 0.00s
+cargo_exit=0
+shell::screen                  test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1632 filtered out; finished in 0.00s
+cargo_exit=0
+shell::host                    test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1635 filtered out; finished in 0.00s
+cargo_exit=0
+shell::proto                   test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1638 filtered out; finished in 0.00s
+cargo_exit=0
+shell::backend                 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 1.28s
+cargo_exit=0
+shell::client                  test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1637 filtered out; finished in 0.50s
+cargo_exit=0
+shell::session                 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1637 filtered out; finished in 0.08s
+cargo_exit=0
+daemon::executor::foreground   test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 0.00s
+cargo_exit=0
+tmux::ansi                     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1639 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.80s
+test result: ok. 1639 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.75s
+test result: ok. 1639 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.96s
+== F. structural greps (each must print the stated number) ==
+shell_exec.rs exists       (1): 1
+mod shell_exec declaration (1): 1
+run_in_shell declared      (1): 1
+login_shell declared       (1): 1
+SHELL named once           (1): 1
+annotate_output used     (>=1): 2
+mask_sensitive used      (>=1): 3
+normalize_output used    (>=1): 3
+exit_status_annotation   (>=1): 1
+annotate_ansi still private(1): 1
+annotate_output wrapper    (1): 1
+log_shell_command declared (1): 1
+exit field in event log  (>=1): 2
+log_command still one fn   (1): 1
+foreground log_command     (9): 9
+executor mod log_command   (2): 2
+registry accessor          (1): 1
+shell mods stay private    (0): 0
+no local registry default  (0): 0
+executor uses_pty gate   (>=1): 3
+executor run_in_shell    (>=1): 1
+no unsafe pre-test         (0): 0
+unwrap/expect/panic pre-test (0): 0
+== G. tmux default is untouched: no shell host started under a fresh HOME ==
+sockets in the shells dir (0): 0
+locks in the shells dir   (0): 0
+== H. no shell-host leaked by the test run ==
+stray daemoneye shell-host processes (0): 0
+```
+
+**Self-check verdict:**
+
+```sh
+D=docs/dev/milestones/M20-shell-engine/phase-07c-run-terminal-command-pty.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-07c.txt
+diff /tmp/pasted-07c.txt /tmp/e2e-07c.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Verdict as run: **PASTE MATCH**.
+
+bug-07c-3's own DoD grep: `grep -c 'AKIAIOSFOD.x1b'
+src/daemon/executor/shell_exec.rs` → **1** (the `.` matches the literal ESC
+byte at column 12 of the guard test's input line,
+`shell_exec.rs:299`). The guard test cannot run green with
+`format_for_model`'s body reversed: the mutation run above shows it as the
+module's single `FAILED`, and the restored body's run shows all seven green.

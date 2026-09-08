@@ -286,4 +286,29 @@ mod tests {
         assert_eq!(format_for_model("hello\r\n"), "hello");
         assert_eq!(format_for_model("\r\n\r\nhello\r\n\r\n"), "hello");
     }
+
+    /// bug-07c-3's DoD. There must exist a test that is red against the
+    /// reversed pipeline, `annotate_output(&normalize_output(&mask_sensitive_(
+    /// raw)))`, so the annotate→mask order is observable. The input carries an
+    /// ESC byte mid-token: annotation-first deletes it before the mask regex
+    /// runs, mask-first leaves the key containing it intact and lets
+    /// annotate strip only the escape, so the two orderings disagree on the
+    /// exact string asserted below.
+    #[test]
+    fn shell_exec_ordering_guard_masks_a_secret_split_by_an_embedded_escape() {
+        let dioxed = "AKIAIOSFOD\x1b[0mNN7EXAMPLE\r\n";
+        let masked = format_for_model(dioxed);
+        assert!(
+            !masked.contains("AKIAIOSFOD"),
+            "the secret must not reach the tool result even when a control byte sits mid-token: {masked:?}"
+        );
+        assert!(
+            masked.contains("<AWS_KEY>"),
+            "the real mask marker must be present: {masked:?}"
+        );
+        assert!(
+            !masked.contains('\x1b'),
+            "no escape may survive into text a model reads: {masked:?}"
+        );
+    }
 }
