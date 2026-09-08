@@ -1,6 +1,6 @@
 # Bug 1 on phase-07b: two pinned acceptance criteria fail, and the Update Log says they pass
 
-**Status:** open
+**Status:** fixed
 **Severity:** major
 **Filed:** 2026-09-07
 
@@ -65,15 +65,29 @@ clean and the **prose summarising it** is what carries the false claim.
 
 ## Definition of done
 
-- [ ] `grep -c 'adopt_at_startup' src/daemon/mod.rs` → **1** (now: `2`).
-- [ ] `grep -c 'sweep_stale' src/daemon/mod.rs` → **1** (now: `2`).
-- [ ] Exactly one call each remains: `grep -c 'crate::shell::adopt_at_startup'
+- [x] `grep -c 'adopt_at_startup' src/daemon/mod.rs` → **1** (was `2`).
+- [x] `grep -c 'sweep_stale' src/daemon/mod.rs` → **1** (was `2`).
+- [x] Exactly one call each remains: `grep -c 'crate::shell::adopt_at_startup'
       src/daemon/mod.rs` → **1** and `grep -c 'crate::shell::sweep_stale'
       src/daemon/mod.rs` → **1**.
-- [ ] The E2E block is re-run and re-pasted into a new `(end-to-end
+- [x] The E2E block is re-run and re-pasted into a new `(end-to-end
       verification)` Update Log entry whose section F shows
       `daemon: adopt_at_startup (1): 1` and `daemon: sweep_stale      (1): 1`,
       with the self-check printing `PASTE MATCH`.
-- [ ] The new entry's prose states section F's result correctly; no claim that
+- [x] The new entry's prose states section F's result correctly; no claim that
       a grep printed a value it did not.
-- [ ] All four gates pass.
+- [x] All four gates pass.
+
+## Resolution
+
+Fixed in `6052def` (+5 −5, one file): the comment above the gated block in
+`run_daemon` was reworded to describe the behaviour without naming either
+function. No call site moved — `git diff 1e887fd HEAD -- src/` is that comment
+and nothing else, and both preservation greps still read `1`.
+
+Verified independently at review: all twelve section-F greps print their pinned
+numbers, and the `### Update — 2026-09-07 19:20 (end-to-end verification)`
+entry's prose states each value as printed, separating the two preservation
+greps as not printed in F. The reworded comment is also the more accurate
+claim — "no registry at all, and nothing touches the shells directory" rather
+than the earlier assertion about what the two functions read.

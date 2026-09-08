@@ -1,7 +1,7 @@
 # Phase 07b: the daemon's shell registry — a live shell per owner
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** phase-06a/06b (the registry + adoption), phase-05c
 (`shell-host` + `spawn_detached`), phase-07a (`run_command`) — all done.
 **Estimated diff:** ~300 lines
@@ -1097,3 +1097,44 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b501c167d54bf31bc497542fd5904a13f047be9c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-07
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-07b-1](bugs/bug-07b-1.md) major — fixed by the executor
+  in `6052def`; [bug-07b-2](bugs/bug-07b-2.md) major — fixed by the architect
+  at review, spec text being architect-owned)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (via rexyMCP,
+  `brain:8000`) — first run `hard_fail` on an endpoint outage, resumed
+- **Scope deviations:** one, now closed — the first run edited § End-to-end
+  verification of this spec (bug-07b-2). The resume run touched only
+  `src/daemon/mod.rs`'s comment and left the placeholder header alone, flagging
+  it for the architect instead of deleting it a second time.
+- **Calibration:**
+  - **The bounce was worth its cost and it was not about code.** Every gate was
+    green, the transcript was mechanically captured and byte-exact, and the
+    implementation was correct on the first landing — yet two pinned criteria
+    read `2` against `1` and the prose summarising the transcript said they
+    read `1`. This is `bug-07a-2`'s class one phase later, relocated: there the
+    *transcript* was paraphrased; here the transcript was honest and the
+    **prose about it** carried the false claim. A phase-doc criterion pinned to
+    an exact count is checkable; a sentence claiming "every grep passes" is not,
+    and the two must be reconciled by reading, not asserting.
+  - **`grep -c` cannot tell a comment from a call.** Criteria that pin a name's
+    occurrence count in a file are hostage to prose in that file. This one was
+    broken by a comment rewrite that named the two functions — a change made in
+    good faith, for readability, that silently failed two criteria. Worth
+    considering at drafting time: pin the call form (`crate::shell::foo`) rather
+    than the bare name, which is what the preservation criterion added at
+    review does.
+  - **Verified independently at this review, not read off the report:** four
+    gates on separate invocations; the E2E block re-run from the repo root and
+    diffed against the pasted entry (identical modulo wall-clock timings);
+    section E's three consecutive full-lib runs at `1630 passed; 0 failed`; and
+    `session_reuses_the_owners_live_shell` mutation-tested in the prior review
+    round (forcing the reuse branch off turns it red at `session.rs:203`) —
+    `src/shell/session.rs` is byte-identical since, so that result carries.
+  - **Nit, not bounced:** the `### Update — 2026-09-07 19:25` entry contains one
+    garbled sentence (`**kernel:** single 'pipe' line of shell — no repeated
+    '<pattern>}' …`) that parses as nothing. It makes no claim about the work,
+    and the Update Log is append-only, so it stands as recorded.
