@@ -1,8 +1,7 @@
 # Phase 07c: `run_terminal_command` on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
-prior bounce: bug-07c-1, bug-07c-2)
+**Status:** done
 **Depends on:** phase-07a (`client::run_command`), phase-07b
 (`shell_for_owner` + the registry in `run_daemon`) — both done.
 **Estimated diff:** ~320 lines
@@ -1573,3 +1572,47 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7ab55edaf2833ac5f2fc979a21e51f27e9d516fc
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-08
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bug-07c-1 + bug-07c-2 filed together at the first review;
+  bug-07c-3 at the second). All three now `fixed`.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none. The bug-07c-3 re-dispatch changed 25 lines, all
+  inside `shell_exec.rs`'s test module; `format_for_model`'s body is
+  byte-identical to the previously reviewed state, as the bug required.
+- **Calibration:** the phase doc pinned a literal test input — *"feed the exact
+  F3 byte string"* — and the F3 string was chosen to demonstrate the
+  transformations, not to discriminate the *order*. The test written to that
+  letter inherited the blind spot, and the module stayed 6/6 green with
+  `format_for_model` reversed. **A spec that names a guard's input has already
+  decided what the guard can catch.** When a phase doc calls a test "the
+  regression guard for X", the input belongs to the criterion, not to the
+  prose: state the property (*"an input on which the two orderings disagree"*)
+  and require the mutation transcript, rather than handing over a string. The
+  bug-07c-3 DoD did exactly that — demand red-under-mutation, not a named
+  input — and the re-dispatch closed it first try.
+
+**Verified at review, independently re-run:** all four gates green
+(`fmt`, `build` zero new warnings, `clippy --all-targets --all-features -D
+warnings`, `cargo test`); full suite 1639 passed / 0 failed / 4 ignored on
+three consecutive runs; `daemon::executor::shell_exec::` 7 passed / 0 failed;
+all twelve preserved module counts exactly `17, 8, 13, 13, 11, 8, 5, 7, 6, 6,
+13, 13`; every structural grep at its pinned value; the last end-to-end entry's
+pasted block re-checked against `/tmp/e2e-07c.txt` → `PASTE MATCH`.
+
+**Mutation re-run by the reviewer, not read from the log:** substituting
+`format_for_model`'s body with
+`crate::tmux::annotate_output(&normalize_output(&mask_sensitive(raw)))` yields
+`test result: FAILED. 6 passed; 1 failed`, with
+`shell_exec_ordering_guard_masks_a_secret_split_by_an_embedded_escape` the
+module's only red test; restoring the body returns `7 passed; 0 failed`. The
+guard can fail against the exact defect it exists to prevent.
+
+**One nit, not filed as a bug and not blocking:** the new test's local is named
+`dioxed` (`shell_exec.rs:299`), which means nothing — `split_secret` would say
+what it holds — and its doc comment carries a line-wrap artifact,
+`mask_sensitive_(` with a trailing underscore (`shell_exec.rs:291`). Cosmetic,
+inside a test, and not worth a third bounce on this phase; fold into a later
+cleanup if one touches this file.

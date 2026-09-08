@@ -1,7 +1,7 @@
 # Bug 3 on phase-07c: the ordering-guard test passes with the ordering reversed
 
 **Severity:** major
-**Status:** open
+**Status:** fixed
 **Filed:** 2026-09-08
 
 ## What's wrong

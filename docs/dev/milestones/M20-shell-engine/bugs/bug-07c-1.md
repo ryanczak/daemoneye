@@ -1,6 +1,6 @@
 # Bug 1 on phase-07c: ten shell modules made public, outside authorization and on a false premise
 
-**Status:** open
+**Status:** fixed
 **Severity:** major
 **Filed:** 2026-09-08
 

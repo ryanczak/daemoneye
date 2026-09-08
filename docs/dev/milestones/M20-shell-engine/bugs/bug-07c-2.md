@@ -1,6 +1,6 @@
 # Bug 2 on phase-07c: a test that passes with the whole phase deleted
 
-**Status:** open
+**Status:** fixed
 **Severity:** minor
 **Filed:** 2026-09-08
 
