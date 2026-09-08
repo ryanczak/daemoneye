@@ -191,7 +191,7 @@ line-number facts go stale and each landing shifts the next Current state).
 | 06b | shell-registry-adoption ([phase-06b-shell-registry-adoption.md](phase-06b-shell-registry-adoption.md)) | **done** (approved_first_try, 2026-09-06) | `host_is_alive` (the flock probe, failing **closed**), `scan_shell_ids`, `parse_cast_name`, `adopt_at_startup` (live hosts → `Owner::Adopted`) and `sweep_stale` (dead hosts only). Flips the `var/run/shells` lifecycle row from `Pending`. Hermetic — a held `InstanceLock` *is* a live host to the probe, so no child processes. |
 | 07a | shell-client ([phase-07a-shell-client.md](phase-07a-shell-client.md)) | **done** (approved_after_1) 2026-09-06 | `src/shell/client.rs`: `run_command` over `var/run/shells/<id>.sock` — `Subscribe` + `Input` on one connection, chunk accumulation, `parse_outcome` as the terminator, real exit code. Also sets the `.cast`/`.meta.json` modes explicitly (`0600`) rather than inheriting the umask. |
 | 07b | shell-session-wiring ([phase-07b-shell-session-wiring.md](phase-07b-shell-session-wiring.md)) | **done** (approved_after_1) 2026-09-07 | `src/shell/session.rs`: `shell_for_owner` — reuse the owner's live shell or create one, `await_ready`, roll the record back when readiness fails. Stands a live `ShellRegistry` up in `run_daemon` (sweep, then adopt), gated on `[execution] backend = "pty"`. Nothing consumes it yet. |
-| 07c | run-terminal-command-pty | todo (not drafted) | Route `run_terminal_command` through 07b's `shell_for_owner` + 07a's client when `backend = "pty"` (local host only), masked + ANSI-annotated result, real exit code in the tool result and in the `events.jsonl` command record. **Owns the masking exit criterion** (PE decision 2026-09-06). First phase that runs a command on the new substrate from chat. |
+| 07c | run-terminal-command-pty ([phase-07c-run-terminal-command-pty.md](phase-07c-run-terminal-command-pty.md)) | todo (drafted 2026-09-07) | Route `run_terminal_command` through 07b's `shell_for_owner` + 07a's client when `backend = "pty"` (local host only), masked + ANSI-annotated result, real exit code in the tool result and in the `events.jsonl` command record. **Owns the masking exit criterion** (PE decision 2026-09-06). First phase that runs a command on the new substrate from chat. |
 | 08 | interactive-and-signals | todo (not drafted) | `is_interactive_command()` → return immediately with the shell id; pause / resume / cancel on the shell API (`SIGSTOP` / `SIGCONT` / `SIGINT` to the foreground pgrp); state transitions `Idle → Running → Paused → Exited`. **Also owns exited-shell GC under `shells.exited_retention_secs`** (moved from 06b at drafting, 2026-09-06 — see § Notes). |
 | 09 | restart-survival-and-close | todo (not drafted) | Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
 
@@ -345,6 +345,45 @@ line-number facts go stale and each landing shifts the next Current state).
   adopts under a new `Owner::Adopted` rather than reconstructing one, and
   `started_unix` comes from the cast filename. Note the two pids are different
   and neither is used for liveness — the flock is.
+
+- **Drafting 07c (2026-09-07) — five probes, and two of them changed the
+  spec.** Compiled into the tree, run, reverted:
+
+  - **The whole chain already works, exit code included**: one
+    `shell_for_owner` + one `client::run_command` returned `exit_code=3` and
+    the command's bytes, the second call reused the same id, and `cd /tmp`
+    then `pwd` returned `/tmp`. So 07c is composition, not mechanism.
+  - **`exit 3` kills the shell.** The first probe used a bare `exit 3` and hung
+    to the 15 s timeout — `exit` ends the bash session, so the end marker never
+    arrives. `sh -c 'exit 3'` is the shape that yields a non-zero code with the
+    shell alive. Pinned in the test plan; it would otherwise have cost the
+    executor a full timeout to rediscover.
+  - **`annotate_ansi` is the sanitiser, not just the annotator** — measured, it
+    strips `\x1b[2J`, `\x1b[H`, `\x1b[?25l` entirely and folds CRLF, while
+    `normalize_output` leaves raw ESC bytes in the model's input. That decided
+    the pipeline order (annotate → mask → normalize) rather than a guess.
+  - **Today's foreground result is not annotated at all**: `capture_pane` omits
+    `-e`, so tmux strips the escapes before we see them. The PTY hands us
+    escapes for the first time, which is why annotation is real work here.
+  - **`log_command` has 11 call sites** (9 in `foreground.rs`, 2 in
+    `executor/mod.rs`) and no exit-code field, so 07c adds a sibling rather
+    than a parameter. The first draft said "ten"; running `grep -c` corrected
+    it to 9 + 2 before dispatch — the same class of unrun number that bounced
+    07b.
+
+  **A registry global, not a threaded parameter.** `cache: &Arc<SessionCache>`
+  reaches `execute_tool_call` through `AskCtx` → `ConversationLoopCtx` and a
+  second chain through `trigger_ghost_turn` → `do_ghost_turn`; threading a
+  second handle the same way is a ~10-site breaking type change across five
+  files for one consumer — the `multi_site_break` failure class. The daemon
+  already keeps its process-lifetime singletons as globals (CLAUDE.md § "Global
+  statics in daemon"), so `shell::registry()` joins them, and `run_in_shell`
+  still takes `&ShellRegistry` so tests never touch the global.
+
+  **Scope left open for the PE:** `background=true` stays on the tmux
+  `de-bg-*` path. Its shell-substrate equivalent needs async completion
+  notification and **no phase owns it** — 08 is interactive/signals, 09 is
+  restart survival. Raise at 07c's close.
 
 - **Phase 07b was split again at drafting (2026-09-06) into 07b and 07c**, on
   the same kind of missing-piece finding that split 07 — and found the same

@@ -4154,9 +4154,9 @@ Two lessons, both already folded into the 07b spec:
    design". Had it been pasted verbatim the parity claim would have been
    visibly untested. Same class as the M12 headline; bug-07a-2 filed.
 
-**Active phase: phase-07b — shell-session-wiring**
-(`docs/dev/milestones/M20-shell-engine/phase-07b-shell-session-wiring.md`,
-status: todo, drafted 2026-09-06). Dispatch with `/rexymcp:dispatch phase-07b`.
+**phase-07b — shell-session-wiring: done (approved_after_1) 2026-09-07**,
+landing commit `1e887fd`, fix `6052def`, approval `c373c02`. One bounce, two
+bugs, both closed. 
 
 Scope: `src/shell/session.rs` — `shell_for_owner` (reuse the owner's live
 shell or create one, `await_ready`, roll the registry record back when
@@ -4209,3 +4209,57 @@ Drafting notes:
 - All criteria run against the current tree in their failing state; the E2E
   block passed `bash -n`; `File::create` confirmed at exactly **2** occurrences
   so the `mode(0o600)` criterion's expected value of 2 is reachable.
+
+**phase-07b's bounce is the milestone's second evidence-artifact data point,
+and the most instructive one yet.** Every gate was green, the E2E transcript
+was mechanically captured and byte-exact, and the implementation was correct
+on the first landing — and it still bounced. Two pinned greps
+(`adopt_at_startup`, `sweep_stale` in `src/daemon/mod.rs`) read **2** against
+their pinned **1**, because the run's comment rewrite named both functions and
+`grep -c` cannot tell a comment from a call. The transcript printed the `2`s
+honestly; the **prose summarising it** said "every structural grep prints its
+pinned number". That is bug-07a-2's class one phase later, relocated from the
+transcript into the sentence about it (bug-07b-1).
+
+A second bug (bug-07b-2) was filed and fixed by the architect at review: the
+first run deleted the phase doc's prescribed E2E header from § End-to-end
+verification, arguing the template line would capture the self-check's `grep`.
+It could not — the self-check takes `tail -1` and the template sat ~130 lines
+above any appended entry. Spec text is architect-owned, so restoring it was
+the architect's job; the bug stays on record because the run edited the
+document it was being measured against on a premise one `grep -n` would have
+disproved.
+
+Two calibration items carried into 07c's draft:
+
+1. **`grep -c` on a bare function name is hostage to prose in the same file.**
+   Pin the call form (`crate::shell::foo`) when the criterion means "one call
+   site". 07c carries preservation criteria in exactly that shape.
+2. **A phase whose gates are all green can still be unfinished.** The bounce
+   cost one small comment rewrite and bought a corrected claim; it was worth
+   it, and the criterion that caught it was a pinned count, not a sentence.
+
+**Active phase: phase-07c — run-terminal-command-pty**
+(`docs/dev/milestones/M20-shell-engine/phase-07c-run-terminal-command-pty.md`,
+status: todo, drafted 2026-09-07). Dispatch with `/rexymcp:dispatch phase-07c`.
+
+Scope: route `run_terminal_command` through 07b's `shell_for_owner` + 07a's
+`run_command` when `[execution] backend = "pty"` — chat sessions, non-ghost,
+no `target_pane`. New `src/daemon/executor/shell_exec.rs`; the tool result is
+ANSI-annotated, masked and normalized, carries the real exit code, and a new
+`log_shell_command` puts that exit code in the `events.jsonl` command record.
+**Owns the M20 masking exit criterion** (PE decision 2026-09-06): a seeded
+secret appears in the `.cast` and not in the tool result. With the default
+`backend = "tmux"` nothing changes.
+
+Drafting measurements (probes compiled in, run, reverted) and the
+registry-global rationale are recorded in the milestone README § Notes. Two
+probes changed the spec: a bare `exit 3` hangs the marker protocol (it kills
+the shell — use `sh -c 'exit 3'`), and `annotate_ansi` turns out to strip every
+non-colour control sequence and fold CRLF, which is what fixed the pipeline
+order at annotate → mask → normalize. A third corrected an unrun number: the
+draft said `log_command` had "ten" call sites; `grep -c` says 9 + 2.
+
+**Open for the PE at 07c's close:** `background=true` stays on the tmux
+`de-bg-*` path and no phase owns its shell-substrate equivalent — 08 is
+interactive/signals, 09 is restart survival.
