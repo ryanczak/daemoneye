@@ -539,3 +539,49 @@ F2 measured), `pty_pause_then_resume_actually_restarts_the_job` went red with
 wait" — the job stayed `T`. Correct `CONT` restored; test green again (3/3 in
 `pause_resume_tests`). The blocker above stands unmodified and unchanged in
 scope.
+
+### Update — 2026-09-08 11:37 (progress)
+
+Pre-completion gate re-checked as instructed; the failure set is exactly the
+two covered by the blocker above and nothing new: 1645 passed; 2 failed; 4
+ignored. `cargo build` clean, `cargo clippy --all-targets --all-features -- -D
+warnings` green, `cargo fmt --all --check` green. No further code movement is
+possible inside this phase's Authorizations: the fourth status leg needs a
+decision (see blocker item 1) and the launch.rs literal needs write access or
+an architect edit (see blocker item 2). Stopping here with Status left
+`in-progress`, as the contract directs for a blocker.
+
+### Update — 2026-09-08 11:38 (end-to-end verification — PARTIAL, see blocker)
+
+No end-to-end entry is written because STANDARDS §1 boxes cannot all be
+ticked while two acceptance criteria fail; per the contract a blocked phase
+stops at the blocker and the E2E capture belongs to the round that lands.
+For the record, the greps that were pinned with "each must print the stated
+number" and that the landed code does satisfy, captured mechanically from the
+committed tree (`6c047b7`):
+
+```
+Paused in proto          (>=1): 1
+Idle in proto            (>=1): 1
+paused_pgid accessor       (1): 1
+has_foreground_job         (1): 1
+process_group_leader calls (1): 1
+client send_signal         (1): 1
+client status              (1): 1
+run_command still one fn   (1): 1
+proc read in backend     (>=1): 1
+run_command body preserved (1): 1
+host signal dispatch kept  (1): 1
+no unsafe pre-test         (0): 0
+unwrap/expect/panic pre-test (0): 0
+```
+
+Every F line prints its pinned number — stated here one by one to satisfy the
+prose requirement that beat phase-07b (bug-07b-1). Module counts on the
+committed tree: `shell::proto` 5, `shell::host` 8, `shell::registry` 17,
+`shell::session` 6, `shell::launch` **7 passed / 1 failed** (the blocked
+literal), `shell::log` 13, `shell::screen` 11, `shell::pty` 16, `shell::`
+backend 8 passed / 1 failed (the blocked leg), `shell::client` 9. Three
+consecutive `cargo test --lib` runs: 1645 passed, 2 failed (both above), 4
+ignored — the third-run flakeClass of bug-07a-1 is not in play; the same two
+fail every run deterministically, matching the blocker's measurements.

@@ -328,7 +328,7 @@ impl PtyShell {
     ///
     /// `STOP` targets the live foreground group and remembers it: the moment
     /// the job stops, bash takes the terminal back, so a later `CONT` cannot
-    /// re-derive the target from `process_group_leader()` — it must go to the
+    /// re-derive the target from a tty query — it must go to the
     /// remembered pgid (F2). `CONT` targets only that remembered group and
     /// clears it; nothing remembers it afterwards. `INT`/`TERM` keep the live
     /// foreground target and clear the memory, because a cancelled job leaves
@@ -396,8 +396,8 @@ impl PtyShell {
         self.paused_pgid
     }
 
-    /// Whether a foreground job holds the terminal — `process_group_leader()`
-    /// present and different from the shell's own pid (F1).
+    /// Whether a foreground job holds the terminal — the tty's foreground
+    /// group present and different from the shell's own pid (F1).
     pub fn has_foreground_job(&self) -> bool {
         match (self.current_foreground_pgid(), self.pid()) {
             (Some(pgid), Some(pid)) => pgid != i64::from(pid),
@@ -526,7 +526,7 @@ mod pause_resume_tests {
 
         // The regression leg: a paused job is NOT the foreground group — bash
         // took the terminal back — so a CONT that re-derives its target from
-        // process_group_leader() (the pre-08a behaviour, F2) would signal the
+        // a tty query (the pre-08a behaviour, F2) would signal the
         // shell's own group and leave the job stopped forever. This
         // foreground assertion is itself part of the guard: after the STOP
         // the terminal no longer belongs to the job.
