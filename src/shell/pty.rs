@@ -500,10 +500,44 @@ mod pause_resume_tests {
         );
     }
 
+    /// Panic-path cleanup for tests that start `sleep 30`: an assertion that
+    /// fails between STOP and the job's teardown would otherwise leave a
+    /// stopped `sleep` on the host (the phase's section-G leak check counts
+    /// exactly that). Resumes the remembered group and kills the shell; Drop
+    /// runs on unwind.
+    struct JobGuard(PtyShell);
+
+    impl std::ops::Deref for JobGuard {
+        type Target = PtyShell;
+        fn deref(&self) -> &PtyShell {
+            &self.0
+        }
+    }
+
+    impl std::ops::DerefMut for JobGuard {
+        fn deref_mut(&mut self) -> &mut PtyShell {
+            &mut self.0
+        }
+    }
+
+    impl Drop for JobGuard {
+        fn drop(&mut self) {
+            if let Some(pgid) = self.0.paused_pgid() {
+                let _ = std::process::Command::new("kill")
+                    .arg("-s")
+                    .arg("CONT")
+                    .arg("--")
+                    .arg(format!("-{pgid}"))
+                    .status();
+            }
+            let _ = self.0.kill();
+        }
+    }
+
     #[test]
     fn pty_pause_then_resume_actually_restarts_the_job() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available");
+        let mut shell = PtyShell::spawn("bash", (24, 80)).map(JobGuard).expect("bash available");
         shell
             .write_input(b"sleep 30\n")
             .expect("start the foreground job");
@@ -560,7 +594,9 @@ mod pause_resume_tests {
     #[test]
     fn pty_stop_with_no_foreground_job_remembers_nothing() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available");
+        let mut shell = PtyShell::spawn("bash", (24, 80))
+            .map(JobGuard)
+            .expect("bash available");
         let deadline = Instant::now() + Duration::from_secs(10);
         poll_until(
             deadline,
@@ -586,7 +622,9 @@ mod pause_resume_tests {
     #[test]
     fn pty_cancel_clears_the_paused_group() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available");
+        let mut shell = PtyShell::spawn("bash", (24, 80))
+            .map(JobGuard)
+            .expect("bash available");
         shell
             .write_input(b"sleep 30\n")
             .expect("start the foreground job");

@@ -659,6 +659,39 @@ mod tests {
         assert_eq!(state, ShellState::Exited);
     }
 
+    /// The pids whose PPID is `pid` — the shell's live children, found by a
+    /// bounded `/proc` walk, so panic-path cleanup can kill the exact job this
+    /// test started instead of any group it does not own.
+    fn child_pids_of(pid: Option<i64>) -> Vec<i64> {
+        let Some(pid) = pid else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        let Ok(entries) = std::fs::read_dir("/proc") else {
+            return found;
+        };
+        for entry in entries.flatten() {
+            let Ok(raw) = entry.file_name().into_string() else {
+                continue;
+            };
+            let Ok(tpid) = raw.parse::<i64>() else {
+                continue;
+            };
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{tpid}/stat")) else {
+                continue;
+            };
+            let Some(fields) = stat.rsplit(')').next() else {
+                continue;
+            };
+            let mut it = fields.split_whitespace();
+            let _state = it.next();
+            if it.next() == Some(&pid.to_string()) {
+                found.push(tpid);
+            }
+        }
+        found
+    }
+
     /// Poll `backend.status()` until it reports `want`, or fail at the
     /// deadline with the state actually observed.
     fn status_until(backend: &Arc<PtyBackend>, want: ShellState) -> ShellState {
@@ -684,6 +717,43 @@ mod tests {
         // Running again after CONT.
         let dir = tempfile::tempdir().unwrap();
         let backend = spawn_backend(&dir);
+        // The job must never outlive the test, even through an assertion
+        // panic (Drop runs on unwind): resume whatever this test stopped,
+        // then kill the shell by pid — the section-G leak check counts every
+        // `sleep 30` this suite leaves behind.
+        struct JobGuard {
+            backend: Arc<PtyBackend>,
+        }
+        impl Drop for JobGuard {
+            fn drop(&mut self) {
+                let shell = self.backend.shell.lock().unwrap_or_log();
+                if let Some(pgid) = shell.paused_pgid() {
+                    let _ = std::process::Command::new("kill")
+                        .arg("-s")
+                        .arg("CONT")
+                        .arg("--")
+                        .arg(format!("-{pgid}"))
+                        .status();
+                }
+                let shell_pid = shell.pid().map(|p| p as i64);
+                drop(shell);
+                for pid in child_pids_of(shell_pid) {
+                    let _ = std::process::Command::new("kill")
+                        .arg("-9")
+                        .arg(format!("{pid}"))
+                        .status();
+                }
+                if let Some(pid) = shell_pid {
+                    let _ = std::process::Command::new("kill")
+                        .arg("-9")
+                        .arg(format!("{pid}"))
+                        .status();
+                }
+            }
+        }
+        let _guard = JobGuard {
+            backend: Arc::clone(&backend),
+        };
         let mut rx = backend.subscribe();
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         quiet(&mut rx, deadline);
