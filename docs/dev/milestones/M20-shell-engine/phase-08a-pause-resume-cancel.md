@@ -602,3 +602,12 @@ but rule 3's discriminator reads the shell's own group. Decision needed on:
 (a) what `Paused`→`CONT` reports (extra discriminator input, or accept `Idle`
 and amend the pinned test), (b) permission to update launch.rs's stale
 literal. Code, README row, and status are left as committed at `7f032e7`.
+
+### Update — 2026-09-08 11:46 (blocker, final)
+
+Gate re-ran; identical failure set (1645 passed; 2 failed; both documented
+above; build/lint/fmt green; structural pins hold at HEAD — `Paused`=5,
+`Idle`=5, `paused_pgid`=1, `has_foreground_job`=1, `process_group_leader`=1
+in `pty.rs`). Nothing further is executable inside this phase's
+Authorizations; the loop should return this briefing to the architect for
+the 08a decision rather than re-dispatch at executor discretion.
