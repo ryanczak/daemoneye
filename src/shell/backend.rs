@@ -28,6 +28,16 @@ fn signal_name(sig: ShellSignal) -> &'static str {
     }
 }
 
+/// The `/proc/<pgid>/stat` state char (F5): the first token after the last
+/// `)`, because `comm` is parenthesised and may itself contain spaces and
+/// parens. `Some(true)` when the group leader is stopped (`T`), `Some(false)`
+/// for any other readable state, `None` when `/proc` cannot be read — a
+/// missing entry means the process is gone, which is not a paused state.
+fn job_state_is_stopped(pgid: i64) -> Option<bool> {
+    let s = std::fs::read_to_string(format!("/proc/{pgid}/stat")).ok()?;
+    Some(s.rsplit(')').next()?.split_whitespace().next()? == "T")
+}
+
 /// A live shell behind phase-05a's `ShellBackend`: one pump task feeds the
 /// subscriber broadcast, the cast log and the screen from the same PTY bytes.
 pub struct PtyBackend {
@@ -133,14 +143,31 @@ impl ShellBackend for PtyBackend {
             let alive = shell.is_alive().with_context(|| "checking shell liveness");
             let (rows, cols) = self.screen.lock().unwrap_or_log().size();
             let pid = shell.pid().unwrap_or(0);
-            match alive {
-                Ok(true) => (ShellState::Running, rows, cols, pid),
-                Ok(false) => (ShellState::Exited, rows, cols, pid),
+            let state = match alive {
+                Ok(true) => {
+                    // Rule 2 checks /proc rather than trusting the remembered
+                    // pgid alone: a job resumed or killed by something outside
+                    // this process must not leave the shell reporting Paused
+                    // forever. A missing /proc entry means the process is
+                    // gone, which is not a paused state.
+                    let paused = shell
+                        .paused_pgid()
+                        .is_some_and(|pgid| job_state_is_stopped(pgid).unwrap_or(false));
+                    if paused {
+                        ShellState::Paused
+                    } else if shell.has_foreground_job() {
+                        ShellState::Running
+                    } else {
+                        ShellState::Idle
+                    }
+                }
+                Ok(false) => ShellState::Exited,
                 Err(e) => {
                     log::error!("shell host: checking shell liveness: {e:#}");
-                    (ShellState::Exited, rows, cols, pid)
+                    ShellState::Exited
                 }
-            }
+            };
+            (state, rows, cols, pid)
         };
         ShellResponse::Status {
             state,
@@ -561,13 +588,16 @@ mod tests {
         rt.block_on(backend.input(probe.as_bytes()))
             .expect("run after signal");
         std::thread::sleep(Duration::from_millis(300));
+        // The foreground job is gone after `Int`, so the state is Idle; the
+        // assertion that matters is that the shell itself is alive, which
+        // `Exited` would deny.
         let status = rt.block_on(backend.status());
         match status {
             ShellResponse::Status {
-                state: ShellState::Running,
+                state: ShellState::Idle,
                 ..
             } => {}
-            other => panic!("shell must still be running after Int, got {other:?}"),
+            other => panic!("shell must still be usable after Int, got {other:?}"),
         }
         let probe_marker = "post-signal-probe";
         let got = recv_until(
@@ -588,12 +618,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let backend = spawn_backend(&dir);
         let rt = tokio::runtime::Runtime::new().expect("runtime");
+        // The shell is alive with no job in the foreground: Idle (F1), not
+        // Running — and decisively not Exited, which is the property this
+        // test pins.
         match rt.block_on(backend.status()) {
             ShellResponse::Status {
-                state: ShellState::Running,
+                state: ShellState::Idle | ShellState::Running,
                 ..
             } => {}
-            other => panic!("expected Running, got {other:?}"),
+            other => panic!("expected the live state Idle, got {other:?}"),
         }
         // Kill the backend's shell child through the PtyShell, then wait for
         // the PTY to observe the exit (the reader thread drains EOF before
@@ -624,5 +657,107 @@ mod tests {
             }
         };
         assert_eq!(state, ShellState::Exited);
+    }
+
+    /// Poll `backend.status()` until it reports `want`, or fail at the
+    /// deadline with the state actually observed.
+    fn status_until(backend: &Arc<PtyBackend>, want: ShellState) -> ShellState {
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match rt.block_on(backend.status()) {
+                ShellResponse::Status { state, .. } if state == want => return state,
+                other => {
+                    if std::time::Instant::now() >= deadline {
+                        panic!("never observed {want:?}, last state {other:?}");
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn backend_status_reports_paused_then_running() {
+        // One state per assertion with its own message, in this order:
+        // Running before STOP with a foreground job, Paused after STOP,
+        // Running again after CONT.
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let mut rx = backend.subscribe();
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        quiet(&mut rx, deadline);
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(backend.input(b"sleep 30\n"))
+            .expect("start the foreground job");
+        // The foreground job holds the terminal; wait for it to appear (F1),
+        // then assert Running rather than polling blindly.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let has = {
+                let shell = backend.shell.lock().unwrap_or_log();
+                shell.has_foreground_job()
+            };
+            if has {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the sleep 30 job never took the foreground"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            status_until(&backend, ShellState::Running),
+            ShellState::Running,
+            "a foreground job must report Running after the fg wait loop proved has_foreground_job"
+        );
+
+        // Paused: STOP remembers the pgid and /proc/<pgid>/stat reads T.
+        rt.block_on(backend.signal(ShellSignal::Stop))
+            .expect("stop the job");
+        assert_eq!(
+            status_until(&backend, ShellState::Paused),
+            ShellState::Paused,
+            "a stopped foreground job must report Paused"
+        );
+
+        // Running again: CONT targets the remembered pgid (F2) and the job
+        // resumes.
+        rt.block_on(backend.signal(ShellSignal::Cont))
+            .expect("resume the job");
+        assert_eq!(
+            status_until(&backend, ShellState::Running),
+            ShellState::Running,
+            "after CONT the resumed job must report Running again"
+        );
+        let _ = rt;
+    }
+
+    #[test]
+    fn backend_status_is_idle_on_a_fresh_shell() {
+        // Guards the rule-4 fallthrough: no job in the foreground, nothing
+        // remembered, so the state a shell reports before anything has run
+        // must be Idle, never Running.
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match rt.block_on(backend.status()) {
+                ShellResponse::Status {
+                    state: ShellState::Idle,
+                    ..
+                } => break,
+                other => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "a fresh shell must settle to Idle, last state {other:?}"
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
     }
 }

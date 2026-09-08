@@ -9,8 +9,95 @@ use anyhow::Context;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-use crate::shell::proto::{ShellRequest, ShellResponse, encode};
+use crate::shell::proto::{ShellRequest, ShellResponse, ShellSignal, encode};
 use crate::shell::pty::{CommandOutcome, Nonce, parse_outcome, wrap_command};
+
+/// Send `sig` to the shell hosted at `sock`. Returns when the host has
+/// acknowledged, which is not the same as the job having reacted.
+pub async fn send_signal(sock: &Path, sig: ShellSignal, timeout: Duration) -> anyhow::Result<()> {
+    let stream = UnixStream::connect(sock)
+        .await
+        .with_context(|| format!("connecting to shell socket at {}", sock.display()))?;
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+
+    let wire = encode(ShellRequest::Signal { signal: sig }).context("encoding Signal frame")?;
+    writer
+        .write_all(wire.as_bytes())
+        .await
+        .context("sending Signal frame")?;
+    writer.flush().await.context("flushing Signal frame")?;
+
+    read_ack(sock, &mut reader, timeout).await
+}
+
+/// The shell's current state, rows, cols and pid.
+pub async fn status(sock: &Path, timeout: Duration) -> anyhow::Result<ShellResponse> {
+    let stream = UnixStream::connect(sock)
+        .await
+        .with_context(|| format!("connecting to shell socket at {}", sock.display()))?;
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+
+    let wire = encode(ShellRequest::Status).context("encoding Status frame")?;
+    writer
+        .write_all(wire.as_bytes())
+        .await
+        .context("sending Status frame")?;
+    writer.flush().await.context("flushing Status frame")?;
+
+    read_one(sock, &mut reader, timeout).await
+}
+
+/// The single answer frame of a one-shot request that expects `Ok`.
+async fn read_ack(
+    sock: &Path,
+    reader: &mut (impl AsyncBufReadExt + Unpin),
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let frame = read_one(sock, reader, timeout).await?;
+    match frame {
+        ShellResponse::Ok => Ok(()),
+        ShellResponse::Error { message } => Err(anyhow::anyhow!(
+            "shell host at {} rejected the request: {message}",
+            sock.display()
+        )),
+        other => Err(anyhow::anyhow!(
+            "shell host at {} answered a signal with {other:?}",
+            sock.display()
+        )),
+    }
+}
+
+/// Read exactly one response frame, bounded by `timeout`.
+async fn read_one(
+    sock: &Path,
+    reader: &mut (impl AsyncBufReadExt + Unpin),
+    timeout: Duration,
+) -> anyhow::Result<ShellResponse> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut line: Vec<u8> = Vec::new();
+    let read = tokio::time::timeout_at(deadline, reader.read_until(b'\n', &mut line)).await;
+    let n = match read {
+        Ok(Ok(n)) => n,
+        Ok(Err(e)) => {
+            return Err(e).with_context(|| format!("reading frame from {}", sock.display()));
+        }
+        Err(_) => anyhow::bail!(
+            "timed out after {timeout:?} waiting for the shell host's reply at {}",
+            sock.display()
+        ),
+    };
+    if n == 0 {
+        anyhow::bail!("shell socket at {} closed before a reply", sock.display());
+    }
+    serde_json::from_slice::<ShellResponse>(&line).with_context(|| {
+        format!(
+            "malformed frame from {} while expecting one reply",
+            sock.display()
+        )
+    })
+}
 
 /// Run `cmd` in the shell hosted at `sock` and return its real outcome.
 ///
@@ -281,5 +368,166 @@ mod tests {
             elapsed < Duration::from_secs(3),
             "failure must be prompt, not wait out the deadline: elapsed={elapsed:?}"
         );
+    }
+
+    /// A fake `ShellBackend` over a real socket, on the `shell::host` tests'
+    /// pattern — no PTY needed to exercise the client's one-shot round-trips.
+    mod oneshot {
+        use super::*;
+        use crate::shell::host::{ShellBackend, bind, serve};
+        use crate::shell::proto::ShellState;
+        use std::sync::Mutex;
+
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        enum Call {
+            Signal(ShellSignal),
+            Status,
+        }
+
+        struct SignalBackend {
+            calls: Mutex<Vec<Call>>,
+            status: ShellResponse,
+        }
+
+        impl SignalBackend {
+            fn new(status: ShellResponse) -> Arc<Self> {
+                Arc::new(Self {
+                    calls: Mutex::new(Vec::new()),
+                    status,
+                })
+            }
+            fn calls(&self) -> Vec<Call> {
+                self.calls.lock().unwrap().clone()
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl ShellBackend for SignalBackend {
+            async fn input(&self, _bytes: &[u8]) -> anyhow::Result<()> {
+                Ok(())
+            }
+            async fn resize(&self, _rows: u16, _cols: u16) -> anyhow::Result<()> {
+                Ok(())
+            }
+            async fn signal(&self, sig: ShellSignal) -> anyhow::Result<()> {
+                self.calls.lock().unwrap().push(Call::Signal(sig));
+                Ok(())
+            }
+            async fn status(&self) -> ShellResponse {
+                self.calls.lock().unwrap().push(Call::Status);
+                self.status.clone()
+            }
+            fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+                tokio::sync::broadcast::channel(1).0.subscribe()
+            }
+        }
+
+        struct Server {
+            backend: Arc<SignalBackend>,
+            path: PathBuf,
+            _dir: tempfile::TempDir,
+        }
+
+        async fn start_server(status: ShellResponse) -> Server {
+            let backend = SignalBackend::new(status);
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("one-shot.sock");
+            let listener = bind(&path).await.unwrap();
+            let serve_backend = Arc::clone(&backend);
+            tokio::spawn(async move { serve(listener, serve_backend).await });
+            Server {
+                backend,
+                path,
+                _dir: dir,
+            }
+        }
+
+        #[tokio::test]
+        async fn client_send_signal_round_trips() {
+            let server = start_server(ShellResponse::Ok).await;
+            send_signal(&server.path, ShellSignal::Stop, Duration::from_secs(5))
+                .await
+                .expect("the host acknowledges the signal");
+            send_signal(&server.path, ShellSignal::Cont, Duration::from_secs(5))
+                .await
+                .expect("the host acknowledges the second signal");
+            assert_eq!(
+                server.backend.calls(),
+                vec![
+                    Call::Signal(ShellSignal::Stop),
+                    Call::Signal(ShellSignal::Cont)
+                ],
+                "both signals must reach the backend in order"
+            );
+        }
+
+        #[tokio::test]
+        async fn client_send_signal_carries_the_host_error_back() {
+            // A host that refuses the signal: the Error frame must surface as
+            // an `Err` carrying the host's message.
+            struct Refusing;
+            #[async_trait::async_trait]
+            impl ShellBackend for Refusing {
+                async fn input(&self, _bytes: &[u8]) -> anyhow::Result<()> {
+                    Ok(())
+                }
+                async fn resize(&self, _rows: u16, _cols: u16) -> anyhow::Result<()> {
+                    Ok(())
+                }
+                async fn signal(&self, _sig: ShellSignal) -> anyhow::Result<()> {
+                    Err(anyhow::anyhow!("no such group"))
+                }
+                async fn status(&self) -> ShellResponse {
+                    ShellResponse::Ok
+                }
+                fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+                    tokio::sync::broadcast::channel(1).0.subscribe()
+                }
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("refusing.sock");
+            let listener = bind(&path).await.unwrap();
+            tokio::spawn(async move { serve(listener, Arc::new(Refusing)).await });
+            let err = send_signal(&path, ShellSignal::Int, Duration::from_secs(5))
+                .await
+                .expect_err("a refusing host must surface an Err");
+            assert!(
+                err.to_string().contains("no such group"),
+                "the error must carry the host's message: {err:#}"
+            );
+        }
+
+        #[tokio::test]
+        async fn client_status_reports_state() {
+            let expected = ShellResponse::Status {
+                state: ShellState::Paused,
+                rows: 31,
+                cols: 100,
+                pid: 4711,
+            };
+            let server = start_server(expected.clone()).await;
+            let answered = status(&server.path, Duration::from_secs(5))
+                .await
+                .expect("the one-shot Status round-trip answers");
+            assert_eq!(answered, expected, "the frame must survive");
+            match answered {
+                ShellResponse::Status {
+                    state: ShellState::Paused,
+                    rows,
+                    cols,
+                    pid,
+                } => {
+                    assert_eq!(rows, 31, "rows round-trip");
+                    assert_eq!(cols, 100, "cols round-trip");
+                    assert_eq!(pid, 4711, "pid round-trip");
+                }
+                other => panic!("expected a Status frame, got {other:?}"),
+            }
+            assert_eq!(
+                server.backend.calls(),
+                vec![Call::Status],
+                "exactly one Status dispatch"
+            );
+        }
     }
 }

@@ -16,7 +16,7 @@ mod screen;
 mod session;
 
 pub use backend::PtyBackend;
-pub use client::run_command;
+pub use client::{run_command, send_signal, status};
 pub use host::{ShellBackend, bind, serve};
 pub use launch::{await_ready, cast_path, lock_path, run_host, socket_path, spawn_detached};
 pub use log::{CastWriter, CommandRecord, MetaIndex, meta_path_for, read_command_output};

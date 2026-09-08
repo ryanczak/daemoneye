@@ -1,7 +1,7 @@
 # Phase 08a: pause, resume and cancel on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05b (`PtyBackend`), phase-05a (`proto.rs` frame set),
 phase-07a (`client::run_command`) — all done.
 **Estimated diff:** ~300 lines
@@ -447,4 +447,95 @@ never `rm -rf`.
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
+### Update — 2026-09-08 10:20 (progress)
+
+Executor started phase-08a (headless dispatch). Pre-flight verified: on
+`master`, tree clean, `git rev-parse --abbrev-ref HEAD` → `master`. All ten
+Current-state module counts reproduced exactly before any edit (pty 13,
+backend 7, client 6, proto 5, host 8, registry 17, session 6, launch 8, log
+13, screen 11), and `grep -rc 'Paused' src/shell/*.rs` is 0 everywhere — the
+state does not exist yet, as the spec states. Status flipped to `in-progress`
+here and in the milestone README's phase table. Tasks 1–4 next, in order.
+
 <!-- entries appended below this line -->
+
+### Update — 2026-09-08 11:25 (blocker)
+
+**Blocked on:** Task 3's fourth status leg ("`Running` again after `CONT`",
+pinned in `backend_status_reports_paused_then_running`) is unimplementable
+under the spec's own rule precedence and its own measured facts — and meeting
+it would require editing `launch.rs`, which the Authorizations forbid.
+
+**What I tried, in order:**
+
+1. Implemented Tasks 1, 2 and 3 exactly as specified. Task 3's four-way
+   precedence (not-alive → Exited; remembered-pgid with `/proc` state `T` →
+   Paused; foreground job → Running; else Idle) compiles and its first three
+   legs hold in tests.
+2. Ran the pinned `backend_status_reports_paused_then_running`. Legs 1–3 pass
+   (Idle→Running→Paused). The fourth leg, `Running` after `CONT`, never
+   satisfies: `status()` reads `Idle` at every poll across 10 s.
+3. Instrumented `status()` under a temp env-gated print, then deleted it:
+   after `CONT`, `tcgetpgrp(master)` reads the **shell's own pid**, and the
+   remembered pgid is consumed, so rule 2 is false, rule 3 is false, rule 4
+   fires → `Idle`. Not an implementation race — the value is stable for
+   seconds.
+4. Re-measured outside the crate with a scratch `portable-pty` probe
+   (same `bash` + `sleep 30` + the same `kill -s STOP -- -<pgid>` /
+   `kill -s CONT -- -<pgid>` shape): after `CONT` the job's `/proc/<pgid>/stat`
+   state returns to `S` (it **did** resume), but `fg==shell_pid` stays true at
+   every sample across 7 s, and writing further input (`echo probed`) does not
+   change it. So bash takes the terminal when the job stops and **`CONT` does
+   not give it back** — exactly consistent with the spec's own F1/F2 probes
+   (`fg_pgrp_after_INT=Some(shell_pid)`, `after_second_CONT=S` while the fg
+   pgrp is the shell's).
+5. Checked the escape routes the spec itself excludes: `has_foreground_job()`
+   is F1's discriminator and there is "nothing else to consult" (spec, F1). Reporting `Running` after `CONT` would require consulting something else
+   (e.g. remembering that a resume happened) — a design change beyond Task 3's
+   pinned rules.
+6. Interviewed the rest of the tree: `launch_run_host_serves_status_over_its_socket`
+   (`launch.rs:302`) pins the **old** two-way semantic by asserting the fresh
+   shell's `Status` reply carries `state: Running`. Task 3 changed exactly
+   that semantic (a fresh idle shell now reports `Idle`), so this test now
+   fails on every `cargo test --lib` run. `launch.rs` is in the phase's
+   "Do not change" list, so I cannot fix it; without the edit the criterion
+   "`shell::launch::` 8, 0 failed" cannot hold.
+
+So the phase doc carries two contradictions that cannot both be satisfied:
+(a) F1+the four rules versus the pinned test's fourth leg, and (b) the
+Authorizations' launch.rs prohibition versus the unchanged-count criterion
+once Task 3's semantic change lands.
+
+**What I need:** a decision on both:
+
+1. What should `status()` report after a successful `CONT`? Measured truth:
+   the job resumed (`/proc` state `S`) but does **not** own the terminal —
+   bash kept it. Per the spec's rules that is `Idle`; to report `Running`
+   means adding a fourth input to the discriminator (e.g. treat
+   "a job is alive in the group last stopped" as `Running` for one resume
+   generation), which is a design change. Whoever decides should also
+   reconcile the `pty_pause_then_resume_actually_restarts_the_job` wording
+   (which only pins the job's `/proc` state after `CONT`, and passes today).
+2. Authorization to touch the one `ShellState::Running` assertion in
+   `launch.rs`'s readiness test (it is a *readiness* probe; its shape —
+   status answered in time — survives the change; only the pinned state
+   literal went stale), or to have the architect edit it.
+
+Work already landed on `master`-to-be (committed as part of this phase's WIP
+commit): Task 1 (two new `ShellState` variants + proto tests), Task 2
+(remembered-pgid STOP/CONT/INT/TERM paths + `paused_pgid()` +
+`has_foreground_job()`, the F2 regression test red-verified against a
+re-derived `CONT`), Task 4 (`client::{send_signal, status}` + three hermetic
+socket tests; `run_command` byte-untouched). Task 3's `status()` implements
+the pinned four rules with the `/proc`-guarded `Paused` check. The one test
+that cannot pass is the fourth leg above, plus launch's stale literal.
+
+### Update — 2026-09-08 11:30 (progress)
+
+F2 red-leg verification done as the spec demands: with `CONT` temporarily
+mutated to re-derive its target from `tcgetpgrp` (the shipped-today behaviour
+F2 measured), `pty_pause_then_resume_actually_restarts_the_job` went red with
+"the remembered job to resume (state S or R) after CONT not reached within the
+wait" — the job stayed `T`. Correct `CONT` restored; test green again (3/3 in
+`pause_resume_tests`). The blocker above stands unmodified and unchanged in
+scope.

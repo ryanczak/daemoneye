@@ -168,6 +168,9 @@ pub struct PtyShell {
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     stream_tx: broadcast::Sender<Vec<u8>>,
+    /// The pgid this shell stopped, `None` when nothing is paused (F2: a
+    /// `CONT` cannot re-derive its target once the job has stopped).
+    paused_pgid: Option<i64>,
     _reader_handle: Option<JoinHandle<()>>,
 }
 
@@ -214,6 +217,7 @@ impl PtyShell {
             writer,
             child,
             stream_tx,
+            paused_pgid: None,
             _reader_handle: Some(reader_handle),
         })
     }
@@ -315,20 +319,65 @@ impl PtyShell {
 
     /// Send SIGTERM to the current foreground process group so a timed-out
     /// command cannot keep occupying the shell.
-    fn terminate_foreground(&self) -> anyhow::Result<()> {
+    fn terminate_foreground(&mut self) -> anyhow::Result<()> {
         self.signal_foreground("TERM")
     }
 
     /// Send `sig` — a `kill(1)` signal name such as `INT`, `TERM`, `STOP` or
-    /// `CONT` — to the current foreground process group. portable-pty exposes
-    /// no signal-sending API, so the platform `kill(1)` is invoked with the
-    /// negative PGID. The shell itself sits in its own process group and is
-    /// untouched; when no job is in the foreground the group is the shell's
-    /// own, and an interactive shell ignores `INT`/`TERM`.
-    pub fn signal_foreground(&self, sig: &str) -> anyhow::Result<()> {
-        let Some(pgid) = self.master.process_group_leader() else {
-            return Ok(());
-        };
+    /// `CONT` — to a process group.
+    ///
+    /// `STOP` targets the live foreground group and remembers it: the moment
+    /// the job stops, bash takes the terminal back, so a later `CONT` cannot
+    /// re-derive the target from `process_group_leader()` — it must go to the
+    /// remembered pgid (F2). `CONT` targets only that remembered group and
+    /// clears it; nothing remembers it afterwards. `INT`/`TERM` keep the live
+    /// foreground target and clear the memory, because a cancelled job leaves
+    /// nothing paused (F4).
+    ///
+    /// portable-pty exposes no signal-sending API, so the platform `kill(1)`
+    /// is invoked with the negative PGID. The shell itself sits in its own
+    /// process group and is untouched; when no job is in the foreground the
+    /// group is the shell's own, and an interactive shell ignores
+    /// `INT`/`TERM`.
+    pub fn signal_foreground(&mut self, sig: &str) -> anyhow::Result<()> {
+        let current = self.current_foreground_pgid();
+        match sig {
+            "STOP" => {
+                // F1: the foreground group equals the shell's own pid when no
+                // job holds the terminal; stopping that group would stop the
+                // shell itself, so leave nothing remembered.
+                let no_job = match (current, self.pid()) {
+                    (Some(pgid), Some(pid)) => pgid == i64::from(pid),
+                    _ => true,
+                };
+                if let Some(pgid) = current.filter(|_| !no_job) {
+                    self.signal_group(pgid, sig)?;
+                    self.paused_pgid = Some(pgid);
+                }
+            }
+            "CONT" => {
+                // F2: the stopped job is not the foreground group any more;
+                // a CONT that re-derives its target signals the shell's own
+                // group and the job stays stopped (red-verified).
+                if let Some(pgid) = self.paused_pgid.take() {
+                    self.signal_group(pgid, sig)?;
+                }
+            }
+            _ => {
+                if let Some(pgid) = current {
+                    self.signal_group(pgid, sig)?;
+                }
+                self.paused_pgid = None;
+            }
+        }
+        Ok(())
+    }
+
+    fn current_foreground_pgid(&self) -> Option<i64> {
+        self.master.process_group_leader().map(|pgid| pgid as i64)
+    }
+
+    fn signal_group(&self, pgid: i64, sig: &str) -> anyhow::Result<()> {
         if pgid > 0 {
             std::process::Command::new("kill")
                 .arg("-s")
@@ -340,6 +389,20 @@ impl PtyShell {
                 .context(format!("kill -s {sig} -- -{pgid} failed"))?;
         }
         Ok(())
+    }
+
+    /// The process group this shell stopped, if a job is currently paused.
+    pub fn paused_pgid(&self) -> Option<i64> {
+        self.paused_pgid
+    }
+
+    /// Whether a foreground job holds the terminal — `process_group_leader()`
+    /// present and different from the shell's own pid (F1).
+    pub fn has_foreground_job(&self) -> bool {
+        match (self.current_foreground_pgid(), self.pid()) {
+            (Some(pgid), Some(pid)) => pgid != i64::from(pid),
+            _ => false,
+        }
     }
 
     /// Resize the PTY.
@@ -395,8 +458,168 @@ fn take_reader(reader: Box<dyn Read + Send>, tx: broadcast::Sender<Vec<u8>>) -> 
 }
 
 #[cfg(test)]
+mod pause_resume_tests {
+    use super::*;
+    use std::time::Duration;
+    use std::time::Instant;
+
+    /// The `/proc/<pgid>/stat` state char of `pgid`, read the F5 way: the
+    /// state char is the first token after the last `)`, because `comm` is
+    /// parenthesised and may itself contain spaces and parens.
+    fn job_state_char(pgid: i64) -> Option<String> {
+        let s = std::fs::read_to_string(format!("/proc/{pgid}/stat")).ok()?;
+        s.rsplit(')')
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .next()
+            .map(str::to_string)
+    }
+
+    /// Poll `pred` until it holds or `deadline` passes; a stop/cont transition
+    /// is asynchronous, so a single read raced against the signal.
+    fn poll_until(deadline: Instant, mut pred: impl FnMut() -> bool, label: &str) {
+        loop {
+            if pred() {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{label} not reached within the wait"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Wait until the shell reports a foreground job (`sleep 30` is running).
+    fn wait_for_foreground(shell: &mut PtyShell) {
+        poll_until(
+            Instant::now() + Duration::from_secs(10),
+            || shell.has_foreground_job(),
+            "the foreground job to hold the terminal",
+        );
+    }
+
+    #[test]
+    fn pty_pause_then_resume_actually_restarts_the_job() {
+        let _home = crate::test_home_guard();
+        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available");
+        shell
+            .write_input(b"sleep 30\n")
+            .expect("start the foreground job");
+        wait_for_foreground(&mut shell);
+
+        let started_pgid = shell.has_foreground_job();
+        assert!(started_pgid, "the job must hold the terminal before STOP");
+
+        shell
+            .signal_foreground("STOP")
+            .expect("STOP reaches the group");
+        let paused = shell
+            .paused_pgid()
+            .expect("STOP must remember the job's pgid (F2)");
+        poll_until(
+            Instant::now() + Duration::from_secs(10),
+            || job_state_char(paused).as_deref() == Some("T"),
+            "the remembered job to be in /proc state T after STOP",
+        );
+
+        // The regression leg: a paused job is NOT the foreground group — bash
+        // took the terminal back — so a CONT that re-derives its target from
+        // process_group_leader() (the pre-08a behaviour, F2) would signal the
+        // shell's own group and leave the job stopped forever. This
+        // foreground assertion is itself part of the guard: after the STOP
+        // the terminal no longer belongs to the job.
+        assert!(
+            !shell.has_foreground_job(),
+            "after STOP the stopped job no longer holds the terminal — the case F2 measured"
+        );
+
+        shell
+            .signal_foreground("CONT")
+            .expect("CONT reaches the job");
+        poll_until(
+            Instant::now() + Duration::from_secs(10),
+            || matches!(job_state_char(paused).as_deref(), Some("S") | Some("R")),
+            "the remembered job to resume (state S or R) after CONT",
+        );
+        assert!(
+            shell.paused_pgid().is_none(),
+            "CONT consumed the memory: nothing is paused afterwards"
+        );
+        let outcome = shell
+            .run("printf 'RESUMED\\n'", Duration::from_secs(10))
+            .expect("the shell still answers after a pause/resume cycle");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(
+            text.contains("RESUMED"),
+            "shell usable after resume: {text:?}"
+        );
+    }
+
+    #[test]
+    fn pty_stop_with_no_foreground_job_remembers_nothing() {
+        let _home = crate::test_home_guard();
+        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        poll_until(
+            deadline,
+            || !shell.has_foreground_job(),
+            "the fresh shell to be idle (no fg job)",
+        );
+        shell
+            .signal_foreground("STOP")
+            .expect("STOP with no job present");
+        assert!(
+            shell.paused_pgid().is_none(),
+            "an idle shell must not remember a stopped group (F1)"
+        );
+        // A STOP aimed at the shell's own group would stop the shell, and the
+        // next command would hang: prove it has not.
+        let outcome = shell
+            .run("printf 'STILL_ALIVE\\n'", Duration::from_secs(10))
+            .expect("the shell must still run after a no-op STOP");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(text.contains("STILL_ALIVE"), "shell still usable: {text:?}");
+    }
+
+    #[test]
+    fn pty_cancel_clears_the_paused_group() {
+        let _home = crate::test_home_guard();
+        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available");
+        shell
+            .write_input(b"sleep 30\n")
+            .expect("start the foreground job");
+        wait_for_foreground(&mut shell);
+        shell.signal_foreground("STOP").expect("stop the job");
+        assert!(
+            shell.paused_pgid().is_some(),
+            "the job must be paused before the cancel"
+        );
+        shell.signal_foreground("INT").expect("cancel the job");
+        assert!(
+            shell.paused_pgid().is_none(),
+            "INT must clear the paused memory (F4)"
+        );
+        let outcome = shell
+            .run(
+                "printf 'STILL_ALIVE\\n'; sh -c 'exit 0'",
+                Duration::from_secs(10),
+            )
+            .expect("the shell still answers after a cancel");
+        assert_eq!(outcome.exit_code, 0, "the shell's exit code survives");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(
+            text.contains("STILL_ALIVE"),
+            "shell usable after INT: {text:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn nonce(s: &str) -> Nonce {
         Nonce(s.to_string())

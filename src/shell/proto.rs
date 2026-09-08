@@ -16,8 +16,12 @@ pub enum ShellSignal {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellState {
+    #[serde(rename = "Idle")]
+    Idle,
     #[serde(rename = "Running")]
     Running,
+    #[serde(rename = "Paused")]
+    Paused,
     #[serde(rename = "Exited")]
     Exited,
 }
@@ -152,11 +156,21 @@ mod tests {
         assert_eq!(encode(ShellSignal::Term).unwrap(), "\"TERM\"\n");
         assert_eq!(encode(ShellSignal::Stop).unwrap(), "\"STOP\"\n");
         assert_eq!(encode(ShellSignal::Cont).unwrap(), "\"CONT\"\n");
+        assert_eq!(encode(ShellState::Idle).unwrap(), "\"Idle\"\n");
         assert_eq!(encode(ShellState::Running).unwrap(), "\"Running\"\n");
+        assert_eq!(encode(ShellState::Paused).unwrap(), "\"Paused\"\n");
         assert_eq!(encode(ShellState::Exited).unwrap(), "\"Exited\"\n");
         assert!(serde_json::from_str::<ShellSignal>("\"int\"").is_err());
         assert!(serde_json::from_str::<ShellSignal>("\"SIGINT\"").is_err());
         assert!(serde_json::from_str::<ShellState>("\"running\"").is_err());
+        assert_eq!(
+            serde_json::from_str::<ShellState>("\"Paused\"").unwrap(),
+            ShellState::Paused
+        );
+        assert_eq!(
+            serde_json::from_str::<ShellState>("\"Idle\"").unwrap(),
+            ShellState::Idle
+        );
     }
 
     #[test]
