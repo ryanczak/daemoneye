@@ -1,7 +1,7 @@
 # Bug 1 on phase-08a: the primary test is flaky — an unpolled assertion on an asynchronous condition
 
 **Severity:** blocker
-**Status:** open
+**Status:** fixed
 **Filed:** 2026-09-08
 
 ## What's wrong

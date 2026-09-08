@@ -1,7 +1,7 @@
 # Bug 2 on phase-08a: a job can be paused only once — the second STOP is a silent no-op
 
 **Severity:** major
-**Status:** open
+**Status:** fixed
 **Filed:** 2026-09-08
 
 ## What's wrong

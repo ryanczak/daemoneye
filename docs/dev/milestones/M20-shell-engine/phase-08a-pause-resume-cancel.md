@@ -1,7 +1,7 @@
 # Phase 08a: pause, resume and cancel on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** phase-05b (`PtyBackend`), phase-05a (`proto.rs` frame set),
 phase-07a (`client::run_command`) — all done.
 **Estimated diff:** ~300 lines
@@ -1402,3 +1402,69 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 09affca3121625f788e60aaed8a41f607aa78f00
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-08
+
+- **Verdict:** approved_after_2
+- **Bounces:** 1 review bounce (bug-08a-1 + bug-08a-2, filed together) + 1
+  `hard_fail` escalation. Both bugs now `fixed`.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** one, declared and accepted — see below.
+- **Calibration:** the `hard_fail` between the bounce and this run was **not**
+  the executor's. `rexymcp`'s HTTP client carried a hard-coded 300 s *total*
+  `reqwest` timeout, which is a deadline on the whole exchange including the
+  response body, so every streamed response running past five minutes was
+  severed and surfaced as `error decoding response body`; the backend read that
+  as a retriable transport error and re-sent the same prompt three more times,
+  restarting the model's reasoning from zero each attempt (4 × 300 s = the
+  1200 s `awaiting_model` stretch measured on two consecutive runs, four
+  distinct TCP connections in the vLLM access log, and no server-side error at
+  all). Fixed upstream in rexyMCP `d1a9d74` — connect-timeout only, mirroring
+  the fix daemoneye applied to its own copy of that client on 2026-08-17
+  (`7f9c9b6`). **A phase that stalls at a suspiciously round multiple of a
+  timeout constant is an infrastructure symptom, not an executor one.**
+
+**Verified at review, independently re-run:** all four gates green; full suite
+**1649 passed / 0 failed / 4 ignored on ten consecutive runs** at default
+threads, steady at ~7.4 s with none of the 14–17 s outliers that marked the
+flaky runs; `shell::pty::` 17, `shell::backend::` 10, `shell::client::` 9; the
+seven preserved modules exactly `5, 8, 17, 6, 8, 13, 11`; every structural grep
+at its pinned value; leak checks 0 stray `sleep 30` and 0 stray shell-hosts;
+the last end-to-end entry re-checked against `/tmp/e2e-08a.txt` → `PASTE MATCH`.
+
+**Both mutation checks re-run by the reviewer, not read from the log:**
+
+- Reverting the `STOP` arm to terminal-only (`target = current.filter(…)`)
+  turns `pty_pause_resume_pause_toggles_more_than_once` red and **only** that
+  test — precisely bug-08a-2's defect.
+- Reverting `CONT` to the pre-08a re-deriving form turns
+  `pty_pause_then_resume_actually_restarts_the_job` red — the F2 guard survived
+  Edit 1 intact, which was the risk bug-08a-1 carried.
+
+Both green on restore.
+
+**The third flake, found by the executor and worth keeping.** While sweeping the
+new toggle test (~23% failure) it instrumented `/proc` and found the spawned
+`bash` inheriting this host's `~/.bashrc`, whose `PROMPT_COMMAND` forks a
+`tmux set-environment` client that can hold the terminal's foreground group for
+seconds while the queued `sleep 30` is still unread — so a boot-window `STOP`
+targeted *that*. The insight that fixed it generalises: **a pty echoes a written
+line as the line discipline receives it, so seeing the echo is not evidence the
+job has started.** The tests now gate every transition on the foreground
+leader's `/proc/<pgid>/cmdline` being the queued job (`start_job`,
+`wait_for_fg_cmdline`) rather than on `has_foreground_job()` alone.
+
+**Scope deviation — accepted, with a measurement.** The `STOP` arm also gained a
+short settle (3 × 20 ms) that re-reads the terminal before giving up, to close
+the `fork` → `setpgid(2)` window that transiently reads as an idle shell. That
+is production behaviour the spec did not ask for. It was declared, the
+mechanism it closes is real, and it is benign — a `STOP` on a genuinely idle
+shell now costs 60 ms and still does nothing, and `signal_foreground` already
+blocked on `Command::status()`, so it introduces no new class of blocking.
+Measured at review: with the settle loop removed, `shell::pty::` and
+`shell::backend::` are green 8 runs each and the full suite green 8 more — **18
+runs, no failure**, so it is not load-bearing for the tests; the cmdline gating
+above is what actually fixed the flake. Kept rather than bounced: it is a
+defensible guard against a real kernel-level race, and a third bounce for
+60 ms of defensive re-reading would be disproportionate. Flagged here for the
+PE at milestone close.
