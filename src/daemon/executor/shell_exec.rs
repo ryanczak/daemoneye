@@ -10,15 +10,16 @@ use std::time::Duration;
 use super::foreground;
 use crate::ai::mask_sensitive;
 use crate::daemon::utils::normalize_output;
-use crate::shell::registry::{Owner, ShellId, ShellRegistry};
-use crate::shell::{client, session};
+use crate::shell::spawn_detached_host;
+use crate::shell::{Owner, ShellId, ShellRegistry, login_shell, run_command, shell_for_owner};
 
 /// How long a fresh host may take to come up and answer `Status`.
 pub(super) const SHELL_READY_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// The PTY geometry every shell host is spawned with.
-pub(super) const ROWS: u16 = 24;
+const ROWS: u16 = 24;
 /// The PTY geometry every shell host is spawned with.
-pub(super) const COLS: u16 = 80;
+const COLS: u16 = 80;
 
 /// Annotate, mask, then normalize. The order matters (F3): the annotation step
 /// must strip control bytes before masking, or an escape embedded mid-token
@@ -48,7 +49,7 @@ pub(super) async fn run_in_shell(
     max_per_owner: u32,
 ) -> anyhow::Result<(ShellId, ShellRunResult)> {
     run_in_shell_with(reg, owner, cmd, max_per_owner, |id| {
-        session::spawn_detached_host(id, ROWS, COLS)
+        spawn_detached_host(id, ROWS, COLS)
     })
     .await
 }
@@ -68,21 +69,16 @@ where
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
     let (id, socket) =
-        session::shell_for_owner(reg, owner, max_per_owner, SHELL_READY_TIMEOUT, spawn).await?;
-    let outcome = client::run_command(
-        &socket,
-        cmd,
-        &session::login_shell(),
-        foreground::LOCAL_CMD_TIMEOUT,
-    )
-    .await
-    .map_err(|e| {
-        e.context(format!(
-            "command exceeded the {:#?} limit in shell {}",
-            foreground::LOCAL_CMD_TIMEOUT,
-            id.as_str()
-        ))
-    })?;
+        shell_for_owner(reg, owner, max_per_owner, SHELL_READY_TIMEOUT, spawn).await?;
+    let outcome = run_command(&socket, cmd, &login_shell(), foreground::LOCAL_CMD_TIMEOUT)
+        .await
+        .map_err(|e| {
+            e.context(format!(
+                "command exceeded the {:#?} limit in shell {}",
+                foreground::LOCAL_CMD_TIMEOUT,
+                id.as_str()
+            ))
+        })?;
     let raw = String::from_utf8_lossy(&outcome.output);
     let mut text = format_for_model(&raw);
     if let Some(note) = foreground::exit_status_annotation(Some(outcome.exit_code)) {
@@ -101,7 +97,7 @@ where
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::shell::registry::with_shells;
+    use crate::shell::{bind, lock_path, serve, socket_path};
     use crate::test_home_guard;
     use anyhow::Context;
     use std::sync::Arc;
@@ -126,15 +122,13 @@ mod tests {
         let cast = dir.path().join(format!("{}.cast", id.as_str()));
         let backend = crate::shell::PtyBackend::spawn("bash", ROWS, COLS, 100, &cast, 0)
             .context("spawning bash")?;
-        let lock = crate::daemon::instance::InstanceLock::acquire(
-            &crate::shell::launch::lock_path(id.as_str()),
-        )
-        .context("holding the per-id instance lock")?;
-        let socket = crate::shell::launch::socket_path(id.as_str());
-        let listener = crate::shell::host::bind(&socket)
+        let lock = crate::daemon::instance::InstanceLock::acquire(&lock_path(id.as_str()))
+            .context("holding the per-id instance lock")?;
+        let socket = socket_path(id.as_str());
+        let listener = bind(&socket)
             .await
             .context("binding the in-process host's socket")?;
-        tokio::spawn(crate::shell::host::serve(listener, Arc::clone(&backend)));
+        tokio::spawn(serve(listener, Arc::clone(&backend)));
         std::mem::forget(lock);
         std::mem::forget(dir);
         Ok(cast)
@@ -291,26 +285,5 @@ mod tests {
     fn shell_exec_pipeline_leaves_a_clean_command_as_its_output() {
         assert_eq!(format_for_model("hello\r\n"), "hello");
         assert_eq!(format_for_model("\r\n\r\nhello\r\n\r\n"), "hello");
-    }
-
-    #[test]
-    fn shell_exec_registry_records_are_leased_and_released_like_session_tests() {
-        let (_home, _dir) = test_home();
-        let reg = ShellRegistry::default();
-        with_shells(&reg, |store| {
-            store.insert(
-                "s4".to_string(),
-                crate::shell::registry::ShellRecord {
-                    id: ShellId::from_index(4),
-                    owner: Owner::Chat("cap".into()),
-                    started_unix: 0,
-                },
-            );
-        });
-        let records = with_shells(&reg, |store| store.len());
-        assert_eq!(
-            records, 1,
-            "the seeded record is visible through the API used"
-        );
     }
 }

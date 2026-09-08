@@ -1,7 +1,8 @@
 # Phase 07c: `run_terminal_command` on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress (bounced at review 2026-09-08 — bug-07c-1, bug-07c-2)
+**Status:** in-progress (re-dispatched 2026-09-08 after review bounce —
+bug-07c-1, bug-07c-2)
 **Depends on:** phase-07a (`client::run_command`), phase-07b
 (`shell_for_owner` + the registry in `run_daemon`) — both done.
 **Estimated diff:** ~320 lines
@@ -728,9 +729,155 @@ diff /tmp/pasted-07c.txt /tmp/e2e-07c.txt && echo "PASTE MATCH" || echo "PASTE M
 
 Verdict as run: **PASTE MATCH**.
 
+### Update — 2026-09-08 15:30 (started by local-inference-lab/GLM on re-dispatch)
+
+Pre-flight on `master` at `ab505f6` after the bounce: tree clean, `cargo test
+--lib shell::` = 137 passed / 0 failed, all twelve preserved module counts match
+§ Current state exactly, full-lib baseline unchanged. Both bugs read.
+Remediation plan: bug-07c-1 — revert the ten `pub mod` lines to `mod` (no other
+line of `src/shell/mod.rs` changes) and rewrite every by-path import in
+`shell_exec.rs` and `executor/mod.rs` to the re-exports the module already
+publishes; bug-07c-2 — delete the vending test and cover the cap path through
+`run_in_shell_with` with `max_per_owner = 1`, mutation-tested red before
+reverting. No behaviour change from the reviewed state otherwise.
+
 <!-- entries appended below this line -->
 
-### Update — ts=1788837839688 (complete, server-authored)
+### Update — 2026-09-08 16:05 (end-to-end verification, re-dispatch)
+
+**What this re-dispatch changed** (bug-07c-1, bug-07c-2, both filed at review):
+
+- **bug-07c-1:** all ten `pub mod` lines in `src/shell/mod.rs` are back to
+  `mod`; the `pub use` block diff from `1d29a77` is exactly the `login_shell`
+  addition the spec authorized, no line removed. Every by-path import in
+  `shell_exec.rs` and `executor/mod.rs` was rewritten to the module's
+  re-exports (`crate::shell::{Owner, ShellId, ShellRegistry, …}`).
+  Counts: `grep -c '^pub mod ' src/shell/mod.rs` → **0**;
+  `grep -c '^mod ' src/shell/mod.rs` → **10**; the by-path
+  `crate::shell::registry::` / `launch::` / `host::` /
+  `{client, session}` grep over `shell_exec.rs` → **0**.
+- **bug-07c-2:** the vending test is deleted
+  (`shell_exec_registry_records_are_leased_and_released_like_session_tests`
+  → **0** matches). **Choice: removal, making the module count 6, not 7.**
+  The cap-path behaviour the bug suggests as a replacement is already pinned
+  one layer down by `shell::session::session_honours_the_per_owner_cap`
+  (a red assertion against `check_owner_cap`'s message), so a same-level copy
+  here would re-test `shell_for_owner`, which this phase composes and does not
+  own, instead of covering any behaviour this phase wrote. Every remaining
+  `shell_exec_` test asserts something about this phase's own body.
+
+Section F prose, each grep's value as it printed (section F of the pasted
+block):
+
+- every line printed a number on the same line as its label — no
+  `grep: No such file or directory`, no bare `0` after an awk fatal;
+- every pinned-criterion line printed exactly its pinned number: **1** for
+  shell_exec.rs exists, mod declaration, `run_in_shell(` (re-pinned call
+  form), login_shell, SHELL, annotate_ansi-private, annotate_output wrapper,
+  log_shell_command, log_command, and registry accessor (re-pinned call
+  form); **9** foreground log_command; **2** executor log_command; **0** for
+  shell mods public, local registry default, unsafe pre-test, and
+  unwrap/expect/panic pre-test;
+- the `>=1` criteria printed within bounds: annotate_output **1**,
+  mask_sensitive **2**, normalize_output **2**, exit_status_annotation **1**,
+  `"exit"` **2**, uses_pty **3**, run_in_shell-in-mod **1**.
+
+Section G: sockets **0**, locks **0** — no shell host under a fresh `HOME`.
+Section H: **0** stray shell-host processes. Section D: all twelve counts
+exactly `17, 8, 13, 13, 11, 8, 5, 7, 6, 6, 13, 13`. Section E: three
+consecutive full-lib runs, `1638 passed; 0 failed; 4 ignored` each — the
+count is one below the prior run's 1639 because deleted is the vending test
+bug-07c-2 files; nothing else changed.
+
+```
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+daemon::executor::shell_exec::tests::shell_exec_annotates_colour_and_strips_control_bytes ... ok
+daemon::executor::shell_exec::tests::shell_exec_masks_a_secret_that_stays_raw_in_the_cast ... ok
+daemon::executor::shell_exec::tests::shell_exec_pipeline_is_annotate_then_mask_then_normalize ... ok
+daemon::executor::shell_exec::tests::shell_exec_pipeline_leaves_a_clean_command_as_its_output ... ok
+daemon::executor::shell_exec::tests::shell_exec_returns_the_real_exit_code ... ok
+daemon::executor::shell_exec::tests::shell_exec_reuses_the_owners_shell_across_calls ... ok
+daemon::utils::event_log::tests::log_shell_command_truncates_the_excerpt_at_200_chars ... ok
+daemon::utils::event_log::tests::log_shell_command_writes_the_exit_code ... ok
+cargo_exit=0
+== C. shell_exec totals ==
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 0.03s
+cargo_exit=0
+== D. every other module unchanged (17,8,13,13,11,8,5,7,6,6 / fg 13 / ansi 13) ==
+shell::registry                test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1625 filtered out; finished in 0.00s
+cargo_exit=0
+shell::launch                  test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1634 filtered out; finished in 1.12s
+cargo_exit=0
+shell::pty                     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1629 filtered out; finished in 2.51s
+cargo_exit=0
+shell::log                     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1629 filtered out; finished in 0.00s
+cargo_exit=0
+shell::screen                  test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1631 filtered out; finished in 0.00s
+cargo_exit=0
+shell::host                    test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1634 filtered out; finished in 0.00s
+cargo_exit=0
+shell::proto                   test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1637 filtered out; finished in 0.00s
+cargo_exit=0
+shell::backend                 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1635 filtered out; finished in 3.30s
+cargo_exit=0
+shell::client                  test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 0.50s
+cargo_exit=0
+shell::session                 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 0.08s
+cargo_exit=0
+daemon::executor::foreground   test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1629 filtered out; finished in 0.00s
+cargo_exit=0
+tmux::ansi                     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1629 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1638 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.54s
+test result: ok. 1638 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.37s
+test result: ok. 1638 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.47s
+== F. structural greps (each must print the stated number) ==
+shell_exec.rs exists       (1): 1
+mod shell_exec declaration (1): 1
+run_in_shell declared      (1): 1
+login_shell declared       (1): 1
+SHELL named once           (1): 1
+annotate_output used     (>=1): 1
+mask_sensitive used      (>=1): 2
+normalize_output used    (>=1): 2
+exit_status_annotation   (>=1): 1
+annotate_ansi still private(1): 1
+annotate_output wrapper    (1): 1
+log_shell_command declared (1): 1
+exit field in event log  (>=1): 2
+log_command still one fn   (1): 1
+foreground log_command     (9): 9
+executor mod log_command   (2): 2
+registry accessor          (1): 1
+shell mods stay private    (0): 0
+no local registry default  (0): 0
+executor uses_pty gate   (>=1): 3
+executor run_in_shell    (>=1): 1
+no unsafe pre-test         (0): 0
+unwrap/expect/panic pre-test (0): 0
+== G. tmux default is untouched: no shell host started under a fresh HOME ==
+sockets in the shells dir (0): 0
+locks in the shells dir   (0): 0
+== H. no shell-host leaked by the test run ==
+stray daemoneye shell-host processes (0): 0
+```
+
+**Self-check verdict:**
+
+```sh
+D=docs/dev/milestones/M20-shell-engine/phase-07c-run-terminal-command-pty.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-07c.txt
+diff /tmp/pasted-07c.txt /tmp/e2e-07c.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Verdict as run: **PASTE MATCH** (the self-check resolves to this entry — the
+previous verification entries carry their own pasted blocks, and `tail -1`
+picks the last, which is this one).
 
 **Summary:** **Summary:** Phase 07c is implemented and committed (`a656c47` code, `9f5ac93`-line docs commit for the E2E transcript; working tree clean). A chat turn's `run_terminal_command` now routes through `shell_for_owner` + `client::run_command` when `[execution] backend = "pty"` (and only when it is not a ghost, there is a session id, and no `target_pane` is given); the approval gate runs first exactly as the tmux path does. The result is `annotate_ansi` → `mask_sensitive` → `normalize_output` in that order (annotation first so control bytes cannot split a secret past its regex), carries the child's real exit code, gets the non-zero note from the existing `exit_status_annotation` (widened to `pub(super)`, plus `LOCAL_CMD_TIMEOUT`), and is recorded in `events.jsonl` by a new `log_shell_command` with an `exit` field — `log_command` and its eleven call sites untouched. The daemon's registry is now a process global (`shell::registry()`), and `run_daemon` sweeps/adopts into it; with the default `backend = "tmux"` nothing changes, confirmed by section G (0 sockets, 0 locks under a fresh `$HOME`).
 

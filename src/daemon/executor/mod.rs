@@ -11,7 +11,7 @@ use crate::daemon::session::{SessionStore, with_sessions};
 use crate::daemon::utils::send_response_split;
 use crate::ipc::{PaneInfo, Request, Response};
 use crate::scheduler::ScheduleStore;
-use crate::shell::registry::Owner;
+use crate::shell::Owner;
 use crate::tmux::cache::SessionCache;
 use crate::util::UnpoisonExt;
 use std::sync::Arc;

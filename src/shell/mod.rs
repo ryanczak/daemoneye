@@ -4,16 +4,16 @@
 //! shell spawned through `portable-pty`, and the marker protocol that returns a
 //! command's real exit code and its exact output bytes.
 
-pub mod backend;
-pub mod client;
-pub mod host;
-pub mod launch;
-pub mod log;
-pub mod proto;
-pub mod pty;
-pub mod registry;
-pub mod screen;
-pub mod session;
+mod backend;
+mod client;
+mod host;
+mod launch;
+mod log;
+mod proto;
+mod pty;
+mod registry;
+mod screen;
+mod session;
 
 pub use backend::PtyBackend;
 pub use client::run_command;
