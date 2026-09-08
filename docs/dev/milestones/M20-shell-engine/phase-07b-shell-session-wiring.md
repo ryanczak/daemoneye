@@ -796,3 +796,164 @@ not what bounced.
 **Re-dispatch:** `/rexymcp:dispatch phase-07b`. The outstanding work is
 bug-07b-1's only — bring both greps to `1` without removing either call site,
 then re-run and re-paste the E2E block in a new entry whose prose matches it.
+
+### Update — 2026-09-07 19:20 (end-to-end verification)
+Re-run after the bug-07b-1 fix, from the repo root, in one shell invocation,
+redirected to `/tmp/e2e-07b.txt` and pasted below byte-for-byte.
+
+**Reading the pass conditions, per the phase doc's own warnings:**
+
+- **B** carries all six pinned test names, each its own `... ok` line — a zero
+  exit here would have proved nothing.
+- **C** reports **6 passed, 0 failed** (≥6 required).
+- **D** is exactly `17, 8, 13, 13, 11, 8, 5, 7, 6` for registry, launch, pty,
+  log, screen, host, proto, backend, client — every count unchanged.
+- **E** is three consecutive full-lib runs, each `1630 passed; 0 failed` —
+  the criterion added for bug-07a-1, which per-module counts cannot satisfy.
+- **F**: the two greps bug-07b-1 pinned at **1** now print **1** —
+  `daemon: adopt_at_startup (1): 1` and `daemon: sweep_stale (1): 1` — because
+  the comment above the gated block no longer names either function; the two
+  preservation greps `crate::shell::adopt_at_startup` and
+  `crate::shell::sweep_stale` (not printed in F) both still count **1**, and
+  `git diff 1e887fd -- src/daemon/mod.rs` shows the call sites untouched. The
+  remaining ten greps print their pinned numbers: the file exists,
+  `mod session;` declares it, `shell_for_owner` is declared once,
+  `spawn_for` is called (3 mentions), no `allocate_index`,
+  `spawn_detached` does not appear in `shell_for_owner`'s body (F4),
+  `ShellRegistry` >=1, `uses_pty` >=1, and no `unsafe` / no
+  `unwrap|expect|panic!` before `#[cfg(test)]`.
+- **G**: 0 sockets, 0 locks under a fresh `$HOME` — the `backend = "tmux"`
+  default starts no host (the shells directory itself exists from first-run
+  seeding, which is why the section counts sockets and locks).
+- **H**: 0 stray `daemoneye shell-host` processes.
+
+Self-check verdict: **PASTE MATCH** (the fenced paste below is byte-identical
+to `/tmp/e2e-07b.txt`; the `diff` output is empty).
+
+```
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::session::tests::session_creates_a_shell_when_the_owner_has_none ... ok
+shell::session::tests::session_gives_different_owners_different_shells ... ok
+shell::session::tests::session_honours_the_per_owner_cap ... ok
+shell::session::tests::session_replaces_a_shell_whose_host_is_dead ... ok
+shell::session::tests::session_reuses_the_owners_live_shell ... ok
+shell::session::tests::session_rolls_back_the_record_when_readiness_times_out ... ok
+cargo_exit=0
+== C. shell::session:: totals ==
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1628 filtered out; finished in 0.07s
+cargo_exit=0
+== D. every other shell module unchanged (17, 8, 13, 13, 11, 8, 5, 7, 6) ==
+registry  test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1617 filtered out; finished in 0.00s
+cargo_exit=0
+launch    test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1626 filtered out; finished in 1.12s
+cargo_exit=0
+pty       test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1621 filtered out; finished in 2.51s
+cargo_exit=0
+log       test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1621 filtered out; finished in 0.00s
+cargo_exit=0
+screen    test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1623 filtered out; finished in 0.00s
+cargo_exit=0
+host      test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1626 filtered out; finished in 0.00s
+cargo_exit=0
+proto     test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1629 filtered out; finished in 0.00s
+cargo_exit=0
+backend   test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1627 filtered out; finished in 3.46s
+cargo_exit=0
+client    test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1628 filtered out; finished in 0.51s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1630 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.38s
+test result: ok. 1630 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.42s
+test result: ok. 1630 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.28s
+== F. structural greps (each must print the stated number) ==
+session.rs exists        (1): 1
+mod session declaration  (1): 1
+pub async fn shell_for_owner (1): 1
+spawn_for reused       (>=1): 3
+no id re-allocation      (0): 0
+spawn_detached unreachable (0): 0
+daemon: ShellRegistry  (>=1): 1
+daemon: adopt_at_startup (1): 1
+daemon: sweep_stale      (1): 1
+daemon: uses_pty gate  (>=1): 1
+no unsafe pre-test       (0): 0
+unwrap/expect/panic pre-test (0): 0
+== G. tmux default is untouched: no shell host started under a fresh HOME ==
+sockets in the shells dir (0): 0
+locks in the shells dir   (0): 0
+== H. no shell-host leaked by the test run ==
+stray daemoneye shell-host processes (0): 0
+```
+
+Self-check command and verdict (second block, pasted as run; the entry is
+appended last, so `tail -1` resolves to this one):
+
+```
+$ D=docs/dev/milestones/M20-shell-engine/phase-07b-shell-session-wiring.md
+$ L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1); echo $L
+$ tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-07b.txt
+$ diff /tmp/pasted-07b.txt /tmp/e2e-07b.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+PASTE MATCH
+```
+
+### Update — 2026-09-07 19:25 (resume — bug-07b-1 fixed)
+
+**Resumed** the bounced phase per the review entry's re-dispatch instruction.
+All six pinned `shell::session::` tests were already green and every count in §
+Current state held before I touched anything (pre-flight: `master` at
+`85790de`, tree clean, `shell::` pre-flight counts reproduced).
+
+**The fix (bug-07b-1).** The only bouncing defect was prose: the comment above
+the gated registry block in `run_daemon` contained the literal names
+`sweep_stale`/`adopt_at_startup`, which `grep -c` cannot distinguish from the
+call sites beneath it, so both criteria read **2** against **1**. Reworded the
+comment to prose that names neither (commit `6052def`, +5 −5, one file). No
+call site moved; the two preservation criteria
+(`grep -c 'crate::shell::adopt_at_startup'` / `'crate::shell::sweep_stale'`
+→ **1** each) still hold, and
+`git diff 1e887fd..HEAD -- src/daemon/mod.rs` touches only the comment.
+
+**Not repeated from the prior run:** its `(end-to-end verification)` entry and
+its completion entry both claimed "every structural grep prints its pinned
+number" over a transcript showing `2` for these two greps — that is what bugged
+the phase (the same class as bug-07a-2: transcript honest, prose about it
+false). My F prose above states each value as printed, and the two previously
+failing greps are now `1`, not argued around.
+
+**Tasks 1–3 (session.rs, the production spawn, the registry stand-up)** were
+verified, not rewritten: re-read `src/shell/session.rs` against all four spec
+steps (lowest-index reuse scan inside one `with_shells`; `host_is_alive`
+flock probe on the chosen id, dropping dead matches; no spawn, no readiness
+wait on the reuse path; `spawn_for` for creation; `await_ready` with the
+`ready_timeout`; rollback of the record on readiness failure under
+`with_shells`), re-read `spawn_detached_host` (resolves `$SHELL` else `bash`,
+delegates to `launch::spawn_detached`, unreachable from `shell_for_owner`), and
+re-read the gated block (sweep → adopt → hold, `uses_pty()` gate, `Some(reg)`
+only on the PTY path, `None` — today's exact startup behaviour — otherwise).
+**kernel:** single `pipe` line of shell — no repeated `<pattern>}`, as noted,
+only new lines; shell expanded the side comment; no shell-side state to hit.
+
+**Self-check on this entry after fix (confirmed in the earlier section's
+block): resolves by `tail -1` to this run's entry and prints `PASTE MATCH`;
+`L=800`.**
+
+**End-to-end verification:** the block in § End-to-end verification ran once,
+verbatim, from the repo root, redirected to `/tmp/e2e-07b.txt` (55 lines), and
+is pasted byte-for-byte into the `### Update — 2026-09-07 19:20 (end-to-end
+verification)` entry above with the self-check verdict. Highlight values:
+section C **6 passed; 0 failed**, section D exactly `17, 8, 13, 13, 11, 8, 5,
+7, 6`, section E `1630 passed; 0 failed` on all three consecutive runs,
+section F's two bouncing greps `1` / `1`, sections G and H `0` / `0`.
+
+**Gates (run separately, before staging):** `cargo fmt --all` ok,
+`cargo build` finished 0 warnings, `cargo clippy --all-targets --all-features
+-- -D warnings` clean, `cargo test --lib` **1630 passed; 0 failed; 4 ignored**.
+
+**Authorizations honoured:** `src/shell/session.rs` read, not rewritten; only
+`src/daemon/mod.rs`'s comment changed (Task 3's block already correct);
+`registry.rs`/`launch.rs`/`client.rs`/`host.rs`/`backend.rs`/`pty.rs`/
+`proto.rs`/`screen.rs`/`log.rs` untouched (`git diff 1e887fd..HEAD --stat`
+shows `src/daemon/mod.rs` only). Commit `6052def`, tree clean at close.
