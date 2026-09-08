@@ -192,10 +192,38 @@ line-number facts go stale and each landing shifts the next Current state).
 | 07a | shell-client ([phase-07a-shell-client.md](phase-07a-shell-client.md)) | **done** (approved_after_1) 2026-09-06 | `src/shell/client.rs`: `run_command` over `var/run/shells/<id>.sock` — `Subscribe` + `Input` on one connection, chunk accumulation, `parse_outcome` as the terminator, real exit code. Also sets the `.cast`/`.meta.json` modes explicitly (`0600`) rather than inheriting the umask. |
 | 07b | shell-session-wiring ([phase-07b-shell-session-wiring.md](phase-07b-shell-session-wiring.md)) | **done** (approved_after_1) 2026-09-07 | `src/shell/session.rs`: `shell_for_owner` — reuse the owner's live shell or create one, `await_ready`, roll the record back when readiness fails. Stands a live `ShellRegistry` up in `run_daemon` (sweep, then adopt), gated on `[execution] backend = "pty"`. Nothing consumes it yet. |
 | 07c | run-terminal-command-pty ([phase-07c-run-terminal-command-pty.md](phase-07c-run-terminal-command-pty.md)) | **done** (approved_after_2, 2026-09-08 — [bug-07c-1](bugs/bug-07c-1.md), [bug-07c-2](bugs/bug-07c-2.md), [bug-07c-3](bugs/bug-07c-3.md), all fixed) | Route `run_terminal_command` through 07b's `shell_for_owner` + 07a's client when `backend = "pty"` (local host only), masked + ANSI-annotated result, real exit code in the tool result and in the `events.jsonl` command record. **Owns the masking exit criterion** (PE decision 2026-09-06). First phase that runs a command on the new substrate from chat. |
-| 08 | interactive-and-signals | todo (not drafted) | `is_interactive_command()` → return immediately with the shell id; pause / resume / cancel on the shell API (`SIGSTOP` / `SIGCONT` / `SIGINT` to the foreground pgrp); state transitions `Idle → Running → Paused → Exited`. **Also owns exited-shell GC under `shells.exited_retention_secs`** (moved from 06b at drafting, 2026-09-06 — see § Notes). |
+| 08a | pause-resume-cancel ([phase-08a-pause-resume-cancel.md](phase-08a-pause-resume-cancel.md)) | todo (drafted 2026-09-08) | The signalling mechanism, all inside `src/shell/`: `ShellState::{Idle, Paused}`, the remembered stopped-pgid so `CONT` reaches the job it stopped, four-way `status()` via `/proc`, and `client::{send_signal, status}`. Mechanism only — no tool, no UX (design § line 452). |
+| 08b | interactive-and-gc | todo (not drafted) | The consumers: `is_interactive_command()` → return immediately with the shell id rather than waiting out `LOCAL_CMD_TIMEOUT`; exited-shell GC under `shells.exited_retention_secs` (moved from 06b at drafting, 2026-09-06 — see § Notes). |
 | 09 | restart-survival-and-close | todo (not drafted) | Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
 
 ## Notes
+
+- **Phase 08 was split at drafting (2026-09-08) into 08a and 08b**, on a seam
+  measurement found rather than a size guess — the same way 05b and 07b split.
+  Probes in `src/shell/pty.rs` against a real `bash` (run, then reverted)
+  turned up a defect that reshapes the work:
+
+  **A stopped job cannot be resumed today.** `signal_foreground` re-derives its
+  target from `master.process_group_leader()` on every call. But the instant a
+  job is `SIGSTOP`ped, bash takes the terminal back, so that call starts
+  returning the *shell's* own pgid — and `CONT` is delivered to the shell
+  instead of to the stopped job, which stays in state `T` indefinitely
+  (measured: `T` at every 500 ms sample across 3 s). A `CONT` aimed at the
+  *remembered* pgid resumed it immediately. So resume cannot re-derive its
+  target; the shell has to remember what it stopped.
+
+  That makes pause/resume/cancel + the `Idle`/`Paused` states a real mechanism
+  change confined to `src/shell/` (**08a**), and leaves the two consumers —
+  interactive-command routing in the executor, and exited-shell GC in the
+  registry — as a separate, independent phase (**08b**). Neither half needs the
+  other to land first.
+
+  Two related facts, also measured, are pinned in 08a § Measured facts: the
+  shell's own `/proc` state stays `S` while its job is `T` (so `Paused` must be
+  read from the job's pgid, never the shell's), and `is_alive()` is `true` for
+  a paused shell (`try_wait` sees no exit), which is why `status()` reports
+  `Running` for a stopped shell today.
+
 
 - **Phase 05b was split again at drafting (2026-09-03) into 05b and 05c**, on a
   real seam found by measurement rather than by guessing at size. Two findings

@@ -4263,3 +4263,48 @@ draft said `log_command` had "ten" call sites; `grep -c` says 9 + 2.
 **Open for the PE at 07c's close:** `background=true` stays on the tmux
 `de-bg-*` path and no phase owns its shell-substrate equivalent — 08 is
 interactive/signals, 09 is restart survival.
+
+---
+
+**phase-07c — run-terminal-command-pty: done (approved_after_2) 2026-09-08**,
+commit `f541c45`; three bugs, all fixed. bug-07c-1 (ten shell modules made
+public when the re-exports already sufficed) and bug-07c-2 (a test asserting a
+one-entry map has length one) were filed together at the first review; bug-07c-3
+at the second. That last one is the one worth remembering: the test the phase
+doc named *"the regression guard for the ordering"* stayed green with
+`format_for_model`'s body reversed to mask-before-annotate, because the doc
+pinned its input — the F3 byte string — and in that string the secret and the
+escapes never overlap. Measured on an input where the orderings differ (a secret
+with an ESC embedded mid-token) the reversed pipeline emits the AWS key
+verbatim. **A spec that names a guard's input has already decided what the guard
+can catch**; state the property and demand the mutation transcript instead. The
+bug-07c-3 DoD did exactly that and closed first try.
+
+**Active phase: phase-08a — pause-resume-cancel**
+(`docs/dev/milestones/M20-shell-engine/phase-08a-pause-resume-cancel.md`,
+status: todo, drafted 2026-09-08). Dispatch with `/rexymcp:dispatch phase-08a`.
+
+Scope: pause, resume and cancel a shell's foreground job, and make `Status` say
+which state it is in — `ShellState::{Idle, Paused}` added to the frame set, a
+remembered stopped-pgid in `PtyShell`, a four-way `status()` in `PtyBackend`,
+and `client::{send_signal, status}`. Confined to `src/shell/`. Mechanism only:
+design § line 452 makes pause and cancel user-only controls that no tool may
+reach, and the attached-mode `Ctrl-p`/`Ctrl-c` UX that drives them is M23.
+
+**Phase 08 was split at drafting into 08a and 08b** on a measured defect, not a
+size guess (milestone README § Notes): **a stopped job cannot be resumed
+today.** `signal_foreground` re-derives its target every call, but the moment a
+job is `SIGSTOP`ped bash takes the terminal back, so `process_group_leader()`
+starts returning the shell's own pgid and `CONT` goes to the shell instead of
+the job — measured `T` at every 500 ms sample across 3 s, while a `CONT` aimed
+at the remembered pgid resumed it at once. Resume cannot re-derive its target.
+Two supporting facts are pinned in the phase doc: the shell's own `/proc` state
+stays `S` while its job is `T`, and `is_alive()` is `true` for a paused shell —
+which is why `status()` reports `Running` for one today. **08b** takes the two
+consumers that need none of this: `is_interactive_command()` routing (an `ssh`
+through `run_terminal_command` currently waits out the 45 s `LOCAL_CMD_TIMEOUT`)
+and exited-shell GC under `shells.exited_retention_secs`.
+
+**Still open for the PE:** `background=true` stays on the tmux `de-bg-*` path
+and no phase owns its shell-substrate equivalent — 08a is signalling, 08b is
+interactive routing + GC, 09 is restart survival.
