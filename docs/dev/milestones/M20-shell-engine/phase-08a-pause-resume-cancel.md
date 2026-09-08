@@ -486,6 +486,161 @@ here and in the milestone README's phase table. Tasks 1–4 next, in order.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-09-08 (refined re-dispatch after a backend hard_fail)
+
+## READ THIS FIRST — the gates are green and the tree is clean, and that is EXPECTED
+
+The previous run ended on `BackendError: "error decoding response body"` after
+15 turns of reading — a **transport failure between the runner and the model
+endpoint**, not anything you or the spec did wrong. Nothing was written; the
+diff was empty. The endpoint is healthy again.
+
+**Do not conclude this phase is finished because the gates pass.** They do
+pass. `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`
+and `cargo fmt --all` are all green, the tree is clean at `faef3ac`, and
+`cargo test --lib` will report `0 failed` **about 3 runs in 4**. That last
+number is the trap: **bug-08a-1 is a ~27% flaky test**, so a single green suite
+run is not evidence it is fixed. Run it ten times, as bug-08a-1's DoD requires.
+
+**What is already approved and must NOT be redone or re-litigated:**
+
+- Task 1 — `ShellState::{Idle, Paused}` in `proto.rs`. Done, correct.
+- Task 2's `CONT` fix — the remembered-`paused_pgid` resume. **Verified red at
+  review** against the pre-08a re-deriving form: it is the phase's F2 guard and
+  it works. Leave it alone.
+- Task 3 — the four-way `status()` precedence, including the `resumed_pgid`
+  extension you added. **That deviation was reviewed and accepted**: I measured
+  it independently (after `CONT`, `fg` stays the shell's own pgid while the job
+  runs in state `S`), so the spec's rule 3 genuinely could not report `Running`
+  after a resume without it. Keep it.
+- Task 4 — `client::{send_signal, status}`. Done, correct.
+- The `launch.rs:299` readiness literal `Running` → `Idle`. Reviewed, accepted,
+  forced by Task 3.
+
+**There are exactly two edits left.** Both are named below with the current
+source quoted from the tree you are about to open.
+
+---
+
+### Edit 1 of 2 — bug-08a-1: poll the foreground handoff instead of asserting it
+
+`src/shell/pty.rs`, inside `pty_pause_then_resume_actually_restarts_the_job`.
+This is what is there now (the assertion is at line 594):
+
+```rust
+        assert!(
+            !shell.has_foreground_job(),
+            "after STOP the stopped job no longer holds the terminal — the case F2 measured"
+        );
+```
+
+Two things happen after `SIGSTOP`, in order and **not atomically**: the job
+enters `/proc` state `T`, and *then* bash reaps the stop and takes the terminal
+back. The test already polls for the first and asserts the second instantly, so
+under load it fires against a state the shell has not reached yet. Failing runs
+take 14–17 s against a steady 6.9 s.
+
+The module already has the right tool, three lines above this call site:
+
+```rust
+    fn poll_until(deadline: Instant, mut pred: impl FnMut() -> bool, label: &str) {
+```
+
+Use it. **Keep the check** — it is what makes this test the F2 guard; only its
+timing changes. Do not delete it, do not weaken it to a warning, and do not add
+a bare `sleep`.
+
+### Edit 2 of 2 — bug-08a-2: let `STOP` reach a job it already resumed
+
+`src/shell/pty.rs`, `signal_foreground`. This is the `"STOP"` arm as it stands:
+
+```rust
+            "STOP" => {
+                // F1: the foreground group equals the shell's own pid when no
+                // job holds the terminal; stopping that group would stop the
+                // shell itself, so leave nothing remembered.
+                let no_job = match (current, self.pid()) {
+                    (Some(pgid), Some(pid)) => pgid == i64::from(pid),
+                    _ => true,
+                };
+                if let Some(pgid) = current.filter(|_| !no_job) {
+                    self.signal_group(pgid, sig)?;
+                    self.paused_pgid = Some(pgid);
+                    self.resumed_pgid = None;
+                }
+            }
+```
+
+`current` is the **terminal** foreground group. After a resume bash holds the
+terminal while the job runs in the group this shell remembers, so `no_job` is
+`true` and the second `STOP` returns `Ok(())` having done nothing — measured:
+the job stays in state `S` and `paused_pgid()` stays `None`.
+
+**You have already solved this exact asymmetry once, on the read side.** Your
+`status()` could not see a resumed job through the terminal either, so it
+consults the remembered group:
+
+```rust
+    pub fn resumed_pgid_alive(&self) -> Option<i64> {
+        let pgid = self.resumed_pgid?;
+        match std::fs::read_to_string(format!("/proc/{pgid}/stat")) {
+```
+
+Apply the same idea to `STOP`: when the terminal offers no job, fall back to
+the group this shell last resumed **if it still has a live process**. Reuse
+`resumed_pgid_alive()` rather than writing a second `/proc` reader.
+
+Two constraints the fix must satisfy:
+
+- `grep -c 'process_group_leader' src/shell/pty.rs` stays **1**. Consult the
+  remembered field; do not add a second tty query.
+- `pty_stop_with_no_foreground_job_remembers_nothing` must still pass. A shell
+  that has **never** run a job has no remembered group, so `STOP` must still do
+  nothing. Remembering a *resumed* group is not the same as inventing one —
+  that test is the negative case that keeps the two apart.
+
+---
+
+### Finish conditions — falsifiable, check them yourself before reporting
+
+- `cargo test --lib shell::pty::` → **17 passed**, not 16. (16 means Edit 2's
+  test was never added; a number above 17 means you added scope.)
+- `cargo test --lib shell::backend::` → **10 passed**, not 9.
+- `cargo test --lib` → `0 failed` on **ten consecutive runs**. Paste all ten
+  `test result:` lines. Three is not enough at a 27% failure rate.
+- `grep -cE '^\s+!shell\.has_foreground_job\(\),' src/shell/pty.rs` → **0**,
+  while `grep -c 'has_foreground_job' src/shell/pty.rs` stays **5 or more**.
+- Every other module count unchanged: `proto` 5, `host` 8, `registry` 17,
+  `session` 6, `launch` 8, `log` 13, `screen` 11, `client` 9.
+- `ps -eo args | awk '/^sleep 30$/ {n++} END{print n+0}'` → **0** after the ten
+  runs. **Never** use `pkill`, `killall`, or a signal to a process group you did
+  not create.
+
+### Mutation-check your own work before reporting
+
+1. **Edit 2's new test must be able to fail.** Revert only the `STOP` fallback,
+   run `cargo test --lib shell::pty::pause_resume_tests::`, and confirm
+   `pty_pause_resume_pause_toggles_more_than_once` is red. Restore, confirm
+   green. Paste both `test result:` lines.
+2. **Edit 1 must not cost the F2 guard.** Substitute the `"CONT"` arm with the
+   re-deriving form —
+   `self.paused_pgid.take(); if let Some(pgid) = current { self.signal_group(pgid, sig)?; }`
+   — and confirm `pty_pause_then_resume_actually_restarts_the_job` is still
+   **red**. Restore, confirm green. Paste both lines.
+
+Both mutation results are verified independently at review; a claimed check is
+not one.
+
+### Update — 2026-09-08 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the hard_fail was a transient `BackendError` ("error decoding
+response body") after 15 read-only turns with an empty diff — no spec gap and
+nothing on disk to resume — but the tree it returns to is a **green bounce**
+(clean tree, passing gates, a flaky test that hides itself 3 runs in 4), which
+a plain re-dispatch loses to, so the four-part green-bounce treatment is
+applied rather than a bare retry.
+
 ### Update — 2026-09-08 11:25 (blocker)
 
 **Blocked on:** Task 3's fourth status leg ("`Running` again after `CONT`",
