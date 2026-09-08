@@ -1,7 +1,7 @@
 # Phase 07c: `run_terminal_command` on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced at review 2026-09-08 — bug-07c-1, bug-07c-2)
 **Depends on:** phase-07a (`client::run_command`), phase-07b
 (`shell_for_owner` + the registry in `run_daemon`) — both done.
 **Estimated diff:** ~320 lines
@@ -318,8 +318,13 @@ Each was run against the current tree and returns the "now" value shown.
 - [ ] `test -f src/daemon/executor/shell_exec.rs && echo yes` → **yes**
       (now: absent).
 - [ ] `grep -c 'mod shell_exec;' src/daemon/executor/mod.rs` → **1** (now `0`).
-- [ ] `grep -c 'pub(super) async fn run_in_shell' src/daemon/executor/shell_exec.rs`
-      → **1**.
+- [ ] `grep -c 'pub(super) async fn run_in_shell(' src/daemon/executor/shell_exec.rs`
+      → **1** (now `1`). *(Corrected at review 2026-09-08 — the criterion was
+      written without the `(` and so also matched `run_in_shell_with`, the
+      injected-spawn wrapper this phase's own test plan requires. An architect
+      spec defect, not an implementation one: the run reported the `2` honestly
+      and the wrapper is correct. This is the exact fragility the phase-07b
+      verdict said to avoid and this doc then reproduced twice.)*
 - [ ] **One source of truth for the shell name:**
       `grep -c 'pub fn login_shell' src/shell/session.rs` → **1** (now `0`),
       and `grep -c 'SHELL' src/shell/session.rs` → **1** (now `1` — the count
@@ -344,8 +349,12 @@ Each was run against the current tree and returns the "now" value shown.
       (now `9`) and `grep -c 'log_command(' src/daemon/executor/mod.rs` → **2**
       (now `2`) — *preservation* criteria.
 - [ ] **The registry is a global with one accessor:**
-      `grep -c 'pub fn registry' src/shell/mod.rs` → **1** (now `0`), and
-      `grep -c 'ShellRegistry::default()' src/daemon/mod.rs` → **0** (now `1`).
+      `grep -c 'pub fn registry(' src/shell/mod.rs` → **1** (now `1`), and
+      `grep -c 'ShellRegistry::default()' src/daemon/mod.rs` → **0** (now `0`).
+      *(Corrected at review 2026-09-08 for the same prefix fragility —
+      `pub fn registry` also matched `registry_lookup`. **`registry_lookup` is
+      authorized**: it is read-only over `registry()` and serves Task 4's
+      error path, which must name a shell id. Keep it.)*
 - [ ] **Routing is gated on all four conditions:** in
       `src/daemon/executor/mod.rs`, `grep -c 'uses_pty' …` → **1 or more**
       (now `0`) and `grep -c 'run_in_shell' …` → **1 or more** (now `0`).
@@ -367,6 +376,18 @@ Each was run against the current tree and returns the "now" value shown.
       *(bug-07a-1: a phase's own PTY-spawning tests turned this gate red 19
       runs in 20 while every per-module count above stayed green.)*
 - [ ] All four gates pass.
+- [ ] **bug-07c-1 — the shell modules stay private.**
+      `grep -c '^pub mod ' src/shell/mod.rs` → **0** (now `10`),
+      `grep -c '^mod ' src/shell/mod.rs` → **10** (now `0`), and
+      `grep -c 'crate::shell::registry::\|crate::shell::launch::\|crate::shell::host::\|crate::shell::{client, session}' src/daemon/executor/shell_exec.rs`
+      → **0** (now `8`). Every symbol this phase needs is already re-exported
+      from `src/shell/mod.rs`; verified at review that the private layout
+      builds, tests and lints clean.
+- [ ] **bug-07c-2 — no test that cannot fail.**
+      `grep -c 'shell_exec_registry_records_are_leased_and_released_like_session_tests' src/daemon/executor/shell_exec.rs`
+      → **0** (now `1`), and `daemon::executor::shell_exec::` reports either
+      **6** or **7** passing with a replacement that is red against broken
+      code — say which in the Update Log.
 
 ## Test plan
 
@@ -433,7 +454,7 @@ for r in 1 2 3; do cargo test --lib 2>&1 | grep -E "^test result:" | head -1; do
 echo "== F. structural greps (each must print the stated number) =="
 echo -n "shell_exec.rs exists       (1): "; test -f src/daemon/executor/shell_exec.rs && echo 1 || echo 0
 echo -n "mod shell_exec declaration (1): "; grep -c 'mod shell_exec;' src/daemon/executor/mod.rs
-echo -n "run_in_shell declared      (1): "; grep -c 'pub(super) async fn run_in_shell' src/daemon/executor/shell_exec.rs
+echo -n "run_in_shell declared      (1): "; grep -c 'pub(super) async fn run_in_shell(' src/daemon/executor/shell_exec.rs
 echo -n "login_shell declared       (1): "; grep -c 'pub fn login_shell' src/shell/session.rs
 echo -n "SHELL named once           (1): "; grep -c 'SHELL' src/shell/session.rs
 echo -n "annotate_output used     (>=1): "; grep -c 'annotate_output' src/daemon/executor/shell_exec.rs
@@ -447,7 +468,8 @@ echo -n "exit field in event log  (>=1): "; grep -c '"exit"' src/daemon/utils/ev
 echo -n "log_command still one fn   (1): "; grep -c 'pub fn log_command' src/daemon/utils/event_log.rs
 echo -n "foreground log_command     (9): "; grep -c 'log_command(' src/daemon/executor/foreground.rs
 echo -n "executor mod log_command   (2): "; grep -c 'log_command(' src/daemon/executor/mod.rs
-echo -n "registry accessor          (1): "; grep -c 'pub fn registry' src/shell/mod.rs
+echo -n "registry accessor          (1): "; grep -c 'pub fn registry(' src/shell/mod.rs
+echo -n "shell mods stay private    (0): "; grep -c '^pub mod ' src/shell/mod.rs
 echo -n "no local registry default  (0): "; grep -c 'ShellRegistry::default()' src/daemon/mod.rs
 echo -n "executor uses_pty gate   (>=1): "; grep -c 'uses_pty' src/daemon/executor/mod.rs
 echo -n "executor run_in_shell    (>=1): "; grep -c 'run_in_shell' src/daemon/executor/mod.rs
@@ -856,3 +878,61 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e7a830ba9411bb2c2753f32a3e1c9f5735fced59
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-08 (review — bounced)
+
+**Verdict: bounced.** The substrate work is right; the blast radius is not.
+
+**Independently re-verified at review** (re-run, not read off the report):
+
+- All four gates pass on separate invocations — `cargo fmt --all`,
+  `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`,
+  `cargo test` (1639 passed, 0 failed).
+- The E2E block re-run from the repo root reproduces the pasted transcript
+  **byte-for-byte modulo wall-clock timings**, including its two off-target
+  values. Self-check resolves to the right entry: `PASTE MATCH`.
+- Section D's twelve counts hold exactly; section E is three consecutive
+  full-lib runs at `1639 passed; 0 failed`; sections G and H are zero.
+- `shell_exec_masks_a_secret_that_stays_raw_in_the_cast` was
+  **mutation-tested**: dropping `mask_sensitive` from `format_for_model` turns
+  it red at `shell_exec.rs:206` with *"the secret must not reach the tool
+  result"*, and restoring turns it green. The milestone's masking exit
+  criterion is covered by a test that can actually fail.
+- The routing predicate, the annotate→mask→normalize order, the exit code
+  through `exit_status_annotation`, and `log_shell_command`'s `exit` field all
+  match the spec. `log_command` and its eleven call sites are untouched.
+
+**Credit where it is due.** The run reported *both* off-target greps in its own
+prose, with their printed values and its reasoning, instead of asserting the
+section passed. That is precisely what bug-07b-1 was filed to change one phase
+earlier, and it worked — the honest report is why this review could go straight
+to the real question.
+
+**What bounced it:**
+
+- **[bug-07c-1](bugs/bug-07c-1.md) (major)** — all ten `src/shell/` modules
+  were changed from `mod` to `pub mod`, widening a library crate's public API
+  by ten modules, outside the Authorizations, and justified by *"the
+  pre-existing `mod`-private layout made that a compile error."* Verified at
+  review by making the change: with all ten private and the imports going
+  through the re-exports `src/shell/mod.rs` already publishes,
+  `cargo build`, `cargo test --lib --no-run` and `clippy -D warnings` are all
+  clean. The compile error was created by the run's own by-path import style,
+  not inherited from the layout.
+- **[bug-07c-2](bugs/bug-07c-2.md) (minor)** —
+  `shell_exec_registry_records_are_leased_and_released_like_session_tests`
+  asserts that a `HashMap` with one entry has length one. Delete this phase's
+  entire production body and it still passes; nothing in it is leased or
+  released. It is one of the seven the module count reports.
+
+**Two criteria were my defect, not the run's, and are corrected here.**
+`grep -c 'pub(super) async fn run_in_shell'` and `grep -c 'pub fn registry'`
+were written without their trailing `(`, so they also matched
+`run_in_shell_with` and `registry_lookup` — both of which are correct and
+authorized. Re-pinned to the exact call form and now passing. The phase-07b
+verdict said, in as many words, to pin the call form rather than the bare
+name; this doc then did the opposite twice. Recorded as `spec_bug`.
+
+**Re-dispatch:** `/rexymcp:dispatch phase-07c`. Both bugs are mechanical —
+ten `mod` lines, roughly a dozen import lines, and one test either deleted or
+given something that can fail.
