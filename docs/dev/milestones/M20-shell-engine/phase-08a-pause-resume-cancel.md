@@ -1,7 +1,7 @@
 # Phase 08a: pause, resume and cancel on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress (bounced at review 2026-09-08 — bug-08a-1, bug-08a-2)
+**Status:** review
 **Depends on:** phase-05b (`PtyBackend`), phase-05a (`proto.rs` frame set),
 phase-07a (`client::run_command`) — all done.
 **Estimated diff:** ~300 lines
@@ -1242,3 +1242,163 @@ test result: ok. 1649 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; f
 ```
 
 Leak checks after the sweeps: stray `sleep 30` = 0, stray daemoneye `shell-host` = 0.
+
+### Update — ts=1788911242348 (complete, server-authored)
+
+**Summary:** </think>I've completed both bugs. Let me verify the final state once more:
+
+1. Both bug fixes landed:
+   - bug-08a-1: bare assert → poll_until for the fg handoff
+   - bug-08a-2: memory-first STOP arm + toggle tests (pty + backend)
+   - Additional flake discovered (rc transient holding fg): echo/cmdline gates + settle retry
+2. Gates: build/clippy/fmt green; 12 consecutive full-lib runs all green; leak checks 0.
+3. Mutation checks both red then green, pasted in the E2E entry.
+4. E2E transcript pasted with PASTE MATCH.
+5. Committed; tree clean.
+
+Update Log: appended a progress entry and E2E entry (no complete entry — the server writes it).
+
+Status left in-progress ✓, README row in-progress ✓.
+
+Now the final Summary + Notes for review message.</think>
+**Summary + Notes for review**
+
+Phase-08a's two review blockers are both fixed, verified against real PTYs, and committed (`09affca`).
+
+**bug-08a-1 (flaky primary test):** the bare `assert!(!shell.has_foreground_job(), …)` at `pty.rs:594` is now a `poll_until` — the check survives verbatim, only its timing changed (`grep -cE '^\s+!shell\.has_foreground_job\(\),' src/shell/pty.rs` → 0; `has_foreground_job` count stays 5).
+
+**bug-08a-2 (pause toggles only once):** the `STOP` arm now consults what the shell is *tracking* first — `paused_group_alive()` (`/proc` state `T` on the remembered group) then `resumed_pgid_alive()` — and only falls back to the terminal's fg group, F1-filtered, when nothing is remembered; the single `process_group_leader` call site is untouched (count still 1). New tests: `pty_pause_resume_pause_toggles_more_than_once` (STOP→CONT→STOP→CONT, `/proc` `T` at both stops, `paused_pgid()` re-armed) and `backend_status_toggles_running_paused_more_than_once` (`Running→Paused→Running→Paused` through `PtyBackend::status`). `shell::pty::` 17, `shell::backend::` 10.
+
+**A second flake surfaced while sweeping the toggle test (~23%):** a `/proc`-watcher (temporary, removed) showed the spawned bash inheriting this host's `~/.bashrc`, whose `PROMPT_COMMAND` forks a `tmux set-environment` client that can hold the terminal's fg group for seconds while the queued `sleep 30` is still unread — a boot-window `STOP` targeted *that*, and since the pty echoes a write as the line discipline receives it, "echo seen" is not evidence the job exists. Fixes: the tests gate every transition on the fg leader's `/proc` cmdline being the queued job (`start_job`/`wait_for_fg_cmdline`), and the `STOP` arm re-reads the terminal over a short settle (3×20 ms) before giving up — closing the fork→setpgid window that reads as idle. `pty_stop_with_no_foreground_job_remembers_nothing` still passes (fresh shell ⇒ stable idle read ⇒ nothing remembered).
+
+**Gates:** build/clippy/`fmt --check` green; `cargo test --lib` **`1649 passed; 0 failed; 4 ignored` on twelve consecutive runs** at default threads (both mutation checks verified red on demand and green on restore, transcripts pasted in the phase doc's E2E entry with `PASTE MATCH`); leak checks 0/0. Status left `in-progress`, README row unchanged, no `(complete)` entry written — the completion tail is yours to author.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 7.43s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/shell/backend.rs` — +151 -55
+- `src/shell/pty.rs` — +210 -34
+
+**Commit:** 09affca3121625f788e60aaed8a41f607aa78f00
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
