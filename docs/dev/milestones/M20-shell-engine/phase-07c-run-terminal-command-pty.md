@@ -1,7 +1,7 @@
 # Phase 07c: `run_terminal_command` on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-07a (`client::run_command`), phase-07b
 (`shell_for_owner` + the registry in `run_daemon`) — both done.
 **Estimated diff:** ~320 lines
@@ -707,3 +707,152 @@ diff /tmp/pasted-07c.txt /tmp/e2e-07c.txt && echo "PASTE MATCH" || echo "PASTE M
 Verdict as run: **PASTE MATCH**.
 
 <!-- entries appended below this line -->
+
+### Update — ts=1788837839688 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 07c is implemented and committed (`a656c47` code, `9f5ac93`-line docs commit for the E2E transcript; working tree clean). A chat turn's `run_terminal_command` now routes through `shell_for_owner` + `client::run_command` when `[execution] backend = "pty"` (and only when it is not a ghost, there is a session id, and no `target_pane` is given); the approval gate runs first exactly as the tmux path does. The result is `annotate_ansi` → `mask_sensitive` → `normalize_output` in that order (annotation first so control bytes cannot split a secret past its regex), carries the child's real exit code, gets the non-zero note from the existing `exit_status_annotation` (widened to `pub(super)`, plus `LOCAL_CMD_TIMEOUT`), and is recorded in `events.jsonl` by a new `log_shell_command` with an `exit` field — `log_command` and its eleven call sites untouched. The daemon's registry is now a process global (`shell::registry()`), and `run_daemon` sweeps/adopts into it; with the default `backend = "tmux"` nothing changes, confirmed by section G (0 sockets, 0 locks under a fresh `$HOME`).
+
+**Verification:** `/tmp/e2e-07c.txt` captured mechanically and pasted verbatim into the phase doc's `### Update — 2026-09-07 20:25 (end-to-end verification)`; paste self-check printed `PASTE MATCH`. Named tests: all seven `shell_exec_*` plus two `log_shell_command_*` pass; `daemon::executor::shell_exec::` = 7 passed / 0 failed; all twelve preserved module counts match § Current state exactly; the full lib suite ran three consecutive times with `0 failed` (1639 passed, 4 ignored); `cargo fmt`, `cargo build` (0 new warnings), and `cargo clippy --all-targets --all-features -- -D warnings` all clean; no `unsafe`, no `unwrap`/`expect`/`panic!` outside tests.
+
+**Notes for review:**
+1. **Two greps print more than the criterion's pinned "1", both stated in the Update Log prose with their printed values:** `run_in_shell declared` printed **2** — the second hit is `run_in_shell_with`, the injected-spawn wrapper the test plan itself demands (tests cannot reach `spawn_detached_host`, 07b F4); and `registry accessor` printed **2** — `registry_lookup` exists because Task 4's error path must name a shell id without reopening the registry lock. Both come straight from the spec's own requirements; if you want the criterion `grep -c 'pub(super) async fn run_in_shell'` → literally 1, the fix is a doc-name tweak on my side in a follow-up, not a redesign.
+2. **`shell/mod.rs` module visibility:** the spec's Task 5 sketch listed only the registry accessor, but `run_in_shell` needs `registry::{Owner, ShellId, ShellRegistry}` and `client`/`session` *by path* from `daemon::executor` — the pre-existing `mod`-private layout made that a compile error, so the ten `mod` lines became `pub mod` (re-exports unchanged). No behaviour change; `annotate_ansi` visibility untouched as authorised.
+3. **Error path logging:** on `shell_for_owner`/`run_command` failure the branch names the shell id, says the command may still be running, finishes the stats record with code 1, and logs `status = "shell-error"`, `exit = -1` (no real code exists to log). It does **not** fall back to tmux, per the spec.
+4. **One-time leak in the working transcript, not the code:** an early false-start test dragged a dated grep-escape into test naming — the committed test names are exactly the pinned ones. Section B line-by-line matches the six pinned `shell_exec_` names plus the two `log_shell_command_` ones; nothing else greened.
+5. Out of scope and flagged for the PE at this phase's close, as the spec lists: background / ghost / remote targets fall through to the tmux path; interactive commands hit the 45 s `LOCAL_CMD_TIMEOUT` error path of Task 4 and say so.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+nning 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.28s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M20-shell-engine/README.md` — +1 -1
+- `docs/dev/milestones/M20-shell-engine/phase-07c-run-terminal-command-pty.md` — +145 -1
+- `src/daemon/executor/foreground.rs` — +2 -2
+- `src/daemon/executor/mod.rs` — +99 -0
+- `src/daemon/executor/shell_exec.rs` — +316 -0
+- `src/daemon/mod.rs` — +1 -1
+- `src/daemon/utils/event_log.rs` — +80 -0
+- `src/shell/mod.rs` — +37 -11
+- `src/shell/session.rs` — +8 -1
+- `src/tmux/mod.rs` — +8 -0
+
+**Commit:** e7a830ba9411bb2c2753f32a3e1c9f5735fced59
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
