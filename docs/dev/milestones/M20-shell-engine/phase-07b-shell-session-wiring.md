@@ -1,7 +1,7 @@
 # Phase 07b: the daemon's shell registry — a live shell per owner
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** in-progress (bounced at review 2026-09-07 — bug-07b-1)
 **Depends on:** phase-06a/06b (the registry + adoption), phase-05c
 (`shell-host` + `spawn_detached`), phase-07a (`run_command`) — all done.
 **Estimated diff:** ~300 lines
@@ -240,7 +240,17 @@ happened is the `shell_for_owner` count, the `shell::session::` total, and the
       `grep -c 'ShellRegistry' src/daemon/mod.rs` → **1 or more**,
       `grep -c 'adopt_at_startup' src/daemon/mod.rs` → **1**,
       `grep -c 'sweep_stale' src/daemon/mod.rs` → **1**, and
-      `grep -c 'uses_pty' src/daemon/mod.rs` → **1 or more** (now all `0`).
+      `grep -c 'uses_pty' src/daemon/mod.rs` → **1 or more**.
+      *(bug-07b-1 — re-measured at review against `1e887fd`: the first and
+      last hold at `1` and `1`, but `adopt_at_startup` is now **2** and
+      `sweep_stale` is now **2**, because the comment above the gated block
+      names both functions and `grep -c` cannot tell a comment from a call.
+      Both must read `1`.)*
+- [ ] **Exactly one call site each, which is what the counts above mean:**
+      `grep -c 'crate::shell::adopt_at_startup' src/daemon/mod.rs` → **1** and
+      `grep -c 'crate::shell::sweep_stale' src/daemon/mod.rs` → **1** (now both
+      `1` — a *preservation* criterion: it must still hold after the counts
+      above are brought back to `1`, so the fix is not to delete a call).
 - [ ] **Allocation is reused, not reinvented:**
       `grep -c 'spawn_for' src/shell/session.rs` → **1 or more**, and
       `grep -c 'allocate_index' src/shell/session.rs` → **0** (F-none: id
@@ -266,6 +276,12 @@ happened is the `shell_for_owner` count, the `shell::session::` total, and the
       PTY-spawning tests turned the gate red 19 runs in 20 while every
       per-module count stayed green. A single green run does not settle it.)*
 - [ ] All four gates pass.
+- [ ] **The `(end-to-end verification)` entry's prose matches its own
+      transcript.** Re-run the block after the fix, paste it into a *new*
+      entry, and state section F's result as it prints. The 2026-09-08 02:12
+      entry claimed "every structural grep prints its pinned number" over a
+      transcript showing two that did not — the same class as `bug-07a-2` one
+      phase earlier, moved from the transcript into the prose about it.
 
 ## Test plan
 
@@ -364,6 +380,8 @@ Paste the contents of `/tmp/e2e-07b.txt` into your Update Log entry as a fenced
 block. **The entry's header must be exactly this line**, or the self-check
 below cannot find it:
 
+```
+### Update — YYYY-MM-DD HH:MM (end-to-end verification)
 ```
 
 Then run the self-check and paste its verdict line into the same entry:
@@ -734,3 +752,47 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 1e887fd6e92166b6fd9d39088760b5076eb9e22e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-07 (review — bounced)
+
+**Verdict: bounced.** Two bugs filed; the implementation itself is sound and is
+not what bounced.
+
+**Independently re-verified at review** (not read off the executor's report):
+
+- All four gates pass on separate invocations — `cargo fmt --all`,
+  `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`,
+  `cargo test`.
+- The E2E block was re-run from the repo root and its output compared to the
+  pasted transcript: **identical modulo wall-clock timings**. The paste is
+  genuine and mechanical, and the self-check resolves to the right entry.
+- Section E reproduces: three consecutive full-lib runs, `1630 passed;
+  0 failed` each — the `bug-07a-1` criterion is genuinely satisfied.
+- `session_reuses_the_owners_live_shell` was **mutation-tested**: forcing the
+  reuse branch off (`let reuse: Option<ShellId> = None;`) turns it red at
+  `session.rs:203`; restoring turns it green. The test is real, and its
+  `AtomicUsize` spawn count is what catches a respawn that got lucky on the id.
+- `shell_for_owner` implements all four spec steps including the step-4
+  readiness rollback; no `unsafe`, no `unwrap`/`expect`/`panic!`, no `#[allow]`
+  or `#[ignore]`, no `TODO`/`dbg!` in the new file. `mod session;` is private
+  with an explicit `pub use` in `shell/mod.rs`, so nothing is dead code.
+
+**What bounced it:**
+
+- **[bug-07b-1](bugs/bug-07b-1.md) (major)** — `adopt_at_startup` and
+  `sweep_stale` each count **2** in `src/daemon/mod.rs` against criteria pinned
+  at **1**, because this run's comment rewrite put both names in prose. The
+  transcript prints the `2`s honestly; the entry's prose says "every structural
+  grep prints its pinned number". Two passing criteria were taken to failing
+  and then reported as passing.
+- **[bug-07b-2](bugs/bug-07b-2.md) (major, fixed at review)** — the run deleted
+  this section's prescribed E2E header from the spec, on the premise that the
+  template line would capture the self-check's `grep`. It would not: the
+  self-check takes `tail -1`, and the template at line 368 sits ~130 lines
+  above any appended entry. Restored by the architect, since spec text is
+  architect-owned and dispatching against a doc missing its own instruction
+  would be an architect-side defect.
+
+**Re-dispatch:** `/rexymcp:dispatch phase-07b`. The outstanding work is
+bug-07b-1's only — bring both greps to `1` without removing either call site,
+then re-run and re-paste the E2E block in a new entry whose prose matches it.
