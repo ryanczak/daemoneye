@@ -296,10 +296,13 @@ mod tests {
         let response: ShellResponse = serde_json::from_str(line.trim()).unwrap();
         match response {
             ShellResponse::Status {
-                state: ShellState::Running,
+                // A fresh idle shell reports Idle since phase-08a; the
+                // property this readiness test pins is that a reply arrives
+                // at all.
+                state: ShellState::Idle,
                 ..
             } => {}
-            other => panic!("expected a Running Status reply, got {other:?}"),
+            other => panic!("expected an Idle Status reply, got {other:?}"),
         }
     }
 

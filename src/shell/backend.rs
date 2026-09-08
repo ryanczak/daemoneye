@@ -155,7 +155,11 @@ impl ShellBackend for PtyBackend {
                         .is_some_and(|pgid| job_state_is_stopped(pgid).unwrap_or(false));
                     if paused {
                         ShellState::Paused
-                    } else if shell.has_foreground_job() {
+                    } else if shell.has_foreground_job() || shell.resumed_pgid_alive().is_some() {
+                        // After a resume bash keeps the terminal (F2's probe:
+                        // fg stays the shell's own while the job runs), so
+                        // busy also covers the group this shell last stopped,
+                        // while that group still has a live job.
                         ShellState::Running
                     } else {
                         ShellState::Idle

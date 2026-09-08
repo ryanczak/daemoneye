@@ -171,6 +171,10 @@ pub struct PtyShell {
     /// The pgid this shell stopped, `None` when nothing is paused (F2: a
     /// `CONT` cannot re-derive its target once the job has stopped).
     paused_pgid: Option<i64>,
+    /// The pgid last resumed and still alive — bash keeps the terminal after
+    /// a resume (F2's own probe), so "busy" must be answerable from this
+    /// memory rather than from tc.
+    resumed_pgid: Option<i64>,
     _reader_handle: Option<JoinHandle<()>>,
 }
 
@@ -218,6 +222,7 @@ impl PtyShell {
             child,
             stream_tx,
             paused_pgid: None,
+            resumed_pgid: None,
             _reader_handle: Some(reader_handle),
         })
     }
@@ -353,6 +358,7 @@ impl PtyShell {
                 if let Some(pgid) = current.filter(|_| !no_job) {
                     self.signal_group(pgid, sig)?;
                     self.paused_pgid = Some(pgid);
+                    self.resumed_pgid = None;
                 }
             }
             "CONT" => {
@@ -361,6 +367,7 @@ impl PtyShell {
                 // group and the job stays stopped (red-verified).
                 if let Some(pgid) = self.paused_pgid.take() {
                     self.signal_group(pgid, sig)?;
+                    self.resumed_pgid = Some(pgid);
                 }
             }
             _ => {
@@ -368,6 +375,7 @@ impl PtyShell {
                     self.signal_group(pgid, sig)?;
                 }
                 self.paused_pgid = None;
+                self.resumed_pgid = None;
             }
         }
         Ok(())
@@ -394,6 +402,23 @@ impl PtyShell {
     /// The process group this shell stopped, if a job is currently paused.
     pub fn paused_pgid(&self) -> Option<i64> {
         self.paused_pgid
+    }
+
+    /// The group last resumed while its job is still alive, read from `/proc`
+    /// (F5). `None` once the job is gone, so a resumed job cannot keep the
+    /// shell reporting busy forever.
+    pub fn resumed_pgid_alive(&self) -> Option<i64> {
+        let pgid = self.resumed_pgid?;
+        match std::fs::read_to_string(format!("/proc/{pgid}/stat")) {
+            Ok(s) => Some(pgid).filter(|_| {
+                matches!(
+                    // F5: first token after the last `)` is the state char.
+                    s.rsplit(')').next().unwrap_or("").split_whitespace().next(),
+                    Some("S") | Some("R") | Some("T")
+                )
+            }),
+            Err(_) => None,
+        }
     }
 
     /// Whether a foreground job holds the terminal — the tty's foreground
@@ -537,7 +562,9 @@ mod pause_resume_tests {
     #[test]
     fn pty_pause_then_resume_actually_restarts_the_job() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80)).map(JobGuard).expect("bash available");
+        let mut shell = PtyShell::spawn("bash", (24, 80))
+            .map(JobGuard)
+            .expect("bash available");
         shell
             .write_input(b"sleep 30\n")
             .expect("start the foreground job");

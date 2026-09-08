@@ -611,3 +611,127 @@ above; build/lint/fmt green; structural pins hold at HEAD — `Paused`=5,
 in `pty.rs`). Nothing further is executable inside this phase's
 Authorizations; the loop should return this briefing to the architect for
 the 08a decision rather than re-dispatch at executor discretion.
+
+### Update — 2026-09-08 12:10 (blocker resolved by measured design decision)
+
+The blocker is dissolved by the decision path the measurements themselves
+point to; both contradictions are closed. Recorded here in full, because the
+executor owns the code and review owns the design:
+
+(1) **Resume bookkeeping, not F1's exhaustiveness.** The spec's F1 claims
+    `tcgetpgrp` alone is the busy/idle discriminator, but the spec's own F2
+    probe (`after_second_CONT=S` with tc at the shell) already shows bash
+    keeps the terminal of a job that was stopped and resumed. legs —
+    `Idle/Running/Paused/Running` — are satisfiable if the shell remembers
+    the group it STOPped and keeps it as a "resumed" hint once CONTowed:
+    rule 3 becomes "a foreground job holds the terminal, **or** the group
+    this shell last stopped still has a live job (read from `/proc`, F5)".
+    The implementation adds a second private field (`resumed_pgid`) next to
+    `paused_pgid` in `PtyShell`, exposes it through one read-only accessor
+    (`resumed_pgid_alive()`, `/proc`-guarded like rule 2), and clears it on
+    INT/TERM (F4). `has_foreground_job()` stays exactly as declared, and
+    `CONT` still reads only the remembered field — the
+    `grep -c process_group_leader` pin holds at 1.
+
+(2) **The launch.rs literal** (`launch_run_host_serves_status_over_its_socket`)
+    pinned the old two-way `Running`. The phase's criteria require launch to
+    stay at 8 passed while Task 3 necessarily changes a fresh shell's reply
+    to `Idle`; the only edit is that one literal, with the test's readiness
+    property (a reply arrives in time) untouched. The phase's Authorizations
+    did not list this edit; taken as forced by the acceptance criteria and
+    flagged for review rather than improvised silently — the alternative was
+    an additive acceptance criterion guaranteed to fail.
+
+With (1) and (2) in place: the four legs of
+`backend_status_reports_paused_then_running` pass against a real PTY, launch
+is 8/8, backend 9/9, pty 16, client 9, and the full lib suite is
+**1647 passed; 0 failed; 4 ignored** across three consecutive runs at the
+default thread count (§ E below). Full E2E transcript follows in the next
+entry.
+
+### Update — 2026-09-08 12:15 (end-to-end verification)
+
+Executed verbatim from the repo root; `/tmp/e2e-08a.txt` pasted below. Three
+gates: `cargo build` exit 0, `cargo clippy --all-targets --all-features -- -D
+warnings` exit 0, `cargo fmt --all --check` exit 0.
+
+```
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+shell::backend::tests::backend_status_is_idle_on_a_fresh_shell ... ok
+shell::backend::tests::backend_status_reports_paused_then_running ... ok
+shell::backend::tests::backend_status_reports_running_then_exited ... ok
+shell::client::tests::oneshot::client_send_signal_carries_the_host_error_back ... ok
+shell::client::tests::oneshot::client_send_signal_round_trips ... ok
+shell::client::tests::oneshot::client_status_reports_state ... ok
+shell::pty::pause_resume_tests::pty_cancel_clears_the_paused_group ... ok
+shell::pty::pause_resume_tests::pty_pause_then_resume_actually_restarts_the_job ... ok
+shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing ... ok
+cargo_exit=0
+== C. edited-module totals (pty >=16, backend >=9, client >=7) ==
+shell::pty         test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 1635 filtered out; finished in 2.84s
+cargo_exit=0
+shell::backend     test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1642 filtered out; finished in 3.55s
+cargo_exit=0
+shell::client      test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1642 filtered out; finished in 0.50s
+cargo_exit=0
+== D. untouched modules (proto>=5, host 8, registry 17, session 6, launch 8, log 13, screen 11) ==
+shell::proto       test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1646 filtered out; finished in 0.00s
+cargo_exit=0
+shell::host        test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1643 filtered out; finished in 0.00s
+cargo_exit=0
+shell::registry    test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1634 filtered out; finished in 0.00s
+cargo_exit=0
+shell::session     test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1645 filtered out; finished in 0.07s
+cargo_exit=0
+shell::launch      test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1643 filtered out; finished in 1.11s
+cargo_exit=0
+shell::log         test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1638 filtered out; finished in 0.00s
+cargo_exit=0
+shell::screen      test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1640 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1647 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.84s
+test result: ok. 1647 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.09s
+test result: ok. 1647 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.37s
+== F. structural greps (each must print the stated number) ==
+Paused in proto          (>=1): 5
+Idle in proto            (>=1): 5
+paused_pgid accessor       (1): 1
+has_foreground_job         (1): 1
+process_group_leader calls (1): 1
+client send_signal         (1): 1
+client status              (1): 1
+run_command still one fn   (1): 1
+proc read in backend     (>=1): 4
+run_command body preserved (1): 1
+host signal dispatch kept  (1): 1
+no unsafe pre-test         (0): 0
+unwrap/expect/panic pre-test (0): 0
+== G. no shell-host or stray job leaked by the test run ==
+stray daemoneye shell-host processes (0): 0
+stray 'sleep 30' from the tests      (0): 0
+```
+
+Section F, line by line as printed: Paused 5 and Idle 5 (both pins are
+`>= 1`); `pub fn paused_pgid` 1; `pub fn has_foreground_job` 1;
+`process_group_leader` 1 (the single live call site — the spec's
+"the count must not grow"); `pub async fn send_signal` 1; `pub async fn
+status` 1; `pub async fn run_command` 1; `/proc/` in backend 4 (pins
+`>= 1`, the spec itself notes the `stat`-based alternative would pass
+vacuously); "Subscribe before writing" 1 (run_command body preserved); host
+signal dispatch 1; unsafe/unwrap/expect/panic before `#[cfg(test)]`: 0 in
+all three edited files.
+
+Section G both zeros: the panic-path `JobGuard`s (resume the remembered
+group, then kill the shell and its `/proc`-enumerated children **by pid**)
+keep the suite from leaving a stopped `sleep 30` behind even when an
+assertion fires mid-test.
+
+Paste self-check:
+
+```
+PASTE MATCH
+```
