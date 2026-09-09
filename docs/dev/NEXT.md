@@ -4502,3 +4502,31 @@ landed in `WORKFLOW.md` (`e251528`).
    `shell::launch`'s tests.
 
 **Next milestone is not started and not assumed.** M21+ awaits your direction.
+
+---
+
+## M24 — Run Manager: scoped 2026-09-09, awaiting PE sign-off
+
+**Active phase: none** (milestone scoped, no phase drafted yet).
+
+The PE chose to build the **Run model next** and let `background=true` fall out
+of it (decision 2026-09-09). This **executes the design's M24 ahead of M21–M23**
+— a deliberate reorder; the dependency check that makes it safe is in the
+milestone README § Notes (needs only M20's substrate + 08a cancel signalling;
+the governor half that needs M22's `Category` is scoped into M25, not here).
+Milestone number kept as **M24** to stay in sync with design § 2.3 and its
+rexyMCP anchors.
+
+Scope, exit criteria and a proposed 10-phase breakdown (pre-measurement) are in
+`docs/dev/milestones/M24-run-manager/README.md`. Headline exit criterion: a
+chat `run_terminal_command(background=true)` returns immediately with a run id,
+runs in a dedicated substrate shell, and completes via `[Background Task
+Completed]` with the real exit code — the tmux `de-bg-*` path gone under
+`backend = "pty"`.
+
+**Next step:** PE confirms the scope + reorder, then `/rexymcp:architect next`
+drafts phase-01 (run-core). Nothing is dispatched until then.
+
+**Deferred / excluded:** the governor (M25, needs M22's `Category`); M21
+Host/SSH, M22 Tool surface, M23 Client decoupling remain in the design roadmap,
+now sequenced after M24.
