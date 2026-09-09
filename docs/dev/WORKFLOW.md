@@ -1025,6 +1025,28 @@ for architect authorization; or (2) the executor adds the bound without
 authorization and the architect catches it at review as a scope deviation. Both
 end in the right place, but both cost a round trip.
 
+### A struct field's blast radius is every construction site — Authorizations must name them all
+
+When a spec adds a field to a struct, **every `StructName { … }` literal in the
+crate must change or the build breaks** — including the ones in other files'
+test modules. Enumerate them at draft time (`grep -rn 'StructName {' src/`) and
+list **every file that holds one** in § Authorizations. A spec that says "add
+`exited_unix: None` at every existing construction site" while its Authorizations
+say "do not change `session.rs`" — where three of those sites live — hands the
+executor a choice between a compile error and an authorization breach.
+
+The executor's correct move in that position is the one M20's took twice: make
+exactly the forced edits, declare them, and let review adjudicate. But the round
+trip is the architect's to prevent, and the grep takes ten seconds. The same
+enumeration applies to a *semantic* change that forces test literals elsewhere —
+08a's `status()` started reporting `Idle` for a fresh shell, which forced a
+`Running` literal in `launch.rs`'s readiness test that the phase had not
+authorized either.
+
+*(Folded 2026-09-08 at M20 close, on PE sign-off, at three occurrences: 08a's
+forced `launch.rs` literal, 08b's `interactive: false` sites, 09's
+`exited_unix: None` sites in `session.rs`.)*
+
 ### Verify external APIs against live docs
 
 When a phase references an external API the architect cannot live-verify
@@ -1383,6 +1405,34 @@ criteria required that string to appear zero times in production code. All four
 were caught at drafting and cost no dispatch — which is the argument for a
 recipe rather than a warning: the shape is recognisable and the fix is
 uniform.)*
+
+**Two more shapes, both caught at drafting in M20 and both zero-cost once the
+criteria block is actually run against the tree before dispatch:**
+
+- **A criterion that already passes is either a *preservation* criterion or a
+  vacuous one — label which.** `grep -c 'shell' docs/architecture.md → 1 or
+  more (now 0)` was written for a file that already said "shell" eleven times;
+  `grep -c 'stat' backend.rs → 1 or more (now 0)` matched `status` and `state`
+  twenty times. Neither could fail, so neither could certify work. The tell is
+  the parenthetical: if the "now" value you *ran* does not match the "now" value
+  you *wrote*, stop. When a criterion is meant to pass now and keep passing
+  (`log_command` still has 9 call sites), say **preservation criterion** in the
+  text so the executor does not read it as a task.
+- **`git diff <branch>` on the working branch is empty by construction.**
+  `git diff --numstat master -- <file>` certifies anything when `master` *is*
+  the branch being edited. Pin a body anchor instead (`grep -c 'Subscribe
+  before writing' client.rs → 1`) or a baseline commit hash.
+
+Also in this class: a `grep -cE 'unwrap|unsafe' → 0` over a file that already
+carries a pre-existing `unsafe` is *impossible*, not vacuous — scope it to the
+files the phase adds code to, and pin the pre-existing file's count separately
+as a preservation criterion. **The one procedure that catches all of these is
+the same: run the whole § Acceptance criteria block against the current tree
+before dispatch, and require every non-preservation line to fail.**
+
+*(Folded 2026-09-08 at M20 close, on PE sign-off, at four drafting catches
+across 08a and 09 — none cost a dispatch, which is the argument for making the
+pre-dispatch run a literal step rather than a habit.)*
 
 ### A sweep's scope is its convertible sites, not its matches
 
@@ -1753,6 +1803,20 @@ filed a blocker** rather than editing the criterion or merging two required
 call sites to hit the number.
 
 *(Folded 2026-08-29 at M18 close, on PE sign-off, at three occurrences.)*
+
+*(Reinforced 2026-09-08 at M20 close, on PE sign-off — the rule was here and
+was broken three more times, so per this document's own escalation clause the
+remedy is a mechanism. M20 phase-08b pinned `shell::session:: → 8 or more`
+while its own Test plan listed exactly one session test on a base of 6; the
+executor printed the honest `7` and declined to pad. Phase-07c shipped two
+prefix greps — `pub(super) async fn run_in_shell` matched `run_in_shell_with`,
+`pub fn registry` matched `registry_lookup` — both corrected at review after
+the run reported `2` truthfully. **The mechanical step:** before dispatch, for
+every module whose count you pin, write the arithmetic *in the criterion* —
+`(now 6) + 1 named test = 7` — so the number is derivable from the Test plan by
+anyone reading it, and add the `(` or trailing anchor that makes a `fn`/`pub`
+grep match a declaration and nothing else. A criterion the executor cannot
+re-derive from the doc is a criterion the executor is right to distrust.)*
 
 **A bounce makes the acceptance criteria stale, and stale criteria certify the
 phase as finished.** After a review rejects a phase, the criteria in the phase
