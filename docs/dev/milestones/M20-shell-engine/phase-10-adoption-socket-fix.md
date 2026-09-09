@@ -251,6 +251,82 @@ Next: write the three pinned tests, confirm the real-socket one is red against
 Both full `test result:` lines and the mutation diffs land in the
 end-to-end verification entry below, per the phase doc.
 
-Committed as `cf466d5 fix(shell): scan_shell_ids accepts real AF_UNIX sockets
-(bug-10-1)` — apologies for the stray characters in the commit body; the doc
-content is what matters here.
+Committed as `2dc6310 fix(shell): scan_shell_ids accepts real AF_UNIX sockets
+(bug-10-1)`.
+
+### Update — 2026-09-08 20:4x (end-to-end verification)
+
+The phase's E2E block, run verbatim from the repo root into `/tmp/e2e-10.txt`
+(final invocation — three runs of the block total; only the last is the
+evidence, the two earlier ones covered the A1 gate while the tree still carried
+doc-comment-only uncommitted edits, and every line of the artifact below is from
+that single final run):
+
+```text
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+cargo_exit=0
+== B. named tests ==
+shell::registry::tests::adopt_at_startup_adopts_a_real_socket_host ... ok
+shell::registry::tests::scan_shell_ids_finds_a_real_socket ... ok
+shell::registry::tests::scan_shell_ids_still_skips_a_directory_named_like_a_socket ... ok
+cargo_exit=0
+== C. registry total (>=25) ==
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1643 filtered out; finished in 0.00s
+cargo_exit=0
+== D. untouched (session 7, shell_exec 10, launch 8, host 8) ==
+shell::session                 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1663 filtered out; finished in 0.09s
+cargo_exit=0
+daemon::executor::shell_exec   test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1660 filtered out; finished in 0.05s
+cargo_exit=0
+shell::launch                  test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1662 filtered out; finished in 1.11s
+cargo_exit=0
+shell::host                    test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1662 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1666 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.39s
+test result: ok. 1666 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.42s
+test result: ok. 1666 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.43s
+== F. structural greps ==
+UnixListener::bind in tests (>=1): 1
+make_dir negative kept    (>=3): 4
+is_file removed OR is_socket added: is_file2 is_socket1
+no unwrap/expect/panic/unsafe pre-test (0): 0
+```
+
+**Filter shape chosen:** accept-regular-file-or-socket —
+`if !file_type.is_file() && !file_type.is_socket() { continue; }` with
+`use std::os::unix::fs::FileTypeExt;` inside `scan_shell_ids`.
+Per the phase doc's third criterion this shape keeps `is_file()` so its
+`grep -c 'is_file()'` count is **not** 0; the satisfied alternative is
+`is_socket()` ≥ **1**, and the artifact's F section shows `is_file2 is_socket1`.
+
+Where those two `is_file()` occurrences live: 234 is the doc comment naming
+why the socket case matters, and 247 is the half of the *fixed* predicate that
+admits regular files — the test-fixture type — rather than dropping the
+entry-type check. The original single defective line
+(`if !file_type.is_file() { continue; }`) no longer exists:
+`grep -cE '^\s*if !file_type\.is_file\(\)$'` → **0**.
+
+**PASTE MATCH self-check:**
+
+```text
+PASTE MATCH
+```
+
+**Mutation check (F1 guard), run separately from the block** — the guard test
+against the pre-fix filter, then the restored fix:
+
+```text
+# scan_shell_ids reverted to `if !file_type.is_file() { continue; }` via patch:
+test result: FAILED. 25 passed; 2 failed; 0 ignored; 0 measured; 1643 filtered out; finished in 0.00s
+   (failing: shell::registry::tests::scan_shell_ids_finds_a_real_socket;
+             shell::registry::tests::adopt_at_startup_adopts_a_real_socket_host;
+    passing: shell::registry::tests::scan_shell_ids_still_skips_a_directory_named_like_a_socket)
+# filter restored to `!is_file() && !is_socket()` via patch:
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1643 filtered out; finished in 0.00s
+```
+
+Both mutations were applied with `patch` (the executor contract bans in-place
+shell edits) and each was confirmed applied by re-grepping the filter before
+the test run it certified.

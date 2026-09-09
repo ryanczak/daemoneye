@@ -230,9 +230,9 @@ pub fn host_is_alive(lock: &Path) -> bool {
 
 /// Shell ids with a socket in `dir`, sorted by index. Ignores anything whose
 /// stem is not a valid shell id. The name grammar is the identity gate: a
-/// production shell socket is a real AF_UNIX socket, which `is_file()` is
-/// false for, so any entry that is neither a regular file nor a socket (a
-/// directory, most obviously) is skipped.
+/// production shell socket is a real AF_UNIX socket, for which
+/// `FileType::is_file()` is false, so an entry that is neither a regular file
+/// nor a socket (a directory, most obviously) is skipped.
 pub fn scan_shell_ids(dir: &Path) -> Vec<ShellId> {
     use std::os::unix::fs::FileTypeExt;
 
@@ -417,9 +417,8 @@ mod tests {
 
     /// Bind a **real** AF_UNIX socket at `<dir>/<name>`. The returned listener
     /// must stay alive for the rest of the test: dropping it unlinks the
-    /// socket, which is what a production shell socket looks like on disk and
-    /// what the `fs::write` stand-ins never reproduced (the gap that hid
-    /// bug-10-1).
+    /// socket. A real socket is the production entry type the `fs::write`
+    /// fixtures never reproduced — the gap that hid bug-10-1.
     fn bind_socket(dir: &Path, name: &str) -> std::os::unix::net::UnixListener {
         std::os::unix::net::UnixListener::bind(dir.join(name)).unwrap()
     }
