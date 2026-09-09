@@ -4351,3 +4351,42 @@ needed second `ShellRecord` timestamp belongs.
 **Still open for the PE:** `background=true` stays on the tmux `de-bg-*` path
 and no phase owns its shell-substrate equivalent — 08a was signalling, 08b is
 interactive routing, 09 is restart survival + GC.
+
+---
+
+**phase-08b — interactive-commands: done (approved_first_try) 2026-09-08**,
+commit `2889577`. Both mechanisms mutation-verified at review: disabling the
+early return reds both interactive tests while the negative case stays green,
+and removing the reuse-filter clause reds the session test and the
+executor-layer F2 guard independently. One architect defect corrected in the
+doc — the `shell::session` criterion pinned ≥8 against a test plan listing one
+test on a base of 6; the executor printed the honest 7 and declined to pad.
+**That is the third M20 criterion corrected at review for contradicting its own
+spec** (07c's `run_in_shell(` and `pub fn registry` were the others) — a fold
+candidate for milestone close, needing PE sign-off: *derive every pinned count
+from the test plan you just wrote, and re-add it.*
+
+**Active phase: phase-09 — shell-gc**
+(`docs/dev/milestones/M20-shell-engine/phase-09-shell-gc.md`, status: todo,
+drafted 2026-09-08). Dispatch with `/rexymcp:dispatch phase-09`.
+**This is the last executor phase of M20.**
+
+Scope: the exited-shell record reaper under `[shells] exited_retention_secs`
+(a new `exited_unix` stamp plus `reap_exited`, with the clock injected so the
+retention tests cannot sleep), the `.cast` + `.meta.json` sweep under
+`log_retention_days` — the last `Pending { owned_by: "M20 phase-09" }`
+lifecycle row, which the phase also flips to `Implemented` — both hooked onto
+the daemon's existing 60-tick sweep, and the three closing doc updates the exit
+criteria name.
+
+**Deliberately NOT in phase-09: restart survival, the live exit-criteria sweep,
+and the retrospective.** The milestone README's exit criteria already mark live
+checks architect-run, and the restart-survival criterion names evidence a
+`cargo test` cannot produce (a `.cast` with bytes on both sides of a real
+`daemoneye stop` / `daemoneye daemon`). That criterion is **verification, not
+implementation** — the mechanism shipped in 06b and 07b — so the phase adds no
+code for it. Those, plus the retrospective and the calibration fold above, are
+the human-gated milestone close that follows phase-09's approval.
+
+**Still open for the PE:** `background=true` remains on the tmux `de-bg-*` path
+with no phase owning its shell-substrate equivalent.

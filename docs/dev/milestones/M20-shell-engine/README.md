@@ -194,9 +194,38 @@ line-number facts go stale and each landing shifts the next Current state).
 | 07c | run-terminal-command-pty ([phase-07c-run-terminal-command-pty.md](phase-07c-run-terminal-command-pty.md)) | **done** (approved_after_2, 2026-09-08 — [bug-07c-1](bugs/bug-07c-1.md), [bug-07c-2](bugs/bug-07c-2.md), [bug-07c-3](bugs/bug-07c-3.md), all fixed) | Route `run_terminal_command` through 07b's `shell_for_owner` + 07a's client when `backend = "pty"` (local host only), masked + ANSI-annotated result, real exit code in the tool result and in the `events.jsonl` command record. **Owns the masking exit criterion** (PE decision 2026-09-06). First phase that runs a command on the new substrate from chat. |
 | 08a | pause-resume-cancel ([phase-08a-pause-resume-cancel.md](phase-08a-pause-resume-cancel.md)) | **done** (approved_after_2, 2026-09-08; 1 bounce + 1 hard_fail escalation that was an infrastructure timeout, not the executor — [bug-08a-1](bugs/bug-08a-1.md), [bug-08a-2](bugs/bug-08a-2.md), both fixed) | The signalling mechanism, all inside `src/shell/`: `ShellState::{Idle, Paused}`, the remembered stopped-pgid so `CONT` reaches the job it stopped, four-way `status()` via `/proc`, and `client::{send_signal, status}`. Mechanism only — no tool, no UX (design § line 452). |
 | 08b | interactive-commands ([phase-08b-interactive-commands.md](phase-08b-interactive-commands.md)) | **done** (approved_first_try, 2026-09-08) | `is_interactive_command()` → return immediately naming the shell, **and** mark that shell so it is never reused: measured at drafting, an interactive command captures the owner's shell permanently and every later command in the session times out too (see § Notes). GC moved to 09. |
-| 09 | restart-survival-and-close | todo (not drafted) | Exited-shell GC under `shells.exited_retention_secs` (moved from 08b at drafting, 2026-09-08 — it needs a second `ShellRecord` timestamp field and `src/config/lifecycle.rs:110` already places the shell-log sweep here). Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
+| 09 | shell-gc ([phase-09-shell-gc.md](phase-09-shell-gc.md)) | todo (drafted 2026-09-08) | **The last executor phase.** Exited-shell GC under `shells.exited_retention_secs` (moved from 08b at drafting, 2026-09-08 — it needs a second `ShellRecord` timestamp field and `src/config/lifecycle.rs:110` already places the shell-log sweep here). Plus the `.cast` log sweep under `log_retention_days` (the last `Pending` lifecycle row) and the closing docs — `CLAUDE.md` § Key files, `README.md` § Configuration, `architecture.md` § 5. **Restart survival, the live exit-criteria sweep and the retrospective are NOT in it**: the README's own exit criteria mark live checks architect-run, and milestone close is human-gated (see § Notes). |
 
 ## Notes
+
+- **Phase 09 was scoped at drafting (2026-09-08) to the executor-dispatchable
+  half only.** The charter bundled four workstreams; reading the milestone's
+  own exit criteria splits them by *who can execute them*, not by size:
+
+  **Executor work (this phase):** the exited-shell record reaper under
+  `exited_retention_secs`, the `.cast` sweep under `log_retention_days` — the
+  last `Pending { owned_by: "M20 phase-09" }` lifecycle row — and the closing
+  docs (`CLAUDE.md` § Key files, `README.md` § Configuration,
+  `architecture.md` § 5). All hermetic, all verifiable by `cargo test`.
+
+  **Architect work (milestone close, not this phase):** restart survival and
+  the live sweep. The exit criteria already say so — *"Live checks are
+  architect-run (M14–M19 convention: through the user's door, session JSONL /
+  `.cast` files as evidence anchors, isolated `HOME`…)"* — and the
+  restart-survival criterion names evidence a `cargo test` cannot produce: a
+  `.cast` containing bytes on both sides of a real `daemoneye stop` /
+  `daemoneye daemon`. Note this is **verification, not implementation**: the
+  mechanism shipped in 06b (`adopt_at_startup`, `sweep_stale`) and 07b (both
+  wired into `run_daemon`), so phase-09 adds no code for it. The retrospective
+  is likewise milestone-close work.
+
+  Two facts measured at drafting and pinned in the phase doc: the two knobs are
+  **different lifecycles on different clocks** (`exited_retention_secs` in
+  seconds for the *record*, `log_retention_days` in days for the *log*), and
+  `std::fs::File::set_times` with a `write(true)` handle backdates an mtime on
+  this toolchain (`PROBE backdated_ok=true`), so the retention tests inject a
+  boundary instead of sleeping — STANDARDS § 3.3 forbids the sleep outright.
+
 
 - **Phase 08b was rescoped at drafting (2026-09-08): interactive routing only,
   GC moved to 09.** Probes through the shipped API (compiled in, run, reverted)
