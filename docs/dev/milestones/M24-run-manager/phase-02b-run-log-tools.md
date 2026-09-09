@@ -1,7 +1,7 @@
 # Phase 02b: the run-log tools
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-02a (`turn_log.rs` — `read_turn_log`, `TurnLogRecord`).
 Done.
 **Estimated diff:** ~400 lines incl. tests
@@ -612,3 +612,57 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f8639407f790605471fc373461b73dfdbb6b90a8
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-09
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none material. Three small extensions, all declared in
+  the Update Log and all inside the spec's stated intent: the search header
+  also names the query and says how many further matches the cap hid (the same
+  clamp-honesty the spec demanded, applied to search); a
+  `run_log_input_rejected` helper routes `RunId::parse` failures to a readable
+  result string, which is exactly what the spec asked for; and `Some(0)` folds
+  into the default, documented on `clamp_run_log_limit` and covered by its own
+  test — "show me the last 0" is nonsense and the spec had not said.
+- **Calibration — none, and that is the finding.** This is the first phase in
+  several with **no architect defect**. The two gates the `CLAUDE.md`
+  add-a-tool checklist does not name were measured at drafting and pinned as
+  F2/F3, and the executor hit neither as a blocker: `dispatch.rs` carries three
+  dispatch arms *and* three `minimal_args` arms, and the `runs` group needed no
+  registration because the `load_tools` catalog is generated. **Pre-injecting a
+  measured gate is what stops it becoming a bounce** — 02a discovered its
+  fourth and fifth gates the hard way; 02b was told about its two up front and
+  cost nothing.
+
+**Verified at review, independently re-run:** all four gates green; full suite
+**1694 passed / 0 failed / 4 ignored on three consecutive runs**;
+`daemon::run::` **28** (the 6 pinned tests plus 5 the executor added of its
+own — clamp-on-zero, search-respects-the-clamp, tail-default,
+unknown-turn — all meaningful); `ai::tools::` **17** and `doc_truth` **10**
+both unchanged, which is the point of the preservation criteria: adding three
+tools moved neither gate's count while both kept passing. Structural, each as
+it printed and each matching the pasted transcript exactly: `runs` group **3**,
+dispatch + `minimal_args` **6**, `pending.rs` arms **15**, approval-gated
+**0**, clamp constant **18**, `CLAUDE.md` counts **1**, README counts **1**,
+README group row **1**, pre-test unwrap/panic **0**, no TODO/dbg/allow.
+Section G **0** — nothing leaked into the real `~/.daemoneye`.
+
+**Both mutations re-run by the reviewer, not read from the log:**
+
+1. Removing the clamp (`n.min(MAX_RUN_LOG_LIMIT)` → `n`) reds
+   `run_log_tail_clamps_an_oversized_limit` plus two other clamp tests
+   (25 passed / 3 failed).
+2. Making `get_turn` return the whole log (`&records[start..end]` →
+   `&records[..]`) reds **only**
+   `get_turn_returns_only_that_turns_records` (27 passed / 1 failed).
+
+Both green on restore (28 passed).
+
+**The clamp-honesty test is the one worth naming.** The spec's sharpest demand
+was that a clamp the model cannot see is a truncation it will mistake for the
+whole log. The test asserts all of it: the header says `showing 200 of 210`,
+the header says `was clamped`, the head record is absent, the first and last
+shown records are the right ones, and exactly `MAX_RUN_LOG_LIMIT` records come
+back. That is a real guard, not a count check.
