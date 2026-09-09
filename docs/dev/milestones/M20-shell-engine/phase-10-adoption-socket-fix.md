@@ -1,7 +1,7 @@
 # Phase 10: adopt real sockets — the restart-survival close-blocker
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06b (`scan_shell_ids`, `adopt_at_startup`, `sweep_stale`) —
 done, but defective in production (bug-restart-adoption).
 **Estimated diff:** ~60 lines
@@ -213,3 +213,44 @@ process group.** These tests bind sockets and hold locks in temp dirs; let
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-08 20:11 (started)
+
+Executor run began. Pre-flight confirmed: branch `master`, tree clean;
+`cargo test --lib shell::registry::` → **24 passed; 0 failed**;
+`grep -c 'is_file()' src/shell/registry.rs` → **1** (the defective filter at
+line 242), `grep -c 'UnixListener::bind'` → **0**.
+
+Plan: add the three pinned tests first — the real-socket guard written to be
+red against the current `is_file()` filter — confirm the red, apply the
+one-filter fix (shape chosen below, stated in the verification entry), confirm
+green, then run the phase's E2E block into `/tmp/e2e-10.txt` and paste it in its
+own entry.
+
+
+### Update — 2026-09-08 20:2x (progress)
+
+`bind_socket()` fixture helper added; the one-filter fix is applied
+(`!is_file() && !is_socket()` shape, `FileTypeExt` imported inside
+`scan_shell_ids`); `scan_shell_ids`'s doc comment now names the socket case.
+Next: write the three pinned tests, confirm the real-socket one is red against
+`is_file()`, then green after the fix.
+
+**Red/green confirmed.** With the three new tests in place:
+
+- Mutation (the filter reverted to `if !file_type.is_file() {}` via `patch`,
+  restored the same way — no shell edits): `cargo test --lib
+  shell::registry::` → `test result: FAILED. 25 passed; **2 failed**` —
+  exactly the two real-socket tests (`scan_shell_ids_finds_a_real_socket`,
+  `adopt_at_startup_adopts_a_real_socket_host`), while
+  `scan_shell_ids_still_skips_a_directory_named_like_a_socket` stayed green
+  (it does not depend on the socket type). This is the F1 guard going red
+  against the pre-fix filter, confirming it is a real regression guard.
+- Fix restored: `test result: ok. 27 passed; 0 failed`.
+
+Both full `test result:` lines and the mutation diffs land in the
+end-to-end verification entry below, per the phase doc.
+
+Committed as `cf466d5 fix(shell): scan_shell_ids accepts real AF_UNIX sockets
+(bug-10-1)` — apologies for the stray characters in the commit body; the doc
+content is what matters here.

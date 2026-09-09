@@ -229,8 +229,13 @@ pub fn host_is_alive(lock: &Path) -> bool {
 }
 
 /// Shell ids with a socket in `dir`, sorted by index. Ignores anything whose
-/// stem is not a valid shell id, and anything that is not a `.sock` file.
+/// stem is not a valid shell id. The name grammar is the identity gate: a
+/// production shell socket is a real AF_UNIX socket, which `is_file()` is
+/// false for, so any entry that is neither a regular file nor a socket (a
+/// directory, most obviously) is skipped.
 pub fn scan_shell_ids(dir: &Path) -> Vec<ShellId> {
+    use std::os::unix::fs::FileTypeExt;
+
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -239,7 +244,7 @@ pub fn scan_shell_ids(dir: &Path) -> Vec<ShellId> {
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
-        if !file_type.is_file() {
+        if !file_type.is_file() && !file_type.is_socket() {
             continue;
         }
         let name = entry.file_name();
@@ -410,6 +415,15 @@ mod tests {
         std::fs::create_dir(dir.join(name)).unwrap();
     }
 
+    /// Bind a **real** AF_UNIX socket at `<dir>/<name>`. The returned listener
+    /// must stay alive for the rest of the test: dropping it unlinks the
+    /// socket, which is what a production shell socket looks like on disk and
+    /// what the `fs::write` stand-ins never reproduced (the gap that hid
+    /// bug-10-1).
+    fn bind_socket(dir: &Path, name: &str) -> std::os::unix::net::UnixListener {
+        std::os::unix::net::UnixListener::bind(dir.join(name)).unwrap()
+    }
+
     #[test]
     fn registry_host_is_alive_reports_a_held_lock_as_alive() {
         let dir = tempfile::tempdir().unwrap();
@@ -475,6 +489,32 @@ mod tests {
     }
 
     #[test]
+    fn scan_shell_ids_finds_a_real_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let _listener = bind_socket(dir.path(), "s0.sock");
+
+        let scanned = scan_shell_ids(dir.path());
+        let ids: Vec<&str> = scanned.iter().map(|id| id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["s0"],
+            "a real AF_UNIX socket named s0.sock must be found — bug-10-1"
+        );
+    }
+
+    #[test]
+    fn scan_shell_ids_still_skips_a_directory_named_like_a_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        make_dir(dir.path(), "s0.sock");
+
+        let scanned = scan_shell_ids(dir.path());
+        assert!(
+            scanned.is_empty(),
+            "a directory named s0.sock is not a shell socket and must be skipped"
+        );
+    }
+
+    #[test]
     fn registry_parse_cast_name_accepts_and_rejects() {
         let parsed = parse_cast_name("s3-1788699323.cast");
         let (id, ts) = parsed.expect("s3-1788699323.cast must parse");
@@ -506,6 +546,30 @@ mod tests {
         let adopted = adopt_at_startup(&reg, dir.path(), logs.path());
         assert_eq!(adopted.len(), 1);
         assert_eq!(adopted[0].as_str(), "s0");
+
+        let guard = reg.try_lock().unwrap();
+        let record = guard.get("s0").expect("s0 must be adopted");
+        assert!(matches!(record.owner, Owner::Adopted));
+        assert_eq!(record.started_unix, 1788699323);
+    }
+
+    /// The production file type, end to end at the registry layer: a real
+    /// bound socket plus a held lock must adopt through the same path the
+    /// daemon runs at startup. The existing adoption tests use `fs::write`
+    /// stand-ins for the socket, which is why 24 tests were green while
+    /// production adopted nothing (bug-10-1).
+    #[test]
+    fn adopt_at_startup_adopts_a_real_socket_host() {
+        let (dir, logs) = fixture_dirs();
+        let _listener = bind_socket(dir.path(), "s0.sock");
+        write(logs.path(), "s0-1788699323.cast");
+        let _held =
+            crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+        let reg = ShellRegistry::default();
+        let adopted = adopt_at_startup(&reg, dir.path(), logs.path());
+        let ids: Vec<&str> = adopted.iter().map(|id| id.as_str()).collect();
+        assert_eq!(ids, vec!["s0"]);
 
         let guard = reg.try_lock().unwrap();
         let record = guard.get("s0").expect("s0 must be adopted");
