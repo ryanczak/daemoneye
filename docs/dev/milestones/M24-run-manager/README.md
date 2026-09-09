@@ -7,8 +7,9 @@ resume; and make **`run_terminal_command(background=true)` fall out of it** as a
 un-awaited chat Run against a dedicated substrate shell, replacing the tmux
 `de-bg-*` path.
 
-**Status:** planning — scoped 2026-09-09, **awaiting PE sign-off** (and
-confirmation of the roadmap reorder below).
+**Status:** in-progress — scoped 2026-09-09, **PE sign-off 2026-09-09**
+(scope + the M24-ahead-of-M21–M23 reorder both confirmed; background landing
+mid-milestone accepted).
 
 **Depends on:** M20 (shell engine — the substrate a Run holds and background
 runs on; 08a cancel signalling; 08b's dedicated-shell rule). Not on M21–M23.
@@ -83,7 +84,7 @@ precede the full four-loop unification's completion.
 
 ## Notes
 
-- **Roadmap reorder (2026-09-09, PE decision — awaiting written sign-off).** The
+- **Roadmap reorder (2026-09-09, PE decision — signed off).** The
   design roadmap orders M21 Host/SSH → M22 Tool surface → M23 Client decoupling
   → **M24 Run manager**. The PE chose to execute the **Run manager next**,
   ahead of M21–M23, because `background=true` is the pressing functional gap and
