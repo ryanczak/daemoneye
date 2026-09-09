@@ -26,7 +26,8 @@ pub use pty::{
 };
 pub use registry::{
     Owner, ShellId, ShellRecord, ShellRegistry, adopt_at_startup, allocate_index, check_owner_cap,
-    host_is_alive, parse_cast_name, scan_shell_ids, spawn_for, sweep_stale, with_shells,
+    host_is_alive, mark_interactive, parse_cast_name, scan_shell_ids, spawn_for, sweep_stale,
+    with_shells,
 };
 pub use screen::ShellScreen;
 pub use session::{login_shell, shell_for_owner, spawn_detached_host};

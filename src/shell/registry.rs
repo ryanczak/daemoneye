@@ -75,6 +75,11 @@ pub struct ShellRecord {
     pub id: ShellId,
     pub owner: Owner,
     pub started_unix: u64,
+    /// Set when an interactive command (ssh, mosh, …) took this shell's
+    /// terminal. Such a shell still passes the liveness probe — its `bash` is
+    /// alive — but every byte written to it is consumed by the interactive
+    /// process, so it must never be handed to another command (08b F2).
+    pub interactive: bool,
 }
 
 /// Shared registry of live shells.
@@ -111,6 +116,16 @@ pub fn with_shells<T>(
 ) -> T {
     let mut store = reg.0.lock().unwrap_or_log();
     f(&mut store)
+}
+
+/// Mark `id`'s shell captured by an interactive session. Idempotent; a no-op
+/// when the id is not in the registry.
+pub fn mark_interactive(reg: &ShellRegistry, id: &ShellId) {
+    with_shells(reg, |store| {
+        if let Some(record) = store.get_mut(id.as_str()) {
+            record.interactive = true;
+        }
+    });
 }
 
 /// Lowest unused index, starting at 0. Fills holes: `{0, 1, 3}` yields `2`.
@@ -175,6 +190,7 @@ where
                 id: id.clone(),
                 owner: owner.clone(),
                 started_unix,
+                interactive: false,
             },
         );
         Ok(id)
@@ -290,6 +306,7 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
                     id: id.clone(),
                     owner: Owner::Adopted,
                     started_unix,
+                    interactive: false,
                 },
             );
         }
@@ -323,6 +340,7 @@ mod tests {
             id: ShellId::from_index(index),
             owner,
             started_unix: 0,
+            interactive: false,
         }
     }
 
@@ -632,6 +650,48 @@ mod tests {
             allocate_index(&occupied),
             0,
             "the released slot must be reallocatable"
+        );
+    }
+
+    /// 08b Task 1's boundary cases: the setter is idempotent, and an id that
+    /// is not in the registry is a no-op rather than an insert.
+    #[test]
+    fn registry_mark_interactive_is_idempotent_and_ignores_unknown_ids() {
+        let reg = ShellRegistry::default();
+        let record = record(0, Owner::Chat("a".into()));
+        let id = record.id.clone();
+        with_shells(&reg, |store| {
+            store.insert(id.as_str().to_string(), record);
+        });
+
+        mark_interactive(&reg, &id);
+        mark_interactive(&reg, &id);
+
+        let guard = reg.try_lock().unwrap();
+        assert!(
+            guard[id.as_str()].interactive,
+            "marking twice must leave the flag set"
+        );
+        assert_eq!(
+            guard.len(),
+            1,
+            "marking must never insert; the second call must not have added a record"
+        );
+    }
+
+    #[test]
+    fn registry_mark_interactive_leaves_an_unknown_id_absent() {
+        let reg = ShellRegistry::default();
+        let stranger = ShellId::from_index(9);
+        mark_interactive(&reg, &stranger);
+        let guard = reg.try_lock().unwrap();
+        assert!(
+            guard.is_empty(),
+            "marking an id that is not in the registry must be a no-op"
+        );
+        assert!(
+            !guard.contains_key(stranger.as_str()),
+            "a no-op must not materialise the stranger"
         );
     }
 }

@@ -1,7 +1,7 @@
 # Phase 08b: interactive commands on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07c (`run_in_shell`), phase-07b (`shell_for_owner`) —
 both done. Independent of 08a; touches none of its signal code.
 **Estimated diff:** ~280 lines
@@ -418,5 +418,17 @@ cleanup, never `rm -rf`.
 ## Update Log
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+
+### Update — 2026-09-09 00:20 (started — executor)
+
+**Pre-flight:** `git rev-parse --abbrev-ref HEAD` → `master`, `git status`
+clean. Current-state counts verified against the tree before any edit:
+`shell::registry` 17 passed, `shell::session` 6,
+`daemon::executor::shell_exec` 7, `daemon::utils::shell` 43, full lib suite
+1649 passed / 0 failed / 4 ignored — all match § Current state. The "now-0"
+structural greps all print 0.
+
+**Executor:** dev-agent (claude-opus-4-1). Working Task 1 → 2 → 3, then the
+pinned test plan.
 
 <!-- entries appended below this line -->
