@@ -1,7 +1,7 @@
 # Phase 10: adopt real sockets — the restart-survival close-blocker
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06b (`scan_shell_ids`, `adopt_at_startup`, `sweep_stale`) —
 done, but defective in production (bug-restart-adoption).
 **Estimated diff:** ~60 lines
@@ -330,3 +330,155 @@ test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1643 filtered out; 
 Both mutations were applied with `patch` (the executor contract bans in-place
 shell edits) and each was confirmed applied by re-grepping the filter before
 the test run it certified.
+
+### Update — ts=1788924646679 (complete, server-authored)
+
+**Summary:** The phase is complete and committed. Final state of the spec's acceptance criteria, each verified against the tree:
+
+| Criterion | Now | Required |
+|---|---|---|
+| Real socket found (new guard test) | `test result: ok. 27 passed` — all three named tests green | UnixListener bind ≥1 → **1** |
+| Directory named `s0.sock` excluded | negative test green; `make_dir` count **4** | ≥3 ✅ |
+| Filter shape | accept file-or-socket (stated: satisfies `is_socket()` ≥ 1); single defective `if !file_type.is_file()` line now **0** | one of the two ✅ |
+| Registry tests | **27 passed, 0 failed** | ≥25 ✅ |
+| No unwrap/expect/panic/unsafe pre-test | **0** | 0 ✅ |
+| Untouched modules | session **7**, shell_exec **10**, launch **8**, host **8** | unchanged ✅ |
+| Full lib suite | **1666 passed, 0 failed**, 3 consecutive runs | ✅ |
+| Four gates | fmt / build / clippy `-D warnings` / test — all clean | ✅ |
+| Mutation check | reverted filter → `FAILED. 25 passed; 2 failed` (exactly the two real-socket tests); restored → `ok. 27 passed` | ✅ |
+| E2E capture | `/tmp/e2e-10.txt` pasted in its own entry, `PASTE MATCH` confirmed | ✅ |
+
+**Task 1 is done.** I'm stopping here per the phase lifecycle — status stays `in-progress` for the server to finalize.
+
+**Summary + Notes for review:** Made the daemon re-adopt shells that survive a restart by fixing the one defective filter in `src/shell/registry.rs:247` — `scan_shell_ids` now accepts an entry that is a regular file *or* a real AF_UNIX socket, so `adopt_at_startup` and `sweep_stale` (which both route through it, unchanged) see the production socket they were blind to. Added three tests using a real `UnixListener::bind` rather than the `fs::write` stand-in that hid the bug — including the end-to-end `adopt_at_startup_adopts_a_real_socket_host` with a held `InstanceLock` — and the guard test was confirmed red against the pre-fix filter (2 failed) and green after (27 passed). Deviations from the spec's wording, to update your model of the E2E block: the F-section greps ran with `grep -c`, which emits `0` **and exits 1** when nothing matches rather than printing nothing, so `grep -c 'is_file()'` now counts the two legitimate occurrences left (doc comment + the *fixed* predicate's regular-file half) and the criterion `is_file() == 0` appears as `is_file2 is_socket1` — the criterion's stated alternative (`is_socket() ≥ 1`) is the one this shape satisfies, which I've stated in the verification entry along with the follow-up grep showing `0` matches for the original single-line form. The spec's copy block also missed that `grep -c` would need this; no other divergence. One process defect on my side, worth flagging: the first commit's message picked up stray characters in its last line, so I soft-reset and re-created it (`2dc6310`, clean body) and folded the comment polish into a small follow-up commit `9b3562b` — net content is identical; `git log -1 --stat` shows both include every touched file, and the working tree is clean. The live restart sweep itself remains the architect-run close step per the phase doc; a `PRAGMATZ1` note in git history attributes this executor's line work, not a second run of it.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+
+
+LINT
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.31s
+
+
+TEST
+nning 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test ipc_ask_round_trip ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test minimal_config_parsing ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.36s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M20-shell-engine/README.md` — +1 -1
+- `docs/dev/milestones/M20-shell-engine/phase-10-adoption-socket-fix.md` — +118 -1
+- `src/shell/registry.rs` — +65 -2
+- `/tmp/commit-msg-10.txt` — +19 -0
+
+**Commit:** 9b3562b963e61595d5fc3d40f6f56f5c08b4e4c8
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
