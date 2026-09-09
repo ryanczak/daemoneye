@@ -72,7 +72,7 @@ precede the full four-loop unification's completion.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | run-core ([phase-01-run-core.md](phase-01-run-core.md)) — `RunId`/`RunKind`/`RunState`/`Budget`/`Briefing` in `src/daemon/run/`, pure, no wiring | **done** (approved_first_try, 2026-09-09) |
-| 02a | turn-log ([phase-02a-turn-log.md](phase-02a-turn-log.md)) — `var/log/runs/<id>.jsonl` record/writer/reader + the path constructor and lifecycle row a new artifact dir requires | review                                                        |
+| 02a | turn-log ([phase-02a-turn-log.md](phase-02a-turn-log.md)) — `var/log/runs/<id>.jsonl` record/writer/reader + the path constructor and lifecycle row a new artifact dir requires | **done** (approved_first_try, 2026-09-09) |
 | 02b | run-log-tools — `run_log_search` / `run_log_tail` / `get_turn`, clamped limits + one uncapped escape hatch | todo (not drafted) |
 | 03 | run-result — `RunResult` + bounded briefing (port from rexyMCP anchors) | todo (not drafted) |
 | 04 | cancel — cooperative cancel + `var/run/stop-<run>` sentinel + `daemoneye stop <run>` | todo (not drafted) |
@@ -84,6 +84,19 @@ precede the full four-loop unification's completion.
 | 10 | cli — `/runs`, `/run`, `/stop`; cross-run telemetry (`RunRecord`) if not deferred | todo (not drafted) |
 
 ## Notes
+
+- **Adding a directory under `~/.daemoneye/` trips FIVE gates, not three**
+  (learned in 02a, 2026-09-09). A new artifact dir needs: (1) a path
+  constructor, (2) eager creation in `ensure_dirs()`, (3) a `LifecycleEntry`
+  in `src/config/lifecycle.rs`, (4) a leaf in `RUNTIME_TREE`
+  (`src/config/runtime_tree.rs`) — `every_policy_path_appears_in_tree` fails
+  without it — and (5) the matching line in the shipped
+  `assets/memory/knowledge/agent-runtime-layout.md`, because
+  `render_matches_shipped_asset` compares the rendered tree to that asset.
+  Verified by deleting the leaf: gates 4 and 5 go red together. **Phase-10
+  faces this again** when it adds the `[runs]` retention key and flips the
+  `var/log/runs` row from `Pending`.
+
 
 - **Phase 02 split at drafting (2026-09-09) into 02a and 02b**, on the tool
   checklist rather than on size guessing. The charter bundled the turn-log

@@ -1,7 +1,7 @@
 # Phase 02a: the per-run turn log
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`RunId`, `RunKind`, `RunState` — the types a record
 carries). Done.
 **Estimated diff:** ~330 lines incl. tests
@@ -52,10 +52,23 @@ test fails.** `src/config/lifecycle.rs`'s own test module enforces:
 - `every_policy_entry_corresponds_to_a_real_path` — a row naming a path nothing
   creates **fails**.
 
-So `var/log/runs` needs **all three**: the `runs_dir()` constructor, a
-`create_dir_all(runs_dir())` in `ensure_dirs()`, and a `LifecycleEntry`. There
-is even a `mutation_check_uncovered_directory_fails_gate` test proving the gate
-bites. **This is the single most likely way to bounce this phase.**
+Plus **two more the original draft of this phase missed**, both in
+`src/config/runtime_tree.rs` and both found by the executor at run time
+(corrected here at review 2026-09-09):
+
+- `every_policy_path_appears_in_tree` — a `POLICY_TABLE` path with no leaf in
+  `RUNTIME_TREE` **fails**.
+- `render_matches_shipped_asset` — `RUNTIME_TREE` must still render to the
+  shipped `assets/memory/knowledge/agent-runtime-layout.md`, so that asset
+  needs the same leaf.
+
+So `var/log/runs` needs **all five**: the `runs_dir()` constructor, a
+`create_dir_all(runs_dir())` in `ensure_dirs()`, a `LifecycleEntry`, a
+`RUNTIME_TREE` leaf, and the matching line in the shipped runtime-layout asset.
+Verified at review by deleting the leaf: both tree tests go red together.
+There is also a `mutation_check_uncovered_directory_fails_gate` test proving
+the first gate bites. **This is the single most likely way to bounce this
+phase.**
 
 **F2 — `ensure_dirs()` is the eager-creation site** (`src/config/seeds.rs:19+`),
 a flat list to add one line to:
@@ -213,8 +226,11 @@ Each was run against the current tree and returns the "now" value shown.
       on **three consecutive runs**.
 - [ ] **No caller was added.** Against the pre-phase baseline commit
       `736a9a3` (not `HEAD`, which moves as you commit):
-      `git diff --name-only 736a9a3 -- src/ | grep -vE '^src/(daemon/run/|config/(load|seeds|lifecycle)\.rs$|config/mod\.rs$)' | wc -l`
-      → **0**.
+      `git diff --name-only 736a9a3 -- src/ | grep -vE '^src/(daemon/run/|config/(load|seeds|lifecycle|runtime_tree|mod)\.rs$)' | wc -l`
+      → **0**. *(Corrected at review 2026-09-09 to include `runtime_tree.rs`,
+      which F1's fourth gate forces. As originally written this printed `1`;
+      the executor pasted that honestly and explained it in prose, which is the
+      correct handling.)*
 - [ ] All four gates pass.
 
 ## Test plan
@@ -284,7 +300,7 @@ echo -n "no unwrap/panic pre-test   (0): "
 for f in src/daemon/run/*.rs; do awk '/^#\[cfg\(test\)\]/{exit} {print}' $f; done | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe'
 echo "== G. no caller was added (this phase wires nothing) =="
 echo -n "files touched outside run/ + the three config files (0): "
-git diff --name-only 736a9a3 -- src/ | grep -vE '^src/(daemon/run/|config/(load|seeds|lifecycle|mod)\.rs$)' | wc -l
+git diff --name-only 736a9a3 -- src/ | grep -vE '^src/(daemon/run/|config/(load|seeds|lifecycle|runtime_tree|mod)\.rs$)' | wc -l
 echo "== H. nothing leaked into the real HOME =="
 echo -n "runs dir in the developer HOME (0 or pre-existing): "
 ls -d "$HOME/.daemoneye/var/log/runs" 2>/dev/null | wc -l
@@ -331,6 +347,11 @@ You may edit, and nothing else:
   in `ensure_dirs()` (Task 2)
 - `src/config/lifecycle.rs` — **only** the one new `LifecycleEntry` (Task 3).
   Do not change any existing row.
+- `src/config/runtime_tree.rs` and
+  `assets/memory/knowledge/agent-runtime-layout.md` — **only** the one `runs/`
+  leaf each, which the policy row forces (F1's fourth and fifth gates).
+  *(Added at review 2026-09-09: the original Authorizations omitted these, and
+  the executor was correct to make the edit and flag it.)*
 - `src/daemon/run/` — the record, writer and reader (Task 4)
 - this phase doc's Update Log
 
@@ -651,3 +672,59 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b7f9124293f6158f8dbe5722d6c8b3f97bab6ef0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-09
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** two files outside the Authorizations list —
+  `src/config/runtime_tree.rs` and its shipped twin
+  `assets/memory/knowledge/agent-runtime-layout.md`, one `runs/` leaf each.
+  **Both were forced, and the deviation is mine, not the executor's.**
+  Verified at review by deleting the leaf: `every_policy_path_appears_in_tree`
+  **and** `render_matches_shipped_asset` go red together (3 passed / 2 failed),
+  green when restored. The executor hit the gate, wrote a blocker entry naming
+  what it tried and why the alternative was worse, made the minimal two-site
+  edit, pasted the E2E block **unmodified** showing section G at `1` rather
+  than the pinned `0`, and explained it in prose outside the fence. That is
+  exactly the handling the phase doc asks for.
+- **Calibration — my F1 was incomplete.** It named **three** gates on a new
+  artifact directory; there are **five**. The two I missed both live in
+  `src/config/runtime_tree.rs`: a `POLICY_TABLE` path needs a `RUNTIME_TREE`
+  leaf, and `RUNTIME_TREE` must still render to the shipped runtime-layout
+  asset. F1, the Authorizations and the section-G pattern are corrected above.
+  **This matters beyond this phase**: any future phase adding a directory under
+  `~/.daemoneye/` faces all five, and M24 phase-10 will when it adds the
+  retention config key. Recorded in the milestone README so it is not
+  rediscovered a third time.
+
+**Verified at review, independently re-run:** all four gates green; full suite
+**1683 passed / 0 failed / 4 ignored on three consecutive runs**;
+`daemon::run::` **17**; `config::lifecycle::` **5** and `daemon::session::`
+**21** unchanged. Structural, each as it printed: `runs_dir` **1**,
+`ensure_dirs` **1**, lifecycle row **1**, `M24 phase-10` **1**,
+`serde(rename` **18** (exactly the re-pinned target), pre-test
+unwrap/expect/panic/unsafe **0**, no TODO/dbg/allow. **Section H is `0`** — the
+turn log never touched the developer's real `~/.daemoneye/var/log/runs`, which
+is the check that matters most for a phase whose artifact lives under `HOME`.
+
+**Both mutations re-run by the reviewer, not read from the log:**
+
+1. Writer `.append(true)` → `.truncate(true)`:
+   `turn_log_appends_rather_than_truncating` goes red (with three collateral
+   failures, since truncation breaks every multi-record test — expected).
+2. Reader propagating the parse error instead of skipping: **only**
+   `turn_log_reader_skips_a_malformed_line` goes red (6 passed / 1 failed) —
+   precisely targeted, which is what makes it a real guard for the
+   crash-truncated-final-record case.
+
+Both green on restore (17 passed).
+
+**One observation on the `PhaseResult` payload, not on the work.** Its
+`files_changed` list omitted `src/daemon/run/mod.rs`, `src/config/runtime_tree.rs`
+and the asset — three files that are genuinely in the commits. The tree itself
+is coherent (`git diff --name-only` against the baseline shows all ten), so this
+is a reporting gap in the harness rather than anything wrong with the phase.
+Worth knowing when reading a `PhaseResult`: **verify the diff against the
+baseline rather than trusting `files_changed`.**
