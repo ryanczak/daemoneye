@@ -72,7 +72,7 @@ precede the full four-loop unification's completion.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | run-core ([phase-01-run-core.md](phase-01-run-core.md)) — `RunId`/`RunKind`/`RunState`/`Budget`/`Briefing` in `src/daemon/run/`, pure, no wiring | **done** (approved_first_try, 2026-09-09) |
-| 02a | turn-log ([phase-02a-turn-log.md](phase-02a-turn-log.md)) — `var/log/runs/<id>.jsonl` record/writer/reader + the path constructor and lifecycle row a new artifact dir requires | in-progress (started 2026-09-09 20:01, executor gemini-cli-3) |
+| 02a | turn-log ([phase-02a-turn-log.md](phase-02a-turn-log.md)) — `var/log/runs/<id>.jsonl` record/writer/reader + the path constructor and lifecycle row a new artifact dir requires | review                                                        |
 | 02b | run-log-tools — `run_log_search` / `run_log_tail` / `get_turn`, clamped limits + one uncapped escape hatch | todo (not drafted) |
 | 03 | run-result — `RunResult` + bounded briefing (port from rexyMCP anchors) | todo (not drafted) |
 | 04 | cancel — cooperative cancel + `var/run/stop-<run>` sentinel + `daemoneye stop <run>` | todo (not drafted) |

@@ -1,7 +1,7 @@
 # Phase 02a: the per-run turn log
 
 **Milestone:** M24 — Run Manager
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-01 (`RunId`, `RunKind`, `RunState` — the types a record
 carries). Done.
 **Estimated diff:** ~330 lines incl. tests
@@ -491,3 +491,163 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1686 filtered ou
 
 Green again after restore: `test result: ok. 17 passed; 0 failed; 0 ignored`
 on `daemon::run::`.
+
+### Update — ts=1788985449114 (complete, server-authored)
+
+**Summary:** </think>All four tasks are complete. Let me do a final sanity pass against the completion checklist:
+
+- [x] Phase doc Status: in-progress (not flipped to review by me)
+- [x] README phase-table row: in-progress
+- [x] No hand-written (complete) entry — only started, blocker-explainer, E2E verification, and mutation-check entries
+- [x] cargo fmt --all was actually run before git add
+- [x] All four gates pass: build clean, clippy clean, fmt check clean, 3× full lib suite 1683 passed / 0 failed
+- [x] Grep for spec-pinned literals: all structural greps printed expected values (runs_dir=1, seeds=1, lifecycle row=1, M24 phase-10=1, serde renames=18, no-unwrap=0)
+- [x] Mutation checks both verified red then green
+- [x] E2E transcript pasted verbatim, PASTE MATCH confirmed
+- [x] git status clean, two commits, all files included
+- [x] No caller added outside the authorized files except runtime_tree.rs which was forced by the tree gate and is explicitly documented in the Update Log
+- [x] Section H leak check: 0
+
+Now write the final Summary + Notes for review.</think>
+**Summary**
+
+Implemented M24 phase-02a: the per-run turn log at `var/log/runs/<run-id>.jsonl`. `src/daemon/run/turn_log.rs` (~300 lines) carries the `TurnLogRecord` envelope (timestamp, `RunId`, `TurnLogEvent` payload tagged on `event_type` with an explicit `serde(rename)` per variant — 18 renames counted across the run module), a writer that appends one JSON line per record and flushes per record (warns, never panics, on any I/O failure), and a reader that skips a malformed line rather than failing the read and returns empty for a run with no log. Four starter variants: `RunStarted`/`TurnStarted`/`Note`/`RunFinished`; no caller was added. F1's wiring landed in config: `runs_dir()` in `load.rs`, one `create_dir_all(runs_dir())` in `seeds.rs::ensure_dirs()`, and a `Pending { owned_by: "M24 phase-10" }`, `config_key: None`, non-lazy `LifecycleEntry` in `lifecycle.rs`. All four gates pass: build and clippy `-D warnings` clean, fmt clean, and the full lib suite is `1683 passed; 0 failed` on three consecutive runs (was 1676 + 4 ignored, +7 pinned tests). Mutation checks were executed and are evidenced in the Update Log: `.append→.truncate` turned `turn_log_appends_rather_than_truncating` red, and error-propagating parsing turned `turn_log_reader_skips_a_malformed_line` red; both were restored to green. The E2E transcript is pasted verbatim (`PASTE MATCH` confirmed by the doc's self-check), and section H is **0** — the developer HOME never gained a `var/log/runs`.
+
+**Notes for review**
+
+- **One authorized-file list deviation, flagged in the Update Log before commit:** adding the policy row turned `config::runtime_tree::every_policy_path_appears_in_tree` red — the runtime-tree gate validates every `POLICY_TABLE` path against `RUNTIME_TREE`, which the doc's F1 three-direction list doesn't name. I added the single `runs/` leaf to `RUNTIME_TREE` and the matching line to the shipped `assets/memory/knowledge/agent-runtime-layout.md` twin (no behavior change; the minimal mechanical consequence of policy-driven tree generation). Phase doc section G consequently prints **1**, not 0, and that is explained in prose outside the pasted fence — everything else in the block matches the spec's stated values.
+- Every event field this phase carries is already in the envelope's baseline, so the doc's forward-compat rule ("fields added *after* this phase carry `#[serde(default)]`") is a contract for later phases, and the module doc comment states it; nothing to `default` yet.
+- Timestamps in records are caller-supplied (no clock inside the type) so tests stay deterministic; the writer/reader API is sync like its `session.rs` analogue, which is what phases 05–08 will call from the blocking side.
+- Two governance notes for the run loop: the E2E self-check found its entry at line 402, and the phase doc's own template slot (`### Update — YYYY-MM-DD HH:MM (end-to-end verification)`) is left as the placeholder, with the real dated entry a few lines below — that keeps the template text intact for future phases.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nning 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_strips_trailing_prose ... ok
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.94s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M24-run-manager/README.md` — +1 -1
+- `docs/dev/milestones/M24-run-manager/phase-02a-turn-log.md` — +129 -1
+- `src/config/lifecycle.rs` — +13 -0
+- `src/config/load.rs` — +6 -0
+- `src/config/seeds.rs` — +1 -0
+- `src/daemon/run/turn_log.rs` — +298 -0
+
+**Commit:** b7f9124293f6158f8dbe5722d6c8b3f97bab6ef0
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
