@@ -4612,3 +4612,28 @@ F1: tail and search clamp to `MAX_RUN_LOG_LIMIT`, `get_turn` is the uncapped
 hatch. A clamp the model cannot see is a truncation it will mistake for the
 whole log, so the header must say when it clamped — and a test asserts both
 halves.
+
+**phase-02b — run-log-tools: done (approved_first_try) 2026-09-09**, commits
+`f863940` + `936068b`, approval `34f23a6`. `run_log_tail` / `run_log_search` /
+`get_turn` as a deferred `runs` group; 169 turns, zero bounces. Both reviewer-run
+mutations bit. **First phase in several with no architect defect** — the two
+gates `CLAUDE.md`'s add-a-tool checklist does not name were measured at drafting
+and pinned as F2/F3, and neither became a blocker.
+
+**Active phase: M24 phase-03 — run-result** (drafted 2026-09-09,
+`docs/dev/milestones/M24-run-manager/phase-03-run-result.md`, status `todo`).
+Ports rexyMCP `executor/src/phase/result.rs` + `briefing.rs` into
+`src/daemon/run/result.rs`: `RunStatus` (the four contract strings),
+`CancelReason`/`Cancellation` (`reason` stays `None` — phase-04 sets it),
+`RunResult` + `from_state` (total match, no `_` arm), and `Briefing::render()`.
+Still pure — nothing constructs one from a live run until phases 05–08.
+**The drafting find:** `log_read.rs:72-80` already hardcodes all four wire
+strings in a private `state_label`, so the phase de-duplicates them behind
+`RunStatus::as_str()`; the second mutation check is that breaking one arm reddens
+tests in *both* modules.
+
+**Hygiene note (2026-09-09): `docs/dev/NEXT.md` is 4,600+ lines / 276 KB** — it
+has accumulated every milestone's running commentary since M15 and is now larger
+than the milestone READMEs it points at. It is read at the top of every architect
+turn. Worth truncating to the active milestone plus a link list at the next
+milestone close.

@@ -74,7 +74,7 @@ precede the full four-loop unification's completion.
 | 01 | run-core ([phase-01-run-core.md](phase-01-run-core.md)) — `RunId`/`RunKind`/`RunState`/`Budget`/`Briefing` in `src/daemon/run/`, pure, no wiring | **done** (approved_first_try, 2026-09-09) |
 | 02a | turn-log ([phase-02a-turn-log.md](phase-02a-turn-log.md)) — `var/log/runs/<id>.jsonl` record/writer/reader + the path constructor and lifecycle row a new artifact dir requires | **done** (approved_first_try, 2026-09-09) |
 | 02b | run-log-tools ([phase-02b-run-log-tools.md](phase-02b-run-log-tools.md)) — `run_log_tail` / `run_log_search` / `get_turn` as a deferred `runs` group; clamped limits + `get_turn` as the uncapped escape hatch | **done** (approved_first_try, 2026-09-09) |
-| 03 | run-result — `RunResult` + bounded briefing (port from rexyMCP anchors) | todo (not drafted) |
+| 03 | run-result ([phase-03-run-result.md](phase-03-run-result.md)) — `RunStatus`/`Cancellation`/`RunResult` + `Briefing::render()`, ported from the rexyMCP anchors; de-duplicates the four wire strings out of `log_read.rs` | todo |
 | 04 | cancel — cooperative cancel + `var/run/stop-<run>` sentinel + `daemoneye stop <run>` | todo (not drafted) |
 | 05 | background — `run_terminal_command(background=true)` as an un-awaited chat Run on a dedicated shell + marker-watcher completion → `[Background Task Completed]` **(the payoff)** | todo (not drafted) |
 | 06 | chat-run — wire chat turns onto `Run` | todo (not drafted) |
