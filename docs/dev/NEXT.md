@@ -4579,3 +4579,36 @@ fails, and a non-lazy row that `ensure_dirs()` does not create fails. Miss
 either and the phase bounces. The row is deliberately `Pending`, deferring the
 retention config key to phase-10 (recorded in the milestone README so it is not
 lost at close).
+
+---
+
+**phase-02a — turn-log: done (approved_first_try) 2026-09-09**, commit
+`481a885`. Both mutations verified at review. The scope deviation was mine: F1
+named three gates on a new artifact directory and there are **five** — the two
+missed both live in `config/runtime_tree.rs` (a `POLICY_TABLE` path needs a
+`RUNTIME_TREE` leaf, and the tree must still render to the shipped
+`agent-runtime-layout.md`). Recorded in the milestone README; **phase-10 hits it
+again** when it adds the `[runs]` retention key.
+
+**Active phase: phase-02b — run-log-tools**
+(`docs/dev/milestones/M24-run-manager/phase-02b-run-log-tools.md`, status: todo,
+drafted 2026-09-09). Dispatch with `/rexymcp:dispatch phase-02b`.
+
+Scope: `run_log_tail`, `run_log_search`, `get_turn` over phase-02a's turn log —
+a new **deferred** `runs` group, none approval-gated. Mostly checklist rather
+than design: adding a tool touches nine files.
+
+Two gates the `CLAUDE.md` add-a-tool checklist does **not** name, both measured
+at drafting and pinned as F2/F3: `dispatch_roundtrip_all_tools` walks every
+entry in `TOOLS` and needs a `minimal_args` arm per tool (step 12 of an 11-step
+list), and the `load_tools` catalog is **generated** from `deferred_group`, so a
+new group needs no registration. Also pinned: `sre.toml` is `include_str!`'d, so
+unlike last phase's runtime-tree pair it is one site, not two — and it is
+optional for deferred tools anyway (`create_agent` has no prose), so it is
+explicitly out of scope.
+
+The design's phrase "clamped limits and one uncapped escape hatch" is decoded in
+F1: tail and search clamp to `MAX_RUN_LOG_LIMIT`, `get_turn` is the uncapped
+hatch. A clamp the model cannot see is a truncation it will mistake for the
+whole log, so the header must say when it clamped — and a test asserts both
+halves.
