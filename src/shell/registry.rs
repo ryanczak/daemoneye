@@ -1,7 +1,7 @@
 //! The in-memory shell registry: id grammar, ownership, per-owner caps, and
 //! slot allocation with spawn-outside-the-lock, plus startup adoption of the
-//! shells surviving a daemon restart and the sweep of dead hosts' leftovers.
-//! Exited-shell GC is phase-08.
+//! shells surviving a daemon restart, the sweep of dead hosts' leftovers, and
+//! the record reaper for exited shells.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -80,6 +80,11 @@ pub struct ShellRecord {
     /// alive — but every byte written to it is consumed by the interactive
     /// process, so it must never be handed to another command (08b F2).
     pub interactive: bool,
+    /// Unix seconds when this shell's host was **first observed** dead, set by
+    /// the reaper. `None` while the host is alive. The record is kept for
+    /// `[shells] exited_retention_secs` after this, so an operator can still
+    /// see that the shell existed.
+    pub exited_unix: Option<u64>,
 }
 
 /// Shared registry of live shells.
@@ -191,6 +196,7 @@ where
                 owner: owner.clone(),
                 started_unix,
                 interactive: false,
+                exited_unix: None,
             },
         );
         Ok(id)
@@ -307,6 +313,7 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
                     owner: Owner::Adopted,
                     started_unix,
                     interactive: false,
+                    exited_unix: None,
                 },
             );
         }
@@ -331,9 +338,53 @@ pub fn sweep_stale(dir: &Path) -> Vec<ShellId> {
     swept
 }
 
+/// Reap exited shells. For each record: probe its host; a live host clears any
+/// exit stamp, a newly dead host is stamped with `now_unix`, and a host
+/// stamped `retention_secs` or more ago has its record removed (so
+/// `retention_secs == 0` removes a dead shell on the pass after it was
+/// stamped). Returns the ids removed. The host's socket, lock and `.cast` log
+/// have their own lifecycles (`sweep_stale`, the daemon's log sweep) and are
+/// left alone here.
+pub fn reap_exited(reg: &ShellRegistry, retention_secs: u64, now_unix: u64) -> Vec<ShellId> {
+    let mut reaped = with_shells(reg, |store| {
+        let mut reaped: Vec<ShellId> = Vec::new();
+        for (key, record) in store.iter_mut() {
+            let lock = super::launch::lock_path(key);
+            if host_is_alive(&lock) {
+                // The probe fails closed. A transient read failure must not
+                // leave a stale stamp that reaps a live shell later.
+                record.exited_unix = None;
+                continue;
+            }
+            match record.exited_unix {
+                None => record.exited_unix = Some(now_unix),
+                Some(stamp) if now_unix.saturating_sub(stamp) >= retention_secs => {
+                    reaped.push(record.id.clone());
+                }
+                Some(_) => {}
+            }
+        }
+        for id in &reaped {
+            store.remove(id.as_str());
+        }
+        reaped
+    });
+    reaped.sort_by_key(|id| id.index());
+    if !reaped.is_empty() {
+        let ids: Vec<&str> = reaped.iter().map(|id| id.as_str()).collect();
+        log::info!(
+            "shell registry: reaped {} exited shell(s): {ids:?}",
+            reaped.len()
+        );
+    }
+    reaped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
+    use crate::test_home_guard;
 
     fn record(index: u32, owner: Owner) -> ShellRecord {
         ShellRecord {
@@ -341,6 +392,7 @@ mod tests {
             owner,
             started_unix: 0,
             interactive: false,
+            exited_unix: None,
         }
     }
 
@@ -587,6 +639,187 @@ mod tests {
         assert!(
             check_owner_cap(&existing, &Owner::Chat("a".into()), 0).is_ok(),
             "cap 0 (unlimited) must allow a further shell"
+        );
+    }
+
+    /// Point `HOME` at a fresh temp dir so `reap_exited`'s probes resolve
+    /// `<id>.lock` under that dir, serialised against every other
+    /// HOME-touching test. The `TempDir` must stay bound for the whole test —
+    /// it deletes the tree when dropped — so return both.
+    fn reaper_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
+        let guard = test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+        Config::ensure_dirs().expect("reaper test HOME setup must create the dirs");
+        (guard, dir)
+    }
+
+    #[test]
+    fn registry_reap_removes_a_dead_shell_past_its_retention() {
+        let (_home, _home_dir) = reaper_home();
+        // No lock file at all → the probe reads the host dead.
+        let reg = ShellRegistry::default();
+        let dead = record(0, Owner::Chat("a".into()));
+        let dead_id = dead.id.clone();
+        with_shells(&reg, |store| {
+            store.insert(dead_id.as_str().to_string(), dead);
+        });
+
+        // First pass: the death is *observed* — stamped, not removed.
+        let reaped = reap_exited(&reg, 300, 1_000);
+        assert!(
+            reaped.is_empty(),
+            "the first sighting must not reap; retention starts here"
+        );
+        let exited = with_shells(&reg, |store| {
+            store.get(dead_id.as_str()).map(|r| r.exited_unix)
+        });
+        assert_eq!(
+            exited,
+            Some(Some(1_000)),
+            "the first sight of a dead host must stamp the record with now_unix"
+        );
+
+        // Second pass inside the retention: still there.
+        let reaped = reap_exited(&reg, 300, 1_000 + 299);
+        assert!(
+            reaped.is_empty(),
+            "299 s into a 300 s retention is too early"
+        );
+        let still_listed = with_shells(&reg, |store| store.contains_key(dead_id.as_str()));
+        assert!(still_listed, "the record must outlive its retention");
+
+        // Third pass at the retention boundary: reaped.
+        let reaped = reap_exited(&reg, 300, 1_000 + 300);
+        assert_eq!(reaped.len(), 1, "exactly the retention boundary reaps");
+        assert_eq!(reaped[0].as_str(), "s0");
+        let gone = with_shells(&reg, |store| store.contains_key(dead_id.as_str()));
+        assert!(!gone, "the reaped record must be removed from the registry");
+    }
+
+    #[test]
+    fn registry_reap_keeps_a_live_shell_forever() {
+        let (_home, _home_dir) = reaper_home();
+        let lock_path = crate::config::shells_dir().join("s2.lock");
+        let _held = crate::daemon::instance::InstanceLock::acquire(&lock_path).unwrap();
+        let reg = ShellRegistry::default();
+        let live = record(2, Owner::Chat("a".into()));
+        let live_id = live.id.clone();
+        with_shells(&reg, |store| {
+            store.insert(live_id.as_str().to_string(), live);
+        });
+
+        for now in [1_000u64, 1_000 + 300, 1_000 + 100_000] {
+            let reaped = reap_exited(&reg, 300, now);
+            assert!(reaped.is_empty(), "a live shell must never be reaped");
+        }
+
+        let (shell_listed, stamped) = with_shells(&reg, |store| {
+            let stamped = store.get(live_id.as_str()).map(|r| r.exited_unix);
+            (store.contains_key(live_id.as_str()), stamped)
+        });
+        assert!(shell_listed, "the live shell's record must survive");
+        assert_eq!(
+            stamped,
+            Some(None),
+            "a live shell must never be stamped exited"
+        );
+    }
+
+    #[test]
+    fn registry_reap_clears_the_stamp_when_a_host_reads_alive_again() {
+        let (_home, _home_dir) = reaper_home();
+        let lock_path = crate::config::shells_dir().join("s1.lock");
+        let reg = ShellRegistry::default();
+        let flappy = record(1, Owner::Ghost("g".into()));
+        let flappy_id = flappy.id.clone();
+        with_shells(&reg, |store| {
+            store.insert(flappy_id.as_str().to_string(), flappy);
+        });
+
+        // Pass 1: dead (nothing holds the lock), so the record is stamped.
+        let reaped = reap_exited(&reg, 300, 1_000);
+        assert!(reaped.is_empty());
+        let stamped = with_shells(&reg, |store| {
+            store.get(flappy_id.as_str()).map(|r| r.exited_unix)
+        });
+        assert_eq!(stamped, Some(Some(1_000)));
+
+        // Pass 2: the lock is now held — a probe failure reads *alive*. The
+        // stale stamp must be cleared, not trusted, or a later pass would
+        // reap a live shell.
+        let recovered = crate::daemon::instance::InstanceLock::acquire(&lock_path).unwrap();
+        let reaped = reap_exited(&reg, 300, 1_000 + 400);
+        assert!(reaped.is_empty());
+        let unstamped = with_shells(&reg, |store| {
+            store.get(flappy_id.as_str()).map(|r| r.exited_unix)
+        });
+        assert_eq!(
+            unstamped,
+            Some(None),
+            "a host that reads alive again must have its exit stamp cleared"
+        );
+
+        // Pass 3: far past where the stale stamp would have reaped — and the
+        // shell survives, because the fresh probe keeps saying alive.
+        let reaped = reap_exited(&reg, 300, 1_000 + 400 + 100_000);
+        assert!(
+            reaped.is_empty(),
+            "the cleared stamp must protect the shell"
+        );
+        let still_listed = with_shells(&reg, |store| store.contains_key(flappy_id.as_str()));
+        assert!(still_listed);
+        drop(recovered);
+    }
+
+    #[test]
+    fn registry_reap_with_zero_retention_removes_on_the_pass_after_stamping() {
+        let (_home, _home_dir) = reaper_home();
+        let reg = ShellRegistry::default();
+        let dead = record(0, Owner::Chat("a".into()));
+        let dead_id = dead.id.clone();
+        with_shells(&reg, |store| {
+            store.insert(dead_id.as_str().to_string(), dead);
+        });
+
+        // Pass 1: stamped, retained — even with retention 0 the death has to
+        // be *seen* before anything is removed, so a caller that acquires a
+        // lock between two passes cannot lose a shell it never saw die.
+        let reaped = reap_exited(&reg, 0, 5_000);
+        assert!(reaped.is_empty(), "the stamping pass must not also reap");
+
+        // Pass 2: the boundary the doc comment names.
+        let reaped = reap_exited(&reg, 0, 5_000);
+        assert_eq!(
+            reaped.len(),
+            1,
+            "retention 0 removes a dead shell on the pass right after the stamp"
+        );
+        assert_eq!(reaped[0].as_str(), "s0");
+        let gone = with_shells(&reg, |store| store.contains_key(dead_id.as_str()));
+        assert!(!gone);
+    }
+
+    #[test]
+    fn registry_reap_reports_removed_ids_in_id_order() {
+        let (_home, _home_dir) = reaper_home();
+        let reg = ShellRegistry::default();
+        for index in [3u32, 1u32, 2u32] {
+            let r = record(index, Owner::Chat("a".into()));
+            let id = r.id.clone();
+            with_shells(&reg, |store| {
+                store.insert(id.as_str().to_string(), r);
+            });
+        }
+        let _stamp_pass = reap_exited(&reg, 0, 100);
+        let reaped = reap_exited(&reg, 0, 100);
+        let ids: Vec<&str> = reaped.iter().map(|id| id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["s1", "s2", "s3"],
+            "the removed ids must come back in id order regardless of map order"
         );
     }
 

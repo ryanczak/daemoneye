@@ -950,6 +950,24 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                         crate::daemon::utils::sweep_agent_mailboxes(
                             startup_config.retention.mailbox_retention_days,
                         );
+                        // Reap the record first so a just-reaped shell's log
+                        // is swept on the same tick rather than the next one.
+                        crate::shell::reap_exited(
+                            crate::shell::registry(),
+                            startup_config.shells.exited_retention_secs,
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                        );
+                        let mut live_shell_ids = std::collections::BTreeSet::new();
+                        crate::shell::with_shells(crate::shell::registry(), |store| {
+                            live_shell_ids.extend(store.keys().cloned());
+                        });
+                        crate::daemon::utils::sweep_shell_logs(
+                            startup_config.shells.log_retention_days,
+                            &live_shell_ids,
+                        );
                         if let Some(ref lp) = log_path
                             && crate::daemon::utils::rotate_log_file(
                                 lp,

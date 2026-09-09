@@ -1,7 +1,7 @@
 # Phase 09: shell reaping, log retention, and the closing docs
 
 **Milestone:** M20 — Shell Engine
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06b (`host_is_alive`, `sweep_stale`), phase-07b (the
 registry in `run_daemon`), phase-08b (`ShellRecord.interactive`) — all done.
 **Estimated diff:** ~300 lines
@@ -515,3 +515,166 @@ cleanup, never `rm -rf`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-08 17:54 (started)
+
+**Executor:** Claude (Sonnet 4.6). Phase-09 executor run begun.
+
+**Pre-flight, executed not assumed:**
+- `git rev-parse --abbrev-ref HEAD` → `master`; tree clean.
+- `grep -rl 'sweep_shell_logs' src/ --include=*.rs` → nothing — the `.cast`
+  sweep does not exist.
+- Counts match § Current state: `shell::registry` **19** passed
+  (`test result: ok. 19 passed; 0 failed; …; 1640 filtered out`),
+  `daemon::utils` **106**, `config::lifecycle` **5**. Full lib suite
+  **1655 passed; 0 failed; 4 ignored**.
+
+Starting Task 1 (`exited_unix` + `reap_exited` in `src/shell/registry.rs`)
+with the test plan's four reaper cases, all clock-injected.
+
+### Update — 2026-09-08 18:54 (progress)
+
+**Task 1 — `exited_unix` + `reap_exited`, done.**
+
+- `ShellRecord` gained `pub exited_unix: Option<u64>`; all six construction
+  sites take `None` (registry `spawn_for`, `adopt_at_startup`, the three
+  `session.rs` test fixtures, and the `record()` test helper).
+- `reap_exited(reg, retention_secs, now_unix)` added beside `sweep_stale`
+  (untouched): probes `launch::lock_path(id)` per record inside one
+  `with_shells` call; a live host clears `exited_unix` (fail-closed guard —
+  `host_is_alive` reports unreadable locks as alive, so a stale stamp must
+  never be trusted); a newly dead host is stamped with the *injected*
+  `now_unix`; a record whose stamp is `>= retention_secs` old is removed and
+  its id returned, sorted by index. The `.cast`, `.sock` and `.lock` files are
+  not touched — files are `sweep_stale`'s and the log sweep's lifecycles.
+- `src/shell/mod.rs`: `reap_exited` added to the existing `pub use
+  registry::{…}` block (the bug-07c-1 pattern), nothing else re-exported.
+- Production clock (`SystemTime::now() → UNIX_EPOCH`, same source `spawn_for`
+  stamps `started_unix` with) lives at the call site only, per STANDARDS § 3.3.
+
+**Notable during implementation:** the reaper tests needed the crate's
+`test_home_guard()` HOME-angling pattern. `reap_exited` resolves each id's
+lock via `launch::lock_path` (i.e. `$HOME/.daemoneye/var/run/shells/<id>.lock`),
+so a reaper test that acquires its `InstanceLock` at an arbitrary tempdir
+path would probe the wrong file and read the wrong liveness — in fact my
+first draft probed the *developer* `HOME`'s stale lock files from earlier
+manual runs, and also dropped the temp `HOME` tree too early (`TempDir`
+deleting itself when `reaper_home()` returned). Both fixed: `reaper_home()`
+returns the guard **and** the `TempDir`, and each test binds the pair for
+its whole body.
+
+Five reaper tests added (all clock-injected, zero sleeps — the pinned four
+plus `registry_reap_reports_removed_ids_in_id_order` pinning the return
+order independent of map order):
+- `registry_reap_removes_a_dead_shell_past_its_retention` — stamps on the
+  first pass, survives one pass inside the retention, is gone at exactly
+  `stamp + retention`.
+- `registry_reap_keeps_a_live_shell_forever` — a record whose lock **is**
+  held (real `InstanceLock` under the temp `HOME`, as the adoption tests do)
+  is never stamped, never reaped, at any `now_unix`.
+- `registry_reap_clears_the_stamp_when_a_host_reads_alive_again` — stamped,
+  then the lock is acquired under the probe's feet; the next pass reads
+  alive, clears the stamp, and a pass far past the original stamp still
+  refuses to reap.
+- `registry_reap_with_zero_retention_removes_on_the_pass_after_stamping` —
+  retention 0 still stamps on the first pass and reaps on the next.
+- `registry_reap_reports_removed_ids_in_id_order`.
+
+`cargo test --lib shell::registry::` → **24 passed; 0 failed** (was 19).
+
+**Task 2 — `sweep_shell_logs`, done.**
+
+`src/daemon/utils/mod.rs`, shaped after `sweep_pane_logs`: `0 = keep forever`
+guard first, quiet return when `shell_logs_dir()` is unreadable, mtime cutoff
+against `now`. Two deliberate differences from `sweep_pane_logs`, as the spec
+pins:
+
+- It sweeps **both** `.cast` files **and** their `.meta.json` sidecars (the
+  sidecar stem is matched with `.cast.meta.json` so a `s3-x.cast` and its
+  `s3-x.cast.meta.json` resolve to the same id `s3`).
+- It takes `live_ids: &BTreeSet<String>` — a shell still in the registry is
+  **never** swept, however old: the negative case
+  `utils_sweep_shell_logs_keeps_a_log_whose_shell_is_still_registered` proves
+  an ancient cast whose id is in the live set survives. The set is
+  `BTreeSet` (script-side) so the call site can pass the registry's keys
+  directly; `sweep_session_archives` already takes its ids as a parameter for
+  exactly this reason, so no reach into the global registry.
+
+One adaptation to record (a divergence caught by a test, not a blocker):
+the spec's single-knob sketch (`sweep_shell_logs(retention_days: u32)`)
+would have had to reach for the global registry from inside a sweep helper —
+but the spec text itself says "take the live ids as a parameter … rather than
+reaching for the global registry", so the parameter is the spec's own
+resolution and the signature above is it.
+
+A cast's stem can carry a label (`<id>-<started_unix>.cast` per
+`launch::cast_path`, plus the shell id is `sN` whereas the *file* stem after
+`.cast` is only `sN-<ts>`), so the sweep derives the id from the part before
+the first hyphen and validates it with `shell::ShellId::parse` — an id-less
+or malformed stem is **kept**, because if ownership cannot be read off the
+name the file cannot be proven not to belong to a live shell.
+
+Tests use std's `FileTimes` (the spec's
+`File::options().write(true).open(&path)` + `set_times(FileTimes::new()
+.set_modified(...))` shape, compiled and run against this toolchain) via a
+backdate() helper in the existing `sweep_tests` module — the module already
+had `filetime::set_file_mtime` (the pre-existing helper; **no dependency
+added**, `filetime` is already a dev-wide dep of this crate), but the new
+round of tests uses the std-only path the spec pins so the pattern stays
+portable. `daemon::utils` is now **109 passed** (was 106).
+
+**Task 3 — the daemon tick, done.**
+
+In the existing `sweep_counter.is_multiple_of(60)` block, right after
+`sweep_agent_mailboxes` and before log rotation: `reap_exited` with
+`crate::shell::registry()` and the real clock read the same way `spawn_for`
+reads it, then the registry's keys are collected into a fresh `BTreeSet` in
+one `with_shells` call and passed to
+`sweep_shell_logs(startup_config.shells.log_retention_days, …)`. Reap runs
+before the log sweep so a just-reaped shell's log is eligible on the same
+tick. The existing four sweeps and their arguments are untouched;
+`src/daemon/mod.rs` is otherwise unmodified (its single pre-existing `unsafe`
+dup2 block is deliberately out of my reach).
+
+**Task 4 — lifecycle row flipped, done.**
+
+`var/log/shells` → `ImplementationStatus::Implemented`; the note now
+describes the sweep (`sweep_shell_logs()` on the daemon's 60th tick deletes
+`.cast` + `.meta.json` past retention; a shell still in the registry is never
+swept) and no longer names phase-09. No other row touched; `var/run/shells`
+keeps `KeepForever` and its `sweep_stale` note. `config::lifecycle`'s own
+guard: **5 passed; 0 failed** — exactly as pinned (the table's tests do not
+parse notes, so they pass unchanged).
+
+**Task 5 — closing docs, done.**
+
+- `CLAUDE.md` § Key files: one row per `src/shell/` module (`pty`, `backend`,
+  `screen`, `log`, `proto`, `host`/`launch`, `client`, `registry`,
+  `session`) in the existing one-line-per-file style, plus a row for
+  `daemon/executor/shell_exec.rs` (07c) and `sweep_shell_logs()` named in the
+  `daemon/utils/` row's existing list. Describes what shipped; nothing about
+  background execution, ghosts, SSH targets or client bindings.
+- `README.md` § Configuration: `[execution]` and `[shells]` sections in the
+  existing three-column key/default/meaning table style. Keys and defaults
+  transcribed from `src/config/types.rs` (`backend` default `"tmux"` with
+  `"pty"` opt-in and the "anything else is tmux with a warning" rule,
+  `max_per_owner` 0 = unlimited, `exited_retention_secs` 300 s on the
+  *record*, `log_retention_days` 7 d on the *log*, `scrollback_lines` 5000).
+  The two-knob separation (seconds vs days) is stated where an operator
+  would trip over it.
+- `docs/architecture.md` § press: the M20 heading now says the engine
+  **shipped** and § 5 gains an "as built" subsection — host process and
+  socket protocol, marker protocol with real exit codes and the split-nonce
+  rationale, screen + asciicast v2 log + `.meta.json` index, the registry
+  with adoption/reaping, the two GC lifecycles on their different clocks,
+  and `backend = "tmux"` unchanged as default. A closing paragraph names
+  what is *not* in the shipped engine (background execution on the
+  substrate, ghost-on-PTY sessions, SSH targets, client bindings) so the doc
+  cannot be read as promising them.
+
+**Gates so far** `cargo build` clean (0 warnings), `cargo clippy
+--all-targets --all-features -- -D warnings` exit 0, `cargo test --lib`
+**1663 passed; 0 failed** (up from 1655: +5 registry, +3 utils, the shifted
+360-wide sum checks out), `cargo fmt --all` clean, lib suite verified
+`0 failed` across consecutive runs at the default thread count. Full gate
+transcript lands in the end-to-end entry below, as WORKFLOW requires.

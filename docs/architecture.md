@@ -446,9 +446,62 @@ four drift gates, and fixed three latent defects found along the way.
 `v1.0.0` (2026-09-03) is the last tmux-based release; M18/M19 (container
 sandbox) are merged. DaemonEye 2.0 — plan of record
 [`docs/design/daemoneye-2.0.md`](design/daemoneye-2.0.md) — replaces the
-tmux substrate of § 1.4 with daemon-owned PTY shells held by detached
-shell-host processes, SSH to remote hosts from local PTYs, asciicast v2 shell
-logs, and the rexyMCP run/turn model. M20 delivers the shell engine behind
-`[execution] backend = "tmux" | "pty"` (default `tmux`); milestone README
-`docs/dev/milestones/M20-shell-engine/README.md`. Until M26 removes tmux,
-§§ 1–4 above describe the `tmux` backend and remain accurate.
+tmux substrate of § 1.4. M20 delivers the **shell engine**: it shipped and is
+described below; the remaining 2.0 milestones (run/turn model, SSH transport,
+client UX) are not yet scoped here. Until M26 removes tmux, §§ 1–4 above
+describe the `tmux` backend and remain accurate.
+
+#### The shell engine as built (`src/shell/`, shipped)
+
+With `[execution] backend = "pty"` (opt-in; `"tmux"` remains the default and
+byte-for-byte unchanged) commands route to **daemon-owned PTY shells** instead
+of tmux panes:
+
+- **Shell hosts.** Each shell is owned by a small detached process,
+  `daemoneye shell-host --id sN`, launched from `launch.rs` with its own
+  process group so it survives a daemon restart. The host holds the PTY
+  (`portable-pty`), serves a peer-uid-checked Unix socket at
+  `var/run/shells/<id>.sock` (newline-delimited JSON frames — `Subscribe` /
+  `Input` / `Resize` / `Signal` / `Status` in `proto.rs`, replied with
+  `Chunk` / `Status` / `Error`) and guards a per-id `flock`
+  (`var/run/shells/<id>.lock`) that doubles as the liveness oracle.
+- **Marker protocol & real exit codes.** A command is wrapped in `\x1f`
+  markers (`DE_BEG`/`DE_END <nonce> $?`). The engine accumulates PTY output
+  until the end marker for this nonce arrives, returns the bytes strictly
+  between the markers — masked of secrets and ANSI-annotated for the model —
+  and records the command's **real** exit status, read from the PTY's
+  `$?`/`$status` rather than inferred. No PID polling, no output-stability
+  polling.
+- **Screen and log.** Every shell carries both views: a `vt100` grid
+  (`screen.rs`, scrolled to `[shells] scrollback_lines`) that `ansi.rs`
+  annotation and `status.rs` classification read, and an append-only
+  **asciicast v2** recording at `var/log/shells/<id>-<unix_ts>.cast` with a
+  `.cast.meta.json` sidecar index (per-command byte ranges + exit codes), so
+  "output of command N" is an O(1) slice and `asciinema play` works.
+- **Registry.** `ShellRegistry` (`registry.rs`) maps canonical `sN` ids to
+  `ShellRecord { owner, started_unix, interactive, exited_unix }`. `spawn_for`
+  reserves an id under the lock and spawns the host outside it; per-owner caps
+  come from `[shells] max_per_owner`. At daemon startup the daemon *adopts*
+  surviving hosts (`adopt_at_startup` — live flock records with
+  `Owner::Adopted`, `started_unix` recovered from the cast filename) and
+  removes dead hosts' leftover socket+lock files (`sweep_stale`).
+- **Interactive commands.** An interactive command (ssh, mosh, …) is never
+  written to a reused shell: the owner is told it needs a fresh one and the
+  captured shell is marked `interactive = true` so it is never handed to
+  another command while its host lives.
+- **Signal lifecycles.** Pause/resume/cancel send `STOP`/`CONT`/`INT`/`TERM`
+  through the host's socket, remembering the stopped foreground pgid so
+  `CONT` reaches the job it stopped; `status` reads `ShellState` from
+  `/proc`.
+- **GC.** On its 60th cleanup tick the daemon runs `reap_exited` — dead hosts'
+  records are stamped when first seen dead and reaped after
+  `[shells] exited_retention_secs` (0 = on the first pass after stamping; a
+  host that later reads alive is unstamped) — then `sweep_shell_logs`, which
+  deletes `.cast` + `.meta.json` files older than
+  `[shells] log_retention_days` (0 = never) **except** those whose shell is
+  still registered. The two are independent lifecycles on different clocks.
+
+Still **not** delivered by the shell engine (flagged for later milestones):
+background execution on the substrate (the `de-bg-*` tmux path remains),
+ghost sessions on PTYs, SSH/remote targets, and client key bindings / an
+attach UI.

@@ -957,6 +957,36 @@ Periodic sweeps for the two artifact directories that otherwise grow without bou
 | `pane_log_retention_days` | integer | `7` | Delete captured pane logs (`var/log/panes/*.log`, written by background jobs) older than this many days. `0` = keep forever. |
 | `mailbox_retention_days` | integer | `7` | Delete agent mailbox results (`agents/<name>/mailbox/*.json`) older than this many days. `0` = keep forever. |
 
+### `[execution]` section
+
+Selects the substrate `run_terminal_command` runs on. The default is unchanged
+tmux behaviour; the PTY shell engine is opt-in per site.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `backend` | string | `"tmux"` | `"tmux"` runs commands in tmux panes as before. `"pty"` routes them through the daemon's PTY shell engine: daemon-owned shells recorded as asciicast v2 logs in `~/.daemoneye/var/log/shells/`. Anything other than `"tmux"`/`"pty"` is treated as `"tmux"` with a startup warning. |
+
+### `[shells]` section
+
+Settings for the PTY-backed shell engine (`[execution] backend = "pty"`). All
+values are checked at daemon startup; see the lifecycle table in
+`src/config/lifecycle.rs` for the artifact rows these sweeps cover.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `max_per_owner` | integer | `5` | Maximum concurrent shells one owner (a chat session, a ghost) may hold. `0` = unlimited. |
+| `exited_retention_secs` | integer | `300` | How long an exited shell's registry record stays listed before it is reaped. `0` = reap a dead shell on the pass after its host is first seen dead. The `.cast` log has a separate, day-based retention below. |
+| `log_retention_days` | integer | `7` | Days to keep `var/log/shells/*.cast` (and their `.meta.json` sidecars). `0` = keep forever. A shell still in the registry is never swept, however old its log. |
+| `scrollback_lines` | integer | `5000` | Rows of scrollback the screen model retains per shell. |
+
+```toml
+[shells]
+max_per_owner        = 5
+exited_retention_secs = 300
+log_retention_days   = 7
+scrollback_lines     = 5000
+```
+
 ### `[daemon]` section
 
 Controls daemon startup and session ownership. Use this when running DaemonEye as a systemd user service so ghost shells, scheduled jobs, and webhook-triggered automation work without any `daemoneye chat` client connected.

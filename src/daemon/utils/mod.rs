@@ -120,6 +120,70 @@ pub fn sweep_pane_logs(retention_days: u32) {
     }
 }
 
+/// Delete asciicast logs (`*.cast`) and their `.meta.json` sidecars in
+/// `var/log/shells/` whose mtime is older than `retention_days` days.
+/// 0 = keep forever (no-op). A log whose shell is still registered is never
+/// deleted, however old it is — a long-running shell that has been quiet past
+/// the retention still owns its recording. A file whose stem does not start
+/// with a valid shell id is kept too: if ownership cannot be read off the
+/// name, the file cannot be proven not to belong to a live shell.
+pub fn sweep_shell_logs(retention_days: u32, live_ids: &std::collections::BTreeSet<String>) {
+    if retention_days == 0 {
+        return;
+    }
+
+    let shells_dir = crate::config::shell_logs_dir();
+    let Ok(entries) = std::fs::read_dir(&shells_dir) else {
+        return;
+    };
+
+    let now = std::time::SystemTime::now();
+    let cutoff = now - std::time::Duration::from_secs(retention_days as u64 * 86_400);
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let (extension, stem) = if let Some(stem) = name.strip_suffix(".cast") {
+            (".cast", stem)
+        } else if let Some(stem) = name.strip_suffix(".cast.meta.json") {
+            (".meta.json", stem)
+        } else {
+            continue;
+        };
+
+        // The id is the part before the first hyphen, mirroring the cast-name
+        // grammar (`<id>-<started_unix>[.label].cast`).
+        let Some((id_part, _)) = stem.split_once('-') else {
+            continue;
+        };
+        if crate::shell::ShellId::parse(id_part).is_err() {
+            continue;
+        }
+
+        let Ok(meta) = path.metadata() else { continue };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if modified >= cutoff {
+            continue;
+        }
+
+        if live_ids.contains(id_part) {
+            continue;
+        }
+
+        log::info!(
+            "shells: deleting expired {extension} log {}",
+            path.display()
+        );
+        if let Err(e) = std::fs::remove_file(&path) {
+            log::warn!("shells: failed to delete {}: {}", path.display(), e);
+        }
+    }
+}
+
 /// Delete mailbox files (`*.json`) in every agent's `agents/<name>/mailbox/`
 /// directory whose mtime is older than `retention_days` days. 0 = keep forever
 /// (no-op). An agent with no mailbox directory is silently skipped.
@@ -170,7 +234,7 @@ pub fn sweep_agent_mailboxes(retention_days: u32) {
 #[cfg(test)]
 mod sweep_tests {
     use super::*;
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
 
     fn create_archive_file(
         sessions_dir: &std::path::Path,
@@ -187,6 +251,18 @@ mod sweep_tests {
             std::time::SystemTime::now() - std::time::Duration::from_secs(days_ago * 86_400);
         let ft = filetime::FileTime::from_system_time(mtime);
         filetime::set_file_mtime(path, ft).unwrap();
+    }
+
+    /// Backdate a file with std only. `filetime` is a dependency of this
+    /// crate, but `FileTimes::set_modified` requires a writable handle —
+    /// missing it fails on a read-only `.cast`, so go through an explicit
+    /// `OpenOptions::write(true)` handle instead.
+    fn backdate(path: &std::path::Path, days_ago: u64) {
+        let mtime =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(days_ago * 86_400);
+        let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        f.set_times(std::fs::FileTimes::new().set_modified(mtime))
+            .unwrap();
     }
 
     #[test]
@@ -361,6 +437,93 @@ mod sweep_tests {
         assert!(old_entry.exists(), "retention_days=0 should be a no-op");
 
         // Restore HOME so ambient readers in other tests are not poisoned.
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn utils_sweep_shell_logs_deletes_an_old_cast_and_its_sidecar() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let logs_dir = crate::config::shell_logs_dir();
+        std::fs::create_dir_all(&logs_dir).unwrap();
+
+        let cast = logs_dir.join("s7-1788699323-shell.cast");
+        let sidecar = logs_dir.join("s7-1788699323-shell.cast.meta.json");
+        std::fs::write(&cast, b"{\"version\": 2}").unwrap();
+        std::fs::write(&sidecar, b"{\"shell_id\": \"s7\"}").unwrap();
+        backdate(&cast, 30);
+        backdate(&sidecar, 30);
+
+        sweep_shell_logs(7, &BTreeSet::new());
+
+        assert!(
+            !cast.exists(),
+            "an expired .cast past retention must be swept"
+        );
+        assert!(
+            !sidecar.exists(),
+            "an expired .meta.json sidecar past retention must be swept"
+        );
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn utils_sweep_shell_logs_keeps_a_log_whose_shell_is_still_registered() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let logs_dir = crate::config::shell_logs_dir();
+        std::fs::create_dir_all(&logs_dir).unwrap();
+
+        let cast = logs_dir.join("s3-1788699323.quiet.cast");
+        std::fs::write(&cast, b"{\"version\": 2}").unwrap();
+        backdate(&cast, 30);
+
+        let mut live = BTreeSet::new();
+        live.insert("s3".to_string());
+        sweep_shell_logs(7, &live);
+
+        assert!(
+            cast.exists(),
+            "a registered shell's recording must never be swept, however old"
+        );
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn utils_sweep_shell_logs_zero_retention_is_a_no_op() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let logs_dir = crate::config::shell_logs_dir();
+        std::fs::create_dir_all(&logs_dir).unwrap();
+
+        let cast = logs_dir.join("s9-1788699323.build.cast");
+        std::fs::write(&cast, b"{\"version\": 2}").unwrap();
+        backdate(&cast, 30);
+
+        sweep_shell_logs(0, &BTreeSet::new());
+
+        assert!(cast.exists(), "retention_days=0 must keep the log forever");
+
         match old_home {
             Some(v) => unsafe { std::env::set_var("HOME", v) },
             None => unsafe { std::env::remove_var("HOME") },

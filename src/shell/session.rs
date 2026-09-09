@@ -278,6 +278,7 @@ mod tests {
                     owner: owner.clone(),
                     started_unix: 0,
                     interactive: false,
+                    exited_unix: None,
                 },
             );
         });
@@ -325,6 +326,7 @@ mod tests {
                     owner: owner.clone(),
                     started_unix: 0,
                     interactive: false,
+                    exited_unix: None,
                 },
             );
             store.insert(
@@ -334,6 +336,7 @@ mod tests {
                     owner: owner.clone(),
                     started_unix: 0,
                     interactive: false,
+                    exited_unix: None,
                 },
             );
         });

@@ -104,10 +104,10 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
             default_retention_days: 7,
         },
         config_key: Some("shells.log_retention_days"),
-        implemented: ImplementationStatus::Pending {
-            owned_by: "M20 phase-09",
-        },
-        note: "asciicast recordings (var/log/shells/*.cast) whose sweep lands with the registry in phase-09",
+        implemented: ImplementationStatus::Implemented,
+        note: "sweep_shell_logs() on the daemon's 60th-tick sweep deletes \
+               var/log/shells/*.cast and .cast.meta.json past retention; a \
+               shell still in the registry is never swept",
         lazy: false,
     },
     LifecycleEntry {
