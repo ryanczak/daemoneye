@@ -467,5 +467,10 @@ mod tests {
     }
 }
 
+mod log_read;
 mod turn_log;
+pub use log_read::{
+    DEFAULT_RUN_LOG_LIMIT, MAX_RUN_LOG_LIMIT, clamp_run_log_limit, get_turn,
+    run_log_input_rejected, run_log_search, run_log_tail,
+};
 pub use turn_log::{TurnLogEvent, TurnLogRecord, append_turn_event, read_turn_log, turn_log_file};

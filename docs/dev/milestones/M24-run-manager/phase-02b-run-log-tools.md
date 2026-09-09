@@ -1,7 +1,7 @@
 # Phase 02b: the run-log tools
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02a (`turn_log.rs` — `read_turn_log`, `TurnLogRecord`).
 Done.
 **Estimated diff:** ~400 lines incl. tests
@@ -383,3 +383,79 @@ group.** Use `find <dir> -depth -delete` for cleanup, never `rm -rf`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-09 13:53 (started)
+
+Status flipped `todo` → `in-progress`; milestone README phase-table row updated to
+match. Executor dispatched. Pre-flight verified: branch `master`, tree clean, full
+lib `1683 passed; 0 failed; 4 ignored`, `cargo test --lib daemon::run::` → `17
+passed; 0 failed`.
+
+### Update — 2026-09-09 14:17 (end-to-end verification)
+
+Every acceptance criterion checked against the real artifacts. Numbers from
+section F, as they printed: `runs group in TOOLS` **3**, `dispatch +
+minimal_args` **6**, `pending.rs arms` **15** (variant + `to_tool_call` +
+`id()` + `tool_name()` + `summary()` + `should_emit_tool_feedback`, 5 arms ×
+3 tools), `not approval-gated` **0**, `clamp constant` **18** (definition plus
+uses across `log_read.rs` and the milestone doc — the `cat |` false-shared-form
+note in the spec was read; this count is over `src/daemon/run/*.rs` only),
+`CLAUDE.md counts` **1**, `README counts` **1**, `README runs group row` **1**,
+`no unwrap/panic pre-test` **0**, real-HOME runs dir **0**.
+
+Section B lists the six pinned tests plus three extras at `... ok`. Section D:
+`ai::tools` **17 passed; 0 failed** (F2's `dispatch_roundtrip_all_tools` walks
+the 39-entry `TOOLS`), `doc_truth` **10 passed; 0 failed** (F5's four table
+gates keep passing). Section E: three consecutive full-lib runs, `0 failed`
+each.
+
+Mutation checks (pasted red → green `test result:` lines below, ran before
+restoring): 1) `Some(n) => n.min(MAX)` → `n.max(MAX)` turned
+`run_log_tail_clamps_an_oversized_limit` red (`FAILED. 1690 passed; 4
+failed`) — the tail, search, and default-limit tests caught it too; 2)
+`get_turn`'s slice end forced to `0` turned
+`get_turn_returns_only_that_turns_records` red (`FAILED. 1693 passed; 1
+failed`). Both were green again after restore — the consecutive runs in
+section E are the restored tree.
+
+```text
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.95s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+daemon::run::log_read::tests::get_turn_reports_an_unknown_turn ... ok
+daemon::run::log_read::tests::get_turn_returns_only_that_turns_records ... ok
+daemon::run::log_read::tests::run_log_search_matches_case_insensitively ... ok
+daemon::run::log_read::tests::run_log_search_respects_the_clamp ... ok
+daemon::run::log_read::tests::run_log_search_returns_nothing_for_no_match ... ok
+daemon::run::log_read::tests::run_log_tail_clamps_an_oversized_limit ... ok
+daemon::run::log_read::tests::run_log_tail_returns_the_last_n_records ... ok
+daemon::run::log_read::tests::run_log_tail_uses_the_default_when_limit_is_omitted ... ok
+daemon::run::log_read::tests::run_log_tools_reject_an_unknown_run_as_a_result_not_an_error ... ok
+cargo_exit=0
+== C. run module total (>=23) ==
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 1670 filtered out; finished in 0.01s
+cargo_exit=0
+== D. the tool gates ==
+ai::tools          test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1681 filtered out; finished in 0.00s
+cargo_exit=0
+doc_truth          test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1694 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.03s
+test result: ok. 1694 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.26s
+test result: ok. 1694 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.95s
+== F. structural greps (each must print the stated number) ==
+runs group in TOOLS        (3): 3
+dispatch + minimal_args  (>=6): 6
+pending.rs arms         (>=10): 15
+not approval-gated         (0): 0
+clamp constant           (>=2): 18
+CLAUDE.md counts           (1): 1
+README counts            (>=1): 1
+README runs group row      (1): 1
+no unwrap/panic pre-test   (0): 0
+== G. nothing leaked into the real HOME ==
+runs dir in the developer HOME (0): 0
+```

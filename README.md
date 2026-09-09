@@ -493,7 +493,7 @@ While the search prompt is open, typing edits the query, `Enter` commits it and 
 
 ## AI tools
 
-The model has **36 tools**. The 27 **core** tools are sent with every request; the 9 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
+The model has **39 tools**. The 27 **core** tools are sent with every request; the 12 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
 
 Tools marked **⚠** require explicit user approval before they execute.
 
@@ -537,6 +537,11 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `runbooks` | `read_runbook`, `list_runbooks` |
 | `scripts` | `read_script`, `list_scripts` |
 | `memory` | `delete_memory` |
+| `runs` | `run_log_tail`, `run_log_search`, `get_turn` |
+
+* `run_log_tail` reads the last N records of one run's turn log (`~/.daemoneye/var/log/runs/<run_id>.jsonl`); limit clamped inside the reader at 200, default 50 — the header says when a request was clamped.
+* `run_log_search` searches one run's turn log for records containing a substring, case-insensitively, under the same clamp.
+* `get_turn` reads every record one turn logged — the one uncapped escape hatch, since the caller has already narrowed to a single turn.
 
 ---
 

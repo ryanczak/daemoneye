@@ -230,6 +230,28 @@ pub enum PendingCall {
         agent_name: String,
         timeout_secs: u64,
     },
+    /// Read the last N records of one run's turn log (M24 phase-02b).
+    RunLogTail {
+        id: String,
+        thought_signature: Option<String>,
+        run_id: String,
+        limit: Option<u64>,
+    },
+    /// Search one run's turn log for records containing a query substring.
+    RunLogSearch {
+        id: String,
+        thought_signature: Option<String>,
+        run_id: String,
+        query: String,
+        limit: Option<u64>,
+    },
+    /// Read every record one turn logged — the uncapped escape hatch.
+    GetTurn {
+        id: String,
+        thought_signature: Option<String>,
+        run_id: String,
+        turn: u32,
+    },
     ReadPane {
         id: String,
         thought_signature: Option<String>,
@@ -492,6 +514,42 @@ impl PendingCall {
                 thought_signature: thought_signature.clone(),
                 name: "list_runbooks".to_string(),
                 arguments: "{}".to_string(),
+            },
+            PendingCall::RunLogTail {
+                id,
+                thought_signature,
+                run_id,
+                limit,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "run_log_tail".to_string(),
+                arguments: args_to_string(serde_json::json!({"run_id": run_id, "limit": limit})),
+            },
+            PendingCall::RunLogSearch {
+                id,
+                thought_signature,
+                run_id,
+                query,
+                limit,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "run_log_search".to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"run_id": run_id, "query": query, "limit": limit}),
+                ),
+            },
+            PendingCall::GetTurn {
+                id,
+                thought_signature,
+                run_id,
+                turn,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "get_turn".to_string(),
+                arguments: args_to_string(serde_json::json!({"run_id": run_id, "turn": turn})),
             },
             PendingCall::AddMemory {
                 id,
@@ -784,6 +842,9 @@ impl PendingCall {
             PendingCall::ReadPane { id, .. } => id,
             PendingCall::FindInPanes { id, .. } => id,
             PendingCall::TmuxControl { id, .. } => id,
+            PendingCall::RunLogTail { id, .. } => id,
+            PendingCall::RunLogSearch { id, .. } => id,
+            PendingCall::GetTurn { id, .. } => id,
         }
     }
 
@@ -815,6 +876,9 @@ impl PendingCall {
                 | PendingCall::ReadPane { .. }
                 | PendingCall::FindInPanes { .. }
                 | PendingCall::LoadTools { .. }
+                | PendingCall::RunLogTail { .. }
+                | PendingCall::RunLogSearch { .. }
+                | PendingCall::GetTurn { .. }
         )
     }
 
@@ -913,6 +977,16 @@ impl PendingCall {
             PendingCall::LoadTools { groups, .. } => {
                 format!("load_tools: {}", groups.join(", "))
             }
+            PendingCall::RunLogTail { run_id, limit, .. } => match limit {
+                Some(n) => format!("tail {run_id} limit={n}"),
+                None => format!("tail {run_id} (default limit)"),
+            },
+            PendingCall::RunLogSearch { run_id, query, .. } => {
+                format!("search {run_id} \"{query}\"")
+            }
+            PendingCall::GetTurn { run_id, turn, .. } => {
+                format!("turn {turn} of {run_id}")
+            }
             _ => String::new(),
         }
     }
@@ -958,6 +1032,9 @@ impl PendingCall {
             PendingCall::ReadPane { .. } => "read_pane",
             PendingCall::FindInPanes { .. } => "find_in_panes",
             PendingCall::TmuxControl { .. } => "tmux_control",
+            PendingCall::RunLogTail { .. } => "run_log_tail",
+            PendingCall::RunLogSearch { .. } => "run_log_search",
+            PendingCall::GetTurn { .. } => "get_turn",
         }
     }
 }

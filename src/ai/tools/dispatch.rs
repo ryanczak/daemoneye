@@ -69,6 +69,9 @@ pub fn dispatch_tool_event(
             thought_signature: t,
         }),
         "read_runbook" => dispatch::<ReadRunbookArgs>(id, args, ts),
+        "run_log_tail" => dispatch::<RunLogTailArgs>(id, args, ts),
+        "run_log_search" => dispatch::<RunLogSearchArgs>(id, args, ts),
+        "get_turn" => dispatch::<GetTurnArgs>(id, args, ts),
         "add_memory" => dispatch::<AddMemoryArgs>(id, args, ts),
         "update_memory" => dispatch::<UpdateMemoryArgs>(id, args, ts),
         "delete_memory" => dispatch::<DeleteMemoryArgs>(id, args, ts),
@@ -224,6 +227,9 @@ mod tests {
                 "delete_runbook" => json!({"name": "rb"}),
                 "read_runbook" => json!({"name": "rb"}),
                 "list_runbooks" => json!({}),
+                "run_log_tail" => json!({"run_id": "a1b2c3d4e5f60718", "limit": 5}),
+                "run_log_search" => json!({"run_id": "a1b2c3d4e5f60718", "query": "q"}),
+                "get_turn" => json!({"run_id": "a1b2c3d4e5f60718", "turn": 1}),
                 "add_memory" => json!({"key": "k", "value": "v", "category": "knowledge"}),
                 "update_memory" => json!({"key": "k", "category": "knowledge"}),
                 "delete_memory" => json!({"key": "k", "category": "knowledge"}),
@@ -456,8 +462,8 @@ mod tests {
             .collect()
     }
 
-    /// The core/deferred partition is total and matches the Goal table: the nine
-    /// deferred tools carry their group, a control core tool is None.
+    /// The core/deferred partition is total and matches the Goal table: the
+    /// twelve deferred tools carry their group, a control core tool is None.
     #[test]
     fn deferred_group_split_is_total() {
         let expected: &[(&str, &str)] = &[
@@ -470,6 +476,9 @@ mod tests {
             ("read_runbook", "runbooks"),
             ("list_runbooks", "runbooks"),
             ("delete_memory", "memory"),
+            ("run_log_tail", "runs"),
+            ("run_log_search", "runs"),
+            ("get_turn", "runs"),
         ];
         for (name, group) in expected {
             let t = TOOLS

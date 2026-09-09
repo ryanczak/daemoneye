@@ -745,6 +745,47 @@ where
                         timeout_secs,
                     });
                 }
+                AiEvent::RunLogTail {
+                    id,
+                    run_id,
+                    limit,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::RunLogTail {
+                        id,
+                        thought_signature,
+                        run_id,
+                        limit,
+                    });
+                }
+                AiEvent::RunLogSearch {
+                    id,
+                    run_id,
+                    query,
+                    limit,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::RunLogSearch {
+                        id,
+                        thought_signature,
+                        run_id,
+                        query,
+                        limit,
+                    });
+                }
+                AiEvent::GetTurn {
+                    id,
+                    run_id,
+                    turn,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::GetTurn {
+                        id,
+                        thought_signature,
+                        run_id,
+                        turn,
+                    });
+                }
                 AiEvent::Error(e) => {
                     send_response_split(tx, Response::Error(e)).await?;
                     return Ok(());

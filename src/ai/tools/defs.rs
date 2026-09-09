@@ -448,6 +448,84 @@ pub static TOOLS: &[ToolDef] = &[
         params: &[],
     },
     ToolDef {
+        name: "run_log_tail",
+        deferred_group: Some("runs"),
+        description: "Read the last N records of a run's turn log (var/log/runs/<run_id>.jsonl), \
+                      oldest first. Records are run_started / turn_started / note / run_finished \
+                      events with timestamps. limit defaults to 50 and is capped at 200; the \
+                      header of the result always says how many records exist and whether the \
+                      request was capped. Use run_log_search to find specific text instead of \
+                      paging through the whole log.",
+        params: &[
+            ParamDef {
+                name: "run_id",
+                ty: ParamTy::Str,
+                required: true,
+                description: "The 16-hex id of the run whose turn log to read.",
+            },
+            ParamDef {
+                name: "limit",
+                ty: ParamTy::Int,
+                required: false,
+                description: "How many of the most recent records to show. Default 50, \
+                              maximum 200 (larger values are clamped and the result says so).",
+            },
+        ],
+    },
+    ToolDef {
+        name: "run_log_search",
+        deferred_group: Some("runs"),
+        description: "Search one run's turn log for records whose text contains the query, \
+                      case-insensitively. Returns matching events (notes, turn boundaries, \
+                      finish states) oldest first. limit defaults to 50 and is capped at 200. \
+                      Use this to find when something happened inside a long run without paging.",
+        params: &[
+            ParamDef {
+                name: "run_id",
+                ty: ParamTy::Str,
+                required: true,
+                description: "The 16-hex id of the run whose turn log to search.",
+            },
+            ParamDef {
+                name: "query",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Substring to look for, case-insensitively.",
+            },
+            ParamDef {
+                name: "limit",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Maximum number of matching records to show. Default 50, \
+                              maximum 200 (larger values are clamped and the result says so).",
+            },
+        ],
+    },
+    ToolDef {
+        name: "get_turn",
+        deferred_group: Some("runs"),
+        description: "Read every record one turn logged, in order — the uncapped form of \
+                      run_log_tail for a caller that has already narrowed to a single turn. \
+                      Returns the turn_started line, each note after it, and the next \
+                      turn_started (exclusive). Errors as a result line when the run has no \
+                      such turn; never an exception.",
+        params: &[
+            ParamDef {
+                name: "run_id",
+                ty: ParamTy::Str,
+                required: true,
+                description: "The 16-hex id of the run whose turn log to read.",
+            },
+            ParamDef {
+                name: "turn",
+                ty: ParamTy::Int,
+                required: true,
+                description: "Which turn to read (the turn numbers the run's own \
+                              turn_started events carry).",
+            },
+        ],
+    },
+    ToolDef {
         name: "add_memory",
         description: "Store a persistent memory entry in ~/.daemoneye/memory/<category>/<key>.md. \
                       category: 'session' (loaded at every session start — keep brief), \

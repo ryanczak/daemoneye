@@ -241,6 +241,28 @@ pub enum AiEvent {
         timeout_secs: u64,
         thought_signature: Option<String>,
     },
+    /// Read the last N records of one run's turn log (M24 phase-02b).
+    RunLogTail {
+        id: String,
+        run_id: String,
+        limit: Option<u64>,
+        thought_signature: Option<String>,
+    },
+    /// Search one run's turn log for records containing a query substring.
+    RunLogSearch {
+        id: String,
+        run_id: String,
+        query: String,
+        limit: Option<u64>,
+        thought_signature: Option<String>,
+    },
+    /// Read every record one turn logged — the uncapped escape hatch.
+    GetTurn {
+        id: String,
+        run_id: String,
+        turn: u32,
+        thought_signature: Option<String>,
+    },
     Done(TokenBreakdown),
     Error(String),
     /// Non-terminal advisory the user should see (truncation, refusal,

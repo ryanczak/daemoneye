@@ -143,6 +143,27 @@ pub(super) struct ReadRunbookArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct RunLogTailArgs {
+    run_id: String,
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct RunLogSearchArgs {
+    run_id: String,
+    query: String,
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct GetTurnArgs {
+    run_id: String,
+    turn: u32,
+}
+
+#[derive(Deserialize)]
 pub(super) struct AddMemoryArgs {
     key: String,
     value: String,
@@ -513,6 +534,49 @@ where
     T: FnOnce(String, Option<String>) -> AiEvent,
 {
     ReadRunbookArgs::from_value(args).map(|a| mk(a.name, ts))
+}
+
+impl ToolArgs for RunLogTailArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::RunLogTail {
+            id: id.to_string(),
+            run_id: self.run_id,
+            limit: self.limit,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for RunLogSearchArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::RunLogSearch {
+            id: id.to_string(),
+            run_id: self.run_id,
+            query: self.query,
+            limit: self.limit,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for GetTurnArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::GetTurn {
+            id: id.to_string(),
+            run_id: self.run_id,
+            turn: self.turn,
+            thought_signature: ts,
+        }
+    }
 }
 
 impl ToolArgs for AddMemoryArgs {

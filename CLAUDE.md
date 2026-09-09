@@ -136,7 +136,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Current AI tools
 
-**36 tools: 27 core + 9 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
+**39 tools: 27 core + 12 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
 `src/ai/tools/defs.rs` — `core` means `None` (rendered on every request); a group
 name means the tool is omitted until `load_tools` pulls the group in. **Note the
 asymmetry**: for scripts, runbooks and memory the *write* side is core while the
@@ -165,6 +165,9 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `delete_runbook` | core | Delete a runbook; approval-gated |
 | `read_runbook` | **runbooks** | Read a runbook's full content |
 | `list_runbooks` | **runbooks** | List runbooks with their tags |
+| `run_log_tail` | **runs** | Read the last N records of one run's turn log (limit clamped inside the reader, default 50, cap 200 — the header says when a request was clamped) |
+| `run_log_search` | **runs** | Search one run's turn log for records containing a substring, case-insensitively (same clamp and header) |
+| `get_turn` | **runs** | Read every record one turn logged — the one uncapped escape hatch, because the caller has already narrowed to a single turn |
 | `add_memory` | core | Store a persistent memory entry under `<category>/<key>.md` |
 | `read_memory` | core | Read one entry by key + category |
 | `update_memory` | core | Patch individual frontmatter/body fields in place; omitted fields are preserved, `updated` is stamped automatically. Preferred over read+delete+add. |
