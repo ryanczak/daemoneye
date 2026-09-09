@@ -4466,3 +4466,39 @@ filter). **M20 cannot close until phase-10 lands and the restart sweep is
 re-run green.**
 
 Still open for the PE: `background=true` on the tmux `de-bg-*` path, unowned.
+
+---
+
+## M20 — Shell Engine: **all exit criteria met 2026-09-09. Active phase: none.**
+
+**phase-10 — adoption-socket-fix: done (approved_first_try) 2026-09-09**,
+commit `5a1d14c`. The close-blocker is fixed and the live restart sweep re-ran
+green: `shell registry: adopted 1 surviving shell(s): ["s0"]`, host pid
+unchanged across `daemoneye stop` + `daemoneye daemon`, cast 795 → 1040 bytes
+(ticks 4 → 12) — bytes on both sides of the restart. Evidence at
+`docs/dev/milestones/M20-shell-engine/restart-evidence.txt`.
+
+**16 phases done** (5 approved_first_try, 7 approved_after_1, 3
+approved_after_2, 1 approved_after_4; 3 hard_fail escalations; 18 bugs, all
+closed). Retrospective in the milestone README. The three calibration folds are
+landed in `WORKFLOW.md` (`e251528`).
+
+**M20 is ready for PE sign-off.** Nothing technical is outstanding.
+
+**For the PE at sign-off:**
+
+1. **A fold candidate, not landed** (one occurrence — hold for recurrence
+   unless you want it now): *a fixture must match the production artifact's
+   **type**, not just its name.* Every `.sock` fixture was `fs::write`'d as a
+   regular file; that is why 24 green registry tests could not see a filter
+   that excluded real sockets.
+2. **`background=true` is still unowned** — it remains on the tmux `de-bg-*`
+   path with no phase owning its shell-substrate equivalent. Worth scoping into
+   the next milestone.
+3. **Test hygiene, minor:** a `cargo test` run leaves stale `s*.lock` /
+   `s0.sock` artifacts in the developer's real `~/.daemoneye/var/run/shells/`,
+   and a transient `daemoneye shell-host` under the real `HOME` was observed
+   during review. Harmless to results; worth a look when someone next touches
+   `shell::launch`'s tests.
+
+**Next milestone is not started and not assumed.** M21+ awaits your direction.

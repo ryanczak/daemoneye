@@ -197,13 +197,15 @@ line-number facts go stale and each landing shifts the next Current state).
 | 09 | shell-gc ([phase-09-shell-gc.md](phase-09-shell-gc.md)) | **done** (approved_first_try, 2026-09-08) | **The last executor phase.** Exited-shell GC under `shells.exited_retention_secs` (moved from 08b at drafting, 2026-09-08 — it needs a second `ShellRecord` timestamp field and `src/config/lifecycle.rs:110` already places the shell-log sweep here). Plus the `.cast` log sweep under `log_retention_days` (the last `Pending` lifecycle row) and the closing docs — `CLAUDE.md` § Key files, `README.md` § Configuration, `architecture.md` § 5. **Restart survival, the live exit-criteria sweep and the retrospective are NOT in it**: the README's own exit criteria mark live checks architect-run, and milestone close is human-gated (see § Notes). |
 | 10 | adoption-socket-fix ([phase-10-adoption-socket-fix.md](phase-10-adoption-socket-fix.md)) | **done** (approved_first_try, 2026-09-09 — [bug-10-1](bugs/bug-10-1.md) fixed; **live restart sweep re-run green**) | `scan_shell_ids` filters on `is_file()`, false for a real AF_UNIX socket, so the daemon never re-adopts a surviving shell and `sweep_stale` never sweeps a dead one — both inert in production, green in tests (fixtures are regular files). The one filter that fails restart survival. |
 
-## Retrospective — M20 (all 15 original phases done 2026-09-08; live sweep found one close-blocker → phase-10)
+## Retrospective — M20 (16 phases done; all exit criteria met 2026-09-09)
 
-**15 phases, all `done`. 4 approved_first_try, 7 approved_after_1, 3
-approved_after_2, 1 approved_after_4; 3 `hard_fail` escalations; 17 bugs
+**16 phases, all `done`. 5 approved_first_try, 7 approved_after_1, 3
+approved_after_2, 1 approved_after_4; 3 `hard_fail` escalations; 18 bugs
 filed, all closed.** The milestone was scoped as nine phases and ran as
-fifteen — 05→05a/05b/05c, 06→06a/06b, 07→07a/07b/07c, 08→08a/08b — **every
-split made at drafting on a measured seam, never on an estimate.**
+sixteen — 05→05a/05b/05c, 06→06a/06b, 07→07a/07b/07c, 08→08a/08b, plus
+phase-10 from the live sweep — **every split made at drafting on a measured
+seam, never on an estimate, and the last phase existed only because the live
+sweep found what the suite could not.**
 
 ### What the splits were actually made of
 
@@ -246,6 +248,16 @@ Counting the 17 bugs and 3 escalations by origin rather than by phase:
   Fixed upstream in rexyMCP `d1a9d74`. **A phase that stalls at a round
   multiple of a timeout constant is an infrastructure symptom, not a model
   one.**
+- **The live sweep earned its place.** Fifteen phases, 1663 green tests and
+  four clean gates did not catch that the daemon could never re-adopt a shell,
+  because the defect lived exactly where the fixtures diverged from production:
+  a `.sock` written with `fs::write` is a regular file, and the real one is a
+  socket. **A test fixture that matches the production artifact's *name* but
+  not its *type* is not a test of that artifact.** The architect-run live
+  sweep is the only thing in this process that runs against the real file
+  types, the real daemon lifecycle and the real user door — and it found a
+  blocker on the PE's hard requirement after every other gate said done.
+
 - **The executor's best work was catching the architect.** In 09 it found that
   cast files are `{id}-{started_unix}.cast`, so the live-shell guard the spec
   asked for would never have fired against a `.cast`-stripped stem — the sweep
@@ -274,8 +286,8 @@ a fix" bar. None is landed; `WORKFLOW.md` changes need explicit approval.
 
 ### Exit criteria status
 
-**The live sweep ran 2026-09-08 and found a close-blocker.** Two of the three
-live criteria pass; restart survival does **not**:
+**The live sweep ran 2026-09-08; it found one close-blocker, which phase-10
+fixed. Re-run 2026-09-09, all three live criteria now pass.**
 
 - **Exit code (pty), live — PASS.** A `daemoneye chat` turn under
   `backend = "pty"` ran `sh -c 'exit 3'` in shell s0; the session JSONL
@@ -284,29 +296,29 @@ live criteria pass; restart survival does **not**:
 - **Negative (tmux), live — PASS.** Under `backend = "tmux"` a chat turn ran
   via the tmux pane path with **zero** shell sockets/casts/hosts spawned and
   zero `mode=shell` command records.
-- **Restart survival — FAIL (bug-10-1).** The shell *host* survives
-  `daemoneye stop` + `daemoneye daemon` (same pid, socket, lock, and a `.cast`
-  with both markers) — but the daemon never **re-adopts** it: `scan_shell_ids`
-  filters on `file_type.is_file()`, which is false for a real AF_UNIX socket,
-  so `adopt_at_startup` (and `sweep_stale`) find nothing. Every unit test
-  passes because its `.sock` fixtures are regular files. Fix drafted as
-  **phase-10**; the criterion is verification, but the fix is real code.
+- **Restart survival (the PE's hard requirement) — PASS after phase-10.**
+  Evidence in `restart-evidence.txt`, captured with the daemon stopped
+  *mid-command*:
 
-The remaining criteria below are met **except restart survival above**, which
-phase-10 fixes:
+  ```
+  shell registry: adopted 1 surviving shell(s): ["s0"]
+  host pid 2819156 — unchanged across daemoneye stop + daemoneye daemon
+  cast 795 → 1040 bytes; ticks 4 → 12   (bytes on both sides of the restart)
+  s0.sock: socket=True  regular_file=False
+  ```
 
-- **Restart survival (the PE's hard requirement)** — a shell running `sleep 60`
-  surviving `daemoneye stop` + `daemoneye daemon`, evidenced by a `.cast` with
-  bytes on both sides. The *mechanism* shipped in 06b (`adopt_at_startup`,
-  `sweep_stale`) and 07b (both wired into `run_daemon`) and is unit-covered;
-  what remains is verification through the user's door.
-- **The live half of the `backend = "pty"` round trip** — the real exit code in
-  a session JSONL `tool_results` entry, and the negative criterion that
-  `backend = "tmux"` performs no PTY spawn.
+  **What the sweep caught, and why nothing else could.** On the first run that
+  adoption line was *absent*: `scan_shell_ids` filtered directory entries on
+  `file_type.is_file()`, which is **false for a real AF_UNIX socket**, so
+  `adopt_at_startup` and `sweep_stale` were both inert in production — a shell
+  survived the restart but the daemon came back blind to it. All 24 registry
+  tests were green because every `.sock` fixture was `fs::write`'d as a
+  **regular file**. The suite could not see it; only a real socket could.
+  Fixed in phase-10 (one filter, plus tests that bind a real `UnixListener`),
+  mutation-verified at review, and the sweep re-run green.
 
-Both need an interactive approval through a real tmux client: the shell path is
-gated on `!is_ghost`, so no auto-approve route reaches it, and `ask` is
-one-shot. That is a session of its own and is the gate to a full close.
+Every other exit criterion is met by the unit suite and the four gates. **M20
+is code complete with all exit criteria satisfied.**
 
 ## Notes
 
