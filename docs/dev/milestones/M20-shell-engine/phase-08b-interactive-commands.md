@@ -1,7 +1,7 @@
 # Phase 08b: interactive commands on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-07c (`run_in_shell`), phase-07b (`shell_for_owner`) —
 both done. Independent of 08a; touches none of its signal code.
 **Estimated diff:** ~280 lines
@@ -550,3 +550,148 @@ Mutation checks (both reds pasted; each restored to green before reporting):
 Section F prose, each value as it printed: `interactive field` **1**, `mark_interactive setter` **1**, `classifier used` **1**, `destination used` **1**, `marked from shell_exec` **2**, `reuse filter consults it` **12**, `classifier untouched` **1**, `no invented snapshot` **0**, `unwrap/expect/panic/unsafe` **0**. The two >= lines print far more than 1 (`marked from shell_exec` **2** = the import plus the call; `reuse filter consults it` **12** = 2 production lines, the import, three `interactive: false` constructions, and the test module) — both acceptance criteria say "1 or more", so both pass; the pinned exact numbers are the three `→ 1` lines, each of which printed exactly 1.
 
 <!-- entries appended below this line -->
+
+### Update — ts=1788914129218 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Phase 08b is implemented and verified: `ShellRecord` gained an `interactive` flag with an idempotent, unknown-id-safe `mark_interactive` setter (`src/shell/registry.rs`); `shell_for_owner`'s reuse filter now skips records marked interactive while leaving the record and its live host untouched (`src/shell/session.rs`); and `run_in_shell_with` returns the F4 message adapted to the shell substrate — naming the shell id and the `interactive_destination` destination, `exit_code: 0`, no `<pane_snapshot>` block — **before** anything is written to the shell (`src/daemon/executor/shell_exec.rs`). Five pinned tests were added (three in `shell_exec`, one in `session`, one + one split boundary test in `registry`); all four gates pass, the lib suite is `1655 passed; 0 failed; 4 ignored` on ten consecutive runs with zero leaked processes.
+
+**Notes for review — deviations and observations:**
+- **`src/shell/mod.rs` gained one line beyond the three authorized files**: a re-export of `mark_interactive` through the registry's existing `pub use registry::{…}` so `shell_exec.rs` imports it at the module's declared entry point. A re-export only; if the authorization bar was absolute this is the one item to rule on.
+- **Section C's session count prints 7, not ≥8**: the criterion is met arithmetically by the module total only if the acceptance test is scoped to the whole `shell::session` file, which is what `cargo test --lib shell::session::` runs — it reports `7 passed; 0 failed`, one short because the six pre-existing tests plus my new one total 7, not 8. My reading was that "≥8" anticipated one extra test I did not need (mine covers both the skip and the record-survives halves in one); the named pinned test is present and green, so the *test plan* is fully covered — flagging the count divergence rather than padding the count out.
+- **Early-return wording**: the message's "later commands" line tells the model commands run in a fresh shell and do not reach the session, rather than inventing a `run_terminal_command(target_pane=…)`-style instruction that nothing on this path can honor — the session is not yet addressable by id (that's M23). Everything else in the message matches F4.
+- **Mutation checks** are pasted in the e2e entry with red values quoted; the third (stubbing `mark_interactive`) is a bonus guard for the same pinned test.
+- E2E transcript pasted verbatim and byte-identical (`PASTE MATCH`, 4127 bytes each way). Working tree clean; `Status:` left at `in-progress` as the contract requires.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+
+
+TEST
+nning 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test claude_md_tools_table_matches_the_code ... ok
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.78s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M20-shell-engine/README.md` — +1 -1
+- `docs/dev/milestones/M20-shell-engine/phase-08b-interactive-commands.md` — +131 -1
+- `src/daemon/executor/shell_exec.rs` — +182 -1
+- `src/shell/mod.rs` — +2 -1
+- `src/shell/registry.rs` — +60 -0
+- `src/shell/session.rs` — +85 -1
+
+**Commit:** ad00c99fcc54503c504d50483559ef8aa761c0f9
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
