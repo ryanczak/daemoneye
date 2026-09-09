@@ -196,6 +196,99 @@ line-number facts go stale and each landing shifts the next Current state).
 | 08b | interactive-commands ([phase-08b-interactive-commands.md](phase-08b-interactive-commands.md)) | **done** (approved_first_try, 2026-09-08) | `is_interactive_command()` → return immediately naming the shell, **and** mark that shell so it is never reused: measured at drafting, an interactive command captures the owner's shell permanently and every later command in the session times out too (see § Notes). GC moved to 09. |
 | 09 | shell-gc ([phase-09-shell-gc.md](phase-09-shell-gc.md)) | **done** (approved_first_try, 2026-09-08) | **The last executor phase.** Exited-shell GC under `shells.exited_retention_secs` (moved from 08b at drafting, 2026-09-08 — it needs a second `ShellRecord` timestamp field and `src/config/lifecycle.rs:110` already places the shell-log sweep here). Plus the `.cast` log sweep under `log_retention_days` (the last `Pending` lifecycle row) and the closing docs — `CLAUDE.md` § Key files, `README.md` § Configuration, `architecture.md` § 5. **Restart survival, the live exit-criteria sweep and the retrospective are NOT in it**: the README's own exit criteria mark live checks architect-run, and milestone close is human-gated (see § Notes). |
 
+## Retrospective — M20 closed 2026-09-08 (code complete; live sweep outstanding)
+
+**15 phases, all `done`. 4 approved_first_try, 7 approved_after_1, 3
+approved_after_2, 1 approved_after_4; 3 `hard_fail` escalations; 17 bugs
+filed, all closed.** The milestone was scoped as nine phases and ran as
+fifteen — 05→05a/05b/05c, 06→06a/06b, 07→07a/07b/07c, 08→08a/08b — **every
+split made at drafting on a measured seam, never on an estimate.**
+
+### What the splits were actually made of
+
+Each split came from a probe compiled into the tree, run, then reverted, that
+contradicted the charter:
+
+- **08 → 08a/08b:** `signal_foreground` re-derives its target every call, but
+  the instant a job is `SIGSTOP`ped bash takes the terminal back — so `CONT`
+  went to the shell, and the job stayed in state `T` at every 500 ms sample
+  across 3 s. **A stopped job could not be resumed at all.** That turned
+  pause/resume from wiring into a mechanism change.
+- **08b's own rescope:** an interactive command does not merely hang for 45 s —
+  it **poisons the owner's shell permanently.** `shell_for_owner` hands back the
+  same shell (correctly: its bash is alive), but the interactive process eats
+  every byte written to it, so a following `echo ALIVE` timed out too. Early
+  return alone would have reproduced the bug one command later; the non-reuse
+  mark is what fixes it. GC moved to 09 to make room.
+- **09's scoping** came from reading the exit criteria rather than sizing: they
+  already mark live checks architect-run, so the phase kept the hermetic half
+  (reaper, log sweep, docs) and left verification to close.
+
+**The lesson, stated once:** the charter is a hypothesis. Probing before
+drafting changed the *shape* of three phases and found two real defects that no
+green test suite would ever have surfaced.
+
+### Where the failures actually came from
+
+Counting the 17 bugs and 3 escalations by origin rather than by phase:
+
+- **Architect-side spec defects were the largest single class.** bug-07c-3 (the
+  ordering guard that could not fail), 08b's `≥8` count, 09's `Pending`
+  rationale and its Authorizations forbidding a file its own Task 1 required —
+  plus two more caught during drafting before dispatch. Four criteria across
+  the milestone were corrected *at review* for contradicting their own spec.
+- **One `hard_fail` was not the executor at all.** Two consecutive runs stalled
+  at exactly 1200 s. That is 4 × 300 s: rexymcp's HTTP client carried a
+  hard-coded total `reqwest` timeout, a deadline on the whole exchange
+  including the body, so every stream past five minutes was severed as
+  `error decoding response body` and retried three times with the same prompt.
+  Fixed upstream in rexyMCP `d1a9d74`. **A phase that stalls at a round
+  multiple of a timeout constant is an infrastructure symptom, not a model
+  one.**
+- **The executor's best work was catching the architect.** In 09 it found that
+  cast files are `{id}-{started_unix}.cast`, so the live-shell guard the spec
+  asked for would never have fired against a `.cast`-stripped stem — the sweep
+  would have deleted running shells' logs. In 08b it declined to pad a test
+  count to reach a number the spec had no basis for, and reported the honest
+  `7`.
+
+### Calibration folds — proposed, awaiting PE sign-off
+
+Three occurrences each, so all three clear the "one is data, two a trend, three
+a fix" bar. None is landed; `WORKFLOW.md` changes need explicit approval.
+
+1. **Derive every pinned count from the test plan you just wrote, and re-add
+   it.** (07c ×2, 08b.) A criterion whose number disagrees with its own test
+   plan teaches the executor that the spec is unreliable.
+2. **When a spec adds a struct field, its Authorizations must name every file
+   holding a construction site.** (08a's forced `launch.rs` literal, 09's
+   forced `session.rs` edit.) Otherwise the executor must choose between a
+   compile error and an authorization breach.
+3. **Run every acceptance criterion against the tree before dispatch, and pin
+   on an anchor that does not already match.** Four vacuous or impossible
+   criteria were caught this way at drafting — `grep -c 'stat' backend.rs`
+   printing 20, `grep -c 'shell' architecture.md` printing 11, a `git diff
+   master` that is empty by construction on the working branch, and an
+   unwrap/unsafe grep over a file with a pre-existing `unsafe`.
+
+### Exit criteria status
+
+Every criterion is met **except the two that are architect-run live checks**,
+which are the outstanding work at close:
+
+- **Restart survival (the PE's hard requirement)** — a shell running `sleep 60`
+  surviving `daemoneye stop` + `daemoneye daemon`, evidenced by a `.cast` with
+  bytes on both sides. The *mechanism* shipped in 06b (`adopt_at_startup`,
+  `sweep_stale`) and 07b (both wired into `run_daemon`) and is unit-covered;
+  what remains is verification through the user's door.
+- **The live half of the `backend = "pty"` round trip** — the real exit code in
+  a session JSONL `tool_results` entry, and the negative criterion that
+  `backend = "tmux"` performs no PTY spawn.
+
+Both need an interactive approval through a real tmux client: the shell path is
+gated on `!is_ghost`, so no auto-approve route reaches it, and `ask` is
+one-shot. That is a session of its own and is the gate to a full close.
+
 ## Notes
 
 - **Phase 09 was scoped at drafting (2026-09-08) to the executor-dispatchable

@@ -476,7 +476,7 @@ of tmux panes:
   (`screen.rs`, scrolled to `[shells] scrollback_lines`) that `ansi.rs`
   annotation and `status.rs` classification read, and an append-only
   **asciicast v2** recording at `var/log/shells/<id>-<unix_ts>.cast` with a
-  `.cast.meta.json` sidecar index (per-command byte ranges + exit codes), so
+  `.meta.json` sidecar index (per-command byte ranges + exit codes), so
   "output of command N" is an O(1) slice and `asciinema play` works.
 - **Registry.** `ShellRegistry` (`registry.rs`) maps canonical `sN` ids to
   `ShellRecord { owner, started_unix, interactive, exited_unix }`. `spawn_for`

@@ -4390,3 +4390,47 @@ the human-gated milestone close that follows phase-09's approval.
 
 **Still open for the PE:** `background=true` remains on the tmux `de-bg-*` path
 with no phase owning its shell-substrate equivalent.
+
+---
+
+**phase-09 — shell-gc: done (approved_first_try) 2026-09-08**, commit
+`44fb07e`. Both mutations re-verified at review; suite 1663/0 on ten
+consecutive runs. The executor caught a real spec defect: cast files are
+`{id}-{started_unix}.cast`, so the live-shell guard would never have fired
+against a `.cast`-stripped stem and the sweep would have deleted running
+shells' logs.
+
+## M20 — Shell Engine: **code complete 2026-09-08, awaiting PE sign-off**
+
+**Active phase: none.**
+
+All 15 phases are `done` (4 approved_first_try, 7 approved_after_1, 3
+approved_after_2, 1 approved_after_4; 3 hard_fail escalations; 17 bugs, all
+closed). Retrospective in `docs/dev/milestones/M20-shell-engine/README.md`
+§ Retrospective.
+
+**Two things are outstanding before M20 can be called closed, both for the PE:**
+
+1. **The architect-run live sweep**, which is the milestone's own convention
+   for these two criteria:
+   - **Restart survival (the PE's hard requirement)** — `sleep 60` in a shell
+     across `daemoneye stop` + `daemoneye daemon`, evidenced by a `.cast` with
+     bytes on both sides. The mechanism shipped in 06b + 07b and is
+     unit-covered; only verification remains.
+   - **The live `backend = "pty"` round trip** — the real exit code in a
+     session JSONL `tool_results` entry, plus the negative criterion that
+     `backend = "tmux"` performs no PTY spawn.
+
+   Both need an interactive approval through a real tmux client: the shell path
+   is gated on `!is_ghost` so no auto-approve route reaches it, and `ask` is
+   one-shot with no session JSONL. This is a session of its own.
+
+2. **Three calibration folds into `WORKFLOW.md`**, each at three occurrences,
+   none landed (WORKFLOW changes need explicit approval): derive pinned counts
+   from the test plan; Authorizations must name every file holding a struct's
+   construction sites; run every acceptance criterion against the tree before
+   dispatch and pin on an anchor that does not already match.
+
+**Also still open for the PE:** `background=true` remains on the tmux
+`de-bg-*` path with no phase owning its shell-substrate equivalent. Flag it
+when scoping the next milestone.
