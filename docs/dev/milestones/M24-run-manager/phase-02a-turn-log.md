@@ -462,3 +462,32 @@ E2E block altered: the transcript above is from the corrected E2E run. The
 literal E2E harness section G printed **1** where the spec's arrow says 0;
 per the phase's own instruction I pasted the block without modification and
 explain the one-extra-line here, in prose outside the fence.
+
+### Update — 2026-09-09 20:40 (mutation checks)
+
+Both required mutations were applied to the code, run, and reverted (each
+verified red, then restored and verified green on the same command).
+
+**Mutation 1 — writer `.append(true)` → `.truncate(true)`:**
+`turn_log_appends_rather_than_truncating` went red:
+
+```text
+test daemon::run::turn_log::tests::turn_log_appends_rather_than_truncating ... FAILED
+thread '…' panicked at src/daemon/run/turn_log.rs:237:65:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1686 filtered out; finished in 0.00s
+```
+
+Green again after restore: `test result: ok. 17 passed; 0 failed` on
+`daemon::run::`.
+
+**Mutation 2 — reader propagates a parse error (`.map(from_str(l).unwrap())`)
+instead of skipping:**
+`turn_log_reader_skips_a_malformed_line` went red:
+
+```text
+test daemon::run::turn_log::tests::turn_log_reader_skips_a_malformed_line ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1686 filtered out; finished in 0.00s
+```
+
+Green again after restore: `test result: ok. 17 passed; 0 failed; 0 ignored`
+on `daemon::run::`.
