@@ -1,7 +1,7 @@
 # Phase 02b: the run-log tools
 
 **Milestone:** M24 — Run Manager
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-02a (`turn_log.rs` — `read_turn_log`, `TurnLogRecord`).
 Done.
 **Estimated diff:** ~400 lines incl. tests
@@ -459,3 +459,156 @@ no unwrap/panic pre-test   (0): 0
 == G. nothing leaked into the real HOME ==
 runs dir in the developer HOME (0): 0
 ```
+
+### Update — ts=1788988822739 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 02b is implemented and committed (`f863940`, working tree clean). `src/daemon/run/log_read.rs` adds the three read-only projections over phase-02a's turn log — `run_log_tail`, `run_log_search`, `get_turn` — with the limit clamped **inside** the readers (`MAX_RUN_LOG_LIMIT = 200`, default 50, `0`/`None` → default) and a header that names the run, the totals seen vs. shown, and says explicitly when a request was clamped; `get_turn` is the uncapped escape hatch. The tools are plumbed through all nine touch points of the CLAUDE.md checklist plus the two hidden gates: `dispatch.rs` carries three dispatch arms **and** three `minimal_args` arms (F2's `dispatch_roundtrip_all_tools` passes), and `["runs"]` needed no catalog registration (F3). All three are silent tools in `should_emit_tool_feedback` (F8) and none appears in `APPROVAL_GATED_TOOLS` (F6); doc counts now read 39 / 27 + 12 in both `CLAUDE.md` and `README.md`, including the new `` | `runs` | `` group row.
+
+**Notes for review**
+
+- **Deviations worth knowing:** (1) the clamped readers' headers are a small superset of the spec's sketch — search names its query and, when the cap cut matches off, prints "N further match(es) not shown — raise the limit up to 200", which is the same clamp-honesty the spec asked for and falls out of rendering search under a header; (2) `run_log_input_rejected` is a tiny helper the executor arms route `RunId::parse` failures through, so a malformed id surfaces as a readable result string, never an `Err`; (3) `clamp_note` folds `Some(0)` into the default (documented on `clamp_run_log_limit`) since "show me the last 0" is nonsense.
+- **Grep values as printed** (section F): rows in `TOOLS` **3**, dispatch + `minimal_args` **6**, `pending.rs` arms **15**, not-approval-gated **0**, clamp-constant occurrences **18** (over `src/daemon/run/*.rs` only — the spec noted the `cat |` count-prefix hazard), `CLAUDE.md` counts **1**, `README` counts **1**, README group row **1**, no-unwrap/panic pre-test **0**, real-HOME runs dir **0**.
+- **Gates:** `cargo build` clean, `clippy -D warnings` clean, `fmt` clean; `ai::tools` `17 passed; 0 failed` (unchanged — the roundtrip test is one function that walks all 39 `TOOLS`), `doc_truth` `10 passed; 0 failed`, full lib `1694 passed; 0 failed` on three consecutive runs, `daemon::run` `28 passed; 0 failed`. Mutation checks: removing `.min` (→ `.max`) turned `run_log_tail_clamps_an_oversized_limit` red (plus 3 neighbours), and forcing `get_turn`'s slice end to `0` turned `get_turn_returns_only_that_turns_records` red; both restored and the pasted E2E block is from the restored tree, and the self-check reports `PASTE MATCH`. The end-to-end transcript lives in its own Update Log entry (`### Update — 2026-09-09 14:17 (end-to-end verification)`), built live and diff-verified against the pasted block.
+- **Out of scope, left alone as specified:** `sre.toml` prose (F4 — optional; the generated `load_tools` catalog already names the group), anything that writes a turn log, cross-run search, retention, and the `/runs` CLI commands.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.88s
+
+
+TEST
+nning 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test config_pricing_round_trip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_injection_block_format ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g6_agent_namespace_field_persisted ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.95s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +4 -1
+- `README.md` — +6 -1
+- `docs/dev/milestones/M24-run-manager/README.md` — +1 -1
+- `docs/dev/milestones/M24-run-manager/phase-02b-run-log-tools.md` — +77 -1
+- `src/ai/tools/args.rs` — +64 -0
+- `src/ai/tools/defs.rs` — +78 -0
+- `src/ai/tools/dispatch.rs` — +11 -2
+- `src/ai/types/events.rs` — +22 -0
+- `src/ai/types/pending.rs` — +77 -0
+- `src/daemon/executor/mod.rs` — +29 -0
+- `src/daemon/run/log_read.rs` — +492 -0
+- `src/daemon/run/mod.rs` — +5 -0
+- `src/daemon/stream.rs` — +41 -0
+
+**Commit:** f8639407f790605471fc373461b73dfdbb6b90a8
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
