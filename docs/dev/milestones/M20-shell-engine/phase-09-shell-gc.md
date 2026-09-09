@@ -1,7 +1,7 @@
 # Phase 09: shell reaping, log retention, and the closing docs
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** phase-06b (`host_is_alive`, `sweep_stale`), phase-07b (the
 registry in `run_daemon`), phase-08b (`ShellRecord.interactive`) — all done.
 **Estimated diff:** ~300 lines
@@ -270,8 +270,14 @@ Each was run against the current tree and returns the "now" value shown.
       `grep -c 'sweep_shell_logs' src/daemon/mod.rs` → **1 or more** (now `0`).
 - [ ] **The lifecycle row is flipped:**
       `grep -c 'M20 phase-09' src/config/lifecycle.rs` → **0** (now `1`), and
-      `grep -c 'Pending {' src/config/lifecycle.rs` → **1** (now `2`) — one
-      `Pending` row remains and belongs to another milestone; leave it alone.
+      `grep -c 'Pending {' src/config/lifecycle.rs` → **1** (now `2`).
+      *(Rationale corrected at review 2026-09-08. The criterion's number was
+      right and its explanation was wrong: it said "one `Pending` row remains
+      and belongs to another milestone". There was only ever **one** `Pending`
+      row — this phase's — and the second match is the enum arm's own
+      definition at `lifecycle.rs:31`. So the surviving match after the flip is
+      the type, not a row. The executor worked this out and said so; an
+      architect defect, not an implementation one.)*
 - [ ] **`sweep_stale` is untouched (it is the directory sweep, not the record
       reaper):** `grep -c 'pub fn sweep_stale' src/shell/registry.rs` → **1**
       (now `1`) — *preservation criterion.*
@@ -933,3 +939,63 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0924f3fbd8e6d01c40e5abb0e96fc77954b6381b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-08
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** two adaptations, both declared, both accepted — and one
+  forced edit my own Authorizations wrongly forbade. See below.
+- **Calibration:** two architect defects, both corrected in this doc.
+  (1) The `Pending {` criterion's rationale was wrong — there was one `Pending`
+  row, not two, and the survivor is the enum arm. (2) The **Authorizations**
+  list said *"Do not change … `session.rs`"* while Task 1 required
+  `exited_unix: None` at *"every existing construction site"* — three of which
+  are in `session.rs`. The executor made exactly those three test-module edits
+  and nothing else. Same class as 08a's forced `launch.rs` literal: **when a
+  spec adds a struct field, its Authorizations must list every file holding a
+  construction site.** With the count-derivation defect at 08b, that is a
+  cluster worth folding at milestone close.
+
+**Verified at review, independently re-run:** all four gates green; full suite
+**1663 passed / 0 failed / 4 ignored on ten consecutive runs** at default
+threads; `shell::registry::` 24, `daemon::utils::` 109, `config::lifecycle::` 5;
+all eleven preserved modules exact (`session` 7, `shell_exec` 10, `pty` 17,
+`backend` 10, `client` 9, `proto` 5, `host` 8, `launch` 8, `log` 13, `screen`
+11, `utils::shell` 43); every structural grep at its pinned value, including the
+two preservation criteria (`sweep_stale` still 1, `daemon/mod.rs` still exactly
+one `unsafe`); section G's no-sleep check 0; no leaked shell-hosts. Every number
+in the pasted end-to-end block matches what I measured independently.
+
+**Both mutations re-run by the reviewer, not read from the log:**
+
+- Reaping on the first sighting (dropping the stamp) turns four reaper tests
+  red — including `registry_reap_removes_a_dead_shell_past_its_retention` —
+  while `registry_reap_keeps_a_live_shell_forever` stays green.
+- Making `sweep_shell_logs` ignore the live-id set turns
+  `utils_sweep_shell_logs_keeps_a_log_whose_shell_is_still_registered` red and
+  **only** that one; the other two sweep tests stay green.
+
+Both green on restore.
+
+**Adaptation 1 — the id derivation, and it is a real catch.** The spec said to
+take the live ids as a parameter but never said how to match them to
+filenames. `cast_path` (`launch.rs:42`) is `{id}-{started_unix}.cast`, so a
+naive `strip_suffix(".cast")` stem is `s0-1788…`, which **never** equals a live
+id `s0` — the live-shell guard would never fire and the sweep would delete the
+logs of running shells. The executor found this, derived the id from the stem
+before the first hyphen, validated it with `ShellId::parse`, and made an
+unparseable stem **keep** the file (ownership unprovable ⇒ do not delete). That
+is the fail-safe direction and it is what makes the negative test meaningful.
+
+**Adaptation 2 — `&BTreeSet<String>` for the live ids**, so `run_daemon` can
+hand over the registry's keys directly. Within the spec's own constraint (do
+not reach for the global registry from inside a sweep helper).
+
+**One nit, not filed as a bug and not blocking.** `docs/architecture.md:479`
+calls the sidecar `.cast.meta.json`, but `meta_path_for` (`src/shell/log.rs:184`)
+**strips** the `.cast` suffix, so the real name is `<id>-<ts>.meta.json`.
+`README.md:979` and `CLAUDE.md:65` both have it right; only this one line is
+wrong. **To be fixed in the milestone-close doc pass** rather than by bouncing
+the milestone's last phase over one filename.
