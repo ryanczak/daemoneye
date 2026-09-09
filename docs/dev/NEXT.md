@@ -4549,3 +4549,33 @@ validator that `bail!`s, mirroring `validate_shell_id`, because the id becomes a
 path segment: the pinned negatives include `../../etc/passwd` and `a/b`.
 `Briefing` is defined here so `RunState::HardFail(Briefing)` is final from the
 start and phase 03 does not have to change the enum.
+
+---
+
+**phase-01 — run-core: done (approved_first_try) 2026-09-09**, commit
+`736a9a3`. Three mutations verified at review, including one of my own that
+confirmed the `RunId` path-traversal rejection is load-bearing. One architect
+defect corrected: my section-B grep was unanchored and matched 21 lines where 10
+were pinned — now `^test daemon::run::tests::`.
+
+**Active phase: phase-02a — turn-log**
+(`docs/dev/milestones/M24-run-manager/phase-02a-turn-log.md`, status: todo,
+drafted 2026-09-09). Dispatch with `/rexymcp:dispatch phase-02a`.
+
+Scope: the per-run JSONL at `var/log/runs/<run-id>.jsonl` — an
+`event_type`-tagged record with four starter variants, an append-and-flush
+writer, and a reader that skips a malformed line. Plus the two things a **new
+artifact directory** requires here: the `runs_dir()` constructor and a lifecycle
+policy row.
+
+**Phase 02 was split at drafting into 02a/02b** on the tool checklist, not on a
+size guess: the charter bundled three AI tools (`run_log_*`, `get_turn`), and
+each carries the 11-step add-a-tool checklist plus the `doc_truth` table gates.
+02b ships those tools against what 02a writes.
+
+The load-bearing pre-injection is F1: `src/config/lifecycle.rs` gates a new
+artifact directory in **both** directions — an existing dir with no policy row
+fails, and a non-lazy row that `ensure_dirs()` does not create fails. Miss
+either and the phase bounces. The row is deliberately `Pending`, deferring the
+retention config key to phase-10 (recorded in the milestone README so it is not
+lost at close).

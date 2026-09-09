@@ -72,7 +72,8 @@ precede the full four-loop unification's completion.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | run-core ([phase-01-run-core.md](phase-01-run-core.md)) — `RunId`/`RunKind`/`RunState`/`Budget`/`Briefing` in `src/daemon/run/`, pure, no wiring | **done** (approved_first_try, 2026-09-09) |
-| 02 | turn-log — `var/log/runs/<id>.jsonl` writer + format + `run_log_*`/`get_turn` tools | todo (not drafted) |
+| 02a | turn-log ([phase-02a-turn-log.md](phase-02a-turn-log.md)) — `var/log/runs/<id>.jsonl` record/writer/reader + the path constructor and lifecycle row a new artifact dir requires | todo (drafted 2026-09-09) |
+| 02b | run-log-tools — `run_log_search` / `run_log_tail` / `get_turn`, clamped limits + one uncapped escape hatch | todo (not drafted) |
 | 03 | run-result — `RunResult` + bounded briefing (port from rexyMCP anchors) | todo (not drafted) |
 | 04 | cancel — cooperative cancel + `var/run/stop-<run>` sentinel + `daemoneye stop <run>` | todo (not drafted) |
 | 05 | background — `run_terminal_command(background=true)` as an un-awaited chat Run on a dedicated shell + marker-watcher completion → `[Background Task Completed]` **(the payoff)** | todo (not drafted) |
@@ -83,6 +84,24 @@ precede the full four-loop unification's completion.
 | 10 | cli — `/runs`, `/run`, `/stop`; cross-run telemetry (`RunRecord`) if not deferred | todo (not drafted) |
 
 ## Notes
+
+- **Phase 02 split at drafting (2026-09-09) into 02a and 02b**, on the tool
+  checklist rather than on size guessing. The charter bundled the turn-log
+  writer with three AI tools (`run_log_search`, `run_log_tail`, `get_turn`);
+  each tool carries `CLAUDE.md`'s 11-step add-a-tool checklist plus the
+  `doc_truth` gates that hold the `CLAUDE.md` and `README.md` tool tables and
+  their counts in sync. Three tools is a phase on its own. 02a ships the record,
+  writer and reader; 02b ships the tools that read them. Same seam-by-measurement
+  practice as M20's 05a/05b/05c.
+
+- **Retention for `var/log/runs` is deliberately deferred to phase-10.** The
+  lifecycle row 02a adds is `Pending { owned_by: "M24 phase-10" }` with
+  `config_key: None`, because a retention key would drag `assets/etc/config.toml`
+  and two `doc_truth` config gates into a phase that is otherwise about a file
+  format. **Phase-10 must pick this up** — flip the row to `Implemented` and add
+  the sweep — or M24 closes with a `Pending` row, which is what the M20
+  lifecycle audit caught last milestone.
+
 
 - **Roadmap reorder (2026-09-09, PE decision — signed off).** The
   design roadmap orders M21 Host/SSH → M22 Tool surface → M23 Client decoupling
