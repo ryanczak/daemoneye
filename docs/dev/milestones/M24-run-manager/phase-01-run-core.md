@@ -1,7 +1,7 @@
 # Phase 01: the `Run` core types
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (this is the milestone's first phase; pure types, no wiring)
 **Estimated diff:** ~450 lines incl. tests
 **Tags:** language=rust, kind=feature, size=m
@@ -403,3 +403,138 @@ group.** Use `find <dir> -depth -delete` for cleanup, never `rm -rf`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-09 19:10 (started)
+
+**Executor:** headless run, phase-01 (M24 Run Manager).
+
+Pre-flight confirmed: branch `master`, tree clean, `src/daemon/run/` absent,
+full lib suite **1666 passed; 0 failed; 4 ignored**. Phase status flipped to
+`in-progress` here and in the milestone README. Implementation begins: `RunId`,
+`RunKind`, `RunState`, `Budget`/`BudgetDimension`, `Briefing` under
+`src/daemon/run/`, re-exported from `mod.rs`, no wiring and no I/O (per spec §
+Authorizations).
+
+### Update — 2026-09-09 19:24 (implementation + mutation check)
+
+**Module shape chosen:** everything in a single `src/daemon/run/mod.rs` — the
+five types total ~300 lines and share the idiom family (F1–F4), so a second
+file would only add a hop. Consequence for the acceptance criteria: `grep -c
+'^pub mod ' src/daemon/run/mod.rs` is **0** and there is nothing to re-export,
+so the `pub use` criterion is **waived** under the spec's parenthetical ("if
+you put everything in mod.rs itself … say which shape you chose"). This entry
+is that statement.
+
+**What the types are:** `RunId` is a newtype over `String` validated by a hard
+grammar — exactly 16 lowercase hex characters (same span a session id carries),
+built from the low 64 bits of a `Uuid::new_v4()`, so `var/log/runs/<id>.jsonl`
+and `var/log/sessions/<id>.jsonl` look alike on disk and a user can type
+either. `parse` rejects the whole F-table pinned in the spec; it is a security
+boundary because the id becomes a path segment. `RunKind` carries the four
+design-2.3 variants with `label()` for the future `daemoneye runs` listing;
+`RunState` is the design's five variants with `is_terminal()` false only for
+`Running`; `Briefing` enforces its own bounds (≤5 working files, each attempt
+≤200 chars) at construction via `new`, and the bounds are named constants;
+`Budget` holds five limit/spent pairs with `0 = unlimited`, `record_*` for
+spend, `remaining()` saturating at zero and `None`-when-unlimited, and
+`exhausted()` naming the first spent-out dimension in the documented order
+(`BUDGET_DIMENSION_ORDER`). Wall-clock is a parameter, never a clock read.
+
+**Mutation checks (both bounds):** with the 5-file cap removed
+(`take(MAX_BRIEFING_FILES + 1)`) `briefing_truncates_working_files_to_five`
+went red: `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured;
+1679 filtered out; finished in 0.00s` — restored, green again. With the
+`limit == 0` unlimited branch removed from `remaining()` immediately
+`budget_zero_limit_means_unlimited` went red: `test result: FAILED. 0 passed;
+1 failed; 0 ignored; 0 measured; 1679 filtered out; finished in 0.00s`
+(assertion message `limit 0 must be unlimited for Turns, left: Some(0),
+right: None`) — restored, green again. Full run-module result after
+restoration: `test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured;
+1670 filtered out; finished in 0.00s`.
+
+**Gates:** `cargo fmt --all` clean (run before staging); `cargo build` — 0
+warnings; `cargo clippy --all-targets --all-features -- -D warnings` — exit 0;
+`cargo test` — lib `1676 passed; 0 failed; 4 ignored` (1666 pre-phase + the
+10 new), plus the integration/bin/doc suites all green.
+
+### Update — 2026-09-09 19:24 (end-to-end verification)
+
+Ran the phase's E2E block verbatim from the repo root; `/tmp/e2e-m24-01.txt`
+contents follow, then the self-check verdict.
+
+```text
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.26s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+ai::tests::select_timeout_uses_first_token_budget_before_first_token ... ok
+cli::commands::chat::tests::turn_budget_label_new_session ... ok
+cli::commands::chat::tests::turn_budget_label_reports_usage ... ok
+cli::commands::stream::tests::silence_budget_phase1_is_90s ... ok
+cli::commands::stream::tests::silence_budget_phase2_is_120s ... ok
+daemon::briefing::tests::clear_briefing_is_noop_when_absent ... ok
+daemon::briefing::tests::clear_briefing_removes_file ... ok
+daemon::briefing::tests::read_briefing_returns_content_when_present ... ok
+daemon::briefing::tests::read_briefing_returns_none_when_absent ... ok
+daemon::digest::tests::budget_cut_keeps_min_tail ... ok
+daemon::digest::tests::budget_cut_respects_target ... ok
+daemon::run::tests::briefing_truncates_each_attempt_to_200_chars ... ok
+daemon::run::tests::briefing_truncates_working_files_to_five ... ok
+daemon::run::tests::budget_remaining_saturates_at_zero ... ok
+daemon::run::tests::budget_reports_the_first_exhausted_dimension ... ok
+daemon::run::tests::budget_zero_limit_means_unlimited ... ok
+daemon::run::tests::run_id_generates_a_valid_16_hex_id ... ok
+daemon::run::tests::run_id_parse_rejects_path_traversal_and_separators ... ok
+daemon::run::tests::run_id_parse_rejects_wrong_length_case_and_non_hex ... ok
+daemon::run::tests::run_kind_labels_all_four_kinds ... ok
+daemon::run::tests::run_state_terminal_predicate_separates_running_from_finished ... ok
+cargo_exit=0
+== C. run module total (>=10) ==
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1670 filtered out; finished in 0.00s
+cargo_exit=0
+== D. untouched (registry 27, stats 7) ==
+shell::registry      test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1653 filtered out; finished in 0.00s
+cargo_exit=0
+daemon::stats        test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1673 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1676 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.04s
+test result: ok. 1676 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 6.97s
+test result: ok. 1676 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.00s
+== F. structural greps (each must print the stated number) ==
+run dir exists             (1): 1
+declared in daemon/mod.rs  (1): 1
+no pub mod in run/mod.rs   (0): 0
+RunId declared             (1): 1
+RunKind declared           (1): 1
+RunState declared          (1): 1
+Briefing declared          (1): 1
+BudgetDimension declared   (1): 1
+grammar bails            (>=1): 1
+no io/clock in types       (0): 0
+no unwrap/panic pre-test   (0): 0
+== G. no caller was added (this phase wires nothing) ==
+files touched outside daemon/run + daemon/mod.rs (0): 0
+```
+
+Section F, value by value as printed: run dir exists **1** (expected 1);
+declared in daemon/mod.rs **1** (1); no pub mod in run/mod.rs **0** (0 — all
+types live in `mod.rs` itself, no submodules, so nothing to re-export and the
+`pub use` line is waived per the spec's parenthetical); RunId **1**, RunKind
+**1**, RunState **1**, Briefing **1**, BudgetDimension **1** (all 1);
+`bail!` **1** (>=1 — the hard grammar validator in `RunId::parse`);
+no-IO/clock **0** (0); pre-test unwrap/panic **0** (0). Every line carried a
+number on the same line as its label (the module exists, so none of the
+zeroes is a `No such file or directory` artifact).
+
+Section G: **0** — no caller was added, per the phase's "no wiring" criterion.
+
+The run-module total in C is 10, matching the test plan's arithmetic; the ten
+named tests in B are each present with `... ok`.
+
+Self-check verdict below (pasted from its own output).
+
+```text
+PASTE MATCH
+```

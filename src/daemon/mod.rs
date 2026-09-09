@@ -38,6 +38,7 @@ pub mod memory_prompt;
 pub mod policy;
 pub mod prompt;
 pub mod ready;
+pub mod run;
 pub mod scheduled;
 pub mod server;
 pub mod session;
