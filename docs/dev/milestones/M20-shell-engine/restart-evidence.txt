@@ -1,0 +1,12 @@
+== M20 restart-survival live sweep (post phase-10) ==
+HOME=/tmp/de-m20-crDN  backend=pty
+-- hosts belonging to THIS home --
+  host pid=2819156 (this home)
+-- adoption line (the criterion) --
+2026-09-09T16:04:36Z INFO  shell registry: adopted 1 surviving shell(s): ["s0"]
+-- cast bytes across the restart --
+  before_stop=795  now=1040
+  ticks logged=12
+-- socket type (the thing that broke it) --
+  s0.lock: socket=False regular_file=True
+  s0.sock: socket=True regular_file=False

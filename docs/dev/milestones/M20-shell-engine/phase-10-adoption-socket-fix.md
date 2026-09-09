@@ -1,7 +1,7 @@
 # Phase 10: adopt real sockets — the restart-survival close-blocker
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** phase-06b (`scan_shell_ids`, `adopt_at_startup`, `sweep_stale`) —
 done, but defective in production (bug-restart-adoption).
 **Estimated diff:** ~60 lines
@@ -482,3 +482,73 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 9b3562b963e61595d5fc3d40f6f56f5c08b4e4c8
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-09
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none. The filter-shape criterion was written as an
+  explicit either/or; the executor took the `is_socket()` branch and said so,
+  which is the criterion working as intended.
+- **Calibration:** a fold candidate for the PE, **not** landed —
+  **a fixture must match the production artifact's *type*, not just its name.**
+  Every `.sock` fixture in `shell::registry` was created with `fs::write`, i.e.
+  a regular file; production binds a real AF_UNIX socket. 24 green tests could
+  not see a filter that excluded the only file type that actually occurs. The
+  general form: when a test stands in for a filesystem object, ask what
+  `stat()` would say about the real one. One occurrence so far — hold for
+  recurrence.
+
+**Verified at review, independently re-run:** all four gates green; full suite
+**1666 passed / 0 failed / 4 ignored on three consecutive runs**;
+`shell::registry::` **27**, and the untouched modules exact (`session` 7,
+`shell_exec` 10, `launch` 8, `host` 8). Structural: `UnixListener::bind` **1**,
+`make_dir` **4**, `is_socket()` **1**, the original defective line
+`^\s*if !file_type\.is_file\(\) \{$` → **0**, no unwrap/expect/panic/unsafe
+outside tests, no TODO/dbg/allow.
+
+**Mutation re-run by the reviewer, not read from the log:** reverting the
+filter to `if !file_type.is_file() {` turns **exactly** the two real-socket
+tests red —
+
+```
+adopt_at_startup_adopts_a_real_socket_host ... FAILED
+scan_shell_ids_finds_a_real_socket ... FAILED
+scan_shell_ids_still_skips_a_directory_named_like_a_socket ... ok
+test result: FAILED. 25 passed; 2 failed
+```
+
+— while the directory-negative stays green (it never depended on the socket
+type). Restored: `ok. 27 passed`.
+
+**The live restart sweep now PASSES — this is the phase's real acceptance.**
+Re-run through the user's door (isolated `HOME`, `backend = "pty"`, canned-AI
+stub, real tmux client), with a command that emits every 6 s so the log is
+visibly live, and the daemon stopped *mid-command*:
+
+```
+-- hosts belonging to THIS home --
+  host pid=2819156 (this home)
+-- adoption line (the criterion) --
+2026-09-09T16:04:36Z INFO  shell registry: adopted 1 surviving shell(s): ["s0"]
+-- cast bytes across the restart --
+  before_stop=795  now=1040
+  ticks logged=12          (4 before the restart, 12 after)
+-- socket type (the thing that broke it) --
+  s0.lock: socket=False regular_file=True
+  s0.sock: socket=True  regular_file=False
+```
+
+The adoption line is precisely what was **absent** before this phase; the host
+pid is unchanged across `daemoneye stop` + `daemoneye daemon`; and the `.cast`
+carries bytes on both sides of the restart — the exit criterion's own wording.
+
+**One observation, outside this phase's scope.** A `cargo test` run leaves
+stale `s*.lock` / `s0.sock` artifacts in the *developer's real*
+`~/.daemoneye/var/run/shells/` (entries dated across several days), and a
+transient `daemoneye shell-host` under `HOME=/home/matt` was observed and
+exited on its own during review. Nothing here writes to a user's live shells at
+runtime, and it did not affect any result — but a suite that leaks host
+artifacts into the real `HOME` is worth a look when someone next touches
+`shell::launch`'s tests.
