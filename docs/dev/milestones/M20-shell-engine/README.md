@@ -193,10 +193,40 @@ line-number facts go stale and each landing shifts the next Current state).
 | 07b | shell-session-wiring ([phase-07b-shell-session-wiring.md](phase-07b-shell-session-wiring.md)) | **done** (approved_after_1) 2026-09-07 | `src/shell/session.rs`: `shell_for_owner` — reuse the owner's live shell or create one, `await_ready`, roll the record back when readiness fails. Stands a live `ShellRegistry` up in `run_daemon` (sweep, then adopt), gated on `[execution] backend = "pty"`. Nothing consumes it yet. |
 | 07c | run-terminal-command-pty ([phase-07c-run-terminal-command-pty.md](phase-07c-run-terminal-command-pty.md)) | **done** (approved_after_2, 2026-09-08 — [bug-07c-1](bugs/bug-07c-1.md), [bug-07c-2](bugs/bug-07c-2.md), [bug-07c-3](bugs/bug-07c-3.md), all fixed) | Route `run_terminal_command` through 07b's `shell_for_owner` + 07a's client when `backend = "pty"` (local host only), masked + ANSI-annotated result, real exit code in the tool result and in the `events.jsonl` command record. **Owns the masking exit criterion** (PE decision 2026-09-06). First phase that runs a command on the new substrate from chat. |
 | 08a | pause-resume-cancel ([phase-08a-pause-resume-cancel.md](phase-08a-pause-resume-cancel.md)) | **done** (approved_after_2, 2026-09-08; 1 bounce + 1 hard_fail escalation that was an infrastructure timeout, not the executor — [bug-08a-1](bugs/bug-08a-1.md), [bug-08a-2](bugs/bug-08a-2.md), both fixed) | The signalling mechanism, all inside `src/shell/`: `ShellState::{Idle, Paused}`, the remembered stopped-pgid so `CONT` reaches the job it stopped, four-way `status()` via `/proc`, and `client::{send_signal, status}`. Mechanism only — no tool, no UX (design § line 452). |
-| 08b | interactive-and-gc | todo (not drafted) | The consumers: `is_interactive_command()` → return immediately with the shell id rather than waiting out `LOCAL_CMD_TIMEOUT`; exited-shell GC under `shells.exited_retention_secs` (moved from 06b at drafting, 2026-09-06 — see § Notes). |
-| 09 | restart-survival-and-close | todo (not drafted) | Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
+| 08b | interactive-commands ([phase-08b-interactive-commands.md](phase-08b-interactive-commands.md)) | todo (drafted 2026-09-08) | `is_interactive_command()` → return immediately naming the shell, **and** mark that shell so it is never reused: measured at drafting, an interactive command captures the owner's shell permanently and every later command in the session times out too (see § Notes). GC moved to 09. |
+| 09 | restart-survival-and-close | todo (not drafted) | Exited-shell GC under `shells.exited_retention_secs` (moved from 08b at drafting, 2026-09-08 — it needs a second `ShellRecord` timestamp field and `src/config/lifecycle.rs:110` already places the shell-log sweep here). Adoption end to end: shell running across `daemoneye stop` + `daemoneye daemon`; the live sweep of every exit criterion; `CLAUDE.md`, `README.md`, `architecture.md` § 5 updated; retrospective. |
 
 ## Notes
+
+- **Phase 08b was rescoped at drafting (2026-09-08): interactive routing only,
+  GC moved to 09.** Probes through the shipped API (compiled in, run, reverted)
+  found the charter understated the interactive half, the same way measurement
+  split 08 itself:
+
+  **An interactive command poisons the owner's shell permanently.** `ssh host`
+  is written into the shell, the session opens, the end marker never arrives
+  and `run_command` returns `Err` after the 45 s `LOCAL_CMD_TIMEOUT` — that
+  much was expected. What was not: `shell_for_owner` then hands back **the
+  same shell** (correctly — its `bash` is alive, so the flock probe says
+  reuse), but the interactive process owns the terminal and eats every byte
+  written to it. Measured: a following `echo ALIVE` on that shell also timed
+  out. **Every subsequent `run_terminal_command` in that chat session times
+  out, forever.**
+
+  So "return immediately with the shell id" is not sufficient on its own — an
+  early return that leaves the shell reusable reproduces the poisoning one
+  command later. 08b therefore carries two mechanisms (early return **and** a
+  non-reuse mark), which is a phase's worth of work; the exited-shell GC it was
+  chartered with moves to **09**, where it is a better fit anyway: it needs a
+  second `ShellRecord` timestamp (`sweep_stale` reaps immediately and records
+  nothing today), and `src/config/lifecycle.rs:110` already says the shell-log
+  sweep *"lands with the registry in phase-09"*.
+
+  Also measured and pinned in the phase doc: the classifier is already correct
+  on all six cases tried, including both negatives (`ssh -N host` and
+  `ssh host uptime` → false), so 08b touches neither `is_interactive_command`
+  nor `interactive_destination`.
+
 
 - **Phase 08 was split at drafting (2026-09-08) into 08a and 08b**, on a seam
   measurement found rather than a size guess — the same way 05b and 07b split.

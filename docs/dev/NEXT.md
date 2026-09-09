@@ -4308,3 +4308,46 @@ and exited-shell GC under `shells.exited_retention_secs`.
 **Still open for the PE:** `background=true` stays on the tmux `de-bg-*` path
 and no phase owns its shell-substrate equivalent — 08a is signalling, 08b is
 interactive routing + GC, 09 is restart survival.
+
+---
+
+**phase-08a — pause-resume-cancel: done (approved_after_2) 2026-09-08**,
+commit `8f50353`; 1 review bounce (bug-08a-1 flaky guard, bug-08a-2 pause
+toggling only once) + 1 `hard_fail` that turned out to be **infrastructure, not
+the executor**: rexymcp's HTTP client carried a hard-coded 300 s *total*
+`reqwest` timeout, a deadline on the whole exchange including the body, so any
+streamed response past five minutes was severed as `error decoding response
+body` and retried three times with the same prompt — 4 × 300 s = the 1200 s
+stall seen twice. Fixed upstream in rexyMCP `d1a9d74` (connect-timeout only),
+mirroring daemoneye's own `7f9c9b6`. **A phase that stalls at a round multiple
+of a timeout constant is an infrastructure symptom.** One accepted scope
+deviation is flagged in the verdict for the PE: a 3 × 20 ms settle re-read in
+the `STOP` arm, declared and benign, but measured at review as not
+load-bearing (18 runs green without it).
+
+**Active phase: phase-08b — interactive-commands**
+(`docs/dev/milestones/M20-shell-engine/phase-08b-interactive-commands.md`,
+status: todo, drafted 2026-09-08). Dispatch with `/rexymcp:dispatch phase-08b`.
+
+Scope: make an interactive command (`ssh host`, `mosh box`) return immediately
+naming the shell it connected on, **and** mark that shell so it is never handed
+to another command. Two mechanisms, both needed — see below. Confined to
+`src/shell/registry.rs`, `src/shell/session.rs` and
+`src/daemon/executor/shell_exec.rs`.
+
+**08b was rescoped at drafting on a measured defect** (milestone README
+§ Notes): **an interactive command poisons the owner's shell permanently.**
+`ssh host` opens the session, the end marker never arrives, `run_command`
+returns `Err` after 45 s — expected. Not expected: `shell_for_owner` hands back
+the *same* shell (correctly; its bash is alive), but the interactive process
+eats every byte written to it, so a following `echo ALIVE` timed out too. Every
+later command in that chat session times out, forever. An early return that
+leaves the shell reusable just reproduces this one command later, which is why
+08b carries the non-reuse mark as well — and why the **exited-shell GC** it was
+chartered with moved to **09**, which already owns lifecycle
+(`src/config/lifecycle.rs:110` places the shell-log sweep there) and where the
+needed second `ShellRecord` timestamp belongs.
+
+**Still open for the PE:** `background=true` stays on the tmux `de-bg-*` path
+and no phase owns its shell-substrate equivalent — 08a was signalling, 08b is
+interactive routing, 09 is restart survival + GC.
