@@ -4530,3 +4530,22 @@ Nothing is dispatched until then.
 **Deferred / excluded:** the governor (M25, needs M22's `Category`); M21
 Host/SSH, M22 Tool surface, M23 Client decoupling remain in the design roadmap,
 now sequenced after M24.
+
+**Active phase: phase-01 — run-core**
+(`docs/dev/milestones/M24-run-manager/phase-01-run-core.md`, status: todo,
+drafted 2026-09-09). Dispatch with `/rexymcp:dispatch phase-01`.
+
+Scope: create `src/daemon/run/` with the five pure types the milestone is built
+from — `RunId`, `RunKind`, `RunState`, `Budget`, `Briefing`. No wiring, no I/O,
+no callers; a section-G criterion pinned to baseline `3077587` enforces that
+nothing outside `src/daemon/run/` + the one `pub mod run;` line changes.
+
+Grounded at drafting: `RunId` takes the **16-lowercase-hex** grammar of
+`new_session_id()` (`src/cli/commands/ipc_client.rs:13`), the convention behind
+`var/log/sessions/<id>.jsonl` and so the right shape for
+`var/log/runs/<id>.jsonl` — the two other uuid conventions in the tree
+(`ghost.rs:185`, `pty.rs:30`) are explicitly *not* the model. `parse` is a hard
+validator that `bail!`s, mirroring `validate_shell_id`, because the id becomes a
+path segment: the pinned negatives include `../../etc/passwd` and `a/b`.
+`Briefing` is defined here so `RunState::HardFail(Briefing)` is final from the
+start and phase 03 does not have to change the enum.

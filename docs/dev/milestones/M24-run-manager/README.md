@@ -71,7 +71,7 @@ precede the full four-loop unification's completion.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | run-core — `Run`/`RunId`/`RunKind`/`RunState`/`Budget` in `src/daemon/run/`, pure, no wiring | todo (not drafted) |
+| 01 | run-core ([phase-01-run-core.md](phase-01-run-core.md)) — `RunId`/`RunKind`/`RunState`/`Budget`/`Briefing` in `src/daemon/run/`, pure, no wiring | todo (drafted 2026-09-09) |
 | 02 | turn-log — `var/log/runs/<id>.jsonl` writer + format + `run_log_*`/`get_turn` tools | todo (not drafted) |
 | 03 | run-result — `RunResult` + bounded briefing (port from rexyMCP anchors) | todo (not drafted) |
 | 04 | cancel — cooperative cancel + `var/run/stop-<run>` sentinel + `daemoneye stop <run>` | todo (not drafted) |
