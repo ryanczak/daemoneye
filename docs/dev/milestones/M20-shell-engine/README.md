@@ -195,8 +195,9 @@ line-number facts go stale and each landing shifts the next Current state).
 | 08a | pause-resume-cancel ([phase-08a-pause-resume-cancel.md](phase-08a-pause-resume-cancel.md)) | **done** (approved_after_2, 2026-09-08; 1 bounce + 1 hard_fail escalation that was an infrastructure timeout, not the executor — [bug-08a-1](bugs/bug-08a-1.md), [bug-08a-2](bugs/bug-08a-2.md), both fixed) | The signalling mechanism, all inside `src/shell/`: `ShellState::{Idle, Paused}`, the remembered stopped-pgid so `CONT` reaches the job it stopped, four-way `status()` via `/proc`, and `client::{send_signal, status}`. Mechanism only — no tool, no UX (design § line 452). |
 | 08b | interactive-commands ([phase-08b-interactive-commands.md](phase-08b-interactive-commands.md)) | **done** (approved_first_try, 2026-09-08) | `is_interactive_command()` → return immediately naming the shell, **and** mark that shell so it is never reused: measured at drafting, an interactive command captures the owner's shell permanently and every later command in the session times out too (see § Notes). GC moved to 09. |
 | 09 | shell-gc ([phase-09-shell-gc.md](phase-09-shell-gc.md)) | **done** (approved_first_try, 2026-09-08) | **The last executor phase.** Exited-shell GC under `shells.exited_retention_secs` (moved from 08b at drafting, 2026-09-08 — it needs a second `ShellRecord` timestamp field and `src/config/lifecycle.rs:110` already places the shell-log sweep here). Plus the `.cast` log sweep under `log_retention_days` (the last `Pending` lifecycle row) and the closing docs — `CLAUDE.md` § Key files, `README.md` § Configuration, `architecture.md` § 5. **Restart survival, the live exit-criteria sweep and the retrospective are NOT in it**: the README's own exit criteria mark live checks architect-run, and milestone close is human-gated (see § Notes). |
+| 10 | adoption-socket-fix ([phase-10-adoption-socket-fix.md](phase-10-adoption-socket-fix.md)) | todo (drafted 2026-09-08 — close-blocker from the live sweep, [bug-10-1](bugs/bug-10-1.md)) | `scan_shell_ids` filters on `is_file()`, false for a real AF_UNIX socket, so the daemon never re-adopts a surviving shell and `sweep_stale` never sweeps a dead one — both inert in production, green in tests (fixtures are regular files). The one filter that fails restart survival. |
 
-## Retrospective — M20 closed 2026-09-08 (code complete; live sweep outstanding)
+## Retrospective — M20 (all 15 original phases done 2026-09-08; live sweep found one close-blocker → phase-10)
 
 **15 phases, all `done`. 4 approved_first_try, 7 approved_after_1, 3
 approved_after_2, 1 approved_after_4; 3 `hard_fail` escalations; 17 bugs
@@ -273,8 +274,26 @@ a fix" bar. None is landed; `WORKFLOW.md` changes need explicit approval.
 
 ### Exit criteria status
 
-Every criterion is met **except the two that are architect-run live checks**,
-which are the outstanding work at close:
+**The live sweep ran 2026-09-08 and found a close-blocker.** Two of the three
+live criteria pass; restart survival does **not**:
+
+- **Exit code (pty), live — PASS.** A `daemoneye chat` turn under
+  `backend = "pty"` ran `sh -c 'exit 3'` in shell s0; the session JSONL
+  `tool_results` carries `[command exited with status 3]` and the events
+  segment records `event=command mode=shell exit=3 pane=s0`.
+- **Negative (tmux), live — PASS.** Under `backend = "tmux"` a chat turn ran
+  via the tmux pane path with **zero** shell sockets/casts/hosts spawned and
+  zero `mode=shell` command records.
+- **Restart survival — FAIL (bug-10-1).** The shell *host* survives
+  `daemoneye stop` + `daemoneye daemon` (same pid, socket, lock, and a `.cast`
+  with both markers) — but the daemon never **re-adopts** it: `scan_shell_ids`
+  filters on `file_type.is_file()`, which is false for a real AF_UNIX socket,
+  so `adopt_at_startup` (and `sweep_stale`) find nothing. Every unit test
+  passes because its `.sock` fixtures are regular files. Fix drafted as
+  **phase-10**; the criterion is verification, but the fix is real code.
+
+The remaining criteria below are met **except restart survival above**, which
+phase-10 fixes:
 
 - **Restart survival (the PE's hard requirement)** — a shell running `sleep 60`
   surviving `daemoneye stop` + `daemoneye daemon`, evidenced by a `.cast` with

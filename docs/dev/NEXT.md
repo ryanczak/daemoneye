@@ -4434,3 +4434,35 @@ closed). Retrospective in `docs/dev/milestones/M20-shell-engine/README.md`
 **Also still open for the PE:** `background=true` remains on the tmux
 `de-bg-*` path with no phase owning its shell-substrate equivalent. Flag it
 when scoping the next milestone.
+
+---
+
+## M20 live sweep run 2026-09-08 — one close-blocker found
+
+The three folds are landed in `WORKFLOW.md` (commit `e251528`): pinned-count
+derivation, struct-field authorizations, and run-every-criterion-before-dispatch.
+
+The architect-run live sweep then ran (isolated `HOME`, canned-AI stub, real
+tmux client via a persistent PTY-client helper). Results:
+
+- **Exit code (pty) — PASS.** `sh -c 'exit 3'` through a real `daemoneye chat`
+  turn: session JSONL `tool_results` = `[command exited with status 3]`, events
+  segment `event=command mode=shell exit=3 pane=s0`.
+- **Negative (tmux) — PASS.** `backend = "tmux"` chat turn ran via the tmux
+  pane path; 0 shell sockets/casts/hosts, 0 `mode=shell` records.
+- **Restart survival — FAIL → phase-10.** The shell host survives
+  `daemoneye stop`+`daemon` (same pid, socket, lock, `.cast` with both
+  markers), but the daemon never re-adopts it: `scan_shell_ids` filters on
+  `file_type.is_file()`, false for a real AF_UNIX socket. Proven against the
+  crate: `scan_shell_ids` returns `[]` for a real socket, `["s0"]` for a
+  regular file (the fixture that hid it). Both `adopt_at_startup` and
+  `sweep_stale` are inert in production. Filed `bugs/bug-10-1.md`.
+
+**Active phase: phase-10 — adoption-socket-fix**
+(`docs/dev/milestones/M20-shell-engine/phase-10-adoption-socket-fix.md`, todo,
+drafted 2026-09-08). Dispatch with `/rexymcp:dispatch phase-10`. ~60 lines: one
+filter, three tests (one binding a real `UnixListener`, red against the current
+filter). **M20 cannot close until phase-10 lands and the restart sweep is
+re-run green.**
+
+Still open for the PE: `background=true` on the tmux `de-bg-*` path, unowned.
