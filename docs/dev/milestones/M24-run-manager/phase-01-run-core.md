@@ -1,7 +1,7 @@
 # Phase 01: the `Run` core types
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** none (this is the milestone's first phase; pure types, no wiring)
 **Estimated diff:** ~450 lines incl. tests
 **Tags:** language=rust, kind=feature, size=m
@@ -302,7 +302,7 @@ Run this block verbatim from the repo root. It writes `/tmp/e2e-m24-01.txt`.
 {
 echo "== A. build =="; cargo build 2>&1 | tail -2; echo "cargo_exit=${PIPESTATUS[0]}"
 echo "== B. named tests (each line is one pinned test) =="
-cargo test --lib 2>&1 | grep -E "^test .*(run_id_|run_kind_|run_state_|budget_|briefing_).* ok$" | sed 's/^test //' | sort
+cargo test --lib 2>&1 | grep -E "^test daemon::run::tests::.* ok$" | sed 's/^test //' | sort
 echo "cargo_exit=${PIPESTATUS[0]}"
 echo "== C. run module total (>=10) =="
 cargo test --lib daemon::run:: 2>&1 | grep -E "^test result:"; echo "cargo_exit=${PIPESTATUS[0]}"
@@ -679,3 +679,64 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 34c701fb42b55a6c628fdb3c98758001f2051007
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-09
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none. The single-`mod.rs` module shape is the option
+  the spec explicitly permitted, and the executor invoked the `pub use` waiver
+  in the Update Log exactly as asked (verified: `src/daemon/run/` holds only
+  `mod.rs`, `grep -c 'pub use '` → 0, so there is genuinely nothing to
+  re-export).
+- **Calibration — an architect defect, corrected in the E2E block above.** My
+  section-B grep was
+  `^test .*(run_id_|run_kind_|run_state_|budget_|briefing_).* ok$`, which is
+  unanchored to the module and matches **21** lines against this tree — the 10
+  pinned tests plus 11 pre-existing ones whose names merely contain `budget_`
+  or `briefing_` (`daemon::briefing::tests::*`, `daemon::digest::tests::
+  budget_cut_*`, `cli::…::turn_budget_label_*`, `cli::…::silence_budget_*`,
+  `ai::…first_token_budget*`). Corrected to `^test daemon::run::tests::.* ok$`,
+  which returns exactly **10**. Nothing was hidden — every pinned test is
+  present and green — but the transcript was noisy where it should have been
+  exact. **Worth recording plainly: `WORKFLOW.md` § "Run every count criterion"
+  gained the "scope the search so the criterion's own corpus cannot satisfy it"
+  fold *this same session*, and I then wrote an under-scoped grep in the very
+  next phase doc I authored.** The fold's own escalation clause anticipates
+  this: prose did not stop it. If it recurs, the remedy is the mechanical
+  pre-dispatch check that clause names, not more wording.
+
+**Verified at review, independently re-run:** all four gates green; full suite
+**1676 passed / 0 failed / 4 ignored on ten consecutive runs** (1666 pre-phase +
+10 new), steady at ~7.0 s; `daemon::run::` **10**; `shell::registry::` **27**
+and `daemon::stats::` **7** unchanged. Structural: run dir **1**, `pub mod run;`
+**1**, `pub mod` inside `run/mod.rs` **0**, each of the five type declarations
+**1**, `bail!` **1**, no-IO/clock **0**, pre-test unwrap/expect/panic/unsafe
+**0**, no TODO/dbg/allow. **Section G — the no-wiring criterion — is `0`
+against the pinned baseline `3077587`**, so nothing outside `src/daemon/run/`
+and the one `pub mod run;` line changed.
+
+**Three mutations re-run by the reviewer, not read from the log** — the two the
+spec required, plus one of my own on the security boundary:
+
+1. Removing the 5-file cap reds **only**
+   `briefing_truncates_working_files_to_five` (9 passed / 1 failed).
+2. Removing the `limit == 0` unlimited branch reds **only**
+   `budget_zero_limit_means_unlimited` (9 passed / 1 failed).
+3. *(reviewer's own)* Loosening the id grammar to `!s.is_empty()` reds **both**
+   `run_id_parse_rejects_path_traversal_and_separators` and
+   `run_id_parse_rejects_wrong_length_case_and_non_hex` (8 passed / 2 failed).
+   That third one matters most: the id becomes a path segment, so the traversal
+   rejection is a security boundary, and it is genuinely load-bearing.
+
+All green on restore.
+
+**The disclosed flake did not reproduce.** The executor honestly reported one
+`1 failed` lib run during its first E2E attempt and re-ran the block. I ran the
+suite **ten** times at the default thread count: `0 failed` every time, no
+outlier timings. The phase adds only pure tests (no PTY, no clock, no
+filesystem), so it cannot be the source; the suite's PTY tests have a known
+load-sensitivity history (bug-08a-1), which is the likely explanation under a
+busy executor host. Nothing to file — recorded so a recurrence has a precedent
+to point at.
