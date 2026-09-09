@@ -39,6 +39,7 @@ impl Config {
         let pd = prompts_dir();
         std::fs::create_dir_all(&pd)?;
         std::fs::create_dir_all(sessions_dir())?;
+        std::fs::create_dir_all(runs_dir())?;
         // User-managed top-level directories
         std::fs::create_dir_all(scripts_dir())?;
         std::fs::create_dir_all(runbooks_dir())?;

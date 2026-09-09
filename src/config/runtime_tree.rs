@@ -318,6 +318,12 @@ pub static RUNTIME_TREE: TreeNode = TreeNode {
                                 children: &[],
                             }],
                         },
+                        TreeNode {
+                            name: "runs/",
+                            note: Some("per-run turn logs (<run-id>.jsonl, M24)"),
+                            blank_before: false,
+                            children: &[],
+                        },
                     ],
                 },
                 TreeNode {

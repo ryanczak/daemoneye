@@ -108,6 +108,12 @@ pub fn sessions_dir() -> PathBuf {
     var_log_dir().join("sessions")
 }
 
+/// Directory where per-run turn logs are stored: `~/.daemoneye/var/log/runs/`.
+/// One `<run-id>.jsonl` file per run.
+pub fn runs_dir() -> PathBuf {
+    var_log_dir().join("runs")
+}
+
 /// Resolves the user's home directory from the `HOME` env var.
 /// Falls back to `/tmp` on systems where HOME is unset (unusual but possible).
 fn dirs_next() -> PathBuf {

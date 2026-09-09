@@ -89,6 +89,19 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         lazy: false,
     },
     LifecycleEntry {
+        path: "var/log/runs",
+        intent: LifecycleIntent::Sweep {
+            default_retention_days: 0,
+        },
+        config_key: None,
+        implemented: ImplementationStatus::Pending {
+            owned_by: "M24 phase-10",
+        },
+        note: "per-run turn logs (var/log/runs/<run-id>.jsonl); retention needs a \
+               [runs] config key, which lands with the run CLI in phase-10",
+        lazy: false,
+    },
+    LifecycleEntry {
         path: "var/log/panes",
         intent: LifecycleIntent::Sweep {
             default_retention_days: 7,

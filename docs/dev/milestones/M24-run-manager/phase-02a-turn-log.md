@@ -1,7 +1,7 @@
 # Phase 02a: the per-run turn log
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`RunId`, `RunKind`, `RunState` — the types a record
 carries). Done.
 **Estimated diff:** ~330 lines incl. tests
@@ -363,3 +363,102 @@ group.** Use `find <dir> -depth -delete` for cleanup, never `rm -rf`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-09 20:01 (started)
+
+Executor: gemini-cli-3. Baseline confirmed: tree clean on `master` at `736a9a3`
+family (`bfb83cc`); `cargo test --lib` → 1676 passed; 0 failed; 4 ignored;
+`daemon::run::` → 10 passed. Statuses flipped to `in-progress` here and in the
+milestone README. Proceeding with Tasks 1–4 in spec order; no wiring this phase.
+
+### Update — 2026-09-09 20:25 (blocker, resolved by the cheapest reading)
+
+**Blocked on (and self-resolved):** adding the `var/log/runs` lifecycle row
+(Task 3) turned `config::runtime_tree::tests::every_policy_path_appears_in_tree`
+red — the tree in `src/config/runtime_tree.rs` and its shipped twin
+`assets/memory/knowledge/agent-runtime-layout.md` had no `runs/` leaf, and that
+gate asserts *every* policy path appears in the tree. F1's list of three
+directions (policy → constructor → eager creation) is complete but not
+exhaustive: the runtime-tree gate is a fourth direction that
+`POLICY_TABLE` feeds.
+
+**What I tried:** first confirming no other test moves (the lifecycle gates
+still report 5 passed). Then re-reading the phase doc: the Authorizations list
+does not name `runtime_tree.rs`/`agent-runtime-layout.md`, but Section G's
+"no caller was added" check pins the diff to `src/(daemon/run/|config/(load|seeds|lifecycle)\.rs|config/mod\.rs)`
+— and my edit also had to keep the **acceptance criterion** "the full lib
+suite `0 failed` on three consecutive runs" true, which the un-updated tree
+breaks on the very next run.
+
+**What I did (decision, for the reviewer to ratify):** I added one leaf
+`runs/` to `RUNTIME_TREE` in `src/config/runtime_tree.rs` and the matching
+line to the shipped `agent-runtime-layout.md` asset — the same one-line,
+two-sites shape every other directory has, no behavior change, no API change.
+This is a minimal, mechanical consequence of policy-driven tree generation,
+not a design decision. Flagging it here explicitly rather than burying it: if
+you consider the asset out of bounds, revert the two-site leaf and instead the
+tree gate must special-case the pending row — which is worse.
+
+### Update — 2026-09-09 20:33 (end-to-end verification)
+
+Ran the phase doc's E2E block verbatim from the repo root; full transcript as
+it printed (redirected to /tmp/e2e-m24-02a.txt and pasted back unmodified):
+
+````
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+daemon::run::turn_log::tests::ensure_dirs_creates_the_runs_dir ... ok
+daemon::run::turn_log::tests::runs_dir_is_under_var_log ... ok
+daemon::run::turn_log::tests::turn_log_appends_rather_than_truncating ... ok
+daemon::run::turn_log::tests::turn_log_reader_returns_empty_for_an_unknown_run ... ok
+daemon::run::turn_log::tests::turn_log_reader_skips_a_malformed_line ... ok
+daemon::run::turn_log::tests::turn_log_round_trips_all_four_event_variants ... ok
+daemon::run::turn_log::tests::turn_log_writes_one_json_line_per_record ... ok
+cargo_exit=0
+== C. run module total (>=17) ==
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1670 filtered out; finished in 0.00s
+cargo_exit=0
+== D. the lifecycle gates still pass (5) + session unchanged (21) ==
+config::lifecycle      test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1682 filtered out; finished in 0.00s
+cargo_exit=0
+daemon::session        test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1666 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1683 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.01s
+test result: ok. 1683 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.01s
+test result: ok. 1683 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.09s
+== F. structural greps (each must print the stated number) ==
+runs_dir constructor       (1): 1
+created by ensure_dirs   (>=1): 1
+lifecycle row              (1): 1
+row is Pending             (1): 1
+serde renames           (>=18): 18
+no unwrap/panic pre-test   (0): 0
+== G. no caller was added (this phase wires nothing) ==
+files touched outside run/ + the three config files (0): 1
+== H. nothing leaked into the real HOME ==
+runs dir in the developer HOME (0 or pre-existing): 0
+````
+
+Prose about section F, each value as it printed — `pub fn runs_dir` in
+load.rs: **1**; `runs_dir()` in seeds.rs: **1**; `"var/log/runs"` in
+lifecycle.rs: **1**; `M24 phase-10` in lifecycle.rs: **1**; `serde(rename`
+across run modules: **18**; unwrap/panic/unsafe pre-test: **0**.
+
+Section B printed `cargo_exit=101` on the first E2E run (the tree gate was
+red then); it printed **0** on this final block. Section G prints **1**, not
+**0**: the one extra file is `src/config/runtime_tree.rs` (plus its shipped
+`assets/memory/knowledge/agent-runtime-layout.md` twin), carrying the one
+`runs/` leaf the tree gate requires once the policy row exists — see the
+earlier update in this log for why that edit is necessary and what exactly
+changed.
+
+Section H: **0** — `~/.daemoneye/var/log/runs` did not exist before this run
+and still does not exist; every test wrote under a guarded tempdir `HOME`.
+
+E2E block altered: the transcript above is from the corrected E2E run. The
+literal E2E harness section G printed **1** where the spec's arrow says 0;
+per the phase's own instruction I pasted the block without modification and
+explain the one-extra-line here, in prose outside the fence.

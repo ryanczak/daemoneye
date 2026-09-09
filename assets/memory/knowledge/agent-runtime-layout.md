@@ -56,6 +56,7 @@ automation, configuration, and logs live under it.
       pipe/                  ← live pipe-pane capture logs (ephemeral, ANSI-stripped)
       sessions/
         <id>.jsonl           ← per-session JSONL conversation history (ephemeral)
+      runs/                  ← per-run turn logs (<run-id>.jsonl, M24)
 
     index/
       memory.db              ← SQLite FTS5 memory index (derived; rebuildable)
