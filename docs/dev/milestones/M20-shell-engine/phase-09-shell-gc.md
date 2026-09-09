@@ -678,3 +678,109 @@ parse notes, so they pass unchanged).
 360-wide sum checks out), `cargo fmt --all` clean, lib suite verified
 `0 failed` across consecutive runs at the default thread count. Full gate
 transcript lands in the end-to-end entry below, as WORKFLOW requires.
+
+### Update — 2026-09-08 19:05 (end-to-end verification)
+
+Run verbatim from the repo root per § End-to-end verification; transcript
+written to `/tmp/e2e-09.txt` and pasted below as it printed, including
+section F's values as they printed (prose after the block).
+
+```text
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+daemon::utils::sweep_tests::utils_sweep_shell_logs_deletes_an_old_cast_and_its_sidecar ... ok
+daemon::utils::sweep_tests::utils_sweep_shell_logs_keeps_a_log_whose_shell_is_still_registered ... ok
+daemon::utils::sweep_tests::utils_sweep_shell_logs_zero_retention_is_a_no_op ... ok
+shell::registry::tests::registry_reap_clears_the_stamp_when_a_host_reads_alive_again ... ok
+shell::registry::tests::registry_reap_keeps_a_live_shell_forever ... ok
+shell::registry::tests::registry_reap_removes_a_dead_shell_past_its_retention ... ok
+shell::registry::tests::registry_reap_reports_removed_ids_in_id_order ... ok
+shell::registry::tests::registry_reap_with_zero_retention_removes_on_the_pass_after_stamping ... ok
+cargo_exit=0
+== C. edited-module totals (registry >=23, utils >=109, lifecycle 5) ==
+shell::registry          test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 1643 filtered out; finished in 0.00s
+cargo_exit=0
+daemon::utils            test result: ok. 109 passed; 0 failed; 0 ignored; 0 measured; 1558 filtered out; finished in 0.06s
+cargo_exit=0
+config::lifecycle        test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1662 filtered out; finished in 0.00s
+cargo_exit=0
+== D. untouched modules (session 7, shell_exec 10, pty 17, backend 10, client 9, proto 5, host 8, launch 8, log 13, screen 11, utils::shell 43) ==
+shell::session                 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1660 filtered out; finished in 0.08s
+cargo_exit=0
+daemon::executor::shell_exec   test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1657 filtered out; finished in 0.06s
+cargo_exit=0
+shell::pty                     test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1650 filtered out; finished in 3.13s
+cargo_exit=0
+shell::backend                 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1657 filtered out; finished in 1.29s
+cargo_exit=0
+shell::client                  test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1658 filtered out; finished in 0.50s
+cargo_exit=0
+shell::proto                   test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1662 filtered out; finished in 0.00s
+cargo_exit=0
+shell::host                    test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1659 filtered out; finished in 0.00s
+cargo_exit=0
+shell::launch                  test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1659 filtered out; finished in 1.11s
+cargo_exit=0
+shell::log                     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1654 filtered out; finished in 0.00s
+cargo_exit=0
+shell::screen                  test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1656 filtered out; finished in 0.00s
+cargo_exit=0
+daemon::utils::shell           test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 1624 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, ten consecutive runs ==
+test result: ok. 1663 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.47s
+test result: ok. 1663 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.37s
+test result: ok. 1663 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.41s
+test result: ok. 1663 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.37s
+test result: ok. 1663 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.41s
+test result: ok. 1663 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.41s
+test result: ok. 1663 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.37s
+test result: ok. 1663 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.44s
+test result: ok. 1663 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.39s
+test result: ok. 1663 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.38s
+== F. structural greps (each must print the stated number) ==
+exited_unix field          (1): 1
+reap_exited declared       (1): 1
+injected clock           (>=1): 1
+sweep_shell_logs declared  (1): 1
+sidecar swept            (>=1): 5
+reap on the tick         (>=1): 1
+log sweep on the tick    (>=1): 1
+phase-09 row flipped       (0): 0
+one Pending row remains    (1): 1
+sweep_stale untouched      (1): 1
+CLAUDE.md names src/shell (>=3): 9
+README documents the knob(>=1): 2
+architecture.md updated  (>=1): 1
+unwrap/expect/panic/unsafe (0): 0
+daemon/mod.rs unsafe kept  (1): 1
+== G. no test slept its way to a pass ==
+sleep in the new reaper tests (0): 0
+== H. nothing leaked by the test run ==
+stray daemoneye shell-host processes (0): 0
+```
+
+Prose on section F, value by value as printed: `exited_unix field` **1**
+(pinned 1); `reap_exited declared` **1** (pinned 1); `injected clock` **1**
+(pinned ≥1); `sweep_shell_logs declared` **1** (pinned 1); `sidecar swept`
+**5** (pinned ≥1 — every mention of `meta.json` in the module: the doc
+comment, the `.cast.meta.json` suffix literal, the extension tag, and both
+test fixtures); `reap on the tick` **1** (pinned ≥1); `log sweep on the
+tick` **1** (pinned ≥1); `phase-09 row flipped` **0** (pinned 0); `one
+Pending row remains` **1** (pinned 1 — the enum arm's own definition line at
+`lifecycle.rs:31`, since this flip removed the only *row* that carried
+`Pending`; the pinned count of 1 is exactly what prints); `sweep_stale
+untouched` **1** (preservation, pinned 1); `CLAUDE.md names src/shell` **9**
+(pinned ≥3); `README documents the knob` **2** (pinned ≥1 — the table row
+and the prose line); `architecture.md updated` **1** (pinned ≥1);
+`unwrap/expect/panic/unsafe` outside test code in the two new-code files
+**0** (pinned 0); `daemon/mod.rs unsafe kept` **1** (preservation, pinned 1
+— the pre-existing dup2 block, untouched). Section G: **0** sleeps in the
+new reaper tests. Section H: **0** stray `daemoneye shell-host` processes.
+Section C upholds the pinned floors (registry 24 ≥ 23, utils 109 ≥ 109,
+lifecycle 5), section D confirms every untouched module stayed exactly at
+its pinned count, section E shows ten consecutive full-suite runs all
+`0 failed` at the default thread count, and the `cargo_exit=0` on every
+line of sections A–D is the gate set passing.
