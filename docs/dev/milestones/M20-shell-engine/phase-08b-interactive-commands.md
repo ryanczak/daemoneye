@@ -1,7 +1,7 @@
 # Phase 08b: interactive commands on the shell substrate
 
 **Milestone:** M20 — Shell Engine
-**Status:** review
+**Status:** done
 **Depends on:** phase-07c (`run_in_shell`), phase-07b (`shell_for_owner`) —
 both done. Independent of 08a; touches none of its signal code.
 **Estimated diff:** ~280 lines
@@ -239,8 +239,15 @@ Each was run against the current tree and returns the "now" value shown.
       does not match this pattern — CLAUDE.md § Important Invariants.)*
 - [ ] `cargo test --lib daemon::executor::shell_exec::` reports **10 or more**
       passing, `0 failed` (now `7`).
-- [ ] `cargo test --lib shell::session::` reports **8 or more** passing,
-      `0 failed` (now `6`).
+- [ ] `cargo test --lib shell::session::` reports **7 or more** passing,
+      `0 failed` (now `6`). *(Corrected at review 2026-09-08 — the criterion
+      said `8 or more`, which contradicts this doc's own test plan: it lists
+      exactly one session test, and 6 + 1 = 7. An architect arithmetic defect,
+      not an implementation one; the run reported the `7` honestly and the
+      pinned test `session_reuse_skips_a_shell_marked_interactive` is present
+      and green. Third time in this milestone a criterion has been corrected
+      at review for disagreeing with its own spec — see the 07c `run_in_shell(`
+      and `pub fn registry` corrections.)*
 - [ ] `cargo test --lib shell::registry::` reports **18 or more** passing,
       `0 failed` (now `17`).
 - [ ] Unchanged: `shell::pty::` **17**, `shell::backend::` **10**,
@@ -695,3 +702,62 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** ad00c99fcc54503c504d50483559ef8aa761c0f9
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-08
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** two, both declared, both accepted — see below.
+- **Calibration:** one architect defect, corrected in § Acceptance criteria
+  above. The `shell::session::` criterion pinned **≥8** while this doc's own
+  test plan lists exactly one session test against a base of 6. The executor
+  printed the honest `7`, said so plainly, and explicitly declined to pad the
+  count to reach a number the spec had no basis for — the right call, and the
+  behaviour the milestone's earlier bounces were trying to produce. **This is
+  the third criterion in M20 corrected at review for contradicting its own
+  spec** (07c's `run_in_shell(` and `pub fn registry`). One occurrence is data,
+  two a trend, three a fix: worth folding at milestone close — *derive every
+  pinned count from the test plan you just wrote, and re-add it.*
+
+**Verified at review, independently re-run:** all four gates green; full suite
+**1655 passed / 0 failed / 4 ignored on ten consecutive runs** at default
+threads; `daemon::executor::shell_exec::` 10, `shell::registry::` 19,
+`shell::session::` 7; every preserved module exact — `daemon::utils::shell`
+**43** (unchanged in both directions, so the classifier is untouched),
+`pty` 17, `backend` 10, `client` 9, `proto` 5, `host` 8, `launch` 8, `log` 13,
+`screen` 11; every structural grep at its pinned value; leak checks 0 stray
+shell-hosts and 0 stray `ssh` processes; the end-to-end block re-checked
+against `/tmp/e2e-08b.txt` → `PASTE MATCH`.
+
+**Both mutations re-run by the reviewer, not read from the log:**
+
+- Disabling the early return (`if false && is_interactive_command(cmd)`) turns
+  **both** interactive tests red while
+  `shell_exec_non_interactive_still_runs_on_the_same_shell` stays green — the
+  negative case is discriminating, not decorative.
+- Removing the reuse-filter clause (`!record.interactive &&`) turns
+  `session_reuse_skips_a_shell_marked_interactive` **and** the executor-layer
+  F2 guard `shell_exec_interactive_marks_the_shell_and_the_next_command_gets_a_new_one`
+  red — the two mechanisms are guarded independently, at their own layers,
+  which is what the phase needed.
+
+Both green on restore.
+
+**Scope deviation 1 — `src/shell/mod.rs` gained one line, and it is the right
+line.** `mark_interactive` was added to the existing `pub use registry::{…}`
+block so `shell_exec` imports it at the module's declared entry point. That is
+outside the three authorized files, and it is also **exactly the pattern
+bug-07c-1 was filed to enforce**: that bug bounced an earlier phase for making
+ten shell modules `pub mod` when the re-export block already existed. Applying
+that lesson unprompted is the correct resolution of the conflict between the
+authorization list and the codebase's own convention.
+
+**Scope deviation 2 — the message declines to invent an instruction it cannot
+honour.** F4's tmux original ends by telling the model to use
+`run_terminal_command(target_pane=…)` to type into the session. The shell
+substrate has no such addressing yet (M23), so the executor wrote *"Later
+commands run in a fresh shell and do not reach this session; a way to type into
+the open session arrives with a later milestone"* instead. That is the same
+judgment the spec asked for on `<pane_snapshot>` — omit rather than fabricate —
+applied to a case the spec did not enumerate. Correct.
