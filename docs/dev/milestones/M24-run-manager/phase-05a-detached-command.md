@@ -690,11 +690,20 @@ was removed by the architect; do not recreate it.
 
 ### Update — 2026-09-10 (escalation)
 
-**Chosen lever:** resume, after an architect spec correction.
+**Chosen lever:** resume the partial work — executed as `execute_phase` against
+this `in-progress` doc, **not** `continue_phase`.
 **Rationale:** the spec was the problem (task 4's writer-lifetime claim was
 false, which is what burned 600 turns), so it had to be corrected either way —
 but the executor's partial work is structurally correct and worth preserving, so
-resume rather than a fresh re-dispatch that would rebuild 150 sound lines. The
+resume rather than a fresh re-dispatch that would rebuild ~150 sound lines. The
 architect verified the one-line fix on the partial tree and handed the diagnosis
 over rather than applying it.
+
+**Why not `continue_phase`:** it is a blocking call that returns no `run_id` and
+registers no watcher, so the run cannot be stopped short of killing `rexymcp
+serve`. Re-dispatching an `in-progress` doc achieves the same resume — the
+executor reads the phase doc plus the § Notes for executor block above, and the
+partial diff is already on the working tree — while staying observable in
+`rexymcp status` and stoppable. After a 600-turn loss, keeping the stop path is
+worth more than the tool's task-state restoration.
 
