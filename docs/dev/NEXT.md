@@ -4650,7 +4650,40 @@ reachable `budget_exceeded` arm: one edit, both modules red. Recorded in the
 milestone README as a **held fold candidate at occurrence 2** (same family as
 M20 bug-07c-3).
 
-**Active phase: M24 phase-04 — cancel** (drafted 2026-09-10,
+**phase-04 — cancel: done (approved_after_1) 2026-09-10**, commits `8557220`
+(round 1) + `32abf73` (round 2), approval `38221c5`. 251 turns then 99.
+Reason-carrying cancel registry, `var/run/stop-<run>` sentinel + 500 ms
+injectable-poll watcher, filtered startup sweep, `daemoneye stop [<run>]`.
+**Bounced once (bug-04-1, `missing_spec_test`):**
+`watcher_exits_without_firing_when_the_run_is_gone` built two unrelated
+`RunCancelSignal::new()` pairs, so its "without firing" assertion observed a
+receiver whose sender was dropped on creation and could never fail — a spurious
+`handle.cancel()` on a deregistered run left the test green. Fixed by collapsing
+to the sibling shape; verified at review by mutation. **Calibration recorded
+(occurrence 2, held):** the round-1 mutation check *did* redden this test — it
+reddened the strong `is_finished()` half, masking the dead one. A mutation
+reddening a test proves only that *some* assertion fired; aim it at the property
+whose guard is in doubt, and quote the failing assertion line.
+
+**Active phase: M24 phase-05a — detached-command** (drafted 2026-09-10,
+`docs/dev/milestones/M24-run-manager/phase-05a-detached-command.md`, status
+`todo`). `spawn_command` + `CommandHandle` (start a command, return before it
+finishes, deliver the real `CommandOutcome` later) and `dedicated` shells that
+`shell_for_owner` never reuses. **Phase 05 split at drafting into 05a/05b** on
+the module boundary: 05a is entirely `src/shell/` and asserts a zero diff under
+`src/daemon/`; 05b is the executor arm, the `[Background Task Completed]` event,
+`Run` wiring and retiring tmux `de-bg-*` — the milestone's payoff criterion.
+**Drafting finds:** `run_command` (`src/shell/client.rs:111-190`) must first
+split into a shared handshake + a shared read-to-marker loop, or the detached
+variant duplicates the marker protocol; the `dedicated` field has six
+construction sites and `spawn_for` three call sites, all named in
+§ Authorizations. Two pinned counts were **wrong until run** —
+`grep -c 'ShellRecord {'` is 5 (the pattern also matches the struct definition
+and a test helper's return type), and `~/.daemoneye/var/run/shells/` already
+holds 5 entries of M20 `shell::launch` litter, so that criterion is a delta, not
+an absolute.
+
+*(Superseded — phase-04 is done: originally drafted 2026-09-10,
 `docs/dev/milestones/M24-run-manager/phase-04-cancel.md`, status `todo`).
 Reason-carrying run cancel registry in `src/daemon/run/cancel.rs`, the
 `var/run/stop-<run>` sentinel + 500 ms watcher (poll injectable), a startup

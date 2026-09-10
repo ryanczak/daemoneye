@@ -76,7 +76,8 @@ precede the full four-loop unification's completion.
 | 02b | run-log-tools ([phase-02b-run-log-tools.md](phase-02b-run-log-tools.md)) — `run_log_tail` / `run_log_search` / `get_turn` as a deferred `runs` group; clamped limits + `get_turn` as the uncapped escape hatch | **done** (approved_first_try, 2026-09-09) |
 | 03 | run-result ([phase-03-run-result.md](phase-03-run-result.md)) — `RunStatus`/`Cancellation`/`RunResult` + `Briefing::render()`, ported from the rexyMCP anchors; de-duplicates the four wire strings out of `log_read.rs` | **done** (approved_first_try, 2026-09-09) |
 | 04 | cancel ([phase-04-cancel.md](phase-04-cancel.md)) — reason-carrying run cancel registry, `var/run/stop-<run>` sentinel + watcher, startup sweep, `daemoneye stop [<run>]` | **done** (approved_after_1, 2026-09-10) |
-| 05 | background — `run_terminal_command(background=true)` as an un-awaited chat Run on a dedicated shell + marker-watcher completion → `[Background Task Completed]` **(the payoff)** | todo (not drafted) |
+| 05a | detached-command ([phase-05a-detached-command.md](phase-05a-detached-command.md)) — `spawn_command` + `CommandHandle` (start, don't await) and `dedicated` shells excluded from reuse; pure substrate, no daemon file touched | todo |
+| 05b | background — the executor arm on the substrate: un-awaited chat Run on a dedicated shell + marker-watcher completion → `[Background Task Completed]` **(the payoff)** | todo (not drafted) |
 | 06 | chat-run — wire chat turns onto `Run` | todo (not drafted) |
 | 07 | ghost-run — `trigger_ghost_turn` onto `Run`; mailbox carries `RunResult` | todo (not drafted) |
 | 08 | scheduled-run — scheduled jobs onto `Run` | todo (not drafted) |
@@ -97,6 +98,21 @@ precede the full four-loop unification's completion.
   faces this again** when it adds the `[runs]` retention key and flips the
   `var/log/runs` row from `Pending`.
 
+
+- **Phase 05 split at drafting (2026-09-10) into 05a and 05b**, on a measured
+  seam rather than a size guess. The charter bundled two substrate primitives
+  (a command you start but do not await; a shell nobody else may be handed)
+  with the executor wiring that consumes them (the `PendingCall::Background`
+  arm, the `[Background Task Completed]` event, `Run` + turn-log + cancel
+  registration, and retiring the tmux `de-bg-*` path). The seam is the module
+  boundary: **05a is entirely `src/shell/`, 05b entirely `src/daemon/`** — 05a
+  asserts a zero diff under `src/daemon/`, so the split is a checkable
+  property, not a description. 05a changes no user-visible behaviour; the exit
+  criterion belongs to 05b. Measured at drafting: `run_command`
+  (`src/shell/client.rs:111-190`) needs splitting into a shared handshake plus a
+  shared read-to-marker loop before a detached variant can exist without
+  duplicating the marker protocol — that refactor plus the `dedicated` field's
+  six construction sites is a phase on its own.
 
 - **Phase 02 split at drafting (2026-09-09) into 02a and 02b**, on the tool
   checklist rather than on size guessing. The charter bundled the turn-log
