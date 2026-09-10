@@ -4688,7 +4688,41 @@ touches `src/shell/pty.rs`.**
 `CommandHandle: Debug` → `Nonce: Debug`). A field's blast radius includes the
 trait bounds its container's *tests* require, not just its construction sites.
 
-**Active phase: M24 phase-05b — background** (drafted 2026-09-10,
+**phase-05b — background: done (approved_first_try) 2026-09-10**, commit
+`11ef7f5`, approval `9df5067`. 310 turns. **The milestone's payoff:** under
+`backend = "pty"` a chat turn's `run_terminal_command(background=true)` returns
+immediately naming a run id and a dedicated shell, and completion arrives as
+`[Background Task Completed]` with the real marker exit code — no tmux window.
+`src/daemon/background/` holds a **zero diff**: the tmux path still serves
+`backend = "tmux"`, ghosts and `retry_in_pane`. Suite 1726 → **1735**.
+**Calibration (occurrence 3, at the fold threshold):** the criterion
+`grep -c 'shell_for_owner' bg_shell.rs → 0` **contradicted the phase's own Test
+plan**, which requires that symbol in a test; the file reads 1, inside
+`#[cfg(test)]`, and the production-only count is 0 — the property held, the
+criterion was mis-scoped. **Fix: scope such criteria to production with the
+`awk '/^#\[cfg\(test\)\]/{exit}'` prefix the unwrap/panic criteria already
+use.** Same family as phase-03's unrunnable mutation prescription and M20
+bug-07c-3 — **three occurrences; put the fold to the PE at milestone close.**
+
+**Active phase: M24 phase-06a — chat-run-log** (drafted 2026-09-10,
+`docs/dev/milestones/M24-run-manager/phase-06a-chat-run-log.md`, status `todo`).
+A chat turn gets a `RunId` and a turn log at `var/log/runs/<id>.jsonl`, readable
+by the `run_log_tail`/`run_log_search`/`get_turn` tools 02b already shipped. **A
+chat Run is one turn** (one `Ask` → final answer), `RunKind::Chat { session }` —
+the same granularity 05b gave a background command.
+**Phase 06 split at drafting into 06a/06b** on the additive/rewire seam: 06a
+changes no existing behaviour and asserts a **zero diff on
+`src/daemon/cancel.rs`**; 06b is the risky half (collapse the session-keyed
+`bool` registry onto the run-keyed reason-carrying one, add the session→run map,
+wire `watch_stop_sentinel`).
+**Drafting find that shaped the design:** `run_conversation_loop` is **1321
+lines** (`src/daemon/stream.rs:57-1378`) with **six exit paths** — returns at
+`:174`, `:203`, `:227`, `:791`, `:1004` plus the implicit end. Hence a `Drop`
+guard rather than six hand-placed `RunFinished` calls, and the guard writes a
+`HardFail` naming the omission when no outcome was set, so a forgotten path is a
+visible wrong answer rather than a run that appears never to end.
+
+*(Superseded — phase-05b is done: originally drafted 2026-09-10,
 `docs/dev/milestones/M24-run-manager/phase-05b-background.md`, status `todo`).
 **The milestone's payoff:** under `backend = "pty"` a chat turn's
 `run_terminal_command(background=true)` returns immediately with a run id, runs

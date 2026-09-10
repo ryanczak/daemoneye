@@ -78,7 +78,8 @@ precede the full four-loop unification's completion.
 | 04 | cancel ([phase-04-cancel.md](phase-04-cancel.md)) — reason-carrying run cancel registry, `var/run/stop-<run>` sentinel + watcher, startup sweep, `daemoneye stop [<run>]` | **done** (approved_after_1, 2026-09-10) |
 | 05a | detached-command ([phase-05a-detached-command.md](phase-05a-detached-command.md)) — `spawn_command` + `CommandHandle` (start, don't await) and `dedicated` shells excluded from reuse; pure substrate, no daemon file touched | **done** (approved_after_1, 2026-09-10) |
 | 05b | background ([phase-05b-background.md](phase-05b-background.md)) — the executor arm on the substrate: un-awaited chat Run on a dedicated shell + marker completion → `[Background Task Completed]` **(the payoff)** | **done** (approved_first_try, 2026-09-10) |
-| 06 | chat-run — wire chat turns onto `Run` | todo (not drafted) |
+| 06a | chat-run-log ([phase-06a-chat-run-log.md](phase-06a-chat-run-log.md)) — a chat turn gets a `RunId` + `var/log/runs/<id>.jsonl` via a `RunLogGuard` whose `Drop` writes the one `RunFinished`; cancellation untouched | todo |
+| 06b | chat-run-cancel — collapse the session-keyed `bool` registry onto the run-keyed reason-carrying one, session→run map, `watch_stop_sentinel` wired so `daemoneye stop <run>` cancels a chat turn | todo (not drafted) |
 | 07 | ghost-run — `trigger_ghost_turn` onto `Run`; mailbox carries `RunResult` | todo (not drafted) |
 | 08 | scheduled-run — scheduled jobs onto `Run` | todo (not drafted) |
 | 09 | resume — briefing-seeded `daemoneye run resume` + seeded tasks from runbook `## Steps` | todo (not drafted) |
@@ -98,6 +99,23 @@ precede the full four-loop unification's completion.
   faces this again** when it adds the `[runs]` retention key and flips the
   `var/log/runs` row from `Pending`.
 
+
+- **Phase 06 split at drafting (2026-09-10) into 06a and 06b**, on the
+  additive/rewire seam. 06a is **purely additive** — a chat turn gains a
+  `RunId` and a turn log, and nothing existing changes behaviour; § G asserts a
+  **zero diff on `src/daemon/cancel.rs`**, so "cancellation is untouched" is a
+  checkable property rather than a promise. 06b is the risky half: collapsing
+  the session-keyed `bool` registry onto the run-keyed reason-carrying one,
+  adding the session→run map `Request::Cancel { session_id }` needs to resolve,
+  and wiring `watch_stop_sentinel`. Measured at drafting: **`run_conversation_loop`
+  is 1321 lines (`src/daemon/stream.rs:57-1378`) with six exit paths** — five
+  explicit returns at `:174`, `:203`, `:227`, `:791`, `:1004` plus the implicit
+  end. That measurement is what made 06a a `Drop` guard rather than six
+  hand-placed `RunFinished` calls: in a function that long a hand-wired exit is a
+  missed exit, and a missed exit writes nothing at all, leaving a run that looks
+  like it never ended. The guard records the last outcome set and, if none was,
+  writes a `HardFail` naming the omission — a forgotten path becomes a visible
+  wrong answer instead of silence.
 
 - **Phase 05 split at drafting (2026-09-10) into 05a and 05b**, on a measured
   seam rather than a size guess. The charter bundled two substrate primitives
