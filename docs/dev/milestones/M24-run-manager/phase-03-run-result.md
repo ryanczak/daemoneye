@@ -1,7 +1,7 @@
 # Phase 03: `RunResult` — the structured value a finished run hands back
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`RunState`, `Briefing`, `Budget`, `RunId`, `RunKind`)
 and phase-02a (`RunFinished { state }` in the turn log). Both **done**.
 **Estimated diff:** ~470 lines incl. tests
@@ -974,3 +974,76 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** a8c33f5e7bd7b8c5098d20ea2546ce17875c8524
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-09
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (266 turns)
+- **Scope deviations:** two, both declared in the Update Log and both correct.
+  `RunResult::cancelled` takes the run's own `turns` alongside the
+  `Cancellation` — the first cut derived it from `cancellation.turns_done` and
+  the pinned test caught the 7-vs-9 conflation, which is exactly the
+  distinction F4 asked for. And `.err().expect(...)` became `expect_err` under
+  `clippy::err_expect`; test-only, so the no-`expect` criterion (scoped to
+  non-test code by the awk guard) is untouched.
+
+**Calibration — the architect prescribed a falsification test that could not
+falsify.** Mutation 2 told the executor that breaking `RunStatus::as_str`'s
+**`hard_fail`** arm must redden a `daemon::run::log_read` test. It cannot:
+`log_read.rs` has exactly one test asserting a finished-state label
+(`run_finished_states_render_their_labels`, `log_read.rs:467-474`) and it pins
+**`budget_exceeded`**. I verified this myself — `grep -n 'HardFail'
+src/daemon/run/log_read.rs` returns nothing outside the `state_label` call
+site. I drafted a mutation without checking that its observable effect was
+reachable.
+
+**The executor's handling was the right one and is worth recording.** It ran
+the mutation, saw only one module redden, did **not** assume a stale binary —
+it ran `cargo clean -p daemoneye` and a `strings` probe on the fresh test
+binary to confirm the mutated literal was actually compiled in — then greped
+`log_read`'s tests, found the real reason, and **published the divergence**
+rather than editing the tests its Authorizations forbade it to touch or
+quietly claiming the check passed. That is the behaviour the workflow is
+trying to produce.
+
+**Reviewer-run proof the property actually holds.** I ran the mutation on the
+**reachable** arm — `RunStatus::BudgetExceeded => "budgetexceeded"` — and one
+edit reddened **both** modules, which is what the criterion was after:
+
+```
+test daemon::run::result::tests::run_status_serialises_to_the_four_contract_strings ... FAILED
+test daemon::run::log_read::tests::run_finished_states_render_their_labels ... FAILED
+```
+
+So task 7's de-duplication genuinely bites; only the arm I named was wrong.
+
+**Four mutations run by the reviewer, not read from the log**, each restored
+and re-verified green (39 passed, tree clean):
+
+1. `as_str`'s `BudgetExceeded` arm → **two modules red** (above).
+2. `cancelled()` attaches a briefing →
+   `run_result_cancelled_carries_stage_and_turns_but_no_briefing` red, alone.
+3. `from_state`'s `Running` arm returns `Ok` instead of `bail!` →
+   `run_result_from_state_errors_on_running` red, alone.
+4. The render's `# Current blocker` / `# Budget` headings swapped → **both**
+   render tests red. The byte-offset ordering assertion is real, not decorative.
+
+**Verified at review, independently re-run:** all four gates green; full suite
+**1705 passed / 0 failed / 4 ignored on three consecutive runs** (1694 + 11);
+`daemon::run::` **39** (28 + 11, the pinned arithmetic). Preservation held
+exactly: `log_read` **11**, `turn_log` **7**, `shell::registry` **27**,
+`ai::tools` **17** — task 7 edited a file whose 11 tests the executor did not
+write, and none of them moved. Every structural grep matched the pasted
+transcript value for value, including the two the executor self-corrected
+(`no schemars` → 0 after it reworded a module doc that had been printing a
+false 1). **PASTE MATCH was byte-diffed** against a surviving
+`/tmp/e2e-m24-03.txt`, not inferred. Section G: **0** files outside
+`src/daemon/run/`.
+
+**One nit, not a bounce, and it is mine.** `assemble` carries
+`#[allow(clippy::too_many_arguments)]` for its eight parameters. rexyMCP avoids
+that by grouping into an `Artifacts` struct — which I quoted in F2 while
+telling the executor not to copy its *fields*, so "use the grouping idea" was
+not what the doc conveyed. Private helper, public constructors clean,
+correctness unaffected.
