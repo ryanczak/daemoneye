@@ -1,9 +1,7 @@
 # Phase 04: cooperative cancellation — the `stop-<run>` sentinel
 
 **Milestone:** M24 — Run Manager
-**Status:** review
-`watcher_exits_without_firing_when_the_run_is_gone` is wired to an orphan
-channel pair and cannot fail)
+**Status:** done
 **Depends on:** phase-01 (`RunId`) and phase-03 (`CancelReason`, `Cancellation`).
 Both **done**.
 **Estimated diff:** ~520 lines incl. tests
@@ -1298,3 +1296,33 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 32abf73b456a47c427a07397932445bb4d32eb1e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-10
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bugs/bug-04-1.md](bugs/bug-04-1.md) — the "without firing"
+  assertion in `watcher_exits_without_firing_when_the_run_is_gone` was wired to
+  an orphan channel pair and could never fail; `missing_spec_test`)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (round 1: 251
+  turns; round 2: 99 turns)
+- **Scope deviations:** none. Round 2 touched test-side lines plus one
+  doc-comment sentence in `watch_stop_sentinel`; no production behaviour
+  changed, and `daemon/cancel.rs` held at 0 diff lines against `f8b49af`.
+- **Calibration:** **A mutation check passing is not evidence that every
+  assertion in the test has power.** The executor's round-1 mutation 3 reddened
+  this same test honestly — it reddened the *strong* `is_finished()` half, which
+  masked the dead `!signal.is_cancelled()` half sitting beside it. Both halves
+  were named in the § Test plan. Where a spec names two properties for one test,
+  a mutation that reddens the test proves only that *some* assertion fired; the
+  check has to be aimed at the property whose guard is in doubt. Same family as
+  M11's vacuous guards — **occurrence 2**, held as a fold candidate, not yet
+  folded into WORKFLOW.md.
+- **Warnings:** the round-2 guard
+  `timeout(Duration::ZERO, signal.cancelled()).await.expect_err(...)` does have
+  independent power — verified at review, it catches the spurious fire on its
+  own — but its message claims it detects an orphaned receiver, which it does
+  not: an orphaned receiver parks forever in `cancelled()`'s dropped-sender
+  branch, so the timeout still returns `Err` and the assertion still passes. The
+  assertion is real and the comment is imprecise. Not worth a bounce; worth
+  correcting if the file is touched again.
+
