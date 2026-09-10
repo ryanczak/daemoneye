@@ -4637,3 +4637,26 @@ has accumulated every milestone's running commentary since M15 and is now larger
 than the milestone READMEs it points at. It is read at the top of every architect
 turn. Worth truncating to the active milestone plus a link list at the next
 milestone close.
+
+**phase-03 — run-result: done (approved_first_try) 2026-09-09**, commits
+`a8c33f5` + `5998ae5`, approval `f8b49af`. 266 turns. `RunStatus`/`Cancellation`/
+`RunResult` + `from_state` + `Briefing::render()`; de-duplicated the four wire
+strings out of `log_read.rs`. **Architect defect, caught by the executor:**
+mutation 2 named the `hard_fail` arm and demanded a `log_read` test redden —
+`log_read` has no `HardFail`-rendering test, so the check was unrunnable. The
+executor probed properly (`cargo clean` + `strings`) and published the
+divergence instead of editing forbidden tests. Reviewer re-ran it on the
+reachable `budget_exceeded` arm: one edit, both modules red. Recorded in the
+milestone README as a **held fold candidate at occurrence 2** (same family as
+M20 bug-07c-3).
+
+**Active phase: M24 phase-04 — cancel** (drafted 2026-09-10,
+`docs/dev/milestones/M24-run-manager/phase-04-cancel.md`, status `todo`).
+Reason-carrying run cancel registry in `src/daemon/run/cancel.rs`, the
+`var/run/stop-<run>` sentinel + 500 ms watcher (poll injectable), a startup
+sweep, and `daemoneye stop [<run>]` keeping its no-arg daemon-stop meaning.
+**Drafting finds:** `var/run` is *not* actually cleared at startup despite its
+lifecycle row (so the phase sweeps its own sentinels), and `daemon/cancel.rs`
+already holds the same rexyMCP-ported machinery keyed by session with a `bool`
+channel — phase-04 builds a reason-carrying sibling and leaves it untouched, a
+deliberate duplication that phase-06 collapses.

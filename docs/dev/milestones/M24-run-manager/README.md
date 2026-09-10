@@ -75,7 +75,7 @@ precede the full four-loop unification's completion.
 | 02a | turn-log ([phase-02a-turn-log.md](phase-02a-turn-log.md)) — `var/log/runs/<id>.jsonl` record/writer/reader + the path constructor and lifecycle row a new artifact dir requires | **done** (approved_first_try, 2026-09-09) |
 | 02b | run-log-tools ([phase-02b-run-log-tools.md](phase-02b-run-log-tools.md)) — `run_log_tail` / `run_log_search` / `get_turn` as a deferred `runs` group; clamped limits + `get_turn` as the uncapped escape hatch | **done** (approved_first_try, 2026-09-09) |
 | 03 | run-result ([phase-03-run-result.md](phase-03-run-result.md)) — `RunStatus`/`Cancellation`/`RunResult` + `Briefing::render()`, ported from the rexyMCP anchors; de-duplicates the four wire strings out of `log_read.rs` | **done** (approved_first_try, 2026-09-09) |
-| 04 | cancel — cooperative cancel + `var/run/stop-<run>` sentinel + `daemoneye stop <run>` | todo (not drafted) |
+| 04 | cancel ([phase-04-cancel.md](phase-04-cancel.md)) — reason-carrying run cancel registry, `var/run/stop-<run>` sentinel + watcher, startup sweep, `daemoneye stop [<run>]` | todo |
 | 05 | background — `run_terminal_command(background=true)` as an un-awaited chat Run on a dedicated shell + marker-watcher completion → `[Background Task Completed]` **(the payoff)** | todo (not drafted) |
 | 06 | chat-run — wire chat turns onto `Run` | todo (not drafted) |
 | 07 | ghost-run — `trigger_ghost_turn` onto `Run`; mailbox carries `RunResult` | todo (not drafted) |
@@ -164,3 +164,19 @@ precede the full four-loop unification's completion.
   mutation prescription is a different artifact and is equally an instruction
   the executor must be able to execute. Two occurrences — carry to the PE, do
   not fold yet.
+
+- **Two pre-existing audit gaps found while drafting phase-04 (2026-09-10) —
+  both belong to phase-10, neither is phase-04's to fix.**
+  1. **`var/run` claims `ClearAtStartup` + `Implemented` in
+     `src/config/lifecycle.rs:156-162`, but nothing implements it.** The only
+     startup cleanup loop is for `var/log/pipe` (`src/daemon/mod.rs:531-541`),
+     and `var/run` cannot be cleared wholesale anyway — it holds
+     `schedules.json`, `pane_prefs.json`, the pid/socket, and the `shells/`
+     subtree M20 explicitly exempted. Phase-04 therefore sweeps its own
+     `stop-*` sentinels rather than trusting the row.
+  2. **`runs_dir()` (`var/log/runs`, added in 02a) is in neither
+     `path_audit.rs`'s `INVENTORY` nor its constructor list.** The
+     `inventory_contains_all_config_constructors` test walks a hand-written
+     `Vec<fn() -> PathBuf>`, so a constructor omitted from the list is invisible
+     to it — the completeness gate is itself incomplete. Phase-10 should add the
+     entry when it takes ownership of the `var/log/runs` lifecycle row.
