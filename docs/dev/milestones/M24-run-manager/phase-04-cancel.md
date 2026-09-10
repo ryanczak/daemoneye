@@ -1,7 +1,7 @@
 # Phase 04: cooperative cancellation — the `stop-<run>` sentinel
 
 **Milestone:** M24 — Run Manager
-**Status:** in-progress (bounced 2026-09-10 — see [bugs/bug-04-1.md](bugs/bug-04-1.md): the "without firing" assertion in
+**Status:** review
 `watcher_exits_without_firing_when_the_run_is_gone` is wired to an orphan
 channel pair and cannot fail)
 **Depends on:** phase-01 (`RunId`) and phase-03 (`CancelReason`, `Cancellation`).
@@ -1158,3 +1158,143 @@ Bug-doc "Definition of done" re-check, greps now:
 `cargo test --lib daemon::run::cancel::` → **11 passed; 0 failed**;
 `cargo test --lib daemon::run::` → **50 passed; 0 failed**;
 `cargo test --lib daemon::cancel::` → **6 passed; 0 failed** (F2 preservation).
+
+### Update — ts=1789061548759 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Fixed bug-04-1 and re-verified the whole phase. The defect was exactly as the bug doc pinned: `watcher_exits_without_firing_when_the_run_is_gone` built two unrelated channel pairs (`let (_, mut signal) = …` + `let (watch_handle, _) = …`), so its "without firing" assertion observed a receiver whose sender was dropped on the same line and could never fail. I collapsed it to one pair in the sibling test's shape — `let (watch_handle, mut signal) = RunCancelSignal::new();` — leaving the rest of the test (guard drop, timed advance, `is_finished` assertion) untouched, and added two guards that would have caught this defect class: an explicit `reason().is_none()` after the exit (only a sentinel fire may carry a reason) and a zero-timeout `cancelled()` `expect_err` that fails the moment the receiver is orphaned from the watcher's handle. No production code changed; the only non-test edit is one sentence added to `watch_stop_sentinel`'s existing doc comment explaining the why ("there is nobody left to hand the reason to") — `daemon/cancel.rs` remains at **0 diff lines** against `f8b49af`.
+
+**Re-dispatch criteria, as printed:** both orphan greps now **0/0** (were 1/1); the mutation check — `patch` only, injecting `handle.cancel(CancelReason::UserStop)` immediately before the deregistration branch's `return` — produced **`test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1719 filtered out`** (first re-run; a second apply/revert cycle reproduced red then green), reverting to **`ok. 1 passed; 0 failed`**, with `daemon::run::cancel::` at **11 passed; 0 failed** and `daemon::run::` at **50 passed; 0 failed** after revert — both transcripts pasted into the phase's progress entry. The E2E block ran verbatim into `/tmp/e2e-m24-04.txt`, every section at its pinned value on this round's tree (D preservation exact: cancel 6, lifecycle 5, path_audit 24, log_read 11, result 11, registry 27; H: h1 0 / h2 1 / h3 `stop_exit=1 files=0` / h4 0 / h5 `stop_exit=1`), pasted into a **new** end-to-end Update Log entry titled `### Update — 2026-09-10 10:31 (end-to-end verification)`, and the self-check printed **`PASTE MATCH`**.
+
+**Notes for review:** (1) One adaptation beyond the letter of the bug doc: after the pair collapse, clippy's `-D warnings` flagged the now-real `mut` on `signal` — the old `let _ = &mut signal;` placeholder had been load-bearing *for the broken shape*. Rather than restoring a placeholder or an `#[allow]`, I gave the binding a genuine use (the zero-timeout `cancelled()` self-check above), which simultaneously closes the orphan-pair hole structurally; no lint suppression exists in the file. (2) The bug doc's completion entry says "gc" — that is the server's trailing label, not something an executor writes; the bookkeeping tail remains server-authored, so I did the opposite of authoring one: status stays `in-progress`, and my Update Log content is the started/progress/e2e entries for this round only, with the mutation red-then-green transcripts in the progress entry as the doc requires. (3) This round touched only *test-side* lines plus one doc sentence in an already-committed module, and the "minimum-viable validator" of the bug doc is precisely the one that was vacuous before — so I also kept all original validators: full suite **1716 passed; 0 failed; 4 ignored** on three consecutive runs, four gates green (`fmt` clean, build zero warnings, clippy `-D warnings` clean, `cargo test` **1772 passed; 0 failed** total across all targets), working tree clean at commit `32abf73`.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 7.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test header_status_uses_first_occurrence_only ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M24-run-manager/phase-04-cancel.md` — +220 -0
+- `src/daemon/run/cancel.rs` — +13 -4
+
+**Commit:** 32abf73b456a47c427a07397932445bb4d32eb1e
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
