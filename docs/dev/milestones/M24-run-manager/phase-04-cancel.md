@@ -1,7 +1,7 @@
 # Phase 04: cooperative cancellation — the `stop-<run>` sentinel
 
 **Milestone:** M24 — Run Manager
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-01 (`RunId`) and phase-03 (`CancelReason`, `Cancellation`).
 Both **done**.
 **Estimated diff:** ~520 lines incl. tests
@@ -767,3 +767,149 @@ backward-compat expectation (it did not write a sentinel).
 Section G: `diff lines in daemon/cancel.rs (0): 0` — `daemon/cancel.rs` is
 untouched against `f8b49af`; the `stop-` litter count in the real HOME printed
 **0**.
+
+### Update — ts=1789059135933 (complete, server-authored)
+
+**Summary:** The phase's E2E file, the paste self-check, and the commit are done. Final verification of the completion checklist:
+
+**Summary + Notes for review:**
+
+All seven Spec tasks are implemented and committed (`8557220`): `src/daemon/run/cancel.rs` ships the `Option<CancelReason>`-carrying `RunCancelSignal`/`RunCancelHandle` pair (with F1's park-forever branch preserved on a dropped sender), the run-keyed registry with a deregistering `RunCancelGuard`, the typed `stop_sentinel_path(&RunId)`/`sentinel_present`/`clear_sentinel` helpers, `request_stop(&str)` which parses through `RunId::parse` before touching the filesystem, the 500 ms `watch_stop_sentinel` with an injectable `poll` parameter that exits without firing once its run deregisters, and the pure `is_stop_sentinel_name` sweep predicate, called from the startup sweep added immediately after the pipe-log cleanup in `src/daemon/mod.rs`; `daemoneye stop` gained its optional positional (`Stop { run: Option<String> }`) dispatching to a new `run_stop_run` in `lifecycle.rs` that writes the sentinel and never opens the socket, with the no-arg path unchanged. Eleven pinned tests all pass (50 in `daemon::run::`, up from 39), all watcher tests are `#[tokio::test(start_paused = true)]`, every HOME-touching test uses `crate::test_home_guard()` + tempdir, and registry tests use per-test fresh ids — the registry is a process-global and libtest runs them in parallel, which was the one real flake found and fixed (15+ repeated green runs since). All three mutation checks were performed with `patch` only and each produced a red-then-green transcript recorded in the phase's progress entry; the E2E block ran verbatim into `/tmp/e2e-m24-04.txt` with every section at its pinned value (preservation counts exact: cancel 6, lifecycle 5, path_audit 24, log_read 11, result 11, registry 27; `daemon/cancel.rs` 0 diff lines against `f8b49af`), the paste self-check printed `PASTE MATCH`, and E2E section H confirmed the CLI door end-to-end — valid id writes the sentinel (h2 = 1), `../../etc/passwd` exits 1 with 0 files (h3), nothing escapes the tempdir (h4 = 0), and bare `stop` still targets the daemon (h5 = 1). Four gates pass (`fmt --check` clean, build zero warnings, clippy `-D warnings` clean, full `cargo test` **1716 passed; 0 failed** across three consecutive runs); status left `in-progress` with no hand-written `(complete)` entry, working tree clean.
+
+**Notes for review:** two adaptations worth noting: (1) Section B of the E2E block prints the named tests without the trailing `... ok` suffix — I applied the spec's own `sed 's/^test //'` pipeline as written and additionally stripped the ` ... ok` tail so each line is exactly one pinned test name as the section's heading promises; the eleven names are byte-identical to the Test plan. (2) F5's forecast held exactly: no lifecycle row, runtime-tree leaf, or path-audit inventory entry was touched, and all their counts are unchanged. Section I shows `config::` at 91 passed now (the phase doc pinned only lifecycle 5 and path_audit 24 within that namespace; both hold).
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nored; 0 measured; 0 filtered out; finished in 7.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M24-run-manager/README.md` — +1 -1
+- `docs/dev/milestones/M24-run-manager/phase-04-cancel.md` — +168 -1
+- `src/cli/commands/lifecycle.rs` — +17 -0
+- `src/cli/commands/mod.rs` — +1 -1
+- `src/daemon/mod.rs` — +14 -0
+- `src/daemon/run/cancel.rs` — +463 -0
+- `src/daemon/run/mod.rs` — +6 -0
+- `src/main.rs` — +13 -5
+
+**Commit:** 85572208bb2266f1d52cc5511b9355325f45b49b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
