@@ -114,11 +114,37 @@ pub async fn run_command(
     shell_name: &str,
     timeout: Duration,
 ) -> anyhow::Result<CommandOutcome> {
+    let (mut reader, writer, nonce) = start_command(sock, cmd, shell_name).await?;
+    // The writer half must outlive the read loop: tokio shuts the stream's
+    // write direction down when it is dropped, and a host that reads EOF on
+    // its side tears the connection down — before the end marker could ever
+    // arrive. So it is dropped only after `read_to_marker`, reproducing the
+    // original inline handshake's lifetime exactly.
+    let result = read_to_marker(&mut reader, &nonce, sock, cmd, timeout).await;
+    drop(writer);
+    result
+}
+
+/// Connect, subscribe, and write the marker-wrapped command. Returns the
+/// reader, the still-open write half, and the nonce the command's end marker
+/// will carry. Everything that can fail *before the command is running* fails
+/// here. The caller keeps the write half alive until it is done with the
+/// connection: dropping it half-shuts the stream (tokio's documented
+/// `OwnedWriteHalf` drop), which the host reads as end-of-writes.
+async fn start_command(
+    sock: &Path,
+    cmd: &str,
+    shell_name: &str,
+) -> anyhow::Result<(
+    BufReader<tokio::net::unix::OwnedReadHalf>,
+    tokio::net::unix::OwnedWriteHalf,
+    Nonce,
+)> {
     let stream = UnixStream::connect(sock)
         .await
         .with_context(|| format!("connecting to shell socket at {}", sock.display()))?;
     let (reader, mut writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
+    let reader = BufReader::new(reader);
 
     // Subscribe before writing, so no byte of this command's output can
     // precede the subscription.
@@ -139,7 +165,18 @@ pub async fn run_command(
         .await
         .context("sending Input frame")?;
     writer.flush().await.context("flushing Input frame")?;
+    Ok((reader, writer, nonce))
+}
 
+/// Read frames until `parse_outcome` finds this nonce's end marker, the
+/// deadline passes, or the socket closes.
+async fn read_to_marker(
+    reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+    nonce: &Nonce,
+    sock: &Path,
+    cmd: &str,
+    timeout: Duration,
+) -> anyhow::Result<CommandOutcome> {
     let deadline = tokio::time::Instant::now() + timeout;
     let mut line: Vec<u8> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
@@ -176,7 +213,7 @@ pub async fn run_command(
                 // so never decode a chunk on its own — accumulate bytes and
                 // hand the whole buffer to `parse_outcome`.
                 buf.extend_from_slice(&bytes);
-                if let Some(outcome) = parse_outcome(&buf, &nonce) {
+                if let Some(outcome) = parse_outcome(&buf, nonce) {
                     return Ok(outcome);
                 }
             }
@@ -186,6 +223,56 @@ pub async fn run_command(
             }
         }
     }
+}
+
+/// A command that was started in a shell but not awaited.
+#[derive(Debug)]
+pub struct CommandHandle {
+    /// Resolves once the end marker arrives, the timeout expires, or the
+    /// socket closes. A dropped receiver simply discards the outcome; the
+    /// reader task ends at its own deadline either way.
+    pub outcome: tokio::sync::oneshot::Receiver<anyhow::Result<CommandOutcome>>,
+    /// The nonce this command's end marker carries — diagnostic only. The
+    /// reader task holds its own clone, since `read_to_marker` needs the live
+    /// `Nonce` to strip markers with.
+    pub nonce: Nonce,
+}
+
+/// Start `cmd` in the shell at `sock` and return **as soon as it is running**.
+///
+/// The handshake — connect, subscribe, write, flush — completes before this
+/// returns, so a missing socket, a dead host or an encode failure is an `Err`
+/// from this call. After `Ok`, the command is running and its outcome arrives
+/// on [`CommandHandle::outcome`]; a start failure is never delivered as a late
+/// outcome, because the caller must be able to tell the model "it is running"
+/// or "it did not start" synchronously.
+///
+/// The write half moves into the reader task and is dropped only when that
+/// task ends, so the connection stays open in both directions for as long as
+/// the outcome can still arrive — the host must not see EOF on its read side
+/// while the command runs.
+pub async fn spawn_command(
+    sock: &Path,
+    cmd: &str,
+    shell_name: &str,
+    timeout: Duration,
+) -> anyhow::Result<CommandHandle> {
+    let (reader, writer, nonce) = start_command(sock, cmd, shell_name).await?;
+    let task_sock = sock.to_path_buf();
+    let task_cmd = cmd.to_string();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let task_nonce = nonce.clone();
+    tokio::spawn(async move {
+        let mut reader = reader;
+        let result = read_to_marker(&mut reader, &task_nonce, &task_sock, &task_cmd, timeout).await;
+        // The writer must outlive the read loop: dropping it half-closes the
+        // stream and the host tears the connection down before the end marker
+        // can arrive. It dies here, when the outcome has already been handed
+        // over.
+        drop(writer);
+        let _ = tx.send(result);
+    });
+    Ok(CommandHandle { outcome: rx, nonce })
 }
 
 #[cfg(test)]
@@ -367,6 +454,147 @@ mod tests {
         assert!(
             elapsed < Duration::from_secs(3),
             "failure must be prompt, not wait out the deadline: elapsed={elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_spawn_command_returns_before_the_command_finishes() {
+        let host = spawn_host().await;
+        let mut handle = spawn_command(
+            &host.path,
+            "sleep 1; printf 'LATE\\n'",
+            "bash",
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("the handshake completes and the command starts");
+
+        let pending = handle
+            .outcome
+            .try_recv()
+            .expect_err("a still-running command must not have resolved yet");
+        assert!(
+            matches!(pending, tokio::sync::oneshot::error::TryRecvError::Empty),
+            "the call must return while the command still runs: {pending:?}"
+        );
+
+        let outcome = handle
+            .outcome
+            .await
+            .expect("the reader task stays alive to deliver")
+            .expect("the command finishes inside the timeout");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(
+            text.contains("LATE"),
+            "the late bytes must still arrive: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_spawn_command_delivers_the_real_exit_code() {
+        let host = spawn_host().await;
+        let handle = spawn_command(
+            &host.path,
+            "sh -c 'exit 7'",
+            "bash",
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("the command starts");
+        let outcome = handle
+            .outcome
+            .await
+            .expect("the reader task delivers")
+            .expect("exit 7 is a normal completion");
+        assert_eq!(
+            outcome.exit_code, 7,
+            "the real exit code must survive the detached round-trip, not 0 and not 1"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_spawn_command_delivers_the_output_between_markers() {
+        let host = spawn_host().await;
+        let handle = spawn_command(
+            &host.path,
+            "printf 'BG_OK\\n'",
+            "bash",
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("the command starts");
+        let outcome = handle
+            .outcome
+            .await
+            .expect("the reader task delivers")
+            .expect("printf cannot fail");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(
+            text.contains("BG_OK"),
+            "the command's own bytes must arrive: {text:?}"
+        );
+        assert!(
+            !text.contains("DE_END") && !text.contains("DE_BEG"),
+            "the marker literal must be stripped from the delivered output: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_spawn_command_errors_when_the_shell_socket_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock = dir.path().join("missing.sock");
+        let result = spawn_command(&sock, "echo hi", "bash", Duration::from_secs(10)).await;
+        let err = result.expect_err("a start failure must be an Err from the call itself");
+        assert!(
+            err.to_string().contains("missing.sock"),
+            "the error must name the socket it could not reach: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_spawn_command_timeout_resolves_the_receiver_with_an_error() {
+        let host = spawn_host().await;
+        let handle = spawn_command(&host.path, "sleep 30", "bash", Duration::from_millis(500))
+            .await
+            .expect("a silent command still starts");
+        let result = handle
+            .outcome
+            .await
+            .expect("the reader task delivers its outcome, including failure")
+            .expect_err("a command outliving the timeout must resolve to Err");
+        let msg = format!("{result:#}");
+        assert!(
+            msg.contains("timed out") && msg.contains("sleep 30"),
+            "the detached timeout must name the timeout and the command like run_command's: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_run_command_and_spawn_command_agree_on_one_command() {
+        let host = spawn_host().await;
+        let cmd = "printf 'PARITY\\n'; sh -c 'exit 3'";
+
+        let awaited = run_command(&host.path, cmd, "bash", Duration::from_secs(10))
+            .await
+            .expect("the awaited path completes");
+        let detached = spawn_command(&host.path, cmd, "bash", Duration::from_secs(10))
+            .await
+            .expect("the detached path starts")
+            .outcome
+            .await
+            .expect("the reader task delivers")
+            .expect("the detached path completes");
+
+        assert_eq!(
+            awaited.exit_code, detached.exit_code,
+            "both paths must report the same real exit code"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&awaited.output),
+            String::from_utf8_lossy(&detached.output),
+            "both paths must deliver the same output bytes: awaited={:?} detached={:?}",
+            String::from_utf8_lossy(&awaited.output),
+            String::from_utf8_lossy(&detached.output),
         );
     }
 

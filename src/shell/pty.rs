@@ -23,7 +23,8 @@ const RUN_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// A per-command marker nonce. 128 bits of randomness rendered as 32 hex
 /// characters, so a command's own output cannot plausibly collide with it.
-pub struct Nonce(String);
+#[derive(Clone, Debug)]
+pub struct Nonce(pub(crate) String);
 
 impl Nonce {
     pub fn new() -> Self {

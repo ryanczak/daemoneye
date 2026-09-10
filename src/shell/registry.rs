@@ -80,6 +80,12 @@ pub struct ShellRecord {
     /// alive — but every byte written to it is consumed by the interactive
     /// process, so it must never be handed to another command (08b F2).
     pub interactive: bool,
+    /// Set when this shell was created to serve exactly one command for its
+    /// whole life — a background run. Unlike `interactive` this is decided at
+    /// creation, not discovered later: the shell is never offered to another
+    /// command, so a background job and the owner's foreground commands can
+    /// never land in the same shell (08b's poisoning rule).
+    pub dedicated: bool,
     /// Unix seconds when this shell's host was **first observed** dead, set by
     /// the reaper. `None` while the host is alive. The record is kept for
     /// `[shells] exited_retention_secs` after this, so an operator can still
@@ -175,6 +181,7 @@ pub async fn spawn_for<F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
     max_per_owner: u32,
+    dedicated: bool,
     spawn: F,
 ) -> anyhow::Result<ShellId>
 where
@@ -196,6 +203,7 @@ where
                 owner: owner.clone(),
                 started_unix,
                 interactive: false,
+                dedicated,
                 exited_unix: None,
             },
         );
@@ -318,6 +326,9 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
                     owner: Owner::Adopted,
                     started_unix,
                     interactive: false,
+                    // An adopted shell's original purpose is unknown; `false`
+                    // keeps it reusable, which is today's behaviour.
+                    dedicated: false,
                     exited_unix: None,
                 },
             );
@@ -397,6 +408,7 @@ mod tests {
             owner,
             started_unix: 0,
             interactive: false,
+            dedicated: false,
             exited_unix: None,
         }
     }
@@ -898,6 +910,7 @@ mod tests {
                 &reg_in_task,
                 Owner::Chat("a".into()),
                 5,
+                false,
                 move |_id| async move {
                     let _ = started_tx.send(());
                     let _ = release_rx.await;
@@ -930,7 +943,7 @@ mod tests {
     #[tokio::test]
     async fn registry_spawn_for_releases_the_slot_when_the_spawn_fails() {
         let reg = ShellRegistry::default();
-        let result = spawn_for(&reg, Owner::Chat("a".into()), 5, |_id| async {
+        let result = spawn_for(&reg, Owner::Chat("a".into()), 5, false, |_id| async {
             Err(anyhow::anyhow!("boom"))
         })
         .await;
@@ -988,6 +1001,48 @@ mod tests {
         assert!(
             !guard.contains_key(stranger.as_str()),
             "a no-op must not materialise the stranger"
+        );
+    }
+
+    #[tokio::test]
+    async fn registry_spawn_for_sets_dedicated_from_its_argument() {
+        let foreground = ShellRegistry::default();
+        assert!(
+            spawn_for(
+                &foreground,
+                Owner::Chat("a".into()),
+                5,
+                false,
+                |_id| async { Ok(()) }
+            )
+            .await
+            .is_ok(),
+            "the foreground spawn must succeed"
+        );
+        let background = ShellRegistry::default();
+        assert!(
+            spawn_for(&background, Owner::Chat("a".into()), 5, true, |_id| async {
+                Ok(())
+            })
+            .await
+            .is_ok(),
+            "the dedicated spawn must succeed"
+        );
+        let fg_flag = with_shells(&foreground, |store| {
+            store.get("s0").map(|record| record.dedicated)
+        });
+        let bg_flag = with_shells(&background, |store| {
+            store.get("s0").map(|record| record.dedicated)
+        });
+        assert_eq!(
+            fg_flag,
+            Some(false),
+            "spawn_for's caller decides; a foreground shell must not carry the flag"
+        );
+        assert_eq!(
+            bg_flag,
+            Some(true),
+            "the pair is the behaviour: the same one constructor site must yield both"
         );
     }
 }

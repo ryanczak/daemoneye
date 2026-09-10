@@ -16,7 +16,7 @@ mod screen;
 mod session;
 
 pub use backend::PtyBackend;
-pub use client::{run_command, send_signal, status};
+pub use client::{CommandHandle, run_command, send_signal, spawn_command, status};
 pub use host::{ShellBackend, bind, serve};
 pub use launch::{await_ready, cast_path, lock_path, run_host, socket_path, spawn_detached};
 pub use log::{CastWriter, CommandRecord, MetaIndex, meta_path_for, read_command_output};
@@ -30,7 +30,7 @@ pub use registry::{
     sweep_stale, with_shells,
 };
 pub use screen::ShellScreen;
-pub use session::{login_shell, shell_for_owner, spawn_detached_host};
+pub use session::{login_shell, shell_for_owner, spawn_dedicated_for, spawn_detached_host};
 
 use std::sync::OnceLock;
 

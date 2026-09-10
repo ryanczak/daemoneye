@@ -38,8 +38,10 @@ where
                 // the liveness probe but eats every byte written to it
                 // (08b F2); the owner gets a fresh one instead. The record
                 // stays and the host stays alive: later work addresses the
-                // session by id.
-                !record.interactive && record.owner.key() == owner_key
+                // session by id. A dedicated shell is excluded for the same
+                // reason in the other direction: it belongs to exactly one
+                // command, so it is never offered to anything else.
+                !record.interactive && !record.dedicated && record.owner.key() == owner_key
             })
             .map(|record| record.id.clone())
             .collect();
@@ -63,7 +65,7 @@ where
     }
 
     // (3) Otherwise create one, then wait for it to become ready.
-    let id = spawn_for(reg, owner, max_per_owner, spawn).await?;
+    let id = spawn_for(reg, owner, max_per_owner, false, spawn).await?;
     let socket = launch::socket_path(id.as_str());
     if let Err(e) = launch::await_ready(&socket, Instant::now() + ready_timeout).await {
         // (4) A record for a host that never came up would be handed to the
@@ -98,6 +100,47 @@ pub fn login_shell() -> String {
 pub async fn spawn_detached_host(id: ShellId, rows: u16, cols: u16) -> anyhow::Result<()> {
     let shell = login_shell();
     launch::spawn_detached(id.as_str(), &shell, rows, cols).await
+}
+
+/// A ready shell created for one command's exclusive use. Unlike
+/// `shell_for_owner` this **never** reuses: a background command gets its own
+/// shell or none.
+///
+/// The owner cap still applies and its error still propagates, so a background
+/// command that would exceed `[shells] max_per_owner` fails loudly here rather
+/// than silently borrowing a foreground shell. As in `shell_for_owner`, a
+/// record for a host that never came up is worse than no record at all, so a
+/// readiness failure removes the record before the error is returned.
+pub async fn spawn_dedicated_for<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    max_per_owner: u32,
+    ready_timeout: Duration,
+    spawn: F,
+) -> anyhow::Result<(ShellId, PathBuf)>
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let id = spawn_for(reg, owner, max_per_owner, true, spawn).await?;
+    let socket = launch::socket_path(id.as_str());
+    if let Err(e) = launch::await_ready(&socket, Instant::now() + ready_timeout).await {
+        // A record for a host that never came up would be handed to the next
+        // caller as a live shell; `spawn_for` rolled back only a spawn
+        // failure, so readiness is this function's own responsibility to
+        // undo.
+        with_shells(reg, |store| {
+            store.remove(id.as_str());
+        });
+        return Err(e).with_context(|| {
+            format!(
+                "shell {} never became ready at {} within {ready_timeout:?}",
+                id.as_str(),
+                socket.display()
+            )
+        });
+    }
+    Ok((id, socket))
 }
 
 #[cfg(test)]
@@ -278,6 +321,7 @@ mod tests {
                     owner: owner.clone(),
                     started_unix: 0,
                     interactive: false,
+                    dedicated: false,
                     exited_unix: None,
                 },
             );
@@ -326,6 +370,7 @@ mod tests {
                     owner: owner.clone(),
                     started_unix: 0,
                     interactive: false,
+                    dedicated: false,
                     exited_unix: None,
                 },
             );
@@ -336,6 +381,7 @@ mod tests {
                     owner: owner.clone(),
                     started_unix: 0,
                     interactive: false,
+                    dedicated: false,
                     exited_unix: None,
                 },
             );
@@ -448,5 +494,130 @@ mod tests {
                 "the captured shell's record must not be removed or killed"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn session_dedicated_shell_is_never_reused_by_shell_for_owner() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("bg".into());
+
+        // Seed the owner a live-looking shell that had been created for
+        // exactly one command's use.
+        with_shells(&reg, |store| {
+            store.insert(
+                "s0".to_string(),
+                ShellRecord {
+                    id: ShellId::from_index(0),
+                    owner: owner.clone(),
+                    started_unix: 0,
+                    interactive: false,
+                    dedicated: true,
+                    exited_unix: None,
+                },
+            );
+        });
+        let lock = launch::lock_path("s0");
+        let _held = crate::daemon::instance::InstanceLock::acquire(&lock).expect("hold s0");
+
+        let (next_id, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the owner's foreground command must get a shell");
+
+        assert_ne!(
+            next_id.as_str(),
+            "s0",
+            "a dedicated shell is one command's exclusive property; the owner's next foreground command must not land in it"
+        );
+
+        let outcome = client::run_command(
+            &launch::socket_path(next_id.as_str()),
+            "printf 'FRESH_FOREGROUND\\n'",
+            "bash",
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("the fresh shell answers");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(
+            text.contains("FRESH_FOREGROUND"),
+            "the replacement shell must be usable: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_spawn_dedicated_for_creates_a_new_shell_even_when_one_is_reusable() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("bg".into());
+
+        let (reusable_id, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the owner's first shell comes up and looks reusable");
+
+        let (dedicated_id, _) = spawn_dedicated_for(
+            &reg,
+            owner.clone(),
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("a background command gets its own shell");
+
+        assert_ne!(
+            reusable_id.as_str(),
+            dedicated_id.as_str(),
+            "spawn_dedicated_for must never reuse, even a perfectly reusable shell"
+        );
+
+        let guard = reg.try_lock().unwrap();
+        let record = guard
+            .get(dedicated_id.as_str())
+            .expect("the dedicated shell's record is registered");
+        assert!(
+            record.dedicated,
+            "the shell it allocated must carry the dedicated flag"
+        );
+        assert!(
+            !guard
+                .get(reusable_id.as_str())
+                .expect("the foreground record must be untouched")
+                .dedicated,
+            "the pre-existing foreground shell keeps its status"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_spawn_dedicated_for_removes_the_record_when_readiness_never_arrives() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("bg".into());
+
+        // The spawn succeeds without binding a socket, so only the readiness
+        // wait can fail — exactly the case the rollback exists for.
+        let result = spawn_dedicated_for(&reg, owner, 5, Duration::from_millis(50), |_id| async {
+            Ok(())
+        })
+        .await;
+
+        assert!(result.is_err(), "a host that never becomes ready must Err");
+        let guard = reg.try_lock().unwrap();
+        assert!(
+            guard.is_empty(),
+            "a record for a host that never came up must be rolled back, not handed to the next caller"
+        );
     }
 }

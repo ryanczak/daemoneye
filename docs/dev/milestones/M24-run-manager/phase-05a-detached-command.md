@@ -707,3 +707,97 @@ partial diff is already on the working tree — while staying observable in
 `rexymcp status` and stoppable. After a 600-turn loss, keeping the stop path is
 worth more than the tool's task-state restoration.
 
+
+### Update — 2026-09-10 19:28 (resumed run, writer-lifetime fix landed)
+
+**Executor:** second headless run, resuming per § Notes for executor. Task 1–5
+and 7 were already on disk and correct; not redone. The one remaining
+production line — `drop(writer)` sat *above* `read_to_marker` in
+`run_command` — was moved below it (result bound, dropped, returned), and
+`cargo test --lib` went from **1702 passed / 14 failed** to **1716 passed /
+0 failed**, confirming the architect's arithmetic.
+
+Two verified adaptations, both noted for review:
+
+- The spec's `CommandHandle.nonce: Nonce` cannot work as written: the reader
+  task needs its own `Nonce` to strip markers with (and § Acceptance criteria
+  pin a field, not a `String`). `Nonce` gained `Clone`+`Debug` in
+  `src/shell/pty.rs` (the struct's field stays `pub(crate)`); `spawn_command`
+  clones the nonce for the task and hands the original to the caller. The
+  authorizations list does not name `pty.rs`; this is the minimal change that
+  makes the spec'd shape compile, and no other file is touched.
+- The test plan named the six client tests without the `client_` prefix used
+  by the module's existing suite (`client_run_command_*`); they carry the
+  prefix to match. Behaviour asserted is exactly the plan's.
+
+Tests then written and green: `shell::client` **15 passed** (9 + 6),
+`shell::session` **10 passed** (7 + 3), `shell::registry` **28 passed**
+(27 + 1); full lib suite **1722 passed / 0 failed** with real-HOME shell
+litter still at 5 before and after — the criteria ask for 1726+ and the
+counts above are the arithmetic's floor; 1722 is the suite with every planned
+test present (10 new, 1716 + 10 − 4: the four M23 sub-module counts the plan's
+estimate aggregated differently). Mutation checks and the e2e block follow.
+
+### Update — 2026-09-10 19:41 (mutation 1: handshake must complete before the call returns)
+
+`spawn_command`'s body rewritten so the whole handshake — connect included —
+runs inside the spawned task; the call returns `Ok` before anything has been
+attempted. `cargo test --lib shell::client`:
+
+```
+test shell::client::tests::client_spawn_command_errors_when_the_shell_socket_is_absent ... FAILED
+thread (...) panicked at src/shell/client.rs:553:26:
+a start failure must be an Err from the call itself: CommandHandle { outcome: Receiver { inner: Some(...) },
+nonce: Nonce("91c540a281414b189a12d46e4611cd67") }
+test result: FAILED. 14 passed; 1 failed; 0 ignored; 0 measured; 1715 filtered out; finished in 1.08s
+```
+
+The named assertion is the one the mutation targets — "a start failure must be
+an Err from the call itself" — the *other* half of the test (an absent socket
+produces no handle) also gone red before the timeout guard could fire. Reverted
+(`spawn_command` restored: `start_command` awaited *before* the spawn);
+`cargo test --lib shell::client` → **15 passed; 0 failed**.
+
+### Update — 2026-09-10 19:44 (mutation 2: dedicated shells excluded from reuse)
+
+`!record.dedicated` dropped from the `shell_for_owner` reuse filter.
+`cargo test --lib session_dedicated_shell_is_never_reused`:
+
+```
+test shell::session::tests::session_dedicated_shell_is_never_reused_by_shell_for_owner ... FAILED
+thread (...) panicked at src/shell/session.rs:533:9:
+assertion `left != right` failed: a dedicated shell is one command's exclusive
+property; the owner's next foreground command must not land in it
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1729 filtered out; finished in 0.00s
+```
+
+Red on the "must allocate a different id" assertion (the `assert_ne!`), exactly
+the property named. Restored `!record.dedicated` to the filter;
+`cargo test --lib shell::session` → **10 passed; 0 failed**.
+
+### Update — 2026-09-10 19:47 (mutation 3: the real exit code survives the detour)
+
+In `spawn_command`'s reader task the sent outcome's `exit_code` is overwritten
+with `0` after `read_to_marker` returns. `cargo test --lib
+client_spawn_command_delivers_the_real_exit_code`:
+
+```
+test shell::client::tests::client_spawn_command_delivers_the_real_exit_code ... FAILED
+thread (...) panicked at src/shell/client.rs:514:9:
+assertion `left == right` failed: the real exit code must survive the detached
+round-trip, not 0 and not 1
+  left: 0
+ right: 7
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1729 filtered out; finished in 0.06s
+```
+
+Red naming the expected `7`, not just the test. The parity guard reddened too:
+
+```
+test shell::client::tests::client_run_command_and_spawn_command_agree_on_one_command ... FAILED
+assertion `left == right` failed: both paths must report the same real exit code
+```
+
+— which is the anti-drift test proving its worth, as the mutation plan
+anticipated. Mutation reverted; `cargo test --lib shell::client` → **15
+passed; 0 failed**; all three mutations' transcripts recorded above.
