@@ -76,7 +76,7 @@ precede the full four-loop unification's completion.
 | 02b | run-log-tools ([phase-02b-run-log-tools.md](phase-02b-run-log-tools.md)) — `run_log_tail` / `run_log_search` / `get_turn` as a deferred `runs` group; clamped limits + `get_turn` as the uncapped escape hatch | **done** (approved_first_try, 2026-09-09) |
 | 03 | run-result ([phase-03-run-result.md](phase-03-run-result.md)) — `RunStatus`/`Cancellation`/`RunResult` + `Briefing::render()`, ported from the rexyMCP anchors; de-duplicates the four wire strings out of `log_read.rs` | **done** (approved_first_try, 2026-09-09) |
 | 04 | cancel ([phase-04-cancel.md](phase-04-cancel.md)) — reason-carrying run cancel registry, `var/run/stop-<run>` sentinel + watcher, startup sweep, `daemoneye stop [<run>]` | **done** (approved_after_1, 2026-09-10) |
-| 05a | detached-command ([phase-05a-detached-command.md](phase-05a-detached-command.md)) — `spawn_command` + `CommandHandle` (start, don't await) and `dedicated` shells excluded from reuse; pure substrate, no daemon file touched | todo |
+| 05a | detached-command ([phase-05a-detached-command.md](phase-05a-detached-command.md)) — `spawn_command` + `CommandHandle` (start, don't await) and `dedicated` shells excluded from reuse; pure substrate, no daemon file touched | in-progress |
 | 05b | background — the executor arm on the substrate: un-awaited chat Run on a dedicated shell + marker-watcher completion → `[Background Task Completed]` **(the payoff)** | todo (not drafted) |
 | 06 | chat-run — wire chat turns onto `Run` | todo (not drafted) |
 | 07 | ghost-run — `trigger_ghost_turn` onto `Run`; mailbox carries `RunResult` | todo (not drafted) |

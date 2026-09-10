@@ -1,7 +1,7 @@
 # Phase 05a: the detached command runner and dedicated shells
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** M20 (the shell substrate: `run_command`, the marker protocol,
 the registry). Nothing in M24 phases 01–04 — this phase is pure substrate and
 touches no `src/daemon/run/` file.
@@ -256,8 +256,48 @@ async fn read_to_marker(
 existing error message and context string is preserved verbatim** — the nine
 `shell::client` tests pin them and must not be edited.
 
-The writer half is dropped when `start_command` returns; the command is already
-written and flushed, and nothing later writes to this connection.
+**The writer half must outlive the read loop — this is the phase's one real
+trap, and an earlier dispatch lost its whole budget to it.** Dropping tokio's
+`OwnedWriteHalf` shuts down the stream's *write direction*; the shell host reads
+EOF on its side and tears the connection down, so the read loop then fails with
+`shell socket at … closed while running …` **before the end marker can arrive**.
+The original inline `run_command` never hit this because `writer` was a local
+that lived until the function returned.
+
+So `start_command` returns the writer as a third element, and each caller keeps
+it alive across its own read:
+
+```rust
+async fn start_command(
+    sock: &Path,
+    cmd: &str,
+    shell_name: &str,
+) -> anyhow::Result<(
+    BufReader<tokio::net::unix::OwnedReadHalf>,
+    tokio::net::unix::OwnedWriteHalf,
+    Nonce,
+)>;
+
+// run_command — drop AFTER the read loop, never before:
+let (mut reader, writer, nonce) = start_command(sock, cmd, shell_name).await?;
+let result = read_to_marker(&mut reader, &nonce, sock, cmd, timeout).await;
+drop(writer);
+result
+
+// spawn_command — the writer moves into the task and drops when it ends:
+tokio::spawn(async move {
+    let mut reader = reader;
+    let result = read_to_marker(&mut reader, &nonce, &task_sock, &task_cmd, timeout).await;
+    drop(writer);
+    let _ = tx.send(result);
+});
+```
+
+**Verified by the architect on the partial tree (2026-09-10):** with `drop(writer)`
+placed *before* `read_to_marker` in `run_command`, 14 pre-existing tests fail
+(5 in `shell::client`, 2 in `shell::session`, the rest downstream); moving it
+after restores the full suite to **1716 passed; 0 failed**. Nothing else about
+the split was wrong.
 
 ### Task 5 — `CommandHandle` and `spawn_command`
 
@@ -596,4 +636,65 @@ No other file may be touched. In particular **do not** edit anything under
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
+### Update — 2026-09-10 17:49 (started)
+
+**Executor:** headless run, executor contract v1. Pre-flight confirmed against
+commit state on `master`: clean tree (0 porcelain lines), `shell::client` 9
+passed, `shell::session` 7 passed, `shell::registry` 27 passed, full lib suite
+1716 passed / 0 failed, `spawn_command` / `CommandHandle` / `spawn_dedicated_for`
+/ `pub dedicated: bool` all absent (grep 0 each), real-HOME shell litter 5.
+Phase status flipped to `in-progress` here and in the milestone README's
+phase table; executing the seven Spec tasks now.
+
+### Notes for executor — 2026-09-10
+
+**Read this before anything else. The tree already holds most of this phase's
+work and it is good — do not start over, and do not re-derive the design.**
+
+The previous dispatch ended `budget_exceeded` at 600 turns. The cause was a
+**false claim in this spec**, now corrected in § Spec task 4: it told you the
+writer half could be dropped when `start_command` returns. It cannot — see the
+task-4 block for the mechanism and the verified evidence. You had already worked
+this out yourself (your comment in `run_command` states it correctly); the run
+was lost to the `drop(writer)` call sitting one line *above* `read_to_marker`
+instead of below it.
+
+**Already on disk and approved — do not redo:** `start_command`,
+`read_to_marker`, `spawn_command`, `CommandHandle`, `ShellRecord.dedicated`,
+`spawn_for`'s `dedicated` parameter and its three call sites, the
+`shell_for_owner` reuse-filter change, `spawn_dedicated_for`, and the
+`src/shell/mod.rs` re-exports. `cargo build`, `cargo clippy --all-targets
+--all-features -- -D warnings` and `cargo fmt --all --check` are **all green on
+the current tree** — that is expected here and is **not** evidence the phase is
+done.
+
+**Exactly three things remain:**
+
+1. **One line.** In `run_command`, move `drop(writer);` to *after* the
+   `read_to_marker` call (bind the result, drop, return it — the shape is in
+   task 4). This alone takes the suite from **1702 passed / 14 failed** to
+   **1716 passed / 0 failed**. Run `cargo test --lib` and confirm that exact
+   pair of numbers before you go on.
+2. **The ten tests in § Test plan** — none of them exist yet. Current counts are
+   `shell::client` **9**, `shell::session` **7**, `shell::registry` **27**; the
+   targets are **15**, **10**, **28**, and the full suite **1726 or more**. A
+   suite that reports 1716 means the fix landed but no test was written.
+3. **The three mutation checks and the § End-to-end verification block**, then
+   the paste self-check.
+
+Do not touch `src/daemon/` — § G asserts a zero diff there. An untracked
+`src/shell/mod.rs.base` (a stale patch backup, actually a copy of `client.rs`)
+was removed by the architect; do not recreate it.
+
 <!-- entries appended below this line -->
+
+### Update — 2026-09-10 (escalation)
+
+**Chosen lever:** resume, after an architect spec correction.
+**Rationale:** the spec was the problem (task 4's writer-lifetime claim was
+false, which is what burned 600 turns), so it had to be corrected either way —
+but the executor's partial work is structurally correct and worth preserving, so
+resume rather than a fresh re-dispatch that would rebuild 150 sound lines. The
+architect verified the one-line fix on the partial tree and handed the diagnosis
+over rather than applying it.
+
