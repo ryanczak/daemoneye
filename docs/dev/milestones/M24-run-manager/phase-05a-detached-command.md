@@ -801,3 +801,71 @@ assertion `left == right` failed: both paths must report the same real exit code
 — which is the anti-drift test proving its worth, as the mutation plan
 anticipated. Mutation reverted; `cargo test --lib shell::client` → **15
 passed; 0 failed**; all three mutations' transcripts recorded above.
+
+### Update — 2026-09-10 19:53 (end-to-end verification)
+
+The § End-to-end verification block, run verbatim from the repo root and
+captured mechanically to `/tmp/e2e-m24-05a.txt` (colour codes stripped by the
+block's own cleanup line). Output exactly as produced:
+
+````
+== A. build ==
+real HOME shells BEFORE the suite: 5
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+cargo_exit=0
+== B. the new detached-runner tests, against a real bash PTY ==
+test shell::client::tests::client_spawn_command_errors_when_the_shell_socket_is_absent ... ok
+test shell::client::tests::client_run_command_errors_when_the_socket_is_absent ... ok
+test shell::client::tests::oneshot::client_send_signal_round_trips ... ok
+test shell::client::tests::oneshot::client_send_signal_carries_the_host_error_back ... ok
+test shell::client::tests::oneshot::client_status_reports_state ... ok
+test shell::client::tests::client_run_command_returns_the_real_exit_code ... ok
+test shell::client::tests::client_run_command_and_spawn_command_agree_on_one_command ... ok
+test shell::client::tests::client_spawn_command_delivers_the_real_exit_code ... ok
+test shell::client::tests::client_run_command_ignores_interleaved_non_chunk_frames ... ok
+test shell::client::tests::client_spawn_command_delivers_the_output_between_markers ... ok
+test shell::client::tests::client_run_command_output_excludes_the_markers ... ok
+test shell::client::tests::client_run_command_survives_a_chunk_split_mid_marker ... ok
+test shell::client::tests::client_run_command_times_out_on_a_silent_command ... ok
+test shell::client::tests::client_spawn_command_timeout_resolves_the_receiver_with_an_error ... ok
+test shell::client::tests::client_spawn_command_returns_before_the_command_finishes ... ok
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 1715 filtered out; finished in 1.08s
+cargo_exit=0
+== C. module counts (client >=15, session >=10, registry >=28) ==
+shell::client      test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 1715 filtered out; finished in 1.08s
+shell::session     test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1720 filtered out; finished in 0.16s
+shell::registry    test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 1702 filtered out; finished in 0.00s
+== D. preservation: run 50, cancel 6, executor 226, path_audit 24 ==
+daemon::run::        test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 1680 filtered out; finished in 0.01s
+daemon::cancel::     test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1724 filtered out; finished in 0.05s
+daemon::executor     test result: ok. 226 passed; 0 failed; 4 ignored; 0 measured; 1500 filtered out; finished in 0.07s
+config::path_audit   test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 1706 filtered out; finished in 0.00s
+== E. lib suite, three consecutive runs ==
+test result: ok. 1726 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.21s
+test result: ok. 1726 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.41s
+test result: ok. 1726 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.44s
+== F. structural greps (each must print the stated number) ==
+dedicated field            (1): 1
+reuse excludes dedicated   (1): 1
+spawn_dedicated_for        (1): 1
+spawn_command              (1): 1
+CommandHandle              (1): 1
+start_command helper       (1): 1
+read_to_marker helper      (1): 1
+ONE parse_outcome site     (1): 1
+ONE Subscribe site         (1): 1
+dedicated threaded       (>=2): 2
+ShellRecord sites          (5): 5
+oneshot outcome          (>=1): 1
+no rust-side sleep         (0): 0
+no unwrap/panic pre-test src/shell/client.rs    (0): 0
+no unwrap/panic pre-test src/shell/session.rs   (0): 0
+no unwrap/panic pre-test src/shell/registry.rs  (0): 0
+== G. no daemon file touched, no HOME litter ==
+daemon/ diff lines         (0): 0
+real HOME shells AFTER (==BEFORE): 5
+````
+
+Every number matches its stated target. Section E: three consecutive full-lib
+runs at 1726 passed / 0 failed (the suite took slightly longer on the first
+run; all three green).
