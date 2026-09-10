@@ -1,7 +1,7 @@
 # Phase 05a: the detached command runner and dedicated shells
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** M20 (the shell substrate: `run_command`, the marker protocol,
 the registry). Nothing in M24 phases 01–04 — this phase is pure substrate and
 touches no `src/daemon/run/` file.
@@ -1013,3 +1013,49 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 69440970f6ee88f63d3bdb93912a7a96bdf624bd
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-10
+
+- **Verdict:** approved_after_1
+- **Bounces:** none at review. One prior dispatch ended `budget_exceeded` at 600
+  turns and was escalated (`spec_bug`) — see the escalation entry above.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (run 1: 600 turns,
+  budget_exceeded; run 2, resumed: 158 turns, complete)
+- **Scope deviations:** one, declared by the executor and **caused by an
+  incomplete Authorizations list, not by overreach.** `src/shell/pty.rs` was not
+  in § Authorizations, but the spec pinned `CommandHandle::nonce: Nonce` and the
+  absent-socket test's `expect_err` needs `CommandHandle: Debug`, which needs
+  `Nonce: Debug`; the reader task additionally needs its own `Nonce`, so `Clone`
+  too. `#[derive(Clone, Debug)]` on `Nonce` is the minimal change that makes the
+  spec'd shape compile. **Architect gap:** § Authorizations should have named
+  `pty.rs` and the two derives — a field's blast radius includes the trait bounds
+  its container's tests require, not just its construction sites.
+- **Calibration:** the phase's own failure was a **spec bug**, corrected before
+  the resume: task 4 claimed the writer half could be dropped when
+  `start_command` returns. Dropping tokio's `OwnedWriteHalf` half-closes the
+  stream, the host reads EOF and tears the connection down, and the read loop
+  dies before the end marker arrives. The executor diagnosed this correctly on
+  its own — its `run_command` comment states the mechanism — then placed
+  `drop(writer)` one line above `read_to_marker` instead of below, and spent the
+  rest of its budget there. **Do not assert a lifetime or ownership claim in a
+  spec without running it** (same family as [[spec-facts-must-be-executed]]);
+  where a refactor moves a binding across an await, pin the drop point as a
+  worked example, which is what the corrected task 4 now does.
+- **Warnings:** the `pty.rs` change also widened `Nonce`'s field from private to
+  `pub(crate)`, which nothing requires. Verified at review: no file outside
+  `pty.rs` touches the field, and reverting it to private builds clean and passes
+  all 168 `shell::` tests. Harmless dead scope, not worth a bounce — **revert it
+  in the next phase that touches `pty.rs`.**
+
+**Verified independently at review** (not read from the executor's transcript):
+all four gates green with a forced recompile (fmt, build zero warnings, clippy
+`-D warnings`, **1726 passed / 0 failed**); every structural and preservation
+criterion at its pinned value, including the real-HOME litter delta (5 before, 5
+after); and two mutation checks re-run by hand — forcing `exit_code = 0` in the
+reader task reddens `client_spawn_command_delivers_the_real_exit_code` on
+`left: 0 / right: 7` **and** the parity guard on "both paths must report the same
+real exit code", while replacing the `tokio::spawn` with an inline await reddens
+`client_spawn_command_returns_before_the_command_finishes` on "a still-running
+command must not have resolved yet". The phase's defining property is genuinely
+guarded.
+
