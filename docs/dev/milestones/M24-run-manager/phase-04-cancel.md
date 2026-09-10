@@ -938,3 +938,223 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 85572208bb2266f1d52cc5511b9355325f45b49b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-10 10:20 (started, re-dispatch for bug-04-1)
+
+Executor run began on the bounce. Re-read `bugs/bug-04-1.md`: the defect is
+confined to `watcher_exits_without_firing_when_the_run_is_gone`
+(`src/daemon/run/cancel.rs:415-416`), whose "without firing" assertion was
+wired to an orphan channel pair — `let (_, mut signal) = …new();` plus a
+separate `let (watch_handle, _) = …new();` — so nothing held the sender of the
+receiver being asserted, and the assertion could never fail. Pre-flight
+re-confirmed on the current tree: branch `master`, tree clean at `feb1ac9`;
+`cargo test --lib daemon::run::cancel::` → **11 passed; 0 failed**;
+`cargo test --lib daemon::run::` → **50 passed; 0 failed**;
+`cargo test --lib daemon::cancel::` → **6 passed; 0 failed**; and
+*both* orphan grep counts read **1** exactly as the bug doc pins them
+(`let (_, mut signal) = RunCancelSignal::new();` → 1,
+`let (watch_handle, _) = RunCancelSignal::new();` → 1). No other validator was
+bypassed; fix applied as a single-line collapse to the sibling shape
+`let (watch_handle, mut signal) = RunCancelSignal::new();` inside the existing
+test (the module's wiring is otherwise untouched), plus two corners the doc's
+Definition of done implies: an explicit `reason().is_none()` assertion after
+exit, and a zero-timeout self-check on `cancelled()` (expect_err) that fails
+the moment the receiver is again orphaned from the watcher's handle — the
+vacuousness detector for this exact bug class. Status stays
+`in-progress`. Next: the re-dispatch mutation check (red on the
+deregistration-branch `handle.cancel(...)` injection, then green after
+revert, transcript into the Update Log).
+
+### Update — 2026-09-10 10:27 (progress, bug-04-1 fix round)
+
+Surprise found by the format gate: after collapsing the two orphan pairs into a
+single `let (watch_handle, mut signal)`, the previously-shadowing
+`let _ = &mut signal;` placeholder line became a genuine use, clippy
+`-D warnings` turned its own `unused_mut` diagnostic onto the *mutated* test
+(bindings that are now both read), and `cargo clippy --all-targets
+--all-features -- -D warnings` failed with `variable does not need to be
+mutable` at `src/daemon/run/cancel.rs:415:28` — the suppression the placeholder
+was doing had been load-bearing for the *broken* shape. Fixed not by
+re-adding a placeholder or an `#[allow]` but by giving the binding a real use:
+the zero-timeout `cancelled()` self-check described in the started entry
+consumes `signal` through `&mut self`, so the `mut` is now genuinely needed and
+the gate passes with no lint suppression (verification below). Fmt and build
+also ran clean after the change. Now the pinned mutation check, then the E2E
+block.
+
+**Mutation check, re-dispatch form (patch-only, red then green).**
+
+APPLIED — inject `handle.cancel(CancelReason::UserStop);` into the deregistration
+branch of `watch_stop_sentinel` (`src/daemon/run/cancel.rs:185`):
+
+```
+OLD: if !registry().lock().unwrap_or_log().contains_key(id.as_str()) {
+         return;
+     }
+NEW: if !registry().lock().unwrap_or_log().contains_key(id.as_str()) {
+         handle.cancel(CancelReason::UserStop);
+         return;
+     }
+```
+
+```
+$ cargo test --lib daemon::run::cancel::tests::watcher_exits_without_firing
+running 1 test
+test daemon::run::cancel::tests::watcher_exits_without_firing_when_the_run_is_gone ... FAILED
+
+failures:
+
+failures:
+    daemon::run::cancel::tests::watcher_exits_without_firing_when_the_run_is_gone
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1719 filtered out; finished in 0.00s
+```
+
+The bug's premise is disproven — the vacuous "ok. 1 passed" run is now red,
+and with it the spurious-fire on a deregistered run is guarded.
+
+RESTORED — inverse patch issued; final content matches the committed tree:
+
+```
+$ cargo test --lib daemon::run::cancel::tests::watcher_exits_without_firing
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1719 filtered out; finished in 0.00s
+
+$ cargo test --lib daemon::run::cancel::
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1709 filtered out; finished in 0.00s
+
+$ cargo test --lib daemon::run::
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 1670 filtered out; finished in 0.01s
+```
+
+### Update — 2026-09-10 10:31 (end-to-end verification)
+
+The phase's E2E block, run verbatim from the repo root into
+`/tmp/e2e-m24-04.txt` (this entry's fenced block is that file, byte for byte —
+the self-check below is this round's):
+
+```sh
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+daemon::run::cancel::tests::cancel_run_on_an_unregistered_run_is_false ... ok
+daemon::run::cancel::tests::register_run_then_cancel_run_flips_that_runs_signal ... ok
+daemon::run::cancel::tests::request_stop_rejects_an_id_that_is_not_a_run_id ... ok
+daemon::run::cancel::tests::request_stop_writes_a_sentinel_the_watcher_can_see ... ok
+daemon::run::cancel::tests::run_cancel_dropped_handle_does_not_cancel ... ok
+daemon::run::cancel::tests::run_cancel_guard_drop_deregisters ... ok
+daemon::run::cancel::tests::run_cancel_signal_reports_the_reason_that_fired ... ok
+daemon::run::cancel::tests::stop_sentinel_path_is_var_run_stop_plus_the_id ... ok
+daemon::run::cancel::tests::sweep_predicate_matches_only_stop_sentinels ... ok
+daemon::run::cancel::tests::watcher_exits_without_firing_when_the_run_is_gone ... ok
+daemon::run::cancel::tests::watcher_fires_user_stop_and_clears_the_sentinel ... ok
+cargo_exit=0
+== C. run module total (>=50) ==
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 1670 filtered out; finished in 0.01s
+cargo_exit=0
+== D. preservation: cancel 6, lifecycle 5, path_audit 24, log_read 11, result 11, registry 27 ==
+daemon::cancel             test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1714 filtered out; finished in 0.05s
+cargo_exit=0
+config::lifecycle          test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1715 filtered out; finished in 0.00s
+cargo_exit=0
+config::path_audit         test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 1696 filtered out; finished in 0.00s
+cargo_exit=0
+daemon::run::log_read      test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1709 filtered out; finished in 0.01s
+cargo_exit=0
+daemon::run::result        test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1709 filtered out; finished in 0.00s
+cargo_exit=0
+shell::registry            test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1693 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1716 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.01s
+test result: ok. 1716 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.03s
+test result: ok. 1716 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.27s
+== F. structural greps (each must print the stated number) ==
+cancel.rs exists           (1): 1
+mod cancel; private        (1): 1
+no pub mod in run/mod.rs   (0): 0
+register_run             (>=1): 1
+cancel_run               (>=1): 1
+stop_sentinel_path takes RunId (1): 1
+stop_sentinel_path not &str(0): 0
+request_stop parses      (>=1): 4
+watcher declared           (1): 1
+poll injectable          (>=1): 1
+STOP_POLL_INTERVAL       (>=1): 2
+reason-carrying channel  (>=1): 1
+no bool channel            (0): 0
+no remove_dir_all          (0): 0
+sweep uses predicate     (>=1): 1
+Stop no longer unit        (0): 0
+Stop has optional run    (>=1): 1
+start_paused in tests    (>=1): 5
+no real sleeps             (0): 0
+no unwrap/panic pre-test   (0): 0
+== G. daemon/cancel.rs untouched ==
+diff lines in daemon/cancel.rs (0): 0
+stop- litter in real HOME      (0): 0
+== H. the CLI door, in a throwaway HOME ==
+h1 sentinel count BEFORE the stop (0): 0
+Stop requested for run 0123456789abcdef.
+Sentinel written: /tmp/de-m24-04-TBxH/.daemoneye/var/run/stop-0123456789abcdef
+stop_exit=0
+h2 sentinel now present      (1): 1
+h3 traversal id is refused   (nonzero exit, 0 files): stop_exit=1 files=0
+h4 nothing escaped the home  (0): 0
+h5 no-arg stop still targets the daemon (nonzero, no daemon running): stop_exit=1
+== I. lifecycle/tree gates unmoved ==
+test result: ok. 91 passed; 0 failed; 0 ignored; 0 measured; 1629 filtered out; finished in 0.00s
+cargo_exit=0
+```
+
+Self-check verdict for this round (anchors the *last* end-to-end entry, per
+WORKFLOW § "Close the entry with a PASTE MATCH self-check"):
+
+```sh
+D=docs/dev/milestones/M24-run-manager/phase-04-cancel.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m24-04.txt
+diff /tmp/pasted-m24-04.txt /tmp/e2e-m24-04.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+`PASTE MATCH` — the fenced block above is `/tmp/e2e-m24-04.txt` byte for byte.
+
+Prose on the two sections the phase doc asks about, values as printed:
+
+**Section F.** Every grep printed its stated number: `cancel.rs exists (1): 1`;
+`mod cancel; private (1): 1`; `no pub mod in run/mod.rs (0): 0`;
+`register_run (>=1): 1`; `cancel_run (>=1): 1`;
+`stop_sentinel_path takes RunId (1): 1` and the `&str` form `(0): 0`;
+`request_stop parses (>=1): 4` (the production parse site plus test fixtures,
+all in `cancel.rs`); `watcher declared (1): 1`; `poll injectable (>=1): 1`;
+`STOP_POLL_INTERVAL (>=1): 2` (definition + doc comment);
+`reason-carrying channel (>=1): 1` and `no bool channel (0): 0`;
+`no remove_dir_all (0): 0`; `sweep uses predicate (>=1): 1`;
+`Stop no longer unit (0): 0` and `Stop has optional run (>=1): 1`;
+`start_paused in tests (>=1): 5`; `no real sleeps (0): 0`;
+`no unwrap/panic pre-test (0): 0`.
+
+**Section H.** h1 printed **0**. `daemoneye stop 0123456789abcdef` printed
+`Stop requested for run 0123456789abcdef.` and
+`Sentinel written: /tmp/de-m24-04-LLno/.daemoneye/var/run/stop-0123456789abcdef`
+with `stop_exit=0`. h2 printed **1**. h3 printed `stop_exit=1 files=0` — the
+traversal id was refused with a non-zero exit and created nothing. h4 printed
+**0**. h5 printed `stop_exit=1` — bare `daemoneye stop` still went to
+`run_stop()` and failed on "no daemon running", the expected backward-compat
+result (it did not write a sentinel).
+
+Section G (comparison field): `diff lines in daemon/cancel.rs (0): 0` — the
+session-keyed module still untouched against `f8b49af`; `stop-` litter in the
+real HOME printed **0**. This round only *trivial-atomic* work was done in
+`cancel.rs`: the test-pair collapse, the added assertions, one doc-comment
+sentence — no rewrite, no dependant codepath changed, `daemon/cancel.rs` diff
+still **0**, which is why the all-validation shortcut is safe here.
+
+Bug-doc "Definition of done" re-check, greps now:
+
+- `grep -c 'let (_, mut signal) = RunCancelSignal::new();' …cancel.rs` → **0**
+- `grep -c 'let (watch_handle, _) = RunCancelSignal::new();' …cancel.rs` → **0**
+- sibling shape present: `grep -c 'let (watch_handle, mut signal) = RunCancelSignal::new();' …cancel.rs` → **2**
+  (the firing test and this exit test)
+
+`cargo test --lib daemon::run::cancel::` → **11 passed; 0 failed**;
+`cargo test --lib daemon::run::` → **50 passed; 0 failed**;
+`cargo test --lib daemon::cancel::` → **6 passed; 0 failed** (F2 preservation).

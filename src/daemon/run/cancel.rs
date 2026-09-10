@@ -179,7 +179,7 @@ pub const STOP_POLL_INTERVAL: Duration = Duration::from_millis(500);
 ///
 /// `poll` is injectable for tests. The loop returns — without firing — as
 /// soon as the run is no longer registered, so the task never outlives its
-/// run.
+/// run: the run is gone, there is nobody left to hand the reason to.
 pub async fn watch_stop_sentinel(id: RunId, handle: RunCancelHandle, poll: Duration) {
     loop {
         tokio::time::sleep(poll).await;
@@ -412,8 +412,7 @@ mod tests {
         let id = run_id();
         let (guard, _) = register_run(&id);
         drop(guard);
-        let (_, mut signal) = RunCancelSignal::new();
-        let (watch_handle, _) = RunCancelSignal::new();
+        let (watch_handle, mut signal) = RunCancelSignal::new();
         let watcher = tokio::spawn(watch_stop_sentinel(
             id,
             watch_handle,
@@ -424,7 +423,6 @@ mod tests {
             tokio::time::advance(Duration::from_millis(10)).await;
             tokio::task::yield_now().await;
         }
-        let _ = &mut signal;
         assert!(
             watcher.is_finished(),
             "a watcher whose run is gone must stop polling and return"
@@ -433,6 +431,17 @@ mod tests {
             !signal.is_cancelled(),
             "exiting without a sentinel must not fire the signal"
         );
+        assert!(
+            signal.reason().is_none(),
+            "exit must not carry a reason, only a sentinel fire may"
+        );
+        tokio::time::timeout(Duration::ZERO, signal.cancelled())
+            .await
+            .expect_err(
+                "the observed receiver must be paired with the watcher's own \
+                 handle: if this timeout stops resolving, the receiver got \
+                 orphaned from the sender and the assertion above is vacuous",
+            );
     }
 
     #[test]
