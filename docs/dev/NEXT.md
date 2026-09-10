@@ -4665,7 +4665,46 @@ reddened the strong `is_finished()` half, masking the dead one. A mutation
 reddening a test proves only that *some* assertion fired; aim it at the property
 whose guard is in doubt, and quote the failing assertion line.
 
-**Active phase: M24 phase-05a — detached-command** (drafted 2026-09-10,
+**phase-05a — detached-command: done (approved_after_1) 2026-09-10**, commits
+`cc8101a` + `6944097`, approval `4fb513b`. Run 1 ended **budget_exceeded at 600
+turns**; run 2 (resumed) finished in 158. `spawn_command`/`CommandHandle`,
+`start_command`/`read_to_marker` shared by both callers, `ShellRecord.dedicated`
++ `spawn_dedicated_for`. Suite 1716 → **1726**.
+**The 600-turn loss was an architect spec bug (`spec_bug`, not charged to the
+model):** task 4 claimed the writer half could be dropped when `start_command`
+returns. Dropping tokio's `OwnedWriteHalf` half-closes the stream, the host reads
+EOF and tears the connection down, and the read loop dies before the end marker
+arrives. The executor diagnosed this correctly on its own — its `run_command`
+comment states the mechanism — then placed `drop(writer)` one line above
+`read_to_marker` instead of below. **Never assert a lifetime or ownership claim
+in a spec without running it**; where a refactor moves a binding across an await,
+pin the drop point as a worked example.
+**Warning carried forward:** that round also widened `Nonce`'s field to
+`pub(crate)` with nothing requiring it — verified at review that private still
+builds and passes all 168 `shell::` tests. **Revert it in the next phase that
+touches `src/shell/pty.rs`.**
+**Architect gap recorded:** § Authorizations omitted `pty.rs`, which the spec'd
+`CommandHandle::nonce: Nonce` forced (the absent-socket test's `expect_err` needs
+`CommandHandle: Debug` → `Nonce: Debug`). A field's blast radius includes the
+trait bounds its container's *tests* require, not just its construction sites.
+
+**Active phase: M24 phase-05b — background** (drafted 2026-09-10,
+`docs/dev/milestones/M24-run-manager/phase-05b-background.md`, status `todo`).
+**The milestone's payoff:** under `backend = "pty"` a chat turn's
+`run_terminal_command(background=true)` returns immediately with a run id, runs
+on a dedicated shell, and delivers `[Background Task Completed]` with the real
+marker exit code — no tmux `de-bg-*` window. A **branch**, not a deletion: the
+tmux path still serves `backend = "tmux"`, ghosts and `retry_in_pane`.
+**Drafting decisions:** all testable logic goes in a new
+`executor/bg_shell.rs` taking **no** `tx`/`rx` (approval and IPC stay in the
+arm) — the same split that makes `shell_exec::run_in_shell` testable, and the
+reason this fits one phase. `shell_exec.rs:128-167`'s real-PTY harness is quoted
+for reuse. **Four pinned counts were wrong until run** and are corrected:
+`tokio::spawn` in `executor/mod.rs` is already 1 (a doc comment, not a call
+site), `retry_pane` is already 2, `daemon::background` is 12 (not 21), and
+`daemon::server::catchup` is 19 (not 10).
+
+*(Superseded — phase-05a is done: originally drafted 2026-09-10,
 `docs/dev/milestones/M24-run-manager/phase-05a-detached-command.md`, status
 `todo`). `spawn_command` + `CommandHandle` (start a command, return before it
 finishes, deliver the real `CommandOutcome` later) and `dedicated` shells that
