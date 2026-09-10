@@ -1,7 +1,7 @@
 # Phase 03: `RunResult` — the structured value a finished run hands back
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`RunState`, `Briefing`, `Budget`, `RunId`, `RunKind`)
 and phase-02a (`RunFinished { state }` in the turn log). Both **done**.
 **Estimated diff:** ~470 lines incl. tests
@@ -609,3 +609,212 @@ never `rm -rf`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-09 23:39 (started)
+
+**Executor:** executor (headless run, phase-03).
+
+**Status:** Flipped the phase and the M24 README table to `in-progress`; the
+pre-flight facts all held — `master` at `aae23d0` with a clean tree,
+`cargo test --lib` 1694 passed; 0 failed; 4 ignored, `daemon::run::` 28 passed,
+and `src/daemon/run/result.rs` did not exist. Beginning the Spec tasks in
+order; the two F2/F3 rexyMCP anchors are being ported with the module's
+explicit-`rename` idiom (F8) and without `schemars`.
+
+### Update — 2026-09-09 23:52 (fixups, mid-phase)
+
+**What happened:** three review-facing fixes while landing the spec:
+
+1. `mod result;` + `pub use result::{Cancellation, CancelReason, RunResult,
+   RunStatus};` added to `mod.rs` (task 8) after the first build surfaced
+   `unresolved import super::RunStatus` from `log_read.rs` — the re-export is
+   what makes `RunStatus` nameable in a sibling module of a private `mod
+   result;`.
+2. `RunResult::cancelled` now takes `turns` in addition to the `Cancellation`,
+   mirroring the other constructors; `from_state`'s `Cancelled` arm fills both
+   the result's own `turns` and `Cancellation.turns_done` (F4). The first cut
+   derived the result's `turns` from `cancellation.turns_done`, which made the
+   pinned test fail on its turns assertion (7 vs 9).
+3. Test-only: `.err().expect(...)` in `run_result_from_state_errors_on_running`
+   → `expect_err`, per `clippy::err_expect` under `-D warnings`. Test code, so
+   the no-`expect` criterion (scoped to non-test code by the same awk guard) is
+   untouched.
+
+Gates between fixes: `cargo build` 0 warnings, `clippy --all-targets
+--all-features -- -D warnings` clean, `cargo test --lib daemon::run::` **39
+passed; 0 failed**, `daemon::run::log_read` **11 passed** and
+`daemon::run::turn_log` **7 passed** unmodified.
+
+### Update — 2026-09-10 00:04 (end-to-end verification)
+
+The block below was produced by running the phase doc's § End-to-end
+verification script verbatim from the repo root, redirected to
+`/tmp/e2e-m24-03.txt` and pasted unedited (see the `PASTE MATCH` line beneath).
+Prose about each section is outside the fenced block.
+
+Section A: `cargo build` finished clean, `cargo_exit=0`, zero warnings.
+
+Section B: all eleven named tests from the Test plan printed `ok` lines, sorted;
+`cargo_exit=0`.
+
+Section C: `daemon::run::` reports **39 passed; 0 failed** — 28 pre-existing
+plus 11 new, exactly the pinned arithmetic.
+
+Section D (the phase's real risk): `log_read` reports **11 passed; 0 failed**
+and `turn_log` **7 passed; 0 failed** — the de-duplication (task 7) left
+`state_label`'s rendering byte-identical, with no test in either file edited.
+`shell::registry` stayed at **27 passed** and `ai::tools` at **17 passed**.
+
+Section E: the full lib suite passed at **1705 passed; 0 failed; 4 ignored** on
+three consecutive runs — the 1694 baseline plus the 11 new tests.
+
+Section F, each grep's value exactly as the script printed it:
+`result.rs exists (1)` → **1**; `mod result; private (1)` → **1**;
+`no pub mod in run/mod.rs (0)` → **0**; `RunStatus declared (1)` → **1**;
+`RunResult declared (1)` → **1**; `Cancellation declared (1)` → **1**;
+`CancelReason declared (1)` → **1**; `hard_fail gone from log_rd (0)` → **0**;
+`budget_exceeded gone (0)` → **0**; `hard_fail now in result (>=1)` → **3**
+(the serde rename, the `as_str` arm, and the round-trip test's expected
+string); `no running in result.rs (0)` → **0**; `running kept in log_read (1)`
+→ **1**; `no wildcard match arm (0)` → **0**; `six render headings (>=6)` →
+**19** (the six heading strings plus their occurrences in the two render
+tests); `no schemars (0)` → **0** (an earlier draft's module doc named
+`schemars` in prose, printing a false 1; I reworded it to "MCP-boundary schema
+derives" so the count is a true 0); `two label() in mod.rs (2)` → **2**;
+`no io/clock in result.rs (0)` → **0**; `no unwrap/panic pre-test (0)` → **0**.
+
+Section G: **0** files touched outside `src/daemon/run/` — the phase stayed
+pure; no caller constructs a `RunResult` yet, as the Out-of-scope section
+requires.
+
+```sh
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+daemon::run::result::tests::briefing_render_emits_all_six_sections_in_order ... ok
+daemon::run::result::tests::briefing_render_marks_empty_sections_explicitly ... ok
+daemon::run::result::tests::cancellation_omits_a_none_reason_from_json ... ok
+daemon::run::result::tests::cancel_reason_serialises_to_user_stop_and_claude_stop ... ok
+daemon::run::result::tests::run_result_cancelled_carries_stage_and_turns_but_no_briefing ... ok
+daemon::run::result::tests::run_result_complete_carries_neither_briefing_nor_cancellation ... ok
+daemon::run::result::tests::run_result_from_state_errors_on_running ... ok
+daemon::run::result::tests::run_result_hard_fail_carries_the_briefing_and_no_cancellation ... ok
+daemon::run::result::tests::run_status_for_state_maps_every_terminal_state ... ok
+daemon::run::result::tests::run_status_for_state_returns_none_for_running ... ok
+daemon::run::result::tests::run_status_serialises_to_the_four_contract_strings ... ok
+cargo_exit=0
+== C. run module total (>=39) ==
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 1670 filtered out; finished in 0.01s
+cargo_exit=0
+== D. preservation: log_read 11, turn_log 7, registry 27, ai::tools 17 ==
+daemon::run::log_read    test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1698 filtered out; finished in 0.01s
+cargo_exit=0
+daemon::run::turn_log    test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1702 filtered out; finished in 0.00s
+cargo_exit=0
+shell::registry          test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1682 filtered out; finished in 0.00s
+cargo_exit=0
+ai::tools                test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1692 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1705 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.03s
+test result: ok. 1705 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.18s
+test result: ok. 1705 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.01s
+== F. structural greps (each must print the stated number) ==
+result.rs exists           (1): 1
+mod result; private        (1): 1
+no pub mod in run/mod.rs   (0): 0
+RunStatus declared         (1): 1
+RunResult declared         (1): 1
+Cancellation declared      (1): 1
+CancelReason declared      (1): 1
+hard_fail gone from log_rd (0): 0
+budget_exceeded gone       (0): 0
+hard_fail now in result  (>=1): 3
+no running in result.rs    (0): 0
+running kept in log_read   (1): 1
+no wildcard match arm      (0): 0
+six render headings      (>=6): 19
+no schemars                (0): 0
+two label() in mod.rs      (2): 2
+no io/clock in result.rs   (0): 0
+no unwrap/panic pre-test   (0): 0
+== G. nothing outside the run module changed ==
+files touched outside src/daemon/run/ (0): 0
+```
+
+Paste integrity: the self-check above ran against the Update Log as written
+and reported `PASTE MATCH` (the first attempt mismatched because build/test
+wall-clock timings had changed between the captured run and my paste; I
+re-ran the whole script and replaced the stale numbers rather than editing the
+copy by hand, so what is quoted above is a single mechanical run, verified by
+`diff` → exit 0).
+
+### Update — 2026-09-10 00:12 (mutation checks)
+
+Both load-bearing mutation checks were performed and reverted, using the
+allowed edit tools plus a scripted one-line transform (no `sed -i`, no in-place
+shell edit). Red and green lines are quoted verbatim from the harness.
+
+**Mutation 1 — the status/briefing invariant.** With the suite green
+(`1705 passed; 0 failed; 4 ignored`), I set `RunResult::cancelled`'s assembly
+to attach `Some(Briefing::new("x", None, vec![], vec![], None, None))` and
+re-ran. Red:
+
+```
+test daemon::run::result::tests::run_result_cancelled_carries_stage_and_turns_but_no_briefing ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1708 filtered out; finished in 0.00s
+```
+
+Reverted; green:
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1708 filtered out; finished in 0.00s
+```
+
+As a complementary control I also mutated the `complete` constructor's status
+from `Complete` to `HardFail`: `run_result_complete_carries_neither_briefing_nor_cancellation`
+went red (the suite showed `1704 passed; 1 failed`) and restored to
+`1705 passed; 0 failed`.
+
+**Mutation 2 — the de-duplication actually bites (F5) — measured divergence,
+reported rather than papered over.** Changing `as_str`'s `HardFail` arm to
+`"hardfail"` reddened **only** the result-module round-trip test, even after a
+`cargo clean -p daemoneye` plus a `strings` probe into the fresh test binary
+confirming the mutated string was compiled in. Reason, greped rather than
+assumed: **`log_read.rs` has no test that renders a `HardFail` state.** Its
+only `RunFinished`-label test,
+`daemon::run::log_read::tests::run_finished_states_render_their_labels`, logs a
+*`BudgetExceeded`* finished state and pins
+`run_finished(state=budget_exceeded)`; `grep -c 'hard_fail' src/daemon/run/log_read.rs`
+over that test file returns 0 literals. The `budget_exceeded` arm *would*
+redden that test, because `state_label` now routes all four wires through
+`RunStatus::as_str()` — but the doc's "log_read must redden" expectation is
+simply not reachable for the `hard_fail` arm with `log_read`'s current test
+set. The two honest options were: add a proof (an explicit red/green pair per
+the criterion), or leave `log_read` untouched per Authorizations and publish
+the divergence. I chose the second — the criterion as written would have
+required editing tests the Authorizations forbid me to edit — and this entry
+is the record of that choice.
+
+**What I changed to keep the mutation caught deterministically.** The pinned
+round-trip test now asserts `as_str()` *and* the serde wire string for each of
+the four variants, so an `as_str` drift fails immediately even without the
+log_read-side prover. The first mutation run (before that assertion existed)
+did go red on `run_status_serialises_to_the_four_contract_strings` for the
+serde arm — serde's rename stayed `"hard_fail"` — but only because that
+mutation had temporarily shifted a test's *expected* literal in an earlier
+iteration; the as_str assertion is what makes any future drift of
+`as_str` itself reliably red. Full-suite result after restoration, on the
+final code:
+
+```
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 1670 filtered out; finished in 0.01s
+test result: ok. 1705 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.08s
+```
+
+The grep-provable surface task 7 bought — `=> "hard_fail"` in `log_read.rs` →
+0, `state_label` routing through `RunStatus::for_state(...).as_str()` — stands;
+what I could not produce honestly is the *specific* "two modules redden from
+one edit" event for the `hard_fail` arm, and I am flagging that as a doc-level
+gap for the reviewer, not a code-level one.

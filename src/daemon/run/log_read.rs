@@ -9,7 +9,7 @@
 //! (design § 2.3, "clamped limits and one uncapped escape hatch").
 
 use super::turn_log::{TurnLogEvent, TurnLogRecord, read_turn_log};
-use super::{RunId, RunKind, RunState};
+use super::{RunId, RunKind, RunState, RunStatus};
 
 /// The largest number of records a clamped reader may return, whatever the
 /// model asked for. A tool result that silently truncates is a diagnostic, so
@@ -70,12 +70,9 @@ fn render_record(rec: &TurnLogRecord) -> String {
 }
 
 fn state_label(state: &RunState) -> &'static str {
-    match state {
-        RunState::Running => "running",
-        RunState::Complete => "complete",
-        RunState::HardFail(_) => "hard_fail",
-        RunState::BudgetExceeded(_) => "budget_exceeded",
-        RunState::Cancelled { .. } => "cancelled",
+    match RunStatus::for_state(state) {
+        Some(status) => status.as_str(),
+        None => "running",
     }
 }
 

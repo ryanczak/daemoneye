@@ -156,6 +156,20 @@ pub enum BudgetDimension {
     Usd,
 }
 
+impl BudgetDimension {
+    /// The lowercase label the briefing's Budget section names a dimension
+    /// by ("ended on: turns") — the human word for it, not the wire name.
+    pub fn label(&self) -> &'static str {
+        match self {
+            BudgetDimension::Turns => "turns",
+            BudgetDimension::ToolCalls => "tool_calls",
+            BudgetDimension::Tokens => "tokens",
+            BudgetDimension::WallClock => "wall_clock",
+            BudgetDimension::Usd => "usd",
+        }
+    }
+}
+
 /// Runtime consumption tracked against limits (design § 2.3), across turns,
 /// tool calls, tokens, wall clock, and USD. Holds both the limits and what
 /// has been spent; `0` in the limit means unlimited (the project's "set to 0
@@ -468,9 +482,11 @@ mod tests {
 }
 
 mod log_read;
+mod result;
 mod turn_log;
 pub use log_read::{
     DEFAULT_RUN_LOG_LIMIT, MAX_RUN_LOG_LIMIT, clamp_run_log_limit, get_turn,
     run_log_input_rejected, run_log_search, run_log_tail,
 };
+pub use result::{CancelReason, Cancellation, RunResult, RunStatus};
 pub use turn_log::{TurnLogEvent, TurnLogRecord, append_turn_event, read_turn_log, turn_log_file};
