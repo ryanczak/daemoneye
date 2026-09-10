@@ -1,7 +1,9 @@
 # Phase 04: cooperative cancellation — the `stop-<run>` sentinel
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** in-progress (bounced 2026-09-10 — see [bugs/bug-04-1.md](bugs/bug-04-1.md): the "without firing" assertion in
+`watcher_exits_without_firing_when_the_run_is_gone` is wired to an orphan
+channel pair and cannot fail)
 **Depends on:** phase-01 (`RunId`) and phase-03 (`CancelReason`, `Cancellation`).
 Both **done**.
 **Estimated diff:** ~520 lines incl. tests
@@ -384,6 +386,29 @@ Each was run against the current tree and returns the "now" value shown.
       `ls ~/.daemoneye/var/run/ | grep -c '^stop-'` → **0** after the suite runs.
 - [ ] Full lib suite `0 failed` on **three consecutive runs**.
 - [ ] All four gates pass.
+
+### Re-dispatch criteria — bug-04-1 (added 2026-09-10)
+
+Everything above still passes and must stay passing. These are the outstanding
+work; each was run against the current tree and returns the "now" value shown.
+
+- [ ] **The watcher exit test observes the handle under test.**
+      `grep -c 'let (_, mut signal) = RunCancelSignal::new();' src/daemon/run/cancel.rs`
+      → **0** (now `1`), and
+      `grep -c 'let (watch_handle, _) = RunCancelSignal::new();' src/daemon/run/cancel.rs`
+      → **0** (now `1`). One `RunCancelSignal::new()` call destructured to both
+      names in a single `let`, as `watcher_fires_user_stop_and_clears_the_sentinel`
+      already does.
+- [ ] **The "without firing" half has guard power (mutation, `patch` only).**
+      Add `handle.cancel(CancelReason::UserStop);` immediately before the `return`
+      in the "run no longer registered" branch of `watch_stop_sentinel` →
+      `cargo test --lib daemon::run::cancel::tests::watcher_exits_without_firing`
+      reports **`FAILED. 0 passed; 1 failed`** (it reports **`ok. 1 passed`**
+      today — that is the defect). Revert → **`ok. 1 passed; 0 failed`**. Put the
+      red-then-green transcript in the Update Log.
+- [ ] `cargo test --lib daemon::run::cancel::` → **11 or more passed; 0 failed**
+      (now 11) and `cargo test --lib daemon::run::` → **50 or more passed;
+      0 failed** (now 50).
 
 ## Test plan
 
