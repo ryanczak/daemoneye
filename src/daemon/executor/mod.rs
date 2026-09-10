@@ -1,3 +1,4 @@
+mod bg_shell;
 pub(crate) mod container;
 mod file_ops;
 mod foreground;
@@ -418,6 +419,121 @@ where
             retry_pane,
             ..
         } => {
+            // The PTY shell substrate, when configured, for a **chat**
+            // session's plain background command. A ghost session (no
+            // substrate shell of its own and sandboxed away from the host),
+            // an explicit `retry_in_pane` (it names a tmux pane, which the
+            // substrate has none of), or `backend = "tmux"` (the default)
+            // falls through to `run_background` unchanged, so the default
+            // behaviour is byte-for-byte today's.
+            let uses_pty = crate::config::Config::load()
+                .unwrap_or_default()
+                .execution
+                .uses_pty();
+            if uses_pty
+                && !is_ghost
+                && session_id.is_some()
+                && retry_pane.as_deref().is_none_or(|p| p.is_empty())
+            {
+                match prompt_and_await_approval(
+                    ApprovalRequest {
+                        id,
+                        cmd,
+                        background: true,
+                        target_pane_hint: None,
+                    },
+                    session_id,
+                    ghost_policy.as_ref(),
+                    tx,
+                    rx,
+                )
+                .await?
+                {
+                    Err(outcome) => return Ok(outcome),
+                    Ok(cmd_id) => {
+                        let owner = Owner::Chat(session_id.unwrap_or_default().to_string());
+                        let max_per_owner = crate::config::Config::load()
+                            .unwrap_or_default()
+                            .shells
+                            .max_per_owner;
+                        match bg_shell::start_background(
+                            crate::shell::registry(),
+                            owner.clone(),
+                            cmd,
+                            max_per_owner,
+                        )
+                        .await
+                        {
+                            Ok((start, handle)) => {
+                                // The command was dispatched; its real exit code is
+                                // not known yet and the stats row is about
+                                // dispatch, not outcome.
+                                crate::daemon::stats::finish_command(cmd_id, 0);
+                                let text = format!(
+                                    "Running in background on shell {} (run {}). The result is \
+                                     not available yet — it will be delivered later as a \
+                                     [Background Task Completed] message. Continue with other \
+                                     work or end your turn; do not poll for it.",
+                                    start.shell_id.as_str(),
+                                    start.run_id
+                                );
+                                send_response_split(
+                                    tx,
+                                    Response::ToolResult {
+                                        tool_call_id: id.to_string(),
+                                        output: text.clone(),
+                                    },
+                                )
+                                .await?;
+                                crate::daemon::utils::log_shell_command(
+                                    session_id,
+                                    start.shell_id.as_str(),
+                                    cmd,
+                                    "approved",
+                                    0,
+                                    &text,
+                                );
+                                tokio::spawn(bg_shell::await_and_notify(
+                                    sessions.clone(),
+                                    session_id.map(|s| s.to_string()).unwrap_or_default(),
+                                    cmd.to_string(),
+                                    start,
+                                    handle,
+                                ));
+                                return Ok(ToolCallOutcome::Result(text));
+                            }
+                            Err(e) => {
+                                let shell_id =
+                                    crate::shell::registry_lookup(&owner, |sid| sid.to_string())
+                                        .unwrap_or_else(|| "s?".to_string());
+                                let msg = format!(
+                                    "Error starting background command in shell {shell_id}: \
+                                     {e:#}. Nothing was started, so retrying is safe."
+                                );
+                                crate::daemon::stats::finish_command(cmd_id, 1);
+                                send_response_split(
+                                    tx,
+                                    Response::ToolResult {
+                                        tool_call_id: id.to_string(),
+                                        output: msg.clone(),
+                                    },
+                                )
+                                .await?;
+                                crate::daemon::utils::log_shell_command(
+                                    session_id,
+                                    &shell_id,
+                                    cmd,
+                                    "shell-error",
+                                    -1,
+                                    &msg,
+                                );
+                                return Ok(ToolCallOutcome::Result(msg));
+                            }
+                        }
+                    }
+                }
+            }
+
             foreground::run_background(
                 id,
                 cmd,
