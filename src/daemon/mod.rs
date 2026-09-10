@@ -540,6 +540,20 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         }
     }
 
+    // Remove stop sentinels left behind by a previous daemon run: a
+    // `daemoneye stop <run>` from a terminal whose daemon died would
+    // otherwise still be honoured on restart. Only `stop-*` entries are
+    // removed — everything else in var/run (pid, socket, schedules,
+    // pane prefs, the shells subtree) must survive.
+    if let Ok(entries) = std::fs::read_dir(crate::config::var_run_dir()) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if crate::daemon::run::is_stop_sentinel_name(&name.to_string_lossy()) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
     let default_model = startup_config.resolve_model(None);
     let api_key = default_model.resolve_api_key();
     if api_key.is_empty() {

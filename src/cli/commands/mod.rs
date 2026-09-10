@@ -20,7 +20,7 @@ pub use audit_prompts::run_audit_prompts;
 pub use costs::{GroupBy, run_costs};
 pub use interrupt::InterruptState;
 pub use ipc_client::{connect, recv, send_request};
-pub use lifecycle::{liveness_line, run_logs, run_ping, run_stop};
+pub use lifecycle::{liveness_line, run_logs, run_ping, run_stop, run_stop_run};
 pub use reindex::run_reindex;
 pub use sandbox::run_sandbox_build;
 pub use setup::run_setup;

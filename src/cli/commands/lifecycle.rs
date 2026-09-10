@@ -74,6 +74,23 @@ pub async fn run_stop() -> Result<()> {
     Ok(())
 }
 
+/// `daemoneye stop <run>` — write the run's stop sentinel and exit, without
+/// opening the IPC socket. Works from any terminal, including when the daemon
+/// is wedged.
+pub fn run_stop_run(raw_id: &str) -> Result<()> {
+    match crate::daemon::run::request_stop(raw_id) {
+        Ok(path) => {
+            println!("Stop requested for run {raw_id}.");
+            println!("Sentinel written: {}", path.display());
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("daemoneye stop {raw_id}: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
 pub async fn run_ping() -> Result<()> {
     let liveness = daemon_liveness().await;
     let pid = read_pid(&default_pid_path());

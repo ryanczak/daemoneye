@@ -65,8 +65,11 @@ enum Commands {
     },
     /// Show daemon status (uptime, sessions, provider, circuit breaker)
     Status,
-    /// Stop the background daemon
-    Stop,
+    /// Stop the background daemon, or cancel one run by id
+    Stop {
+        /// Run id to cancel. Omit to stop the daemon.
+        run: Option<String>,
+    },
     /// Initialise ~/.daemoneye/ and print tmux/systemd configuration
     Setup {
         /// Overwrite ~/.daemoneye/bin/daemoneye with the binary currently running this command.
@@ -414,9 +417,14 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Commands::Status => {
             cli::run_status().await?;
         }
-        Commands::Stop => {
-            cli::run_stop().await?;
-        }
+        Commands::Stop { run } => match run {
+            Some(id) => {
+                cli::run_stop_run(&id)?;
+            }
+            None => {
+                cli::run_stop().await?;
+            }
+        },
         Commands::Setup {
             overwrite_bin,
             overwrite_memory,

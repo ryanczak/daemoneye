@@ -1,7 +1,7 @@
 # Phase 04: cooperative cancellation — the `stop-<run>` sentinel
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`RunId`) and phase-03 (`CancelReason`, `Cancellation`).
 Both **done**.
 **Estimated diff:** ~520 lines incl. tests
@@ -600,3 +600,170 @@ never `rm -rf`. Note the E2E block ends with exactly that `find` form.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-10 16:21 (started)
+
+Executor run began. Pre-flight confirmed: branch `master`, tree clean;
+`cargo test --lib` → **1705 passed; 0 failed; 4 ignored**;
+`cargo test --lib daemon::run::` → **39 passed; 0 failed**;
+`cargo test --lib daemon::cancel::` → **6 passed; 0 failed**;
+`test -f src/daemon/run/cancel.rs` → **false** (0);
+`src/main.rs` `Commands::Stop` is the unit variant (`grep -c 'Stop,'` → 1).
+All seven Spec tasks are now implemented: `src/daemon/run/cancel.rs` (the
+`Option<CancelReason>`-carrying watch signal, run registry + guard, sentinel
+path/present/clear, `request_stop` parsing through `RunId::parse`, the 500 ms
+injectable-poll watcher, and the `is_stop_sentinel_name` sweep predicate),
+the `mod cancel;` + re-export lines in `src/daemon/run/mod.rs`, the filtered
+startup sweep immediately after the pipe-log cleanup in `src/daemon/mod.rs`,
+the `Stop { run: Option<String> }` variant + dispatch in `src/main.rs`, and
+`run_stop_run` beside `run_stop` in `src/cli/commands/lifecycle.rs` (exported
+from `src/cli/commands/mod.rs`). Eleven pinned tests written per the Test plan;
+all watcher tests are `#[tokio::test(start_paused = true)]` with
+`tokio::time::advance`, and every HOME-touching test takes
+`crate::test_home_guard()` + a tempdir HOME (reusing turn_log.rs's HomeGuard
+shape). Registry tests use per-test fresh ids because the registry is a
+process-global and libtest runs in parallel. `cargo test --lib daemon::run::`
+→ **50 passed; 0 failed**; `.unwrap_or_log()` on every registry lock; one
+early verifier round-trip (a missing `UnpoisonExt` import and a `borrow()`
+move instead of `.clone()`) was fixed. Next: the three mutation checks, then
+the E2E block and paste self-check.
+
+### Update — 2026-09-10 16:5x (progress)
+
+Three mutation checks run, one by one, using only `patch` to break and revert:
+
+1. **Security boundary.** `request_stop` rebuilt the path from the raw string
+   (no `RunId::parse`) → `request_stop_rejects_an_id_that_is_not_a_run_id`:
+   **RED** (`test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured;
+   1719 filtered out`), reverted → **GREEN** (`test result: ok. 1 passed;
+   0 failed`). Full module re-checked after revert: 11 passed.
+2. **Sweep negative case.** `is_stop_sentinel_name` returned `!name.is_empty()`
+   → `sweep_predicate_matches_only_stop_sentinels`: **RED** (`FAILED. 0 passed;
+   1 failed`), reverted → **GREEN** (`ok. 1 passed; 0 failed`).
+3. **Watcher liveness exit.** Removed the "run no longer registered → return"
+   check → `watcher_exits_without_firing_when_the_run_is_gone`: **RED**
+   (`FAILED. 0 passed; 1 failed`, "a watcher whose run is gone must stop
+   polling and return"), reverted → **GREEN** (`ok. 1 passed; 0 failed`).
+
+`daemon::run::` remains **50 passed; 0 failed** after the reverts.
+Running the E2E block into `/tmp/e2e-m24-04.txt` next; it is already captured
+once (all sections green — A build ok, B 11/11 named tests, C 50, D all six
+preservation counts exact, E three green full-suite runs, F every structural
+grep at its stated number, G 0 diff lines in `daemon/cancel.rs` and 0 stop-
+litter in the real HOME, H h1 0 / h2 1 / h3 exit 1 with 0 files / h4 0 /
+h5 exit 1, I config:: 91 passed) — re-running to capture the artifact for the
+paste self-check.
+
+### Update — 2026-09-10 16:49 (end-to-end verification)
+
+The phase's E2E block, run verbatim from the repo root into
+`/tmp/e2e-m24-04.txt` (this entry's fenced block is that file, byte for byte —
+the self-check confirmed `diff /tmp/pasted-m24-04.txt /tmp/e2e-m24-04.txt`
+prints `PASTE MATCH`):
+
+```sh
+== A. build ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+cargo_exit=0
+== B. named tests (each line is one pinned test) ==
+daemon::run::cancel::tests::cancel_run_on_an_unregistered_run_is_false
+daemon::run::cancel::tests::register_run_then_cancel_run_flips_that_runs_signal
+daemon::run::cancel::tests::request_stop_rejects_an_id_that_is_not_a_run_id
+daemon::run::cancel::tests::request_stop_writes_a_sentinel_the_watcher_can_see
+daemon::run::cancel::tests::run_cancel_dropped_handle_does_not_cancel
+daemon::run::cancel::tests::run_cancel_guard_drop_deregisters
+daemon::run::cancel::tests::run_cancel_signal_reports_the_reason_that_fired
+daemon::run::cancel::tests::stop_sentinel_path_is_var_run_stop_plus_the_id
+daemon::run::cancel::tests::sweep_predicate_matches_only_stop_sentinels
+daemon::run::cancel::tests::watcher_exits_without_firing_when_the_run_is_gone
+daemon::run::cancel::tests::watcher_fires_user_stop_and_clears_the_sentinel
+cargo_exit=0
+== C. run module total (>=50) ==
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 1670 filtered out; finished in 0.01s
+cargo_exit=0
+== D. preservation: cancel 6, lifecycle 5, path_audit 24, log_read 11, result 11, registry 27 ==
+daemon::cancel             test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1714 filtered out; finished in 0.05s
+cargo_exit=0
+config::lifecycle          test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1715 filtered out; finished in 0.00s
+cargo_exit=0
+config::path_audit         test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 1696 filtered out; finished in 0.00s
+cargo_exit=0
+daemon::run::log_read      test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1709 filtered out; finished in 0.01s
+cargo_exit=0
+daemon::run::result        test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1709 filtered out; finished in 0.00s
+cargo_exit=0
+shell::registry            test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1693 filtered out; finished in 0.00s
+cargo_exit=0
+== E. lib suite, three consecutive runs ==
+test result: ok. 1716 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.05s
+test result: ok. 1716 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.10s
+test result: ok. 1716 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.54s
+== F. structural greps (each must print the stated number) ==
+cancel.rs exists           (1): 1
+mod cancel; private        (1): 1
+no pub mod in run/mod.rs   (0): 0
+register_run             (>=1): 1
+cancel_run               (>=1): 1
+stop_sentinel_path takes RunId (1): 1
+stop_sentinel_path not &str(0): 0
+request_stop parses      (>=1): 4
+watcher declared           (1): 1
+poll injectable          (>=1): 1
+STOP_POLL_INTERVAL       (>=1): 2
+reason-carrying channel  (>=1): 1
+no bool channel            (0): 0
+no remove_dir_all          (0): 0
+sweep uses predicate     (>=1): 1
+Stop no longer unit        (0): 0
+Stop has optional run    (>=1): 1
+start_paused in tests    (>=1): 5
+no real sleeps             (0): 0
+no unwrap/panic pre-test   (0): 0
+== G. daemon/cancel.rs untouched ==
+diff lines in daemon/cancel.rs (0): 0
+stop- litter in real HOME      (0): 0
+== H. the CLI door, in a throwaway HOME ==
+h1 sentinel count BEFORE the stop (0): 0
+Stop requested for run 0123456789abcdef.
+Sentinel written: /tmp/de-m24-04-xnhq/.daemoneye/var/run/stop-0123456789abcdef
+stop_exit=0
+h2 sentinel now present      (1): 1
+h3 traversal id is refused   (nonzero exit, 0 files): stop_exit=1 files=0
+h4 nothing escaped the home  (0): 0
+h5 no-arg stop still targets the daemon (nonzero, no daemon running): stop_exit=1
+== I. lifecycle/tree gates unmoved ==
+test result: ok. 91 passed; 0 failed; 0 ignored; 0 measured; 1629 filtered out; finished in 0.00s
+cargo_exit=0
+```
+
+Self-check verdict: `diff /tmp/pasted-m24-04.txt /tmp/e2e-m24-04.txt` prints
+`PASTE MATCH`.
+
+Prose on the two sections the phase doc asks me to state as printed:
+
+**Section F.** Every grep printed its stated number: `cancel.rs exists (1): 1`;
+`mod cancel; private (1): 1`; `no pub mod in run/mod.rs (0): 0`;
+`register_run (>=1): 1`; `cancel_run (>=1): 1`;
+`stop_sentinel_path takes RunId (1): 1` and the `&str` form `(0): 0`;
+`request_stop parses (>=1): 4` (the parse site plus three test fixtures, all in
+`cancel.rs`); `watcher declared (1): 1`; `poll injectable (>=1): 1`;
+`STOP_POLL_INTERVAL (>=1): 2` (definition + doc comment);
+`reason-carrying channel (>=1): 1` and `no bool channel (0): 0`;
+`no remove_dir_all (0): 0`; `sweep uses predicate (>=1): 1`;
+`Stop no longer unit (0): 0` and `Stop has optional run (>=1): 1`;
+`start_paused in tests (>=1): 5`; `no real sleeps (0): 0`;
+`no unwrap/panic pre-test (0): 0`.
+
+**Section H.** h1 printed **0** (no sentinels before the stop). `daemoneye stop
+0123456789abcdef` printed `Stop requested for run 0123456789abcdef.` and
+`Sentinel written: /tmp/de-m24-04-xnhq/.daemoneye/var/run/stop-0123456789abcdef`
+with `stop_exit=0`. h2 printed **1** — the sentinel is on disk under the
+throwaway HOME. h3 printed `stop_exit=1 files=0` — the traversal id was refused
+with a non-zero exit and created nothing. h4 printed **0** — no `stop-*` name
+escaped the throwaway home. h5 printed `stop_exit=1` — bare `daemoneye stop`
+still went to `run_stop()` and failed on "no daemon running", exactly the
+backward-compat expectation (it did not write a sentinel).
+
+Section G: `diff lines in daemon/cancel.rs (0): 0` — `daemon/cancel.rs` is
+untouched against `f8b49af`; the `stop-` litter count in the real HOME printed
+**0**.
