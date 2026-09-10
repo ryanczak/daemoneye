@@ -1,7 +1,7 @@
 # Phase 05b: `background=true` as an un-awaited Run on a dedicated shell
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-05a (`spawn_command`, `CommandHandle`,
 `spawn_dedicated_for`) and phase-01/02a (`RunId`, the turn log). All **done**.
 **Estimated diff:** ~500 lines incl. tests
@@ -962,3 +962,56 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 11ef7f534e84c89f39f5c96d5f220ca73db249ad
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-10
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (310 turns)
+- **Scope deviations:** none. Only `bg_shell.rs` (new) and the
+  `PendingCall::Background` arm plus one `mod` line in `executor/mod.rs`; no
+  visibility widening was needed, and `src/daemon/background/` holds a **zero
+  diff** — the tmux path is branched around, not modified.
+- **Calibration — an architect defect the executor absorbed correctly.** The
+  criterion `grep -c 'shell_for_owner' src/daemon/executor/bg_shell.rs` → **0**
+  **contradicts this phase's own § Test plan**, which requires
+  `bg_start_uses_a_dedicated_shell_not_the_owners_existing_one` to "give the
+  owner a live reusable shell first (via `shell_for_owner`)". The file reads
+  **1**, at `src/daemon/executor/bg_shell.rs:475`, inside `#[cfg(test)]`. The
+  executor followed the more specific instruction, which was right. **The
+  property the criterion meant to guard holds**: verified at review, the
+  production-only count
+  (`awk '/^#\[cfg\(test\)\]/{exit} {print}' … | grep -c 'shell_for_owner'`)
+  is **0**. *Lesson: a whole-file `grep -c … → 0` criterion is unsatisfiable
+  whenever the Test plan puts the same symbol in a test. Scope such criteria to
+  production code with the `awk` prefix the unwrap/panic criteria already use.*
+  Same family as M24 phase-03's unrunnable mutation prescription and M20
+  bug-07c-3 — **occurrence 3 of "the architect prescribed a check that could not
+  pass as written"**; carry to the PE at milestone close.
+- **Warnings:** the start-failure path
+  (`src/daemon/executor/mod.rs`, the `Err(e)` arm) tells the model "Nothing was
+  started, so retrying is safe", where the foreground path deliberately warns the
+  opposite ("the command may still be running … retrying could double-apply its
+  effect"). Accurate for every reachable failure — the interactive refusal, a
+  `max_per_owner` cap error, a readiness timeout, and a failed connect all
+  precede any byte reaching the PTY. It would be wrong only if `write_all`
+  delivered the Input frame and `flush` then failed, which is not a reachable
+  state on a `UnixStream` split half. Left as written; revisit if the substrate
+  ever buffers writes.
+
+**Verified independently at review** (not read from the executor's transcript):
+four gates green on a forced recompile — fmt, build zero warnings, clippy
+`-D warnings`, **1735 passed / 0 failed** over three consecutive runs, the exact
+pinned floor of 1726 + 9. `bg_shell` 9, `daemon::executor` 235; every
+preservation count exact (`shell_exec` 10, `run::` 50, `client` 15, `session` 10,
+`registry` 28, `background` 12, `catchup` 19); `background/` diff 0; real-HOME
+shell litter unchanged at 5. Two mutations re-run by hand: swapping
+`spawn_dedicated_for` for `shell_for_owner` in production reddens
+`bg_start_uses_a_dedicated_shell_not_the_owners_existing_one`, and making
+`start_background_with` await the outcome before returning reddens
+`bg_start_returns_before_the_command_finishes` on exactly its "a still-running
+command must not have resolved yet" assertion — **the phase's defining property
+is genuinely guarded.** Both negative-case tests are real: the masking test
+asserts the raw secret is *absent* (not merely that something changed), and the
+vanished-session test asserts no entry is resurrected.
+
