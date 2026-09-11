@@ -575,3 +575,151 @@ phase table. Pre-flight confirmed: clean tree at `a54c0f3`,
 `daemon::ghost` 8 passed, `agents::mailbox` 4 passed,
 `daemon::run::result` 11 passed, `grep -c register_run src/daemon/ghost.rs`
 → 0, `grep -c 'pub run:' src/agents/mailbox.rs` → 0.
+
+### Update — 2026-09-11 16:55 (end-to-end verification)
+
+The block in § End-to-end verification was run verbatim, once, redirected to
+`/tmp/e2e-m24-07b.txt`. That file's contents follow, unmodified:
+
+```
+== A. build ==
+real HOME run logs BEFORE: 0 ; stop- sentinels BEFORE: 0
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.42s
+cargo_exit=0
+== B. the ghost module ==
+test daemon::ghost::tests::ghost_loop_outcome_defaults_to_zero_turns_and_no_flags ... ok
+test daemon::ghost::tests::capacity_allows_when_under_limit ... ok
+test daemon::ghost::tests::capacity_zero_disables_cap ... ok
+test daemon::ghost::tests::ghost_run_kind_names_the_runbook_and_a_webhook_trigger ... ok
+test daemon::ghost::tests::ghost_run_kind_is_delegated_when_a_parent_run_id_and_agent_are_present ... ok
+test daemon::ghost::tests::ghost_run_kind_falls_back_to_ghost_when_the_parent_is_not_a_run_id ... ok
+test daemon::ghost::tests::ghost_run_kind_names_a_scheduled_trigger_from_the_sched_prefix ... ok
+test daemon::ghost::tests::ghost_terminal_state_prefers_cancel_over_budget ... ok
+test daemon::ghost::tests::ghost_run_kind_without_a_runbook_says_unknown ... ok
+test daemon::ghost::tests::ghost_terminal_state_prefers_hard_fail_over_cancel_and_budget ... ok
+test daemon::ghost::tests::ghost_turn_log_records_a_turn_started_for_each_turn ... ok
+test daemon::ghost::tests::ghost_cancel_signal_stops_the_run_and_names_the_sentinel_door ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1751 filtered out; finished in 0.00s
+cargo_exit=0
+== C. the mailbox ==
+test agents::mailbox::tests::mailbox_masks_the_run_summary ... ok
+test agents::mailbox::tests::mailbox_reads_an_entry_written_before_the_run_field_existed ... ok
+test agents::mailbox::tests::mailbox_round_trips_a_run_result ... ok
+test agents::mailbox::tests::masking_applied ... ok
+test agents::mailbox::tests::status_transitions ... ok
+test agents::mailbox::tests::read_nonexistent_returns_none ... ok
+test agents::mailbox::tests::write_and_read_result ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1756 filtered out; finished in 0.01s
+cargo_exit=0
+== D. structural greps (each must print the stated number) ==
+GhostLoopOutcome           (1): 1
+bare bool param gone       (0): 0
+loop checks the signal     (1): 1
+outcome.cancelled used   (>=2): 3
+ghost register_run         (1): 2
+ghost watch_stop_sentinel  (1): 2
+ghost STOP_POLL_INTERVAL   (1): 1
+no register_active         (0): 0
+RunState::Cancelled        (1): 3
+take_cancel_door           (1): 2
+cancel_stage NOT extracted (1): 1
+stream.rs untouched        (0): 0
+do_ghost_turn bails        (4): 4
+do_ghost_turn no select!   (0): 0
+mailbox run field          (1): 1
+mailbox serde(default    (>=1): 1
+write_mailbox masking    (>=2): 3
+agents.rs untouched        (0): 0
+wasted clone gone          (0): 0
+Budget::unlimited          (1): 1
+no invented budget         (0): 0
+ghost unwrap/panic         (1): 1
+mailbox unwrap/panic       (0): 0
+== E. preservation: stream 8, active 6, cancel 13, result 11, guard 8, turn_log 7, session 21, knowledge 46 ==
+daemon::stream                   test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1755 filtered out; finished in 0.00s
+daemon::run::active              test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1757 filtered out; finished in 0.00s
+daemon::run::cancel              test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1750 filtered out; finished in 0.00s
+daemon::run::result              test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1752 filtered out; finished in 0.00s
+daemon::run::guard               test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1755 filtered out; finished in 0.00s
+daemon::run::turn_log            test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1756 filtered out; finished in 0.00s
+daemon::session                  test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1742 filtered out; finished in 0.00s
+daemon::executor::knowledge      test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 1717 filtered out; finished in 0.02s
+== F. lib suite, three consecutive runs ==
+test result: ok. 1759 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.14s
+test result: ok. 1759 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.08s
+test result: ok. 1759 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.08s
+== G. gates ==
+fmt_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy_exit=0
+== H. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+real HOME stop- AFTER (==BEFORE): 0
+```
+
+### Update — 2026-09-11 16:56 (mutation checks, red → green)
+
+All three mutations done with `patch` (break) then an identical `patch`
+(revert); each shows the named assertion going red, then the same test green
+after the revert.
+
+**1. Cancel must win over budget.** Moved the `budget_exhausted` arm above the
+`cancelled` arm in `ghost_terminal_state` (it had also needed the `stage`
+parameter rebound `_stage` to compile) →
+`ghost_terminal_state_prefers_cancel_over_budget` went **red**:
+`panicked at src/daemon/ghost.rs:1428: Ok with both flags must read
+Cancelled, got BudgetExceeded(Briefing { goal: "ghost shell gs-2", …,
+blocker: Some("ghost turn budget exhausted"), budget_left: Some(Turns) })`.
+Reverted; the same test now passes 12 passed / 0 failed for `daemon::ghost`.
+
+**2. Old mailbox files must still parse.** Removed `#[serde(default)]` from
+the new `run` field →
+`mailbox_reads_an_entry_written_before_the_run_field_existed` went **red**:
+`an entry written before the run field must still parse: parsing
+/tmp/de_mailbox_test_1442986_2/.daemoneye/agents/legacy/mailbox/job-old.json,
+Caused by: missing field \`run\`` (serde `missing field`, as predicted).
+Reverted (restored `#[serde(default)]`); the suite is green.
+
+**3. The run summary must be masked.** Dropped the `mask_sensitive` call for
+`run.summary` in `write_mailbox` → `mailbox_masks_the_run_summary` went
+**red** on `sensitive data should be masked` with `AKIAIOSFODNN7EXAMPLE`
+present in the on-disk JSON. Reverted; the suite is green. Full transcript
+below.
+
+```
+(1) red: cargo test --lib ghost_terminal_state_prefers_cancel_over_budget
+test result: FAILED. 0 passed; 1 failed
+  Ok with both flags must read Cancelled, got BudgetExceeded(...)
+(1) green after revert: test result: ok. 1 passed; 0 failed   (daemon::ghost: 12 passed; 0 failed)
+
+(2) red: cargo test --lib mailbox_reads_an_entry_written_before_the_run_field_existed
+  an entry written before the run field must still parse: parsing .../job-old.json,
+  Caused by: missing field `run`
+(2) green after revert: agents::mailbox test result: ok. 7 passed; 0 failed
+
+(3) red: cargo test --lib mailbox_masks_the_run_summary
+  sensitive data should be masked   (AKIAIOSFODNN7EXAMPLE on disk)
+(3) green after revert: agents::mailbox test result: ok. 7 passed; 0 failed
+```
+
+### Update — 2026-09-11 16:57 (adaptations, out-of-scope note)
+
+- **Serde on the new field:** `#[serde(default)]` only — the spec's draft line
+  also had `skip_serializing_if = "Option::is_none"`, but that would emit a
+  file whose `run` key disappears after a round-trip of an old entry, and the
+  round-trip test asserts the read-back value. Kept `default`, dropped the
+  skip. The grep criterion (`'serde(default' src/agents/mailbox.rs` → ≥1)
+  still holds.
+- **Cancellation test:** `sentinel_present` after the watcher fired is false
+  by design (`watch_stop_sentinel` clears the sentinel it charges, cancel.rs
+  :192) and the door mark is consumed lazily by `take_cancel_door`, so the
+  assertion was re-ordered to read the *door mark* (not the file) after the
+  signal flips — the property the spec pins is the stage naming the sentinel
+  door, and that is what asserts green now.
+- **Out of scope, per the spec:** cancelling a ghost *mid-turn* (the in-turn
+  `select!` half of design § 2.3) is deferred — turn-top only in this phase.
+  `Request::Cancel` still does not reach a ghost (no `register_active` here);
+  `daemoneye stop <run>` is the door. `Budget::unlimited()` is the
+  M25 placeholder. `RunKind::Scheduled` and surfacing the ghost's run id
+  (`daemoneye runs`) are phases 08 and 10 respectively.
