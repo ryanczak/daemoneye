@@ -5,6 +5,12 @@
 //! client's Ctrl-C can find the run id to cancel. It is deliberately
 //! separate from the cancel registry — that one holds every run kind, this
 //! one answers only "which run is this chat session's turn?".
+//!
+//! The file also carries the run's `CancelDoor` mark. Both cancel doors fire
+//! `CancelReason::UserStop` (phase-03 closed the reason set, and it must not
+//! be widened), so the shared signal cannot say which door fired; the stage
+//! recorded in `RunState::Cancelled` has to. Each door marks just before it
+//! flips the signal, and the turn's cancel branch consumes the mark.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -14,9 +20,51 @@ use crate::util::UnpoisonExt;
 use super::{CancelReason, RunId};
 
 static ACTIVE: OnceLock<Mutex<HashMap<String, RunId>>> = OnceLock::new();
+static DOORS: OnceLock<Mutex<HashMap<String, CancelDoor>>> = OnceLock::new();
 
 fn active() -> &'static Mutex<HashMap<String, RunId>> {
     ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn doors() -> &'static Mutex<HashMap<String, CancelDoor>> {
+    DOORS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The cancel door a run's cancellation arrived through. Both wired doors
+/// fire `CancelReason::UserStop`, so the reason alone cannot distinguish
+/// them; the `stage` recorded in `RunState::Cancelled` names the door.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelDoor {
+    /// The chat client's `Request::Cancel`, resolved through the session map.
+    Chat,
+    /// The `var/run/stop-<run>` filesystem sentinel (`daemoneye stop <run>`).
+    Sentinel,
+}
+
+impl CancelDoor {
+    /// The `stage` string recorded in `RunState::Cancelled` when cancellation
+    /// arrived through this door.
+    pub fn stage(self) -> &'static str {
+        match self {
+            CancelDoor::Chat => "chat_cancel",
+            CancelDoor::Sentinel => "stop_sentinel",
+        }
+    }
+}
+
+/// Mark which door is about to cancel `run_id`, so the turn can name it in
+/// its recorded stage. Read back by [`take_cancel_door`].
+pub fn mark_cancel_door(run_id: &RunId, door: CancelDoor) {
+    doors()
+        .lock()
+        .unwrap_or_log()
+        .insert(run_id.as_str().to_string(), door);
+}
+
+/// Consume the run's door mark. `None` when no door marked it — the signal
+/// can also fire through a bare `cancel_run` that set no mark.
+pub fn take_cancel_door(run_id: &RunId) -> Option<CancelDoor> {
+    doors().lock().unwrap_or_log().remove(run_id.as_str())
 }
 
 /// Register `run_id` as the run currently in flight for `session_id`.
@@ -42,13 +90,22 @@ pub fn run_for_session(session_id: &str) -> Option<RunId> {
 
 /// Cancel whatever run `session_id` has in flight. Returns whether one was
 /// found — the same contract `cancel_turn` had, so the IPC handler's log
-/// line keeps its meaning.
+/// line keeps its meaning. Marks the run's door `Chat` before flipping the
+/// signal, so the turn records the chat door's stage.
 pub fn cancel_session(session_id: &str, reason: CancelReason) -> bool {
     let run_id = match run_for_session(session_id) {
         Some(id) => id,
         None => return false,
     };
-    super::cancel::cancel_run(&run_id, reason)
+    mark_cancel_door(&run_id, CancelDoor::Chat);
+    if super::cancel::cancel_run(&run_id, reason) {
+        true
+    } else {
+        // The run deregistered between the lookup and the fire; nobody will
+        // consume the mark, so remove it.
+        take_cancel_door(&run_id);
+        false
+    }
 }
 
 /// Guard deregistering a session's active run on drop.
@@ -58,7 +115,12 @@ pub struct ActiveRunGuard {
 
 impl Drop for ActiveRunGuard {
     fn drop(&mut self) {
-        active().lock().unwrap_or_log().remove(&self.session_id);
+        let run_id = active().lock().unwrap_or_log().remove(&self.session_id);
+        // A mark set by a door whose cancel lost the race with the turn's
+        // exit would otherwise sit in the map forever.
+        if let Some(run_id) = run_id {
+            doors().lock().unwrap_or_log().remove(run_id.as_str());
+        }
     }
 }
 

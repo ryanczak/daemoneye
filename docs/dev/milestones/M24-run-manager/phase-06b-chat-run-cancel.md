@@ -290,10 +290,12 @@ Each was run against the current tree and returns the "now" value shown.
       comes from `run_log.run_id()`), and
       `grep -c 'run_log.run_id()' src/daemon/stream.rs` → **2 or more** (now
       `0`).
-- [ ] **Both doors are wired in `stream.rs`:**
-      `grep -c 'register_run' src/daemon/stream.rs` → **1** (now `0`);
-      `grep -c 'register_active' src/daemon/stream.rs` → **1** (now `0`);
-      `grep -c 'watch_stop_sentinel' src/daemon/stream.rs` → **1** (now `0`).
+- [ ] **Both doors are wired in `stream.rs`** (counted in production only —
+      re-pinned 2026-09-11 at takeover, because the bounce's pinning test lives
+      in `stream.rs`'s test module and names all three):
+      `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/stream.rs | grep -c 'register_run('` → **1** (now `0`);
+      same for `register_active(` → **1** (now `0`);
+      same for `watch_stop_sentinel(` → **1** (now `0`).
 - [ ] **The IPC handler resolves through the session map:**
       `grep -c 'cancel_session' src/daemon/server/mod.rs` → **1** (now `0`),
       and `grep -c 'found=' src/daemon/server/mod.rs` → **1**, unchanged (now
@@ -846,3 +848,138 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** ec521b2727f802d54c950d8a386e6ef9a3eef4b0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-11 (architect takeover)
+
+**Executor:** Claude Code (direct), after `stop_phase` on run
+`67af5446-0f9e-4077-8aab-72c82ec7430a` (GLM-5.3-Flash, 90 turns, 5 h 25 min,
+`claude_stop` on explicit PE instruction). The run was alive but not
+converging: five turns of 17–24 min each re-derived the same design after a
+turn-29 compaction (270 k → 171 k tokens, 35 messages evicted), five
+`parse_failed` turns produced prose with no tool call, and after 5 h the tree
+held 17 lines. At the stop it had landed the right shape — a per-run door mark
+in `active.rs` (`CancelDoor`, `mark_cancel_door`, `take_cancel_door`), the
+sentinel watcher marking `Sentinel` before `cancel_run`, `cancel_session`
+marking `Chat`, and `stream.rs` consuming the mark — but no test, no mutation
+transcript, no E2E entry.
+
+Kept the executor's shape; finished it:
+
+- `take_cancel_door` returns `Option<CancelDoor>` instead of silently
+  defaulting to `Chat` (STANDARDS § 2.2 — no fallback that hides a missing
+  mark); the stream's `cancel_stage` helper renders `None` as
+  `"unmarked_cancel"`, a real value for a bare `cancel_run` caller.
+- `ActiveRunGuard::drop` also clears the run's door mark, so a door that lost
+  the race with the turn's exit cannot leave an entry behind.
+- `run::cancel` is `pub(crate)` so `stream.rs`'s test can reuse
+  `test_support::{HomeGuard, fresh_run_id}`; the module's public surface is
+  still the `pub use` block in `run/mod.rs`.
+- `cancel_stage_distinguishes_the_two_doors` in `src/daemon/stream.rs` drives
+  **both real doors** — `cancel_session` and a spawned `watch_stop_sentinel`
+  on a written sentinel — asserts both signals report `UserStop`, that the
+  two stages differ, and that a consumed mark is not read twice.
+
+**Mutation check 4** (bug-06b-1 DoD): both doors made to record the same
+stage string — `CancelDoor::Sentinel => "chat_cancel"` — captured
+mechanically, then reverted:
+
+```
+== mutation 4: both doors record the same stage ==
+test daemon::stream::tests::cancel_stage_distinguishes_the_two_doors ... FAILED
+assertion `left != right` failed: the chat door and the sentinel door must record different stages
+  left: "chat_cancel"
+ right: "chat_cancel"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1748 filtered out; finished in 0.00s
+== reverted ==
+test daemon::stream::tests::cancel_stage_distinguishes_the_two_doors ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1748 filtered out; finished in 0.00s
+```
+
+### Update — 2026-09-11 (end-to-end verification)
+
+Ran the phase's block verbatim from the repo root after the takeover, output
+redirected to `/tmp/e2e-m24-06b.txt`; section I appends the bug-06b-1
+re-dispatch criteria. The paste below is that file byte for byte.
+
+```
+== A. build ==
+real HOME stop- sentinels BEFORE: 0 ; run logs BEFORE: 0
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.00s
+cargo_exit=0
+== B. the two cancel modules ==
+test daemon::run::active::tests::active_re_registering_a_session_replaces_the_previous_run ... ok
+test daemon::run::active::tests::active_guard_drop_deregisters ... ok
+test daemon::run::active::tests::active_register_then_run_for_session_returns_that_run ... ok
+test daemon::run::active::tests::active_cancel_session_on_an_unknown_session_is_false ... ok
+test daemon::run::active::tests::active_run_for_an_unknown_session_is_none ... ok
+test daemon::run::active::tests::active_cancel_session_cancels_the_registered_run ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1743 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1736 filtered out; finished in 0.00s
+cargo_exit=0
+== C. module counts (active >=6, run::cancel >=13) ==
+daemon::run::active      test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1743 filtered out; finished in 0.00s
+daemon::run::cancel      test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1736 filtered out; finished in 0.00s
+daemon::run::            test result: ok. 65 passed; 0 failed; 0 ignored; 0 measured; 1684 filtered out; finished in 0.01s
+== D. preservation: stream 7, server 21, guard 7, turn_log 7, log_read 11, executor 235 ==
+daemon::stream             test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1741 filtered out; finished in 0.00s
+daemon::server             test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1728 filtered out; finished in 0.00s
+daemon::run::guard         test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1742 filtered out; finished in 0.00s
+daemon::run::turn_log      test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1742 filtered out; finished in 0.00s
+daemon::run::log_read      test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1738 filtered out; finished in 0.01s
+daemon::executor           test result: ok. 235 passed; 0 failed; 4 ignored; 0 measured; 1510 filtered out; finished in 1.08s
+== E. the IPC wire contract is unchanged ==
+test cancel_request_roundtrip ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+cargo_exit=0
+== F. lib suite, three consecutive runs ==
+test result: ok. 1745 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.15s
+test result: ok. 1745 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.16s
+test result: ok. 1745 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.18s
+== G. structural greps (each must print the stated number) ==
+old cancel.rs gone         (0): 0
+pub mod cancel; gone       (0): 0
+daemon::cancel:: refs      (0): 0
+active.rs exists           (1): 1
+mod active; private        (1): 1
+register_active            (1): 1
+run_for_session            (1): 1
+cancel_session             (1): 1
+ActiveRunGuard             (1): 1
+watcher new signature      (1): 1
+watcher handle param gone  (0): 0
+watcher uses cancel_run    (2): 2
+no second RunId in stream  (0): 1
+stream uses run_log id   (>=2): 5
+stream register_run        (1): 5
+stream register_active     (1): 3
+stream spawns watcher      (1): 3
+server cancel_session      (1): 1
+server found= kept         (1): 1
+unwrap_or_log on locks   (>=3): 6
+no unwrap/panic pre-test   (0): 0
+== H. no HOME litter from the suite ==
+real HOME stop- AFTER (==BEFORE): 0
+real HOME run logs AFTER (==BEFORE): 0
+== I. re-dispatch criteria (bug-06b-1) ==
+ClaudeStop arm in stream   (0): 0
+pinning test present       (1): 1
+stream tests             (>=8): test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1741 filtered out; finished in 0.00s
+```
+
+Annotations, section by section:
+
+- **D** — the header still says `stream 7`; the bounce's re-dispatch criteria
+  supersede it at **≥ 8**, and 8 is what the new pinning test makes it. Every
+  other preservation count is at its pinned value.
+- **F** — 1745 × 3, matching the re-dispatch arithmetic (1744 + 1).
+- **G** — `no second RunId in stream (0): 1` is the one `RunId::new()` inside
+  `RunLogGuard::start(...)`, whose signature takes the id by value
+  (`src/daemon/run/guard.rs:25`); the criterion as drafted was unsatisfiable
+  and the operative gate (`run_log.run_id()` ≥ 2, at 5) holds. The three
+  `stream …` counts read 5/3/3 because the pinning test names all three
+  symbols; the criterion is re-pinned to production-only counts, which are
+  **1 / 1 / 1** — exactly one registration, one active-map entry, one watcher
+  spawn, so the ghost arm has none of them.
+- **I** — the three re-dispatch criteria: no `ClaudeStop` arm in `stream.rs`,
+  the pinning test present, `daemon::stream` at 8.

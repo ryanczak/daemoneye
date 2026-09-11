@@ -188,6 +188,7 @@ pub async fn watch_stop_sentinel(id: RunId, poll: Duration) {
             return;
         }
         if sentinel_present(&id) {
+            crate::daemon::run::mark_cancel_door(&id, crate::daemon::run::CancelDoor::Sentinel);
             cancel_run(&id, CancelReason::UserStop);
             clear_sentinel(&id);
             return;

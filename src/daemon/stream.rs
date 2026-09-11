@@ -26,16 +26,14 @@ use tokio::io::{AsyncBufRead, AsyncWrite};
 /// constant's doc comment.
 use crate::ai::tools::APPROVAL_GATED_TOOLS as APPROVAL_GATED;
 
-/// The `stage` string recorded in `RunState::Cancelled`, naming the door the
-/// cancellation came through. Both wired doors fire `CancelReason::UserStop`
-/// today; `ClaudeStop` only arrives when a run kind other than a chat turn
-/// lets Claude stop itself (phase-07/08), and it takes the generic stage
-/// name until then.
-fn cancel_stage(reason: &crate::daemon::run::CancelReason) -> &'static str {
-    match reason {
-        crate::daemon::run::CancelReason::UserStop => "user_stop",
-        crate::daemon::run::CancelReason::ClaudeStop => "claude_stop",
-    }
+/// The `stage` recorded in `RunState::Cancelled`: the door the cancellation
+/// came through. Both doors fire `CancelReason::UserStop`, so the reason
+/// cannot tell them apart — the mark each door leaves before firing can.
+fn cancel_stage(run_id: &crate::daemon::run::RunId) -> String {
+    crate::daemon::run::take_cancel_door(run_id)
+        .map(crate::daemon::run::CancelDoor::stage)
+        .unwrap_or("unmarked_cancel")
+        .to_string()
 }
 
 /// Run the AI conversation loop: stream tokens, collect tool calls, execute,
@@ -221,7 +219,7 @@ where
             let event = tokio::select! {
                 biased;
                 reason = cancel_signal.cancelled() => {
-                    let stage = cancel_stage(&reason).to_string();
+                    let stage = cancel_stage(run_log.run_id());
                     if !full_response.is_empty() {
                         messages.push(Message {
                             role: "assistant".to_string(),
@@ -1479,6 +1477,59 @@ fn panic_message(e: tokio::task::JoinError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn cancel_stage_distinguishes_the_two_doors() {
+        use crate::daemon::run::cancel::test_support::{HomeGuard, fresh_run_id};
+        use crate::daemon::run::{
+            CancelReason, cancel_session, register_active, register_run, request_stop,
+            watch_stop_sentinel,
+        };
+        let _home = HomeGuard::new();
+
+        let chat_run = fresh_run_id();
+        let (_chat_cancel, chat_signal) = register_run(&chat_run);
+        let _chat_active = register_active("stream-cancel-stage-chat", &chat_run);
+        assert!(cancel_session(
+            "stream-cancel-stage-chat",
+            CancelReason::UserStop
+        ));
+        let chat_stage = cancel_stage(&chat_run);
+
+        let sentinel_run = fresh_run_id();
+        let (_sentinel_cancel, sentinel_signal) = register_run(&sentinel_run);
+        let watcher = tokio::spawn(watch_stop_sentinel(
+            sentinel_run.clone(),
+            std::time::Duration::from_millis(10),
+        ));
+        request_stop(sentinel_run.as_str()).expect("sentinel written before the watcher polls");
+        tokio::task::yield_now().await;
+        for _ in 0..3 {
+            tokio::time::advance(std::time::Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            watcher.is_finished(),
+            "the watcher must fire on the sentinel"
+        );
+        let sentinel_stage = cancel_stage(&sentinel_run);
+
+        assert_eq!(chat_signal.reason(), Some(CancelReason::UserStop));
+        assert_eq!(
+            sentinel_signal.reason(),
+            Some(CancelReason::UserStop),
+            "both doors fire the same reason — the stage is what must differ"
+        );
+        assert_ne!(
+            chat_stage, sentinel_stage,
+            "the chat door and the sentinel door must record different stages"
+        );
+        assert_eq!(
+            cancel_stage(&chat_run),
+            "unmarked_cancel",
+            "a consumed mark must not be read twice"
+        );
+    }
 
     #[test]
     fn approval_gated_contains_expected_tools() {
