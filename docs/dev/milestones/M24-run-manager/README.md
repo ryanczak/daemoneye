@@ -81,7 +81,7 @@ precede the full four-loop unification's completion.
 | 06a | chat-run-log ([phase-06a-chat-run-log.md](phase-06a-chat-run-log.md)) — a chat turn gets a `RunId` + `var/log/runs/<id>.jsonl` via a `RunLogGuard` whose `Drop` writes the one `RunFinished`; cancellation untouched | **done** (approved_after_1, 2026-09-10) |
 | 06b | chat-run-cancel ([phase-06b-chat-run-cancel.md](phase-06b-chat-run-cancel.md)) — delete `daemon/cancel.rs`; session→run map; both cancel doors converge on `cancel_run`; `daemoneye stop <run>` cancels a live chat turn | done        |
 | 07a | ghost-run-log ([phase-07a-ghost-run-log.md](phase-07a-ghost-run-log.md)) — a ghost gets a `RunId` + `RunLogGuard` + the right `RunKind`; first production `TurnStarted` emitter; Complete/HardFail/BudgetExceeded | **done** (approved_first_try, 2026-09-11) |
-| 07b | ghost-run-cancel-result — cancel check at ghost turn top (`daemoneye stop <run>` reaches a ghost); mailbox carries `RunResult` | todo (not drafted) |
+| 07b | ghost-run-cancel-result ([phase-07b-ghost-run-cancel-result.md](phase-07b-ghost-run-cancel-result.md)) — cancel check at ghost turn top (`daemoneye stop <run>` reaches a ghost); mailbox carries `RunResult` | todo |
 | 08 | scheduled-run — scheduled jobs onto `Run` | todo (not drafted) |
 | 09 | resume — briefing-seeded `daemoneye run resume` + seeded tasks from runbook `## Steps` | todo (not drafted) |
 | 10 | cli — `/runs`, `/run`, `/stop`; cross-run telemetry (`RunRecord`) if not deferred | todo (not drafted) |
@@ -112,6 +112,22 @@ precede the full four-loop unification's completion.
   end — the same measurement that made 06a a `Drop` guard, and the reason 07a
   puts the guard in the 16-line `trigger_ghost_turn` wrapper (`:287-302`) that
   every exit already funnels through, leaving the 760-line body alone.
+
+- **Substring collisions in structural greps are now a two-occurrence
+  pattern** (07a and 07b, both caught pre-dispatch by executing the criteria).
+  07a: `ghost_runbook` is the `schedule_command` tool parameter, so the field
+  became `ghost_runbook_name`. 07b: `grep -c '_runbook_name'` matches
+  `ghost_runbook_name` — the very field 07a added — so the dead-binding
+  criterion greps `let (_runbook_name` instead. **Before pinning any
+  identifier-shaped grep, run it and look at the lines it matches**, not just
+  the count. One more occurrence and this is a WORKFLOW.md fold.
+
+- **Phase 07b scopes cancellation to the turn top only.** The design § 2.3
+  names two check points — turn top *and* inside the model-call `select!`.
+  The in-turn half needs the AI-event loop at `src/daemon/ghost.rs:551`
+  restructured, which would blow the one-session budget; turn-top cancellation
+  is bounded by one ghost turn and is strictly better than uncancellable.
+  Recorded as an explicit Out-of-scope item rather than a silent omission.
 
 - **Two drafting traps found by running the criteria before dispatch (07a,
   2026-09-11).** (1) `ghost_runbook` is **already** the `schedule_command` tool's

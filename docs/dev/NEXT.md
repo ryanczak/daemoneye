@@ -4828,7 +4828,39 @@ deliberate duplication that phase-06 collapses.
 
 ## M24 — Run Manager (active)
 
-**Active phase: phase-07a — ghost-run-log**
+**Active phase: phase-07b — ghost-run-cancel-result**
+(`docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md`,
+status: todo, drafted 2026-09-11). Dispatch with `/rexymcp:dispatch phase-07b`.
+
+Phase-07a closed **approved_first_try 2026-09-11** (commit `b98740f`) — the
+first unbounced phase since 05b, and the validation run for the retuned
+`rexymcp.toml`: 28 min / 225 turns, mean 8 s/turn, zero `parse_failed`, zero
+compactions, peak context 28 %, against 06b's 5 h 25 min / 90 turns on the old
+knobs. `max_tokens` was the binding constraint, not context.
+
+Scope for 07b: `daemoneye stop <run>` reaches a ghost shell — `register_run` +
+`watch_stop_sentinel` in `trigger_ghost_turn`, an `is_cancelled()` check at the
+top of the ghost turn loop, `RunState::Cancelled { stage, turns }` with the
+stage read from the 06b `CancelDoor` mark — plus `MailboxResult` gaining
+`run: Option<RunResult>` so a coordinator sees how its delegate's run ended.
+Precedence pinned: `Err` → HardFail beats cancel beats budget beats Complete.
+
+Deliberate limits, each an Out-of-scope item: **turn-top cancellation only**
+(the design's in-turn `select!` would need the 760-line body restructured),
+`register_active` stays absent (a ghost has no chat client, and a criterion
+pins that), `Budget::unlimited()` is a placeholder because accounting is M25,
+and `cancel_stage` is **not** extracted — two callers, and STANDARDS § 2.2
+says abstract at four.
+
+Grounded at drafting, every criterion executed against the tree: the
+dead-binding criterion greps `let (_runbook_name` because the bare name is a
+substring of `ghost_runbook_name`, and the masking test reuses the
+`AKIAIOSFODNN7EXAMPLE` input `masking_applied` (`src/agents/mailbox.rs:186`)
+already proves the filter catches.
+
+Remaining after 07b: 08 (scheduled-run), 09 (resume), 10 (cli). None drafted.
+
+**Superseded — phase-07a — ghost-run-log**
 (`docs/dev/milestones/M24-run-manager/phase-07a-ghost-run-log.md`, status:
 todo, drafted 2026-09-11). Dispatch with `/rexymcp:dispatch phase-07a`.
 
