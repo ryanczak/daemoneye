@@ -175,19 +175,20 @@ pub fn request_stop(raw_id: &str) -> anyhow::Result<PathBuf> {
 /// this (a human waits at most this long after `daemoneye stop <run>`).
 pub const STOP_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Watch one run's stop sentinel and flip its cancel signal when it appears.
+/// Watch one run's stop sentinel and cancel the registered run when it
+/// appears.
 ///
 /// `poll` is injectable for tests. The loop returns — without firing — as
 /// soon as the run is no longer registered, so the task never outlives its
 /// run: the run is gone, there is nobody left to hand the reason to.
-pub async fn watch_stop_sentinel(id: RunId, handle: RunCancelHandle, poll: Duration) {
+pub async fn watch_stop_sentinel(id: RunId, poll: Duration) {
     loop {
         tokio::time::sleep(poll).await;
         if !registry().lock().unwrap_or_log().contains_key(id.as_str()) {
             return;
         }
         if sentinel_present(&id) {
-            handle.cancel(CancelReason::UserStop);
+            cancel_run(&id, CancelReason::UserStop);
             clear_sentinel(&id);
             return;
         }
@@ -195,7 +196,49 @@ pub async fn watch_stop_sentinel(id: RunId, handle: RunCancelHandle, poll: Durat
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    //! Fixtures shared by `daemon::run`'s test modules (`cancel` and
+    //! `active`).
+    //!
+    //! The run-id registry is process-global and the sentinel directory is
+    //! `$HOME/.daemoneye/var/run`: with libtest running tests in parallel,
+    //! those only stay consistent if every test gets a unique id and a
+    //! throwaway HOME — and both must come from one shared definition or a
+    //! copied one rots out from under the other user.
+
+    use super::RunId;
+
+    /// A run id no other test in this binary will ever register. The
+    /// registries are process-globals and libtest runs these tests in
+    /// parallel — every test that inserts into one must use its own id, or
+    /// one test's registration is another test's flake.
+    pub fn fresh_run_id() -> RunId {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        RunId::parse(&format!("deadc0de0000{n:04x}")).expect("fixture id is valid hex")
+    }
+
+    /// RAII-guarded HOME pointing at a fresh tempdir, so a test that writes
+    /// a sentinel or a run log never touches the developer's real
+    /// `~/.daemoneye`.
+    pub(crate) struct HomeGuard {
+        _lock: crate::TestHomeGuard,
+        pub(crate) tmp: tempfile::TempDir,
+    }
+
+    impl HomeGuard {
+        pub(crate) fn new() -> Self {
+            let _lock = crate::test_home_guard();
+            let tmp = tempfile::tempdir().unwrap();
+            unsafe { std::env::set_var("HOME", tmp.path()) };
+            HomeGuard { _lock, tmp }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::test_support::{HomeGuard, fresh_run_id};
     use super::*;
     use std::path::MAIN_SEPARATOR as SEP;
 
@@ -203,32 +246,6 @@ mod tests {
 
     fn run_id() -> RunId {
         RunId::parse(RUN_ID_STR).expect("fixture id is valid hex")
-    }
-
-    /// A run id no other test in this binary will ever register. The
-    /// registry is a process-global, and libtest runs these tests in
-    /// parallel — every test that inserts into it must use its own id, or
-    /// one test's registration is another test's flake.
-    fn fresh_run_id() -> RunId {
-        static NEXT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
-        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        RunId::parse(&format!("deadc0de000000{n:02x}")).expect("fixture id is valid hex")
-    }
-
-    /// RAII-guarded HOME pointing at a fresh tempdir, so a test that writes a
-    /// sentinel never touches the developer's real `~/.daemoneye`.
-    struct HomeGuard {
-        _lock: crate::TestHomeGuard,
-        tmp: tempfile::TempDir,
-    }
-
-    impl HomeGuard {
-        fn new() -> Self {
-            let _lock = crate::test_home_guard();
-            let tmp = tempfile::tempdir().unwrap();
-            unsafe { std::env::set_var("HOME", tmp.path()) };
-            HomeGuard { _lock, tmp }
-        }
     }
 
     #[test]
@@ -249,7 +266,7 @@ mod tests {
     fn request_stop_rejects_an_id_that_is_not_a_run_id() {
         let guard = HomeGuard::new();
         let run_dir = crate::config::var_run_dir();
-        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::create_dir_all(&run_dir).expect("a fresh tempdir var/run");
         let before = list_var_run();
         for bad in [
             "../../etc/passwd",
@@ -376,21 +393,15 @@ mod tests {
     async fn watcher_fires_user_stop_and_clears_the_sentinel() {
         let _guard = HomeGuard::new();
         let id = run_id();
-        let (guard, _) = register_run(&id);
-        let (watch_handle, mut signal) = RunCancelSignal::new();
-        let watcher = tokio::spawn(watch_stop_sentinel(
-            id.clone(),
-            watch_handle,
-            Duration::from_millis(10),
-        ));
+        let (run_guard, signal) = register_run(&id);
+        let watcher = tokio::spawn(watch_stop_sentinel(id.clone(), Duration::from_millis(10)));
         request_stop(RUN_ID_STR).expect("sentinel written before the watcher runs");
         tokio::task::yield_now().await;
         for _ in 0..3 {
             tokio::time::advance(Duration::from_millis(10)).await;
             tokio::task::yield_now().await;
         }
-        drop(guard);
-        let _ = &mut signal;
+        drop(run_guard);
         assert!(
             watcher.is_finished(),
             "the watcher must return once the sentinel is present"
@@ -410,14 +421,9 @@ mod tests {
     async fn watcher_exits_without_firing_when_the_run_is_gone() {
         let _guard = HomeGuard::new();
         let id = run_id();
-        let (guard, _) = register_run(&id);
-        drop(guard);
-        let (watch_handle, mut signal) = RunCancelSignal::new();
-        let watcher = tokio::spawn(watch_stop_sentinel(
-            id,
-            watch_handle,
-            Duration::from_millis(10),
-        ));
+        let (run_guard, mut signal) = register_run(&id);
+        drop(run_guard);
+        let watcher = tokio::spawn(watch_stop_sentinel(id, Duration::from_millis(10)));
         tokio::task::yield_now().await;
         for _ in 0..3 {
             tokio::time::advance(Duration::from_millis(10)).await;
@@ -438,10 +444,69 @@ mod tests {
         tokio::time::timeout(Duration::ZERO, signal.cancelled())
             .await
             .expect_err(
-                "the observed receiver must be paired with the watcher's own \
-                 handle: if this timeout stops resolving, the receiver got \
-                 orphaned from the sender and the assertion above is vacuous",
+                "the receiver must be paired with the handle the run registered: \
+                 if this timeout stops resolving, the signal was orphaned and the \
+                 assertions above are vacuous",
             );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn watcher_cancel_reaches_the_registered_runs_signal() {
+        let _guard = HomeGuard::new();
+        let id = fresh_run_id();
+        let (run_guard, signal) = register_run(&id);
+        let watcher = tokio::spawn(watch_stop_sentinel(id.clone(), Duration::from_millis(10)));
+        request_stop(id.as_str()).expect("sentinel written before the watcher runs");
+        tokio::task::yield_now().await;
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            watcher.is_finished(),
+            "the watcher must return once the sentinel is present"
+        );
+        assert_eq!(
+            signal.reason(),
+            Some(CancelReason::UserStop),
+            "the registered run's signal must report UserStop — the watcher and \
+             the turn share one channel"
+        );
+        drop(run_guard);
+        assert!(
+            !sentinel_present(&id),
+            "the watcher must still clear the sentinel it charged"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn watcher_on_an_unregistered_run_cancels_nothing() {
+        let _guard = HomeGuard::new();
+        let id = fresh_run_id();
+        let other = fresh_run_id();
+        let (_other_guard, other_signal) = register_run(&other);
+        let _ = &other_signal;
+        request_stop(id.as_str()).expect("sentinel written before the watcher runs");
+        let watcher = tokio::spawn(watch_stop_sentinel(id.clone(), Duration::from_millis(10)));
+        tokio::task::yield_now().await;
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            watcher.is_finished(),
+            "a watcher for a run that was never registered must exit at its first poll"
+        );
+        assert_eq!(
+            other_signal.reason(),
+            None,
+            "a sentinel naming an unregistered run must not fire any registered run"
+        );
+        assert!(
+            sentinel_present(&id),
+            "the watcher exiting early must leave the unregistered run's sentinel \
+             to the sweep"
+        );
     }
 
     #[test]

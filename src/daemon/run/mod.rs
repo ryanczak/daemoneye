@@ -481,11 +481,13 @@ mod tests {
     }
 }
 
+mod active;
 mod cancel;
 mod guard;
 mod log_read;
 mod result;
 mod turn_log;
+pub use active::{ActiveRunGuard, cancel_session, register_active, run_for_session};
 pub use cancel::{
     RunCancelGuard, RunCancelHandle, RunCancelSignal, STOP_POLL_INTERVAL, STOP_SENTINEL_PREFIX,
     cancel_run, clear_sentinel, is_stop_sentinel_name, register_run, request_stop,

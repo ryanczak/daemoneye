@@ -173,7 +173,10 @@ pub async fn handle_client(
             handle_ping(&mut tx).await?;
         }
         Request::Cancel { session_id } => {
-            let found = crate::daemon::cancel::cancel_turn(&session_id);
+            let found = crate::daemon::run::cancel_session(
+                &session_id,
+                crate::daemon::run::CancelReason::UserStop,
+            );
             log::info!("cancel request for session {session_id}: found={found}");
             send_response_split(&mut tx, Response::Ok).await?;
         }

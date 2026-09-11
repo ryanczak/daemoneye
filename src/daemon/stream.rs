@@ -26,6 +26,18 @@ use tokio::io::{AsyncBufRead, AsyncWrite};
 /// constant's doc comment.
 use crate::ai::tools::APPROVAL_GATED_TOOLS as APPROVAL_GATED;
 
+/// The `stage` string recorded in `RunState::Cancelled`, naming the door the
+/// cancellation came through. Both wired doors fire `CancelReason::UserStop`
+/// today; `ClaudeStop` only arrives when a run kind other than a chat turn
+/// lets Claude stop itself (phase-07/08), and it takes the generic stage
+/// name until then.
+fn cancel_stage(reason: &crate::daemon::run::CancelReason) -> &'static str {
+    match reason {
+        crate::daemon::run::CancelReason::UserStop => "user_stop",
+        crate::daemon::run::CancelReason::ClaudeStop => "claude_stop",
+    }
+}
+
 /// Run the AI conversation loop: stream tokens, collect tool calls, execute,
 /// and repeat until the AI produces a final answer with no pending tool calls.
 ///
@@ -82,27 +94,39 @@ where
         cost_attribution,
     } = ctx;
 
-    // Register this turn's cancel signal with the session registry. When
-    // there is no session id (ghost), the handle is dropped immediately, so
-    // `cancelled()` parks forever and the cancel branch below never fires.
-    let (_cancel_guard, mut cancel_signal) = match session_id.as_deref() {
-        Some(sid) => {
-            let (guard, signal) = crate::daemon::cancel::register_turn(sid);
-            (Some(guard), signal)
-        }
-        None => {
-            let (_h, signal) = crate::daemon::cancel::CancelSignal::new();
-            (None, signal) // handle dropped => signal can never fire
-        }
-    };
-
-    // A chat Run: RunStarted here, exactly one RunFinished however this exits.
+    // A chat Run: RunStarted here, exactly one RunFinished however this
+    // exits. Constructed first so the cancel registration below can use its
+    // id — one `RunId` identifies this turn in the run log, the cancel
+    // registry and the sentinel path.
     let mut run_log = crate::daemon::run::RunLogGuard::start(
         crate::daemon::run::RunId::new(),
         crate::daemon::run::RunKind::Chat {
             session: session_id.clone().unwrap_or_default(),
         },
     );
+
+    // Register this turn's cancel signal with the run-keyed registry. Both
+    // cancel doors converge here: the chat client's Ctrl-C resolves the
+    // session to this run through the active-session map, and the stop
+    // sentinel from `daemoneye stop <run>` is watched by a spawned task below
+    // (named turns only — a ghost has no session to resolve and must stay
+    // uncancellable by this path). The signal handed back belongs to
+    // `run_log.run_id()`, so a select! on it is a select! on the same run
+    // both doors name.
+    let (_cancel_guard, mut cancel_signal) = crate::daemon::run::register_run(run_log.run_id());
+    let _active_guard;
+    if let Some(sid) = session_id.as_deref() {
+        _active_guard = Some(crate::daemon::run::register_active(sid, run_log.run_id()));
+        tokio::spawn(crate::daemon::run::watch_stop_sentinel(
+            run_log.run_id().clone(),
+            crate::daemon::run::STOP_POLL_INTERVAL,
+        ));
+    } else {
+        // Ghost: no session to resolve, no watcher. `register_run`'s signal
+        // can only fire through `cancel_run`, which nothing in this turn's
+        // lifetime calls — the cancelled() branch below stays unreachable.
+        _active_guard = None;
+    }
 
     let turn_deadline = (config.limits.turn_timeout_secs > 0).then(|| {
         tokio::time::Instant::now()
@@ -196,7 +220,8 @@ where
             }
             let event = tokio::select! {
                 biased;
-                _ = cancel_signal.cancelled() => {
+                reason = cancel_signal.cancelled() => {
+                    let stage = cancel_stage(&reason).to_string();
                     if !full_response.is_empty() {
                         messages.push(Message {
                             role: "assistant".to_string(),
@@ -219,10 +244,14 @@ where
                             append_session_message(id, msg);
                         }
                     }
+                    log::info!(
+                        "turn cancelled at stage {stage} via {reason:?} for session {:?}",
+                        session_id.as_deref().unwrap_or("(ghost)"),
+                    );
                     send_response_split(tx, Response::SystemMsg("⊘ cancelled".to_string())).await?;
                     send_response_split(tx, Response::Ok).await?;
                     run_log.finish(crate::daemon::run::RunState::Cancelled {
-                        stage: "awaiting_model".into(),
+                        stage,
                         turns: this_turn_count as u32,
                     });
                     return Ok(());
