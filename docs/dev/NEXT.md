@@ -4704,7 +4704,54 @@ criterion was mis-scoped. **Fix: scope such criteria to production with the
 use.** Same family as phase-03's unrunnable mutation prescription and M20
 bug-07c-3 — **three occurrences; put the fold to the PE at milestone close.**
 
-**Active phase: M24 phase-06a — chat-run-log** (drafted 2026-09-10,
+**phase-06a — chat-run-log: done (approved_after_1) 2026-09-10**, commit
+`45379eb`, approval `a1ea3b3`. Run 1 ended **budget_exceeded at 600 turns**;
+after the spec was corrected, run 2 finished in **166**. `RunLogGuard` writes
+`RunStarted` on construction and exactly one `RunFinished` on `Drop`; five
+`run_log.finish` calls at the five return sites, every `?` propagation caught by
+the `Drop` fallback. Suite 1735 → **1742**.
+**The 600-turn loss was three architect spec defects** (`spec_bug`), folded
+before the re-dispatch as WORKFLOW.md § "A check the executor cannot satisfy is
+a bounce you wrote yourself": exit sites pinned by **line number** (invalidated
+by the phase's own +8-line insertion), a **sixth exit path that does not exist**
+(diverging `loop`; rustc reports the closing brace unreachable), and two exits
+mislabelled. **600 → 166 turns on the same model and phase, from spec quality
+alone.**
+**Warnings carried forward:** `#[expect(dead_code)]` on the test `HomeGuard.tmp`
+field in `src/daemon/run/guard.rs` — verified at review that renaming to `_tmp`
+is clippy-clean, prefer that next time the file is touched. And **do not put
+`sed -i` in an § End-to-end verification block**: the executor contract forbids
+in-place edits and `bash` refuses it (06b's block already complies).
+**Governor note:** `read_only_stall_threshold` was found set to `0` in
+`rexymcp.toml` — a 2026-07-25 "reset to default" that actually disabled the
+detector (the real default is 60). Set to **200** on 2026-09-10. The file is
+**gitignored**, so the bad value never appeared in any diff. Written up as
+`~/src/rexyMCP/docs/dev/issues/2026-09-10-governor-blind-to-edit-without-gate.md`
+with reproducible scripts, along with a proposed `EditWithoutGate` detector
+(06a's failed run made 156 patches with 3 gate runs; no current detector sees
+that shape).
+
+**Active phase: M24 phase-06b — chat-run-cancel** (drafted 2026-09-10,
+`docs/dev/milestones/M24-run-manager/phase-06b-chat-run-cancel.md`, status
+`todo`). **The risky half 06a deferred.** Deletes `src/daemon/cancel.rs` (the
+session-keyed `bool` registry, 6 tests), adds `src/daemon/run/active.rs` (the
+session→run map `Request::Cancel` needs), and wires `watch_stop_sentinel` so
+**`daemoneye stop <run>` cancels a live chat turn** — the sentinel phase-04
+shipped finally has a consumer.
+**Design decision recorded in the milestone README:** `watch_stop_sentinel`
+loses its `RunCancelHandle` parameter and calls `cancel_run` instead, so both
+doors converge on one registry and the bug-04-1 orphan-pair shape disappears.
+`watch::Sender` **is** `Clone` on tokio 1.53 (verified by compile probe), so the
+alternative was available and rejected on design grounds.
+**Two of my own criteria failed the new fold's satisfiability test at drafting
+and were replaced:** one pinned the exact argument text of the watcher's
+`cancel_run` call (rendering, not behaviour — now a production-scoped
+occurrence count), and one used an `awk` range over the registration block that
+would run away once the block became a single statement (now a call-site count).
+Net test arithmetic: 1742 − 6 deleted + 6 (`run::active`) + 2 (`run::cancel`) =
+**1744**.
+
+*(Superseded — phase-06a is done: originally drafted 2026-09-10,
 `docs/dev/milestones/M24-run-manager/phase-06a-chat-run-log.md`, status `todo`).
 A chat turn gets a `RunId` and a turn log at `var/log/runs/<id>.jsonl`, readable
 by the `run_log_tail`/`run_log_search`/`get_turn` tools 02b already shipped. **A

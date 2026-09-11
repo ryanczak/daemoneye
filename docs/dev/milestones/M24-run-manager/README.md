@@ -79,7 +79,7 @@ precede the full four-loop unification's completion.
 | 05a | detached-command ([phase-05a-detached-command.md](phase-05a-detached-command.md)) — `spawn_command` + `CommandHandle` (start, don't await) and `dedicated` shells excluded from reuse; pure substrate, no daemon file touched | **done** (approved_after_1, 2026-09-10) |
 | 05b | background ([phase-05b-background.md](phase-05b-background.md)) — the executor arm on the substrate: un-awaited chat Run on a dedicated shell + marker completion → `[Background Task Completed]` **(the payoff)** | **done** (approved_first_try, 2026-09-10) |
 | 06a | chat-run-log ([phase-06a-chat-run-log.md](phase-06a-chat-run-log.md)) — a chat turn gets a `RunId` + `var/log/runs/<id>.jsonl` via a `RunLogGuard` whose `Drop` writes the one `RunFinished`; cancellation untouched | **done** (approved_after_1, 2026-09-10) |
-| 06b | chat-run-cancel — collapse the session-keyed `bool` registry onto the run-keyed reason-carrying one, session→run map, `watch_stop_sentinel` wired so `daemoneye stop <run>` cancels a chat turn | todo (not drafted) |
+| 06b | chat-run-cancel ([phase-06b-chat-run-cancel.md](phase-06b-chat-run-cancel.md)) — delete `daemon/cancel.rs`; session→run map; both cancel doors converge on `cancel_run`; `daemoneye stop <run>` cancels a live chat turn | todo |
 | 07 | ghost-run — `trigger_ghost_turn` onto `Run`; mailbox carries `RunResult` | todo (not drafted) |
 | 08 | scheduled-run — scheduled jobs onto `Run` | todo (not drafted) |
 | 09 | resume — briefing-seeded `daemoneye run resume` + seeded tasks from runbook `## Steps` | todo (not drafted) |
@@ -99,6 +99,21 @@ precede the full four-loop unification's completion.
   faces this again** when it adds the `[runs]` retention key and flips the
   `var/log/runs` row from `Pending`.
 
+
+- **Phase 06b's one design decision, made at drafting (2026-09-10):
+  `watch_stop_sentinel` loses its `RunCancelHandle` parameter** and calls
+  `cancel_run(&id, UserStop)` instead. The watcher already consulted the
+  registry to decide whether to exit, so a separate handle was always
+  redundant — and the "handle separate from the registry" shape is exactly what
+  produced **bug-04-1**, where a test observed a receiver belonging to a
+  different channel. With both cancel doors (`Request::Cancel` via the
+  session→run map, and the sentinel) converging on `cancel_run`, a turn has
+  **one** signal and there is no second channel to fall out of sync.
+  **`tokio::sync::watch::Sender` is `Clone` on tokio 1.53 — verified with a
+  compile probe at drafting** — so handing out a cloned handle would also have
+  worked; it is rejected on design grounds, not capability. Cost: the signature
+  change touches two existing tests in `run::cancel`, which the phase rewrites
+  to observe a registered run's own signal (making them better tests).
 
 - **Phase 06 split at drafting (2026-09-10) into 06a and 06b**, on the
   additive/rewire seam. 06a is **purely additive** — a chat turn gains a
