@@ -80,7 +80,7 @@ precede the full four-loop unification's completion.
 | 05b | background ([phase-05b-background.md](phase-05b-background.md)) — the executor arm on the substrate: un-awaited chat Run on a dedicated shell + marker completion → `[Background Task Completed]` **(the payoff)** | **done** (approved_first_try, 2026-09-10) |
 | 06a | chat-run-log ([phase-06a-chat-run-log.md](phase-06a-chat-run-log.md)) — a chat turn gets a `RunId` + `var/log/runs/<id>.jsonl` via a `RunLogGuard` whose `Drop` writes the one `RunFinished`; cancellation untouched | **done** (approved_after_1, 2026-09-10) |
 | 06b | chat-run-cancel ([phase-06b-chat-run-cancel.md](phase-06b-chat-run-cancel.md)) — delete `daemon/cancel.rs`; session→run map; both cancel doors converge on `cancel_run`; `daemoneye stop <run>` cancels a live chat turn | done        |
-| 07a | ghost-run-log ([phase-07a-ghost-run-log.md](phase-07a-ghost-run-log.md)) — a ghost gets a `RunId` + `RunLogGuard` + the right `RunKind`; first production `TurnStarted` emitter; Complete/HardFail/BudgetExceeded | in-progress |
+| 07a | ghost-run-log ([phase-07a-ghost-run-log.md](phase-07a-ghost-run-log.md)) — a ghost gets a `RunId` + `RunLogGuard` + the right `RunKind`; first production `TurnStarted` emitter; Complete/HardFail/BudgetExceeded | review      |
 | 07b | ghost-run-cancel-result — cancel check at ghost turn top (`daemoneye stop <run>` reaches a ghost); mailbox carries `RunResult` | todo (not drafted) |
 | 08 | scheduled-run — scheduled jobs onto `Run` | todo (not drafted) |
 | 09 | resume — briefing-seeded `daemoneye run resume` + seeded tasks from runbook `## Steps` | todo (not drafted) |
