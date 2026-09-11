@@ -1,7 +1,7 @@
 # Phase 07b: a ghost shell can be stopped, and reports a RunResult
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04 (`register_run`, `watch_stop_sentinel`,
 `STOP_POLL_INTERVAL`), phase-03 (`RunResult`, `Cancellation`), phase-06b
 (`CancelDoor`, `take_cancel_door`) and phase-07a (the ghost's `RunLogGuard`,
@@ -566,3 +566,12 @@ criteria assert zero diffs on the first two.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-11 16:36 (started)
+
+Executor: opus-4.6-executor
+Status flipped todo → in-progress in this doc and in the milestone README
+phase table. Pre-flight confirmed: clean tree at `a54c0f3`,
+`daemon::ghost` 8 passed, `agents::mailbox` 4 passed,
+`daemon::run::result` 11 passed, `grep -c register_run src/daemon/ghost.rs`
+→ 0, `grep -c 'pub run:' src/agents/mailbox.rs` → 0.

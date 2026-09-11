@@ -23,6 +23,14 @@ pub struct MailboxResult {
     pub result: Option<String>,
     pub error: Option<String>,
     pub completed_at: Option<u64>,
+    /// How the delegate's run ended. `None` for entries written before the
+    /// run model reached ghost shells, and for any writer that has no run.
+    // `default` only: keeping `skip_serializing_if` here would also drop the
+    // field when it is legitimately present-and-`None` after a read of an old
+    // file — serde round-trips must stay faithful, and the tests assert the
+    // read-back value, not just parseability.
+    #[serde(default)]
+    pub run: Option<crate::daemon::run::RunResult>,
 }
 
 /// `~/.daemoneye/agents/<name>/mailbox/`
@@ -43,13 +51,23 @@ pub fn ensure_mailbox_dir(agent_name: &str) -> Result<()> {
 
 /// Write a `MailboxResult` to the agent's mailbox.
 ///
-/// Applies the sensitive-data masking filter on `result` before the write.
+/// Applies the sensitive-data masking filter on `result` before the write,
+/// and on the model-authored text inside `run` (its summary and briefing
+/// blocker) — the same output by another route.
 pub fn write_mailbox(agent_name: &str, entry: &MailboxResult) -> Result<()> {
     ensure_mailbox_dir(agent_name)?;
     let path = mailbox_path(agent_name, &entry.job_id);
     let mut entry = entry.clone();
     if let Some(ref result) = entry.result {
         entry.result = Some(crate::ai::filter::mask_sensitive(result));
+    }
+    if let Some(ref mut run) = entry.run {
+        run.summary = crate::ai::filter::mask_sensitive(&run.summary);
+        if let Some(ref mut briefing) = run.briefing
+            && let Some(ref blocker) = briefing.blocker
+        {
+            briefing.blocker = Some(crate::ai::filter::mask_sensitive(blocker));
+        }
     }
     let text = serde_json::to_string_pretty(&entry).context("serializing mailbox entry")?;
     let tmp = path.with_extension("json.tmp");
@@ -126,6 +144,7 @@ mod tests {
             result: Some("Disk is 90% full on /dev/sda1".to_string()),
             error: None,
             completed_at: Some(1712937600),
+            run: None,
         }
     }
 
@@ -168,6 +187,7 @@ mod tests {
                 result: None,
                 error: None,
                 completed_at: None,
+                run: None,
             };
             write_mailbox("analyst", &entry).unwrap();
 
@@ -181,7 +201,6 @@ mod tests {
             assert_eq!(read.result, Some("done".to_string()));
         });
     }
-
     #[test]
     fn masking_applied() {
         let tmp = TmpHome::new();
@@ -194,9 +213,86 @@ mod tests {
                 result: Some("Found key: AKIAIOSFODNN7EXAMPLE in logs".to_string()),
                 error: None,
                 completed_at: Some(1000),
+                run: None,
             };
             write_mailbox("analyst", &entry).unwrap();
             let path = mailbox_path("analyst", "job-mask");
+            let content = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                !content.contains("AKIAIOSFODNN7EXAMPLE"),
+                "sensitive data should be masked"
+            );
+        });
+    }
+
+    #[test]
+    fn mailbox_round_trips_a_run_result() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let mut entry = sample_entry("job-run", "parser");
+            entry.run = Some(crate::daemon::run::RunResult::complete(
+                crate::daemon::run::RunId::parse("0123456789abcdef").unwrap(),
+                crate::daemon::run::RunKind::Ghost {
+                    runbook: "triage".to_string(),
+                    trigger: "manual".to_string(),
+                },
+                "all done".to_string(),
+                4,
+                crate::daemon::run::Budget::unlimited(),
+            ));
+            write_mailbox("parser", &entry).unwrap();
+            let read = read_mailbox("parser", "job-run").unwrap().unwrap();
+            let run = read.run.expect("the run must survive the round trip");
+            assert_eq!(run.status, crate::daemon::run::RunStatus::Complete);
+            assert_eq!(run.turns, 4);
+            assert_eq!(run.summary, "all done");
+        });
+    }
+
+    #[test]
+    fn mailbox_reads_an_entry_written_before_the_run_field_existed() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            ensure_mailbox_dir("legacy").unwrap();
+            let path = mailbox_path("legacy", "job-old");
+            let pre_run_json = r#"{
+  "job_id": "job-old",
+  "agent": "legacy",
+  "task": "old task",
+  "status": "Complete",
+  "result": "earlier answer",
+  "error": null,
+  "completed_at": 1712937600
+}"#;
+            std::fs::write(&path, pre_run_json).unwrap();
+            let read = read_mailbox("legacy", "job-old")
+                .expect("an entry written before the run field must still parse")
+                .expect("the entry must exist");
+            assert!(
+                read.run.is_none(),
+                "a pre-run entry must read back with run: None, got {:?}",
+                read.run
+            );
+        });
+    }
+
+    #[test]
+    fn mailbox_masks_the_run_summary() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let mut entry = sample_entry("job-runmask", "raw");
+            entry.run = Some(crate::daemon::run::RunResult::complete(
+                crate::daemon::run::RunId::parse("0123456789abcdef").unwrap(),
+                crate::daemon::run::RunKind::Ghost {
+                    runbook: "scan".to_string(),
+                    trigger: "manual".to_string(),
+                },
+                "Found key: AKIAIOSFODNN7EXAMPLE in logs".to_string(),
+                1,
+                crate::daemon::run::Budget::unlimited(),
+            ));
+            write_mailbox("raw", &entry).unwrap();
+            let path = mailbox_path("raw", "job-runmask");
             let content = std::fs::read_to_string(&path).unwrap();
             assert!(
                 !content.contains("AKIAIOSFODNN7EXAMPLE"),

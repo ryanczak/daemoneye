@@ -1411,6 +1411,7 @@ fn g5_mailbox_write_and_read() {
         result: Some("Disk is 90% full on /dev/sda1".to_string()),
         error: None,
         completed_at: Some(1712937600),
+        run: None,
     };
     write_mailbox("analyst", &entry).unwrap();
 
@@ -1433,6 +1434,7 @@ fn g5_mailbox_write_and_read() {
         result: Some("Found AWS key AKIAIOSFODNN7EXAMPLE in logs".to_string()),
         error: None,
         completed_at: Some(1712937600),
+        run: None,
     };
     write_mailbox("analyst", &sensitive_entry).unwrap();
     let path = tmp.join(".daemoneye/agents/analyst/mailbox/ghost-test-002.json");

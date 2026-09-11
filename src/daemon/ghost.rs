@@ -31,6 +31,7 @@ async fn write_mailbox_on_exit(
     session_id: &str,
     sessions: &SessionStore,
     error: Option<&anyhow::Error>,
+    run: Option<crate::daemon::run::RunResult>,
 ) {
     let Some((agent_name, ghost_config)) = with_sessions(sessions, |store| {
         let entry = store.get(session_id)?;
@@ -107,6 +108,7 @@ async fn write_mailbox_on_exit(
         result: result_text,
         error: err_text,
         completed_at: Some(completed_at),
+        run,
     };
 
     if let Err(e) = crate::agents::mailbox::write_mailbox(&agent_name, &mailbox_entry) {
@@ -326,6 +328,51 @@ fn emit_turn_started(run_id: &RunId, turn: usize) {
     });
 }
 
+/// What the ghost turn loop reports back about how it ended. `turns` is the
+/// count the loop actually ran, which `RunState::Cancelled` and the
+/// `RunResult` both need.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct GhostLoopOutcome {
+    pub turns: u32,
+    pub budget_exhausted: bool,
+    pub cancelled: bool,
+}
+
+/// The terminal [`RunState`] a ghost run records, from the loop's outcome and
+/// its [`Result`]. The order is the contract: an error is the most specific
+/// outcome even when the run was also cancelled or out of budget;
+/// cancellation beats an exhausted budget.
+fn ghost_terminal_state(
+    result: &Result<()>,
+    outcome: &GhostLoopOutcome,
+    stage: String,
+    session_id: &str,
+) -> RunState {
+    match result {
+        Err(e) => RunState::HardFail(Briefing::new(
+            format!("ghost shell {session_id}"),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some(e.to_string()),
+            None,
+        )),
+        _ if outcome.cancelled => RunState::Cancelled {
+            stage,
+            turns: outcome.turns,
+        },
+        _ if outcome.budget_exhausted => RunState::BudgetExceeded(Briefing::new(
+            format!("ghost shell {session_id}"),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some("ghost turn budget exhausted".to_string()),
+            Some(BudgetDimension::Turns),
+        )),
+        _ => RunState::Complete,
+    }
+}
+
 /// Trigger a headless AI turn for a Ghost Shell.
 ///
 /// This simulates a user's `Ask` request but without an attached terminal.
@@ -337,20 +384,24 @@ pub async fn trigger_ghost_turn(
     cache: &Arc<SessionCache>,
     schedule_store: &Arc<ScheduleStore>,
 ) -> Result<()> {
-    let (_runbook_name, kind_input) = with_sessions(sessions, |store| {
+    let kind = with_sessions(sessions, |store| {
         let entry = store.get(session_id)?;
         let gc = entry.ghost_config.clone().unwrap_or_default();
-        let kind = ghost_run_kind(
+        Some(ghost_run_kind(
             entry.ghost_runbook_name.as_deref(),
             gc.agent.as_deref(),
             gc.parent_job_id.as_deref(),
             entry.ghost_bg_prefix,
-        );
-        Some((entry.ghost_runbook_name.clone(), kind))
+        ))
     })
-    .unwrap_or((None, ghost_run_kind(None, None, None, "")));
-    let mut run_log = RunLogGuard::start(RunId::new(), kind_input);
-    let mut budget_exhausted = false;
+    .unwrap_or_else(|| ghost_run_kind(None, None, None, ""));
+    let mut run_log = RunLogGuard::start(RunId::new(), kind.clone());
+    let (_cancel_guard, cancel_signal) = crate::daemon::run::register_run(run_log.run_id());
+    tokio::spawn(crate::daemon::run::watch_stop_sentinel(
+        run_log.run_id().clone(),
+        crate::daemon::run::STOP_POLL_INTERVAL,
+    ));
+    let mut outcome = GhostLoopOutcome::default();
     let result = do_ghost_turn(
         session_id,
         sessions,
@@ -358,36 +409,40 @@ pub async fn trigger_ghost_turn(
         cache,
         schedule_store,
         run_log.run_id(),
-        &mut budget_exhausted,
+        &cancel_signal,
+        &mut outcome,
     )
     .await;
-    match &result {
-        Ok(()) => {
-            if budget_exhausted {
-                run_log.finish(RunState::BudgetExceeded(Briefing::new(
-                    format!("ghost shell {session_id}"),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Some("ghost turn budget exhausted".to_string()),
-                    Some(BudgetDimension::Turns),
-                )));
-            } else {
-                run_log.finish(RunState::Complete);
-            }
-        }
-        Err(e) => {
-            run_log.finish(RunState::HardFail(Briefing::new(
-                format!("ghost shell {session_id}"),
-                None,
-                Vec::new(),
-                Vec::new(),
-                Some(e.to_string()),
-                None,
-            )));
-        }
-    }
-    write_mailbox_on_exit(session_id, sessions, result.as_ref().err()).await;
+    let state = ghost_terminal_state(
+        &result,
+        &outcome,
+        cancel_stage(run_log.run_id()),
+        session_id,
+    );
+    run_log.finish(state.clone());
+    let summary = with_sessions(sessions, |store| {
+        store
+            .get(session_id)
+            .and_then(|e| e.messages.last())
+            .filter(|m| m.role == "assistant")
+            .map(|m| m.content.clone())
+            .unwrap_or_default()
+    });
+    write_mailbox_on_exit(
+        session_id,
+        sessions,
+        result.as_ref().err(),
+        crate::daemon::run::RunResult::from_state(
+            run_log.run_id().clone(),
+            kind,
+            state,
+            summary,
+            outcome.turns,
+            crate::daemon::run::Budget::unlimited(),
+        )
+        .ok(),
+    )
+    .await;
     let (sbx, sid) = (config.sandbox.clone(), session_id.to_string());
     let _ = tokio::task::spawn_blocking(move || {
         crate::daemon::executor::container::teardown_ghost_containers(&sbx, &sid)
@@ -396,6 +451,14 @@ pub async fn trigger_ghost_turn(
     result
 }
 
+fn cancel_stage(run_id: &crate::daemon::run::RunId) -> String {
+    crate::daemon::run::take_cancel_door(run_id)
+        .map(crate::daemon::run::CancelDoor::stage)
+        .unwrap_or("unmarked_cancel")
+        .to_string()
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn do_ghost_turn(
     session_id: &str,
     sessions: &SessionStore,
@@ -403,7 +466,8 @@ async fn do_ghost_turn(
     cache: &Arc<SessionCache>,
     schedule_store: &Arc<ScheduleStore>,
     run_id: &RunId,
-    budget_exhausted: &mut bool,
+    cancel: &crate::daemon::run::RunCancelSignal,
+    outcome: &mut GhostLoopOutcome,
 ) -> Result<()> {
     let Some((_messages, ghost_config, tmux_session, _target_pane, ghost_active_model)) =
         with_sessions(sessions, |store| {
@@ -539,6 +603,14 @@ async fn do_ghost_turn(
     // exactly once before breaking the loop.
     let mut wrap_up_turn = false;
     loop {
+        if cancel.is_cancelled() {
+            log::info!(
+                "Ghost Shell {session_id}: cancelled, stopping before turn {}",
+                turn + 1
+            );
+            outcome.cancelled = true;
+            break;
+        }
         if wrap_up_turn {
             // The previous iteration was the wrap-up turn — stop now.
             log::warn!(
@@ -583,9 +655,10 @@ async fn do_ghost_turn(
                 crate::daemon::session::append_session_message(session_id, &wrap_up);
             }
             wrap_up_turn = true;
-            *budget_exhausted = true;
+            outcome.budget_exhausted = true;
         }
         turn += 1;
+        outcome.turns = turn as u32;
         emit_turn_started(run_id, turn);
 
         log::info!(
@@ -1288,5 +1361,103 @@ mod tests {
             "each emit must land exactly one TurnStarted record, in order"
         );
         assert!(records.iter().all(|r| r.run_id == id));
+    }
+
+    #[test]
+    fn ghost_loop_outcome_defaults_to_zero_turns_and_no_flags() {
+        let outcome = GhostLoopOutcome::default();
+        assert_eq!(
+            outcome,
+            GhostLoopOutcome {
+                turns: 0,
+                budget_exhausted: false,
+                cancelled: false,
+            },
+            "Default must give zero turns and no flags — the wrapper relies on \
+             starting from a clean outcome"
+        );
+        assert_eq!(outcome.turns, 0, "Default turns must be 0");
+        assert!(!outcome.budget_exhausted, "Default budget flag must be off");
+        assert!(!outcome.cancelled, "Default cancel flag must be off");
+    }
+
+    #[test]
+    fn ghost_terminal_state_prefers_hard_fail_over_cancel_and_budget() {
+        let outcome = GhostLoopOutcome {
+            turns: 3,
+            budget_exhausted: true,
+            cancelled: true,
+        };
+        let state = ghost_terminal_state(
+            &Err(anyhow::anyhow!("model exploded")),
+            &outcome,
+            "stop_sentinel".to_string(),
+            "gs-session-1",
+        );
+        match state {
+            RunState::HardFail(briefing) => {
+                assert!(
+                    briefing
+                        .blocker
+                        .as_deref()
+                        .is_some_and(|b| b.contains("model exploded")),
+                    "the error must land in the briefing blocker, got {:?}",
+                    briefing.blocker
+                );
+            }
+            other => panic!("an Err with both flags set must stay HardFail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ghost_terminal_state_prefers_cancel_over_budget() {
+        let outcome = GhostLoopOutcome {
+            turns: 5,
+            budget_exhausted: true,
+            cancelled: true,
+        };
+        let state = ghost_terminal_state(&Ok(()), &outcome, "chat_cancel".to_string(), "gs-2");
+        match state {
+            RunState::Cancelled { stage, turns } => {
+                assert_eq!(
+                    stage, "chat_cancel",
+                    "the stage must be the door mark, not a default"
+                );
+                assert_eq!(turns, 5, "Cancelled.turns must be the loop's actual count");
+            }
+            other => panic!("Ok with both flags must read Cancelled, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ghost_cancel_signal_stops_the_run_and_names_the_sentinel_door() {
+        use crate::daemon::run::cancel::test_support::{HomeGuard, fresh_run_id};
+        use std::time::Duration;
+        let _home = HomeGuard::new();
+        let id = fresh_run_id();
+        let (guard, signal) = crate::daemon::run::register_run(&id);
+        crate::daemon::run::request_stop(id.as_str()).expect("a valid run id writes its sentinel");
+        let watcher = tokio::spawn(crate::daemon::run::watch_stop_sentinel(
+            id.clone(),
+            Duration::from_millis(10),
+        ));
+        tokio::task::yield_now().await;
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
+        }
+        drop(watcher);
+        assert!(
+            signal.is_cancelled(),
+            "the sentinel the watcher fired must flip the ghost's registered signal"
+        );
+        drop(guard);
+        let stage = crate::daemon::run::take_cancel_door(&id);
+        assert_eq!(
+            stage,
+            Some(crate::daemon::run::CancelDoor::Sentinel),
+            "the door mark must name the sentinel door, not the chat door and not \
+             the sweep-on-drop default"
+        );
     }
 }
