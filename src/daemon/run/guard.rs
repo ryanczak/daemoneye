@@ -17,12 +17,14 @@ const UNRECORDED_BLOCKER: &str = "the run loop exited without recording an outco
 /// Writes a run's `RunStarted` on construction and its `RunFinished` on drop.
 pub struct RunLogGuard {
     run_id: RunId,
+    kind_label: &'static str,
     state: Option<RunState>,
 }
 
 impl RunLogGuard {
     /// Write `RunStarted { kind }` and take ownership of the run's id.
     pub fn start(run_id: RunId, kind: RunKind) -> Self {
+        let kind_label = kind.label();
         append_turn_event(&TurnLogRecord {
             timestamp: chrono::Utc::now().to_rfc3339(),
             run_id: run_id.clone(),
@@ -30,6 +32,7 @@ impl RunLogGuard {
         });
         RunLogGuard {
             run_id,
+            kind_label,
             state: None,
         }
     }
@@ -49,9 +52,10 @@ impl RunLogGuard {
 
 impl Drop for RunLogGuard {
     fn drop(&mut self) {
+        let label = self.kind_label;
         let state = self.state.take().unwrap_or_else(|| {
             RunState::HardFail(super::Briefing::new(
-                "one chat turn",
+                format!("one {label} run"),
                 None,
                 Vec::new(),
                 Vec::new(),
@@ -274,5 +278,39 @@ mod tests {
             !turn_log_file(&other).exists(),
             "no file must be created for any run id other than the guard's"
         );
+    }
+
+    #[test]
+    fn guard_missed_exit_goal_names_the_run_kind() {
+        let _home = HomeGuard::new();
+        let id = RunId::parse("6ac1a6b2e5f60703").unwrap();
+        {
+            let _guard = RunLogGuard::start(
+                id.clone(),
+                RunKind::Ghost {
+                    runbook: "investigate-disk".into(),
+                    trigger: "webhook".into(),
+                },
+            );
+        }
+        let records = read_turn_log(&id);
+        let last = records.last().expect("a finish record must exist at all");
+        match &last.event {
+            TurnLogEvent::RunFinished { state } => match state {
+                RunState::HardFail(b) => {
+                    assert_eq!(
+                        b.goal, "one ghost run",
+                        "the missed-exit goal must name the run kind, not hardcode chat"
+                    );
+                    assert_eq!(
+                        b.blocker.as_deref(),
+                        Some("the run loop exited without recording an outcome"),
+                        "the blocker string is unchanged by the kind-aware goal"
+                    );
+                }
+                other => panic!("expected HardFail for the missed path, got {other:?}"),
+            },
+            other => panic!("expected RunFinished, got {other:?}"),
+        }
     }
 }

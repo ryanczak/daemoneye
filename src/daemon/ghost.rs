@@ -6,6 +6,11 @@ use tokio::io::BufReader;
 use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
 use crate::config::{Config, PricingSource, load_named_prompt};
 use crate::cost::{CostRecord, compute_cost};
+use crate::daemon::GS_SCHED_WINDOW_PREFIX;
+use crate::daemon::run::{
+    Briefing, BudgetDimension, RunId, RunKind, RunLogGuard, RunState, TurnLogEvent, TurnLogRecord,
+    append_turn_event,
+};
 use crate::daemon::session::{
     SessionEntry, SessionStore, append_session_message, with_sessions, write_session_file,
 };
@@ -232,6 +237,7 @@ impl GhostManager {
             pipe_source_pane: None,
             is_ghost: true,
             ghost_config: Some(gc),
+            ghost_runbook_name: Some(runbook.name.clone()),
             ghost_bg_prefix: bg_prefix,
             started_at: chrono::Utc::now(),
             turn_count: 0,
@@ -280,6 +286,46 @@ impl GhostManager {
         Ok(session_id)
     }
 }
+
+/// The `RunKind` a ghost session runs as. A ghost spawned by another ghost is
+/// `Delegated` and names its parent; everything else is a `Ghost` naming its
+/// runbook and what set it off.
+pub fn ghost_run_kind(
+    runbook: Option<&str>,
+    agent: Option<&str>,
+    parent_job_id: Option<&str>,
+    bg_prefix: &str,
+) -> RunKind {
+    if let (Some(agent), Some(parent)) = (agent, parent_job_id)
+        && let Ok(parent_id) = RunId::parse(parent)
+    {
+        return RunKind::Delegated {
+            agent: agent.to_string(),
+            parent: parent_id,
+        };
+    }
+    let trigger = if bg_prefix == GS_SCHED_WINDOW_PREFIX {
+        "scheduled"
+    } else {
+        "webhook"
+    };
+    RunKind::Ghost {
+        runbook: runbook.unwrap_or("unknown").to_string(),
+        trigger: trigger.to_string(),
+    }
+}
+
+/// Append one `TurnStarted { turn }` record to the run's turn log. The turn
+/// log is diagnostic: a write problem is logged inside `append_turn_event`,
+/// never a failure of the ghost turn itself.
+fn emit_turn_started(run_id: &RunId, turn: usize) {
+    append_turn_event(&TurnLogRecord {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        run_id: run_id.clone(),
+        event: TurnLogEvent::TurnStarted { turn: turn as u32 },
+    });
+}
+
 /// Trigger a headless AI turn for a Ghost Shell.
 ///
 /// This simulates a user's `Ask` request but without an attached terminal.
@@ -291,7 +337,56 @@ pub async fn trigger_ghost_turn(
     cache: &Arc<SessionCache>,
     schedule_store: &Arc<ScheduleStore>,
 ) -> Result<()> {
-    let result = do_ghost_turn(session_id, sessions, config, cache, schedule_store).await;
+    let (_runbook_name, kind_input) = with_sessions(sessions, |store| {
+        let entry = store.get(session_id)?;
+        let gc = entry.ghost_config.clone().unwrap_or_default();
+        let kind = ghost_run_kind(
+            entry.ghost_runbook_name.as_deref(),
+            gc.agent.as_deref(),
+            gc.parent_job_id.as_deref(),
+            entry.ghost_bg_prefix,
+        );
+        Some((entry.ghost_runbook_name.clone(), kind))
+    })
+    .unwrap_or((None, ghost_run_kind(None, None, None, "")));
+    let mut run_log = RunLogGuard::start(RunId::new(), kind_input);
+    let mut budget_exhausted = false;
+    let result = do_ghost_turn(
+        session_id,
+        sessions,
+        config,
+        cache,
+        schedule_store,
+        run_log.run_id(),
+        &mut budget_exhausted,
+    )
+    .await;
+    match &result {
+        Ok(()) => {
+            if budget_exhausted {
+                run_log.finish(RunState::BudgetExceeded(Briefing::new(
+                    format!("ghost shell {session_id}"),
+                    None,
+                    Vec::new(),
+                    Vec::new(),
+                    Some("ghost turn budget exhausted".to_string()),
+                    Some(BudgetDimension::Turns),
+                )));
+            } else {
+                run_log.finish(RunState::Complete);
+            }
+        }
+        Err(e) => {
+            run_log.finish(RunState::HardFail(Briefing::new(
+                format!("ghost shell {session_id}"),
+                None,
+                Vec::new(),
+                Vec::new(),
+                Some(e.to_string()),
+                None,
+            )));
+        }
+    }
     write_mailbox_on_exit(session_id, sessions, result.as_ref().err()).await;
     let (sbx, sid) = (config.sandbox.clone(), session_id.to_string());
     let _ = tokio::task::spawn_blocking(move || {
@@ -307,6 +402,8 @@ async fn do_ghost_turn(
     config: &Config,
     cache: &Arc<SessionCache>,
     schedule_store: &Arc<ScheduleStore>,
+    run_id: &RunId,
+    budget_exhausted: &mut bool,
 ) -> Result<()> {
     let Some((_messages, ghost_config, tmux_session, _target_pane, ghost_active_model)) =
         with_sessions(sessions, |store| {
@@ -486,8 +583,10 @@ async fn do_ghost_turn(
                 crate::daemon::session::append_session_message(session_id, &wrap_up);
             }
             wrap_up_turn = true;
+            *budget_exhausted = true;
         }
         turn += 1;
+        emit_turn_started(run_id, turn);
 
         log::info!(
             "Ghost Shell {}: starting turn {}/{}{}",
@@ -1080,5 +1179,114 @@ mod tests {
         config.ghost.max_concurrent_ghosts = 100; // very high ceiling
         // Active count starts at 0, so we're well under the limit.
         assert!(check_ghost_capacity(&config));
+    }
+
+    #[test]
+    fn ghost_run_kind_names_the_runbook_and_a_webhook_trigger() {
+        let kind = ghost_run_kind(
+            Some("investigate-disk"),
+            None,
+            None,
+            crate::daemon::GS_BG_WINDOW_PREFIX,
+        );
+        assert_eq!(
+            kind,
+            RunKind::Ghost {
+                runbook: "investigate-disk".into(),
+                trigger: "webhook".into()
+            }
+        );
+    }
+
+    #[test]
+    fn ghost_run_kind_names_a_scheduled_trigger_from_the_sched_prefix() {
+        let kind = ghost_run_kind(
+            Some("nightly-sweep"),
+            None,
+            None,
+            crate::daemon::GS_SCHED_WINDOW_PREFIX,
+        );
+        let trigger = match &kind {
+            RunKind::Ghost { trigger, .. } => trigger.clone(),
+            other => panic!("expected Ghost, got {other:?}"),
+        };
+        assert_eq!(trigger, "scheduled");
+    }
+
+    #[test]
+    fn ghost_run_kind_is_delegated_when_a_parent_run_id_and_agent_are_present() {
+        let parent = RunId::parse("2190b361c94e7a45").expect("a valid 16-hex id");
+        let kind = ghost_run_kind(
+            Some("investigate-disk"),
+            Some("analyst"),
+            Some(parent.as_str()),
+            crate::daemon::GS_BG_WINDOW_PREFIX,
+        );
+        assert_eq!(
+            kind,
+            RunKind::Delegated {
+                agent: "analyst".into(),
+                parent
+            }
+        );
+    }
+
+    #[test]
+    fn ghost_run_kind_falls_back_to_ghost_when_the_parent_is_not_a_run_id() {
+        let kind = ghost_run_kind(
+            Some("investigate-disk"),
+            Some("analyst"),
+            Some("ghost-disk-full-0123456789abcdef0123456789abcdef"),
+            crate::daemon::GS_BG_WINDOW_PREFIX,
+        );
+        assert_ne!(
+            kind,
+            RunKind::Delegated {
+                agent: "analyst".into(),
+                parent: RunId::parse("2190b361c94e7a45").expect("fixture id"),
+            },
+            "a parent that is not a run id must stay a Ghost, not a Delegated run"
+        );
+        let (runbook, trigger) = match kind {
+            RunKind::Ghost { runbook, trigger } => (runbook, trigger),
+            other => panic!("expected Ghost for the non-run-id parent, got {other:?}"),
+        };
+        assert_eq!(runbook, "investigate-disk");
+        assert_eq!(trigger, "webhook");
+    }
+
+    #[test]
+    fn ghost_run_kind_without_a_runbook_says_unknown() {
+        let kind = ghost_run_kind(None, None, None, crate::daemon::GS_BG_WINDOW_PREFIX);
+        match kind {
+            RunKind::Ghost { runbook, .. } => {
+                assert_eq!(runbook, "unknown", "a nameless runbook must read 'unknown'")
+            }
+            other => panic!("expected Ghost, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ghost_turn_log_records_a_turn_started_for_each_turn() {
+        use crate::daemon::run::cancel::test_support::{HomeGuard, fresh_run_id};
+        use crate::daemon::run::{TurnLogEvent, read_turn_log};
+        let _home = HomeGuard::new();
+        let id = fresh_run_id();
+        emit_turn_started(&id, 1);
+        emit_turn_started(&id, 2);
+        let records = read_turn_log(&id);
+        let turns: Vec<u32> = records
+            .iter()
+            .filter_map(|r| match &r.event {
+                TurnLogEvent::TurnStarted { turn } => Some(*turn),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            turns,
+            vec![1, 2],
+            "each emit must land exactly one TurnStarted record, in order"
+        );
+        assert!(records.iter().all(|r| r.run_id == id));
     }
 }

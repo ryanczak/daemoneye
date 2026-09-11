@@ -1,7 +1,7 @@
 # Phase 07a: a ghost shell is a Run — identity and turn log
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`RunId`/`RunKind`/`RunState`/`Briefing`), phase-02a
 (`TurnLogRecord`, `append_turn_event`, `read_turn_log`) and phase-06a
 (`RunLogGuard`). All **done**.
@@ -532,3 +532,130 @@ No other file. In particular do not touch `src/agents/mailbox.rs`,
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-11 14:29 (progress)
+
+Started phase-07a. Pre-flight confirmed against the tree at `9e7aa150`: clean
+worktree, lib suite **1745 passed / 0 failed**, `daemon::ghost` 2, `run::guard` 7,
+`run::turn_log` 7, `session` 21, `mailbox` 4 — all matching the drafting
+numbers except the commit hash. `RunLogGuard` appears **0** times in
+`src/daemon/ghost.rs` and `ghost_runbook_name` **0** times in
+`src/daemon/session.rs`, as expected. Wiring the runbook name, the guard, and
+the `TurnStarted` emitter next.
+### Update — 2026-09-11 14:46 (mutation checks)
+
+All three mutations: break with the `patch` tool, observe the intended
+assertion go red, revert, observe green.
+
+## Mutation 1 — unconditional Delegated (lossy parent)
+test daemon::ghost::tests::ghost_run_kind_falls_back_to_ghost_when_the_parent_is_not_a_run_id ... FAILED
+expected Ghost for the non-run-id parent, got Delegated { agent: "analyst", parent: RunId("00000000de1e6a7e") }
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1755 filtered out; finished in 0.00s
+## Mutation 1 reverted — green again
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1755 filtered out; finished in 0.00s
+
+
+## Mutation 2 — budget exit dropped, Ok(()) always Complete
+MUT2 APPLY: BudgetExceeded occurrences in trigger_ghost_turn before:
+1
+MUT2 BUILD:
+warning: unused import: `BudgetDimension`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+MUT2 GREP BudgetExceeded in ghost.rs (structure criterion moves 1 -> 0):
+0
+MUT2 TEST attempt:
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1748 filtered out; finished in 0.00s
+MUT2 REVERTED - green:
+1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.74s
+
+
+## Mutation 3 — goal hardcoded back to 'one chat turn'
+test daemon::run::guard::tests::guard_missed_exit_goal_names_the_run_kind ... FAILED
+---- daemon::run::guard::tests::guard_missed_exit_goal_names_the_run_kind stdout ----
+thread 'daemon::run::guard::tests::guard_missed_exit_goal_names_the_run_kind' (1265896) panicked at src/daemon/run/guard.rs:300:21:
+assertion `left == right` failed: the missed-exit goal must name the run kind, not hardcode chat
+    daemon::run::guard::tests::guard_missed_exit_goal_names_the_run_kind
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1755 filtered out; finished in 0.00s
+assertion `left == right` failed: the missed-exit goal must name the run kind, not hardcode chat
+  left: "one chat turn"
+ right: "one ghost run"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+## Mutation 3 reverted — green again
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1755 filtered out; finished in 0.00s
+
+
+**Mutation 2 note (per the Test plan's parenthetical):** no unit test reaches
+the `budget_exhausted` mapping — reaching it means running the whole 760-line
+`do_ghost_turn` against a live AI backend, which the phase doc forbids
+mocking. As instructed, the mutation is instead evidenced by the § D structural
+grep count for `RunState::BudgetExceeded` in `src/daemon/ghost.rs` moving
+**1 → 0** (printed under `MUT2 GREP` above), with `cargo build` still
+succeeding (only an `unused import` warning) and `daemon::ghost` tests staying
+green — i.e. the mapping was genuinely deleted and the suite did not notice,
+so the grep is the observable. The check was reverted and the count is back
+to 1.
+
+### Update — 2026-09-11 14:46 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim from the repo root
+(`bash /tmp/run-e2e-07a.sh`, which contains the block unchanged), redirecting
+into `/tmp/e2e-m24-07a.txt`. Pasted in full below.
+
+```sh
+== A. build ==
+real HOME run logs BEFORE: 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+cargo_exit=0
+== B. the ghost module ==
+test daemon::ghost::tests::ghost_run_kind_names_a_scheduled_trigger_from_the_sched_prefix ... ok
+test daemon::ghost::tests::ghost_run_kind_without_a_runbook_says_unknown ... ok
+test daemon::ghost::tests::ghost_run_kind_is_delegated_when_a_parent_run_id_and_agent_are_present ... ok
+test daemon::ghost::tests::ghost_run_kind_names_the_runbook_and_a_webhook_trigger ... ok
+test daemon::ghost::tests::ghost_run_kind_falls_back_to_ghost_when_the_parent_is_not_a_run_id ... ok
+test daemon::ghost::tests::capacity_allows_when_under_limit ... ok
+test daemon::ghost::tests::capacity_zero_disables_cap ... ok
+test daemon::ghost::tests::ghost_turn_log_records_a_turn_started_for_each_turn ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1748 filtered out; finished in 0.00s
+cargo_exit=0
+== C. the guard ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1748 filtered out; finished in 0.00s
+== D. structural greps (each must print the stated number) ==
+ghost_runbook_name field        (1): 1
+ghost_runbook_name files      (>=7): 7
+ghost_runbook_name: Some files  (1): 1
+chat-specific goal gone    (0): 0
+guard uses label()       (>=1): 1
+ghost_run_kind defined     (1): 1
+ghost_run_kind is pure     (0): 0
+one RunLogGuard::start     (1): 1
+one RunId::new()           (1): 1
+RunState::Complete         (1): 1
+RunState::HardFail         (1): 1
+RunState::BudgetExceeded   (1): 1
+TurnStarted in ghost.rs  (>=1): 4
+TurnStarted prod files   (>=1): 1
+do_ghost_turn bails        (4): 4
+unwrap/panic pre-test      (1): 1
+mailbox.rs untouched       (0): 0
+no RunResult in mailbox fn (0): 0
+== E. preservation: turn_log 7, session 21, mailbox 4, stream 8, active 6, cancel 13 ==
+daemon::run::turn_log      test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1749 filtered out; finished in 0.00s
+daemon::session            test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1735 filtered out; finished in 0.00s
+agents::mailbox            test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1752 filtered out; finished in 0.01s
+daemon::stream             test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1748 filtered out; finished in 0.00s
+daemon::run::active        test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1750 filtered out; finished in 0.00s
+daemon::run::cancel        test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1743 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs ==
+test result: ok. 1752 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.16s
+test result: ok. 1752 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.18s
+test result: ok. 1752 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.14s
+== G. gates ==
+fmt_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+clippy_exit=0
+== H. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+

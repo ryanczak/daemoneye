@@ -1781,6 +1781,7 @@ mod tests {
                 ..Default::default()
             }),
             ghost_bg_prefix: "",
+            ghost_runbook_name: None,
             started_at: chrono::Utc::now(),
             turn_count: 0,
             tool_calls_this_session: 0,
@@ -1880,6 +1881,7 @@ mod tests {
                 ..Default::default()
             }),
             ghost_bg_prefix: "",
+            ghost_runbook_name: None,
             started_at: chrono::Utc::now(),
             turn_count: 0,
             tool_calls_this_session: 0,

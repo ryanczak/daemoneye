@@ -355,6 +355,7 @@ mod tests {
             pipe_source_pane: None,
             is_ghost: false,
             ghost_config: None,
+            ghost_runbook_name: None,
             ghost_bg_prefix: "",
             started_at: chrono::Utc::now(),
             turn_count: 0,

@@ -53,6 +53,9 @@ pub struct SessionEntry {
     pub is_ghost: bool,
     /// Settings for autonomous execution (inherited from the triggering runbook).
     pub ghost_config: Option<crate::ipc::GhostConfig>,
+    /// Name of the runbook this ghost shell follows. `None` for chat
+    /// sessions. Names the run in `RunKind::Ghost { runbook, .. }`.
+    pub ghost_runbook_name: Option<String>,
     /// Window-name prefix to use for background command windows spawned by this ghost session.
     /// Defaults to `GS_BG_WINDOW_PREFIX`; set to `GS_SCHED_WINDOW_PREFIX` for scheduler-
     /// originated ghosts so their windows are visually distinct.
@@ -674,6 +677,7 @@ mod tests {
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",
+            ghost_runbook_name: None,
             started_at: chrono::Utc::now(),
             turn_count: 0,
             tool_calls_this_session: 0,
@@ -713,6 +717,7 @@ mod tests {
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",
+            ghost_runbook_name: None,
             started_at: chrono::Utc::now(),
             turn_count: 0,
             tool_calls_this_session: 0,
@@ -762,6 +767,7 @@ mod tests {
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",
+            ghost_runbook_name: None,
             started_at: chrono::Utc::now(),
             turn_count: 0,
             tool_calls_this_session: 0,
@@ -813,6 +819,7 @@ mod tests {
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",
+            ghost_runbook_name: None,
             started_at: chrono::Utc::now(),
             turn_count: 0,
             tool_calls_this_session: 0,
@@ -1098,6 +1105,7 @@ mod tests {
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
+            ghost_runbook_name: None,
             started_at: loaded_meta.started_at,
             turn_count: loaded_meta.turn_count,
             tool_calls_this_session: loaded_meta.tool_calls_this_session,
@@ -1247,6 +1255,7 @@ mod tests {
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",
+            ghost_runbook_name: None,
             started_at: chrono::Utc::now(),
             turn_count: 0,
             tool_calls_this_session: 0,
