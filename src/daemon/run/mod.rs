@@ -482,6 +482,7 @@ mod tests {
 }
 
 mod cancel;
+mod guard;
 mod log_read;
 mod result;
 mod turn_log;
@@ -490,6 +491,7 @@ pub use cancel::{
     cancel_run, clear_sentinel, is_stop_sentinel_name, register_run, request_stop,
     sentinel_present, stop_sentinel_path, watch_stop_sentinel,
 };
+pub use guard::RunLogGuard;
 pub use log_read::{
     DEFAULT_RUN_LOG_LIMIT, MAX_RUN_LOG_LIMIT, clamp_run_log_limit, get_turn,
     run_log_input_rejected, run_log_search, run_log_tail,

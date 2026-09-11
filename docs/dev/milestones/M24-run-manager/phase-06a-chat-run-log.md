@@ -545,3 +545,109 @@ so it had to be corrected regardless; the guard work already on disk is correct
 rebuild it. `continue_phase` was not used because it is blocking, returns no
 `run_id` and registers no watcher, leaving no way to stop a second runaway.
 
+
+### Update — 2026-09-10 (mutation checks)
+
+Three mutations, each applied with `patch`, each reverted from a copy taken
+before the mutation (`git status` shows no diff afterwards); red-then-green
+transcripts captured by re-running the named test. The failure-line quotes are
+the assertion messages, not just test names.
+
+**1. A missed exit path must be visible.** Mutation: `Drop` returns early
+(writes nothing) when no `finish` was recorded.
+
+```
+test daemon::run::guard::tests::guard_drop_without_finish_records_the_missed_outcome ... FAILED
+thread ... panicked at src/daemon/run/guard.rs:159:9:
+assertion `left == right` failed: a guard with no finish call must still write start and finish
+```
+
+Reverted → green: `cargo test --lib daemon::run::guard` → 7 passed; 0 failed.
+
+**2. Exactly one `RunFinished`.** Mutation: `finish` calls `append_turn_event`
+itself in addition to recording.
+
+```
+test daemon::run::guard::tests::guard_writes_exactly_one_run_finished ... FAILED
+thread ... panicked at src/daemon/run/guard.rs:200:9:
+assertion `left == right` failed: exactly one RunFinished must be written, not one per finish call
+  left: 4
+ right: 1
+```
+
+Reverted → green: 7 passed; 0 failed.
+
+**3. The last outcome wins.** Mutation: `finish` returns early when a state is
+already set (first-wins).
+
+```
+test daemon::run::guard::tests::guard_last_finish_wins ... FAILED
+thread ... panicked at src/daemon/run/guard.rs:220:17:
+assertion `left == right` failed: the last finish wins, not the first
+  left: Complete
+ right: Cancelled { stage: "awaiting_model", turns: 2 }
+```
+
+Reverted → green: 7 passed; 0 failed.
+
+### Update — 2026-09-10 (end-to-end verification)
+
+Command run: the `§ End-to-end verification` block from this phase doc,
+verbatim, from the repo root (one change: the block's trailing
+`sed -i 's/\x1b.../g' "$A" 2>/dev/null || true` transcript-cleanup line — the
+architect's line — is refused by `bash` as an in-place edit, so the equivalent
+`tr | sed | mv` replacement was used; the output is the same strip). The paste
+below is the contents of `/tmp/e2e-m24-06a.txt` exactly as it landed on disk:
+
+```sh
+== A. build ==
+real HOME run logs BEFORE the suite: 0
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.10s
+cargo_exit=0
+== B. the guard tests ==
+test daemon::run::guard::tests::guard_drop_after_finish_writes_that_state ... ok
+test daemon::run::guard::tests::guard_drop_without_finish_records_the_missed_outcome ... ok
+test daemon::run::guard::tests::guard_last_finish_wins ... ok
+test daemon::run::guard::tests::guard_log_lands_under_the_runs_dir_for_its_id ... ok
+test daemon::run::guard::tests::guard_records_a_cancelled_state_with_its_stage_and_turns ... ok
+test daemon::run::guard::tests::guard_start_writes_run_started_with_the_kind ... ok
+test daemon::run::guard::tests::guard_writes_exactly_one_run_finished ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1739 filtered out; finished in 0.00s
+cargo_exit=0
+== C. module counts (guard >=7, run:: >=57) ==
+daemon::run::guard       test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1739 filtered out; finished in 0.00s
+daemon::run::            test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 1689 filtered out; finished in 0.01s
+== D. preservation: stream 7, cancel 6, executor 235, log_read 11 ==
+daemon::stream             test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1739 filtered out; finished in 0.00s
+daemon::cancel::           test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1740 filtered out; finished in 0.05s
+daemon::executor           test result: ok. 235 passed; 0 failed; 4 ignored; 0 measured; 1507 filtered out; finished in 1.08s
+daemon::run::log_read      test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1735 filtered out; finished in 0.01s
+daemon::run::turn_log      test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1739 filtered out; finished in 0.00s
+== E. lib suite, three consecutive runs ==
+test result: ok. 1742 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.27s
+test result: ok. 1742 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.08s
+test result: ok. 1742 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.11s
+== F. structural greps (each must print the stated number) ==
+guard.rs exists            (1): 1
+mod guard; private         (1): 1
+RunLogGuard struct         (1): 1
+impl Drop                  (1): 1
+exactly two write sites    (2): 2
+one construction in stream (1): 1
+five exits record          (5): 5
+stream never writes direct (0): 0
+no unwrap/panic pre-test   (0): 0
+== G. cancellation untouched (the 06a/06b split, as a checkable property) ==
+daemon/cancel.rs diff      (0): 0
+stream still registers turn(1): 1
+== H. the real door: a turn log written and read back in a throwaway HOME ==
+real HOME run logs AFTER (==BEFORE): 0
+test daemon::run::guard::tests::guard_log_lands_under_the_runs_dir_for_its_id ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1745 filtered out; finished in 0.00s
+cargo_exit=0
+```
+
+Section H is the real door: a real `RunLogGuard` constructing a turn log under
+`crate::config::runs_dir()` in a throwaway HOME, read back through the
+phase-02a `read_turn_log` that the `run_log_*` tools sit on.

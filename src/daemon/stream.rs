@@ -96,6 +96,14 @@ where
         }
     };
 
+    // A chat Run: RunStarted here, exactly one RunFinished however this exits.
+    let mut run_log = crate::daemon::run::RunLogGuard::start(
+        crate::daemon::run::RunId::new(),
+        crate::daemon::run::RunKind::Chat {
+            session: session_id.clone().unwrap_or_default(),
+        },
+    );
+
     let turn_deadline = (config.limits.turn_timeout_secs > 0).then(|| {
         tokio::time::Instant::now()
             + std::time::Duration::from_secs(config.limits.turn_timeout_secs)
@@ -171,6 +179,19 @@ where
                     )),
                 )
                 .await?;
+                run_log.finish(crate::daemon::run::RunState::BudgetExceeded(
+                    crate::daemon::run::Briefing::new(
+                        "chat turn",
+                        None,
+                        Vec::new(),
+                        Vec::new(),
+                        Some(format!(
+                            "the turn exceeded [limits] turn_timeout_secs ({}s) and was aborted",
+                            config.limits.turn_timeout_secs
+                        )),
+                        None,
+                    ),
+                ));
                 return Ok(());
             }
             let event = tokio::select! {
@@ -200,6 +221,10 @@ where
                     }
                     send_response_split(tx, Response::SystemMsg("⊘ cancelled".to_string())).await?;
                     send_response_split(tx, Response::Ok).await?;
+                    run_log.finish(crate::daemon::run::RunState::Cancelled {
+                        stage: "awaiting_model".into(),
+                        turns: this_turn_count as u32,
+                    });
                     return Ok(());
                 }
                 recv = tokio::time::timeout(
@@ -224,6 +249,19 @@ where
                                 )),
                             )
                             .await?;
+                            run_log.finish(crate::daemon::run::RunState::HardFail(
+                                crate::daemon::run::Briefing::new(
+                                    "chat turn",
+                                    None,
+                                    Vec::new(),
+                                    Vec::new(),
+                                    Some(format!(
+                                        "the AI backend ended the stream without completing \
+                                         (after {channel_closed_retries} attempts): {cause}"
+                                    )),
+                                    None,
+                                ),
+                            ));
                             return Ok(());
                         }
                         log::warn!(
@@ -787,7 +825,17 @@ where
                     });
                 }
                 AiEvent::Error(e) => {
-                    send_response_split(tx, Response::Error(e)).await?;
+                    send_response_split(tx, Response::Error(e.clone())).await?;
+                    run_log.finish(crate::daemon::run::RunState::HardFail(
+                        crate::daemon::run::Briefing::new(
+                            "chat turn",
+                            None,
+                            Vec::new(),
+                            Vec::new(),
+                            Some(format!("the AI backend reported an error: {e}")),
+                            None,
+                        ),
+                    ));
                     return Ok(());
                 }
                 AiEvent::Notice(n) => {
@@ -1001,6 +1049,7 @@ where
                         )
                         .await?;
                         send_response_split(tx, Response::Ok).await?;
+                        run_log.finish(crate::daemon::run::RunState::Complete);
                         return Ok(());
                     }
 
