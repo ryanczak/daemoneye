@@ -1,7 +1,7 @@
 # Phase 06b: one cancellation registry — chat turns cancel as Runs
 
 **Milestone:** M24 — Run Manager
-**Status:** in-progress (bounced — see `bugs/bug-06b-1.md`)
+**Status:** done
 **Depends on:** phase-04 (`RunCancelSignal`, `register_run`, `cancel_run`,
 `watch_stop_sentinel`, the `stop-<run>` sentinel) and phase-06a (`RunLogGuard`,
 a chat turn already has a `RunId`). Both **done**.
@@ -983,3 +983,28 @@ Annotations, section by section:
   spawn, so the ghost arm has none of them.
 - **I** — the three re-dispatch criteria: no `ClaudeStop` arm in `stream.rs`,
   the pinning test present, `daemon::stream` at 8.
+
+### Review verdict — 2026-09-11
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-06b-1 — the recorded `stage` was derived from
+  `CancelReason`, which both doors share, so it named nothing)
+- **Executor:** GLM-5.3-Flash-NVFP4-Spark for the first dispatch (`ec521b2`)
+  and the re-dispatch to turn 90; Claude Code (direct) takeover finished it
+  (`b727013`)
+- **Scope deviations:** three `stream.rs` call-site criteria re-pinned to
+  production-only counts at takeover (the pinning test names the symbols);
+  `run::cancel` made `pub(crate)` so the shared test fixtures reach
+  `stream.rs`; `create_dir_all(..).unwrap()` → `.expect(..)` in one
+  `run::cancel` test (executor, first dispatch, test code only)
+- **Calibration:** the first dispatch implemented task 4 with a different
+  mechanism than the spec named and disclosed it honestly in its
+  notes-for-review, but mischaracterised the effect — reason-derived stage
+  where the spec had said in bold that both doors share the reason. A
+  disclosed deviation still needs its consequence checked. The re-dispatch
+  spent 5 h 25 min / 90 turns on a ~60-line fix: 100–136 KB think blocks at
+  17–24 min per turn, five `parse_failed` prose-only turns, and a turn-29
+  compaction (35 messages evicted) after which it re-derived the design
+  three times. `max_context_pct = 95` + `enable_thinking` + `max_tokens =
+  32768` is the combination to revisit for this model; the run had converged
+  on the right shape by the stop, so the takeover kept it.

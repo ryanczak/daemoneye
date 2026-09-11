@@ -1,7 +1,7 @@
 # Bug 1 on phase-06b: the recorded `stage` cannot name the door it came through
 
 **Severity:** major
-**Status:** open
+**Status:** resolved — `b727013` (architect takeover after `stop_phase` at turn 90)
 **Filed:** 2026-09-11
 
 ## What's wrong
@@ -88,21 +88,21 @@ function of the reason can recover it.
 Each was run against the current tree (commit `80ddd3e`) and returns the "now"
 value shown, so each fails today.
 
-- [ ] `grep -c 'CancelReason::ClaudeStop' src/daemon/stream.rs` → **0**
+- [x] `grep -c 'CancelReason::ClaudeStop' src/daemon/stream.rs` → **0**
       (now **1**).
-- [ ] A test pinning the difference exists:
+- [x] A test pinning the difference exists:
       `grep -c 'fn cancel_stage_distinguishes_the_two_doors' src/daemon/stream.rs`
       → **1** (now **0**). It must assert that the stage recorded for the chat
       door and the stage recorded for the sentinel door are **different
       strings**, and fail if they are made equal.
-- [ ] `cargo test --lib daemon::stream` → **8 or more** passing, `0 failed`
+- [x] `cargo test --lib daemon::stream` → **8 or more** passing, `0 failed`
       (now **7**).
-- [ ] Full lib suite **1745 or more** passing, `0 failed` (now **1744**).
-- [ ] Preservation, each unchanged: `daemon::run::active` **6**,
+- [x] Full lib suite **1745 or more** passing, `0 failed` (now **1744**).
+- [x] Preservation, each unchanged: `daemon::run::active` **6**,
       `daemon::run::cancel` **13**, `daemon::server` **21**,
       `daemon::run::guard` **7**, `daemon::run::turn_log` **7**,
       `daemon::run::log_read` **11**, `daemon::executor` **235**.
-- [ ] A mutation check recorded red-then-green in the Update Log: make both
+- [x] A mutation check recorded red-then-green in the Update Log: make both
       doors record the same stage string → the new test goes **red** on its
       named assertion.
-- [ ] All four gates pass.
+- [x] All four gates pass.
