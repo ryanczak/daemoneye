@@ -1434,6 +1434,68 @@ before dispatch, and require every non-preservation line to fail.**
 across 08a and 09 — none cost a dispatch, which is the argument for making the
 pre-dispatch run a literal step rather than a habit.)*
 
+### A check the executor cannot satisfy is a bounce you wrote yourself
+
+The fold above says *run every count*. This one is about a different failure:
+**a check that was never shown to be satisfiable at all.** Running a count
+against today's tree proves the "now" value; it does not prove the target value
+is reachable, that the anchor survives the executor's own edits, or that the
+test a mutation is supposed to redden even exists. Four occurrences, two of
+them a full 600-turn budget each:
+
+- **A count that asserted a structure that does not exist.** M24 phase-06a
+  pinned `run_log.finish → 6`, one per "exit path", and named a sixth exit at
+  the function's closing brace. The function is a diverging `loop {}`; rustc
+  reports the brace unreachable. The executor spent its budget scanning a
+  1274-line function for an exit that cannot exist.
+- **An anchor the executor's own edit invalidates.** The same phase identified
+  its five real sites by line number. The phase's first task inserts eight
+  lines above them. Every number was wrong the moment it was used, and the
+  session log is hundreds of `git show <base>:file | awk` calls re-deriving
+  positions.
+- **A whole-file grep whose target the spec itself puts in the file.** M24
+  phase-05b pinned `grep -c 'shell_for_owner' → 0` in a file whose § Test plan
+  requires that symbol in a test; phase-06a pinned `grep -c 'append_turn_event'
+  → 2` where the natural `use` import makes correct code read 3. Both greps
+  were right about production and wrong about the file.
+- **A mutation naming an arm no test renders.** M24 phase-03 demanded that
+  breaking the `hard_fail` arm redden a `log_read` test; `log_read` has no test
+  that renders `HardFail`, so the check was unrunnable as written. (Same family
+  as M20 bug-07c-3.)
+
+**The rule: before dispatch, show every criterion, anchor and mutation is
+satisfiable — not merely that its "now" value is what you wrote.**
+Concretely:
+
+1. **A count's target must be derived from something you ran.** "Six exits"
+   must come from a command that printed six, not from reading two lines of
+   context per site. When rustc or the compiler can settle a structural claim
+   (reachability, an arm's existence, a trait bound), ask it — a probe edit plus
+   `cargo build` is cheaper than a lost budget.
+2. **Anchors are quoted text, never line numbers.** A line number is a claim
+   about a file the executor is about to change. Quote the unique line(s)
+   `patch` should match; those survive every edit but the one that intends to
+   change them.
+3. **Scope a grep to what it is actually about.** A `→ 0` over a whole file
+   fails the moment the Test plan, a `use` line or a doc comment mentions the
+   symbol. Prefix with `awk '/^#\[cfg\(test\)\]/{exit} {print}' file |` for
+   production-only, or include the call's argument (`'append_turn_event(&'`)
+   to count call sites rather than mentions.
+4. **A mutation prescription names the test AND the assertion, and you have
+   confirmed that test exists and reaches that arm.** If you cannot point at
+   the assertion message the failure will print, you have not aimed the
+   mutation; you have described a wish.
+
+The tell, every time: the check was written from the spec's own description of
+the code rather than from the code. A description is what the executor is
+about to *change*; the tree is what it will be *checked against*.
+
+*(Folded 2026-09-10 at PE direction, mid-M24, at four occurrences — two of them
+600-turn budget losses. The PE also considered and declined raising the turn
+cap: both losses were runs with no path to completion, and the cap terminated
+them correctly. Hitting the cap is a spec smell, not a capacity problem; a
+genuinely large phase is split, not extended.)*
+
 ### A sweep's scope is its convertible sites, not its matches
 
 When a phase applies one mechanical change to every instance of a pattern — a

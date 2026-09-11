@@ -4722,6 +4722,18 @@ guard rather than six hand-placed `RunFinished` calls, and the guard writes a
 `HardFail` naming the omission when no outcome was set, so a forgotten path is a
 visible wrong answer rather than a run that appears never to end.
 
+**Fold landed 2026-09-10 (PE direction, mid-milestone):** WORKFLOW.md § "A
+check the executor cannot satisfy is a bounce you wrote yourself" — the
+four-occurrence family (phase-03 unrunnable mutation, M20 bug-07c-3, phase-05b
+mis-scoped grep, phase-06a phantom sixth exit + line-number anchors). Rule: show
+every criterion, anchor and mutation *satisfiable* before dispatch, not merely
+that its "now" value matches; anchors are quoted text never line numbers; greps
+scoped to production or to call sites; a mutation names test + assertion + a
+confirmed-reachable arm. **Joins the upstream push backlog** (local-only
+WORKFLOW.md section; upstream template lacks it). PE considered and declined
+raising the 600-turn cap: both budget losses were runs with no path to
+completion, so the cap terminated correctly — hitting it is a spec smell.
+
 *(Superseded — phase-05b is done: originally drafted 2026-09-10,
 `docs/dev/milestones/M24-run-manager/phase-05b-background.md`, status `todo`).
 **The milestone's payoff:** under `backend = "pty"` a chat turn's

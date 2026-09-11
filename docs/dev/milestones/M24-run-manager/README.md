@@ -186,8 +186,13 @@ precede the full four-loop unification's completion.
   `shell::launch` tests (agreed to clean up in a milestone — a natural fit here
   or in M22).
 
+- **FOLDED 2026-09-10 (mid-milestone, at PE direction) as WORKFLOW.md § "A check
+  the executor cannot satisfy is a bounce you wrote yourself"** — reached four
+  occurrences with phase-05b's mis-scoped `shell_for_owner` grep and phase-06a's
+  phantom sixth exit + line-number anchors (the latter a 600-turn budget loss).
+  Original note follows.
 - **Fold candidate — the architect prescribed a falsification test that could
-  not falsify (occurrence 2, HELD).** Phase-03's mutation 2 named the
+  not falsify (occurrence 2, HELD at the time).** Phase-03's mutation 2 named the
   `hard_fail` arm and demanded a `log_read` test go red; `log_read` has no test
   that renders a `HardFail` state, so the check was unrunnable as written. The
   reachable arm (`budget_exceeded`) does redden both modules — verified at
