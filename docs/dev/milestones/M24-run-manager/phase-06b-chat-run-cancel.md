@@ -1,7 +1,7 @@
 # Phase 06b: one cancellation registry — chat turns cancel as Runs
 
 **Milestone:** M24 — Run Manager
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04 (`RunCancelSignal`, `register_run`, `cancel_run`,
 `watch_stop_sentinel`, the `stop-<run>` sentinel) and phase-06a (`RunLogGuard`,
 a chat turn already has a `RunId`). Both **done**.
@@ -665,3 +665,149 @@ captured then reverted to green:**
    `daemon::run::active::tests::active_guard_drop_deregisters` — *"the entry
    must be None after the guard drops"*, `left: Some(…)` / `right: None`.
    Reverted → green.
+
+### Update — ts=1789100992030 (complete, server-authored)
+
+**Summary:** **Summary** — Phase 06b is implemented and committed (`ec521b2`). `watch_stop_sentinel` now has the two-parameter signature `(id, poll)` and fires through `cancel_run`, so the sentinel door and the chat door share one channel; the deleted `daemon::cancel.rs` is fully replaced by `daemon::run::active.rs` (`register_active`/`run_for_session`/`cancel_session` + drop-guard `ActiveRunGuard`), `stream.rs` constructs the `RunLogGuard` first and registers the turn under `run_log.run_id()` with the active-map entry and sentinel watcher wired only for named sessions (ghosts keep the park-forever signal), and the IPC `Request::Cancel` arm resolves via `cancel_session` with its `found=` log line intact. The cancel arm now binds the fired `CancelReason` and records `RunState::Cancelled { stage }` where `stage` names the door (`user_stop` / `claude_stop` via a small `cancel_stage` mapper in `stream.rs`). End-to-end verification ran the phase block verbatim and is pasted into the phase doc under `### Update — 2026-09-11 04:05 (end-to-end verification)`; the paste self-check returns `PASTE MATCH`, all preservation counts hold (stream 7, server 21, guard 7, turn_log 7, log_read 11, executor 235), `cancel_request_roundtrip` passes, the lib suite reports **1744 passed / 0 failed** on three consecutive runs, HOME litter is 0 before and after, and all four gates (fmt/build/clippy/test) are green.
+
+**Notes for review** — Deviations and annotations for the reviewer:
+
+1. **Structural-grep annotations, as the spec's own parentheticals allow.** `grep -c 'RunId::new()' src/daemon/stream.rs` returns **1**, not 0: the single occurrence is *inside* the `RunLogGuard::start(...)` argument — the guard mints the id, and every other use routes through `run_log.run_id()` (count **4**), which is the operative "≥2" gate. Second: `grep -c 'register_run'` returns **2**, the extra being a comment word in the ghost arm — the *call* count is 1, matching "exactly one registration site". Both annotations are spelled out in the pasted entry.
+2. **`cancel_stage` handles both `CancelReason` variants** (`UserStop → "user_stop"`, `ClaudeStop → "claude_stop"`); the spec named only the `UserStop` string and forbade adding variants, so a two-arm match with a generic string for the not-yet-wired `ClaudeStop` kept the match exhaustive without touching `result.rs` (out of scope).
+3. **Mutation checks** all ran red-then-green with the named assertion messages recorded in the Update Log (watcher → `cancel_run` dropped; first-wins `register_active`; deleted `Drop::remove`).
+4. **Test fixtures were hoisted**, not duplicated: `run::cancel`'s `HomeGuard`/`fresh_run_id` moved into a `#[cfg(test)] pub(crate) mod test_support` so `active.rs` reuses them verbatim rather than carrying a rot-prone copy. This stays inside the authorized `run/cancel.rs` scope (test module only) and no production code moved.
+5. **The dead-code suppression in the ghost arm** uses `Option<ActiveRunGuard>` bound to `_active_guard`, which rustc treats as live through the `else` arm — no `#[allow]` needed; clippy `-D warnings` passes clean.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+nning 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.90s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M24-run-manager/README.md` — +1 -1
+- `docs/dev/milestones/M24-run-manager/phase-06b-chat-run-cancel.md` — +140 -1
+- `src/daemon/mod.rs` — +0 -1
+- `src/daemon/run/active.rs` — +207 -0
+- `src/daemon/run/cancel.rs` — +107 -42
+- `src/daemon/run/mod.rs` — +2 -0
+- `src/daemon/server/mod.rs` — +4 -1
+- `src/daemon/stream.rs` — +46 -17
+
+**Commit:** ec521b2727f802d54c950d8a386e6ef9a3eef4b0
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
