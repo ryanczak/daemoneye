@@ -1,7 +1,7 @@
 # Phase 06a: a chat turn is a Run — identity and turn log
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`RunId`, `RunKind`, `RunState`, `Briefing`) and
 phase-02a (`TurnLogRecord`, `TurnLogEvent`, `append_turn_event`,
 `read_turn_log`). Both **done**.
@@ -796,3 +796,63 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 45379eb0dd63f190a105804962268bfb7c3e1918
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-10
+
+- **Verdict:** approved_after_1
+- **Bounces:** none at review. One prior dispatch ended `budget_exceeded` at 600
+  turns and was escalated (`spec_bug`); the corrected spec landed this run in
+  **166 turns**.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (run 1: 600 turns,
+  budget_exceeded; run 2: 166 turns, complete)
+- **Scope deviations:** none. Only `guard.rs`, the two `mod.rs` lines, and five
+  `run_log.finish(...)` calls plus one `e.clone()` in `stream.rs` (the clone is
+  required — `e` moves into `Response::Error` and the briefing needs it after).
+  `src/daemon/cancel.rs` holds a **zero diff**, so the 06a/06b split held as a
+  checkable property.
+- **Calibration:** the prior run's loss was **three architect spec defects**,
+  folded before the re-dispatch as WORKFLOW.md § "A check the executor cannot
+  satisfy is a bounce you wrote yourself": exit sites pinned by *line number*
+  (invalidated by the phase's own +8-line insertion), a **sixth exit path that
+  does not exist** (the function is a diverging `loop`; rustc reports the closing
+  brace unreachable), and two exits mislabelled. Replacing line numbers with
+  quoted anchors and correcting the count took the run from 600 turns to 166 —
+  **a 3.6× reduction from spec quality alone, on the same model and phase.**
+  *(The daemoneye `read_only_stall_threshold` was also restored from a
+  mistaken `0` to `200` before this run; it did not fire here, but it was
+  disabled during the failure.)*
+- **Warnings (two, neither worth a bounce):**
+  1. **`#[expect(dead_code)]` on the test `HomeGuard.tmp` field**
+     (`src/daemon/run/guard.rs:81`). The field is genuinely RAII-held — dropping
+     the `TempDir` deletes the directory — so it is not masking a defect, and
+     `expect` is self-cleaning where `allow` is not. But the idiomatic
+     zero-attribute fix exists: **verified at review that renaming the field to
+     `_tmp` is clippy-clean under `-D warnings` with all 7 tests passing.**
+     Prefer `_tmp` next time this file is touched. *(The spec said to reuse
+     `run::cancel`'s `HomeGuard` shape, where `tmp` **is** read at
+     `src/daemon/run/cancel.rs:276` — so the copied shape was dead here through
+     no fault of the executor.)*
+  2. **Architect note — do not put `sed -i` in an § End-to-end verification
+     block.** The executor contract forbids in-place edits and `bash` refused
+     this block's trailing transcript-cleanup line, forcing a documented
+     `tr | sed | mv` substitution. The `|| true` guard meant the block still
+     completed, but the phase doc should not ship a command the executor cannot
+     run. Use the `tr | sed | mv` form, or strip at generation only.
+
+**Verified independently at review** (not read from the executor's transcript):
+four gates green on a forced recompile — fmt, build zero warnings, clippy
+`-D warnings`, **1742 passed / 0 failed**, the exact pinned floor of 1735 + 7.
+Every structural criterion at its value (two write sites, one construction, five
+`finish` calls, zero direct writes from `stream.rs`, zero `cancel.rs` diff,
+`cancel::register_turn` still 1, real-HOME run log still empty); preservation
+exact (`stream` 7, `cancel::` 6, `executor` 235, `log_read` 11, `turn_log` 7,
+`guard` 7, `run::` 57). The five recorded states are correct **and in the right
+order** — `BudgetExceeded` (turn timeout), `Cancelled` (user), `HardFail`
+(backend ended the stream — the exit the first spec mislabelled), `HardFail`
+(`AiEvent::Error`), `Complete`. Two mutations re-run by hand: making `Drop` skip
+a missed exit reddens
+`guard_drop_without_finish_records_the_missed_outcome` on "a guard with no finish
+call must still write start and finish", and making `finish` write as well as
+record reddens `guard_writes_exactly_one_run_finished` on `left: 4 / right: 1`.
+**The guard's reason to exist is genuinely guarded.**
+
