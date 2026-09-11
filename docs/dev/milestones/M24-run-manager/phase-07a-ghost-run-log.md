@@ -1,7 +1,7 @@
 # Phase 07a: a ghost shell is a Run — identity and turn log
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`RunId`/`RunKind`/`RunState`/`Briefing`), phase-02a
 (`TurnLogRecord`, `append_turn_event`, `read_turn_log`) and phase-06a
 (`RunLogGuard`). All **done**.
@@ -821,3 +821,32 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** d552dfeb7d1076ade5dfc93ec80b8d978b39f573
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-11
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (225 turns, 28 min)
+- **Scope deviations:** none material. One nit, not bounced: the kind lookup in
+  `trigger_ghost_turn` (`src/daemon/ghost.rs:340-351`) returns a tuple whose
+  first element is bound to `_runbook_name` and never read, so
+  `entry.ghost_runbook_name.clone()` is a wasted clone on every ghost turn.
+  STANDARDS § 2.2 ("if a symbol is unused, delete it") — worth collapsing to the
+  `RunKind` alone next time the function is touched.
+- **Calibration:** **the `rexymcp.toml` retune is validated.** Against 06b's
+  re-dispatch on the old knobs — 5 h 25 min / 90 turns, 17–24 min on
+  think-heavy turns, five `parse_failed` (output truncated before the tool
+  call), one context compaction at 95 %, 457 k output tokens — 07a ran
+  **28 min / 225 turns, mean 8 s/turn, slowest turn 129 s, zero `parse_failed`,
+  zero compactions, 31.8 k output tokens, peak context 28 %**. Same model, same
+  endpoint; `context_length = 524284` / `max_context_pct = 80` /
+  `max_tokens = 16384` is the difference. `max_tokens` was the binding
+  constraint, not context: capping the think budget removed the truncated
+  turns outright.
+  Second, smaller note: mutation check 2 could not be driven by a unit test and
+  fell back to the structural grep the Test plan's parenthetical authorized. The
+  executor recorded the fallback honestly, including that the suite stayed green
+  under the mutation — i.e. the `Complete` vs `BudgetExceeded` mapping has no
+  test coverage. That is a known, bounded gap, and 07b (which rewires this
+  wrapper for cancellation) is where a hermetic seam for it should be
+  considered.
