@@ -1,7 +1,7 @@
 # Phase 06b: one cancellation registry — chat turns cancel as Runs
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-06b-1.md`)
 **Depends on:** phase-04 (`RunCancelSignal`, `register_run`, `cancel_run`,
 `watch_stop_sentinel`, the `stop-<run>` sentinel) and phase-06a (`RunLogGuard`,
 a chat turn already has a `RunId`). Both **done**.
@@ -332,6 +332,41 @@ Each was run against the current tree and returns the "now" value shown.
       consecutive runs** (now **1742**). *Arithmetic: 1742 − 6 deleted
       (`daemon::cancel`) + 6 (`run::active`) + 2 (`run::cancel`) = 1744.*
 - [ ] All four gates pass.
+
+### Re-dispatch criteria (bug-06b-1, filed 2026-09-11)
+
+The criteria above are all met on the current tree. These are the outstanding
+work; each was run against commit `80ddd3e` and returns the "now" value shown.
+See `bugs/bug-06b-1.md` for the mechanism.
+
+- [ ] **The two doors record different stages.** § Spec task 4 requires the
+      `stage` string to name the door; today `cancel_stage` derives it from
+      `CancelReason`, and **both** doors fire `CancelReason::UserStop`
+      (`src/daemon/server/mod.rs:178` and `src/daemon/run/cancel.rs:191`), so
+      both record `"user_stop"`.
+      `grep -c 'CancelReason::ClaudeStop' src/daemon/stream.rs` → **0** (now
+      **1** — a production match arm for a reason no door fires, which
+      `STANDARDS.md` § 2.2 forbids).
+- [ ] **The difference is pinned by a test:**
+      `grep -c 'fn cancel_stage_distinguishes_the_two_doors' src/daemon/stream.rs`
+      → **1** (now **0**). It must assert the chat door's stage and the
+      sentinel door's stage are **different strings**, and go red if they are
+      made equal.
+- [ ] `cargo test --lib daemon::stream` → **8 or more** passing, `0 failed`
+      (now **7**).
+- [ ] Full lib suite **1745 or more** passing, `0 failed` (now **1744**).
+- [ ] **Preservation, each must not move:** `daemon::run::active` **6**,
+      `daemon::run::cancel` **13**, `daemon::server` **21**,
+      `daemon::run::guard` **7**, `daemon::run::turn_log` **7**,
+      `daemon::run::log_read` **11**, `daemon::executor` **235**.
+- [ ] A fourth mutation check recorded red-then-green in the Update Log: make
+      both doors record the same stage string → the new test goes **red** on
+      its named assertion.
+- [ ] All four gates pass.
+
+**Still out of scope, unchanged:** adding a `CancelReason` variant (phase-03's
+type; the `stage` string carries the distinction), and touching
+`src/daemon/run/result.rs`. Authorized files are as § Authorizations lists.
 
 ## Test plan
 
