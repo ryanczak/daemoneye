@@ -4825,3 +4825,34 @@ lifecycle row (so the phase sweeps its own sentinels), and `daemon/cancel.rs`
 already holds the same rexyMCP-ported machinery keyed by session with a `bool`
 channel — phase-04 builds a reason-carrying sibling and leaves it untouched, a
 deliberate duplication that phase-06 collapses.
+
+## M24 — Run Manager (active)
+
+**Active phase: phase-07a — ghost-run-log**
+(`docs/dev/milestones/M24-run-manager/phase-07a-ghost-run-log.md`, status:
+todo, drafted 2026-09-11). Dispatch with `/rexymcp:dispatch phase-07a`.
+
+Phases 01–06b are `done`. 06b closed `escalated` on 2026-09-11 after a bounce
+(bug-06b-1: the recorded cancel `stage` was derived from `CancelReason`, which
+both doors share, so it named nothing) and an architect takeover — the
+GLM-5.3-Flash re-dispatch ran 90 turns / 5 h 25 min on a ~60-line fix without
+converging. `rexymcp.toml` was retuned afterwards (PE, 2026-09-11):
+`context_length = 524284`, `max_context_pct = 80`, `max_tokens = 16384`.
+**Phase-07a is the A/B for those knobs** — 06b's baseline was 17–24 min per
+think-heavy turn and five `parse_failed` (truncated, tool-call-less) turns.
+
+Scope: a ghost shell gets a run identity — one `RunId`, a `RunLogGuard` in the
+16-line `trigger_ghost_turn` wrapper (the 760-line `do_ghost_turn` body is left
+alone), `RunKind::Delegated` vs `Ghost { runbook, trigger }` from a pure
+`ghost_run_kind`, the first production `TurnStarted` emitter in the tree, and
+Complete / HardFail / BudgetExceeded as terminal states. Purely additive:
+cancellation and the mailbox are 07b, and a criterion asserts a zero diff on
+`src/agents/mailbox.rs`.
+
+Grounded at drafting, each criterion executed against the tree: the field is
+`ghost_runbook_name` because `ghost_runbook` is already the `schedule_command`
+tool parameter (5 files), and ghost.rs's no-unwrap criterion is pinned to
+"unchanged at 1" because of the pre-existing `.expect` at `:863`.
+
+Remaining after 07a: 07b (ghost cancel + mailbox `RunResult`), 08
+(scheduled-run), 09 (resume), 10 (cli). None drafted.

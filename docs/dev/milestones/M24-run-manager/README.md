@@ -80,7 +80,8 @@ precede the full four-loop unification's completion.
 | 05b | background ([phase-05b-background.md](phase-05b-background.md)) — the executor arm on the substrate: un-awaited chat Run on a dedicated shell + marker completion → `[Background Task Completed]` **(the payoff)** | **done** (approved_first_try, 2026-09-10) |
 | 06a | chat-run-log ([phase-06a-chat-run-log.md](phase-06a-chat-run-log.md)) — a chat turn gets a `RunId` + `var/log/runs/<id>.jsonl` via a `RunLogGuard` whose `Drop` writes the one `RunFinished`; cancellation untouched | **done** (approved_after_1, 2026-09-10) |
 | 06b | chat-run-cancel ([phase-06b-chat-run-cancel.md](phase-06b-chat-run-cancel.md)) — delete `daemon/cancel.rs`; session→run map; both cancel doors converge on `cancel_run`; `daemoneye stop <run>` cancels a live chat turn | done        |
-| 07 | ghost-run — `trigger_ghost_turn` onto `Run`; mailbox carries `RunResult` | todo (not drafted) |
+| 07a | ghost-run-log ([phase-07a-ghost-run-log.md](phase-07a-ghost-run-log.md)) — a ghost gets a `RunId` + `RunLogGuard` + the right `RunKind`; first production `TurnStarted` emitter; Complete/HardFail/BudgetExceeded | todo |
+| 07b | ghost-run-cancel-result — cancel check at ghost turn top (`daemoneye stop <run>` reaches a ghost); mailbox carries `RunResult` | todo (not drafted) |
 | 08 | scheduled-run — scheduled jobs onto `Run` | todo (not drafted) |
 | 09 | resume — briefing-seeded `daemoneye run resume` + seeded tasks from runbook `## Steps` | todo (not drafted) |
 | 10 | cli — `/runs`, `/run`, `/stop`; cross-run telemetry (`RunRecord`) if not deferred | todo (not drafted) |
@@ -99,6 +100,34 @@ precede the full four-loop unification's completion.
   faces this again** when it adds the `[runs]` retention key and flips the
   `var/log/runs` row from `Pending`.
 
+
+- **Phase 07 split at drafting (2026-09-11) into 07a and 07b**, on the same
+  additive/rewire seam that split 06. 07a is purely additive — a ghost gains an
+  identity and a turn log, and a §D criterion asserts a **zero diff on
+  `src/agents/mailbox.rs`**, so "the mailbox is untouched" is checkable rather
+  than promised. 07b is the rewire: a cancel check at the ghost turn top (the
+  design's "checked at turn top") plus the mailbox payload becoming a
+  `RunResult`. Measured at drafting: **`do_ghost_turn` is 760 lines
+  (`src/daemon/ghost.rs:304-1063`) with four `bail!` exits** plus the implicit
+  end — the same measurement that made 06a a `Drop` guard, and the reason 07a
+  puts the guard in the 16-line `trigger_ghost_turn` wrapper (`:287-302`) that
+  every exit already funnels through, leaving the 760-line body alone.
+
+- **Two drafting traps found by running the criteria before dispatch (07a,
+  2026-09-11).** (1) `ghost_runbook` is **already** the `schedule_command` tool's
+  parameter name, live in five files — a `SessionEntry` field by that name would
+  make every structural grep in the phase match unrelated code; the field is
+  `ghost_runbook_name`. (2) `src/daemon/ghost.rs` already carries one production
+  `.expect` (`:863`, `CostRecord serialization is infallible`, with an INVARIANT
+  comment), so the usual "→ 0" no-unwrap criterion is unsatisfiable there and is
+  pinned to "unchanged at 1" instead. Both were caught only by executing each
+  criterion against the tree — see [[spec-facts-must-be-executed]].
+
+- **`TurnLogEvent::TurnStarted` had no production emitter** before 07a — the
+  variant shipped in 02a and only tests wrote it. Verified at drafting:
+  `grep -rl TurnStarted src/ --include='*.rs'` outside `run/turn_log.rs` and
+  `run/log_read.rs` returned **0 files**. The ghost loop, which already counts
+  its turns, is the first writer.
 
 - **Phase 06b's one design decision, made at drafting (2026-09-10):
   `watch_stop_sentinel` loses its `RunCancelHandle` parameter** and calls
