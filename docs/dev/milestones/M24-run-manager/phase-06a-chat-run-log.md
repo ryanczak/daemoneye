@@ -1,7 +1,7 @@
 # Phase 06a: a chat turn is a Run — identity and turn log
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`RunId`, `RunKind`, `RunState`, `Briefing`) and
 phase-02a (`TurnLogRecord`, `TurnLogEvent`, `append_turn_event`,
 `read_turn_log`). Both **done**.
@@ -49,24 +49,32 @@ grep -c 'RunLogGuard' src/daemon/stream.rs                      # 0
 
 ## Current state
 
-### `run_conversation_loop` is 1321 lines with six exit paths
+### `run_conversation_loop` has exactly FIVE `return` sites — the function
+### never falls through
 
-`src/daemon/stream.rs:57-1378`. **Five explicit returns plus the implicit
-fall-through**, and they are scattered across a very long function:
+`src/daemon/stream.rs:57-1330` (1274 lines). The outer construct is a
+**diverging `loop {`** (`src/daemon/stream.rs:125`), so the function's closing
+brace is unreachable. Verified with rustc: inserting a statement after the outer
+loop produces
 
-| Line | What it is |
-|---|---|
-| `174` | turn-budget / limit refusal |
-| `203` | user cancelled (`⊘ cancelled`) |
-| `227` | turn timeout |
-| `791` | `AiEvent::Error` — the backend failed |
-| `1004` | normal completion of a batch cycle |
-| `1378` | the function's implicit end |
+```
+warning: unreachable statement
+    --> src/daemon/stream.rs:1330:5
+     | any code following this expression is unreachable
+```
 
-**This is why task 1 is a Drop guard and not six hand-placed calls.** In a
-1321-line function a hand-wired exit is a missed exit, and a missed exit writes
-no `RunFinished` at all — the run would look like it is still running forever.
-The guard makes a missed path *visible* instead of silent.
+**There is no "implicit end" to wire.** Five `return Ok(())` sites, and they are
+identified below by **quoted anchor text, not line numbers** — your own edits
+shift every line number in this file, which is exactly what cost the previous
+dispatch its budget.
+
+**Beyond those five, the function also exits through every `?`** —
+`send_response_split(...).await?` and friends propagate `Err` out. Those paths
+are *unbounded and unenumerable*, and wiring them by hand is impossible. **That
+is the reason task 1 is a `Drop` guard**: the five returns get an explicit
+outcome, and every `?` propagation is caught by `Drop` writing the
+"exited without recording an outcome" `HardFail`. A missed path becomes a
+visible wrong answer in the log rather than a run that appears never to end.
 
 ### The turn-log API this phase consumes
 
@@ -195,20 +203,58 @@ registration block (`src/daemon/stream.rs:88-97`), construct the guard:
     );
 ```
 
-Then set the outcome at each of the six exits from § Current state:
+Then add **exactly five** `run_log.finish(...)` calls — one immediately before
+each `return Ok(())`. Each site is given by the **unique line that precedes it**,
+so you can `patch` against text rather than a line number:
 
-| Exit | State to record |
-|---|---|
-| `174` limit refusal | `RunState::BudgetExceeded(Briefing::new(…))` |
-| `203` user cancelled | `RunState::Cancelled { stage: "awaiting_model".into(), turns: this_turn_count }` |
-| `227` turn timeout | `RunState::BudgetExceeded(Briefing::new(…))` |
-| `791` `AiEvent::Error` | `RunState::HardFail(Briefing::new(…))` |
-| `1004` normal completion | `RunState::Complete` |
-| `1378` implicit end | `RunState::Complete` |
+**1. Turn timeout.** Anchor — the `await?;` that follows this block:
 
-**Do not restructure the function.** Add one `run_log.finish(...)` call before
-each return and one before the implicit end. Nothing else in `stream.rs`
-changes.
+```rust
+                    Response::Error(format!(
+                        "Turn exceeded [limits] turn_timeout_secs ({}s) — aborting.",
+                        config.limits.turn_timeout_secs
+                    )),
+```
+Record: `RunState::BudgetExceeded(Briefing::new(…))`, blocker naming the turn
+timeout.
+
+**2. User cancelled.** Anchor:
+
+```rust
+                    send_response_split(tx, Response::SystemMsg("⊘ cancelled".to_string())).await?;
+```
+Record: `RunState::Cancelled { stage: "awaiting_model".into(), turns: this_turn_count }`.
+
+**3. Backend ended the stream (retries exhausted).** Anchor:
+
+```rust
+                                    "AI backend ended the stream without completing \
+                                     (after {} attempts): {cause}",
+                                    channel_closed_retries
+```
+Record: `RunState::HardFail(Briefing::new(…))`, blocker naming the truncated
+stream. *(This is **not** a turn timeout — an earlier draft of this spec
+mislabelled it.)*
+
+**4. `AiEvent::Error`.** Anchor:
+
+```rust
+                AiEvent::Error(e) => {
+                    send_response_split(tx, Response::Error(e)).await?;
+```
+Record: `RunState::HardFail(Briefing::new(…))`, blocker naming the backend error.
+
+**5. Normal completion.** Anchor — the `Response::Ok` send that ends a finished
+turn, immediately after the token-usage block:
+
+```rust
+                        send_response_split(tx, Response::Ok).await?;
+                        return Ok(());
+```
+Record: `RunState::Complete`.
+
+**Do not restructure the function, and do not hunt for a sixth exit — there is
+none.** Nothing else in `stream.rs` changes.
 
 The briefings' `blocker` strings are yours to write, but each must name *which*
 exit it came from, so a reader of the log can tell a timeout from a refusal
@@ -232,14 +278,19 @@ Each was run against the current tree and returns the "now" value shown.
       `pub fn finish` → **1**, `impl Drop for RunLogGuard` → **1** (each **0**
       now).
 - [ ] **Exactly one write site, and it is in `Drop`:**
-      `grep -c 'append_turn_event' src/daemon/run/guard.rs` → **2** — one for
-      `RunStarted` in `start`, one for `RunFinished` in `drop`, and no third.
-      *(Run it: a `finish` that writes would make this 3.)*
+      `grep -c 'append_turn_event(&TurnLogRecord' src/daemon/run/guard.rs` →
+      **2** — one for `RunStarted` in `start`, one for `RunFinished` in `drop`,
+      and no third. *(The pattern includes the argument so it counts **call
+      sites** only; a bare `grep -c 'append_turn_event'` also matches the `use`
+      import and would read 3 on correct code.)*
 - [ ] **The guard is what `stream.rs` uses, at one construction site:**
       `grep -c 'RunLogGuard::start' src/daemon/stream.rs` → **1** (now `0`).
 - [ ] **Every exit records an outcome:**
-      `grep -c 'run_log.finish' src/daemon/stream.rs` → **6** (now `0`) — one
-      per exit path in § Current state's table.
+      `grep -c 'run_log.finish' src/daemon/stream.rs` → **5** (now `0`) — one
+      per `return Ok(())` site. **Five, not six**: the function's closing brace
+      is unreachable (§ Current state proves it with rustc), so there is no
+      sixth exit to wire. Every `?` propagation is covered by `Drop`, by
+      design.
 - [ ] **`stream.rs` does not write turn-log records itself:**
       `grep -c 'append_turn_event' src/daemon/stream.rs` → **0**. The guard owns
       the writing.
@@ -363,9 +414,9 @@ printf 'guard.rs exists            (1): %s\n' "$(test -f src/daemon/run/guard.rs
 printf 'mod guard; private         (1): %s\n' "$(grep -c '^mod guard;' src/daemon/run/mod.rs)"
 printf 'RunLogGuard struct         (1): %s\n' "$(grep -c 'pub struct RunLogGuard' src/daemon/run/guard.rs)"
 printf 'impl Drop                  (1): %s\n' "$(grep -c 'impl Drop for RunLogGuard' src/daemon/run/guard.rs)"
-printf 'exactly two write sites    (2): %s\n' "$(grep -c 'append_turn_event' src/daemon/run/guard.rs)"
+printf 'exactly two write sites    (2): %s\n' "$(grep -c 'append_turn_event(&TurnLogRecord' src/daemon/run/guard.rs)"
 printf 'one construction in stream (1): %s\n' "$(grep -c 'RunLogGuard::start' src/daemon/stream.rs)"
-printf 'six exits record           (6): %s\n' "$(grep -c 'run_log.finish' src/daemon/stream.rs)"
+printf 'five exits record          (5): %s\n' "$(grep -c 'run_log.finish' src/daemon/stream.rs)"
 printf 'stream never writes direct (0): %s\n' "$(grep -c 'append_turn_event' src/daemon/stream.rs)"
 printf 'no unwrap/panic pre-test   (0): %s\n' "$(awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/run/guard.rs | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe')"
 
@@ -434,4 +485,63 @@ the point), `src/daemon/run/turn_log.rs` (shipped in 02a and read by the
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
+### Notes for executor — 2026-09-10
+
+**Read this first. Most of this phase is already on disk and it is correct — do
+not start over.**
+
+The previous dispatch ended `budget_exceeded` at 600 turns, and the cause was
+**three defects in this spec**, all now corrected:
+
+1. **§ Current state gave line numbers, and your own edit invalidated them.**
+   Inserting the guard shifts every line in `stream.rs` by +8, so the table you
+   were given was wrong the moment you used it. The session log shows the
+   result: hundreds of `git show 9df5067:src/daemon/stream.rs | awk …` calls
+   re-deriving positions. **Task 3 now identifies each site by quoted anchor
+   text**, which `patch` can match and which no edit invalidates.
+2. **The spec promised six exit paths. There are five.** The outer construct is
+   a diverging `loop {`, so the function's closing brace is unreachable — rustc
+   says so, and § Current state now quotes the proof. You were scanning the end
+   of a 1274-line function for an exit that cannot exist.
+3. **Two exits were mislabelled.** What the old table called a "limit refusal"
+   is the turn timeout, and what it called a "turn timeout" is the
+   backend-ended-the-stream path. Task 3 now names each correctly.
+
+**Already on disk and approved — do not redo:** `src/daemon/run/guard.rs`
+(`RunLogGuard`, `start`, `finish`, `Drop`) and the `mod guard;` + re-export in
+`src/daemon/run/mod.rs`. **All seven guard tests pass.** The guard construction
+in `src/daemon/stream.rs` is also correct and in the right place.
+
+**Exactly one thing remains:** add **five** `run_log.finish(...)` calls, one
+immediately before each `return Ok(())`, per task 3's five anchors. `cargo
+build` currently warns `unused variable: run_log` and `variable does not need to
+be mutable` — **those two warnings disappearing is your finish condition**, and
+`grep -c 'run_log.finish' src/daemon/stream.rs` must print **5**. Then the three
+mutation checks and the § End-to-end verification block.
+
+Do not touch `src/daemon/cancel.rs` (§ G asserts a zero diff) and do not
+restructure `run_conversation_loop`.
+
 <!-- entries appended below this line -->
+
+### Update — 2026-09-11 00:15 (started)
+
+Beginning phase-06a: the `RunLogGuard` in `src/daemon/run/guard.rs` (RunStarted
+on construction, exactly one RunFinished in Drop with the last `finish` winning
+and the literal missed-outcome HardFail as the fallback), its re-export beside
+`mod cancel;`, and one `run_log.finish(...)` at each of the six exits of
+`run_conversation_loop`. Cancellation (`src/daemon/cancel.rs`) stays untouched
+— the 06a/06b split. Then the mutation pair and the end-to-end block.
+
+### Update — 2026-09-10 (escalation)
+
+**Chosen lever:** refined re-dispatch against the partial tree (`execute_phase`
+on this `in-progress` doc, not `continue_phase`).
+**Rationale:** the spec was the problem — three defects, of which the
+unsatisfiable "six exits" criterion and the shifting line numbers together
+account for the whole 600-turn navigation thrash visible in the session log —
+so it had to be corrected regardless; the guard work already on disk is correct
+(7/7 tests) and the dirty tree preserves it, so a fresh re-dispatch would only
+rebuild it. `continue_phase` was not used because it is blocking, returns no
+`run_id` and registers no watcher, leaving no way to stop a second runaway.
+
