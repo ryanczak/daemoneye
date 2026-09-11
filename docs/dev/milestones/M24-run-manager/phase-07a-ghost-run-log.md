@@ -659,3 +659,26 @@ clippy_exit=0
 real HOME run logs AFTER (==BEFORE): 0
 ```
 
+### Update — 2026-09-11 14:52 (progress)
+
+The gate run reported one failure:
+`shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`
+panicked at `src/shell/pty.rs:742` ("an idle shell must not remember a stopped
+group"). That file is untouched this phase (`git diff HEAD~1 -- src/shell/` is
+empty; the module's last change is `cc8101a`, M20 phase-05a), so the failure
+predates the phase's diff and looked like the known environment-sensitivity of
+the real-bash PTY tests.
+
+Reproduced it thirteen times before concluding: 14 serial-free full-suite runs
+(the failing one plus 13 after), 6 targeted single-test runs, 5×93-test `pty`
+module runs, and 6 runs at `--test-threads=4` — **all green, every time**,
+including three more consecutive full-suite runs at 1752/0. The one-off could
+not be reproduced at --lib, single-test, module, or reduced-parallelism
+granularity. It is a pre-existing flake in `pty.rs`'s STOP-aimed-at-an-idle-
+shell test, not a regression from 07a.
+
+`do_ghost_turn`'s budget exit, the guard's kind-aware drop goal, and the
+`TurnStarted` emitter all held: three further consecutive full-suite runs
+(1755 filtered total: 1752 passed / 4 ignored / 0 failed), preservation counts
+unchanged (`turn_log` 7, `session` 21, `mailbox` 4, `stream` 8, `active` 6,
+`cancel` 13), and no `~/.daemoneye` litter. Committed as `6b5b465`.
