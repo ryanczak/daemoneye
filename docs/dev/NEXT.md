@@ -6,7 +6,40 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M24 — Run Manager (active)
 
-**Active phase: phase-09a — resume-seed**
+**Active phase: phase-09b — resume-wiring**
+(`docs/dev/milestones/M24-run-manager/phase-09b-resume-wiring.md`, status: todo,
+drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-09b`.
+
+Phase-09a closed **approved_first_try 2026-09-12** (`fe3f6f3`). Its executor
+recorded a vacuously-green mutation placement before finding the one that
+discriminates, and disclosed an intermediate `PASTE MISMATCH` before correcting
+it — both reproduced at review. That is the standard the milestone's two earlier
+bounces were asking for.
+
+Scope for 09b: the four surfaces that make `daemoneye run resume <id>
+"<directive>"` real — a pure `resumable_runbook` rule, `Request::ResumeRun`,
+a daemon handler that re-spawns the ghost seeded with 09a's text, and a `Run`
+CLI subcommand group. **The seed is the alert message** passed to
+`GhostManager::start_session_with_config`; that is the whole point.
+
+09b also **retires `resume_seed`** in favour of `resume_plan`. 09a shipped it
+with zero production callers, and `resume_plan` supersedes it by resolving the
+runbook too — STANDARDS § 2.2 says delete an unused symbol rather than keep a
+second entry point speculatively.
+
+Only a **ghost** run is resumable: it is the only kind carrying a runbook name.
+Chat, scheduled and delegated are refused with a reason the user reads, each a
+named negative test — `Delegated` being the subtle one, autonomous but naming an
+agent rather than a runbook.
+
+Pre-injected: `trigger_ghost_turn` must be `tokio::spawn`ed **after** the IPC
+reply, never awaited inside `handle_client` — it runs a whole AI loop while the
+client waits.
+
+Remaining after 09b: **09c** (seeded tasks from a runbook `## Steps` section)
+and **10** (cli listing). Neither drafted.
+
+**Superseded — M24 phase-09a — resume-seed**
 (`docs/dev/milestones/M24-run-manager/phase-09a-resume-seed.md`, status: todo,
 drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-09a`.
 

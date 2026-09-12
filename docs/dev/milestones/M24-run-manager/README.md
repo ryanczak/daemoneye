@@ -84,7 +84,7 @@ precede the full four-loop unification's completion.
 | 07b | ghost-run-cancel-result ([phase-07b-ghost-run-cancel-result.md](phase-07b-ghost-run-cancel-result.md)) — cancel check at ghost turn top (`daemoneye stop <run>` reaches a ghost); mailbox carries `RunResult` | **done** (approved_after_2, 2026-09-11) |
 | 08 | scheduled-run ([phase-08-scheduled-run.md](phase-08-scheduled-run.md)) — `RunKind::Scheduled` gets its first production constructor; wrap the 435-line body, derive the terminal state from the store | **done** (approved_first_try, 2026-09-12) |
 | 09a | resume-seed ([phase-09a-resume-seed.md](phase-09a-resume-seed.md)) — the pure seed: terminal briefing out of the turn log + directive, "not transcript rehydration" made structural | **done** (approved_first_try, 2026-09-12) |
-| 09b | resume-wiring — `daemoneye run resume <id> "<directive>"`: IPC request, CLI subcommand, ghost re-spawn from the seed | todo (not drafted) |
+| 09b | resume-wiring ([phase-09b-resume-wiring.md](phase-09b-resume-wiring.md)) — `daemoneye run resume <id> "<directive>"`: IPC request, CLI subcommand, ghost re-spawn from the seed; retires `resume_seed` for `resume_plan` | todo |
 | 09c | seeded-tasks — runbook `## Steps` becomes a ghost run's task list, coverage-checked before completion | todo (not drafted) |
 | 10 | cli — `/runs`, `/run`, `/stop`; cross-run telemetry (`RunRecord`) if not deferred | todo (not drafted) |
 
@@ -114,6 +114,19 @@ precede the full four-loop unification's completion.
   end — the same measurement that made 06a a `Drop` guard, and the reason 07a
   puts the guard in the 16-line `trigger_ghost_turn` wrapper (`:287-302`) that
   every exit already funnels through, leaving the 760-line body alone.
+
+- **09b deletes a function 09a shipped, on purpose.** `resume_seed` had **zero
+  production callers** (verified at 09b drafting), and `resume_plan` supersedes
+  it by also resolving the runbook. `STANDARDS.md` § 2.2 — "if a symbol is
+  unused, delete it" — beats keeping a second entry point on the speculation
+  that phase-10 might want it. A staged phase that leaves a stepping stone
+  behind should retire it in the phase that steps off it, not later.
+
+- **Only a ghost run is resumable, because only a ghost run names a runbook.**
+  Chat, scheduled and delegated runs are each refused with a reason the user
+  reads, and each refusal is a named negative test. The subtle one is
+  `Delegated`: it *is* autonomous, but it names an agent rather than a runbook,
+  so this path cannot resume it.
 
 - **Phase 09 split three ways at drafting (2026-09-12).** The charter row
   bundled two unrelated capabilities — briefing-seeded resume, and seeded tasks
