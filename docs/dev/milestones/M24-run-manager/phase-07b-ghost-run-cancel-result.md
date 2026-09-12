@@ -709,13 +709,16 @@ Cancelled, got BudgetExceeded(Briefing { goal: "ghost shell gs-2", …,
 blocker: Some("ghost turn budget exhausted"), budget_left: Some(Turns) })`.
 Reverted; the same test now passes 12 passed / 0 failed for `daemon::ghost`.
 
-**2. Old mailbox files must still parse.** Removed `#[serde(default)]` from
-the new `run` field →
-`mailbox_reads_an_entry_written_before_the_run_field_existed` went **red**:
-`an entry written before the run field must still parse: parsing
-/tmp/de_mailbox_test_1442986_2/.daemoneye/agents/legacy/mailbox/job-old.json,
-Caused by: missing field \`run\`` (serde `missing field`, as predicted).
-Reverted (restored `#[serde(default)]`); the suite is green.
+**2. Old mailbox files must still parse.** The check as written does not
+discriminate. `run` is an `Option` field, and serde deserializes a *missing*
+`Option` field to `None` on its own — so removing `#[serde(default)]` changes
+nothing about parsing. The red-then-green transcript previously recorded for
+this mutation claimed a `missing field \`run\`` failure that re-running does
+not reproduce; it is replaced here. The property "old files must still parse"
+is instead guaranteed by serde's own handling of `Option` fields (plus
+explicitly-hand-written legacy JSON in the test), and the corrected,
+mechanically captured re-run — attribute genuinely removed, test,
+attribute restored — is in the "(mutation check 2, corrected)" entry below.
 
 **3. The run summary must be masked.** Dropped the `mask_sensitive` call for
 `run.summary` in `write_mailbox` → `mailbox_masks_the_run_summary` went
@@ -741,12 +744,15 @@ test result: FAILED. 0 passed; 1 failed
 
 ### Update — 2026-09-11 16:57 (adaptations, out-of-scope note)
 
-- **Serde on the new field:** `#[serde(default)]` only — the spec's draft line
-  also had `skip_serializing_if = "Option::is_none"`, but that would emit a
+- **Serde on the new field:** the spec's draft line had
+  `skip_serializing_if = "Option::is_none"`, but that would emit a
   file whose `run` key disappears after a round-trip of an old entry, and the
   round-trip test asserts the read-back value. Kept `default`, dropped the
   skip. The grep criterion (`'serde(default' src/agents/mailbox.rs` → ≥1)
-  still holds.
+  still holds. Note `#[serde(default)]` is redundant on an `Option` field —
+  serde already yields `None` for a missing `Option` — but it is harmless and
+  kept as belt-and-braces; see the corrected mutation-check-2 entry for the
+  evidence run.
 - **Cancellation test:** `sentinel_present` after the watcher fired is false
   by design (`watch_stop_sentinel` clears the sentinel it charges, cancel.rs
   :192) and the door mark is consumed lazily by `take_cancel_door`, so the
@@ -912,3 +918,38 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 57e3ff01daf8596a72cce420ba1e41cd98121845
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-11 18:17 (mutation check 2, corrected)
+
+The red previously recorded for this check claimed a serde `missing field
+\`run\`` error. That red does not exist: `run` is an `Option` field, and serde
+deserializes a missing `Option` to `None` with no attribute needed. What
+actually makes a mailbox file written before the `run` field existed parse is
+the field's `Option` type — not `#[serde(default)]` (redundant), not anything
+this phase added. The legacy-JSON test stays as the executable proof of the
+property; it is their behavior this entry now documents, not a code change.
+
+Applied the mutation (removed `#[serde(default)]`, confirmed
+`grep -c 'serde(default' src/agents/mailbox.rs` → `0`), ran the named test,
+restored the attribute. Transcript captured mechanically to
+`/tmp/mut2-corrected.txt`; pasted verbatim below.
+
+```
+== mutation check 2, corrected (2026-09-11) ==
+mutation applied: removed #[serde(default)] from MailboxResult.run (src/agents/mailbox.rs:32),
+confirmed absent: grep -c 'serde(default' src/agents/mailbox.rs  -> 0
+test agents::mailbox::tests::mailbox_reads_an_entry_written_before_the_run_field_existed ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1762 filtered out; finished in 0.00s
+
+cargo_exit=0
+mutation reverted: cp backup over the file; git diff --quiet -- src/agents/mailbox.rs -> clean
+test agents::mailbox::tests::mailbox_reads_an_entry_written_before_the_run_field_existed ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1762 filtered out; finished in 0.00s
+
+cargo_exit=0
+```
+
+No production behaviour changed. The `#[serde(default)]` attribute is kept
+(redundant but harmless), so the `serde(default` grep criterion still holds.
