@@ -2922,11 +2922,11 @@ phase-07 summaries both generalised past their own evidence (a false
 "flaky grep"; "nothing else deviated" while the pasted evidence carried a
 mismatch). Both caught only by re-running the evidence.
 
-**Active phase: phase-08 — proxy-allowlist**
+**Superseded — M19 phase-08 — proxy-allowlist** (M19 closed 2026-09-03; the
+live `phase-08` pointer is M24's, under "M24 — Run Manager (active)" below.)
 (`docs/dev/milestones/M19-sandbox-completion/phase-08-proxy-allowlist.md`,
-status: todo, drafted 2026-08-30). Dispatch with
-`/rexymcp:dispatch phase-08`. Renders `proxy_allow` / `proxy_deny` into the
-filter phase-07 mounts empty.
+drafted 2026-08-30.) Renders `proxy_allow` / `proxy_deny` into the filter
+phase-07 mounts empty.
 
 **Phase-08 was split into three, and the milestone gained two phases.** The
 README's 08 intent bundles allowlist + audit record + sentinel credentials.
