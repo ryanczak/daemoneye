@@ -1,7 +1,7 @@
 # Phase 09c: seeded tasks — a runbook's `## Steps`, coverage-checked
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-07a (`ghost_runbook_name` on the session) and phase-07b
 (the ghost loop's `GhostLoopOutcome`). Both **done**.
 **Estimated diff:** ~330 lines incl. tests
@@ -364,8 +364,12 @@ Name the assertion message in each failure.
    case-insensitive `step <n>` substring anywhere in the line instead of the
    `STEP <n>: DONE|SKIPPED` form →
    `uncovered_steps_prose_about_a_step_covers_nothing` must go **red**.
-2. **An out-of-range marker must not cover a step.** Drop the range check so
-   `STEP 20: DONE` is parsed by prefix →
+2. **An out-of-range marker must not cover a step.** *(Corrected at review: this
+   spec assumed an explicit `index > step_count` check, and the shipped
+   implementation has none — the guard is structural, `(1..=step_count).filter(…)`
+   never queries 20, so "drop the range check" is vacuous. The executor found
+   and reported that. The mutation that does discriminate parses the index by
+   **leading digit**, turning `STEP 20` into `STEP 2`.)* →
    `uncovered_steps_ignores_an_out_of_range_index` must go **red**.
 
 ## End-to-end verification
@@ -783,3 +787,36 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e5abddc35c0a06f28ebe3d91fedd478ab156f240
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-12
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (194 turns)
+- **Scope deviations:** one, compile-forced and disclosed — the § Task-3 sketch
+  left a `format!` argument unconsumed against the real template, so the
+  executor appended `{}` to the format string. My sketch's error, not a
+  deviation of substance. Two cosmetic nits, neither worth a bounce: a typo in a
+  test message (`legitimate verdir`), and the runbook-load `log::warn!`
+  interpolates the error twice (`({}): {}` with `e, e`).
+- **Calibration:** **the mutation-checks-as-Spec-task fold worked on its first
+  outing.** 09b's mutation section went unrun because it sat outside `## Spec`;
+  09c made it numbered Task 6, and both mutations were run, captured and pasted
+  without prompting. Carry the Spec-task form forward.
+  **And the executor caught a spec defect I could not have seen from outside.**
+  Mutation 2 told it to "drop the `index > step_count` range check" — but its
+  implementation has no such check: out-of-range indices are excluded
+  structurally by `(1..=step_count).filter(…)`, which never queries 20, so the
+  prescribed mutation is vacuous. Rather than report a green as a red, it said
+  so, explained the mechanism, and found the mutation that *does* isolate the
+  branch. I reproduced both: the compound form goes red on "must not alias step
+  2", mutation 1 goes red on the `ALERT`-lesson assertion, and the tree reverts
+  to 21 green.
+  The lesson for me is narrower than "check your mutations": **a mutation
+  instruction names a line to break, so it encodes an assumption about an
+  implementation the executor has not written yet.** State the *property* to
+  break and let the executor find the line, or expect the instruction to miss
+  whenever the implementation turns out better than the one imagined.
+- **Test arithmetic:** 1803, not the predicted 1801 — `runbook::` gained 8 (an
+  extra star-marker/prose case) and `daemon::ghost` 9 (an extra `step_count == 0`
+  boundary). Both criteria said "or more"; the extra cases are real coverage.
