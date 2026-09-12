@@ -209,6 +209,12 @@ enum AgentCommands {
 
 #[derive(Subcommand)]
 enum RunCommands {
+    /// List every run log in ~/.daemoneye/var/log/runs/, newest first
+    ///
+    /// Reads the files directly, like `daemoneye stop <run>` — no daemon
+    /// required. Shows each run's kind, last recorded state, and the
+    /// furthest turn it reached.
+    List,
     /// Resume a finished ghost run from its briefing plus a new directive
     Resume {
         /// The finished run's id
@@ -552,6 +558,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
         },
         Commands::Run { cmd } => match cmd {
+            RunCommands::List => {
+                print!(
+                    "{}",
+                    crate::daemon::run::render_runs_table(&crate::daemon::run::list_runs())
+                );
+            }
             RunCommands::Resume { run, directive } => {
                 cli::run_resume(&run, &directive).await?;
             }

@@ -63,6 +63,9 @@ pub(super) async fn handle_slash(ctx: SlashCtx<'_>, query: &str) -> SlashOutcome
         "/prompt" => cmd_prompt(ctx, rest),
         "/limits" => cmd_limits(ctx.renderer, ctx.session_id).await,
         "/session" | "/sessions" => cmd_session(ctx, rest).await,
+        "/runs" => cmd_runs(ctx.renderer),
+        "/run" => cmd_run(ctx.renderer, rest),
+        "/stop" => cmd_stop(ctx.renderer, rest),
         _ => return SlashOutcome::NotACommand,
     }
     SlashOutcome::Handled
@@ -608,6 +611,39 @@ async fn cmd_session(ctx: SlashCtx<'_>, rest: &str) {
             r,
             &format!("unknown: /session {other} (try list|save|load|delete|rename)"),
         ),
+    }
+}
+
+// ── /runs, /run, /stop ───────────────────────────────────────────────────────
+
+fn cmd_runs(r: &mut RatatuiRendererStdout) {
+    let _ = r.commit(&crate::daemon::run::render_runs_table(
+        &crate::daemon::run::list_runs(),
+    ));
+}
+
+fn cmd_run(r: &mut RatatuiRendererStdout, rest: &str) {
+    let id_text = rest.trim();
+    if id_text.is_empty() {
+        note(r, "usage: /run <id>");
+        return;
+    }
+    let Ok(id) = crate::daemon::run::RunId::parse(id_text) else {
+        note(r, &format!("not a run id: {id_text}"));
+        return;
+    };
+    let _ = r.commit(&crate::daemon::run::run_log_tail(&id, None));
+}
+
+fn cmd_stop(r: &mut RatatuiRendererStdout, rest: &str) {
+    let id_text = rest.trim();
+    if id_text.is_empty() {
+        note(r, "usage: /stop <id>");
+        return;
+    }
+    match crate::daemon::run::request_stop(id_text) {
+        Ok(_path) => note(r, &format!("stop requested for {id_text}")),
+        Err(e) => note(r, &format!("✗ {e}")),
     }
 }
 

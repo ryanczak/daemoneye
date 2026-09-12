@@ -484,6 +484,7 @@ mod tests {
 mod active;
 pub(crate) mod cancel;
 mod guard;
+mod list;
 mod log_read;
 mod result;
 mod resume;
@@ -498,6 +499,7 @@ pub use cancel::{
     sentinel_present, stop_sentinel_path, watch_stop_sentinel,
 };
 pub use guard::RunLogGuard;
+pub use list::{RunSummary, list_runs, render_runs_table, summarize};
 pub use log_read::{
     DEFAULT_RUN_LOG_LIMIT, MAX_RUN_LOG_LIMIT, clamp_run_log_limit, get_turn,
     run_log_input_rejected, run_log_search, run_log_tail,
