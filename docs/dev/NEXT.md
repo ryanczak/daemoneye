@@ -4,7 +4,51 @@ The one live pointer and nothing else. The append-only record of every earlier
 milestone and phase — and every `**Superseded — …**` pointer that once stood
 here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
-## M24 — Run Manager: **closed 2026-09-12, PE signed off**
+## M22 — Tool surface & context (active, scoped 2026-09-12)
+
+**Active phase: none** — milestone scoped, no phase drafted yet.
+
+PE chose M22 next at the M24 close, ahead of M21 and M23: `Category` on `TOOLS`
+is M25's stated dependency, and M21's `host?` params and M23's
+`[HOSTS]/[SHELLS]` blocks both land on a cleaner surface once the pane tools are
+gone. Scope, exit criteria and a proposed 10-phase breakdown are in
+`docs/dev/milestones/M22-tool-surface/README.md`.
+
+Headline exit criterion: **zero `%`-pane identifiers in any prompt asset or tool
+description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 78,
+5 seeded memories.
+
+**Two facts found while scoping, both recorded in the README:**
+
+- **The design's "36 → 42" arithmetic is stale.** The tree has **39** tools, and
+  three of § 2.5's twelve "additions" (`run_log_tail`, `run_log_search`,
+  `get_turn`) already shipped in M24 phase-02b. Real delta: **39 − 6 + 9 = 42**.
+  Phase docs cite the README, not § 2.5's numbers.
+- **`[execution] backend` still defaults to `"tmux"`**, so everything M20 and
+  M24 built is opt-in. **Phase 01 flips it** (PE decision at the M24 close) so
+  later milestones' live checks exercise the real path. Its config doc comment
+  is also stale — "Nothing reads the value yet" went false when M20 phase-07c
+  became the consumer.
+
+**Next step:** PE signs off on the phase breakdown, then
+`/rexymcp:architect next` drafts phase-01. Nothing is dispatched until then.
+
+**Carried out of M24, still open:**
+
+- One calibration fold **held at two occurrences**: *state the property to
+  break, not the line to edit* (M24 09c, 10). M22 has nine near-identical tool
+  phases; a third instance here should be folded.
+- **A phase doc is append-only and nothing enforces it** — M24 phase-10's run
+  overwrote its own spec, and no gate caught it. Wants a guard test or a
+  template line; until then the reviewer checks the headings survived.
+- One local-only `WORKFLOW.md` edit on the upstream push backlog: the
+  `NEXT-HISTORY.md` row in the directory layout.
+- **Deferred to M25 with the governor:** cross-run telemetry (`RunRecord` →
+  scorecard/profile).
+
+## Historical
+
+### M24 — Run Manager: **closed 2026-09-12, PE signed off**
 
 **Active phase: none.**
 
@@ -36,8 +80,6 @@ off 2026-09-12.** Carried out of the close, still open:
 
 **Next step:** `/rexymcp:architect` scopes the next milestone. Nothing is dispatched until
 then.
-
-## Historical
 
 ### M24 — Run Manager: the phase pointers
 
