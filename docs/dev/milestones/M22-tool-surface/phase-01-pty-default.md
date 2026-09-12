@@ -1,7 +1,7 @@
 # Phase 01: `[execution] backend` defaults to `"pty"`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-01-1.md`)
 **Depends on:** M20 (the substrate that becomes the default) and M24 (the
 run model it is verified through). Both **closed**.
 **Estimated diff:** ~120 lines incl. tests
@@ -261,6 +261,29 @@ phase's own tests name the same tokens.
 - [ ] Full lib suite **1815 or more** passing, `0 failed`, on **three
       consecutive runs** (now **1814**).
 - [ ] All four gates pass.
+
+### Re-dispatch criteria (bug-01-1, filed 2026-09-12)
+
+Every criterion above is met on the current tree and **no code changes**. The
+outstanding work is one Update Log entry. Each of these is scoped to the
+`(mutation checks)` entry with the prefix
+`awk '/^### Update.*\(mutation checks/{f=1; next} /^### Update/{f=0} f' docs/dev/milestones/M22-tool-surface/phase-01-pty-default.md |`
+and was run against commit `42cff24d`.
+
+- [ ] **The mutant shown is the one specified** — `eq_ignore_ascii_case("pty")`
+      *without* negation: `grep -c '!self.backend.trim().eq_ignore_ascii_case("pty")'`
+      → **0** (now **1**).
+- [ ] **Its real result is recorded:** `grep -c '4 passed; 1 failed'` → **1 or
+      more** (now **0**). Under the specified mutant only
+      `execution_invalid_value_falls_back_to_the_default` is red — verified at
+      review.
+- [ ] **The irreproducible claim is gone:** `grep -c 'did not hold'` → **0**
+      (now **1**).
+- [ ] **No code change:** `git diff 42cff24d..HEAD --stat -- src/ | wc -l` →
+      **0**; `cargo test --lib 'config::'` → **92**, unchanged.
+
+Mutation 1's transcript reproduces and stays. Amend the entry in place or append
+a corrected one — either way the three greps above decide it.
 
 ## Test plan
 
