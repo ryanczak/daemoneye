@@ -480,3 +480,160 @@ No other file — a criterion asserts a zero diff across all of `src/` outside
 Phase status flipped to `in-progress` here and in M24's README phase table.
 Tasks 1–4 of the Spec are next; the traps noted — `run::Briefing` only, never
 `daemon::briefing`; `Briefing::render()` reused, not re-implemented.
+
+### Update — 2026-09-12 14:45 (progress)
+
+**Executor:** executor-agent (this dispatch).
+**Work:** built `src/daemon/run/resume.rs` — `ResumeError` (`NoRunLog`,
+`StillRunning`, with `Display` + `std::error::Error`), the pure
+`terminal_outcome` over records, the pure `render_seed(kind, Option<&Briefing>,
+directive)`, and the one I/O wrapper `resume_seed`, re-exported from
+`src/daemon/run/mod.rs` by exactly one `mod` line and one `pub use` line.
+14 tests (the plan's 10 plus 3 extra `resume_seed` cases and the `Display`
+assertions).
+
+**Mutation checks** (transcripts in the end-to-end entry context, red-then-green
+on the named assertions):
+
+1. Missing-`RunFinished` → `Ok((kind, None))`: **RED** —
+   `terminal_outcome_without_a_run_finished_is_still_running` failed on its
+   assertion (left `Ok((Ghost …), None)`, right `Err(StillRunning)`);
+   `resume_seed_reports_still_running_for_a_run_with_no_finish` went red with
+   it. Reverted; green again.
+2. `render_seed` returning early with the briefing only when `briefing` is
+   `None`: **RED after a placement correction** — see the observation in the
+   end-to-end entry: with the early return placed after the `# Directive`
+   heading push the mutation was vacuous (green); placed at the top of the
+   `None` arm (return before the directive section is emitted) the named test
+   failed on its directive assertion (`the directive must survive a
+   briefing-less seed`), 13 passed / 1 failed. Reverted; green again.
+
+**Verification:** all four gates pass; full lib suite `1780 passed; 0 failed`
+on three consecutive runs (= 1766 + 14); all eight preservation modules at
+baseline; real-HOME run logs 0 before and after. The commit is `7f227bb`
+(kept separate from the end-to-end capture so the tree the E2E block greps is
+the committed one).
+
+### Update — 2026-09-12 14:50 (end-to-end verification)
+
+**Run by:** executor-agent (this dispatch). The block in § End-to-end
+verification was executed **verbatim and unmodified**, output redirected to
+`/tmp/e2e-m24-09a.txt`; **that file's contents are pasted below, char for
+char.** The real artifact the block exercises is a `var/log/runs/<id>.jsonl`
+written through `append_turn_event` under a throwaway HOME and read back by
+`resume_seed` through the public API
+(`resume_seed_reads_a_real_log_and_returns_the_seed` in section B, plus the
+two `resume_seed` error-path tests in the same filtered run).
+
+**Count explained:** `prod read_turn_log (1)` prints **2**, not the
+criterion's stated 1 — the criterion's "now" value was measured while the file
+did not exist. Both hits are production: the `use super::{…}` import and the
+single call in `resume_seed` (`let records = read_turn_log(run_id);`). The
+rule the criterion pins — `resume_seed` is the only reader — holds; the
+call-site count is 1:
+`awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/run/resume.rs | grep -c 'let records = read_turn_log'`
+→ **1**. Every other count printed exactly the number its criterion states
+(`resume.rs exists (1): 1` is the criterion's own after-phase value).
+
+**Mutation-check transcripts** (edits via the `patch` tool only;
+`sed -i`/`perl -i` unused):
+
+- Mutation 1 (**RED**, `cargo_exit=101`): missing-`RunFinished` returned
+  `Ok((kind, None))`. `terminal_outcome_without_a_run_finished_is_still_running`
+  failed on its named assertion — `left: Ok((Ghost { runbook:
+  "investigate-disk", trigger: "cron" }, None))`, `right: Err(StillRunning)` —
+  and `resume_seed_reports_still_running_for_a_run_with_no_finish` went red
+  with it, printing the mutated seed that rendered from an in-flight run.
+- Mutation 2, first placement (**did not go red**, recorded as the observation
+  Task 5 asks for): the early return inserted **after** the `# Directive`
+  heading push left the directive code reachable, so
+  `cargo test --lib render_seed` printed `2 passed; 0 failed` — a mutant in
+  that position cannot drop the directive. The plan's wording pins the *effect*
+  (briefing section and nothing else when `None`), not the insertion line.
+- Mutation 2, corrected placement (**RED**, `cargo_exit=101`): early return at
+  the **top** of the `None` arm, before the directive section is emitted;
+  `render_seed_without_a_briefing_says_so_and_still_carries_the_directive`
+  failed on its directive assertion (`the directive must survive a
+  briefing-less seed`), `13 passed; 1 failed`.
+- Both restored: `14 passed; 0 failed`, `cargo_exit=0`.
+
+The paste is everything between the two ``` fences below.
+
+```
+== A. build ==
+real HOME run logs BEFORE: 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. the resume module ==
+test daemon::run::resume::tests::resume_error_displays_for_the_cli ... ok
+test daemon::run::resume::tests::render_seed_without_a_briefing_says_so_and_still_carries_the_directive ... ok
+test daemon::run::resume::tests::terminal_outcome_on_a_complete_run_has_no_briefing ... ok
+test daemon::run::resume::tests::render_seed_embeds_the_briefing_and_the_directive ... ok
+test daemon::run::resume::tests::terminal_outcome_on_an_empty_log_is_no_run_log ... ok
+test daemon::run::resume::tests::terminal_outcome_on_a_cancelled_run_has_no_briefing ... ok
+test daemon::run::resume::tests::terminal_outcome_returns_the_budget_exceeded_briefing ... ok
+test daemon::run::resume::tests::terminal_outcome_returns_the_kind_and_the_hard_fail_briefing ... ok
+test daemon::run::resume::tests::terminal_outcome_without_a_run_started_is_no_run_log ... ok
+test daemon::run::resume::tests::terminal_outcome_without_a_run_finished_is_still_running ... ok
+test daemon::run::resume::tests::terminal_outcome_takes_the_first_start_and_the_last_finish ... ok
+test daemon::run::resume::tests::resume_seed_reads_a_real_log_and_returns_the_seed ... ok
+test daemon::run::resume::tests::resume_seed_reports_no_run_log_for_an_unknown_id ... ok
+test daemon::run::resume::tests::resume_seed_reports_still_running_for_a_run_with_no_finish ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 1770 filtered out; finished in 0.00s
+cargo_exit=0
+== C. structural greps (each must print the stated number) ==
+resume.rs exists           (1): 1
+mod resume;                (1): 1
+pub use resume::           (1): 1
+prod terminal_outcome      (1): 1
+prod render_seed           (1): 1
+prod resume_seed           (1): 1
+prod ResumeError enum      (1): 1
+seed cannot see records    (0): 0
+render_seed takes briefing (1): 1
+terminal_outcome no I/O    (0): 0
+prod read_turn_log         (1): 2
+no G4 briefing here        (0): 0
+no G4 briefing in run/     (0): 0
+prod .render() reused      (1): 1
+prod no section copy       (0): 0
+prod NoRunLog            (>=2): 2
+prod StillRunning        (>=2): 2
+prod unwrap/panic          (0): 0
+nothing outside run/       (0): 0
+== D. preservation: turn_log 7, log_read 11, result 11, guard 8, active 6, cancel 13, scheduled 7, ghost 12 ==
+daemon::run::turn_log      test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1777 filtered out; finished in 0.00s
+daemon::run::log_read      test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1773 filtered out; finished in 0.01s
+daemon::run::result        test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1773 filtered out; finished in 0.00s
+daemon::run::guard         test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1776 filtered out; finished in 0.00s
+daemon::run::active        test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1778 filtered out; finished in 0.00s
+daemon::run::cancel        test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1771 filtered out; finished in 0.00s
+daemon::scheduled          test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1777 filtered out; finished in 0.00s
+daemon::ghost              test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1772 filtered out; finished in 0.00s
+== E. lib suite, three consecutive runs ==
+test result: ok. 1780 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.07s
+test result: ok. 1780 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.27s
+test result: ok. 1780 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.13s
+== F. gates ==
+fmt_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy_exit=0
+== G. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+
+**Paste self-check (run after the paste, per § End-to-end verification):**
+
+```
+$ D=docs/dev/milestones/M24-run-manager/phase-09a-resume-seed.md
+$ L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+$ tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m24-09a.txt
+$ diff /tmp/pasted-m24-09a.txt /tmp/e2e-m24-09a.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+PASTE MATCH
+```
+
+(The verdict line was deliberately printed into this entry, per the workflow's
+"the literal PASTE MATCH line goes into the entry" requirement. The first
+self-check run printed `0a1 / 60d60 PASTE MISMATCH` because the paste initially
+dropped the `== A. build ==` header line and kept a trailing blank line; both
+were corrected in the doc so the diff above is byte-exact.)
