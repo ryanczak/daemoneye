@@ -4,38 +4,40 @@ The one live pointer and nothing else. The append-only record of every earlier
 milestone and phase — and every `**Superseded — …**` pointer that once stood
 here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
-## M24 — Run Manager (active)
+## M24 — Run Manager: all phases done, awaiting PE sign-off
 
-**Active phase: phase-10 — run-listing**
-(`docs/dev/milestones/M24-run-manager/phase-10-run-listing.md`, status: todo,
-drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-10`.
-**This is M24's last phase** — when it is `done`, the milestone hits its
-boundary, which is a human sign-off gate.
+**Active phase: none.**
 
-Phase-09c closed **approved_first_try 2026-09-12** (`bb5eb80`), closing M24's
-last *behavioural* exit criterion. The mutation-checks-as-Spec-task fold worked
-first time, and the executor caught a spec defect from the inside: mutation 2
-told it to drop a range check its implementation does not have (out-of-range
-indices are excluded structurally), so it reported the vacuous green and found
-the mutation that does discriminate.
+All **16** M24 phases are `done` as of 2026-09-12 (10 charter rows; 05, 06, 07
+and 09 split at drafting on measured seams). The milestone retrospective is in
+`docs/dev/milestones/M24-run-manager/README.md` § Retrospective. **M24 is not
+closed** — closing is the PE's call, and there are decisions waiting:
 
-Scope for 10: the **discovery** surface. Nine phases have written
-`var/log/runs/<id>.jsonl` and **nothing reads that directory** — every command
-so far takes an id the user had to find by hand. `run/list.rs` adds
-`RunSummary`, a pure `summarize`, a `list_runs()` that enumerates the dir, and a
-pure `render_runs_table`; `daemoneye run list` and the `/runs`, `/run <id>`,
-`/stop <id>` slash commands are the surfaces. All read `$HOME` directly — no
-daemon round trip, pinned by a criterion that none calls `request_once`.
+1. **A phase doc is append-only, and nothing enforces it.** Phase-10's run
+   overwrote its own spec (556 lines, including the `Status:` line), and no gate
+   caught it — the suite was green with the spec gone and `bug_tracker` passed
+   with no status line. Restored from git at review. Wants a guard test or a
+   line in the phase template.
+2. **Three calibration folds proposed, none landed.** `WORKFLOW.md` is
+   untouched per the architect contract; each needs PE sign-off:
+   - *validate a structural criterion against the tree as it will look **after**
+     the phase* — **14 instances** across 07a/07b/08/09a/09b/10, all
+     architect-side;
+   - *state the property to break, not the line to edit* — 2 vacuous mutation
+     instructions (09c, 10);
+   - *pin evidence where it lives* — 2 (07b's two bounces).
+3. **One local-only `WORKFLOW.md` edit is on the upstream push backlog**: the
+   `NEXT-HISTORY.md` row in the directory layout.
+4. **Deferred to M25 with the governor:** cross-run telemetry (`RunRecord` →
+   scorecard/profile).
 
-Naming: the exit clause says `daemoneye runs`, but 09b established the `Run`
-group, so the command is `daemoneye run list`. Substance met, wording deviation
-recorded.
+**Next step:** PE reviews the retrospective and signs off, after which
+`/rexymcp:architect` scopes the next milestone. Nothing is dispatched until
+then.
 
-`/run` and `/stop` are ten-line wrappers over `run_log_tail` and `request_stop`,
-which already exist — criteria pin that the slash module re-implements neither.
+## Historical
 
-Deferred to M25 with the governor: cross-run telemetry (`RunRecord` →
-scorecard/profile), which the milestone README always listed as a candidate.
+### M24 — Run Manager: the phase pointers
 
 **Superseded — M24 phase-09c — seeded-tasks**
 (`docs/dev/milestones/M24-run-manager/phase-09c-seeded-tasks.md`, status: todo,

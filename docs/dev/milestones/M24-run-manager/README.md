@@ -7,7 +7,7 @@ resume; and make **`run_terminal_command(background=true)` fall out of it** as a
 un-awaited chat Run against a dedicated substrate shell, replacing the tmux
 `de-bg-*` path.
 
-**Status:** in-progress — scoped 2026-09-09, **PE sign-off 2026-09-09**
+**Status:** **all 16 phases done 2026-09-12 — awaiting PE sign-off to close.** Scoped 2026-09-09, **PE sign-off on scope 2026-09-09**
 (scope + the M24-ahead-of-M21–M23 reorder both confirmed; background landing
 mid-milestone accepted).
 
@@ -391,3 +391,106 @@ precede the full four-loop unification's completion.
      `Vec<fn() -> PathBuf>`, so a constructor omitted from the list is invisible
      to it — the completeness gate is itself incomplete. Phase-10 should add the
      entry when it takes ownership of the `var/log/runs` lifecycle row.
+
+## Retrospective — all phases done 2026-09-12, awaiting PE sign-off
+
+**Shape.** 10 charter rows became **16 phases**: 05, 06, 07 and 09 each split
+at drafting on a measured seam, and 09 three ways. Every split was decided by a
+measurement rather than a size guess — `run_conversation_loop` at 1321 lines
+with six exits, `do_ghost_turn` at 760 with four, `run_scheduled_job` at 435
+with eleven `mark_done` sites and no `Result` to map. The split that recurred
+was **pure core / wiring**: build the decidable thing first with its negative
+cases, wire it second. It held four times and both halves passed on the first
+dispatch in three of them.
+
+**Verdicts** (16 phases, 23 executor runs, 4,757 executor turns, 10 bugs
+filed): 10 `approved_first_try`, 3 `approved_after_1`, 1 `approved_after_2`,
+2 `escalated`. Two runs hit the 600-turn cap; both were 06b before the
+`rexymcp.toml` retune.
+
+**The headline is a config change, not a code change.** M24 ran across a
+GLM-5.3-Flash retune (`context_length` 262142 → 524284, `max_context_pct`
+95 → 80, `max_tokens` 32768 → 16384, PE 2026-09-11). Same model, same endpoint,
+measured on adjacent phases:
+
+| | 06b re-dispatch (before) | 07a (after) |
+|---|---|---|
+| Wall clock / turns | 5 h 25 min / 90 | **28 min / 225** |
+| Mean per turn | ~3.6 min | **8 s** |
+| `parse_failed` (truncated, tool-call-less) | 5 | **0** |
+| Compactions | 1 (35 msgs evicted) | **0** |
+| Output tokens | 457 k | **31.8 k** |
+
+`max_tokens` was the binding constraint, not context: a 32 k ceiling at ~24
+tok/s is a 20-minute-per-turn cap the model will fill, and truncation is what
+produced the tool-call-less turns. Prefix caching was never off — vLLM simply
+does not populate `prompt_tokens_details`, so rexyMCP reads `cache_read_tokens`
+as 0 for every GLM run and over-reports input cost. **Worth fixing upstream.**
+
+### The three failures worth carrying forward
+
+**1. Evidence defects outnumbered code defects.** Of 10 bugs, the two bounces
+that cost the most (07b ×2) were about *transcripts*, not behaviour: a
+mutation-check red that never happened, then the same fabricated red surviving
+in a fenced block after the prose was corrected. The code shipped correct on
+the first run of that phase and never changed across either bounce. This is M12's
+finding recurring — *evidence-artifact defects, not code* — and the sharper rule
+M24 adds is **pin evidence where it lives**: a claim appearing in prose *and* in
+a transcript is two artifacts, and bug-07b-1's DoD policed only the prose.
+
+**2. Fourteen instances of a criterion matching more than it was pinning.** In
+07a/07b/08/09a/09b/10, structural greps caught doc comments, import lines, test
+names, the criteria block quoting itself, and — twice — a substring of the very
+identifier the phase added. **Every one was architect-side.** The generalisation
+that covers all fourteen: *validate a structural criterion against the tree as
+it will look **after** the phase, not only before.* Each had returned its stated
+value on the pre-phase tree, which is exactly what was checked.
+
+**3. Mutation instructions encode an assumption about code nobody has written.**
+Twice (09c, 10) a prescribed mutation was **structurally vacuous** — 09c's named
+a range check the implementation achieved declaratively; 10's named a
+substitution that redirects the file read, so the mutant could never change the
+output. Both times the executor burned attempts discovering it and reported
+honestly. **State the property to break, not the line to edit.**
+
+### What the executor did well, and it matters
+
+After the two 07b bounces the behaviour changed and stayed changed. In 09a it
+recorded a *vacuously green* mutation placement before finding the one that
+discriminates, and disclosed an intermediate `PASTE MISMATCH` rather than
+showing only the final match. In 09b it declined to fabricate the mutation
+transcripts it had not run and said why. In 09c and 10 it caught two of the
+architect's own spec defects from the inside. **Every one of those disclosures
+was reproduced at review and every one was accurate.** The bounces bought a
+durable change in what the executor volunteers.
+
+### Open items for the close
+
+1. **A phase doc is append-only, and nothing enforces it.** Phase-10's run
+   overwrote its own spec — 556 lines, including the `Status:` line and its
+   mutation transcripts — and **no gate caught it**: `cargo test` was green with
+   the spec gone and `tests/bug_tracker.rs` passed with no status line. Restored
+   from git at review. Needs either a guard test or an explicit line in the
+   phase template. **PE decision.**
+2. **Three folds proposed, none landed** (WORKFLOW.md is untouched, per the
+   architect contract): the after-the-phase criterion rule (14 instances), the
+   property-not-the-line mutation rule (2), and pin-evidence-where-it-lives (2).
+   **PE sign-off needed before any reaches `WORKFLOW.md`.**
+3. **One local-only WORKFLOW.md edit is on the upstream push backlog** — the
+   `NEXT-HISTORY.md` row added to the directory layout.
+4. **Deferred to M25 with the governor:** cross-run telemetry (`RunRecord` →
+   scorecard/profile), always listed as a candidate rather than in scope.
+5. **`daemoneye run list`, not `daemoneye runs`.** The exit clause's wording;
+   the `Run` subcommand group from 09b made one noun the better shape. Recorded
+   rather than silently absorbed.
+
+### Exit criteria
+
+All met. `background=true` on the substrate (05b); one `Run` for four kinds —
+chat 06a/06b, ghost 07a/07b, scheduled 08, delegated via `RunKind::Delegated`;
+structured `RunResult` with a bounded briefing, carried by the ghost mailbox
+(07b); cooperative cancellation for chat (06b) and ghost (07b), with scheduled
+runs deliberately out of scope and the reasoning recorded; briefing-seeded
+resume (09a/09b); seeded tasks coverage-checked against literal markers (09c);
+`daemoneye run list` and `/runs` `/run` `/stop` (10). Four gates green, **1814
+lib tests**.
