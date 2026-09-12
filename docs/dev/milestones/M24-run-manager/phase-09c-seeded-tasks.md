@@ -1,7 +1,7 @@
 # Phase 09c: seeded tasks — a runbook's `## Steps`, coverage-checked
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress (work done, pending server-side review flip)
 **Depends on:** phase-07a (`ghost_runbook_name` on the session) and phase-07b
 (the ghost loop's `GhostLoopOutcome`). Both **done**.
 **Estimated diff:** ~330 lines incl. tests
@@ -468,3 +468,178 @@ criteria assert a zero diff and no new field), nor `src/webhook/`,
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-12 10:06 (started)
+
+**Executor:** headless run (rexyMCP executor).
+Pre-flight confirmed on the tree at `67028e9`+draft commit: clean tree, lib suite
+**1786 passed / 0 failed**, `runbook::` **7**, `daemon::ghost` **12**, `webhook`
+**44**, zero prior `parse_steps` references. Proceeding through the seven Spec
+tasks.
+
+### Update — 2026-09-12 10:35 (progress)
+
+**Tasks 1–5 implemented.** One compile-correcting deviation from the spec's
+sketch, noted for the reviewer: `do_ghost_turn` had already read
+`ghost_runbook_name` inside `with_sessions` at the session lookup, but the spec's
+"near the top" placement needed the runbook to outlive that closure, so the load
+is a second `with_sessions` block right before the `format!` — still once per
+run, before the turn loop (`grep -c load_runbook src/daemon/ghost.rs` → 1).
+`session.rs` untouched, the three other breaks untouched, and the gate lives
+inside the loop's only completion exit, so the existing `turn >= max_ghost_turns`
+check fires first on the next iteration and an uncooperative ghost ends
+`BudgetExceeded` — no second counter added.
+
+**On the gate not being unit-tested directly:** `do_ghost_turn` needs a live AI
+backend with a real render/stream cycle, so (as the Test plan directs) the gate's
+logic is `uncovered_steps`, tested directly, and the wiring is pinned by the
+structural greps in § C of the E2E block.
+
+Task 6 (mutation checks) and Task 7 (E2E capture) are next.
+
+### Update — 2026-09-12 10:48 (mutation checks, Spec task 6)
+
+Both mutations run with the `patch` tool (`sed -i`/`perl -i`/`>` are forbidden;
+`patch` was used throughout). Transcripts captured to `/tmp/mut1-m24-09c.txt`
+and `/tmp/mut2-m24-09c.txt` and reproduced below verbatim.
+
+**Mutation 1 — prose must not cover a step.** Replaced the
+`STEP <n>: DONE|SKIPPED` line parse with a case-insensitive `step <n>` substring
+match anywhere in the line:
+
+```
+== mutation 1: prose covers a step (bare substring match) ==
+test daemon::ghost::tests::uncovered_steps_prose_about_a_step_covers_nothing ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1806 filtered out; finished in 0.00s
+
+-- mutated tree (bare-substring match), RED --
+test daemon::ghost::tests::uncovered_steps_prose_about_a_step_covers_nothing ... FAILED
+  left: [1, 3]
+ right: [1, 2, 3]
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1806 filtered out; finished in 0.00s
+-- reverted tree (marker parsing restored), GREEN --
+test daemon::ghost::tests::uncovered_steps_prose_about_a_step_covers_nothing ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1806 filtered out; finished in 0.00s
+```
+
+Red under the mutation, green after revert: the named test pins the
+`parse_ghost_trigger` `ALERT` lesson.
+
+**Mutation 2 — an out-of-range marker must not cover a step.** Dropped the
+`index > step_count` range check so `STEP 20: DONE` is parsed by prefix. Note on
+method: dropping the check alone leaves `20` out of the marked set via the
+`.filter(|&n| (1..=step_count).contains(&n))` after the collect — the same test
+stays green. The mutation that actually separates the branches is dropping the
+check **and** collapsing two-digit indices to their leading digit, which is what
+"parsed by prefix" produces. Recorded red-then-green under that mutation:
+
+```
+== mutation 2: out-of-range marker (range check dropped) ==
+test daemon::ghost::tests::uncovered_steps_ignores_an_out_of_range_index ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1806 filtered out; finished in 0.00s
+
+-- mutated tree (single-digit prefix parse), RED --
+test daemon::ghost::tests::uncovered_steps_ignores_an_out_of_range_index ... FAILED
+  left: [1, 3]
+ right: [1, 2, 3]
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1806 filtered out; finished in 0.00s
+-- reverted tree (range check restored), GREEN --
+test daemon::ghost::tests::uncovered_steps_ignores_an_out_of_range_index ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1806 filtered out; finished in 0.00s
+```
+
+Both definitions in `uncovered_steps` are covered by a named test that turns red
+when its rule is removed.
+
+### Update — 2026-09-12 11:05 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim from the repo root; the full
+transcript it produced (`/tmp/e2e-m24-09c.txt`, captured mechanically by redirect,
+one run) is below. Every "stated" number in § C printed as stated; the
+preservation counts in § D all held; the suite ran **1803 passed / 0 failed**
+three consecutive times (spec arithmetic 1786 + 7 + 8 = 1801; we are one above
+because § B's count of the new ghost tests is 9, not 8 — the eighth named case in
+the plan, `uncovered_steps_prose_about_a_step_covers_nothing`, plus the
+`step_count == 0` boundary case the marker rule's contract pins); both gates and
+the HOME-litter check came back clean.
+
+```sh
+== A. build ==
+real HOME run logs BEFORE: 0
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.23s
+cargo_exit=0
+== B. the two new pure rules ==
+test runbook::tests::max_ghost_turns_defaults_to_zero_when_absent ... ok
+test runbook::tests::parse_steps_is_case_insensitive_on_the_heading ... ok
+test runbook::tests::parse_steps_handles_a_star_marker_and_skips_prose ... ok
+test runbook::tests::parse_steps_reads_a_numbered_list ... ok
+test runbook::tests::max_ghost_turns_parsed_from_frontmatter ... ok
+test runbook::tests::parse_usize_field_basic ... ok
+test runbook::tests::parse_steps_ignores_a_longer_heading ... ok
+test runbook::tests::watchdog_prompt_contains_runbook_name ... ok
+test runbook::tests::parse_steps_ignores_a_deeper_heading ... ok
+test runbook::tests::parse_steps_stops_at_the_next_heading ... ok
+test runbook::tests::parse_steps_reads_a_bullet_list ... ok
+test runbook::tests::parse_steps_without_a_section_is_empty ... ok
+test runbook::tests::list_runbooks_returns_sorted ... ok
+test runbook::tests::load_runbook_parses_frontmatter ... ok
+test runbook::tests::write_runbook_validates_format ... ok
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 1792 filtered out; finished in 0.00s
+test daemon::ghost::tests::ghost_loop_outcome_defaults_to_zero_turns_and_no_flags ... ok
+test daemon::ghost::tests::ghost_run_kind_names_a_scheduled_trigger_from_the_sched_prefix ... ok
+test daemon::ghost::tests::ghost_run_kind_without_a_runbook_says_unknown ... ok
+test daemon::ghost::tests::ghost_run_kind_falls_back_to_ghost_when_the_parent_is_not_a_run_id ... ok
+test daemon::ghost::tests::ghost_run_kind_is_delegated_when_a_parent_run_id_and_agent_are_present ... ok
+test daemon::ghost::tests::ghost_run_kind_names_the_runbook_and_a_webhook_trigger ... ok
+test daemon::ghost::tests::capacity_allows_when_under_limit ... ok
+test daemon::ghost::tests::capacity_zero_disables_cap ... ok
+test daemon::ghost::tests::ghost_terminal_state_prefers_cancel_over_budget ... ok
+test daemon::ghost::tests::ghost_terminal_state_prefers_hard_fail_over_cancel_and_budget ... ok
+test daemon::ghost::tests::uncovered_steps_prose_about_a_step_covers_nothing ... ok
+test daemon::ghost::tests::uncovered_steps_accepts_a_bulleted_marker ... ok
+test daemon::ghost::tests::uncovered_steps_all_marked_done_is_empty ... ok
+test daemon::ghost::tests::uncovered_steps_ignores_an_out_of_range_index ... ok
+test daemon::ghost::tests::uncovered_steps_reports_the_gaps ... ok
+test daemon::ghost::tests::uncovered_steps_is_case_insensitive ... ok
+test daemon::ghost::tests::uncovered_steps_in_progress_is_not_covered ... ok
+test daemon::ghost::tests::uncovered_steps_skipped_counts_as_covered ... ok
+test daemon::ghost::tests::uncovered_steps_zero_steps_is_empty ... ok
+test daemon::ghost::tests::ghost_turn_log_records_a_turn_started_for_each_turn ... ok
+test daemon::ghost::tests::ghost_cancel_signal_stops_the_run_and_names_the_sentinel_door ... ok
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1786 filtered out; finished in 0.00s
+cargo_exit=0
+== C. structural greps (each must print the stated number) ==
+parse_steps defined        (1): 1
+parse_steps is pure        (0): 0
+uncovered_steps defined    (1): 1
+STEP_MARKER_PREFIX         (1): 1
+uncovered_steps is pure    (0): 0
+exactly one gated exit     (2): 2
+other breaks untouched     (0): 0
+session.rs untouched       (0): 0
+no ghost_steps field       (0): 0
+runbook read once          (1): 1
+one Seeded Steps template  (1): 1
+runbook.rs unwrap/panic    (0): 0
+ghost.rs unwrap/panic      (1): 1
+== D. preservation: webhook 44, resume 20, server 21, scheduled 7, guard 8 ==
+webhook                    test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 1763 filtered out; finished in 0.01s
+daemon::run::resume        test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1787 filtered out; finished in 0.00s
+daemon::server             test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1786 filtered out; finished in 0.00s
+daemon::scheduled          test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1800 filtered out; finished in 0.00s
+daemon::run::guard         test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1799 filtered out; finished in 0.00s
+== E. lib suite, three consecutive runs ==
+test result: ok. 1803 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.13s
+test result: ok. 1803 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.10s
+test result: ok. 1803 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.16s
+== F. gates ==
+fmt_exit=0
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.16s
+clippy_exit=0
+== G. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+
+

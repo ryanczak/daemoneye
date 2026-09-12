@@ -180,6 +180,48 @@ fn parse_list_field(frontmatter: &str, key: &str) -> Vec<String> {
     Vec::new()
 }
 
+/// The ordered steps a runbook's `## Steps` section lists, one string per item.
+/// Empty when the runbook has no such section.
+///
+/// `### Steps` and `## Steps to reproduce` do not start the section; the first
+/// following line that is itself a `## ` heading ends it. Blank lines and prose
+/// inside the section are skipped.
+pub fn parse_steps(content: &str) -> Vec<String> {
+    let mut steps = Vec::new();
+    let mut in_section = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let is_h2 = trimmed.starts_with("## ");
+        if in_section {
+            if is_h2 {
+                break;
+            }
+            let item = if let Some(rest) = trimmed
+                .strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix("* "))
+            {
+                Some(rest)
+            } else {
+                let digits_end = trimmed.find(|c: char| !c.is_ascii_digit()).unwrap_or(0);
+                if digits_end > 0 && trimmed[digits_end..].starts_with(". ") {
+                    Some(&trimmed[digits_end + 2..])
+                } else {
+                    None
+                }
+            };
+            if let Some(text) = item {
+                let text = text.trim();
+                if !text.is_empty() {
+                    steps.push(text.to_string());
+                }
+            }
+        } else if is_h2 && trimmed["## ".len()..].trim().eq_ignore_ascii_case("Steps") {
+            in_section = true;
+        }
+    }
+    steps
+}
+
 /// Load a named runbook from `~/.daemoneye/runbooks/<name>.md`.
 pub fn load_runbook(name: &str) -> Result<Runbook> {
     validate_runbook_name(name)?;
@@ -312,6 +354,90 @@ pub fn watchdog_system_prompt(runbook: &Runbook) -> String {
 mod tests {
     use super::*;
     use std::env;
+
+    #[test]
+    fn parse_steps_reads_a_bullet_list() {
+        let content = "# Runbook: disk\n\n## Steps\n- check df -h\n- check dmesg for I/O errors\n";
+        assert_eq!(
+            parse_steps(content),
+            vec![
+                "check df -h".to_string(),
+                "check dmesg for I/O errors".to_string()
+            ],
+            "each `- ` item in the ## Steps section becomes one step, in order"
+        );
+    }
+
+    #[test]
+    fn parse_steps_reads_a_numbered_list() {
+        let content = "## Steps\n1. stop the service\n2. rotate the log\n3. restart\n";
+        assert_eq!(
+            parse_steps(content),
+            vec![
+                "stop the service".to_string(),
+                "rotate the log".to_string(),
+                "restart".to_string(),
+            ],
+            "each `<digits>.` item becomes one step, in order"
+        );
+    }
+
+    #[test]
+    fn parse_steps_stops_at_the_next_heading() {
+        let content = "## Steps\n- drain the queue\n\n## Notes\n- follow-up for oncall\n";
+        assert_eq!(
+            parse_steps(content),
+            vec!["drain the queue".to_string()],
+            "items under the next ## heading are not steps of this runbook"
+        );
+    }
+
+    #[test]
+    fn parse_steps_is_case_insensitive_on_the_heading() {
+        let content = "## steps\n- lower-case heading still seeds steps\n";
+        assert_eq!(
+            parse_steps(content),
+            vec!["lower-case heading still seeds steps".to_string()],
+            "## steps must be recognised the same as ## Steps"
+        );
+    }
+
+    #[test]
+    fn parse_steps_handles_a_star_marker_and_skips_prose() {
+        let content = "## Steps\n* star item\n\nSome prose between items.\n- after prose\n";
+        assert_eq!(
+            parse_steps(content),
+            vec!["star item".to_string(), "after prose".to_string()],
+            "non-item prose inside the section is not a step"
+        );
+    }
+
+    #[test]
+    fn parse_steps_ignores_a_deeper_heading() {
+        assert_eq!(
+            parse_steps("### Steps\n- not a step\n"),
+            Vec::<String>::new(),
+            "### Steps is not the runbook's step list — only a ## Steps heading starts the section"
+        );
+    }
+
+    #[test]
+    fn parse_steps_ignores_a_longer_heading() {
+        assert_eq!(
+            parse_steps("## Steps to reproduce\n- also not a step\n"),
+            Vec::<String>::new(),
+            "## Steps to reproduce is not the step list — the heading must be exactly Steps"
+        );
+    }
+
+    #[test]
+    fn parse_steps_without_a_section_is_empty() {
+        assert_eq!(
+            parse_steps("# Runbook: disk\n\n## Alert Criteria\n- load over 5\n"),
+            Vec::<String>::new(),
+            "a runbook with no ## Steps section seeds no steps"
+        );
+    }
 
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 

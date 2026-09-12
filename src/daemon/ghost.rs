@@ -373,6 +373,43 @@ fn ghost_terminal_state(
     }
 }
 
+/// The literal a ghost must emit to mark a seeded step resolved.
+pub const STEP_MARKER_PREFIX: &str = "STEP";
+
+/// The 1-based indices of seeded steps with no `STEP <n>: DONE|SKIPPED`
+/// marker anywhere in `transcript`. Empty when every step is covered.
+///
+/// Pure: no I/O, no session access. A step is covered only by a line whose
+/// trimmed, uppercased form is `STEP <n>:` followed by `DONE` or `SKIPPED` —
+/// prose describing the step marks nothing (the lesson of `parse_ghost_trigger`'s
+/// removed `ALERT` heuristic: remarks about a condition are not the condition).
+pub fn uncovered_steps(transcript: &str, step_count: usize) -> Vec<usize> {
+    if step_count == 0 {
+        return Vec::new();
+    }
+    let marker_line = |line: &str| -> Option<usize> {
+        let trimmed = line.trim();
+        let trimmed = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .unwrap_or(trimmed)
+            .trim();
+        let upper = trimmed.to_uppercase();
+        let rest = upper.strip_prefix(&format!("{STEP_MARKER_PREFIX} "))?;
+        let (index, verdict) = rest.split_once(':')?;
+        let index: usize = index.trim().parse().ok()?;
+        let verdict = verdict.trim();
+        if verdict.starts_with("DONE") || verdict.starts_with("SKIPPED") {
+            Some(index)
+        } else {
+            None
+        }
+    };
+    let marked: std::collections::BTreeSet<usize> =
+        transcript.lines().filter_map(marker_line).collect();
+    (1..=step_count).filter(|n| !marked.contains(n)).collect()
+}
+
 /// Trigger a headless AI turn for a Ghost Shell.
 ///
 /// This simulates a user's `Ask` request but without an attached terminal.
@@ -527,6 +564,50 @@ async fn do_ghost_turn(
         String::new()
     };
     let agents_block = crate::daemon::prompt::format_available_agents();
+    let steps: Vec<String> = with_sessions(sessions, |store| {
+        store
+            .get(session_id)
+            .and_then(|e| e.ghost_runbook_name.clone())
+    })
+    .and_then(|name| match crate::runbook::load_runbook(&name) {
+        Ok(rb) => Some(crate::runbook::parse_steps(&rb.content)),
+        Err(e) => {
+            log::warn!(
+                "Ghost Shell {}: runbook '{}' unreadable, no seeded steps ({}): {}",
+                session_id,
+                name,
+                e,
+                e
+            );
+            None
+        }
+    })
+    .unwrap_or_default();
+    let steps_block = if steps.is_empty() {
+        String::new()
+    } else {
+        let listed: String = steps
+            .iter()
+            .enumerate()
+            .map(|(i, text)| format!("  {}. {}\n", i + 1, text))
+            .collect();
+        format!(
+            "## Seeded Steps ({})\n\
+             This runbook defines {} steps. You may not finish until every one is marked.\n\
+             Emit, on its own line, one of:\n\
+               {} <n>: DONE\n  \
+               {} <n>: SKIPPED <reason>\n\
+             for each step 1..={}. A step is only counted when that exact line appears —\n\
+             describing the step in prose does not mark it.\n\
+             {}",
+            steps.len(),
+            steps.len(),
+            STEP_MARKER_PREFIX,
+            STEP_MARKER_PREFIX,
+            steps.len(),
+            listed
+        )
+    };
     let system = format!(
         "{}\n\n\
          ## Ghost Shell Execution Context\n\
@@ -538,7 +619,7 @@ async fn do_ghost_turn(
          Turn Budget: {} (hard limit — shell will be stopped when reached)\n\n\
          {}\n\n\
          {}\
-         {}",
+         {}{}",
         system_base,
         daemon_hostname(),
         tmux_session,
@@ -564,6 +645,7 @@ async fn do_ghost_turn(
         sys_context.format_for_ai(),
         GHOST_SHELL_RULES,
         agents_block,
+        steps_block,
     );
 
     let s = tmux_session.clone();
@@ -1201,6 +1283,53 @@ async fn do_ghost_turn(
         });
 
         if pending_calls.is_empty() {
+            if !steps.is_empty() {
+                let transcript = with_sessions(sessions, |store| {
+                    store
+                        .get(session_id)
+                        .map(|entry| {
+                            entry
+                                .messages
+                                .iter()
+                                .filter(|m| m.role == "assistant")
+                                .map(|m| m.content.clone())
+                                .collect::<Vec<String>>()
+                                .join("\n")
+                        })
+                        .unwrap_or_default()
+                });
+                let uncovered = uncovered_steps(&transcript, steps.len());
+                if !uncovered.is_empty() {
+                    let names: Vec<String> = uncovered.iter().map(|n| n.to_string()).collect();
+                    let nudge = crate::ai::Message {
+                        role: "user".to_string(),
+                        content: format!(
+                            "[SEEDED STEPS INCOMPLETE — steps {} have no {} <n>: DONE or \
+                             {} <n>: SKIPPED <reason> line. Emit one for each, then finish. \
+                             Do not re-run work already done.]",
+                            names.join(", "),
+                            STEP_MARKER_PREFIX,
+                            STEP_MARKER_PREFIX
+                        ),
+                        tool_calls: None,
+                        tool_results: None,
+                        turn: Some(turn + 1),
+                    };
+                    append_session_message(session_id, &nudge);
+                    with_sessions(sessions, |store| {
+                        if let Some(entry) = store.get_mut(session_id) {
+                            entry.messages.push(nudge);
+                            entry.last_accessed = Instant::now();
+                        }
+                    });
+                    log::warn!(
+                        "Ghost Shell {}: steps {} uncovered, nudging instead of completing",
+                        session_id,
+                        names.join(", ")
+                    );
+                    continue;
+                }
+            }
             break;
         }
     }
@@ -1237,6 +1366,92 @@ async fn do_ghost_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uncovered_steps_all_marked_done_is_empty() {
+        let transcript = "working on it\nSTEP 1: DONE\nSTEP 2: DONE\n";
+        assert!(
+            uncovered_steps(transcript, 2).is_empty(),
+            "a marker for every seeded step means nothing is uncovered"
+        );
+    }
+
+    #[test]
+    fn uncovered_steps_skipped_counts_as_covered() {
+        let transcript = "STEP 1: DONE\nSTEP 2: SKIPPED disk was already clean\n";
+        assert!(
+            uncovered_steps(transcript, 2).is_empty(),
+            "SKIPPED is a legitimate verdir for covering a step"
+        );
+    }
+
+    #[test]
+    fn uncovered_steps_reports_the_gaps() {
+        let transcript = "STEP 1: DONE\nSTEP 3: DONE\n";
+        assert_eq!(
+            uncovered_steps(transcript, 4),
+            vec![2, 4],
+            "steps 1 and 3 are marked, so 2 and 4 are the uncovered gaps, in order"
+        );
+    }
+
+    #[test]
+    fn uncovered_steps_is_case_insensitive() {
+        let transcript = "step 1: done\nstep 2: skipped reason\n";
+        assert!(
+            uncovered_steps(transcript, 2).is_empty(),
+            "lower-case markers cover their steps, as parse_ghost_trigger uppercases before matching"
+        );
+    }
+
+    #[test]
+    fn uncovered_steps_accepts_a_bulleted_marker() {
+        let transcript = "- STEP 1: DONE\n* STEP 2: SKIPPED not needed\n";
+        assert!(
+            uncovered_steps(transcript, 2).is_empty(),
+            "a model writing markdown will bullet the marker line; it still covers the step"
+        );
+    }
+
+    #[test]
+    fn uncovered_steps_prose_about_a_step_covers_nothing() {
+        let transcript = "I could not complete step 2 to my satisfaction.\n";
+        assert_eq!(
+            uncovered_steps(transcript, 3),
+            vec![1, 2, 3],
+            "prose about a step is not a marker — only a literal STEP <n>: DONE|SKIPPED line \
+             covers it, exactly as a bare ALERT remark stopped triggering in H3"
+        );
+    }
+
+    #[test]
+    fn uncovered_steps_in_progress_is_not_covered() {
+        let transcript = "STEP 1: DONE\nSTEP 2: IN PROGRESS\n";
+        assert_eq!(
+            uncovered_steps(transcript, 2),
+            vec![2],
+            "neither DONE nor SKIPPED means the step is still open"
+        );
+    }
+
+    #[test]
+    fn uncovered_steps_ignores_an_out_of_range_index() {
+        let transcript = "STEP 20: DONE\n";
+        assert_eq!(
+            uncovered_steps(transcript, 3),
+            vec![1, 2, 3],
+            "an index beyond step_count covers nothing and must not alias step 2"
+        );
+    }
+
+    #[test]
+    fn uncovered_steps_zero_steps_is_empty() {
+        let transcript = "STEP 1: DONE\n";
+        assert!(
+            uncovered_steps(transcript, 0).is_empty(),
+            "no seeded steps means nothing can be uncovered"
+        );
+    }
 
     #[test]
     fn capacity_zero_disables_cap() {
