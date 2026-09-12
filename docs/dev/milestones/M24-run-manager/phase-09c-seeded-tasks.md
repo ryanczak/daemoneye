@@ -1,7 +1,7 @@
 # Phase 09c: seeded tasks — a runbook's `## Steps`, coverage-checked
 
 **Milestone:** M24 — Run Manager
-**Status:** in-progress (work done, pending server-side review flip)
+**Status:** review
 **Depends on:** phase-07a (`ghost_runbook_name` on the session) and phase-07b
 (the ghost loop's `GhostLoopOutcome`). Both **done**.
 **Estimated diff:** ~330 lines incl. tests
@@ -642,4 +642,144 @@ clippy_exit=0
 real HOME run logs AFTER (==BEFORE): 0
 ```
 
+### Update — ts=1789233981641 (complete, server-authored)
 
+**Summary:** **Summary**
+
+Phase 09c (seeded tasks) is implemented and committed as `c68224e` — a ghost run's completion is now gated on literal `STEP <n>: DONE|SKIPPED` markers rather than the model's own account of its work. `runbook::parse_steps` extracts the `## Steps` list (case-insensitive heading, bullet/star/numbered markers, stops at the next `## ` heading, ignores prose, empty without the section — 7 named tests); `uncovered_steps` in `daemon/ghost.rs` scans the accumulated assistant transcript, uppercase-normalizes each line, strips list markers, and returns the gaps in order, with the load-bearing negatives pinned: prose about a step covers nothing, `IN PROGRESS` covers nothing, and `STEP 20` aliases nothing when `step_count` is 3 (9 tests including the `step_count == 0` boundary). The marker contract is interpolated into the ghost system prompt (`steps_block`, byte-absent when the runbook has no steps) and the loop's only completion exit — the bare `break` on an empty pending-call set — now nudges `[SEEDED STEPS INCOMPLETE — steps 2, 4 …]` and `continue`s when coverage is missing; the cancel, wrap-up, and session-gone breaks are untouched (`git diff` grep → 0), `session.rs` has a zero diff, and no `SessionEntry` field was added.
+
+**Notes for review**
+
+- **Wire deviation, compile-correcting only:** the spec's § Task-3 sketch left one `format!` arg unused against the actual template; I appended `\n{}` to the format string so `steps_block` is consumed after `agents_block`. No prose otherwise changed from the phase doc's sketch; `parse_steps` landed in `src/runbook.rs` at `:184` and `uncovered_steps`/`STEP_MARKER_PREFIX` at `ghost.rs:386`/`:377`.
+- **Mutation 2 method note** (recorded in the phase Update Log): dropping the `index > step_count` check *alone* leaves the test green because the post-collect `(1..=step_count).contains(&n)` filter still discards `20`. The check-discarding mutation that actually isolates the branch is check-drop **plus** leading-digit prefix parse (`STEP 20` → `2`); red-then-green transcripts for both mutations are pasted verbatim in the Update Log, named in each assertion message.
+- **End-to-end verification:** § A–G ran verbatim (captured at `/tmp/e2e-m24-09c.txt`, paste self-check `PASTE MATCH`). All § C structural greps printed their stated numbers (including `exactly one gated exit (2): 2`, `other breaks untouched (0): 0`, `runbook read once (1): 1`, `one Seeded Steps template (1): 1`); § D preservation held at webhook **44**, resume **20**, server **21**, scheduled **7**, guard **8**; § E: **1803 passed / 0 failed** on three consecutive suite runs (spec arithmetic said 1801; we are **+1** because § B's ghost-module count is 9 new tests, not 8 — the `step_count == 0` boundary case the marker rule's contract pins is an additional named test); fmt and clippy gates exit 0; HOME run-log litter 0 before and after.
+- The phase doc's `Status:` reads `in-progress (work done, pending server-side review flip)` and the README row matches; I did **not** flip to `review` and did **not** author a `(complete)` entry — those stay with the server. No dependencies added, no `unsafe`, `cargo test --lib` passing, working tree clean.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test header_status_uses_first_occurrence_only ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.26s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M24-run-manager/README.md` — +1 -1
+- `docs/dev/milestones/M24-run-manager/phase-09c-seeded-tasks.md` — +176 -1
+- `src/daemon/ghost.rs` — +216 -1
+- `src/runbook.rs` — +126 -0
+
+**Commit:** e5abddc35c0a06f28ebe3d91fedd478ab156f240
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
