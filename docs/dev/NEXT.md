@@ -38,7 +38,7 @@ prompt path preserved for the other flows. Qwen3.8: three for three.
 commit `f532ad3` + approval `63ef02a`; Qwen3.8: four for four, 59 turns.
 Live sudo-dialog check deferred to milestone close with the others.
 
-**Active phase: phase-06 — dedup-approval-dialogs** (`docs/dev/milestones/
+**Superseded — M15 phase-06 — dedup-approval-dialogs** (M15 closed 2026-08-16.) (`docs/dev/milestones/
 M15-chat-reliability/phase-06-dedup-approval-dialogs.md`, status: todo,
 drafted 2026-08-14 on PE direction: the approval and sudo credential
 dialogs must not contain a copy of the command they concern — it is
@@ -1737,7 +1737,7 @@ reproduced it faithfully.
 
 ## M19 — Sandbox Completion (opened 2026-08-29, PE sign-off)
 
-**Active phase: phase-02 — staging-integration**
+**Superseded — M19 phase-02 — staging-integration** (M19 closed 2026-09-03.)
 (`docs/dev/milestones/M19-sandbox-completion/phase-02-staging-integration.md`,
 status: todo, drafted 2026-08-29). Dispatch with
 `/rexymcp:dispatch phase-02`.
@@ -2687,7 +2687,7 @@ job's staging volume is removed on both completion paths. Bug-phase-02-1 was
 evidence-only: the round-1 end-to-end entry carried no bare `PASTE MATCH`
 line. Code was byte-identical across both rounds.
 
-**Active phase: phase-03 — ghost-container-execution**
+**Superseded — M19 phase-03 — ghost-container-execution** (M19 closed 2026-09-03.)
 (`docs/dev/milestones/M19-sandbox-completion/phase-03-ghost-container-execution.md`,
 status: todo, drafted 2026-08-29). **Its premise was corrected from
 measurement before drafting.** The README claimed ghosts were "labelled, not
@@ -2724,7 +2724,7 @@ just pasted showed two — the third of the misdescription family M18 held at
 two. Fold: every phase doc for this model now pins a checkable criterion for
 each claim its summary will make.
 
-**Active phase: phase-04 — ghost-scoped-teardown**
+**Superseded — M19 phase-04 — ghost-scoped-teardown** (M19 closed 2026-09-03.)
 (`docs/dev/milestones/M19-sandbox-completion/phase-04-ghost-scoped-teardown.md`,
 status: todo, drafted 2026-08-29). Adds a `de.session=<session_id>` label to
 every sandboxed container, a ghost-scoped teardown on `trigger_ghost_turn`'s
@@ -2778,7 +2778,7 @@ the second shows FAILED with 0 — which is the after-each-direction guard
 working, left in rather than trimmed. Task 10 of every later phase now carries
 the repeat-run rule (`rm -f` the artifact; never edit either side).
 
-**Active phase: phase-05 — container-status-ipc**
+**Superseded — M19 phase-05 — container-status-ipc** (M19 closed 2026-09-03.)
 (`docs/dev/milestones/M19-sandbox-completion/phase-05-container-status-ipc.md`,
 status: todo, drafted 2026-08-30). `Request::ContainerStatus` →
 `Response::ContainerStatus`, the collector behind it, and a `SANDBOX` section
@@ -2832,7 +2832,7 @@ HTTP-only egress stated as a **deferral** in 06 (SSH/TCP later — `host:port`
 rules and a `proxy_type` audit field from the start so it stays additive),
 and two measurements added to 10.
 
-**Active phase: phase-06 — proxy-network-and-image**
+**Superseded — M19 phase-06 — proxy-network-and-image** (M19 closed 2026-09-03.)
 (`docs/dev/milestones/M19-sandbox-completion/phase-06-proxy-network-and-image.md`,
 status: todo, drafted 2026-08-30). The proxy image, its own lock, `sandbox
 build` building both, and the network sweep. **Prototyped and stood up live
@@ -2861,7 +2861,7 @@ It does not reproduce — the criterion prints `1` under three independent
 instruments. A **false red** rather than a false green, but the same rule
 applies as [[executor-claims-need-rerunning]]: re-run the claim.
 
-**Active phase: phase-07 — proxy-profile-wiring**
+**Superseded — M19 phase-07 — proxy-profile-wiring** (M19 closed 2026-09-03.)
 (`docs/dev/milestones/M19-sandbox-completion/phase-07-proxy-profile-wiring.md`,
 status: todo, drafted 2026-08-30). Dispatch with
 `/rexymcp:dispatch phase-07`. Makes `[sandbox.profile.<name>] network`
@@ -3002,7 +3002,7 @@ than reporting overall conformance" — and this run opened by naming the
 mismatch unprompted, with its structural cause. Worth remembering as the
 cheaper lever: a targeted Authorizations line, not a WORKFLOW.md fold.
 
-**Active phase: phase-13 — proxy-audit**
+**Superseded — M19 phase-13 — proxy-audit** (M19 closed 2026-09-03.)
 (`docs/dev/milestones/M19-sandbox-completion/phase-13-proxy-audit.md`,
 status: todo, drafted 2026-08-31). Dispatch with
 `/rexymcp:dispatch phase-13`. Drains each job proxy's log at teardown into
@@ -3112,7 +3112,7 @@ Remaining M19 phases: 09 escape-hatch, 10 live-verification-and-close,
 — none drafted. 14 completes the 08 split (08 + 13 + 14 together meet the
 milestone's egress exit criterion); 10 stays the close-out.
 
-**Active phase: phase-11 — container-hardening-flags**
+**Superseded — M19 phase-11 — container-hardening-flags** (M19 closed 2026-09-03.)
 (`docs/dev/milestones/M19-sandbox-completion/phase-11-container-hardening-flags.md`,
 status: todo, drafted 2026-08-31). Dispatch with
 `/rexymcp:dispatch phase-11`. Four `docker run` flags `run_args` does not set,
@@ -3279,7 +3279,7 @@ Review verdict:
    occurrence; recorded, not folded** (threshold is three). Until then, avoid
    `rm -rf` in E2E blocks; `find <dir> -depth -delete` is the working form.
 
-**Active phase: phase-02 — pty-marker-protocol** (status: **in-progress**,
+**Superseded — M20 phase-02 — pty-marker-protocol** (M20 closed 2026-09-09.) (status: **in-progress**,
 bounced 2026-09-03 on `bug-02-1`). Re-dispatch with
 `/rexymcp:dispatch phase-02`.
 
@@ -3397,7 +3397,7 @@ edit named and probing forbidden**, not another re-dispatch. Raising
 `read_only_stall_threshold` 60 → 200 gave that resume room to finish rather
 than room to loop.
 
-**Active phase: phase-03 — asciicast-log**
+**Superseded — M20 phase-03 — asciicast-log** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-03-asciicast-log.md`, status:
 todo, drafted 2026-09-03). Dispatch with `/rexymcp:dispatch phase-03`.
 
@@ -3493,7 +3493,7 @@ phase-02's blocker one level down. **For the rest of M20: when a spec states a
 guarantee about boundaries between units, one of the named tests must cross a
 boundary.**
 
-**Active phase: phase-04 — screen-model**
+**Superseded — M20 phase-04 — screen-model** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-04-screen-model.md`, status: todo,
 drafted 2026-09-03). Dispatch with `/rexymcp:dispatch phase-04`.
 
@@ -3593,7 +3593,7 @@ plain text is still absorbed into the marker. The bug's own DoD asked for
 my constraint was over-strong. Where a gap belongs relative to a marker is a
 design question, recorded in the milestone README for phase-07 to decide.
 
-**Active phase: phase-05a — shell-host-protocol**
+**Superseded — M20 phase-05a — shell-host-protocol** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-05a-shell-host-protocol.md`,
 status: todo, drafted 2026-09-03). Dispatch with
 `/rexymcp:dispatch phase-05a`.
@@ -3693,7 +3693,7 @@ look like a boundary when writing a test list. **The rule is now: name the two
 things that can happen at once, and require a test where they do.** In force
 from phase-05b.
 
-**Active phase: phase-05b — shell-host-backend**
+**Superseded — M20 phase-05b — shell-host-backend** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-05b-shell-host-backend.md`,
 status: todo, drafted 2026-09-03). Dispatch with `/rexymcp:dispatch phase-05b`.
 
@@ -3853,7 +3853,7 @@ test quality. Held at one occurrence, not proposed as a fold.
 `deepseek-v4-flash-0731` returns a 404 from that endpoint. A phase-05b run was
 lost to the dead `brain:8888` before this was corrected.
 
-**Active phase: phase-05c — shell-host-binary**
+**Superseded — M20 phase-05c — shell-host-binary** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-05c-shell-host-binary.md`,
 status: todo, drafted 2026-09-04). Dispatch with `/rexymcp:dispatch phase-05c`.
 
@@ -3957,7 +3957,7 @@ completion entry in the 05c phase doc captured raw model deliberation including
 a stray `</think>` tag. The executor's own Update Log entry above it is clean.
 Worth stripping think-blocks from that summary field.
 
-**Active phase: phase-06a — shell-registry-core**
+**Superseded — M20 phase-06a — shell-registry-core** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-06a-shell-registry-core.md`,
 status: todo, drafted 2026-09-05). Dispatch with `/rexymcp:dispatch phase-06a`.
 
@@ -4059,7 +4059,7 @@ satisfied at 1.
 liveness measurements it needs are already recorded in the milestone README.
 Draft with `/rexymcp:architect next`.
 
-**Active phase: phase-06b — shell-registry-adoption**
+**Superseded — M20 phase-06b — shell-registry-adoption** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-06b-shell-registry-adoption.md`,
 status: todo, drafted 2026-09-06). Dispatch with `/rexymcp:dispatch phase-06b`.
 
@@ -4239,7 +4239,7 @@ Two calibration items carried into 07c's draft:
    cost one small comment rewrite and bought a corrected claim; it was worth
    it, and the criterion that caught it was a pinned count, not a sentence.
 
-**Active phase: phase-07c — run-terminal-command-pty**
+**Superseded — M20 phase-07c — run-terminal-command-pty** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-07c-run-terminal-command-pty.md`,
 status: todo, drafted 2026-09-07). Dispatch with `/rexymcp:dispatch phase-07c`.
 
@@ -4280,7 +4280,7 @@ verbatim. **A spec that names a guard's input has already decided what the guard
 can catch**; state the property and demand the mutation transcript instead. The
 bug-07c-3 DoD did exactly that and closed first try.
 
-**Active phase: phase-08a — pause-resume-cancel**
+**Superseded — M20 phase-08a — pause-resume-cancel** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-08a-pause-resume-cancel.md`,
 status: todo, drafted 2026-09-08). Dispatch with `/rexymcp:dispatch phase-08a`.
 
@@ -4325,7 +4325,7 @@ deviation is flagged in the verdict for the PE: a 3 × 20 ms settle re-read in
 the `STOP` arm, declared and benign, but measured at review as not
 load-bearing (18 runs green without it).
 
-**Active phase: phase-08b — interactive-commands**
+**Superseded — M20 phase-08b — interactive-commands** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-08b-interactive-commands.md`,
 status: todo, drafted 2026-09-08). Dispatch with `/rexymcp:dispatch phase-08b`.
 
@@ -4366,7 +4366,7 @@ spec** (07c's `run_in_shell(` and `pub fn registry` were the others) — a fold
 candidate for milestone close, needing PE sign-off: *derive every pinned count
 from the test plan you just wrote, and re-add it.*
 
-**Active phase: phase-09 — shell-gc**
+**Superseded — M20 phase-09 — shell-gc** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-09-shell-gc.md`, status: todo,
 drafted 2026-09-08). Dispatch with `/rexymcp:dispatch phase-09`.
 **This is the last executor phase of M20.**
@@ -4458,7 +4458,7 @@ tmux client via a persistent PTY-client helper). Results:
   regular file (the fixture that hid it). Both `adopt_at_startup` and
   `sweep_stale` are inert in production. Filed `bugs/bug-10-1.md`.
 
-**Active phase: phase-10 — adoption-socket-fix**
+**Superseded — M20 phase-10 — adoption-socket-fix** (M20 closed 2026-09-09.)
 (`docs/dev/milestones/M20-shell-engine/phase-10-adoption-socket-fix.md`, todo,
 drafted 2026-09-08). Dispatch with `/rexymcp:dispatch phase-10`. ~60 lines: one
 filter, three tests (one binding a real `UnixListener`, red against the current
@@ -4531,7 +4531,7 @@ Nothing is dispatched until then.
 Host/SSH, M22 Tool surface, M23 Client decoupling remain in the design roadmap,
 now sequenced after M24.
 
-**Active phase: phase-01 — run-core**
+**Superseded — M24 phase-01 — run-core** (done; the live pointer is under "M24 — Run Manager (active)" below.)
 (`docs/dev/milestones/M24-run-manager/phase-01-run-core.md`, status: todo,
 drafted 2026-09-09). Dispatch with `/rexymcp:dispatch phase-01`.
 
@@ -4558,7 +4558,7 @@ confirmed the `RunId` path-traversal rejection is load-bearing. One architect
 defect corrected: my section-B grep was unanchored and matched 21 lines where 10
 were pinned — now `^test daemon::run::tests::`.
 
-**Active phase: phase-02a — turn-log**
+**Superseded — M24 phase-02a — turn-log** (done; the live pointer is under "M24 — Run Manager (active)" below.)
 (`docs/dev/milestones/M24-run-manager/phase-02a-turn-log.md`, status: todo,
 drafted 2026-09-09). Dispatch with `/rexymcp:dispatch phase-02a`.
 
@@ -4590,7 +4590,7 @@ missed both live in `config/runtime_tree.rs` (a `POLICY_TABLE` path needs a
 `agent-runtime-layout.md`). Recorded in the milestone README; **phase-10 hits it
 again** when it adds the `[runs]` retention key.
 
-**Active phase: phase-02b — run-log-tools**
+**Superseded — M24 phase-02b — run-log-tools** (done; the live pointer is under "M24 — Run Manager (active)" below.)
 (`docs/dev/milestones/M24-run-manager/phase-02b-run-log-tools.md`, status: todo,
 drafted 2026-09-09). Dispatch with `/rexymcp:dispatch phase-02b`.
 
@@ -4620,7 +4620,7 @@ mutations bit. **First phase in several with no architect defect** — the two
 gates `CLAUDE.md`'s add-a-tool checklist does not name were measured at drafting
 and pinned as F2/F3, and neither became a blocker.
 
-**Active phase: M24 phase-03 — run-result** (drafted 2026-09-09,
+**Superseded — M24 phase-03 — run-result** (done; the live pointer is under "M24 — Run Manager (active)" below.) (drafted 2026-09-09,
 `docs/dev/milestones/M24-run-manager/phase-03-run-result.md`, status `todo`).
 Ports rexyMCP `executor/src/phase/result.rs` + `briefing.rs` into
 `src/daemon/run/result.rs`: `RunStatus` (the four contract strings),
@@ -4731,7 +4731,7 @@ with reproducible scripts, along with a proposed `EditWithoutGate` detector
 (06a's failed run made 156 patches with 3 gate runs; no current detector sees
 that shape).
 
-**Active phase: M24 phase-06b — chat-run-cancel** (drafted 2026-09-10,
+**Superseded — M24 phase-06b — chat-run-cancel** (done; the live pointer is under "M24 — Run Manager (active)" below.) (drafted 2026-09-10,
 `docs/dev/milestones/M24-run-manager/phase-06b-chat-run-cancel.md`, status
 `todo`). **The risky half 06a deferred.** Deletes `src/daemon/cancel.rs` (the
 session-keyed `bool` registry, 6 tests), adds `src/daemon/run/active.rs` (the
