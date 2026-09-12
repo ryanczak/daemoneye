@@ -85,7 +85,7 @@ precede the full four-loop unification's completion.
 | 08 | scheduled-run ([phase-08-scheduled-run.md](phase-08-scheduled-run.md)) — `RunKind::Scheduled` gets its first production constructor; wrap the 435-line body, derive the terminal state from the store | **done** (approved_first_try, 2026-09-12) |
 | 09a | resume-seed ([phase-09a-resume-seed.md](phase-09a-resume-seed.md)) — the pure seed: terminal briefing out of the turn log + directive, "not transcript rehydration" made structural | **done** (approved_first_try, 2026-09-12) |
 | 09b | resume-wiring ([phase-09b-resume-wiring.md](phase-09b-resume-wiring.md)) — `daemoneye run resume <id> "<directive>"`: IPC request, CLI subcommand, ghost re-spawn from the seed; retires `resume_seed` for `resume_plan` | **done** (escalated, 2026-09-12) |
-| 09c | seeded-tasks — runbook `## Steps` becomes a ghost run's task list, coverage-checked before completion | todo (not drafted) |
+| 09c | seeded-tasks ([phase-09c-seeded-tasks.md](phase-09c-seeded-tasks.md)) — runbook `## Steps` parsed; completion gated on literal `STEP <n>: DONE\|SKIPPED` markers, not the model's own account | todo |
 | 10 | cli — `/runs`, `/run`, `/stop`; cross-run telemetry (`RunRecord`) if not deferred | todo (not drafted) |
 
 ## Notes
@@ -114,6 +114,24 @@ precede the full four-loop unification's completion.
   end — the same measurement that made 06a a `Drop` guard, and the reason 07a
   puts the guard in the 16-line `trigger_ghost_turn` wrapper (`:287-302`) that
   every exit already funnels through, leaving the 760-line body alone.
+
+- **09c makes the mutation checks a numbered `## Spec` task**, because 09b's
+  went unrun: their instructions lived outside `## Spec` and so were never
+  seeded into the executor's task list. That is the **fourth** occurrence of
+  M12's fold — *"the executor responds to conditions it can evaluate, not
+  instructions it can agree with… making it a seeded `## Spec` task worked
+  immediately"* — which had been applied to the E2E entry and never to mutation
+  checks. Carry the Spec-task form forward in every phase doc from here.
+
+- **"A condition it can check, not an instruction it can agree with" got a
+  concrete mechanism in 09c**, and the codebase already had the precedent *and*
+  the cautionary tale. `parse_ghost_trigger` (`src/webhook/process.rs:258`)
+  parses a literal `GHOST_TRIGGER: YES/NO`, and its doc comment records that the
+  loose predecessor was removed "because a model remarking 'no ALERT condition'
+  could spuriously launch a ghost". Step coverage therefore counts a step only
+  when a line *parses* as `STEP <n>: DONE|SKIPPED` — a transcript saying "I
+  could not complete step 2" must leave step 2 uncovered, pinned as the
+  load-bearing negative test.
 
 - **09b deletes a function 09a shipped, on purpose.** `resume_seed` had **zero
   production callers** (verified at 09b drafting), and `resume_plan` supersedes

@@ -6,7 +6,40 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M24 — Run Manager (active)
 
-**Active phase: phase-09b — resume-wiring**
+**Active phase: phase-09c — seeded-tasks**
+(`docs/dev/milestones/M24-run-manager/phase-09c-seeded-tasks.md`, status: todo,
+drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-09c`.
+
+Phase-09b closed **escalated 2026-09-12** (`67028e9`) after a `hard_fail` on one
+invented API and a resume. Its `## Mutation checks` went unrun — the instructions
+sat outside `## Spec` and were never seeded as tasks — so the architect ran both
+at review; both go red. **09c makes the mutation checks Spec task 6**, which is
+the fix for that class.
+
+Scope for 09c: M24's last behavioural exit criterion. `parse_steps` reads a
+runbook's `## Steps` section; the ghost's system prompt gains a marker contract;
+and the completion break at `src/daemon/ghost.rs:1203` is gated on
+`uncovered_steps` — the ghost may not finish until every seeded step has a
+literal `STEP <n>: DONE` or `STEP <n>: SKIPPED <reason>` line.
+
+The emphasised half of the criterion — *a condition it can check, not an
+instruction it can agree with* — is why coverage is a parsed marker rather than
+a keyword scan. The codebase already learned this: `parse_ghost_trigger`'s doc
+comment records that the loose `ALERT` heuristic was removed "because a model
+remarking 'no ALERT condition' could spuriously launch a ghost". A transcript
+saying "I could not complete step 2" must leave step 2 **uncovered**, and that
+is the load-bearing negative test.
+
+Deliberate limits: only the one completion break is gated (cancel, wrap-up and
+session-gone stay ungated, pinned by a criterion); the existing turn budget is
+what stops a ghost that refuses to mark its steps, so no new terminal state and
+no second counter; and no `complete_step` AI tool — a parsed line is already a
+checkable condition, and a tool would drag in `TOOLS`, three provider renderings
+and the doc_truth tables.
+
+After 09c only **10** (cli listing) remains, and it is not drafted.
+
+**Superseded — M24 phase-09b — resume-wiring**
 (`docs/dev/milestones/M24-run-manager/phase-09b-resume-wiring.md`, status: todo,
 drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-09b`.
 
