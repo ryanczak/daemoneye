@@ -1,7 +1,7 @@
 # Phase 07b: a ghost shell can be stopped, and reports a RunResult
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-07b-1.md`)
 **Depends on:** phase-04 (`register_run`, `watch_stop_sentinel`,
 `STOP_POLL_INTERVAL`), phase-03 (`RunResult`, `Cancellation`), phase-06b
 (`CancelDoor`, `take_cancel_door`) and phase-07a (the ghost's `RunLogGuard`,
@@ -301,17 +301,20 @@ Each was run against the current tree and returns the "now" value shown.
       `grep -c 'cancel.is_cancelled()' src/daemon/ghost.rs` → **1** (now `0`),
       and `grep -c 'outcome.cancelled' src/daemon/ghost.rs` → **2 or more**
       (now `0`) — the loop sets it, the wrapper reads it.
-- [ ] **The ghost registers its run and its watcher:**
-      `grep -c 'register_run' src/daemon/ghost.rs` → **1** (now `0`);
-      `grep -c 'watch_stop_sentinel' src/daemon/ghost.rs` → **1** (now `0`);
-      `grep -c 'STOP_POLL_INTERVAL' src/daemon/ghost.rs` → **1** (now `0`).
+- [ ] **The ghost registers its run and its watcher** (counted in production
+      only — re-pinned 2026-09-11 at review, because this phase's own tests name
+      the same symbols; prefix each with
+      `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/ghost.rs |`):
+      `grep -c 'register_run'` → **1**; `grep -c 'watch_stop_sentinel'` → **1**;
+      `grep -c 'STOP_POLL_INTERVAL'` → **1**.
 - [ ] **A ghost does not join the chat session→run map:**
       `grep -c 'register_active' src/daemon/ghost.rs` → **0**, unchanged (now
       `0`). *`Request::Cancel` stays chat-only; `daemoneye stop <run>` is the
       ghost's door.*
-- [ ] **The cancelled state is recorded with a door-named stage:**
-      `grep -c 'RunState::Cancelled' src/daemon/ghost.rs` → **1** (now `0`),
-      and `grep -c 'take_cancel_door' src/daemon/ghost.rs` → **1** (now `0`).
+- [ ] **The cancelled state is recorded with a door-named stage**, production
+      only (same `awk` prefix, same reason): `grep -c 'RunState::Cancelled'` →
+      **2** (one doc-comment mention, one match arm) and
+      `grep -c 'take_cancel_door'` → **1**.
 - [ ] **`cancel_stage` was not extracted** (STANDARDS § 2.2, two callers is not
       four): `grep -c '^fn cancel_stage' src/daemon/stream.rs` → **1**,
       unchanged (now `1`), and `git diff --stat -- src/daemon/stream.rs | wc -l`
@@ -323,8 +326,10 @@ Each was run against the current tree and returns the "now" value shown.
       → **0**, unchanged (now `0`).
 - [ ] **The mailbox carries the run:**
       `grep -c 'pub run: Option<crate::daemon::run::RunResult>' src/agents/mailbox.rs`
-      → **1** (now `0`), and `grep -c 'serde(default' src/agents/mailbox.rs` →
-      **1 or more** (now `0`).
+      → **1**. *(The companion `serde(default` count was dropped at review:
+      the attribute is a no-op on an `Option` field — serde already
+      deserializes a missing `Option` to `None` — so pinning it pinned
+      nothing. See `bugs/bug-07b-1.md`.)*
 - [ ] **The run's model-authored text is masked:**
       `awk '/pub fn write_mailbox/,/^}/' src/agents/mailbox.rs | grep -c 'mask_sensitive'`
       → **2 or more** (now `1`).
@@ -362,6 +367,37 @@ Each was run against the current tree and returns the "now" value shown.
 - [ ] Full lib suite **1759 or more** passing, `0 failed`, on **three
       consecutive runs** (now **1752**). *Arithmetic: 1752 + 4 + 3 = 1759.*
 - [ ] All four gates pass.
+
+### Re-dispatch criteria (bug-07b-1, filed 2026-09-11)
+
+Everything above is met on the current tree. The outstanding work is the
+mutation-check-2 evidence. Each was run against commit `4cd6a4c` and returns
+the "now" value shown.
+
+- [ ] **A corrected, reproducible entry exists:**
+      `awk '/^## Update Log/,0' docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md | grep -c 'mutation check 2, corrected'`
+      → **1** (now **0**). *Scoped to the Update Log: this criteria block
+      quotes the same strings, so an unscoped grep matches itself.* It carries the **mechanically captured** output of
+      applying the mutation it names and running the test it names — redirect
+      to a file, paste that file.
+- [ ] **The unreproducible claim is gone:**
+      `awk '/^## Update Log/,0' docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md | grep -c 'as predicted'`
+      → **0** (now **1**). Re-run at review: with `#[serde(default)]` removed
+      and confirmed absent, `cargo test --lib
+      mailbox_reads_an_entry_written_before_the_run_field_existed` returns
+      `ok. 1 passed` — there is no `missing field` error to observe.
+- [ ] **The entry names what actually makes an old file parse:**
+      `awk '/^## Update Log/,0' docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md | awk '/mutation check 2, corrected/,0' | grep -ci 'option'`
+      → **1 or more** (now **0**).
+- [ ] `cargo test --lib agents::mailbox` → **7 or more** passing, `0 failed`
+      (now **7**) — this must not cost coverage.
+- [ ] Full lib suite **1759 or more** passing, `0 failed` (now **1759**).
+- [ ] All four gates pass.
+
+**Mutation checks 1 and 3 were re-run at review and both reproduce** — do not
+redo them. `#[serde(default)]` may stay or go; it is redundant but harmless,
+and if it goes, the comment above the field claiming it is load-bearing goes
+with it.
 
 ## Test plan
 

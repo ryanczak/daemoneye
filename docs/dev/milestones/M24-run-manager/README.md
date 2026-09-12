@@ -81,7 +81,7 @@ precede the full four-loop unification's completion.
 | 06a | chat-run-log ([phase-06a-chat-run-log.md](phase-06a-chat-run-log.md)) — a chat turn gets a `RunId` + `var/log/runs/<id>.jsonl` via a `RunLogGuard` whose `Drop` writes the one `RunFinished`; cancellation untouched | **done** (approved_after_1, 2026-09-10) |
 | 06b | chat-run-cancel ([phase-06b-chat-run-cancel.md](phase-06b-chat-run-cancel.md)) — delete `daemon/cancel.rs`; session→run map; both cancel doors converge on `cancel_run`; `daemoneye stop <run>` cancels a live chat turn | done        |
 | 07a | ghost-run-log ([phase-07a-ghost-run-log.md](phase-07a-ghost-run-log.md)) — a ghost gets a `RunId` + `RunLogGuard` + the right `RunKind`; first production `TurnStarted` emitter; Complete/HardFail/BudgetExceeded | **done** (approved_first_try, 2026-09-11) |
-| 07b | ghost-run-cancel-result ([phase-07b-ghost-run-cancel-result.md](phase-07b-ghost-run-cancel-result.md)) — cancel check at ghost turn top (`daemoneye stop <run>` reaches a ghost); mailbox carries `RunResult` | review      |
+| 07b | ghost-run-cancel-result ([phase-07b-ghost-run-cancel-result.md](phase-07b-ghost-run-cancel-result.md)) — cancel check at ghost turn top (`daemoneye stop <run>` reaches a ghost); mailbox carries `RunResult` | in-progress (bounced, bug-07b-1) |
 | 08 | scheduled-run — scheduled jobs onto `Run` | todo (not drafted) |
 | 09 | resume — briefing-seeded `daemoneye run resume` + seeded tasks from runbook `## Steps` | todo (not drafted) |
 | 10 | cli — `/runs`, `/run`, `/stop`; cross-run telemetry (`RunRecord`) if not deferred | todo (not drafted) |
@@ -112,6 +112,17 @@ precede the full four-loop unification's completion.
   end — the same measurement that made 06a a `Drop` guard, and the reason 07a
   puts the guard in the 16-line `trigger_ghost_turn` wrapper (`:287-302`) that
   every exit already funnels through, leaving the 760-line body alone.
+
+- **Self-referential greps: a doc criterion that quotes its own match string
+  matches itself.** Found at the 07b review while writing the bounce criteria:
+  `grep -c 'as predicted' <phase doc>` matched the criteria block that quotes
+  it, not just the Update Log entry it was meant to police. Doc-content
+  criteria must be **scoped to the section they police** —
+  `awk '/^## Update Log/,0' <doc> | grep -c …`. Same family as the substring
+  collisions below, and together they make **three** occurrences of "the grep
+  matched more than the thing it was pinning" (07a ×1, 07b ×2). Per
+  WORKFLOW.md § Calibration that is fold territory — **PE sign-off needed**
+  before anything lands in WORKFLOW.md.
 
 - **Substring collisions in structural greps are now a two-occurrence
   pattern** (07a and 07b, both caught pre-dispatch by executing the criteria).
