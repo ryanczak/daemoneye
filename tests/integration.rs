@@ -149,6 +149,28 @@ fn cancel_request_roundtrip() {
     }
 }
 
+/// Verify that a ResumeRun request survives round-trip with its run id and
+/// directive intact, using the production `Request` type from
+/// `daemoneye::ipc`.
+#[test]
+fn resume_run_request_roundtrip() {
+    let req = Request::ResumeRun {
+        run_id: "r-abcdef12".to_string(),
+        directive: "try the other mount".to_string(),
+    };
+
+    let json = serde_json::to_string(&req).expect("serialize ResumeRun");
+    let back: Request = serde_json::from_str(&json).expect("deserialize ResumeRun");
+
+    match back {
+        Request::ResumeRun { run_id, directive } => {
+            assert_eq!(run_id, "r-abcdef12");
+            assert_eq!(directive, "try the other mount");
+        }
+        _ => panic!("expected ResumeRun variant"),
+    }
+}
+
 /// Verify that a SessionInfo response survives round-trip using the production `Response` type.
 #[test]
 fn ipc_session_info_round_trip() {

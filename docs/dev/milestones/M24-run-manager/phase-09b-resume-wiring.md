@@ -1,7 +1,7 @@
 # Phase 09b: `daemoneye run resume` — the wiring
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress (hard_fail; resumed — see the escalation entry)
 **Depends on:** phase-09a (`ResumeError`, `terminal_outcome`, `render_seed`),
 phase-07a/07b (the ghost run) and phase-04 (`RunId::parse`). All **done**.
 **Estimated diff:** ~340 lines incl. tests
@@ -144,6 +144,34 @@ cap — **call it**, the same as the scheduler and the webhook do.
 whole AI loop, and the IPC client is waiting for its reply. Reply first, then
 `tokio::spawn` the turn — the same order the scheduler uses when it injects
 `[Ghost Shell Started]` before triggering.
+
+**Cloning the handles for that spawn — the exact shapes.** A spawned task must
+own what it captures, and the handler's bindings are *references*. These are the
+types, read off `handle_client`'s signature (`src/daemon/server/mod.rs:112-119`)
+and `handle_resume_run`'s own parameters:
+
+| binding | type in the handler | how to make it owned |
+|---|---|---|
+| `cache` | `&Arc<SessionCache>` | `Arc::clone(cache)` |
+| `schedule_store` | `&Arc<ScheduleStore>` | `Arc::clone(schedule_store)` |
+| `sessions` | `&SessionStore` | `sessions.clone()` (it is a `Clone` newtype over `Arc`) |
+| `config` | `&Config` | `config.clone()` |
+
+`SessionCache` has **no `inner` field** — `Arc::clone(&cache.inner)` does not
+compile (`E0609`; its real fields are `session_name`, `panes`, `active_pane`,
+`environment`, `windows`, `client_size`). Clone the `Arc` itself. Then:
+
+```rust
+    let cache = Arc::clone(cache);
+    let sessions = sessions.clone();
+    let config = config.clone();
+    let store = Arc::clone(schedule_store);
+    tokio::spawn(async move {
+        if let Err(e) = trigger_ghost_turn(&sid, &sessions, &config, &cache, &store).await {
+            log::error!("resumed ghost {sid} failed: {e}");
+        }
+    });
+```
 
 ## Spec
 
@@ -317,8 +345,12 @@ Each was run against the current tree and returns the "now" value shown.
       a second added variant would make it 2.)*
 - [ ] **The handler is dispatched and replies on every path:**
       `grep -c 'Request::ResumeRun' src/daemon/server/mod.rs` → **1** (now `0`);
-      `grep -c 'pub async fn handle_resume_run' src/daemon/server/handlers.rs` →
-      **1** (now `0`); and inside that function
+      `grep -c 'async fn handle_resume_run' src/daemon/server/handlers.rs` →
+      **1** (now `0`) — visibility-agnostic, because **house style is
+      `pub(super) async fn`**: 17 handlers in that file use it and none uses a
+      bare `pub`. *(Corrected at escalation; the original criterion pinned
+      `pub async fn` and would have failed correct code.)* And inside that
+      function
       `awk '/pub async fn handle_resume_run/,/^}$/' src/daemon/server/handlers.rs | grep -c 'send_response_split'`
       → **5 or more** (one per failure path plus the success path).
 - [ ] **The seed is what seeds the ghost** — the phase's whole point:
@@ -455,7 +487,7 @@ printf 'prod one log read          (1): %s\n' "$(P 'let records = read_turn_log'
 printf 'ipc ResumeRun              (1): %s\n' "$(grep -c 'ResumeRun {' src/ipc.rs)"
 printf 'ipc run_id is String       (1): %s\n' "$(sed -n '/ResumeRun {/,/}/p' src/ipc.rs | grep -c 'run_id: String')"
 printf 'server dispatch arm        (1): %s\n' "$(grep -c 'Request::ResumeRun' src/daemon/server/mod.rs)"
-printf 'handler defined            (1): %s\n' "$(grep -c 'pub async fn handle_resume_run' src/daemon/server/handlers.rs)"
+printf 'handler defined            (1): %s\n' "$(grep -c 'async fn handle_resume_run' src/daemon/server/handlers.rs)"
 printf 'handler replies          (>=5): %s\n' "$(H 'send_response_split')"
 printf 'handler seeds with plan  (>=1): %s\n' "$(H 'plan.seed')"
 printf 'handler spawns the turn    (1): %s\n' "$(H 'tokio::spawn')"
@@ -539,3 +571,38 @@ none of them.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-12 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** the spec was sound and tasks 1–5 landed; the run died on one
+invented API (`E0609: no field 'inner' on type '&Arc<SessionCache>'`,
+`handlers.rs:873`) and spent its whole verifier budget on that single line, so
+the completed ~338 lines are worth preserving and only a hint plus the unfinished
+CLI half remain.
+
+**Verified by the architect against the partial tree**, so the guidance states a
+run fact rather than a guess: replacing `Arc::clone(&cache.inner)` with
+`Arc::clone(cache)` makes `cargo build` and `cargo clippy --all-targets
+--all-features -- -D warnings` exit 0 and the full lib suite report **1786
+passed; 0 failed** (`daemon::run::resume` at 20). That probe was then **reverted**
+— the executor makes its own edit, so a second failure on the same line would
+still be real signal instead of something the architect had erased.
+
+**Two spec defects this exposed, both fixed above before the resume:**
+
+1. **The `tokio::spawn` clone idiom was never shown.** § Current state told the
+   executor to spawn rather than await but not how to own the captured handles,
+   and it invented `.inner`. A table of the four bindings with their real types
+   and the worked `tokio::spawn` block is now in § Current state, naming the
+   `E0609` explicitly.
+2. **The handler-visibility criterion was wrong.** It pinned
+   `pub async fn handle_resume_run`, but house style is `pub(super) async fn` —
+   17 handlers in that file use it, none uses a bare `pub`. The executor wrote
+   correct code that my criterion would have failed at review. Now
+   visibility-agnostic.
+
+**State at escalation:** tasks 1–5 done (`resume.rs`, `run/mod.rs`, `ipc.rs`,
+`server/mod.rs`, `server/handlers.rs`, `tests/integration.rs` — 6 files, +338
+lines); **task 6 (the CLI `Run` group) not started** — `src/main.rs` and
+`src/cli/commands/` are untouched. Task 7's E2E capture also outstanding.

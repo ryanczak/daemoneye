@@ -1,16 +1,17 @@
-//! The resume seed (M24 phase 09a): what a *resumed* run starts from. Given
-//! a finished run's id and a fresh human directive, the text a new run is
-//! seeded with is the kind the run began as, the terminal [`Briefing`] it
-//! ended with when it has one, and the directive — design § 2.3,
-//! "briefing-seeded resume, not transcript rehydration". The seed is built
-//! from the log's structure (first `RunStarted`, last `RunFinished`), never
-//! by replaying turns.
+//! The resume plan (M24 phase 09b): what a *resumed* run starts from. Given
+//! a finished run's id and a fresh human directive, a resumed run needs the
+//! runbook it would follow and the text it is seeded with — the kind the run
+//! began as, the terminal [`Briefing`] it ended with when it has one, and the
+//! directive — design § 2.3, "briefing-seeded resume, not transcript
+//! rehydration". The seed is built from the log's structure (first
+//! `RunStarted`, last `RunFinished`), never by replaying turns.
 //!
 //! Pure split: [`terminal_outcome`] reads a slice of records with no I/O,
-//! [`render_seed`] is pure text over a kind/briefing/directive, and
-//! [`resume_seed`] is the only place that touches a turn log. The CLI, IPC
-//! and re-spawn half is phase-09b; nothing in production calls
-//! [`resume_seed`] yet.
+//! [`render_seed`] is pure text over a kind/briefing/directive,
+//! [`resumable_runbook`] is the pure rule naming the runbook — or refusing —
+//! per kind, and [`resume_plan`] is the only place that touches a turn log.
+//! The IPC and re-spawn half is phase-09b's handler; the CLI subcommand is
+//! `daemoneye run resume`.
 
 use super::{Briefing, RunId, RunKind, RunState, TurnLogEvent, TurnLogRecord, read_turn_log};
 
@@ -21,6 +22,8 @@ pub enum ResumeError {
     NoRunLog,
     /// The log has no `RunFinished` — the run is still in flight.
     StillRunning,
+    /// The run's kind cannot be resumed by this path; the string says why.
+    NotResumable(&'static str),
 }
 
 impl std::fmt::Display for ResumeError {
@@ -28,6 +31,7 @@ impl std::fmt::Display for ResumeError {
         match self {
             ResumeError::NoRunLog => write!(f, "no run log for that id"),
             ResumeError::StillRunning => write!(f, "that run is still running; stop it first"),
+            ResumeError::NotResumable(reason) => f.write_str(reason),
         }
     }
 }
@@ -36,7 +40,7 @@ impl std::error::Error for ResumeError {}
 
 /// The kind a run started with and the briefing it ended with, read from its
 /// turn-log records. Pure — takes the records, does no I/O; the records come
-/// from the turn log, fetched by [`resume_seed`].
+/// from the turn log, fetched by [`resume_plan`].
 ///
 /// A run that ended `HardFail` or `BudgetExceeded` yields the briefing it
 /// carried out; `Complete` and `Cancelled { .. }` carry none, and are still
@@ -104,11 +108,42 @@ pub fn render_seed(kind: &RunKind, briefing: Option<&Briefing>, directive: &str)
     out
 }
 
-/// Read a run's turn log and build its resume seed.
-pub fn resume_seed(run_id: &RunId, directive: &str) -> Result<String, ResumeError> {
+/// What a resumed run needs: the runbook to follow and the seed to start
+/// from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumePlan {
+    pub runbook: String,
+    pub seed: String,
+}
+
+/// The runbook a resumed run would follow, or why this kind cannot be
+/// resumed. Only a ghost run carries a runbook name, which is why only a
+/// ghost run is resumable by this path — a chat run resumes as a new turn, a
+/// scheduled job re-runs on its own schedule, and a delegated run names an
+/// agent rather than a runbook.
+pub fn resumable_runbook(kind: &RunKind) -> Result<&str, ResumeError> {
+    match kind {
+        RunKind::Ghost { runbook, .. } => Ok(runbook),
+        RunKind::Chat { .. } => Err(ResumeError::NotResumable(
+            "a chat run resumes by starting a new chat turn, not by this path",
+        )),
+        RunKind::Scheduled { .. } => Err(ResumeError::NotResumable(
+            "a scheduled job re-runs on its own schedule",
+        )),
+        RunKind::Delegated { .. } => Err(ResumeError::NotResumable(
+            "a delegated run names an agent, not a runbook; resume its parent",
+        )),
+    }
+}
+
+/// Read a run's turn log and build its resume plan: the runbook the resumed
+/// run follows and the seed it starts from. One log read.
+pub fn resume_plan(run_id: &RunId, directive: &str) -> Result<ResumePlan, ResumeError> {
     let records = read_turn_log(run_id);
     let (kind, briefing) = terminal_outcome(&records)?;
-    Ok(render_seed(&kind, briefing.as_ref(), directive))
+    let runbook = resumable_runbook(&kind)?.to_string();
+    let seed = render_seed(&kind, briefing.as_ref(), directive);
+    Ok(ResumePlan { runbook, seed })
 }
 
 #[cfg(test)]
@@ -356,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn resume_seed_reads_a_real_log_and_returns_the_seed() {
+    fn resume_plan_reads_a_real_log_and_builds_the_plan() {
         let home = HomeGuard::new();
         let id = fresh_run_id();
         let kind = RunKind::Ghost {
@@ -371,26 +406,29 @@ mod tests {
                 RunState::HardFail(hard_fail_briefing("logrotate cannot write its state file")),
             ),
         ]);
-        let seed = resume_seed(&id, "try the other mount").ok();
+        let plan = resume_plan(&id, "try the other mount").ok();
         let expected = hard_fail_briefing("logrotate cannot write its state file");
         assert_eq!(
-            seed,
-            Some(render_seed(
-                &RunKind::Ghost {
-                    runbook: "investigate-disk".into(),
-                    trigger: "alert".into(),
-                },
-                Some(&expected),
-                "try the other mount",
-            )),
-            "the I/O wrapper must feed exactly what the pure halves produce"
+            plan,
+            Some(ResumePlan {
+                runbook: "investigate-disk".to_string(),
+                seed: render_seed(
+                    &RunKind::Ghost {
+                        runbook: "investigate-disk".into(),
+                        trigger: "alert".into(),
+                    },
+                    Some(&expected),
+                    "try the other mount",
+                ),
+            }),
+            "the plan's seed must be exactly what the pure halves produce"
         );
         assert!(
-            seed.as_ref().is_some_and(|s| {
-                s.contains("try the other mount")
-                    && s.contains("logrotate cannot write its state file")
+            plan.as_ref().is_some_and(|p| {
+                p.seed.contains("try the other mount")
+                    && p.seed.contains("logrotate cannot write its state file")
             }),
-            "the seed read back from disk carries the blocker and the directive:\n{seed:?}"
+            "the seed read back from disk carries the blocker and the directive:\n{plan:?}"
         );
         assert!(
             home.tmp.path().join(".daemoneye/var/log/runs").exists(),
@@ -399,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn resume_seed_reports_still_running_for_a_run_with_no_finish() {
+    fn resume_plan_reports_still_running_for_a_run_with_no_finish() {
         let _home = HomeGuard::new();
         let id = fresh_run_id();
         log(vec![
@@ -412,20 +450,121 @@ mod tests {
             turn(&id, 1),
         ]);
         assert_eq!(
-            resume_seed(&id, "pick up where you left off"),
+            resume_plan(&id, "pick up where you left off"),
             Err(ResumeError::StillRunning),
             "an in-flight run must not be resumable"
         );
     }
 
     #[test]
-    fn resume_seed_reports_no_run_log_for_an_unknown_id() {
+    fn resume_plan_reports_no_run_log_for_an_unknown_id() {
         let _home = HomeGuard::new();
         let id = fresh_run_id();
         assert_eq!(
-            resume_seed(&id, "anything"),
+            resume_plan(&id, "anything"),
             Err(ResumeError::NoRunLog),
-            "no file means no run, not an empty seed"
+            "no file means no run, not an empty plan"
+        );
+    }
+
+    #[test]
+    fn resumable_runbook_returns_the_runbook_for_a_ghost_run() {
+        let kind = RunKind::Ghost {
+            runbook: "investigate-disk".into(),
+            trigger: "alert".into(),
+        };
+        assert_eq!(
+            resumable_runbook(&kind),
+            Ok("investigate-disk"),
+            "the ghost kind's runbook is the one a resumed run would follow"
+        );
+    }
+
+    #[test]
+    fn resumable_runbook_refuses_a_chat_run() {
+        let kind = RunKind::Chat {
+            session: "s1".into(),
+        };
+        let refusal = resumable_runbook(&kind).err();
+        assert!(
+            matches!(refusal, Some(ResumeError::NotResumable(_))),
+            "a chat run must be refused, not planned:\n{refusal:?}"
+        );
+        assert!(
+            refusal
+                .as_ref()
+                .is_some_and(|e| e.to_string().contains("new chat turn")),
+            "the refusal must say a chat run resumes as a new chat turn:\n{refusal:?}"
+        );
+    }
+
+    #[test]
+    fn resumable_runbook_refuses_a_scheduled_run() {
+        let kind = RunKind::Scheduled {
+            job: "nightly".into(),
+        };
+        let refusal = resumable_runbook(&kind).err();
+        assert!(
+            matches!(refusal, Some(ResumeError::NotResumable(_))),
+            "a scheduled run must be refused, not planned:\n{refusal:?}"
+        );
+        assert!(
+            refusal
+                .as_ref()
+                .is_some_and(|e| e.to_string().contains("own schedule")),
+            "the refusal must say a scheduled job re-runs on its own schedule:\n{refusal:?}"
+        );
+    }
+
+    #[test]
+    fn resumable_runbook_refuses_a_delegated_run() {
+        let parent = fresh_run_id();
+        let kind = RunKind::Delegated {
+            agent: "triage".into(),
+            parent,
+        };
+        let refusal = resumable_runbook(&kind).err();
+        assert!(
+            matches!(refusal, Some(ResumeError::NotResumable(_))),
+            "a delegated run must be refused, not planned — it is autonomous but names an \
+             agent, not a runbook:\n{refusal:?}"
+        );
+        assert!(
+            refusal
+                .as_ref()
+                .is_some_and(|e| e.to_string().contains("resume its parent")),
+            "the refusal must point at resuming the parent run:\n{refusal:?}"
+        );
+    }
+
+    #[test]
+    fn resume_plan_refuses_a_non_ghost_run_even_with_a_briefing() {
+        let _home = HomeGuard::new();
+        let id = fresh_run_id();
+        let kind = RunKind::Scheduled {
+            job: "nightly".into(),
+        };
+        log(vec![
+            started(&id, kind),
+            finished(&id, RunState::BudgetExceeded(hard_fail_briefing("ran out of turns"))),
+        ]);
+        assert_eq!(
+            resume_plan(&id, "redo the nightly scan"),
+            Err(ResumeError::NotResumable(
+                "a scheduled job re-runs on its own schedule",
+            )),
+            "a briefing is not sufficient — the kind decides, and a scheduled run has no \
+             runbook to follow"
+        );
+    }
+
+    #[test]
+    fn resume_error_display_covers_not_resumable() {
+        let reason = "a scheduled job re-runs on its own schedule";
+        assert_eq!(
+            ResumeError::NotResumable(reason).to_string(),
+            reason,
+            "the refusal variant prints its carried reason verbatim"
         );
     }
 

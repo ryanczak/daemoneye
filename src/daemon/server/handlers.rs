@@ -1,13 +1,19 @@
 use super::catchup::is_valid_pane_id;
 use crate::config::Config;
 use crate::config::default_socket_path;
+use crate::daemon::ghost::{GhostManager, check_ghost_capacity, trigger_ghost_turn};
+use crate::daemon::run::RunId;
+use crate::daemon::run::resume_plan;
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
+use crate::agents::merge_runbook_ghost_config;
 use crate::ipc::{PaneInfo, Response};
+use crate::runbook::load_runbook;
 use crate::scheduler::ScheduleStore;
 use crate::tmux::cache::SessionCache;
 use anyhow::Result;
 use libc;
+use std::sync::Arc;
 // ── Quick-return request handlers ─────────────────────────────────────────────
 
 pub(super) async fn handle_ping<W>(tx: &mut W) -> Result<()>
@@ -767,4 +773,117 @@ where
         }
     }
     Ok(())
+}
+
+// ── Run resume handler ───────────────────────────────────────────────────────
+
+/// `Request::ResumeRun` — restart a finished ghost run from the briefing it
+/// recorded and a fresh directive. Every failure path replies with a
+/// `SystemMsg` the user can read and returns; none aborts the connection.
+///
+/// On success the reply goes out **before** the first AI turn is spawned:
+/// `trigger_ghost_turn` runs a whole AI loop and the client is waiting for
+/// its `Ok`, so the reply must not sit behind it.
+pub(super) async fn handle_resume_run<W>(
+    tx: &mut W,
+    cache: &Arc<SessionCache>,
+    sessions: &SessionStore,
+    schedule_store: &Arc<ScheduleStore>,
+    config: &Config,
+    run_id: &str,
+    directive: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let id = match RunId::parse(run_id) {
+        Ok(id) => id,
+        Err(e) => {
+            send_response_split(
+                tx,
+                Response::SystemMsg(format!("resume: not a run id: {run_id} — {e}")),
+            )
+            .await?;
+            return send_response_split(tx, Response::Ok).await;
+        }
+    };
+    let plan = match resume_plan(&id, directive) {
+        Ok(plan) => plan,
+        Err(e) => {
+            send_response_split(tx, Response::SystemMsg(format!("resume: {e}"))).await?;
+            return send_response_split(tx, Response::Ok).await;
+        }
+    };
+    if !check_ghost_capacity(config) {
+        send_response_split(
+            tx,
+            Response::SystemMsg("resume: ghost concurrency limit reached".to_string()),
+        )
+        .await?;
+        return send_response_split(tx, Response::Ok).await;
+    }
+    let rb = match load_runbook(&plan.runbook) {
+        Ok(rb) => rb,
+        Err(e) => {
+            send_response_split(
+                tx,
+                Response::SystemMsg(format!(
+                    "resume: runbook '{}' is gone — {e}",
+                    plan.runbook
+                )),
+            )
+            .await?;
+            return send_response_split(tx, Response::Ok).await;
+        }
+    };
+    let merged = merge_runbook_ghost_config(&rb);
+    match GhostManager::start_session_with_config(
+        sessions.clone(),
+        &rb,
+        &merged,
+        &plan.seed,
+        crate::daemon::GS_BG_WINDOW_PREFIX,
+        config.approvals.ghost_commands,
+    )
+    .await
+    {
+        Err(e) => {
+            send_response_split(
+                tx,
+                Response::SystemMsg(format!(
+                    "resume: failed to start the resumed ghost — {e}"
+                )),
+            )
+            .await?;
+        }
+        Ok(sid) => {
+            log::info!(
+                "resume of run {id} started ghost session {sid} (runbook: {})",
+                plan.runbook
+            );
+            send_response_split(
+                tx,
+                Response::SystemMsg(format!(
+                    "Resumed run {id} as ghost session {sid} (runbook: {}). First turn is starting.",
+                    plan.runbook
+                )),
+            )
+            .await?;
+            send_response_split(tx, Response::Ok).await?;
+            let cache = Arc::clone(&cache.inner);
+            let schedule_store = Arc::clone(schedule_store);
+            let sessions = sessions.clone();
+            let config = config.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    trigger_ghost_turn(&sid, &sessions, &config, &cache, &schedule_store).await
+                {
+                    log::error!("resumed ghost turn failed for {sid}: {e}");
+                    crate::daemon::stats::inc_ghosts_failed();
+                }
+            });
+            return Ok(());
+        }
+    }
+    send_response_split(tx, Response::Ok).await
 }

@@ -388,6 +388,13 @@ pub enum Request {
     Cancel {
         session_id: String,
     },
+    /// Resume a finished ghost run from its briefing plus a fresh directive.
+    ResumeRun {
+        /// The finished run's id, as `daemoneye runs` prints it.
+        run_id: String,
+        /// What the resumed run should do differently.
+        directive: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

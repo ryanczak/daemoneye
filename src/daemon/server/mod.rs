@@ -180,6 +180,18 @@ pub async fn handle_client(
             log::info!("cancel request for session {session_id}: found={found}");
             send_response_split(&mut tx, Response::Ok).await?;
         }
+        Request::ResumeRun { run_id, directive } => {
+            handle_resume_run(
+                &mut tx,
+                &Arc::clone(&cache),
+                &sessions,
+                &schedule_store,
+                &config,
+                &run_id,
+                &directive,
+            )
+            .await?;
+        }
         Request::Shutdown => {
             handle_shutdown(&mut tx).await?;
             return Ok(());
