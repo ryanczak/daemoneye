@@ -6,7 +6,28 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none** — milestone scoped, no phase drafted yet.
+**Active phase: phase-01 — pty-default**
+(`docs/dev/milestones/M22-tool-surface/phase-01-pty-default.md`, status: todo,
+drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-01`. **PE signed
+off on the ten-phase breakdown 2026-09-12.**
+
+Scope: `[execution] backend` defaults to `"pty"`; `"tmux"` becomes the explicit
+opt-out; an **invalid value now falls back to the default** rather than to tmux
+— the old fallback's own comment justified it by a substrate that "does not
+exist yet", and it does now. Three tests rewritten in place, one negative added,
+three executor comments, the seeded template and the README row corrected. The
+config doc comment that has been false since M20 phase-07c goes too.
+
+The four-run-kind live check on the substrate is **architect-run at review**
+(M14 convention), not executor work — the executor's evidence is the config
+behaviour, which is fully decidable in tests.
+
+Drafting note, recorded so the next phase does not repeat it: two of this doc's
+"now" values were wrong on the first pass — one because a sentence wraps across
+two lines and the grep counts lines, one because the real comment text has a
+backtick between `"tmux"` and `(the default)` and the pattern lacked it, so it
+matched nothing against a tree with three such comments. Both caught by running
+the criteria before commit; both fixed.
 
 PE chose M22 next at the M24 close, ahead of M21 and M23: `Category` on `TOOLS`
 is M25's stated dependency, and M21's `host?` params and M23's

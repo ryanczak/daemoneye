@@ -6,7 +6,7 @@ around shells and hosts, add `Category`/`mutates_state()` to `TOOLS` (which
 M25's governor needs), swap the pane context blocks for `[HOSTS]`/`[SHELLS]`,
 and rewrite every prompt asset and seeded memory that still speaks tmux.
 
-**Status:** scoped 2026-09-12 — **awaiting PE sign-off on this breakdown.**
+**Status:** in-progress — scoped 2026-09-12, **PE sign-off on the breakdown 2026-09-12**.
 Ordering chosen by the PE at the M24 close: M22 ahead of M21 and M23, because
 `Category` is M25's stated dependency and because M21's `host?` params and
 M23's `[HOSTS]/[SHELLS]` blocks both land on a cleaner surface once this is
@@ -57,7 +57,7 @@ final surface, so they go last.
 
 | # | Phase | Status |
 |----|-------|--------|
-| 01 | pty-default — flip `[execution] backend` to `"pty"`, correct its stale doc comment, live-verify chat/ghost/scheduled/background on the substrate | todo (not drafted) |
+| 01 | pty-default ([phase-01-pty-default.md](phase-01-pty-default.md)) — flip `[execution] backend` to `"pty"`; `"tmux"` becomes the explicit opt-out and an invalid value falls back to the default; stale comments/template/README corrected | todo |
 | 02 | tool-category — `Category` + `mutates_state()` on every `ToolDef`; pure, additive, unblocks M25 | todo (not drafted) |
 | 03 | shell-tools-read — `list_shells`, `read_shell`, `find_in_shells` (the read-only three) | todo (not drafted) |
 | 04 | shell-tools-lifecycle — `open_shell`, `close_shell`, `watch_shell` | todo (not drafted) |

@@ -1,0 +1,395 @@
+# Phase 01: `[execution] backend` defaults to `"pty"`
+
+**Milestone:** M22 — Tool surface & context
+**Status:** todo
+**Depends on:** M20 (the substrate that becomes the default) and M24 (the
+run model it is verified through). Both **closed**.
+**Estimated diff:** ~120 lines incl. tests
+**Tags:** language=rust, kind=feature, size=s
+
+## Goal
+
+Everything M20 and M24 built runs only when a site opts in with
+`[execution] backend = "pty"`. The PE decided at the M24 close that the flip
+comes first in M22, so every later phase's live verification exercises the
+real path rather than the legacy one. After this phase:
+
+1. A config with no `[execution]` section uses the PTY substrate.
+2. `"tmux"` is the **explicit opt-out**, still honoured exactly as today.
+3. An invalid value falls back to the **default** — now `"pty"` — with the
+   existing startup warning. Today it falls back to tmux, on a rationale the
+   code comment states outright: *"a typo silently keeps today's tmux behaviour
+   rather than half-enabling a substrate that does not exist yet."* The
+   substrate exists and is the default, so the fallback follows it.
+4. Every comment, template line and README row that says tmux is the default
+   says pty instead — including one comment that has been false since M20
+   phase-07c.
+
+**Live verification of the four run kinds on the substrate is architect-run at
+review**, per the M14 convention (isolated `HOME`, canned-AI stub, the shell log
+and run turn-log as evidence). It is not an executor task and is not in this
+doc's E2E block; the executor's evidence is the config behaviour, which is fully
+decidable in tests.
+
+## Architecture references
+
+- `docs/design/daemoneye-2.0.md` § 5 — 2.0 proceeds behind the
+  `[execution] backend` flag (line 503); M26 deletes `src/tmux/` once nothing
+  is behind it.
+- M22 README § Exit criteria, "`[execution] backend` defaults to `"pty"`".
+
+## Pre-flight
+
+Confirm on the current tree (values as of drafting, 2026-09-12, commit
+`ae92a03`):
+
+```sh
+git status --porcelain | wc -l                                          # 0
+cargo test --lib 2>&1 | grep '^test result'                             # 1814 passed
+cargo test --lib 'config::' 2>&1 | grep '^test result'                  # 91 passed
+cargo test --lib 'daemon::executor::' 2>&1 | grep '^test result'        # 235 passed
+cargo test --test doc_truth 2>&1 | grep '^test result'                  # 10 passed
+grep -c '"tmux".to_string()' src/config/types.rs                        # 1
+grep -c 'fn execution_backend_defaults_to_tmux' src/config/mod.rs       # 1
+```
+
+## Current state
+
+### The default and its two stale comments
+
+```rust
+// src/config/types.rs:630-647
+/// Execution backend selection (`[execution]`).
+/// `backend` defaults to `"tmux"`; `"pty"` is the 2.0 substrate. Nothing reads
+/// the value yet — phase-07 is the first consumer.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ExecutionConfig {
+    /// `"tmux"` (default, today's behaviour) or `"pty"` (the 2.0 substrate).
+    #[serde(default = "default_execution_backend")]
+    pub backend: String,
+}
+
+fn default_execution_backend() -> String {
+    "tmux".to_string()
+}
+```
+
+"Nothing reads the value yet" has been false since M20 phase-07c: the gate is
+`uses_pty()` at `src/daemon/executor/mod.rs:302`, with a second at `:426`.
+
+### The predicate whose rationale is now dead
+
+```rust
+// src/config/types.rs:653-660
+    /// True iff the backend value, after trimming and lowercasing, is exactly
+    /// `"pty"`. Everything else — including the default `"tmux"` and any typo —
+    /// is false, so a typo silently keeps today's tmux behaviour rather than
+    /// half-enabling a substrate that does not exist yet.
+    pub fn uses_pty(&self) -> bool {
+        self.backend.trim().eq_ignore_ascii_case("pty")
+    }
+```
+
+`validate()` (`:664-673`) warns on anything that is neither `"tmux"` nor
+`"pty"` and ends *"Keeping today's tmux behaviour."* Both change.
+
+### The tests that pin today's behaviour
+
+`src/config/mod.rs` — `execution_backend_defaults_to_tmux` (`:756`),
+`execution_uses_pty_only_for_exact_pty_value` (`:763`), and
+`execution_config_parses_from_toml` (`:783`), whose last assertion is
+`assert_eq!(empty.execution.backend, "tmux")`. All three are rewritten, not
+deleted: the properties they pin still exist with the values swapped.
+
+### The three comments and two docs that say "the default"
+
+```
+src/daemon/executor/mod.rs:302   // explicit `target_pane`, or `backend = "tmux"` (the default)
+src/daemon/executor/mod.rs:426   // substrate has none of), or `backend = "tmux"` (the default)
+src/daemon/executor/bg_shell.rs:8   //! `backend = "tmux"` (the default) keeps using it. …
+```
+
+`assets/etc/config.toml:281-283`:
+
+```toml
+# Execution substrate for agent shells. Today only tmux exists; "pty" is the
+# 2.0 substrate. Nothing reads this value yet — it becomes live in phase-07.
+# backend = "tmux"            # "tmux" (default) or "pty" (the 2.0 substrate)
+```
+
+**Keep a `# backend =` line in the template.** `tests/doc_truth.rs`'s
+`seeded_config_template_documents_every_config_field` strips `#` and reads the
+key, so the field must stay present as a commented example — only its value
+and prose change.
+
+`README.md:967-972` — the `[execution]` prose ("The default is unchanged tmux
+behaviour; the PTY shell engine is opt-in per site.") and the table row whose
+Default column reads `"tmux"` and whose description ends *"Anything other than
+`"tmux"`/`"pty"` is treated as `"tmux"` with a startup warning."* `CLAUDE.md:71`
+says the PTY path runs "when `[execution] backend = "pty"`" — still true as a
+condition; leave it.
+
+## Spec
+
+Five tasks. Task 4 is the mutation checks, as a numbered Spec task.
+
+### Task 1 — flip the default and the predicate
+
+In `src/config/types.rs`:
+
+- `default_execution_backend()` returns `"pty".to_string()`.
+- `uses_pty()` becomes: **false iff the trimmed, case-folded value is exactly
+  `"tmux"`; true otherwise.** `"tmux"` is the one opt-out; the default and any
+  invalid value both route to the substrate.
+- `validate()` keeps its shape and its warning; the trailing sentence becomes
+  *"Falling back to the default, \"pty\"."*
+- Rewrite the three stale doc comments (`:630-632`, `:635`, `:653-656`) to say
+  what is now true. Do not leave "phase-07" or "does not exist yet" in the file
+  — a criterion greps for both.
+
+### Task 2 — rewrite the three tests, add one negative
+
+In `src/config/mod.rs`:
+
+- `execution_backend_defaults_to_tmux` → `execution_backend_defaults_to_pty`:
+  the default value is `"pty"` and `Config::default().execution.uses_pty()`.
+- `execution_uses_pty_only_for_exact_pty_value` →
+  `execution_tmux_is_the_only_opt_out`: `"tmux"`, `" TMUX "`, `"Tmux"` are all
+  **false**; `"pty"`, `"PTY"`, `" pty "` are all **true**.
+- `execution_config_parses_from_toml`: the empty-config assertion becomes
+  `assert_eq!(empty.execution.backend, "pty")`; the explicit-pty case stays.
+- **New negative:** `execution_invalid_value_falls_back_to_the_default` —
+  `"ptty"`, `"tmxu"` and `""` all report `uses_pty() == true`, and
+  `validate()` on each does not panic. *(This is the behaviour change in the
+  Goal's item 3, pinned. It must not be inferred from the default test.)*
+
+### Task 3 — the comments, the template, the README
+
+- The three executor comments quoted above: `(the default)` moves to the pty
+  side of each sentence, or is dropped where the sentence no longer needs it.
+  Do not restructure any code around them.
+- `assets/etc/config.toml:281-283`: the two prose lines describe pty as the
+  default and tmux as the opt-out, with no "phase-07" and no "Nothing reads";
+  the example line becomes `# backend = "pty"` with its trailing comment
+  updated. **The key stays present.**
+- `README.md` `[execution]` section: the prose says the PTY engine is the
+  default and `"tmux"` is the opt-out; the row's Default column is `"pty"`;
+  the last sentence says an unrecognised value falls back to `"pty"` with a
+  startup warning.
+
+### Task 4 — run the mutation checks and record them
+
+Both mutations below, with the `patch` tool (`sed -i`, `perl -i` and `>`
+redirects are forbidden by the executor contract). Capture each red-then-green
+transcript and paste it into the Update Log. Each names the **property** to
+break; find the line in your implementation. **If a mutation does not turn its
+test red, record that — do not invent a failure.**
+
+1. **The default must be pty.** Make the default resolve to `"tmux"` again →
+   `execution_backend_defaults_to_pty` must go **red**.
+2. **An invalid value must not fall back to tmux.** Make `uses_pty()` true only
+   for the exact value `"pty"` → `execution_invalid_value_falls_back_to_the_default`
+   must go **red**, and `execution_tmux_is_the_only_opt_out` must stay green
+   (it asserts nothing about invalid values — that separation is the point).
+
+### Task 5 — capture the end-to-end evidence
+
+Run the block in § End-to-end verification **verbatim and unmodified**, then
+paste `/tmp/e2e-m22-01.txt` into a new Update Log entry headed
+`### Update — <date> (end-to-end verification)`. Anything presented as command
+output must be command output.
+
+## Acceptance criteria
+
+Each was run against the current tree and returns the "now" value shown.
+Counts marked *prod* use `sed -n '1,/^#\[cfg(test)\]/p' <file> |` — the
+phase's own tests name the same tokens.
+
+- [ ] **The default is pty:** prod
+      `grep -c '"pty".to_string()' src/config/types.rs` → **1** (now `0`), and
+      prod `grep -c '"tmux".to_string()' src/config/types.rs` → **0** (now `1`).
+- [ ] **The stale claims are gone from the config source:**
+      `grep -ciE 'phase-07|does not exist yet|nothing reads' src/config/types.rs`
+      → **0** (now `3` — the first claim wraps across two lines, so it counts
+      twice; the third is `does not exist yet` in `uses_pty`'s comment).
+- [ ] **The predicate opts out on tmux, not in on pty:** prod
+      `sed -n '/pub fn uses_pty/,/^    }/p' src/config/types.rs | grep -c 'eq_ignore_ascii_case("tmux")'`
+      → **1** (now `0`), and the same range `grep -c 'eq_ignore_ascii_case("pty")'`
+      → **0** (now `1`).
+- [ ] **The warning names the new fallback:**
+      `grep -c 'Falling back to the default' src/config/types.rs` → **1** (now
+      `0`), and `grep -c "Keeping today's tmux behaviour" src/config/types.rs` →
+      **0** (now `1`).
+- [ ] **The tests were renamed, not deleted:**
+      `grep -c 'fn execution_backend_defaults_to_pty' src/config/mod.rs` → **1**
+      (now `0`); `grep -c 'fn execution_tmux_is_the_only_opt_out'` → **1** (now
+      `0`); `grep -c 'fn execution_invalid_value_falls_back_to_the_default'` →
+      **1** (now `0`); and the old names are gone —
+      `grep -cE 'fn execution_backend_defaults_to_tmux|fn execution_uses_pty_only_for_exact_pty_value' src/config/mod.rs`
+      → **0** (now `2`).
+- [ ] **No comment still calls tmux the default:**
+      `grep -rc 'tmux"\` (the default)' src/daemon/executor/ | grep -v ':0' | wc -l`
+      → **0** (now **2** files: `mod.rs` ×2, `bg_shell.rs` ×1). *(The real
+      text is `` `backend = "tmux"` (the default) `` — a backtick sits between
+      the closing quote and the parenthesis. A pattern without it matches
+      nothing, which is how the first draft of this criterion read 0 against a
+      tree that has three such comments.)*
+- [ ] **The template keeps the key and drops the stale prose:**
+      `grep -c '^# backend = "pty"' assets/etc/config.toml` → **1** (now `0`);
+      `grep -c '^# backend = ' assets/etc/config.toml` → **1**, unchanged; and
+      `grep -ciE 'phase-07|nothing reads' assets/etc/config.toml` → **0** (now
+      `1`).
+- [ ] **The README row moved:**
+      `sed -n '/^### `\[execution\]` section/,/^### /p' README.md | grep -c '| `"pty"` |'`
+      → **1** (now `0`), and the same range `grep -c 'is treated as `"tmux"`'`
+      → **0** (now `1`).
+- [ ] **`CLAUDE.md` untouched:** `git diff --stat -- CLAUDE.md | wc -l` → **0**.
+- [ ] **No executor logic changed — comments only:**
+      `git diff -- src/daemon/executor/ | grep -E '^[-+]' | grep -vE '^[-+]{3}|^[-+]\s*//' | wc -l`
+      → **0**. *(Every changed line in that directory is a comment line.)*
+- [ ] No new `unsafe`/`unwrap`/`expect`/`panic!` in production code: prod on
+      `src/config/types.rs` → **0**, unchanged.
+- [ ] `cargo test --lib 'config::'` → **92 or more** passing, `0 failed` (now
+      **91**). *Arithmetic: three rewritten in place, one added.*
+- [ ] `cargo test --test doc_truth` → **10**, `0 failed`, unchanged — the
+      template check still finds the key.
+- [ ] **Preservation, each must not move:** `daemon::executor::` **235**,
+      `daemon::executor::shell_exec` **10**, `daemon::run::list` **11**,
+      `daemon::ghost` **21**; `cargo test --test isolation` **9**.
+- [ ] **Nothing leaks into the developer's real HOME:**
+      `ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l` → **0**, unchanged.
+- [ ] Full lib suite **1815 or more** passing, `0 failed`, on **three
+      consecutive runs** (now **1814**).
+- [ ] All four gates pass.
+
+## Test plan
+
+**`src/config/mod.rs`** — three rewritten, one new, all pure:
+
+- `execution_backend_defaults_to_pty`
+- `execution_tmux_is_the_only_opt_out` — the six-value table above; the three
+  tmux spellings are the **negative** half.
+- `execution_config_parses_from_toml` — rewritten assertion only.
+- `execution_invalid_value_falls_back_to_the_default` — **negative case**, and
+  the only test that pins the behaviour change.
+
+No test boots a daemon. The four-run-kind live check is architect-run at
+review, and its evidence goes in the Review verdict, not here.
+
+## Mutation checks
+
+Run as **Spec task 4**. Both name the property; the line is yours to find.
+
+## End-to-end verification
+
+The real artifact is the config the daemon loads. Section B prints
+`Config::default().execution` through the public type, section C the seeded
+template and README rows a user reads.
+
+Run from the repo root, verbatim:
+
+```sh
+A=/tmp/e2e-m22-01.txt
+: > "$A"
+RUNS_BEFORE=$(ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l)
+{
+echo "== A. build =="
+echo "real HOME run logs BEFORE: $RUNS_BEFORE"
+cargo build 2>&1 | tail -2; echo "cargo_exit=${PIPESTATUS[0]}"
+
+echo "== B. the config module =="
+cargo test --lib 'config::execution' -- --nocapture 2>&1 \
+  | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test config::|^test result'
+echo "cargo_exit=${PIPESTATUS[0]}"
+
+echo "== C. what a user reads =="
+sed -n '/^# \[execution\]/,/^$/p' assets/etc/config.toml
+sed -n '/^### `\[execution\]` section/,/^### /p' README.md | grep -E '^\| `backend`|default|opt-out' | cut -c1-120
+
+echo "== D. structural greps (each must print the stated number) =="
+P() { sed -n '1,/^#\[cfg(test)\]/p' src/config/types.rs | grep -c "$1"; }
+printf 'default is pty             (1): %s\n' "$(P '"pty".to_string()')"
+printf 'tmux default gone          (0): %s\n' "$(P '"tmux".to_string()')"
+printf 'stale claims gone          (0): %s\n' "$(grep -ciE 'phase-07|does not exist yet|nothing reads' src/config/types.rs)"
+printf 'predicate opts out on tmux (1): %s\n' "$(sed -n '/pub fn uses_pty/,/^    }/p' src/config/types.rs | grep -c 'eq_ignore_ascii_case("tmux")')"
+printf 'predicate not pty-exact    (0): %s\n' "$(sed -n '/pub fn uses_pty/,/^    }/p' src/config/types.rs | grep -c 'eq_ignore_ascii_case("pty")')"
+printf 'warning names fallback     (1): %s\n' "$(grep -c 'Falling back to the default' src/config/types.rs)"
+printf 'old warning gone           (0): %s\n' "$(grep -c "Keeping today's tmux behaviour" src/config/types.rs)"
+printf 'defaults_to_pty test       (1): %s\n' "$(grep -c 'fn execution_backend_defaults_to_pty' src/config/mod.rs)"
+printf 'only_opt_out test          (1): %s\n' "$(grep -c 'fn execution_tmux_is_the_only_opt_out' src/config/mod.rs)"
+printf 'invalid_falls_back test    (1): %s\n' "$(grep -c 'fn execution_invalid_value_falls_back_to_the_default' src/config/mod.rs)"
+printf 'old test names gone        (0): %s\n' "$(grep -cE 'fn execution_backend_defaults_to_tmux|fn execution_uses_pty_only_for_exact_pty_value' src/config/mod.rs)"
+printf 'executor comments moved    (0): %s\n' "$(grep -rc 'tmux"\` (the default)' src/daemon/executor/ | grep -v ':0' | wc -l)"
+printf 'template example is pty    (1): %s\n' "$(grep -c '^# backend = "pty"' assets/etc/config.toml)"
+printf 'template key present       (1): %s\n' "$(grep -c '^# backend = ' assets/etc/config.toml)"
+printf 'template stale prose gone  (0): %s\n' "$(grep -ciE 'phase-07|nothing reads' assets/etc/config.toml)"
+printf 'README default is pty      (1): %s\n' "$(sed -n '/^### `\[execution\]` section/,/^### /p' README.md | grep -c '| `"pty"` |')"
+printf 'README tmux-fallback gone  (0): %s\n' "$(sed -n '/^### `\[execution\]` section/,/^### /p' README.md | grep -c 'is treated as `"tmux"`')"
+printf 'CLAUDE.md untouched        (0): %s\n' "$(git diff --stat -- CLAUDE.md | wc -l)"
+printf 'executor: comments only    (0): %s\n' "$(git diff -- src/daemon/executor/ | grep -E '^[-+]' | grep -vE '^[-+]{3}|^[-+]\s*//' | wc -l)"
+printf 'types.rs unwrap/panic      (0): %s\n' "$(P '\.\(unwrap\|expect\)(\|panic!(\|unsafe')"
+
+echo "== E. preservation: executor 235, shell_exec 10, run::list 11, ghost 21, isolation 9, doc_truth 10 =="
+for m in 'daemon::executor::' daemon::executor::shell_exec daemon::run::list daemon::ghost; do
+  printf '%-30s ' "$m"; cargo test --lib "$m" 2>&1 | grep '^test result'
+done
+printf '%-30s ' 'test isolation'; cargo test --test isolation 2>&1 | grep '^test result'
+printf '%-30s ' 'test doc_truth'; cargo test --test doc_truth 2>&1 | grep '^test result'
+
+echo "== F. lib suite, three consecutive runs =="
+for i in 1 2 3; do cargo test --lib 2>&1 | grep '^test result'; done
+
+echo "== G. gates =="
+cargo fmt --all --check 2>&1 | tail -2; echo "fmt_exit=${PIPESTATUS[0]}"
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2; echo "clippy_exit=${PIPESTATUS[0]}"
+
+echo "== H. no HOME litter from the suite =="
+printf 'real HOME run logs AFTER (==BEFORE): %s\n' "$(ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l)"
+} >> "$A" 2>&1
+cat "$A"
+```
+
+Then the paste self-check:
+
+```sh
+D=docs/dev/milestones/M22-tool-surface/phase-01-pty-default.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m22-01.txt
+diff /tmp/pasted-m22-01.txt /tmp/e2e-m22-01.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+## Authorizations
+
+The executor may modify **only**:
+
+- `src/config/types.rs` — task 1: `default_execution_backend`, `uses_pty`,
+  `validate`'s message, and the doc comments named. Nothing else in the file.
+- `src/config/mod.rs` — task 2, the `#[cfg(test)]` module only.
+- `src/daemon/executor/mod.rs` and `src/daemon/executor/bg_shell.rs` — task 3,
+  **comment lines only**; a criterion asserts no code line changes.
+- `assets/etc/config.toml` — task 3, the `[execution]` block only.
+- `README.md` — task 3, the `[execution]` section only.
+- `docs/dev/milestones/M22-tool-surface/phase-01-pty-default.md` — **append to
+  the Update Log only.** Do not rewrite, reorder or delete any section above
+  it; the reviewer checks that every `## ` heading in this file survives.
+
+No other file. In particular do not touch `CLAUDE.md`, `src/shell/`,
+`src/daemon/executor/shell_exec.rs` or anything under `src/tmux/`.
+
+## Out of scope
+
+- **Live verification of chat, ghost, scheduled and background on the
+  substrate.** Architect-run at review per the M14 convention; recorded in
+  the Review verdict.
+- **Removing the tmux path or the flag.** That is M26. `"tmux"` stays a
+  first-class, honoured value.
+- **Any tool, prompt or context change.** Phases 02–10.
+- **Migrating existing users' `config.toml`.** A site with an explicit
+  `backend = "tmux"` line keeps tmux; a site with no line moves to pty, which
+  is the point. Say so in the Update Log; do not add migration code.
+
+## Update Log
+
+(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+
+<!-- entries appended below this line -->
