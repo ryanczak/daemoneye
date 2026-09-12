@@ -1,7 +1,7 @@
 # Phase 07b: a ghost shell can be stopped, and reports a RunResult
 
 **Milestone:** M24 — Run Manager
-**Status:** in-progress (bounced — see `bugs/bug-07b-1.md`)
+**Status:** review
 **Depends on:** phase-04 (`register_run`, `watch_stop_sentinel`,
 `STOP_POLL_INTERVAL`), phase-03 (`RunResult`, `Cancellation`), phase-06b
 (`CancelDoor`, `take_cancel_door`) and phase-07a (the ghost's `RunLogGuard`,
@@ -953,3 +953,138 @@ cargo_exit=0
 
 No production behaviour changed. The `#[serde(default)]` attribute is kept
 (redundant but harmless), so the `serde(default` grep criterion still holds.
+
+### Update — ts=1789179441443 (complete, server-authored)
+
+**Summary:** **Summary**
+
+This was a re-dispatch of phase-07b after bug-07b-1, and the only defect was the mutation-check-2 evidence, not the code. I re-ran the recorded mutation for real — removed `#[serde(default)]` from `MailboxResult.run`, confirmed absent by grep, ran `mailbox_reads_an_entry_written_before_the_run_field_existed` — and it passes, exactly as the bug report says: `run` is an `Option`, and serde deserializes a missing `Option` to `None` on its own, so the attribute cannot discriminate. The unreproducible "as predicted" red is gone from the Update Log, replaced by a "(mutation check 2, corrected)" entry whose transcript was captured mechanically (`/tmp/mut2-corrected.txt`, pasted verbatim, paste self-check `PASTE MATCH`) and that names `Option` as what genuinely makes legacy mailbox files parse. Nothing else was touched: `serde(default)` stays (redundant but harmless), so the `grep -c 'serde(default'` ≥1 criterion and all six original phase criteria remain satisfied without any code change.
+
+**Notes for review** — verification: all three re-dispatch criteria hold (`as predicted` → 0, `mutation check 2, corrected` → 1 Update Log hit, `option` in the corrected block → 7); `cargo test --lib agents::mailbox` still **7 passed, 0 failed** with no coverage cost, full lib suite **1759 passed, 0 failed**; both gates green and `cargo fmt --all` run before staging. Phase doc status remains `in-progress (bounced)` and the milestone README row unchanged for the server to finalize, tree is clean at `fa232ae`. Mutation checks 1 and 3 were left alone as instructed. Out of scope note carried unchanged from the first run: ghost cancellation is turn-top only (the in-turn `select!` half is deferred), `Request::Cancel` still doesn't reach a ghost — `daemoneye stop <run>` is the door — and `Budget::unlimited()` remains the M25 placeholder.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+nning 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 31 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.52s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md` — +51 -10
+
+**Commit:** fa232aedbc2eaf2b8d2b2f28ad2ed55f0faa1b13
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
