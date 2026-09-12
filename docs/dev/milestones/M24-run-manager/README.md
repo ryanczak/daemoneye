@@ -82,7 +82,7 @@ precede the full four-loop unification's completion.
 | 06b | chat-run-cancel ([phase-06b-chat-run-cancel.md](phase-06b-chat-run-cancel.md)) — delete `daemon/cancel.rs`; session→run map; both cancel doors converge on `cancel_run`; `daemoneye stop <run>` cancels a live chat turn | done        |
 | 07a | ghost-run-log ([phase-07a-ghost-run-log.md](phase-07a-ghost-run-log.md)) — a ghost gets a `RunId` + `RunLogGuard` + the right `RunKind`; first production `TurnStarted` emitter; Complete/HardFail/BudgetExceeded | **done** (approved_first_try, 2026-09-11) |
 | 07b | ghost-run-cancel-result ([phase-07b-ghost-run-cancel-result.md](phase-07b-ghost-run-cancel-result.md)) — cancel check at ghost turn top (`daemoneye stop <run>` reaches a ghost); mailbox carries `RunResult` | **done** (approved_after_2, 2026-09-11) |
-| 08 | scheduled-run — scheduled jobs onto `Run` | todo (not drafted) |
+| 08 | scheduled-run ([phase-08-scheduled-run.md](phase-08-scheduled-run.md)) — `RunKind::Scheduled` gets its first production constructor; wrap the 435-line body, derive the terminal state from the store | todo |
 | 09 | resume — briefing-seeded `daemoneye run resume` + seeded tasks from runbook `## Steps` | todo (not drafted) |
 | 10 | cli — `/runs`, `/run`, `/stop`; cross-run telemetry (`RunRecord`) if not deferred | todo (not drafted) |
 
@@ -112,6 +112,31 @@ precede the full four-loop unification's completion.
   end — the same measurement that made 06a a `Drop` guard, and the reason 07a
   puts the guard in the 16-line `trigger_ghost_turn` wrapper (`:287-302`) that
   every exit already funnels through, leaving the 760-line body alone.
+
+- **Phase 08 wraps rather than threads, for the third time.** `run_scheduled_job`
+  is 435 lines with seven returns and **eleven** `store.mark_done` sites, and it
+  returns `()`, not `Result` — so there is no single value to map. The phase
+  renames the body to `_inner`, wraps it, and **reads the outcome back out of
+  the store** (`ScheduleStore::list()` → `JobStatus`) rather than rewriting
+  eleven call sites the compiler could not check. Same instinct as 06a's and
+  07a's guards: in a long function, a hand-placed exit is a missed exit.
+  The load-bearing gotcha, pre-injected from `JobStatus`'s own doc comment: a
+  successful **`Every`** job reads back as **`Pending`**, not `Succeeded`,
+  because `mark_done` advances and reschedules it — a mapping that treats
+  `Pending` as "never finished" would mark every successful recurring job a
+  failure.
+
+- **A scheduled ghost job deliberately produces two run logs** — a `Scheduled`
+  parent and the `Ghost` child it started (`trigger: "scheduled"`). Recorded at
+  08's drafting so a later reader does not "fix" it into one.
+
+- **Scheduled-job cancellation is deliberately out of 08.** The exit criterion
+  says every run kind cancels; the honest position is that the residual gap is
+  small and points at superseded code. The script branch runs inside a tmux
+  `de-sj-*` window the 2.0 substrate replaces, so cancel logic written against
+  it would be discarded; and the branch that actually runs a long AI loop — a
+  scheduled **ghost** — already cancels through its own `Ghost` run (07b). What
+  is left uncancellable is a synchronous script that ends on its own.
 
 - **Self-referential greps: a doc criterion that quotes its own match string
   matches itself.** Found at the 07b review while writing the bounce criteria:
