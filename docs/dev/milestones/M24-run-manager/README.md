@@ -7,7 +7,7 @@ resume; and make **`run_terminal_command(background=true)` fall out of it** as a
 un-awaited chat Run against a dedicated substrate shell, replacing the tmux
 `de-bg-*` path.
 
-**Status:** **all 16 phases done 2026-09-12 — awaiting PE sign-off to close.** Scoped 2026-09-09, **PE sign-off on scope 2026-09-09**
+**Status:** **closed 2026-09-12, PE signed off.** All 16 phases done 2026-09-12. Scoped 2026-09-09, **PE sign-off on scope 2026-09-09**
 (scope + the M24-ahead-of-M21–M23 reorder both confirmed; background landing
 mid-milestone accepted).
 
@@ -392,7 +392,7 @@ precede the full four-loop unification's completion.
      to it — the completeness gate is itself incomplete. Phase-10 should add the
      entry when it takes ownership of the `var/log/runs` lifecycle row.
 
-## Retrospective — all phases done 2026-09-12, awaiting PE sign-off
+## Retrospective — closed 2026-09-12, PE signed off
 
 **Shape.** 10 charter rows became **16 phases**: 05, 06, 07 and 09 each split
 at drafting on a measured seam, and 09 three ways. Every split was decided by a

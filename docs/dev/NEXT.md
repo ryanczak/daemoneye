@@ -4,14 +4,14 @@ The one live pointer and nothing else. The append-only record of every earlier
 milestone and phase — and every `**Superseded — …**` pointer that once stood
 here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
-## M24 — Run Manager: all phases done, awaiting PE sign-off
+## M24 — Run Manager: **closed 2026-09-12, PE signed off**
 
 **Active phase: none.**
 
 All **16** M24 phases are `done` as of 2026-09-12 (10 charter rows; 05, 06, 07
 and 09 split at drafting on measured seams). The milestone retrospective is in
-`docs/dev/milestones/M24-run-manager/README.md` § Retrospective. **M24 is not
-closed** — closing is the PE's call, and there are decisions waiting:
+`docs/dev/milestones/M24-run-manager/README.md` § Retrospective. **PE signed
+off 2026-09-12.** Carried out of the close, still open:
 
 1. **A phase doc is append-only, and nothing enforces it.** Phase-10's run
    overwrote its own spec (556 lines, including the `Status:` line), and no gate
@@ -31,7 +31,7 @@ closed** — closing is the PE's call, and there are decisions waiting:
 4. **Deferred to M25 with the governor:** cross-run telemetry (`RunRecord` →
    scorecard/profile).
 
-**Next step:** PE reviews the retrospective and signs off, after which
+**Next step:** the three folds above are under PE review; then
 `/rexymcp:architect` scopes the next milestone. Nothing is dispatched until
 then.
 
