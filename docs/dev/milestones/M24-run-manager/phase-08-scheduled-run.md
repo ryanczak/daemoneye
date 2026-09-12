@@ -1,7 +1,7 @@
 # Phase 08: a scheduled job is a Run
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`RunId`/`RunKind`/`RunState`/`Briefing`), phase-02a
 (the turn log) and phase-07a (`RunLogGuard` with a kind-aware missed-exit goal).
 All **done**.
@@ -213,15 +213,22 @@ Each was run against the current tree and returns the "now" value shown.
 - [ ] **The mapping exists and is pure:**
       `grep -c 'fn scheduled_terminal_state' src/daemon/scheduled.rs` → **1**
       (now `0`), and
-      `sed -n '/fn scheduled_terminal_state/,/-> RunState/p' src/daemon/scheduled.rs | grep -c 'ScheduleStore'`
-      → **0**.
+      the signature takes no store — verified at review with
+      `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/scheduled.rs | sed -n '/fn scheduled_terminal_state/,/^}$/p' | grep -c 'ScheduleStore'`
+      → **0**. *(The originally-drafted `sed -n '/fn …/,/-> RunState/p'` range is
+      broken and was corrected at review: `-> RunState` sits on the signature
+      line itself, so sed hunts for a second occurrence that never comes and the
+      range runs 589 lines to EOF. An architect error, not an executor one.)*
 - [ ] **The body was wrapped, not rewritten:**
       `grep -c 'async fn run_scheduled_job_inner' src/daemon/scheduled.rs` →
       **1** (now `0`);
       `grep -c 'pub async fn run_scheduled_job' src/daemon/scheduled.rs` → **1**,
       unchanged (now `1`); and the eleven outcome sites are untouched —
-      `grep -c 'mark_done' src/daemon/scheduled.rs` → **11**, unchanged (now
-      `11`).
+      `grep -cE '^\s*store\.mark_done' src/daemon/scheduled.rs` → **11**,
+      unchanged. *(Re-pinned at review to the call sites. The bare-word
+      `grep -c 'mark_done'` reads **14** now — 11 calls, 1 doc-comment mention
+      the phase legitimately added, 2 test-assertion messages — so it pinned
+      prose as well as code. Architect error.)*
 - [ ] **The scheduled run is constructed** (production only, `awk` prefix
       `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/scheduled.rs |`):
       `grep -c 'RunKind::Scheduled'` → **1**;
@@ -241,7 +248,12 @@ Each was run against the current tree and returns the "now" value shown.
 - [ ] **The scheduler itself is untouched:**
       `git diff --stat -- src/scheduler.rs | wc -l` → **0**.
 - [ ] **All five `JobStatus` variants are mapped** — production only, same
-      `awk` prefix: `grep -c 'JobStatus::'` → **5 or more**.
+      `awk` prefix, counting *variants* not match arms:
+      `grep -o 'JobStatus::[A-Za-z]*' | sort -u | wc -l` → **5**.
+      *(Re-pinned at review. The drafted `grep -c 'JobStatus::' → >= 5` counts
+      arms, and Task 1's own rules fold `Pending` and `Succeeded` into one arm,
+      so correct code reads **4**. Architect error — the criterion contradicted
+      the spec beside it.)*
 - [ ] No `unsafe`/`unwrap`/`expect`/`panic!` in production code:
       `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/scheduled.rs | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe'`
       → **0**, unchanged (now **0**).
@@ -852,3 +864,38 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 2d9e0949de9654ae5e4e96d18cc43bff7a40a11e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-12
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (121 turns)
+- **Scope deviations:** none in the code. Two blemishes in the Update Log's
+  hand-written commentary, neither affecting the mechanically captured
+  transcript (which I re-extracted and byte-compared against the executor's
+  `/tmp/e2e-m24-08.txt`: **PASTE MATCH**). First, a hand-quoted `grep -n` shows
+  line numbers `72/73` where the file reads `71/72` — the substance (exactly one
+  `RunLogGuard::start` and one `RunId::new()` site) is correct, but a retyped
+  line number is the retyped-transcript class this milestone bounced on twice.
+  Second, the line "No ad-hoc `RLOG` set; the two running-by-name tests never
+  ran and their dirs were implicitly removed" is incoherent — this phase has no
+  `RLOG` and no such tests. Both are noise around correct evidence rather than
+  false claims about a verification outcome, which is why this is a note and not
+  a bug.
+- **Calibration:** **three acceptance criteria were wrong as drafted, all
+  mine**, and the executor caught all three, explained each structurally, and
+  re-verified with correct greps — unprompted, in its own summary. That is
+  precisely the behaviour bug-07b-1 asked for, and it is worth recording as the
+  positive case. The three: (1) a `sed` range bracketed by a pattern that sits
+  on its own start line, so it ran to EOF; (2) `grep -c 'mark_done'` over the
+  whole file, which pinned a doc comment and two test messages alongside the 11
+  call sites; (3) `grep -c 'JobStatus::' >= 5`, which counts match arms while
+  Task 1's own rules fold two variants into one arm — the criterion contradicted
+  the spec printed beside it. All three are re-pinned above.
+  This is the **sixth, seventh and eighth** instance across 07a/07b/08 of a
+  criterion matching more than it was pinning, and the failure mode is now
+  specific enough to name: *a structural criterion must be validated by running
+  it against the tree **as it will look after the phase**, not only before.* All
+  three of these returned their stated value on the pre-phase tree — which is
+  what I checked — and drifted only once the phase's own code and tests existed.
+  The milestone README carries the fold proposal; it needs PE sign-off.
