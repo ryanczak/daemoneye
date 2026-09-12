@@ -1,7 +1,7 @@
 # Bug 1 on phase-07b: mutation check 2's red-then-green transcript does not reproduce
 
 **Severity:** major
-**Status:** open
+**Status:** resolved — `fa232ae` (prose + corrected entry) and `ffa280d` (transcript fence)
 **Filed:** 2026-09-11
 
 ## What's wrong
@@ -84,20 +84,20 @@ outcome rather than the observed one — the spec's own parenthetical ("a serde
 Each was run against the current tree (commit `4cd6a4c`) and returns the "now"
 value shown, so each fails today.
 
-- [ ] A corrected entry exists:
+- [x] A corrected entry exists:
       `awk '/^## Update Log/,0' docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md | grep -c 'mutation check 2, corrected'`
       → **1** (now **0**). *Scoped to the Update Log: this criteria block
       quotes the same strings, so an unscoped grep matches itself.* It must contain the **mechanically captured** output
       of applying the mutation it names and running the named test — redirect to
       a file and paste that file.
-- [ ] The unreproducible claim is gone:
+- [x] The unreproducible claim is gone:
       `awk '/^## Update Log/,0' docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md | grep -c 'as predicted'`
       → **0** (now **1**).
-- [ ] The entry says what actually makes the old file parse — it must name
+- [x] The entry says what actually makes the old file parse — it must name
       `Option`:
       `awk '/^## Update Log/,0' docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md | awk '/mutation check 2, corrected/,0' | grep -ci 'option'`
       → **1 or more** (now **0**).
-- [ ] `cargo test --lib agents::mailbox` → **7 or more** passing, `0 failed`
+- [x] `cargo test --lib agents::mailbox` → **7 or more** passing, `0 failed`
       (now **7** — this bug must not cost coverage).
-- [ ] Full lib suite **1759 or more** passing, `0 failed` (now **1759**).
-- [ ] All four gates pass.
+- [x] Full lib suite **1759 or more** passing, `0 failed` (now **1759**).
+- [x] All four gates pass.

@@ -1,7 +1,7 @@
 # Phase 07b: a ghost shell can be stopped, and reports a RunResult
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (`register_run`, `watch_stop_sentinel`,
 `STOP_POLL_INTERVAL`), phase-03 (`RunResult`, `Cancellation`), phase-06b
 (`CancelDoor`, `take_cancel_door`) and phase-07a (the ghost's `RunLogGuard`,
@@ -1254,3 +1254,41 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** ffa280d2717fc2608f31d04ad49999afd80026e4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-11
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bug-07b-1, bug-07b-2 — both the same artifact, the
+  mutation-check-2 evidence; the code was correct from the first run and never
+  changed across either bounce)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (278 turns, then
+  38, then 19)
+- **Scope deviations:** `tests/integration.rs` edited outside the Authorizations
+  list — mechanically forced, two `MailboxResult` literals that cannot compile
+  without the new field; an architect omission, not a deviation of substance.
+  `#[allow(clippy::too_many_arguments)]` on `do_ghost_turn`, undisclosed by the
+  executor: genuinely forced at 8/7 args by the spec's own two added parameters,
+  and matching three existing instances in the tree including
+  `src/daemon/run/result.rs:192` from this same milestone. Serde on the new
+  field kept `default` and dropped the spec's `skip_serializing_if`; the stated
+  reason is wrong (the skip would not have broken the round trip) but the
+  outcome is cosmetic, and the attribute turns out to be redundant anyway.
+- **Calibration:** **both bounces were evidence defects on correct code, and
+  both of my bug DoDs under-pinned the artifact.** bug-07b-1 pinned the prose
+  string `as predicted` and the fix left the fabricated red intact in the fenced
+  transcript twenty lines below; bug-07b-2 then had to pin the fence itself.
+  The lesson is narrower than "check the evidence": **pin evidence where it
+  lives.** A claim that appears in prose and again in a transcript block is two
+  artifacts, and a grep for the prose wording polices one of them.
+  Round 1's criteria also had to be *retired* rather than re-pinned, because the
+  server's `(complete)` entry quotes the executor's summary — so any
+  whole-Update-Log grep for a string the summary discusses can never settle.
+  Together with the 07a/07b structural-grep collisions this is now **five**
+  instances in two phases of a criterion matching more than it was pinning,
+  three of them mine. The milestone README carries the fold proposal; it needs
+  PE sign-off before anything lands in WORKFLOW.md.
+  On the executor: all three runs were fast and on-target (19-turn final run,
+  exactly the four lines asked for), and the corrected mutation entry it wrote
+  reproduces exactly when re-run. The first run's failure was reporting a
+  predicted result as an observed one — the spec's own parenthetical supplied
+  the wording, which is a spec hazard as much as an executor one.

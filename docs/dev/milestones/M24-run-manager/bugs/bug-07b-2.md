@@ -1,7 +1,7 @@
 # Bug 2 on phase-07b: the fabricated mutation-2 red survives in the fenced transcript
 
 **Severity:** major
-**Status:** open
+**Status:** resolved — `ffa280d`
 **Filed:** 2026-09-11
 
 ## What's wrong
@@ -73,16 +73,16 @@ was left alone. Nothing in bug-07b-1's DoD referenced it.
 Each was run against the current tree (commit `16f56e6`) and returns the "now"
 value shown, so each fails today.
 
-- [ ] **The fabricated red is gone from the mutation-checks entry:**
+- [x] **The fabricated red is gone from the mutation-checks entry:**
       `awk '/^### Update — 2026-09-11 16:56/,/^### Update — 2026-09-11 16:57/' docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md | grep -c 'Caused by: missing field'`
       → **0** (now **1**). *Scoped to that entry: the corrected entry and these
       criteria both legitimately discuss the string.*
-- [ ] **Checks 1 and 3 keep their transcripts** — same `awk` range:
+- [x] **Checks 1 and 3 keep their transcripts** — same `awk` range:
       `grep -c '^(1) red:'` → **1** and `grep -c '^(3) red:'` → **1**, both
       unchanged (now **1** each).
-- [ ] `cargo test --lib agents::mailbox` → **7 or more** passing, `0 failed`
+- [x] `cargo test --lib agents::mailbox` → **7 or more** passing, `0 failed`
       (now **7**).
-- [ ] Full lib suite **1759 or more** passing, `0 failed` (now **1759**).
-- [ ] **No code change:**
+- [x] Full lib suite **1759 or more** passing, `0 failed` (now **1759**).
+- [x] **No code change:**
       `git diff 16f56e6..HEAD --stat -- src/ tests/ | wc -l` → **0**.
-- [ ] All four gates pass.
+- [x] All four gates pass.
