@@ -83,7 +83,9 @@ precede the full four-loop unification's completion.
 | 07a | ghost-run-log ([phase-07a-ghost-run-log.md](phase-07a-ghost-run-log.md)) — a ghost gets a `RunId` + `RunLogGuard` + the right `RunKind`; first production `TurnStarted` emitter; Complete/HardFail/BudgetExceeded | **done** (approved_first_try, 2026-09-11) |
 | 07b | ghost-run-cancel-result ([phase-07b-ghost-run-cancel-result.md](phase-07b-ghost-run-cancel-result.md)) — cancel check at ghost turn top (`daemoneye stop <run>` reaches a ghost); mailbox carries `RunResult` | **done** (approved_after_2, 2026-09-11) |
 | 08 | scheduled-run ([phase-08-scheduled-run.md](phase-08-scheduled-run.md)) — `RunKind::Scheduled` gets its first production constructor; wrap the 435-line body, derive the terminal state from the store | **done** (approved_first_try, 2026-09-12) |
-| 09 | resume — briefing-seeded `daemoneye run resume` + seeded tasks from runbook `## Steps` | todo (not drafted) |
+| 09a | resume-seed ([phase-09a-resume-seed.md](phase-09a-resume-seed.md)) — the pure seed: terminal briefing out of the turn log + directive, "not transcript rehydration" made structural | todo |
+| 09b | resume-wiring — `daemoneye run resume <id> "<directive>"`: IPC request, CLI subcommand, ghost re-spawn from the seed | todo (not drafted) |
+| 09c | seeded-tasks — runbook `## Steps` becomes a ghost run's task list, coverage-checked before completion | todo (not drafted) |
 | 10 | cli — `/runs`, `/run`, `/stop`; cross-run telemetry (`RunRecord`) if not deferred | todo (not drafted) |
 
 ## Notes
@@ -113,6 +115,26 @@ precede the full four-loop unification's completion.
   puts the guard in the 16-line `trigger_ghost_turn` wrapper (`:287-302`) that
   every exit already funnels through, leaving the 760-line body alone.
 
+- **Phase 09 split three ways at drafting (2026-09-12).** The charter row
+  bundled two unrelated capabilities — briefing-seeded resume, and seeded tasks
+  from a runbook `## Steps` section — and resume itself splits again on the
+  pure/wiring seam that has now worked for 05, 06, 07 and 08. **09a** builds the
+  seed text and nothing else (no CLI, no IPC, no spawn); **09b** wires it;
+  **09c** is seeded tasks, which shares no code with either — verified at
+  drafting that **no `## Steps` parsing exists anywhere in the tree**.
+
+- **The "not transcript rehydration" clause is enforced by a signature, not a
+  promise.** 09a's `render_seed` takes `(kind, Option<&Briefing>, directive)`
+  and a criterion pins that `TurnLogRecord` does not appear in it — the function
+  *cannot* replay turns. Design § 2.3's wording became a structural property
+  rather than a review note.
+
+- **Two unrelated types are both called "briefing", and 09a pre-injects the
+  distinction as a table.** `crate::daemon::briefing::read_briefing(agent)` is
+  G4's free-form per-agent prose; `crate::daemon::run::Briefing` is phase-01's
+  bounded struct living inside `RunState`. A criterion asserts the G4 module is
+  not referenced from anywhere in `src/daemon/run/`.
+
 - **Phase 08 wraps rather than threads, for the third time.** `run_scheduled_job`
   is 435 lines with seven returns and **eleven** `store.mark_done` sites, and it
   returns `()`, not `Result` — so there is no single value to map. The phase
@@ -137,6 +159,16 @@ precede the full four-loop unification's completion.
   it would be discarded; and the branch that actually runs a long AI loop — a
   scheduled **ghost** — already cancels through its own `Ghost` run (07b). What
   is left uncancellable is a synchronous script that ends on its own.
+
+- **The rule the 08 review earned, and the shape of the fold to come:** a
+  structural criterion must be validated against the tree **as it will look
+  after the phase**, not only before. All three of 08's bad criteria returned
+  their stated value on the pre-phase tree — which is what was checked — and
+  drifted only once the phase's own code and tests existed. With the 07a/07b
+  collisions that is **eight** instances across four phases of a criterion
+  matching more than it was pinning, and this is the generalisation that covers
+  all of them. Still **awaiting PE sign-off** before anything lands in
+  WORKFLOW.md.
 
 - **Self-referential greps: a doc criterion that quotes its own match string
   matches itself.** Found at the 07b review while writing the bounce criteria:

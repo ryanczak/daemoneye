@@ -6,7 +6,37 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M24 — Run Manager (active)
 
-**Active phase: phase-08 — scheduled-run**
+**Active phase: phase-09a — resume-seed**
+(`docs/dev/milestones/M24-run-manager/phase-09a-resume-seed.md`, status: todo,
+drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-09a`.
+
+Phase-08 closed **approved_first_try 2026-09-12** (`5138a33`). Three of its
+acceptance criteria were wrong as drafted — all mine — and the executor caught
+all three unprompted, explained each structurally and re-verified with correct
+greps. The rule that generalises them: **validate a structural criterion against
+the tree as it will look after the phase, not only before.**
+
+Scope for 09a: the resume **seed**, pure. Given a finished run's id and a
+directive, read its turn log, take the kind from the first `RunStarted` and the
+briefing from the last `RunFinished`, and render the text a resumed run starts
+from. `Complete` and `Cancelled` runs carry no briefing and are still resumable
+on the directive alone; a run with no `RunFinished` is **not** resumable. 10
+tests, nine of them pure.
+
+The design's "not transcript rehydration" clause becomes structural:
+`render_seed(kind, Option<&Briefing>, directive)` cannot see `TurnLogRecord`,
+and a criterion pins that.
+
+Pre-injected trap: **two unrelated types are called "briefing"** —
+`daemon::briefing::read_briefing(agent)` (G4 prose) versus `run::Briefing`
+(phase-01's bounded struct). 09a uses only the second, and a criterion asserts
+the first is not referenced from `src/daemon/run/` at all.
+
+Phase 09 split three ways: **09a** seed (this), **09b** wiring (CLI + IPC +
+re-spawn), **09c** seeded tasks from a runbook `## Steps` section — none of
+which exists in the tree today. Then 10 (cli). 09b and 09c are not drafted.
+
+**Superseded — M24 phase-08 — scheduled-run**
 (`docs/dev/milestones/M24-run-manager/phase-08-scheduled-run.md`, status: todo,
 drafted 2026-09-11). Dispatch with `/rexymcp:dispatch phase-08`.
 
