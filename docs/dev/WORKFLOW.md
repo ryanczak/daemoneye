@@ -37,6 +37,7 @@ session, it's two phases — re-split it.
  ```
  docs/dev/
  ├── NEXT.md                           pointer to the active phase; executor reads first
+ ├── NEXT-HISTORY.md                   append-only record of every earlier pointer; never current
  ├── STANDARDS.md                       engineering contract; read every phase
  ├── WORKFLOW.md                        this file
  └── milestones/
