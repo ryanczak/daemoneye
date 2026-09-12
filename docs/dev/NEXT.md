@@ -6,7 +6,38 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M24 — Run Manager (active)
 
-**Active phase: phase-09c — seeded-tasks**
+**Active phase: phase-10 — run-listing**
+(`docs/dev/milestones/M24-run-manager/phase-10-run-listing.md`, status: todo,
+drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-10`.
+**This is M24's last phase** — when it is `done`, the milestone hits its
+boundary, which is a human sign-off gate.
+
+Phase-09c closed **approved_first_try 2026-09-12** (`bb5eb80`), closing M24's
+last *behavioural* exit criterion. The mutation-checks-as-Spec-task fold worked
+first time, and the executor caught a spec defect from the inside: mutation 2
+told it to drop a range check its implementation does not have (out-of-range
+indices are excluded structurally), so it reported the vacuous green and found
+the mutation that does discriminate.
+
+Scope for 10: the **discovery** surface. Nine phases have written
+`var/log/runs/<id>.jsonl` and **nothing reads that directory** — every command
+so far takes an id the user had to find by hand. `run/list.rs` adds
+`RunSummary`, a pure `summarize`, a `list_runs()` that enumerates the dir, and a
+pure `render_runs_table`; `daemoneye run list` and the `/runs`, `/run <id>`,
+`/stop <id>` slash commands are the surfaces. All read `$HOME` directly — no
+daemon round trip, pinned by a criterion that none calls `request_once`.
+
+Naming: the exit clause says `daemoneye runs`, but 09b established the `Run`
+group, so the command is `daemoneye run list`. Substance met, wording deviation
+recorded.
+
+`/run` and `/stop` are ten-line wrappers over `run_log_tail` and `request_stop`,
+which already exist — criteria pin that the slash module re-implements neither.
+
+Deferred to M25 with the governor: cross-run telemetry (`RunRecord` →
+scorecard/profile), which the milestone README always listed as a candidate.
+
+**Superseded — M24 phase-09c — seeded-tasks**
 (`docs/dev/milestones/M24-run-manager/phase-09c-seeded-tasks.md`, status: todo,
 drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-09c`.
 

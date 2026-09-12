@@ -86,7 +86,7 @@ precede the full four-loop unification's completion.
 | 09a | resume-seed ([phase-09a-resume-seed.md](phase-09a-resume-seed.md)) — the pure seed: terminal briefing out of the turn log + directive, "not transcript rehydration" made structural | **done** (approved_first_try, 2026-09-12) |
 | 09b | resume-wiring ([phase-09b-resume-wiring.md](phase-09b-resume-wiring.md)) — `daemoneye run resume <id> "<directive>"`: IPC request, CLI subcommand, ghost re-spawn from the seed; retires `resume_seed` for `resume_plan` | **done** (escalated, 2026-09-12) |
 | 09c | seeded-tasks ([phase-09c-seeded-tasks.md](phase-09c-seeded-tasks.md)) — runbook `## Steps` parsed; completion gated on literal `STEP <n>: DONE\| **done** (approved_first_try, 2026-09-12) | **done** (approved_first_try, 2026-09-12) |
-| 10 | cli — `/runs`, `/run`, `/stop`; cross-run telemetry (`RunRecord`) if not deferred | todo (not drafted) |
+| 10 | run-listing ([phase-10-run-listing.md](phase-10-run-listing.md)) — `daemoneye run list` + `/runs` `/run <id>` `/stop <id>`; the first reader of `var/log/runs/` | todo |
 
 ## Notes
 
@@ -114,6 +114,19 @@ precede the full four-loop unification's completion.
   end — the same measurement that made 06a a `Drop` guard, and the reason 07a
   puts the guard in the 16-line `trigger_ghost_turn` wrapper (`:287-302`) that
   every exit already funnels through, leaving the 760-line body alone.
+
+- **Nine phases wrote `var/log/runs/` and nothing read it.** Phase-10 is the
+  first reader: every earlier phase addressed a run by an id the user had to
+  find by hand, and 09b shipped `daemoneye run resume` with that limitation
+  recorded in its own Out of scope. Worth noting as a shape — a milestone can
+  build a durable artifact for a long time before anything makes it
+  discoverable, and the discovery surface is easy to keep deferring because
+  nothing fails without it.
+
+- **The exit clause says `daemoneye runs`; the command is `daemoneye run list`.**
+  09b established a `Run` subcommand group, and a second top-level `runs` beside
+  `run` would be two spellings of one noun. The criterion is met in substance
+  and the wording deviation is recorded rather than silently absorbed.
 
 - **09c makes the mutation checks a numbered `## Spec` task**, because 09b's
   went unrun: their instructions lived outside `## Spec` and so were never
