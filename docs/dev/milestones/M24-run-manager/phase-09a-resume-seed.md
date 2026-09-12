@@ -1,7 +1,7 @@
 # Phase 09a: the resume seed — briefing, not transcript
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`RunKind`, `Briefing`, `RunState`), phase-02a
 (`TurnLogRecord`, `read_turn_log`) and phase-03 (`Briefing::render()`). All
 **done**.
@@ -255,7 +255,10 @@ too.
       `sed -n '/pub fn terminal_outcome/,/^}$/p' src/daemon/run/resume.rs | grep -cE 'read_turn_log|std::fs|File::'`
       → **0**.
 - [ ] **`resume_seed` is the only reader**, prod-scoped:
-      `grep -c 'read_turn_log'` → **1**.
+      `grep -c 'let records = read_turn_log'` → **1**. *(Re-pinned at review to
+      the call site. The drafted bare `grep -c 'read_turn_log'` reads **2** —
+      the call plus the `use super::{…}` import — so it pinned the import line
+      too. Architect error; the property it meant to pin holds.)*
 - [ ] **The G4 briefing is not involved** — the wrong-`Briefing` trap:
       `grep -c 'daemon::briefing' src/daemon/run/resume.rs` → **0**, and
       `grep -rc 'daemon::briefing' src/daemon/run/ --include='*.rs' | grep -v ':0' | wc -l`
@@ -780,3 +783,32 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 9aebed1d010ade06422c96dceeb23c7773a62870
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-12
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (133 turns)
+- **Scope deviations:** none. 14 tests against the plan's 10 — the criterion
+  said "10 or more" and the extra four are real coverage (two `resume_seed`
+  error paths and the `Display` strings the 09b CLI will print).
+- **Calibration:** **one more loose criterion, mine** — `grep -c 'read_turn_log'`
+  counts the `use super::{…}` import alongside the single call, so it reads 2
+  where the criterion said 1. Re-pinned above to `let records = read_turn_log`.
+  Ninth instance of the family, and the third phase running where the same rule
+  would have caught it: *validate a structural criterion against the tree as it
+  will look after the phase*. An import line is part of "after".
+  **Two things the executor did that are worth recording as the standard.**
+  First, mutation check 2's prescribed break was ambiguous about placement, and
+  the first placement it tried was **vacuously green**. It recorded that
+  observation explicitly — "a mutant in that position cannot drop the
+  directive" — then found the placement that does discriminate and recorded
+  that transcript too. That is exactly what the spec's "if a mutation does not
+  turn its test red, say so" clause asked for, and I reproduced both outcomes.
+  Second, its first paste self-check printed `PASTE MISMATCH` (a dropped header
+  line and a trailing blank); it fixed the paste and **disclosed the
+  intermediate failure** rather than presenting only the final `PASTE MATCH`.
+  I re-extracted the fence and byte-compared it against the executor's
+  `/tmp/e2e-m24-09a.txt`: byte-identical. After two bounces in this milestone
+  for evidence that was not what it claimed, an executor volunteering "my first
+  attempt failed and here is why" is the behaviour the bounces were for.
