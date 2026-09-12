@@ -86,7 +86,7 @@ precede the full four-loop unification's completion.
 | 09a | resume-seed ([phase-09a-resume-seed.md](phase-09a-resume-seed.md)) — the pure seed: terminal briefing out of the turn log + directive, "not transcript rehydration" made structural | **done** (approved_first_try, 2026-09-12) |
 | 09b | resume-wiring ([phase-09b-resume-wiring.md](phase-09b-resume-wiring.md)) — `daemoneye run resume <id> "<directive>"`: IPC request, CLI subcommand, ghost re-spawn from the seed; retires `resume_seed` for `resume_plan` | **done** (escalated, 2026-09-12) |
 | 09c | seeded-tasks ([phase-09c-seeded-tasks.md](phase-09c-seeded-tasks.md)) — runbook `## Steps` parsed; completion gated on literal `STEP <n>: DONE\| **done** (approved_first_try, 2026-09-12) | **done** (approved_first_try, 2026-09-12) |
-| 10 | run-listing ([phase-10-run-listing.md](phase-10-run-listing.md)) — `daemoneye run list` + `/runs` `/run <id>` `/stop <id>`; the first reader of `var/log/runs/` | **in-progress** (2026-09-12) |
+| 10 | run-listing ([phase-10-run-listing.md](phase-10-run-listing.md)) — `daemoneye run list` + `/runs` `/run <id>` `/stop <id>`; the first reader of `var/log/runs/` | **done** (approved_first_try, 2026-09-12) |
 
 ## Notes
 
