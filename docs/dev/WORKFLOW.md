@@ -565,7 +565,13 @@ third is the one that actually determines whether the re-dispatch does anything:
 2. **Flip the phase doc's `Status:`** back to `in-progress`, naming the bug.
 3. **Refresh the phase doc's acceptance criteria** so the outstanding work is
    expressed *there*, and **run each new criterion to confirm it fails against
-   the current tree**. Paste nothing you did not execute.
+   the current tree**. Paste nothing you did not execute. **When the finding is
+   an evidence artifact, pin the artifact where it lives** — the fenced
+   transcript, scoped to its entry — not the prose that describes it: a claim
+   that appears in prose *and* in a fence is two artifacts, and a grep for the
+   prose wording polices one. *(M24 phase-07b bounced twice on the same
+   fabricated red: the first bug pinned `as predicted` in the prose, the fix
+   removed it, and the fence twenty lines below still showed the red.)*
 4. **Update the milestone README row** and record the bounce in telemetry.
 
 **Step 3 is the load-bearing one, and it is the one that gets skipped.** The
@@ -1391,11 +1397,21 @@ the executor writes. Three recipes cover every instance seen so far:
 | production code only | `sed -n '1,/^#\[cfg(test)\]/p' <file> \| grep -c …` |
 | the Update Log only | `sed -n '/^## Update Log/,$p' <doc> \| grep -c …` |
 | a section of a doc | `sed -n '/^## Section/,/^## /p' <doc> \| grep -c …` |
+| an identifier the phase itself introduces | prod-scope it (row 1), and expect the phase's own **test names, `use` lines and doc comments** to match it — they arrive with the code |
 
 The tell at drafting is mechanical, so make it a literal step: **after writing
 a grep criterion, run it against the phase doc you are writing.** A non-zero
 hit on your own spec means the corpus is contaminated — scope it or pick a
 different token.
+
+**The corpus that contaminates can be the phase's own future.** Validate a
+structural criterion against the tree *as it will look after the phase*, not
+only before. Fourteen M24 criteria returned their stated value on the pre-phase
+tree — which is what was checked — and drifted the moment the phase added the
+tests that name its symbols, the `use` line that imports the function, or an
+identifier of which the pinned token is a substring (`_runbook_name` inside
+`ghost_runbook_name`). All fourteen were architect-side; the fourth table row
+is the recipe. *(Row added 2026-09-12 at M24 close, on PE sign-off.)*
 
 *(Folded 2026-08-29 at M18 close, on PE sign-off, at four further occurrences:
 phase-02's criterion quoting the very sentence it counted; phase-04's two

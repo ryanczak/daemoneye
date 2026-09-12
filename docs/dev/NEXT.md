@@ -18,21 +18,23 @@ off 2026-09-12.** Carried out of the close, still open:
    caught it — the suite was green with the spec gone and `bug_tracker` passed
    with no status line. Restored from git at review. Wants a guard test or a
    line in the phase template.
-2. **Three calibration folds proposed, none landed.** `WORKFLOW.md` is
-   untouched per the architect contract; each needs PE sign-off:
-   - *validate a structural criterion against the tree as it will look **after**
-     the phase* — **14 instances** across 07a/07b/08/09a/09b/10, all
-     architect-side;
-   - *state the property to break, not the line to edit* — 2 vacuous mutation
-     instructions (09c, 10);
-   - *pin evidence where it lives* — 2 (07b's two bounces).
+2. **Calibration folds — PE decided 2026-09-12.** Two of the three proposals
+   turned out to already exist in `WORKFLOW.md` and had not been followed (the
+   `## Spec` mutation-task rule, 2026-08-08; corpus scoping, 2026-08-29).
+   - **Landed:** the after-the-phase corpus rule, as a fourth row on the
+     existing scoping table plus one paragraph (14 instances, all
+     architect-side).
+   - **Landed:** *pin evidence where it lives*, as a clause on bounce step 3
+     (07b ×2).
+   - **Held at 2:** *state the property to break, not the line* (09c, 10). It
+     tenses against the existing "exact `old_str`" prescription; resolve on a
+     third occurrence.
 3. **One local-only `WORKFLOW.md` edit is on the upstream push backlog**: the
    `NEXT-HISTORY.md` row in the directory layout.
 4. **Deferred to M25 with the governor:** cross-run telemetry (`RunRecord` →
    scorecard/profile).
 
-**Next step:** the three folds above are under PE review; then
-`/rexymcp:architect` scopes the next milestone. Nothing is dispatched until
+**Next step:** `/rexymcp:architect` scopes the next milestone. Nothing is dispatched until
 then.
 
 ## Historical
