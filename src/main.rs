@@ -126,6 +126,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: AgentCommands,
     },
+    /// Manage finished runs
+    Run {
+        #[command(subcommand)]
+        cmd: RunCommands,
+    },
     /// Show AI cost summary from events log
     Costs {
         /// Start date (YYYY-MM-DD, inclusive)
@@ -199,6 +204,17 @@ enum AgentCommands {
         /// Clear the briefing file
         #[arg(long)]
         clear: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RunCommands {
+    /// Resume a finished ghost run from its briefing plus a new directive
+    Resume {
+        /// The finished run's id
+        run: String,
+        /// What the resumed run should do differently
+        directive: String,
     },
 }
 
@@ -533,6 +549,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             AgentCommands::Briefing { name, clear } => {
                 run_agent_briefing(&name, clear)?;
+            }
+        },
+        Commands::Run { cmd } => match cmd {
+            RunCommands::Resume { run, directive } => {
+                cli::run_resume(&run, &directive).await?;
             }
         },
         Commands::Costs {

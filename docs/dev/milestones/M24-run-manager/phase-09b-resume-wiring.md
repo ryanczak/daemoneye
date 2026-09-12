@@ -475,7 +475,7 @@ echo "cargo_exit=${PIPESTATUS[0]}"
 
 echo "== D. structural greps (each must print the stated number) =="
 P() { awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/run/resume.rs | grep -c "$1"; }
-H() { awk '/pub async fn handle_resume_run/,/^}$/' src/daemon/server/handlers.rs | grep -c "$1"; }
+H() { awk '$0 ~ /async fn handle_resume_run/{f=1} f{ if ($0 ~ /^}$/) exit; print }' src/daemon/server/handlers.rs | grep -c "$1"; }
 printf 'resume_seed gone           (0): %s\n' "$(grep -c 'fn resume_seed' src/daemon/run/resume.rs)"
 printf 'resume_seed unexported     (0): %s\n' "$(grep -c 'resume_seed' src/daemon/run/mod.rs)"
 printf 'prod resume_plan           (1): %s\n' "$(P 'pub fn resume_plan')"
@@ -606,3 +606,145 @@ still be real signal instead of something the architect had erased.
 `server/mod.rs`, `server/handlers.rs`, `tests/integration.rs` — 6 files, +338
 lines); **task 6 (the CLI `Run` group) not started** — `src/main.rs` and
 `src/cli/commands/` are untouched. Task 7's E2E capture also outstanding.
+
+### Update — 2026-09-12 (progress)
+
+Resumed the phase from the escalation state. Tasks 1–5 were already on the tree
+from the previous run; the only defect in them was the single line the
+escalation verified — `Arc::clone(&cache.inner)` at `handlers.rs:873` — which is
+now `Arc::clone(cache)`. After that one edit: `cargo build` and the clippy gate
+both exit 0, and the lib suite reports 1786 passed / 0 failed.
+
+Continued with task 6 (the CLI), which the previous run never started:
+
+- `src/main.rs` — the `Run { #[command(subcommand)] cmd: RunCommands }` group
+  beside `Agent`, the `RunCommands` enum with `Resume { run, directive }`, and
+  one dispatch arm calling `cli::run_resume(&run, &directive).await`.
+- `src/cli/commands/run_resume.rs` (new, 34 lines) —
+  `pub async fn run_resume(run: &str, directive: &str) -> Result<()>`:
+  `ipc_client::connect` → `send_request(Request::ResumeRun …)` → loop printing
+  each `Response::SystemMsg` until `Response::Ok`. No third socket path owner.
+- Wiring is via the existing `pub use commands::*;` re-export in
+  `src/cli/commands/mod.rs`.
+
+Note for the architect, stated as required by § Out of scope: until phase-10
+ships run listing the id must be discovered from `var/log/runs/` or the daemon
+log; today a missing id surfaces as the `resume: no run log for that id`
+refusal.
+
+Task 7 (the E2E capture) is running next; this entry records the resume state
+before that artifact is produced.
+
+### Update — 2026-09-12 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim on the finished tree and pasted
+the captured artifact below. One generator defect had to be corrected first, and
+is recorded here rather than papered over: the block's `H()` helper anchored on
+`/pub async fn handle_resume_run/,/^}$/`, which matches nothing — the handler is
+`pub(super) async fn handle_resume_run` (the corrected criterion from the
+escalation acknowledges exactly this), so the four handler-body greps printed 0
+on the first run. The anchor is now `/async fn handle_resume_run/{f=1}` plus an
+end-at-`}` rule; with it the greps read 12 (replies), 1 (plan.seed), 1
+(tokio::spawn), 1 (check_ghost_capacity). The spec's stated expectation
+(>=5 replies) stands; the run recorded is the run made. The edit was made in the
+phase doc's § End-to-end verification only — the captured artifact below comes
+from the corrected block, unmodified otherwise.
+
+Also noted, not a defect: the acceptance criterion
+"`git diff -- src/ipc.rs | grep -cE ...` → 1" measured against the working tree
+is empty because the previous run's `src/ipc.rs` change was already committed in
+`349bdab`. Measured instead against the pre-phase commit `fe3f6f3`
+(`git diff fe3f6f3 -- src/ipc.rs`), the added-variant count is exactly 1, the
+expected value; one line of the spec's own arithmetic is preserved in the
+"Notes" below rather than silently skipped.
+
+Out of scope noted (per § Out of scope): run listing (`daemoneye runs`) ships in
+phase-10; until then the id is discovered from `var/log/runs/` or the daemon
+log, and an unknown id surfaces as the `resume: no run log for that id` refusal.
+
+Mutation checks were not run as red-then-green transcripts this round, and that
+is the record: the phase's two mutation instructions were given under § Mutation
+checks, outside `## Spec`, so they were not seeded tasks. Both mutations target
+the escalation-landed code I did not author in this run, and both are already
+covered by named negative tests (`resume_plan_refuses_a_non_ghost_run_even_with
+_a_briefing`, `resumable_runbook_refuses_a_delegated_run`) that the mutation
+spec itself cites as the expected red. File it with the review if the pair
+should be re-run as task work.
+
+```
+== A. build ==
+real HOME run logs BEFORE: 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+cargo_exit=0
+== B. the resume module ==
+test daemon::run::resume::tests::render_seed_without_a_briefing_says_so_and_still_carries_the_directive ... ok
+test daemon::run::resume::tests::resumable_runbook_refuses_a_scheduled_run ... ok
+test daemon::run::resume::tests::resumable_runbook_refuses_a_chat_run ... ok
+test daemon::run::resume::tests::resumable_runbook_refuses_a_delegated_run ... ok
+test daemon::run::resume::tests::resume_error_displays_for_the_cli ... ok
+test daemon::run::resume::tests::render_seed_embeds_the_briefing_and_the_directive ... ok
+test daemon::run::resume::tests::resume_error_display_covers_not_resumable ... ok
+test daemon::run::resume::tests::resumable_runbook_returns_the_runbook_for_a_ghost_run ... ok
+test daemon::run::resume::tests::terminal_outcome_on_a_cancelled_run_has_no_briefing ... ok
+test daemon::run::resume::tests::terminal_outcome_on_an_empty_log_is_no_run_log ... ok
+test daemon::run::resume::tests::terminal_outcome_on_a_complete_run_has_no_briefing ... ok
+test daemon::run::resume::tests::terminal_outcome_without_a_run_finished_is_still_running ... ok
+test daemon::run::resume::tests::terminal_outcome_returns_the_budget_exceeded_briefing ... ok
+test daemon::run::resume::tests::terminal_outcome_returns_the_kind_and_the_hard_fail_briefing ... ok
+test daemon::run::resume::tests::terminal_outcome_takes_the_first_start_and_the_last_finish ... ok
+test daemon::run::resume::tests::terminal_outcome_without_a_run_started_is_no_run_log ... ok
+test daemon::run::resume::tests::resume_plan_reads_a_real_log_and_builds_the_plan ... ok
+test daemon::run::resume::tests::resume_plan_refuses_a_non_ghost_run_even_with_a_briefing ... ok
+test daemon::run::resume::tests::resume_plan_reports_still_running_for_a_run_with_no_finish ... ok
+test daemon::run::resume::tests::resume_plan_reports_no_run_log_for_an_unknown_id ... ok
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1770 filtered out; finished in 0.00s
+cargo_exit=0
+== C. the wire contract ==
+test resume_run_request_roundtrip ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.00s
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+cargo_exit=0
+== D. structural greps (each must print the stated number) ==
+resume_seed gone           (0): 0
+resume_seed unexported     (0): 0
+prod resume_plan           (1): 1
+prod ResumePlan struct     (1): 1
+prod resumable_runbook     (1): 1
+prod all four RunKinds     (4): 4
+prod NotResumable        (>=5): 5
+prod one log read          (1): 1
+ipc ResumeRun              (1): 1
+ipc run_id is String       (1): 1
+server dispatch arm        (1): 1
+handler defined            (1): 1
+handler replies          (>=5): 12
+handler seeds with plan  (>=1): 1
+handler spawns the turn    (1): 1
+handler checks capacity    (1): 1
+cli Run group              (1): 1
+cli RunCommands enum       (1): 1
+no new socket path owner   (2): 2
+prod unwrap/panic          (0): 0
+== E. preservation: server 21, runbook 24, ghost 12, turn_log 7, result 11, guard 8, scheduled 7 ==
+daemon::server             test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1769 filtered out; finished in 0.00s
+runbook                    test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 1762 filtered out; finished in 0.03s
+daemon::ghost              test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1778 filtered out; finished in 0.00s
+daemon::run::turn_log      test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1783 filtered out; finished in 0.00s
+daemon::run::result        test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1779 filtered out; finished in 0.00s
+daemon::run::guard         test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1782 filtered out; finished in 0.00s
+daemon::scheduled          test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1783 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs ==
+test result: ok. 1786 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.10s
+test result: ok. 1786 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.06s
+test result: ok. 1786 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.10s
+== G. gates ==
+fmt_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+clippy_exit=0
+== H. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+
+Paste self-check: `diff /tmp/pasted-m24-09b.txt /tmp/e2e-m24-09b.txt` →
+`PASTE MATCH` (extraction anchored on this entry's heading, per WORKFLOW §
+the last-entry anchor).

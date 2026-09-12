@@ -546,7 +546,10 @@ mod tests {
         };
         log(vec![
             started(&id, kind),
-            finished(&id, RunState::BudgetExceeded(hard_fail_briefing("ran out of turns"))),
+            finished(
+                &id,
+                RunState::BudgetExceeded(hard_fail_briefing("ran out of turns")),
+            ),
         ]);
         assert_eq!(
             resume_plan(&id, "redo the nightly scan"),

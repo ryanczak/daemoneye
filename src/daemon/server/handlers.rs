@@ -1,4 +1,5 @@
 use super::catchup::is_valid_pane_id;
+use crate::agents::merge_runbook_ghost_config;
 use crate::config::Config;
 use crate::config::default_socket_path;
 use crate::daemon::ghost::{GhostManager, check_ghost_capacity, trigger_ghost_turn};
@@ -6,7 +7,6 @@ use crate::daemon::run::RunId;
 use crate::daemon::run::resume_plan;
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
-use crate::agents::merge_runbook_ghost_config;
 use crate::ipc::{PaneInfo, Response};
 use crate::runbook::load_runbook;
 use crate::scheduler::ScheduleStore;
@@ -827,10 +827,7 @@ where
         Err(e) => {
             send_response_split(
                 tx,
-                Response::SystemMsg(format!(
-                    "resume: runbook '{}' is gone — {e}",
-                    plan.runbook
-                )),
+                Response::SystemMsg(format!("resume: runbook '{}' is gone — {e}", plan.runbook)),
             )
             .await?;
             return send_response_split(tx, Response::Ok).await;
@@ -850,9 +847,7 @@ where
         Err(e) => {
             send_response_split(
                 tx,
-                Response::SystemMsg(format!(
-                    "resume: failed to start the resumed ghost — {e}"
-                )),
+                Response::SystemMsg(format!("resume: failed to start the resumed ghost — {e}")),
             )
             .await?;
         }
@@ -870,7 +865,7 @@ where
             )
             .await?;
             send_response_split(tx, Response::Ok).await?;
-            let cache = Arc::clone(&cache.inner);
+            let cache = Arc::clone(cache);
             let schedule_store = Arc::clone(schedule_store);
             let sessions = sessions.clone();
             let config = config.clone();
