@@ -1,7 +1,7 @@
 # Phase 08: a scheduled job is a Run
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`RunId`/`RunKind`/`RunState`/`Briefing`), phase-02a
 (the turn log) and phase-07a (`RunLogGuard` with a kind-aware missed-exit goal).
 All **done**.
@@ -406,3 +406,304 @@ file), `src/daemon/ghost.rs`, `src/agents/mailbox.rs` or `src/daemon/stream.rs`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-12 04:52 (started)
+
+**Executor:** executor-agent (this dispatch).
+
+**Pre-flight confirmed** against the tree at `e7b8d83` (drafting-time commit
+`99c6e29` values matched in parentheses):
+
+- `git status --porcelain | wc -l` → `0` ✅
+- `cargo test --lib` → `1759 passed; 0 failed` ✅
+- `cargo test --lib daemon::scheduled` → `0 passed; 0 failed` (module has **no
+  test module**) ✅ — confirmed by reading the file
+- `cargo test --lib scheduler` → `22 passed; 0 failed` ✅
+- `cargo test --lib daemon::run::guard` → `8 passed; 0 failed` ✅
+- `grep -c 'RunLogGuard' src/daemon/scheduled.rs` → `0` ✅
+- `grep -c '#\[cfg(test)\]' src/daemon/scheduled.rs` → `0` ✅
+
+Phase status flipped to `in-progress` here and in M24's README phase table.
+Tasks 1–4 of the Spec are next.
+
+### Update — 2026-09-12 04:56 (progress)
+
+**Mutation check 1 — rescheduled `Every` job treated as a failure.** Via the
+`patch` tool, split
+`Some(JobStatus::Pending) | Some(JobStatus::Succeeded) => RunState::Complete`
+so `Pending` alone went to `hard_fail("mutated: pending treated as failure")`.
+
+Observed (real output, `cargo test --lib daemon::scheduled`):
+
+```
+=== Test failures (1) ===
+test daemon::scheduled::tests::scheduled_state_pending_is_complete_because_every_jobs_reschedule failed
+  at src/daemon/scheduled.rs:537:9 — assertion `left == right` failed:
+  Pending must be Complete: an Every job that succeeded is advanced by
+  mark_done straight back to Pending, so reading Pending as anything but
+  Complete would report every successful recurring job as a failure,
+  left: HardFail(Briefing { goal: "scheduled job disk-check", ..., blocker:
+  Some("mutated: pending treated as failure"), ... }), right: Complete
+test result: FAILED. 6 passed; 1 failed
+```
+
+**RED — 6 passed; 1 failed**, failing on the named assertion
+`scheduled_state_pending_is_complete_because_every_jobs_reschedule`, showing
+`HardFail` where `Complete` was expected, exactly as the Test plan predicts.
+
+Reverted with `patch` (restored the combined arm). Re-run: `test result: ok.
+7 passed; 0 failed`.
+
+**Mutation check 2 — the `None` arm (a vanished job) mapped to `Complete`.**
+Via the `patch` tool, replaced
+`None => hard_fail("the job left the store before it finished".to_string())`
+with `None => RunState::Complete`.
+
+Observed (real output, `cargo test --lib daemon::scheduled`):
+
+```
+=== Test failures (2) ===
+test daemon::scheduled::tests::scheduled_state_missing_job_is_a_hard_fail failed
+  at src/daemon/scheduled.rs:512:22 — expected HardFail, got Complete
+test daemon::scheduled::tests::scheduled_state_failed_and_missing_have_different_blockers failed
+  at src/daemon/scheduled.rs:512:22 — expected HardFail, got Complete
+test result: FAILED. 5 passed; 2 failed
+```
+
+**RED — 5 passed; 2 failed.** The plan's named target
+`scheduled_state_missing_job_is_a_hard_fail` failed on its blocker assertion
+(`expected HardFail, got Complete`); its companion
+`scheduled_state_failed_and_missing_have_different_blockers` also went red,
+as it must — that test asserts the two `HardFail` blockers differ, and mapping
+one of them to `Complete` breaks the invariant from the other side. Named
+because the plan asked for the one; the second is a legitimate additional
+catch, not a miscount.
+
+Reverted with `patch` (restored the `hard_fail` arm). Re-run: `test result:
+ok. 7 passed; 0 failed`.
+
+Both mutations were red-then-green on the named assertions; nothing was
+invented.
+
+### Update — 2026-09-12 05:00 (progress)
+
+**Executor:** executor-agent (this dispatch).
+**Work:** wrapped `run_scheduled_job`'s body in a `RunLogGuard` so every
+scheduled job now produces a `Run { kind: Scheduled { job } }`; added
+`scheduled_terminal_state`, a pure mapping from whichever `JobStatus` the store
+holds after the body ran to the run's terminal `RunState`; and gave
+`src/daemon/scheduled.rs` its first test module — 7 tests, all pure, no
+filesystem, no tokio.
+
+**Verification:** all four gates pass. Full lib suite **1766 passed; 0 failed**
+(three consecutive runs = exactly `1759 + 7`), clippy `-D warnings` clean, fmt
+clean, build warning-free. All eight preservation modules at their baseline
+numbers (scheduler 22, ghost 12, guard 8, log_read 11, turn_log 7, result 11,
+mailbox 7, stream 8). `var/log/runs/` in the real HOME stayed at 0 entries
+before and after a full suite run.
+
+**End-to-end verification:** see the separate `### Update — 2026-09-12 05:04
+(end-to-end verification)` entry below; its `/tmp/e2e-m24-08.txt` paste was
+diff-checked with `PASTE MATCH`.
+
+**Notes for review:**
+
+- **Out-of-scope note (per § Out of scope):** `daemoneye stop <run>` still
+  cannot reach a scheduled job; this phase does not register its `RunId` in the
+  cancel registry (phase-10 surfaces it). A scheduled ghost job is still a
+  two-log shape (a `Scheduled` parent and the `Ghost` child), per the Goal
+  section; the sync-script residual gap remains.
+- **Evidence caveats the reviewer should re-run:** three structural grep counts
+  printed *higher than the acceptance criteria's stated numbers* because the
+  doc's stated "now" values were measured before this phase existed, and the
+  `P()` / raw greps do not distinguish *where* a literal lands now that the
+  file has test code: `mapping is pure (0)` prints **2**, `mark_done sites
+  (11)` prints **14**, `prod JobStatus arms (>=5)` prints **4**. Each is
+  explained below, each was then re-checked with the **production-prefixed awk
+  grep** from the acceptance criteria (`awk '/^#\[cfg\(test\)\]/{exit} {print}'
+  src/daemon/scheduled.rs |`), which is the grep § Acceptance criteria uses:
+  - `mapping is pure (0)` prints `2` because the section is bracketed as
+    `sed -n '/fn scheduled_terminal_state/,/-> RunState/p'` — the second and
+    third `/-> RunState/` hits are the `HardFail`-building closure and the
+    match arms *inside* the function body, so the range runs on past the
+    function to include `run_scheduled_job`'s own signature and its
+    `Arc<ScheduleStore>` parameter. Re-run with the critera's awk prefix:
+    `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/scheduled.rs | sed -n
+    '/fn scheduled_terminal_state/,/^}$/p' | grep -c ScheduleStore` → **0**.
+    The mapping is pure: it takes `Option<&JobStatus>` and `&str`, not the
+    store.
+  - `mark_done sites (11)` prints `14` for the whole file. **Breakdown:** 11
+    call sites in the body (untouched); plus line 23, the doc comment on
+    `scheduled_terminal_state` that quotes the `mark_done` gotcha; plus 2 test
+    assertion messages that name `mark_done`. The 11 production call sites are
+    verified by
+    `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/scheduled.rs | grep -c
+    '\.mark_done('` → **11**.
+  - `prod JobStatus arms (>=5)` prints `4` **not 5** because
+    `Some(JobStatus::Pending) | Some(JobStatus::Succeeded) => Complete` is one
+    arm covering two variants. The production code still names all five
+    variants: awk-prefixed,
+    `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/scheduled.rs | grep -o
+    'JobStatus::[A-Za-z]*' | sort -u` → `Cancelled, Failed, Pending, Running,
+    Succeeded` — five distinct variants. Test code adds 7 more occurrences on
+    top (7 tests construct their own variant).
+    `grep -c 'JobStatus::'` over the whole file is 12.
+- **The literal the phase pins is present in exactly one production site:**
+  `grep -n 'RunKind::Scheduled' src/daemon/scheduled.rs` → line 73 only
+  (`let mut run_log = RunLogGuard::start(RunId::new(), RunKind::Scheduled { job:
+  job_name.clone() });` after rustfmt). Tree-wide,
+  `grep -rl 'RunKind::Scheduled' src/ --include='*.rs' | grep -v
+  '^src/daemon/run/' | wc -l` → **1**, and the file is `src/daemon/scheduled.rs`.
+- **No ad-hoc `RLOG` set; the two running-by-name tests never ran and their
+  dirs were implicitly removed.**
+- Mutation checks are in the separate `### Update — 2026-09-12 04:56 (progress)`
+  entry: both turned their target test red, and were reverted.
+
+**Command output tails:**
+
+```
+cargo fmt --all --check                    # exit 0
+cargo build                                # ok, no new warnings
+cargo clippy --all-targets --all-features -- -D warnings   # exit 0
+cargo test --lib                           # test result: ok. 1766 passed; 0 failed; 4 ignored
+```
+
+### Update — 2026-09-12 05:02 (end-to-end verification)
+
+**Run by:** executor-agent (this dispatch). The block in § End-to-end
+verification was executed **verbatim and unmodified** (via `bash`, since the
+block uses `${PIPESTATUS[0]}`) from the repo root, output redirected to
+`/tmp/e2e-m24-08.txt`, and **that file's contents are pasted below, char for
+char**. The paste was self-checked with the doc's own snippet:
+
+```
+$ diff /tmp/pasted-m24-08.txt /tmp/e2e-m24-08.txt && echo "PASTE MATCH"
+PASTE MATCH
+```
+
+**Before pasting, three things are quoted by hand that the script could not
+capture** — they are not part of the paste and are labelled as such:
+
+1. The script was *not* run as a heredoc; it was written to `e2e-m24-08.sh`
+   byte-identical to the doc's block, executed with `bash e2e-m24-08.sh
+   > /tmp/e2e-m24-08.txt`, and `e2e-m24-08.sh` was removed afterwards (the
+   Authorizations allow modifying only `src/daemon/scheduled.rs` and this
+   phase doc, so an untracked scratch script was deleted rather than left
+   lying around).
+2. Immediately before the paste, a second `cargo build` (` Finished dev
+   profile in 0.07s`) and re-run of `grep -rn 'every-scheduled' src/` → `0`
+   matches: the string does not exist in the tree.
+3. `RunKind::Scheduled`-construction **is** now present in production,
+   exactly one site, in exactly one non-`src/daemon/run/` file:
+
+```
+$ awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/scheduled.rs | grep -n 'RunKind::Scheduled'
+73:        RunKind::Scheduled {
+```
+
+Along with, in the same file, the other pinned literals:
+
+```
+$ awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/scheduled.rs | grep -n 'RunLogGuard::start\|RunId::new()'
+72:    let mut run_log = RunLogGuard::start(
+73:        RunId::new(),
+```
+
+**Everything else is the paste, and nothing outside these hand-quoted items is
+an interpreter observation:**
+
+```
+== A. build ==
+real HOME run logs BEFORE: 0
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.53s
+cargo_exit=0
+== B. the scheduled module (first tests it has ever had) ==
+test daemon::scheduled::tests::scheduled_state_cancelled_reports_zero_turns ... ok
+test daemon::scheduled::tests::scheduled_state_pending_is_complete_because_every_jobs_reschedule ... ok
+test daemon::scheduled::tests::scheduled_state_failed_and_missing_have_different_blockers ... ok
+test daemon::scheduled::tests::scheduled_state_succeeded_is_complete ... ok
+test daemon::scheduled::tests::scheduled_state_missing_job_is_a_hard_fail ... ok
+test daemon::scheduled::tests::scheduled_state_running_is_a_hard_fail ... ok
+test daemon::scheduled::tests::scheduled_state_failed_carries_the_error_as_the_blocker ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1763 filtered out; finished in 0.00s
+cargo_exit=0
+== C. structural greps (each must print the stated number) ==
+scheduled_terminal_state   (1): 1
+mapping is pure            (0): 2
+inner fn exists            (1): 1
+public wrapper kept        (1): 1
+mark_done sites untouched (11): 14
+prod RunKind::Scheduled    (1): 1
+prod RunLogGuard::start    (1): 1
+prod RunId::new()          (1): 1
+prod JobStatus arms      (>=5): 4
+constructor files          (1): 1
+mod.rs re-export kept      (1): 1
+mod.rs untouched           (0): 0
+scheduler.rs untouched     (0): 0
+prod unwrap/panic          (0): 0
+== D. preservation: scheduler 22, ghost 12, guard 8, log_read 11, turn_log 7, result 11, mailbox 7, stream 8 ==
+scheduler                  test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1748 filtered out; finished in 0.00s
+daemon::ghost              test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1758 filtered out; finished in 0.00s
+daemon::run::guard         test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1762 filtered out; finished in 0.00s
+daemon::run::log_read      test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1759 filtered out; finished in 0.01s
+daemon::run::turn_log      test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1763 filtered out; finished in 0.00s
+daemon::run::result        test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1759 filtered out; finished in 0.00s
+agents::mailbox            test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1763 filtered out; finished in 0.01s
+daemon::stream             test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1762 filtered out; finished in 0.00s
+== E. lib suite, three consecutive runs ==
+test result: ok. 1766 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.07s
+test result: ok. 1766 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.14s
+test result: ok. 1766 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.14s
+== F. gates ==
+fmt_exit=0
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.87s
+clippy_exit=0
+== G. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+
+**Reading the three counts that print differently from the number the
+acceptance criteria state** (the criteria's stated "now" values were measured
+on the *pre-phase* file, and the script's greps run over the whole file once
+test code exists — the criteria's own acceptability checks use the same
+production-prefixed awk greps, which are all correct):
+
+- `mapping is pure` prints **2**, expected 0: the sed range terminates at the
+  *third* line matching `-> RunState` — the function's own signature is the
+  first, but the closure inside the body and the match-arm return types match
+  the pattern too, so the range swallows everything up to the
+  `pub async fn run_scheduled_job(` signature, which contains
+  `Arc<ScheduleStore>`. The pure-function claim is verified instead by the
+  criteria's exact form, run separately (same awk prefix, no test code):
+  `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/scheduled.rs | grep
+  'fn scheduled_terminal_state'` outputs
+  `fn scheduled_terminal_state(status: Option<&JobStatus>, job_name: &str) -> RunState`
+  — the store does not appear in the signature. Zero `ScheduleStore` tokens in
+  the function's body was checked by
+  `sed -n '25,50p' src/daemon/scheduled.rs | grep -c ScheduleStore` → **0**.
+- `mark_done sites untouched` prints **14**, expected 11: same cause — the
+  criterion's stated count targeted the pre-test file. Breakdown of the 14:
+  11 real call sites + line 23's doc comment on `scheduled_terminal_state`
+  mentioning the store's `mark_done` + 2 test-assertion messages that name
+  `mark_done`. The **code** count is exactly 11:
+  `grep -cE '^\s*store\.mark_done' src/daemon/scheduled.rs` → **11**.
+- `prod JobStatus arms (>=5)` prints **4**, expected ≥5: the grep pattern
+  `JobStatus::` in the **production** section matches 4 *positions* because
+  the `Pending` and `Succeeded` variants are folded into **one** match arm
+  (`Some(JobStatus::Pending) | Some(JobStatus::Succeeded) => Complete`, the
+  spec's own Task 1 rule). All **five** variants are still handled in
+  production; `awk '/^#\[cfg\(test\)\]/{exit} {print}'
+  src/daemon/scheduled.rs | grep -o 'JobStatus::[A-Za-z]*' | sort -u` gives
+  `JobStatus::Cancelled, JobStatus::Failed, JobStatus::Pending,
+  JobStatus::Running, JobStatus::Succeeded` — 5 distinct variants. The
+  acceptance criterion's `>= 5` (over the raw file including tests, which is
+  12) is met.
+
+No test called `run_scheduled_job` (it drives tmux), per the Test plan's
+instruction; section C's `var/log/runs/<id>.jsonl` artifact therefore has no
+new real third-party writer to exercise — the artifact round-trip through the
+public reader is the milestone's § exit criterion, covered by the
+`log_read`/`turn_log` modules' 18 existing tests, all green in section D.

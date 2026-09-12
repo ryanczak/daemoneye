@@ -2,17 +2,50 @@ use crate::ai::{AiEvent, Message};
 use crate::config::Config;
 use crate::daemon::background::{OwnedJobInfo, notify_job_completion};
 use crate::daemon::ghost::{GhostManager, check_ghost_capacity, trigger_ghost_turn};
+use crate::daemon::run::{Briefing, RunId, RunKind, RunLogGuard, RunState};
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
 use crate::ipc::Response;
 use crate::runbook;
-use crate::scheduler::{ActionOn, ScheduleStore, ScheduledJob};
+use crate::scheduler::{ActionOn, JobStatus, ScheduleStore, ScheduledJob};
 use crate::scripts;
 use crate::tmux;
 use crate::tmux::cache::SessionCache;
 use crate::webhook::inject_ghost_event;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// The terminal [`RunState`] a scheduled job's run records, from the status the
+/// store holds after the job ran. Pure: takes the status and the job name, not
+/// the store, so its tests need no filesystem.
+///
+/// Note that a successful **`Every`** job does *not* read back as `Succeeded`:
+/// the store's `mark_done` advances it and it returns to `Pending`. `Pending`
+/// therefore maps to [`RunState::Complete`], not to "never finished".
+fn scheduled_terminal_state(status: Option<&JobStatus>, job_name: &str) -> RunState {
+    let hard_fail = |blocker: String| {
+        RunState::HardFail(Briefing::new(
+            format!("scheduled job {job_name}"),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some(blocker),
+            None,
+        ))
+    };
+    match status {
+        // A successful recurring (`Every`) job lands here too, because it
+        // reschedules itself back to Pending as soon as it is marked done.
+        Some(JobStatus::Pending) | Some(JobStatus::Succeeded) => RunState::Complete,
+        Some(JobStatus::Failed(msg)) => hard_fail(msg.clone()),
+        Some(JobStatus::Running) => hard_fail("the job never recorded an outcome".to_string()),
+        Some(JobStatus::Cancelled) => RunState::Cancelled {
+            stage: "job_cancelled".into(),
+            turns: 0,
+        },
+        None => hard_fail("the job left the store before it finished".to_string()),
+    }
+}
 
 /// Run a single scheduled job in a dedicated tmux window.
 ///
@@ -25,6 +58,41 @@ use std::time::Duration;
 /// On success the window is killed and the job marked `Succeeded` (or rescheduled
 /// for `Every` jobs).  On failure the window is left open for inspection.
 pub async fn run_scheduled_job(
+    job: ScheduledJob,
+    store: Arc<ScheduleStore>,
+    session: String,
+    sessions: SessionStore,
+    config: Config,
+    cache: Arc<SessionCache>,
+    notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
+) {
+    let job_id = job.id.clone();
+    let job_name = job.name.clone();
+    let mut run_log = RunLogGuard::start(
+        RunId::new(),
+        RunKind::Scheduled {
+            job: job_name.clone(),
+        },
+    );
+    run_scheduled_job_inner(
+        job,
+        store.clone(),
+        session,
+        sessions,
+        config,
+        cache,
+        notify_tx,
+    )
+    .await;
+    let status = store
+        .list()
+        .into_iter()
+        .find(|j| j.id == job_id)
+        .map(|j| j.status);
+    run_log.finish(scheduled_terminal_state(status.as_ref(), &job_name));
+}
+
+async fn run_scheduled_job_inner(
     job: ScheduledJob,
     store: Arc<ScheduleStore>,
     session: String,
@@ -432,4 +500,114 @@ pub async fn run_scheduled_job(
         notify_tx,
         started_at,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hard_fail_blocker(state: &RunState) -> Option<String> {
+        match state {
+            RunState::HardFail(b) => b.blocker.clone(),
+            other => panic!("expected HardFail, got {other:?}"),
+        }
+    }
+
+    fn hard_fail_goal(state: &RunState) -> String {
+        match state {
+            RunState::HardFail(b) => b.goal.clone(),
+            other => panic!("expected HardFail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scheduled_state_succeeded_is_complete() {
+        let state = scheduled_terminal_state(Some(&JobStatus::Succeeded), "nightly-backup");
+        assert_eq!(
+            state,
+            RunState::Complete,
+            "a succeeded job completed its run"
+        );
+    }
+
+    #[test]
+    fn scheduled_state_pending_is_complete_because_every_jobs_reschedule() {
+        let state = scheduled_terminal_state(Some(&JobStatus::Pending), "disk-check");
+        assert_eq!(
+            state,
+            RunState::Complete,
+            "Pending must be Complete: an Every job that succeeded is advanced by \
+             mark_done straight back to Pending, so reading Pending as anything but \
+             Complete would report every successful recurring job as a failure"
+        );
+    }
+
+    #[test]
+    fn scheduled_state_failed_carries_the_error_as_the_blocker() {
+        let state = scheduled_terminal_state(
+            Some(&JobStatus::Failed("exit code 1".to_string())),
+            "nightly-backup",
+        );
+        assert_eq!(
+            hard_fail_blocker(&state).as_deref(),
+            Some("exit code 1"),
+            "the store's error message must be preserved verbatim as the blocker"
+        );
+        assert_eq!(
+            hard_fail_goal(&state),
+            "scheduled job nightly-backup",
+            "the briefing's goal must name the job"
+        );
+    }
+
+    #[test]
+    fn scheduled_state_cancelled_reports_zero_turns() {
+        let state = scheduled_terminal_state(Some(&JobStatus::Cancelled), "cleanup-tmp");
+        match state {
+            RunState::Cancelled { stage, turns } => {
+                assert_eq!(
+                    stage, "job_cancelled",
+                    "the stage names the job cancellation"
+                );
+                assert_eq!(turns, 0, "a scheduled job has no turns");
+            }
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scheduled_state_running_is_a_hard_fail() {
+        let state = scheduled_terminal_state(Some(&JobStatus::Running), "still-running");
+        let blocker = hard_fail_blocker(&state);
+        assert_eq!(
+            blocker.as_deref(),
+            Some("the job never recorded an outcome"),
+            "a job still Running at map time never called mark_done; that is a bug \
+             worth seeing in the log, not silence"
+        );
+        assert_eq!(hard_fail_goal(&state), "scheduled job still-running");
+    }
+
+    #[test]
+    fn scheduled_state_missing_job_is_a_hard_fail() {
+        let state = scheduled_terminal_state(None, "deleted-mid-run");
+        let blocker = hard_fail_blocker(&state);
+        assert_eq!(
+            blocker.as_deref(),
+            Some("the job left the store before it finished"),
+            "a deleted job is a HardFail, not Complete: nobody recorded an outcome"
+        );
+        assert_eq!(hard_fail_goal(&state), "scheduled job deleted-mid-run");
+    }
+
+    #[test]
+    fn scheduled_state_failed_and_missing_have_different_blockers() {
+        let failed = scheduled_terminal_state(Some(&JobStatus::Failed("boom".to_string())), "j");
+        let missing = scheduled_terminal_state(None, "j");
+        assert_ne!(
+            hard_fail_blocker(&failed),
+            hard_fail_blocker(&missing),
+            "the two HardFail paths name different causes and must stay distinguishable"
+        );
+    }
 }
