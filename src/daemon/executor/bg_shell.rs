@@ -5,10 +5,10 @@
 //!
 //! The tmux background path (`foreground::run_background` → `de-bg-*`) is
 //! untouched: a ghost session, an explicit `retry_in_pane`, or
-//! `backend = "tmux"` (the default) keeps using it. This module is only the
-//! `backend = "pty"` branch's engine, and — like `shell_exec` — takes no
-//! `tx`/`rx`, so every part of it is testable against a real in-process PTY
-//! host.
+//! `backend = "tmux"` (the opt-out) keeps using it. This module is the
+//! `backend = "pty"` branch's engine — the default — and, like `shell_exec`,
+//! takes no `tx`/`rx`, so every part of it is testable against a real
+//! in-process PTY host.
 
 use std::time::Duration;
 

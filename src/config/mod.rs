@@ -753,28 +753,30 @@ mod tests {
     // ── ExecutionConfig and ShellsConfig (M20 phase-01) ─────────────────────
 
     #[test]
-    fn execution_backend_defaults_to_tmux() {
+    fn execution_backend_defaults_to_pty() {
         let exec = ExecutionConfig::default();
-        assert_eq!(exec.backend, "tmux");
-        assert!(!Config::default().execution.uses_pty());
+        assert_eq!(exec.backend, "pty");
+        assert!(Config::default().execution.uses_pty());
     }
 
     #[test]
-    fn execution_uses_pty_only_for_exact_pty_value() {
+    fn execution_tmux_is_the_only_opt_out() {
+        for value in ["tmux", " TMUX ", "Tmux"] {
+            assert!(
+                !ExecutionConfig {
+                    backend: value.to_string()
+                }
+                .uses_pty(),
+                "value {value:?} should opt out of pty"
+            );
+        }
         for value in ["pty", "PTY", " pty "] {
             assert!(
                 ExecutionConfig {
                     backend: value.to_string()
                 }
-                .uses_pty()
-            );
-        }
-        for value in ["tmux", "", "ptyx", "p ty", "docker", "Pty!"] {
-            assert!(
-                !ExecutionConfig {
-                    backend: value.to_string()
-                }
-                .uses_pty()
+                .uses_pty(),
+                "value {value:?} should use pty"
             );
         }
     }
@@ -785,7 +787,21 @@ mod tests {
         assert!(with_pty.execution.uses_pty());
 
         let empty: Config = toml::from_str("").unwrap();
-        assert_eq!(empty.execution.backend, "tmux");
+        assert_eq!(empty.execution.backend, "pty");
+    }
+
+    #[test]
+    fn execution_invalid_value_falls_back_to_the_default() {
+        for value in ["ptty", "tmxu", ""] {
+            let exec = ExecutionConfig {
+                backend: value.to_string(),
+            };
+            assert!(
+                exec.uses_pty(),
+                "invalid value {value:?} should route to the default, pty"
+            );
+            exec.validate(); // must not panic
+        }
     }
 
     #[test]

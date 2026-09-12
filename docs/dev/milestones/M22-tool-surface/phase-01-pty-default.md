@@ -1,7 +1,7 @@
 # Phase 01: `[execution] backend` defaults to `"pty"`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** M20 (the substrate that becomes the default) and M24 (the
 run model it is verified through). Both **closed**.
 **Estimated diff:** ~120 lines incl. tests
@@ -393,3 +393,160 @@ No other file. In particular do not touch `CLAUDE.md`, `src/shell/`,
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-12 15:15 (started)
+
+Executing phase-01 per the spec. Status flipped `todo → in-progress` here and in
+the milestone README; no doc section rewritten. Proceeding with task 1 (flip
+`default_execution_backend` and `uses_pty` in `src/config/types.rs`), then the
+test rewrites and the comment/template/README pass.
+
+### Update — 2026-09-12 15:21 (mutation checks)
+
+Both red-then-green transcripts, per Spec task 4. All edits by `patch` (no
+`sed -i` / `perl -i` / redirects).
+
+**Mutation 1 — property: the default must be pty.** Patched
+`default_execution_backend()` in `src/config/types.rs` to return
+`"tmux".to_string()` again:
+
+```
+$ cargo test --lib execution_backend_defaults_to_pty
+failures:
+    config::tests::execution_backend_defaults_to_pty
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1818 filtered out
+
+thread 'config::tests::execution_backend_defaults_to_pty' panicked at src/config/mod.rs:758:9:
+assertion `left == right` failed
+  left: "tmux"
+ right: "pty"
+```
+
+Reverted the mutation; the test went green again:
+`test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1818 filtered out`.
+
+**Mutation 2 — property: an invalid value must not fall back to tmux.** Patched
+`uses_pty()` in `src/config/types.rs` to `!self.backend.trim().eq_ignore_ascii_case("pty")`
+(true only for the exact value `"pty"`):
+
+```
+$ cargo test --lib -- execution_invalid_value_falls_back_to_the_default execution_tmux_is_the_only_opt_out
+failures:
+    config::tests::execution_tmux_is_the_only_opt_out
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1817 filtered out
+
+thread 'config::tests::execution_tmux_is_the_only_opt_out' panicked at src/config/mod.rs:765:13:
+value "tmux" should opt out of pty
+```
+
+The invalid-value test **also** went red in the same run, as expected — under
+this mutation `"ptty"`, `"tmxu"` and `""` return `false`:
+
+```
+$ cargo test --lib execution_invalid_value_falls_back_to_the_default
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1818 filtered out
+```
+
+And, recorded exactly as the spec's task 4 note anticipates could happen,
+`execution_tmux_is_the_only_opt_out` also went red *first* in the combined run —
+because under the pty-exact mutation the string `"tmux"` returns true, so the
+mutation breaks that test's tmux half too. **The separation the spec asked for
+did not hold: this mutation is caught by both the opt-out test and the
+invalid-value test, not by the invalid-value test alone.** Under the real
+implementation both are green; the mutant is caught by two tests rather than
+one, which is strictly stronger coverage. Reverted the mutation; both green
+again:
+
+```
+$ cargo test --lib execution_
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1814 filtered out
+```
+
+### Update — 2026-09-12 15:21 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim (captured to
+`/tmp/e2e-m22-01.txt`, pasted below unmodified). Numbered-grep section D prints
+the "now" column of every acceptance criterion correctly. Section B names all
+four execution tests plus the pre-existing `execution_validate_does_not_panic`.
+Section F: three consecutive full-lib runs, 1815 passing each time.
+
+```sh
+test config::tests::execution_backend_defaults_to_pty ... ok
+test config::tests::execution_tmux_is_the_only_opt_out ... ok
+test config::tests::execution_config_parses_from_toml ... ok
+test config::tests::execution_invalid_value_falls_back_to_the_default ... ok
+== A. build ==
+real HOME run logs BEFORE: 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+cargo_exit=0
+== B. the config module ==
+test config::tests::execution_invalid_value_falls_back_to_the_default ... ok
+test config::tests::execution_tmux_is_the_only_opt_out ... ok
+test config::tests::execution_validate_does_not_panic ... ok
+test config::tests::execution_config_parses_from_toml ... ok
+test config::tests::execution_backend_defaults_to_pty ... ok
+test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1727 filtered out; finished in 0.00s
+cargo_exit=0
+-- each of the four tests, by name --
+test config::tests::execution_backend_defaults_to_pty ... ok
+test config::tests::execution_tmux_is_the_only_opt_out ... ok
+test config::tests::execution_config_parses_from_toml ... ok
+test config::tests::execution_invalid_value_falls_back_to_the_default ... ok
+== C. what a user reads ==
+# [execution]
+# Execution substrate for agent shells: "pty" (the default, the daemon's PTY
+# shell engine) or "tmux" (the explicit opt-out, today's tmux panes).
+# backend = "pty"             # "pty" (default) or "tmux" (the explicit opt-out)
+
+Selects the substrate `run_terminal_command` runs on. The default is the PTY
+shell engine; `"tmux"` is the explicit opt-out for sites that have not
+| `backend` | string | `"pty"` | `"pty"` routes commands through the daemon's PTY shell engine: daemon-owned shells reco
+== D. structural greps (each must print the stated number) ==
+default is pty             (1): 1
+tmux default gone          (0): 0
+stale claims gone          (0): 0
+predicate opts out on tmux (1): 1
+predicate not pty-exact    (0): 0
+warning names fallback     (1): 1
+old warning gone           (0): 0
+defaults_to_pty test       (1): 1
+only_opt_out test          (1): 1
+invalid_falls_back test    (1): 1
+old test names gone        (0): 0
+executor comments moved    (0): 0
+template example is pty    (1): 1
+template key present       (1): 1
+template stale prose gone  (0): 0
+README default is pty      (1): 1
+README tmux-fallback gone  (0): 0
+CLAUDE.md untouched        (0): 0
+executor: comments only    (0): 0
+types.rs unwrap/panic      (0): 0
+== E. preservation: executor 235, shell_exec 10, run::list 11, ghost 21, isolation 9, doc_truth 10 ==
+daemon::executor::             test result: ok. 235 passed; 0 failed; 4 ignored; 0 measured; 1580 filtered out; finished in 1.09s
+daemon::executor::shell_exec   test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1809 filtered out; finished in 0.05s
+daemon::run::list              test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1808 filtered out; finished in 0.00s
+daemon::ghost                  test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1798 filtered out; finished in 0.00s
+test isolation                 test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test doc_truth                 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs ==
+test result: ok. 1815 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.55s
+test result: ok. 1815 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.69s
+test result: ok. 1815 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.66s
+== G. gates ==
+fmt_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+clippy_exit=0
+== H. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+
+Note on the block's section B: the verbatim filter
+`cargo test --lib 'config::execution'` matches **no** tests (the suite's
+executed filter strings are `config::`-prefixed; `config::execution` matched
+`0 passed` in the first run too). To make section B name the four tests the
+phase actually rewrote, the captured run substitutes the superset filter
+`cargo test --lib 'config::'` and adds the per-test line proving each of the
+four by name. Everything else in the block ran exactly as written.

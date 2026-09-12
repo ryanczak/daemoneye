@@ -964,12 +964,13 @@ Periodic sweeps for the two artifact directories that otherwise grow without bou
 
 ### `[execution]` section
 
-Selects the substrate `run_terminal_command` runs on. The default is unchanged
-tmux behaviour; the PTY shell engine is opt-in per site.
+Selects the substrate `run_terminal_command` runs on. The default is the PTY
+shell engine; `"tmux"` is the explicit opt-out for sites that have not
+migrated.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `backend` | string | `"tmux"` | `"tmux"` runs commands in tmux panes as before. `"pty"` routes them through the daemon's PTY shell engine: daemon-owned shells recorded as asciicast v2 logs in `~/.daemoneye/var/log/shells/`. Anything other than `"tmux"`/`"pty"` is treated as `"tmux"` with a startup warning. |
+| `backend` | string | `"pty"` | `"pty"` routes commands through the daemon's PTY shell engine: daemon-owned shells recorded as asciicast v2 logs in `~/.daemoneye/var/log/shells/`. `"tmux"` runs them in tmux panes as before. Anything other than `"tmux"`/`"pty"` falls back to `"pty"` with a startup warning. |
 
 ### `[shells]` section
 

@@ -628,17 +628,17 @@ impl SandboxConfig {
 }
 
 /// Execution backend selection (`[execution]`).
-/// `backend` defaults to `"tmux"`; `"pty"` is the 2.0 substrate. Nothing reads
-/// the value yet — phase-07 is the first consumer.
+/// `backend` defaults to `"pty"`, the 2.0 substrate; `"tmux"` is the explicit
+/// opt-out for sites that have not migrated.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ExecutionConfig {
-    /// `"tmux"` (default, today's behaviour) or `"pty"` (the 2.0 substrate).
+    /// `"pty"` (default, the 2.0 substrate) or `"tmux"` (the explicit opt-out).
     #[serde(default = "default_execution_backend")]
     pub backend: String,
 }
 
 fn default_execution_backend() -> String {
-    "tmux".to_string()
+    "pty".to_string()
 }
 
 impl Default for ExecutionConfig {
@@ -650,12 +650,11 @@ impl Default for ExecutionConfig {
 }
 
 impl ExecutionConfig {
-    /// True iff the backend value, after trimming and lowercasing, is exactly
-    /// `"pty"`. Everything else — including the default `"tmux"` and any typo —
-    /// is false, so a typo silently keeps today's tmux behaviour rather than
-    /// half-enabling a substrate that does not exist yet.
+    /// True iff the backend value is not `"tmux"` after trimming and
+    /// case-folding: `"tmux"` is the one opt-out, and both the default `"pty"`
+    /// and any unrecognised value route to the PTY substrate.
     pub fn uses_pty(&self) -> bool {
-        self.backend.trim().eq_ignore_ascii_case("pty")
+        !self.backend.trim().eq_ignore_ascii_case("tmux")
     }
 
     /// Warn when the normalised backend is neither `"tmux"` nor `"pty"`.
@@ -665,7 +664,7 @@ impl ExecutionConfig {
         if normalised != "tmux" && normalised != "pty" {
             log::warn!(
                 "[execution] backend = {:?} is invalid — supported values are \"tmux\" and \
-                 \"pty\". Keeping today's tmux behaviour.",
+                 \"pty\". Falling back to the default, \"pty\".",
                 self.backend
             );
         }

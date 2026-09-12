@@ -298,9 +298,9 @@ where
                 ));
             }
 
-            // The PTY shell substrate, when configured. A ghost session, an
-            // explicit `target_pane`, or `backend = "tmux"` (the default)
-            // falls through to `run_foreground` unchanged, so the default
+            // The PTY shell substrate, the default. A ghost session, an
+            // explicit `target_pane`, or `backend = "tmux"` (the opt-out)
+            // falls through to `run_foreground` unchanged, so the opt-out
             // behaviour is byte-for-byte today's.
             let uses_pty = crate::config::Config::load()
                 .unwrap_or_default()
@@ -419,12 +419,12 @@ where
             retry_pane,
             ..
         } => {
-            // The PTY shell substrate, when configured, for a **chat**
+            // The PTY shell substrate, the default, for a **chat**
             // session's plain background command. A ghost session (no
             // substrate shell of its own and sandboxed away from the host),
             // an explicit `retry_in_pane` (it names a tmux pane, which the
-            // substrate has none of), or `backend = "tmux"` (the default)
-            // falls through to `run_background` unchanged, so the default
+            // substrate has none of), or `backend = "tmux"` (the opt-out)
+            // falls through to `run_background` unchanged, so the opt-out
             // behaviour is byte-for-byte today's.
             let uses_pty = crate::config::Config::load()
                 .unwrap_or_default()
