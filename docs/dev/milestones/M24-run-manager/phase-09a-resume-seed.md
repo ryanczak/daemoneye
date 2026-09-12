@@ -1,7 +1,7 @@
 # Phase 09a: the resume seed — briefing, not transcript
 
 **Milestone:** M24 — Run Manager
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`RunKind`, `Briefing`, `RunState`), phase-02a
 (`TurnLogRecord`, `read_turn_log`) and phase-03 (`Briefing::render()`). All
 **done**.
@@ -461,3 +461,22 @@ No other file — a criterion asserts a zero diff across all of `src/` outside
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-12 14:32 (started)
+
+**Executor:** executor-agent (this dispatch).
+
+**Pre-flight confirmed** against the tree at `b58cbdb` (drafting-time commit
+`5138a33` values matched in parentheses):
+
+- `git status --porcelain | wc -l` → `0` ✅
+- `cargo test --lib` → `1766 passed; 0 failed; 4 ignored` ✅
+- `cargo test --lib daemon::run::turn_log` → `7 passed; 0 failed` ✅
+- `cargo test --lib daemon::run::log_read` → `11 passed; 0 failed` ✅
+- `cargo test --lib daemon::run::result` → `11 passed; 0 failed` ✅
+- `test -f src/daemon/run/resume.rs` → `0` (absent) ✅
+- `grep -c '^mod resume;' src/daemon/run/mod.rs` → `0` ✅
+
+Phase status flipped to `in-progress` here and in M24's README phase table.
+Tasks 1–4 of the Spec are next; the traps noted — `run::Briefing` only, never
+`daemon::briefing`; `Briefing::render()` reused, not re-implemented.

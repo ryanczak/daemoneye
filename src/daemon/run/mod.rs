@@ -486,6 +486,7 @@ pub(crate) mod cancel;
 mod guard;
 mod log_read;
 mod result;
+mod resume;
 mod turn_log;
 pub use active::{
     ActiveRunGuard, CancelDoor, cancel_session, mark_cancel_door, register_active, run_for_session,
@@ -502,4 +503,5 @@ pub use log_read::{
     run_log_input_rejected, run_log_search, run_log_tail,
 };
 pub use result::{CancelReason, Cancellation, RunResult, RunStatus};
+pub use resume::{ResumeError, render_seed, resume_seed, terminal_outcome};
 pub use turn_log::{TurnLogEvent, TurnLogRecord, append_turn_event, read_turn_log, turn_log_file};
