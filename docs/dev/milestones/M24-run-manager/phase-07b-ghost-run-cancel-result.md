@@ -1,7 +1,7 @@
 # Phase 07b: a ghost shell can be stopped, and reports a RunResult
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-07b-2.md`)
 **Depends on:** phase-04 (`register_run`, `watch_stop_sentinel`,
 `STOP_POLL_INTERVAL`), phase-03 (`RunResult`, `Cancellation`), phase-06b
 (`CancelDoor`, `take_cancel_door`) and phase-07a (the ghost's `RunLogGuard`,
@@ -395,7 +395,36 @@ the "now" value shown.
 - [ ] All four gates pass.
 
 **Mutation checks 1 and 3 were re-run at review and both reproduce** — do not
-redo them. `#[serde(default)]` may stay or go; it is redundant but harmless,
+redo them.
+
+#### Round 2 (bug-07b-2, filed 2026-09-11)
+
+Round 1's three criteria above are **met** — verified at the executor's commit
+`fa232ae`, where `as predicted` → 0 and the corrected entry names `Option`.
+They are **retired, not re-pinned**: the server's `(complete)` entry quotes the
+executor's summary, which legitimately discusses both strings, so a
+whole-Update-Log grep for them now returns 2 and 5 and can never settle. That
+is a measurement artifact, not a regression — do not chase it.
+
+What is left is the fenced transcript at the end of the
+`### Update — 2026-09-11 16:56 (mutation checks, red → green)` entry, which
+still presents the withdrawn check-2 red as captured output. Each of these was
+run against commit `16f56e6` and returns the "now" value shown.
+
+- [ ] **The fabricated red is gone from that entry** (prefix each grep with
+      `awk '/^### Update — 2026-09-11 16:56/,/^### Update — 2026-09-11 16:57/' <this doc> |`):
+      `grep -c 'Caused by: missing field'` → **0** (now **1**).
+- [ ] **Checks 1 and 3 keep their transcripts**, same range:
+      `grep -c '^(1) red:'` → **1** and `grep -c '^(3) red:'` → **1**, both
+      unchanged (now **1** each).
+- [ ] **No code change:** `git diff 16f56e6..HEAD --stat -- src/ tests/ | wc -l`
+      → **0**.
+- [ ] `cargo test --lib agents::mailbox` → **7 or more**, `0 failed` (now **7**);
+      full lib suite **1759 or more**, `0 failed` (now **1759**); all four gates
+      pass.
+
+Amend the block in place — no third Update Log entry about this, no re-running
+of checks 1 or 3, no code. `#[serde(default)]` may stay or go; it is redundant but harmless,
 and if it goes, the comment above the field claiming it is load-bearing goes
 with it.
 
