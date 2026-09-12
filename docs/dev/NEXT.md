@@ -6,10 +6,21 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: phase-01 — pty-default**
-(`docs/dev/milestones/M22-tool-surface/phase-01-pty-default.md`, status: todo,
-drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-01`. **PE signed
-off on the ten-phase breakdown 2026-09-12.**
+**Active phase: none.** Phase-01 — pty-default closed
+**approved_after_1 2026-09-12**
+(`docs/dev/milestones/M22-tool-surface/phase-01-pty-default.md`, status: done).
+**PE signed off on the ten-phase breakdown 2026-09-12.** Next up is **02 —
+tool-category**, not yet drafted; run `/rexymcp:architect next` to draft it.
+
+Phase-01's one bounce (bug-01-1, `closed`) was an evidence defect on correct
+code — the mutation-2 entry applied the inverse mutant and reported a red that
+mutant cannot produce. The re-dispatch changed **no `src/` line**. The review
+re-ran the specified mutant by hand rather than reading the transcript, and it
+reproduces. One calibration recorded there, first occurrence: **a criterion that
+pins a test count must pin the exact invocation that yields it** — bug-01-1
+demanded the literal string `4 passed; 1 failed` without naming the filter that
+produces it, and that alone caused a second, milder mismatch in the corrected
+entry.
 
 Scope: `[execution] backend` defaults to `"pty"`; `"tmux"` becomes the explicit
 opt-out; an **invalid value now falls back to the default** rather than to tmux
@@ -51,8 +62,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   is also stale — "Nothing reads the value yet" went false when M20 phase-07c
   became the consumer.
 
-**Next step:** PE signs off on the phase breakdown, then
-`/rexymcp:architect next` drafts phase-01. Nothing is dispatched until then.
+**Next step:** `/rexymcp:architect next` drafts **phase-02 — tool-category**.
+Nothing is dispatched until then.
 
 **Carried out of M24, still open:**
 

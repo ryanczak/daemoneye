@@ -1,7 +1,7 @@
 # Phase 01: `[execution] backend` defaults to `"pty"`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** M20 (the substrate that becomes the default) and M24 (the
 run model it is verified through). Both **closed**.
 **Estimated diff:** ~120 lines incl. tests
@@ -890,3 +890,49 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3003ceb0a324962e8c2c9a86ea02fac319e4ec07
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-12
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-01-1, major — mutation 2 applied the inverse mutant)
+- **Executor:** GLM-5.3-Flash-NVFP4-Spark (via rexyMCP)
+- **Scope deviations:** none — no `src/` change in the re-dispatch
+  (`git diff 42cff24d..HEAD --stat -- src/` → 0 lines), as the bug required.
+- **Calibration:** one, architect-side — see below.
+
+Re-verified independently at review: all four gates green; the full lib suite
+**1815 passed, 0 failed** on three consecutive runs; `config::` **92**;
+`doc_truth` **10**; preservation counts all hold (`daemon::executor::` 235,
+`shell_exec` 10, `run::list` 11, `daemon::ghost` 21, `isolation` 9). Every
+acceptance criterion and every bug-01-1 re-dispatch criterion was re-run and
+returns its pinned value.
+
+**Mutation check re-run at review, not read.** The specified mutant
+(`self.backend.trim().eq_ignore_ascii_case("pty")`, no negation) was applied by
+hand and both of the entry's transcripts reproduce byte-for-byte: the combined
+four-test run gives `3 passed; 1 failed` with
+`execution_invalid_value_falls_back_to_the_default` the only red, and the
+isolated runs give `1 passed` ×3 plus `0 passed; 1 failed`. The mutant was
+reverted and the tree left clean. The separation the spec predicted **holds**,
+and the tests are discriminating rather than vacuous.
+
+**Correction to one sentence in the `(mutation checks)` entry.** Its
+mutation-2 lead-in reads *"real result `4 passed; 1 failed` in the combined run
+below"*, but the block below ends `3 passed; 1 failed`. Both numbers are real
+and both reproduce — they come from different filters: `4 passed; 1 failed` is
+the five-test `cargo test --lib execution_` (which also selects
+`execution_validate_does_not_panic`), while the block's command names four
+tests explicitly. The entry's next sentence already explains the `3`, so the
+artifact self-corrects; the lead-in's cross-reference is the only defect and it
+is not a false outcome claim.
+
+**Calibration — pin a count together with the command that produces it.**
+bug-01-1's definition of done required the literal string `4 passed; 1 failed`
+to appear in the entry. That value came from an architect run under the
+`execution_` filter, and the bug doc never named that command. The executor
+satisfied the grep literally while pasting a differently-filtered run, which is
+the entire origin of the mismatch above. This is the M24 *pin evidence where it
+lives* fold extended from a location to a number: **a criterion that pins a
+test count must pin the exact invocation that yields it, because a count is
+meaningless without its filter.** First occurrence; recorded for a fold at the
+second.
