@@ -761,10 +761,10 @@ test result: FAILED. 0 passed; 1 failed
   Ok with both flags must read Cancelled, got BudgetExceeded(...)
 (1) green after revert: test result: ok. 1 passed; 0 failed   (daemon::ghost: 12 passed; 0 failed)
 
-(2) red: cargo test --lib mailbox_reads_an_entry_written_before_the_run_field_existed
-  an entry written before the run field must still parse: parsing .../job-old.json,
-  Caused by: missing field `run`
-(2) green after revert: agents::mailbox test result: ok. 7 passed; 0 failed
+(2) withdrawn, not captured: removing #[serde(default)] from the Option field
+    leaves the legacy-entry test green, exactly as the prose above states —
+    there is no red to show. See the corrected entry of 2026-09-11 18:17 for
+    the mechanically captured re-run.
 
 (3) red: cargo test --lib mailbox_masks_the_run_summary
   sensitive data should be masked   (AKIAIOSFODNN7EXAMPLE on disk)
