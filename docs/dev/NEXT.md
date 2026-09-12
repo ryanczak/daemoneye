@@ -1,6 +1,110 @@
 # NEXT
 
-## M15 — Chat Reliability & Dialog UX (opened 2026-08-14, **closed 2026-08-16**)
+The one live pointer, kept at the top. Everything below `## Historical` is the
+append-only record of every earlier milestone and phase, oldest first, and
+every `**Superseded — …**` line in it was once the pointer you see here.
+
+## M24 — Run Manager (active)
+
+**Active phase: phase-08 — scheduled-run**
+(`docs/dev/milestones/M24-run-manager/phase-08-scheduled-run.md`, status: todo,
+drafted 2026-09-11). Dispatch with `/rexymcp:dispatch phase-08`.
+
+Phase-07b closed **approved_after_2 2026-09-11** (`99c6e29`). Both bounces were
+evidence defects on correct code — the mutation-check-2 transcript, first in
+prose (bug-07b-1) then surviving in the fenced block (bug-07b-2); the shipped
+code never changed across either. Calibration recorded in the phase doc and the
+milestone README: **pin evidence where it lives**, and scope doc-content
+criteria to the section they police.
+
+Scope for 08: `RunKind::Scheduled` gets its **first production constructor** —
+it has existed since phase-01 and nothing has ever built one. `run_scheduled_job`
+(435 lines, seven returns, eleven `mark_done` sites, returns `()`) is renamed to
+`_inner` and wrapped; the wrapper holds a `RunLogGuard` and derives the terminal
+`RunState` from the status the store holds after the job ran. Pure mapping
+function, 7 tests — `daemon::scheduled` has **no test module at all** today.
+
+Pre-injected gotcha: a successful **`Every`** job reads back as `Pending`, not
+`Succeeded` (`mark_done` advances and reschedules it), so the `Pending` arm must
+map to `Complete`. Pinned as a named test and as mutation check 1.
+
+Out of scope with reasons stated: scheduled-job cancellation (the script branch
+lives in a tmux window the substrate replaces; the ghost branch already cancels
+via 07b), collapsing the two run logs a scheduled ghost job produces, and
+rewriting the eleven `mark_done` sites.
+
+Remaining after 08: 09 (resume), 10 (cli). Neither drafted.
+
+## Historical
+
+### M24 — Run Manager: earlier phases (all done)
+
+**Superseded — phase-07b — ghost-run-cancel-result**
+(`docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md`,
+status: todo, drafted 2026-09-11). Dispatch with `/rexymcp:dispatch phase-07b`.
+
+Phase-07a closed **approved_first_try 2026-09-11** (commit `b98740f`) — the
+first unbounced phase since 05b, and the validation run for the retuned
+`rexymcp.toml`: 28 min / 225 turns, mean 8 s/turn, zero `parse_failed`, zero
+compactions, peak context 28 %, against 06b's 5 h 25 min / 90 turns on the old
+knobs. `max_tokens` was the binding constraint, not context.
+
+Scope for 07b: `daemoneye stop <run>` reaches a ghost shell — `register_run` +
+`watch_stop_sentinel` in `trigger_ghost_turn`, an `is_cancelled()` check at the
+top of the ghost turn loop, `RunState::Cancelled { stage, turns }` with the
+stage read from the 06b `CancelDoor` mark — plus `MailboxResult` gaining
+`run: Option<RunResult>` so a coordinator sees how its delegate's run ended.
+Precedence pinned: `Err` → HardFail beats cancel beats budget beats Complete.
+
+Deliberate limits, each an Out-of-scope item: **turn-top cancellation only**
+(the design's in-turn `select!` would need the 760-line body restructured),
+`register_active` stays absent (a ghost has no chat client, and a criterion
+pins that), `Budget::unlimited()` is a placeholder because accounting is M25,
+and `cancel_stage` is **not** extracted — two callers, and STANDARDS § 2.2
+says abstract at four.
+
+Grounded at drafting, every criterion executed against the tree: the
+dead-binding criterion greps `let (_runbook_name` because the bare name is a
+substring of `ghost_runbook_name`, and the masking test reuses the
+`AKIAIOSFODNN7EXAMPLE` input `masking_applied` (`src/agents/mailbox.rs:186`)
+already proves the filter catches.
+
+Remaining after 07b: 08 (scheduled-run), 09 (resume), 10 (cli). None drafted.
+
+**Superseded — phase-07a — ghost-run-log**
+(`docs/dev/milestones/M24-run-manager/phase-07a-ghost-run-log.md`, status:
+todo, drafted 2026-09-11). Dispatch with `/rexymcp:dispatch phase-07a`.
+
+Phases 01–06b are `done`. 06b closed `escalated` on 2026-09-11 after a bounce
+(bug-06b-1: the recorded cancel `stage` was derived from `CancelReason`, which
+both doors share, so it named nothing) and an architect takeover — the
+GLM-5.3-Flash re-dispatch ran 90 turns / 5 h 25 min on a ~60-line fix without
+converging. `rexymcp.toml` was retuned afterwards (PE, 2026-09-11):
+`context_length = 524284`, `max_context_pct = 80`, `max_tokens = 16384`.
+**Phase-07a is the A/B for those knobs** — 06b's baseline was 17–24 min per
+think-heavy turn and five `parse_failed` (truncated, tool-call-less) turns.
+
+Scope: a ghost shell gets a run identity — one `RunId`, a `RunLogGuard` in the
+16-line `trigger_ghost_turn` wrapper (the 760-line `do_ghost_turn` body is left
+alone), `RunKind::Delegated` vs `Ghost { runbook, trigger }` from a pure
+`ghost_run_kind`, the first production `TurnStarted` emitter in the tree, and
+Complete / HardFail / BudgetExceeded as terminal states. Purely additive:
+cancellation and the mailbox are 07b, and a criterion asserts a zero diff on
+`src/agents/mailbox.rs`.
+
+Grounded at drafting, each criterion executed against the tree: the field is
+`ghost_runbook_name` because `ghost_runbook` is already the `schedule_command`
+tool parameter (5 files), and ghost.rs's no-unwrap criterion is pinned to
+"unchanged at 1" because of the pre-existing `.expect` at `:863`.
+
+Remaining after 07a: 07b (ghost cancel + mailbox `RunResult`), 08
+(scheduled-run), 09 (resume), 10 (cli). None drafted.
+
+
+### Milestones M15 – M20 (all closed) and the M24 scoping record
+
+
+### M15 — Chat Reliability & Dialog UX (opened 2026-08-14, **closed 2026-08-16**)
 
 **phase-01 — read-pane-grep-null: done (escalated) 2026-08-14.** Two
 NoProgressStall hard-fails from the Nemotron executor (fresh dispatch +
@@ -95,7 +199,7 @@ half deferred to a PE spot-check), retrospective in the M15 README.
 
 ---
 
-## M16 — LLM Stream Robustness (drafted 2026-08-16, opened 2026-08-16; all phases done 2026-08-18, PE sign-off outstanding)
+### M16 — LLM Stream Robustness (drafted 2026-08-16, opened 2026-08-16; all phases done 2026-08-18, PE sign-off outstanding)
 
 **phase-01 — transport-scaffolding: done (escalated — architect close
 2026-08-17)**, implementation commit `d3ad2c0`. DeepSeek V4 Flash's first
@@ -277,7 +381,7 @@ per test, `never()` not ported, and that `send_cancel` opens its own
 
 ---
 
-## M16 — LLM Stream Robustness: at its milestone boundary (superseded as active by M17)
+### M16 — LLM Stream Robustness: at its milestone boundary (superseded as active by M17)
 
 All eight M16 phases are `done`. **The milestone is not closed**: five live
 exit criteria are unrun and one calibration fold awaits a PE decision. Full
@@ -306,7 +410,7 @@ list the new `keepalive.rs`. Not gated by `tests/doc_truth.rs`.
 
 ---
 
-## Active milestone: M17 — Transcript View (scoped 2026-08-18)
+### Active milestone: M17 — Transcript View (scoped 2026-08-18)
 
 **phase-01 — transcript-model: done (approved_first_try) 2026-08-18**,
 commit `a49ebca` + approval. First DeepSeek V4 Flash phase of M17, clean —
@@ -538,7 +642,7 @@ should be signed off and closed before the first M17 dispatch.
 
 ---
 
-## Historical: M16 phase staging records
+### Historical: M16 phase staging records
 
 **phase-08 staging:** re-derived Current state (`Request` enum `ipc.rs:139`, dispatch match
 `server/mod.rs:172`+ with 25 arms, `StreamOutcome::Interrupted` moved to
@@ -623,7 +727,7 @@ model, no calibration history.
 
 ---
 
-## Historical: M14 milestone boundary (M14 signed off 2026-08-11)
+### Historical: M14 milestone boundary (M14 signed off 2026-08-11)
 
 **PE sign-off landed 2026-08-11.** Calibration decisions: folds 1+2 (last-entry
 PASTE MATCH anchor; no-unpastable-bytes/strip-ANSI-at-generation) are in
@@ -647,7 +751,7 @@ scopes it.
 
 ---
 
-## Historical: M14 milestone boundary (closed 2026-08-11)
+### Historical: M14 milestone boundary (closed 2026-08-11)
 
 **M14 — Live Verification is closed.** Four phases, all `done`: 01
 `approved_after_1`, 02/03/04 `approved_first_try`. Two genuine product
@@ -674,7 +778,7 @@ Run hands-off under `/rexymcp:auto` (first multi-blocker autonomous run).
 
 **Next action:** PE decides the folds and the next milestone.
 
-### Resolved by phase-04 (was: blocked on second live finding)
+#### Resolved by phase-04 (was: blocked on second live finding)
 
 **Phase-02 round 2: the phase-03 fix is proven live (CHECK-G OK — deny path
 prompts, denies, informs the AI), but CHECK-J surfaced live defect #2: the
@@ -694,7 +798,7 @@ M14 occurrence, this time with no blocker entry written) — the
 "impulse-to-diagnose" ban held it off in phase-01 round 2/3 but not here;
 calibration item for close.
 
-## Done: [M14 phase-03 — approval-state-persistence](milestones/M14-live-verification/phase-03-approval-state-persistence.md)
+### Done: [M14 phase-03 — approval-state-persistence](milestones/M14-live-verification/phase-03-approval-state-persistence.md)
 
 Drafted 2026-08-11 on the PE's option-(a) decision (inside the resumed
 /rexymcp:auto run). Deletes the turn-end `SessionApproval::from_config`
@@ -704,7 +808,7 @@ have failed `-D warnings`), pins the session-start semantics in a
 `from_config` doc comment, and live-checks that `/approvals revoke`
 survives a completed turn (CHECK-P). Phase-02 re-runs after this lands.
 
-## Blocked behind phase-03: [M14 phase-02 — approval-roundtrip-live](milestones/M14-live-verification/phase-02-approval-roundtrip-live.md)
+### Blocked behind phase-03: [M14 phase-02 — approval-roundtrip-live](milestones/M14-live-verification/phase-02-approval-roundtrip-live.md)
 
 **BLOCKED 2026-08-11 — live finding, PE decision needed.** The sweep ran
 S1–S5; CHECK-G (deny-path) FAILed for a real reason: **runtime approval state
@@ -751,7 +855,7 @@ round-2 entry) — second flag-don't-game data point after M13 phase-06.
 extraction does not survive multi-round phases; the last-entry anchor is the
 correction (already applied to both M14 phase docs and validated both ways).
 
-### Historical: phase-01 drafting notes
+#### Historical: phase-01 drafting notes
 
 [M14 phase-01 — scripted-live-sweep](milestones/M14-live-verification/phase-01-scripted-live-sweep.md)
 
@@ -779,7 +883,7 @@ phases, all `done`: four `approved_first_try` (01, 02, 05, 06), two
 Four gates re-run green at close: 1241 lib tests. Retrospective in
 `docs/dev/milestones/M13-chat-ux/README.md` § "M13 retrospective".
 
-### Four folds landed at M13 close (PE sign-off, 2026-08-10)
+#### Four folds landed at M13 close (PE sign-off, 2026-08-10)
 
 All four in `docs/dev/WORKFLOW.md`; **none applied upstream** — added to the
 push backlog:
@@ -808,9 +912,9 @@ WORKFLOW.md sections plus the four folds above).
 
 ---
 
-## M13 history (most recent first)
+### M13 history (most recent first)
 
-## OPEN FINDING (2026-08-10, post-boundary): window-switch artifacts persist
+### OPEN FINDING (2026-08-10, post-boundary): window-switch artifacts persist
 
 Live check after M13 phase-05 (binary 19:13, includes the fix): rendering
 artifacts on tmux window switch remain. Diagnosis (derived from
@@ -836,7 +940,7 @@ is tmux's and stays out of reach (existing non-goal). Drafted as
 [phase-06 — repin-rebuild](milestones/M13-chat-ux/phase-06-repin-rebuild.md)
 on PE direction 2026-08-10.
 
-## OPEN FINDING 2 (2026-08-10, post-phase-06 live check): stale live-region debris survives the repin
+### OPEN FINDING 2 (2026-08-10, post-phase-06 live check): stale live-region debris survives the repin
 
 Screenshot evidence (same-size window switch): the input box now pins to the
 bottom correctly — phase-06's mechanism works — but the region between the
@@ -870,7 +974,7 @@ unproven (suspect: earlier-generation live regions vacated by
 viewport-bottom migration or by pre-phase-06 resize-based reanchors); the
 content-extent clear removes them regardless of origin.
 
-## RESOLVED (2026-08-10, live-verified): window-switch artifacts — closed by PE
+### RESOLVED (2026-08-10, live-verified): window-switch artifacts — closed by PE
 
 Live check after phases 06+07 (fresh session, `DAEMONEYE_REANCHOR_TRACE=1`):
 repeated window switches produce **no visible artifacts** — PE confirmed and
@@ -979,7 +1083,7 @@ mid-stream resize/window-switch re-anchoring.
 `docs/dev/milestones/M12-tmux-integration/README.md` § "M12 retrospective".
 Nine phases, six bugs, all resolved; 1200 tests, four gates green, 36 tools.
 
-### Folded at close (PE sign-off, 2026-08-08)
+#### Folded at close (PE sign-off, 2026-08-08)
 
 Both into `docs/dev/WORKFLOW.md`, both at two occurrences:
 
@@ -997,7 +1101,7 @@ Three earlier folds landed mid-milestone, also with sign-off: the E2E capture
 as a `## Spec` task, mutation pairs as `patch` tasks rather than the banned
 `sed -i`, and a reinforcement of the satisfiable-criterion rule.
 
-### Carried out of M12 — open items for whoever scopes next
+#### Carried out of M12 — open items for whoever scopes next
 
 1. **Upstream push — a large accumulated backlog, not the correctness fix it
    was first called.** Checked at close: the plugin template does **not**
@@ -1070,7 +1174,7 @@ a/b split).
 
 ---
 
-### [phase-07 — pane-inspector-cli](milestones/M12-tmux-integration/phase-07-pane-inspector-cli.md) approved 2026-08-08
+#### [phase-07 — pane-inspector-cli](milestones/M12-tmux-integration/phase-07-pane-inspector-cli.md) approved 2026-08-08
 
 `approved_first_try`. `Response::PaneList` now carries a named `PaneInfo`
 instead of a 5-tuple, and `/panes` renders a window-grouped inspector with cwd,
@@ -1094,7 +1198,7 @@ unified type is the better design. Approved as a justified deviation forced by
 the spec defect. **The lesson is mine, not the executor's:** when a spec says
 "add a type", grep the target file for that name first.
 
-### [phase-06b — tmux-control-actions](milestones/M12-tmux-integration/phase-06b-tmux-control-actions.md) approved 2026-08-08
+#### [phase-06b — tmux-control-actions](milestones/M12-tmux-integration/phase-06b-tmux-control-actions.md) approved 2026-08-08
 
 `approved_first_try` — the first of M12, and the first phase since 01 to clear
 review without a bounce. `tmux_control` now carries all six D5 actions;
@@ -1112,7 +1216,7 @@ restore lines (`M1 restored-lines-absent=0` for the spec's
 substance — applied-check, `FAILED` run, restore, restored-passing run — was
 all present and independently re-run at review.
 
-### [phase-06a — tmux-control-gate](milestones/M12-tmux-integration/phase-06a-tmux-control-gate.md) done 2026-08-08 — **architect takeover**
+#### [phase-06a — tmux-control-gate](milestones/M12-tmux-integration/phase-06a-tmux-control-gate.md) done 2026-08-08 — **architect takeover**
 
 `escalated`. Two `NoProgressStall` hard-fails, then a takeover. `tmux_control`
 ships with `focus` / `zoom` / `unzoom`, `APPROVAL_GATED` in both lists, and the
@@ -1139,7 +1243,7 @@ searches of the same file with no edit. Round 2's spec carried an explicit
 Notes-for-executor warning naming that exact pathology and it did not help.
 Third data point behind "a recurring stall is a takeover signal".
 
-### [phase-05 — list-panes-upgrade](milestones/M12-tmux-integration/phase-05-list-panes-upgrade.md) approved 2026-08-08
+#### [phase-05 — list-panes-upgrade](milestones/M12-tmux-integration/phase-05-list-panes-upgrade.md) approved 2026-08-08
 
 `approved_after_1`; one bounce ([bug-05-1](milestones/M12-tmux-integration/bugs/bug-05-1.md)),
 verified fixed. D4's display half landed in full: `list_panes` groups by window
@@ -1175,7 +1279,7 @@ divergent lines. Round 2 came back byte-identical on the first try. **Fold
 candidate at the next milestone boundary**, with the fragility fix noted in the
 blocker.
 
-### [phase-04 — find-in-panes-tool](milestones/M12-tmux-integration/phase-04-find-in-panes-tool.md) approved 2026-08-08
+#### [phase-04 — find-in-panes-tool](milestones/M12-tmux-integration/phase-04-find-in-panes-tool.md) approved 2026-08-08
 
 `approved_after_2`; two bounces, both verified fixed. Round 1 shipped the whole
 tool in 177 turns; round 2 fixed [bug-04-1](milestones/M12-tmux-integration/bugs/bug-04-1.md)
@@ -1201,7 +1305,7 @@ first theory — an H1 heading the architect had put inside § Spec — was
 falsified when the warning persisted in round 3 after that heading was demoted
 to H3. Cause still unidentified; it has had no observed effect on execution.
 
-### [phase-03 — read-pane-tool](milestones/M12-tmux-integration/phase-03-read-pane-tool.md) approved 2026-08-08
+#### [phase-03 — read-pane-tool](milestones/M12-tmux-integration/phase-03-read-pane-tool.md) approved 2026-08-08
 
 `approved_after_1`; one bounce ([bug-03-1](milestones/M12-tmux-integration/bugs/bug-03-1.md)),
 verified fixed. Round 2 did exactly its two tasks — reverted the undeclared
@@ -1214,7 +1318,7 @@ architect in both directions.
 is the second round in M12 where the capture was an enumerated `## Spec` task,
 and the second that produced the entry. The fold's prediction held.
 
-### The E2E fold was wrong, and this phase proves it
+#### The E2E fold was wrong, and this phase proves it
 
 Phase-03's E2E block carried the 2026-08-08 fold in full — every mutation a
 command, no manual steps — and the entry is *still* missing. Block runnability
@@ -1240,7 +1344,7 @@ false deviation report in M12; hold for recurrence.
 
 ---
 
-### Original drafting notes (round 1)
+#### Original drafting notes (round 1)
 
 Phase-03 adds the `read_pane` core AI tool (D3) — the milestone's
 highest-leverage addition: any pane's buffer on demand, any session, at a
@@ -1286,7 +1390,7 @@ exit criterion is verified at 05/07, not here.
 
 **Next action:** `/rexymcp:architect next` to draft phase-03 (read-pane-tool).
 
-### Three calibration items carried out of phase-02
+#### Three calibration items carried out of phase-02
 
 1. **The missing-E2E-entry bounce is at two consecutive occurrences** (phase-01,
    phase-02) — a trend worth folding. The sharp point: phase-02's spec
@@ -1331,7 +1435,7 @@ panes this phase admits are exposed deliberately by phases 03–05.
 **Next action:** `/rexymcp:architect next` to draft phase-02
 (pane-status-classification).
 
-### Two calibration items carried out of phase-01
+#### Two calibration items carried out of phase-01
 
 1. **Lock ordering across the five filter sites is inconsistent** — three clone
    `session_name` before taking `panes`, three hold `panes` while taking it. No
@@ -1371,7 +1475,7 @@ all nine exit criteria verified at close against source. Verdicts: 1
 resolved. Retrospective in
 `docs/dev/milestones/M11-knowledge-index/README.md`.
 
-### Two folds landed 2026-08-07 (PE sign-off)
+#### Two folds landed 2026-08-07 (PE sign-off)
 
 Both are in `docs/dev/WORKFLOW.md`. **Neither is applied upstream.**
 
@@ -1398,7 +1502,7 @@ here, so what landed is the in-repo half: `WORKFLOW.md` now carries the ordered
 sequence. Mirroring it into the skill remains an upstream change, and until it
 lands the skill's §8 and this file disagree on structure.
 
-### Four upstream folds pulled in 2026-08-07
+#### Four upstream folds pulled in 2026-08-07
 
 The sync gap was **bidirectional** — this repo was behind upstream on four
 sections, discovered while inventorying what to push. All four are now in
@@ -1426,7 +1530,7 @@ The only remaining divergence is `## How to fix` / `## Verification`, which the
 2026-08-06 bug-report fold deliberately replaced with `## Root cause` +
 `## Definition of done`. Do **not** pull those back.
 
-### Still out of bounds from this repo
+#### Still out of bounds from this repo
 
 **Push direction, still outstanding.** ~503 lines across 12 local-only
 `WORKFLOW.md` sections, ~13 lines of local-only `STANDARDS.md` DoD boxes (the
@@ -1456,9 +1560,9 @@ would fix it for every project at once. Out of bounds from here.
 
 ---
 
-## Historical record below (M11 and earlier)
+### Historical record below (M11 and earlier)
 
-## Three calibration folds landed 2026-08-06 (PE sign-off)
+### Three calibration folds landed 2026-08-06 (PE sign-off)
 
 All three are in `docs/dev/WORKFLOW.md`. **None is applied upstream** — the same
 clauses belong in rexyMCP's `plugin/templates/WORKFLOW.md`, which is out of
@@ -1502,7 +1606,7 @@ returns to the chat surface, and the turn **resumes and keeps streaming**
 afterwards. Stated precisely: resumption was observed; run-to-final-completion
 after a mid-turn viewer was not separately proven within the capture window.
 
-## Active milestone: M18 — Container-sandboxed Agents (scoped 2026-08-28)
+### Active milestone: M18 — Container-sandboxed Agents (scoped 2026-08-28)
 
 **Goal:** background command/script execution moves into ephemeral rootless
 Docker containers via a `ContainerExec` backend at the executor choke point;
@@ -1735,7 +1839,7 @@ review: the section claimed *every* sandboxed process runs as `--user
 **root**. That was my own wording, dictated verbatim in the spec — the executor
 reproduced it faithfully.
 
-## M19 — Sandbox Completion (opened 2026-08-29, PE sign-off)
+### M19 — Sandbox Completion (opened 2026-08-29, PE sign-off)
 
 **Superseded — M19 phase-02 — staging-integration** (M19 closed 2026-09-03.)
 (`docs/dev/milestones/M19-sandbox-completion/phase-02-staging-integration.md`,
@@ -1838,7 +1942,7 @@ land in WORKFLOW.md** (the architect does not fold unilaterally):
 2. **3 occurrences** — *a pinned count must be derived from the phase's own
    Spec by counting it, not estimated* (phase-04 ×2, phase-05).
 
-### Both folds landed 2026-08-29 (PE sign-off) — and neither is a new section
+#### Both folds landed 2026-08-29 (PE sign-off) — and neither is a new section
 
 Both existing sections already *gestured* at these failures, and § "Run every
 count criterion" says outright that a sixth occurrence calls for **a mechanical
@@ -2241,7 +2345,7 @@ is tested against pre-injected fixture output.
 
 ---
 
-## Historical: post-M17 boundary (superseded by M18 scoping)
+### Historical: post-M17 boundary (superseded by M18 scoping)
 
 **Active phase was none.** Both **M16 — LLM Stream Robustness** and **M17 —
 Transcript View** were closed 2026-08-20 on PE sign-off.
@@ -2494,7 +2598,7 @@ over an empty corpus no longer wipes every other corpus:
 `open_and_reconcile_if_empty(table)` rebuilds only that corpus, and phase 05b's
 whole-index seeding workaround is gone.
 
-## Calibration earned on 05c (superseded items are marked in each phase doc)
+### Calibration earned on 05c (superseded items are marked in each phase doc)
 
 1. **A mutation check the executor performs on itself is not trustworthy.** On
    05b it applied the mutation and failed to restore it *twice* — once rewriting
@@ -2517,7 +2621,7 @@ whole-index seeding workaround is gone.
    (×2). Well past the fold threshold, but the remedy is runtime-side in the
    rexyMCP governor and out of bounds from this repo.
 
-## The rule 03b earned: re-run a pasted transcript, never read it
+### The rule 03b earned: re-run a pasted transcript, never read it
 
 The bounce was a **fabricated** end-to-end transcript — 39 of 56 pasted
 `memory::index` test names did not exist, describing ~25 error-injection tests
@@ -2549,7 +2653,7 @@ doneness, explicit do-not-touch list, one enumerated task, inverted finish
 condition "1084, **not** 1085") landed it in 31 turns with zero source files
 touched. First local confirmation of that fold.
 
-## Two lessons out of 03a, both at the fold threshold
+### Two lessons out of 03a, both at the fold threshold
 
 **1. Identity criteria must pin distinctness — second occurrence, one from a
 fold.** An acceptance criterion of the form "each X maps to *its own* Y" needs
@@ -2613,7 +2717,7 @@ planned; design settled in `docs/design/knowledge-index.md`; milestone README at
 `approved_first_try`, zero bugs, zero bounces). Retrospective:
 `docs/dev/milestones/M10-residual-hygiene/README.md`.
 
-## The carried list is empty except for one unreproducible item
+### The carried list is empty except for one unreproducible item
 
 1. **`hooks_land_on_private_server`** — the old phase-04-review flake. Binds no
    ports; **0 failures in 300 runs** across M8, M9 and M10. No evidence to work
@@ -2623,7 +2727,7 @@ Everything else carried out of M7 and M8 is closed: the tty tests fail instead o
 hanging, the memory category→directory mapping is derived in all three callers,
 the last real-clock sleep is gone, and `daemoneye reindex` is documented and gated.
 
-## One calibration item, resolved at close
+### One calibration item, resolved at close
 
 The executor mislabelled its own model in its Update Log entry three times (M9
 phase-01, M10 phase-01, M10 phase-03) — it is Qwen3.6-27B-FP8 every time. Three
@@ -2646,7 +2750,7 @@ contract-mandated.
 Actively suppressing it would mean editing `executor/templates/executor_contract.md`
 in the **rexyMCP** repo — out of bounds from a target-project architect session.
 
-## The rules M7–M10 earned
+### The rules M7–M10 earned
 
 > **Do not assert a fact about the system in a spec unless it was executed.**
 > A *claimed failure mode* is such a fact — M9 justified a test with a
@@ -2673,7 +2777,7 @@ unless the guard is checked against it; a phase that lands code for a *later*
 phase must say how the deny-warnings gate is satisfied; and **a green bounce
 always needs a refined re-dispatch**, never a plain one.
 
-## M19 — Sandbox Completion (opened 2026-08-29)
+### M19 — Sandbox Completion (opened 2026-08-29)
 
 **phase-01 — is-ghost-predicate: done (approved_first_try) 2026-08-29.**
 `is_ghost_session_id` / `resolve_is_ghost` extracted to `src/daemon/mod.rs`
@@ -3231,13 +3335,13 @@ to M20/M21's exit criteria. `m19-sandbox-completion` (which contained M18)
 fast-forwarded into `master`; crate bumped to 1.0.0; **`v1.0.0` tagged at
 `029ab1a`** as the last tmux-based release. Both pushed to `origin`.
 
-## DaemonEye 2.0 (plan of record 2026-09-03, `docs/design/daemoneye-2.0.md`)
+### DaemonEye 2.0 (plan of record 2026-09-03, `docs/design/daemoneye-2.0.md`)
 
 The plan proposes M20–M29; PE decisions of 2026-09-03 are in its § 8. 2.0
 proceeds on `master` behind an `[execution] backend = "tmux" | "pty"` flag;
 there is no `v2` branch.
 
-## M20 — Shell Engine (scoped 2026-09-03, **awaiting PE sign-off**)
+### M20 — Shell Engine (scoped 2026-09-03, **awaiting PE sign-off**)
 
 Milestone README: `docs/dev/milestones/M20-shell-engine/README.md` — nine
 phases proposed, none drafted. Pre-drafting measurements are recorded there:
@@ -4014,7 +4118,7 @@ Drafting notes:
    puts the fix threshold at three; `docs/dev/TODO.md` § 1 is the standing item.
    The architect does not amend `WORKFLOW.md` unilaterally.
 
-## M20 sign-off and the calibration decision (2026-09-06)
+### M20 sign-off and the calibration decision (2026-09-06)
 
 **Both standing PE items are now closed.**
 
@@ -4400,7 +4504,7 @@ consecutive runs. The executor caught a real spec defect: cast files are
 against a `.cast`-stripped stem and the sweep would have deleted running
 shells' logs.
 
-## M20 — Shell Engine: **code complete 2026-09-08, awaiting PE sign-off**
+### M20 — Shell Engine: **code complete 2026-09-08, awaiting PE sign-off**
 
 **Active phase: none.**
 
@@ -4437,7 +4541,7 @@ when scoping the next milestone.
 
 ---
 
-## M20 live sweep run 2026-09-08 — one close-blocker found
+### M20 live sweep run 2026-09-08 — one close-blocker found
 
 The three folds are landed in `WORKFLOW.md` (commit `e251528`): pinned-count
 derivation, struct-field authorizations, and run-every-criterion-before-dispatch.
@@ -4469,7 +4573,7 @@ Still open for the PE: `background=true` on the tmux `de-bg-*` path, unowned.
 
 ---
 
-## M20 — Shell Engine: **all exit criteria met 2026-09-09. Active phase: none.**
+### M20 — Shell Engine: **all exit criteria met 2026-09-09. Active phase: none.**
 
 **phase-10 — adoption-socket-fix: done (approved_first_try) 2026-09-09**,
 commit `5a1d14c`. The close-blocker is fixed and the live restart sweep re-ran
@@ -4505,7 +4609,7 @@ landed in `WORKFLOW.md` (`e251528`).
 
 ---
 
-## M24 — Run Manager: scoped + PE-signed-off 2026-09-09
+### M24 — Run Manager: scoped + PE-signed-off 2026-09-09
 
 **Active phase: none** (milestone scoped, no phase drafted yet).
 
@@ -4826,94 +4930,3 @@ already holds the same rexyMCP-ported machinery keyed by session with a `bool`
 channel — phase-04 builds a reason-carrying sibling and leaves it untouched, a
 deliberate duplication that phase-06 collapses.
 
-## M24 — Run Manager (active)
-
-**Active phase: phase-08 — scheduled-run**
-(`docs/dev/milestones/M24-run-manager/phase-08-scheduled-run.md`, status: todo,
-drafted 2026-09-11). Dispatch with `/rexymcp:dispatch phase-08`.
-
-Phase-07b closed **approved_after_2 2026-09-11** (`99c6e29`). Both bounces were
-evidence defects on correct code — the mutation-check-2 transcript, first in
-prose (bug-07b-1) then surviving in the fenced block (bug-07b-2); the shipped
-code never changed across either. Calibration recorded in the phase doc and the
-milestone README: **pin evidence where it lives**, and scope doc-content
-criteria to the section they police.
-
-Scope for 08: `RunKind::Scheduled` gets its **first production constructor** —
-it has existed since phase-01 and nothing has ever built one. `run_scheduled_job`
-(435 lines, seven returns, eleven `mark_done` sites, returns `()`) is renamed to
-`_inner` and wrapped; the wrapper holds a `RunLogGuard` and derives the terminal
-`RunState` from the status the store holds after the job ran. Pure mapping
-function, 7 tests — `daemon::scheduled` has **no test module at all** today.
-
-Pre-injected gotcha: a successful **`Every`** job reads back as `Pending`, not
-`Succeeded` (`mark_done` advances and reschedules it), so the `Pending` arm must
-map to `Complete`. Pinned as a named test and as mutation check 1.
-
-Out of scope with reasons stated: scheduled-job cancellation (the script branch
-lives in a tmux window the substrate replaces; the ghost branch already cancels
-via 07b), collapsing the two run logs a scheduled ghost job produces, and
-rewriting the eleven `mark_done` sites.
-
-Remaining after 08: 09 (resume), 10 (cli). Neither drafted.
-
-**Superseded — phase-07b — ghost-run-cancel-result**
-(`docs/dev/milestones/M24-run-manager/phase-07b-ghost-run-cancel-result.md`,
-status: todo, drafted 2026-09-11). Dispatch with `/rexymcp:dispatch phase-07b`.
-
-Phase-07a closed **approved_first_try 2026-09-11** (commit `b98740f`) — the
-first unbounced phase since 05b, and the validation run for the retuned
-`rexymcp.toml`: 28 min / 225 turns, mean 8 s/turn, zero `parse_failed`, zero
-compactions, peak context 28 %, against 06b's 5 h 25 min / 90 turns on the old
-knobs. `max_tokens` was the binding constraint, not context.
-
-Scope for 07b: `daemoneye stop <run>` reaches a ghost shell — `register_run` +
-`watch_stop_sentinel` in `trigger_ghost_turn`, an `is_cancelled()` check at the
-top of the ghost turn loop, `RunState::Cancelled { stage, turns }` with the
-stage read from the 06b `CancelDoor` mark — plus `MailboxResult` gaining
-`run: Option<RunResult>` so a coordinator sees how its delegate's run ended.
-Precedence pinned: `Err` → HardFail beats cancel beats budget beats Complete.
-
-Deliberate limits, each an Out-of-scope item: **turn-top cancellation only**
-(the design's in-turn `select!` would need the 760-line body restructured),
-`register_active` stays absent (a ghost has no chat client, and a criterion
-pins that), `Budget::unlimited()` is a placeholder because accounting is M25,
-and `cancel_stage` is **not** extracted — two callers, and STANDARDS § 2.2
-says abstract at four.
-
-Grounded at drafting, every criterion executed against the tree: the
-dead-binding criterion greps `let (_runbook_name` because the bare name is a
-substring of `ghost_runbook_name`, and the masking test reuses the
-`AKIAIOSFODNN7EXAMPLE` input `masking_applied` (`src/agents/mailbox.rs:186`)
-already proves the filter catches.
-
-Remaining after 07b: 08 (scheduled-run), 09 (resume), 10 (cli). None drafted.
-
-**Superseded — phase-07a — ghost-run-log**
-(`docs/dev/milestones/M24-run-manager/phase-07a-ghost-run-log.md`, status:
-todo, drafted 2026-09-11). Dispatch with `/rexymcp:dispatch phase-07a`.
-
-Phases 01–06b are `done`. 06b closed `escalated` on 2026-09-11 after a bounce
-(bug-06b-1: the recorded cancel `stage` was derived from `CancelReason`, which
-both doors share, so it named nothing) and an architect takeover — the
-GLM-5.3-Flash re-dispatch ran 90 turns / 5 h 25 min on a ~60-line fix without
-converging. `rexymcp.toml` was retuned afterwards (PE, 2026-09-11):
-`context_length = 524284`, `max_context_pct = 80`, `max_tokens = 16384`.
-**Phase-07a is the A/B for those knobs** — 06b's baseline was 17–24 min per
-think-heavy turn and five `parse_failed` (truncated, tool-call-less) turns.
-
-Scope: a ghost shell gets a run identity — one `RunId`, a `RunLogGuard` in the
-16-line `trigger_ghost_turn` wrapper (the 760-line `do_ghost_turn` body is left
-alone), `RunKind::Delegated` vs `Ghost { runbook, trigger }` from a pure
-`ghost_run_kind`, the first production `TurnStarted` emitter in the tree, and
-Complete / HardFail / BudgetExceeded as terminal states. Purely additive:
-cancellation and the mailbox are 07b, and a criterion asserts a zero diff on
-`src/agents/mailbox.rs`.
-
-Grounded at drafting, each criterion executed against the tree: the field is
-`ghost_runbook_name` because `ghost_runbook` is already the `schedule_command`
-tool parameter (5 files), and ghost.rs's no-unwrap criterion is pinned to
-"unchanged at 1" because of the pre-existing `.expect` at `:863`.
-
-Remaining after 07a: 07b (ghost cancel + mailbox `RunResult`), 08
-(scheduled-run), 09 (resume), 10 (cli). None drafted.
