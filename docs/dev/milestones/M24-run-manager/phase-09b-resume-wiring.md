@@ -1,7 +1,7 @@
 # Phase 09b: `daemoneye run resume` — the wiring
 
 **Milestone:** M24 — Run Manager
-**Status:** review
+**Status:** done
 **Depends on:** phase-09a (`ResumeError`, `terminal_outcome`, `render_seed`),
 phase-07a/07b (the ghost run) and phase-04 (`RunId::parse`). All **done**.
 **Estimated diff:** ~340 lines incl. tests
@@ -383,7 +383,10 @@ Each was run against the current tree and returns the "now" value shown.
 - [ ] `cargo test --test integration resume_run_request_roundtrip` → **1
       passed** (now 0 — no such test).
 - [ ] **Preservation, each must not move:** `daemon::server` **21**,
-      `runbook` **24**, `daemon::ghost` **12**, `daemon::run::turn_log` **7**,
+      `runbook` **28** *(re-pinned at review: `cargo test --lib runbook` is a
+      **substring filter over test names**, not a module filter, so it also
+      catches this phase's four `resumable_runbook_*` tests — 24 + 4 = 28. The
+      drafted 24 was the pre-phase value. Architect error.)*, `daemon::ghost` **12**, `daemon::run::turn_log` **7**,
       `daemon::run::result` **11**, `daemon::run::guard` **8**,
       `daemon::scheduled` **7**.
 - [ ] **Nothing leaks into the developer's real HOME:**
@@ -891,3 +894,70 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 8933e5248b4aa400bd8eec095a27fd9e654f7103
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-12 (review: the mutation checks, run by the architect)
+
+The executor disclosed that § Mutation checks was never run — its instructions
+sit outside `## Spec` and so were never seeded as tasks. Rather than bounce on a
+missing artifact whose underlying property is cheap to check, I ran both at
+review. Both go red on their named targets; both reverted green.
+
+```
+=== MUT 1: resume_plan drops the resumability check (runbook forced to "unknown") ===
+test daemon::run::resume::tests::resume_plan_reads_a_real_log_and_builds_the_plan ... FAILED
+test daemon::run::resume::tests::resume_plan_refuses_a_non_ghost_run_even_with_a_briefing ... FAILED
+
+=== MUT 2: Delegated folded into the Ghost arm (returns the agent as the runbook) ===
+test daemon::run::resume::tests::resumable_runbook_refuses_a_delegated_run ... FAILED
+panicked at src/daemon/run/resume.rs:525:9:
+a delegated run must be refused, not planned — it is autonomous but names an agent, not a runbook
+
+=== reverted ===
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 1770 filtered out
+```
+
+### Review verdict — 2026-09-12
+
+- **Verdict:** escalated
+- **Bounces:** none filed; one `hard_fail` + resume
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (133 turns to
+  `hard_fail`, then 137 on the resume)
+- **Scope deviations:** the executor **edited § End-to-end verification's own
+  `H()` helper** before running it, and disclosed the edit. It was right to: the
+  helper anchored on `/pub async fn handle_resume_run/`, which matches nothing —
+  house style is `pub(super) async fn`. My escalation corrected the *criterion*
+  and missed the identical anchor inside the E2E block, so the block as written
+  printed 0 for all four handler greps against correct code. The corrected
+  flag-based `awk` is what produced the pasted run, which I re-extracted and
+  byte-compared against the executor's capture: **PASTE MATCH**.
+- **Calibration:** three items, two of them mine and one procedural.
+  1. **§ Mutation checks was never run, and the cause is structural, not
+     wilful.** The executor's account — those instructions sit outside `## Spec`
+     and so were never seeded as tasks — matches this project's own M12 fold
+     verbatim: *"the executor responds to conditions it can evaluate, not
+     instructions it can agree with… making it a seeded `## Spec` task worked
+     immediately."* That fold was applied to the E2E entry and never to mutation
+     checks. **Fourth occurrence of the class; the fix is to make mutation
+     checks a numbered `## Spec` task in future phase docs.** I ran both at
+     review instead of bouncing: the properties hold, the tests are real, and
+     only the transcript was missing — recorded above.
+  2. **Two more loose criteria, both mine.** The `runbook` preservation row
+     pinned 24, but `cargo test --lib runbook` is a substring filter over test
+     names and catches this phase's own four `resumable_runbook_*` tests (24 + 4
+     = 28) — re-pinned. And the `git diff -- src/ipc.rs` criteria were unmeasurable
+     against the working tree because of item 3; measured against the pre-phase
+     commit `fe3f6f3` they return exactly their stated values (1 added variant,
+     0 added `unwrap`). Instances thirteen and fourteen of the family, and both
+     are the same rule the 08 review named: *validate a structural criterion
+     against the tree as it will look after the phase.*
+  3. **My escalation commit was wrong.** `349bdab` used `git add -A` and swept
+     the executor's partial, **non-compiling** source work into history
+     alongside the intended doc changes. It cost nothing in the end — the resume
+     fixed the build — but it committed a red tree and it is why two criteria
+     could not be measured against the working tree. An escalation commit should
+     name its paths.
+  The executor's conduct is the counterweight to all three: it disclosed the
+  generator edit, disclosed the unmeasurable criterion and re-derived it against
+  the right baseline, disclosed the preservation delta with a correct
+  explanation, and **declined to fabricate the mutation transcripts it had not
+  run** — the exact failure this milestone bounced twice for.
