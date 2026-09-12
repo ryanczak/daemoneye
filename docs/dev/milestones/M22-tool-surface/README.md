@@ -57,7 +57,7 @@ final surface, so they go last.
 
 | # | Phase | Status |
 |----|-------|--------|
-| 01 | pty-default ([phase-01-pty-default.md](phase-01-pty-default.md)) — flip `[execution] backend` to `"pty"`; `"tmux"` becomes the explicit opt-out and an invalid value falls back to the default; stale comments/template/README corrected | in-progress |
+| 01 | pty-default ([phase-01-pty-default.md](phase-01-pty-default.md)) — flip `[execution] backend` to `"pty"`; `"tmux"` becomes the explicit opt-out and an invalid value falls back to the default; stale comments/template/README corrected | review      |
 | 02 | tool-category — `Category` + `mutates_state()` on every `ToolDef`; pure, additive, unblocks M25 | todo (not drafted) |
 | 03 | shell-tools-read — `list_shells`, `read_shell`, `find_in_shells` (the read-only three) | todo (not drafted) |
 | 04 | shell-tools-lifecycle — `open_shell`, `close_shell`, `watch_shell` | todo (not drafted) |
