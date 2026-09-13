@@ -1,0 +1,917 @@
+# Phase 04b: `watch_shell` — the blocking observer
+
+**Milestone:** M22 — Tool surface & context
+**Status:** todo
+**Depends on:** 03a (`list_shells`, the module and its registry seam), 03b
+(`read_shell`, the reader shape and its error sentences) and 04a
+(`open_shell`/`close_shell`, the in-process host fixture in
+`lifecycle_test_support`). All **done**.
+**Estimated diff:** ~580 lines incl. tests
+**Tags:** language=rust, kind=feature, size=m
+
+## Goal
+
+The 03 row gave the model three ways to read what a shell has **already**
+recorded. 04a gave it the two lifecycle tools. This gives it the one way to
+**wait**. After this phase:
+
+1. `watch_shell { shell, pattern?, timeout_secs? }` blocks until the regex
+   matches output arriving after the call, or — with no pattern — until the
+   shell's running command finishes; or until the timeout.
+2. It reads the shell's **live `.cast` file**, not the `.meta.json` command
+   index, because nothing in production writes that index (measured below).
+3. Every outcome the wire can actually produce is a distinct sentence: match,
+   finished, nothing-was-running, job-stopped, host-gone, timeout.
+4. Tool counts move to **45 tools: 33 core + 12 deferred**.
+
+### Why this is one phase and not two
+
+The natural seam is "the reader" (`read_output_since` + `visible_text`) versus
+"the tool". It is not takeable: a phase shipping only the two helpers leaves
+`visible_text` with no caller, and `cargo clippy --all-targets --all-features
+-- -D warnings` fails on the resulting `dead_code`. Making it `pub` to dodge
+that would be speculative API surface, which `STANDARDS.md` § 2.2 forbids in
+the other direction. So the helpers ship with their consumer.
+
+### `watch_pane` is the analogue and it is **not** the model
+
+`watch_pane` (`src/daemon/executor/knowledge/pane.rs:658`) says it blocks —
+its `ToolDef` description reads *"Blocks until the pane's command
+completes"* — and does not. It installs a tmux hook, `tokio::spawn`s a
+watcher, returns `"Now watching pane %3 …"` immediately, and injects a
+`[Watch Pane Match]` **user message** into the session later.
+
+**`watch_shell` actually blocks.** It returns its own answer as the tool
+result. That means:
+
+- no `tokio::spawn`, no hook guard, no `append_session_message`, no
+  `with_sessions`, no `display-message`, no `SessionStore` parameter;
+- the executor arm **must** be wrapped in `with_keepalive` (§ Pre-flight), and
+- the signature takes no session at all.
+
+Do not port `watch_pane`'s body. The only things taken from it are the two
+numbers its shape proved out: a 500 ms poll and a 5 s start grace.
+
+## Architecture references
+
+- `docs/design/daemoneye-2.0.md` § 2.5, the one row:
+  `watch_shell { shell, pattern?, timeout_secs }` | core | — | *Block until
+  pattern / command exit / timeout*. No gate, so it is **not** in
+  `APPROVAL_GATED_TOOLS`.
+- § 2.5's interactive paragraph names the intended flow: *"any other
+  interactive program runs with `wait: false` and the agent uses `watch_shell`
+  / `read_shell` / `send_input` to drive it."* `wait:` arrives in **phase 07**
+  and `send_input` in **phase 05** — neither exists. § Spec task 5 states what
+  may and may not be said about that.
+- `docs/dev/milestones/M22-tool-surface/README.md` § Notes — the tool
+  arithmetic (44 → **45**) and the `read_shell` "screen is not reachable"
+  note, which this phase extends with a second measured fact.
+- `CLAUDE.md` § "Adding a new AI tool (checklist)" — eleven steps; 10 and 11
+  gated by `tests/doc_truth.rs`; step 4 requires `category`.
+
+## Pre-flight
+
+### Measured fact 1 — **nothing in production writes a `.meta.json`**
+
+This decides the whole implementation, so it is stated with its evidence.
+
+```
+$ grep -rn 'MetaIndex\|meta_path_for\|read_command_output' --include=*.rs src/
+src/shell/mod.rs:22            (the re-export)
+src/shell/log.rs               (the definition + its own tests)
+src/daemon/executor/knowledge/shell.rs   (the reader, and its tests)
+```
+
+`MetaIndex::save` (`src/shell/log.rs:159`) has **no production caller**. The
+host writes the `.cast` (`PtyBackend::spawn` → `CastWriter::create`,
+`src/shell/backend.rs:64`) and nothing ever writes the sidecar. The real home
+shows exactly that:
+
+```
+$ ls ~/.daemoneye/var/log/shells/
+s0-1788636479.cast          <- a real shell: no sidecar
+s3-1788470000.meta.json     <- test litter (log.rs's fixture timestamp)
+```
+
+So a `watch_shell` built on 03b's `read_shell_log` **cannot match anything in
+production** — every call would land on that function's "has a cast log but
+its command index is missing or unreadable" branch. That is the bug-03a-1
+class (shipping a description for behaviour that does not exist) one level
+deeper, and it is why the milestone README's proposal that 04b "reuses 03b's
+reader" is **superseded by measurement**.
+
+**`watch_shell` reads the cast file directly.** That file is real, live and
+flushed per record — `CastWriter` calls `self.file.flush()` on every event, so
+a tail sees motion immediately. Its format is one JSON line per event:
+
+```
+{"version":2,"width":80,"height":24,"timestamp":1788636479}
+[0.053861, "o", "\u001b]0;matt@scrappy:~\u0007"]
+[0.05392, "o", "\u001b[?2004h"]
+[0.053927, "o", "\u001b]0;matt@scrappy: ~\u0007\u001b[01;32mmatt@scrappy\u001b[00m:\u001b[01;34m~\u001b[00m$ "]
+```
+
+`"o"` is output, `"i"` is input, `"m"` is a marker. Only `"o"` is this tool's
+business.
+
+### Measured fact 2 — the record's `started_unix` and the cast's are stamped in **different processes**
+
+`cast_path(id, started_unix)` (`src/shell/launch.rs:41`) names
+`<id>-<started_unix>.cast`. Two different clocks feed it:
+
+- `spawn_for` (`src/shell/registry.rs:191-199`) stamps `ShellRecord.started_unix`
+  **in the daemon**, at record reservation.
+- `run_host` (`src/shell/launch.rs:63-70`) computes its **own** `now` in the
+  **child** process, after `validate_shell_id`, the flock and `Config::load()`,
+  and it is that `now` the cast file is named with.
+
+Nothing reconciles the two for a live shell (`recover_started_unix` runs only
+in `adopt_at_startup`). A spawn that crosses a second boundary therefore
+produces a record whose `started_unix` does not name the file on disk.
+
+**So `watch_shell` must not trust the record's timestamp.** Resolve the cast
+by scanning `crate::config::shell_logs_dir()` with the existing public
+`parse_cast_name` (`src/shell/registry.rs:274`) and taking the **highest**
+`started_unix` for this id; fall back to `cast_path(id, record.started_unix)`
+only when the scan finds nothing. A named test pins this.
+
+`parse_cast_name` returns `Option<(ShellId, u64)>` from a file name — it is
+already `pub` and already re-exported (`src/shell/mod.rs:29`); do not write a
+second parser.
+
+> **Do not fix `read_shell` or `find_in_shells` here.** Both have the same
+> two defects (dead index, stale timestamp). They are recorded in the
+> milestone README for a follow-up; this phase's Authorizations forbid
+> touching them and a criterion pins their test names.
+
+### The enum-variant change shape — read this before you edit anything
+
+This phase adds **one** `PendingCall` variant and **one** `AiEvent` variant.
+**The tree cannot compile from the moment the variant exists until the last
+match arm lands.** Edit all five compiler-forced sites **in one contiguous
+batch, then run the verifier once.** A phase in this milestone `hard_fail`ed
+on `VerifierFailurePersistent` for exactly this reason while making correct
+progress.
+
+**Five sites the compiler forces.** Function heads as of commit `fa10352a`:
+
+| Site | What it is |
+|---|---|
+| `src/ai/types/pending.rs:330` | `to_tool_call()` |
+| `src/ai/types/pending.rs:908` | `id()` |
+| `src/ai/types/pending.rs:1135` | `tool_name()` |
+| `src/daemon/executor/mod.rs` (the `execute_tool_call` match) | the executor arm |
+| `src/daemon/stream.rs` (the `AiEvent` streaming match) | event → `PendingCall` |
+
+**Two sites the compiler does NOT force — and they change behaviour.** Both
+have a catch-all, so a missing arm compiles clean and is silently wrong:
+
+- **`summary()`** (`src/ai/types/pending.rs:998`) ends in
+  `_ => String::new()`. Without an arm the blocking tool shows **no arguments**
+  for up to five minutes of `ToolStarted` display. Copy `WatchPane`'s shape
+  exactly — it is the right one:
+
+```rust
+            PendingCall::WatchPane {
+                pane_id,
+                timeout_secs,
+                pattern,
+                ..
+            } => {
+                if let Some(pat) = pattern {
+                    format!("{pane_id} pattern=\"{pat}\"")
+                } else {
+                    format!("{pane_id} {timeout_secs}s")
+                }
+            }
+```
+
+- **`should_emit_tool_feedback()`** (`src/ai/types/pending.rs:960`) is a
+  `matches!(self, A | B | …)` chain, so an unlisted variant silently returns
+  `false` and **no** `ToolStarted`/`ToolFinished` is emitted. `WatchPane` is
+  already in that chain; `WatchShell` joins it. For a tool that blocks, this
+  is the difference between a visible wait and a frozen chat.
+
+Criteria pin both arms, because no gate catches them.
+
+### The executor arm **must** wrap in `with_keepalive` — the one way to get this wrong silently
+
+The daemon's protocol liveness contract (`src/daemon/utils/keepalive.rs:8`):
+while a turn is in flight the daemon sends *something* at least every
+`KEEPALIVE_PERIOD_SECS` (15), and the CLI's dead-daemon deadlines are derived
+from that. A tool that blocks for 300 s without one trips them.
+
+There is exactly one existing blocking tool, and it is the pattern to copy —
+`src/daemon/executor/mod.rs:1140-1156`:
+
+```rust
+        PendingCall::AwaitAgentResult {
+            job_id,
+            agent_name,
+            timeout_secs,
+            ..
+        } => {
+            crate::daemon::utils::with_keepalive(
+                tx,
+                knowledge::await_agent_result(
+                    job_id,
+                    agent_name,
+                    *timeout_secs,
+                    &memory_namespaces,
+                ),
+            )
+            .await?
+        }
+```
+
+`tx` is already in scope in `execute_tool_call`, and the function is already
+`async`. Note the arm's value is the future's output **unwrapped with `?`** —
+`with_keepalive` returns `anyhow::Result<T>`, so the arm ends `.await?` and
+the inner future must produce the `Ok(ToolCallOutcome::Result(..))` itself.
+`watch_shell` returns a plain `String`, so wrap it at the call site:
+
+```rust
+        PendingCall::WatchShell {
+            shell,
+            pattern,
+            timeout_secs,
+            ..
+        } => Ok(ToolCallOutcome::Result(
+            crate::daemon::utils::with_keepalive(
+                tx,
+                knowledge::watch_shell(shell, pattern.as_deref(), *timeout_secs),
+            )
+            .await?,
+        )),
+```
+
+### The blocking loop — the idiom already in the tree
+
+`await_agent_result` (`src/daemon/executor/knowledge/agents.rs:250-291`) is
+the shape: a `tokio::time::timeout` around an endless poll loop, with the
+timeout branch producing its own sentence.
+
+```rust
+    const MAX_TIMEOUT_SECS: u64 = 3600;
+    let capped_secs = timeout_secs.min(MAX_TIMEOUT_SECS);
+    let deadline = tokio::time::Duration::from_secs(capped_secs);
+    let poll_interval = tokio::time::Duration::from_secs(2);
+
+    let result = tokio::time::timeout(deadline, async {
+        loop {
+            /* … check … */
+            tokio::time::sleep(poll_interval).await;
+        }
+    })
+    .await;
+```
+
+Use `tokio::time::sleep`, **never `std::thread::sleep`** — this future runs on
+the daemon's runtime and a blocking sleep stalls every other task on that
+worker. (`closed_by_observed_end` in this same module does use
+`std::thread::sleep`; it is bounded at 1.5 s and is not the example to follow.)
+
+### What is actually observable, and what puts a shell in each state
+
+`ShellState` (`src/shell/proto.rs:18-27`) is the whole vocabulary:
+`Idle | Running | Paused | Exited`. It is derived live by the host from the
+PTY's foreground process group (`src/shell/backend.rs:140-181`), reached from
+the daemon with `crate::shell::status(&socket_path(id), timeout)` →
+`ShellResponse::Status { state, .. }`.
+
+**Who leaves a command running in a shell today — there is exactly one
+producer, and saying more than that is the bug-03a-1 trap.** Background
+execution (`src/daemon/executor/bg_shell.rs:52`) calls `spawn_dedicated_for`
+and then `spawn_command`, which returns a `CommandHandle` **as soon as the
+command is running** rather than waiting for it. The shell is owned by
+`Owner::Chat(session_id)` (`src/daemon/executor/mod.rs:454`), so
+`list_shells` shows it to the same session with the `dedicated` flag. That is
+the shell `watch_shell` is for today. `run_terminal_command`'s foreground path
+blocks in `client::run_command` until the marker arrives, so a foreground
+command is never watchable — by the time the model could call `watch_shell`,
+it has already been given the output.
+
+`wait: false` (phase 07) and `send_input` (phase 05) do not exist. **Do not
+name them in the tool description or in `sre.toml`.**
+
+### The in-process host fixture already exists — do not write a fourth copy
+
+04a lifted it to `pub(crate) mod lifecycle_test_support`
+(`src/daemon/executor/knowledge/shell.rs:853`), and this module's tests reach
+it through the local `spawn_in_process_host` at
+`src/daemon/executor/knowledge/shell.rs:981`:
+
+```rust
+    async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
+        let cast = lifecycle_test_support::spawn_with_cast(id.clone()).await?;
+        std::mem::forget(cast);
+        Ok(())
+    }
+```
+
+`lifecycle_home()` (`src/daemon/executor/knowledge/shell.rs:1012`) is the
+isolated-`HOME` guard those `#[tokio::test]`s hold for their whole body.
+
+**A pattern-arm test needs no host at all** — it writes its own cast file and
+appends to it — but it does need the per-id lock held, because the poll loop
+stops early when `host_is_alive` goes false. Add this helper to the test
+module and use it in every hostless `watch_shell` test:
+
+```rust
+    /// Hold (and leak) the per-id instance lock so `host_is_alive` reads the
+    /// shell as live without a real host — what a pattern-arm test needs and
+    /// what a real host would otherwise provide.
+    fn hold_lock(id: &str) {
+        let lock = crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id))
+            .expect("acquiring the per-id lock");
+        std::mem::forget(lock);
+    }
+```
+
+### The third copy that is due to be folded
+
+This block is **byte-identical** in `read_shell_log` and in
+`close_shell_with`, and `watch_shell` needs it a third time:
+
+```rust
+        let live = with_shells(reg, |store| {
+            let mut ids: Vec<String> = store.values().map(|r| r.id.as_str().to_string()).collect();
+            ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));
+            ids
+        });
+```
+
+`STANDARDS.md` § 2.2 puts the abstraction point at the third copy. Extract
+`fn live_shell_ids(reg: &ShellRegistry) -> Vec<String>` and call it from all
+three. **Do not change any message text** while doing it — the two existing
+sentences differ deliberately and their wording is pinned by existing tests.
+
+## Current state
+
+Values run against the tree at drafting (2026-09-13, commit `fa10352a`).
+
+- `grep -c 'ToolDef {' src/ai/tools/defs.rs` → **44**.
+- `grep -rc 'watch_shell' --include=*.rs src/ | grep -v ':0' | wc -l` → **0**.
+- `grep -c '44 tools: 32 core + 12 deferred' CLAUDE.md` → **1**;
+  `grep -c 'The model has \*\*44 tools\*\*' README.md` → **1**.
+- The duplicated live-ids block:
+  `grep -c 'ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));' src/daemon/executor/knowledge/shell.rs`
+  → **2**.
+- `grep -c 'fn read_output_since\|fn visible_text\|fn live_shell_ids' src/shell/log.rs src/daemon/executor/knowledge/shell.rs`
+  → **0** in both.
+- Tests: `cargo test --lib 'knowledge::shell'` → **27 passed**;
+  `cargo test --lib 'shell::log'` → **13**; `cargo test --lib 'ai::tools'` →
+  **22**; `cargo test --lib 'shell::'` → **204**;
+  `cargo test --lib 'daemon::executor::'` → **262**;
+  `cargo test --lib 'config::'` → **92**; `cargo test --test doc_truth` →
+  **10**; `cargo test --test isolation` → **9**; full lib suite **1847**.
+- `src/daemon/executor/knowledge/shell.rs` is **1855** lines.
+
+## Spec
+
+Nine tasks. Task 8 is the mutation checks and task 9 the end-to-end capture,
+both as numbered Spec tasks — `docs/dev/WORKFLOW.md` § End-to-end verification
+requires the capture to be a task, because the seeder parses only the section
+headed exactly `## Spec`.
+
+### Task 1 — `read_output_since` in `src/shell/log.rs`
+
+A sibling of `read_command_output`, in the same file, `pub` and re-exported
+from `src/shell/mod.rs`:
+
+```rust
+pub fn read_output_since(cast: &Path, from: u64) -> Result<(Vec<u8>, u64)>
+```
+
+- Read from byte `from` to end of file. Return the concatenated `"o"` payload
+  bytes of the **complete** lines found, and the new offset.
+- **The offset must advance only past the last complete line.** A cast whose
+  final line is still being written must leave those bytes unconsumed so the
+  next call sees the whole line. This is the property mutation 1 breaks.
+- Skip `"i"` and `"m"` events and any malformed line, exactly as
+  `read_command_output` does — a malformed line is skipped, never fatal.
+- `from` beyond the file's length returns empty bytes and `from` unchanged
+  (a truncated or rotated file must not panic or seek past the end).
+
+Share the per-line decode with `read_command_output` rather than writing the
+`serde_json::Value` / `array.len() != 3` / `array[1].as_str() != Some("o")`
+walk a second time.
+
+### Task 2 — `visible_text` in `src/daemon/executor/knowledge/shell.rs`
+
+Pure, private, no I/O:
+
+```rust
+fn visible_text(raw: &str) -> String
+```
+
+Raw PTY bytes are not matchable text: the cast excerpt in § Pre-flight shows
+a prompt carrying four escape sequences. `visible_text` turns raw output into
+what a human would see:
+
+1. Remove ANSI escapes. Use one lazily-built `regex::Regex` — CSI, OSC and the
+   short two-character forms:
+
+```rust
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]"
+```
+
+2. Then, **per line**, keep only the text after the last `\r`. A progress bar
+   rewrites one line with carriage returns; the last write is what the
+   terminal shows. `"10%\r50%\r100% done"` must become `"100% done"`.
+
+Do **not** reach for `ShellScreen` here: it renders a fixed `rows`×`cols`
+grid, and output that scrolls past `rows` between two polls would be lost.
+
+### Task 3 — `live_shell_ids`
+
+Extract the byte-identical block quoted in § Pre-flight into
+`fn live_shell_ids(reg: &ShellRegistry) -> Vec<String>` and call it from
+`read_shell_log`, `close_shell_with` and the new `watch_shell`. **No message
+text changes.**
+
+### Task 4 — `watch_shell`
+
+In `src/daemon/executor/knowledge/shell.rs`, after the 04a section.
+
+- A public `watch_shell(shell: &str, pattern: Option<&str>, timeout_secs: u64)
+  -> String` and an injected-seam
+  `watch_shell_with(reg, shell, pattern, timeout_secs, poll, grace) -> String`,
+  mirroring the `list_shells` / `list_shells_in` and `open_shell` /
+  `open_shell_with` splits already in the file. The public form passes
+  `crate::shell::registry()`, `WATCH_POLL` and `WATCH_START_GRACE`.
+- Constants, with the doc comments saying where the numbers come from:
+  `WATCH_POLL = 500ms` and `WATCH_START_GRACE = 5s` (both `watch_pane`'s
+  proven values), `WATCH_DEFAULT_SECS = 300`, `WATCH_MAX_SECS = 3600`
+  (`await_agent_result`'s cap), `WATCH_TAIL_LINES = 50`.
+- **Order of refusals, all returned as text, never `Err`** — every tool result
+  is a value the model reads:
+  1. unknown id → the `live_shell_ids` sentence, the shape `read_shell`
+     already uses;
+  2. invalid `pattern` regex → an error naming the pattern and saying it is
+     applied as a regex, not a literal, the shape `read_shell`'s `filter`
+     already uses. Build it with
+     `regex::RegexBuilder::new(p).size_limit(1 << 20).build()`, as every other
+     regex in this module does.
+- **No ownership check.** `read_shell` and `find_in_shells` read any shell;
+  observing is not mutating. Only `close_shell` checks ownership. Do not add
+  one here.
+- **The starting offset is the cast's current length.** `watch_shell` watches
+  output that arrives **after** the call — a pattern present only in output
+  written before it must time out. That is the negative test; it is also why
+  the description must point at `read_shell` for history.
+- Resolve the cast by the § Pre-flight rule: scan `shell_logs_dir()` with
+  `parse_cast_name`, take the highest `started_unix` for this id, fall back to
+  `cast_path(id, record.started_unix)`. A cast that does not exist yet is not
+  an error — offset 0, and the loop picks it up when the host creates it.
+- **The poll loop**, inside one `tokio::time::timeout(capped, …)`:
+  - read new bytes with `read_output_since`, run them through `visible_text`,
+    append to an accumulated buffer;
+  - with a pattern: match the buffer; on a hit return, rendering the matching
+    line with ±1 line of context through the existing
+    `search_shell_buffer(&buf, &re, 1)`. **Say that the line number is
+    relative to the output seen since the call**, not a log line number;
+  - without a pattern: `crate::shell::status(&socket_path(shell), …)` each
+    tick and branch on `ShellState` (below);
+  - `host_is_alive(&lock_path(shell))` false → the host is gone; return
+    saying so, with the tail of what was seen;
+  - `tokio::time::sleep(poll)`.
+- **The `ShellState` branches, one sentence each.** Track whether the shell
+  has been seen `Running` at any point:
+  - `Running` → keep waiting;
+  - `Idle` **before** `grace` has elapsed and never seen `Running` → keep
+    waiting (a command that has just been sent has not taken the PTY yet);
+  - `Idle` after having been seen `Running` → the command finished;
+  - `Idle` after `grace` with `Running` never seen → **nothing was running**;
+    say that plainly and say what to do (start the command, then watch);
+  - `Paused` → the job is stopped and will not finish on its own; return
+    rather than burning the timeout;
+  - `Exited` → the shell itself ended;
+  - a `status` error (socket gone) → return saying the shell is unreachable.
+    Do not retry silently to the timeout.
+- **Timeout** returns a sentence naming the elapsed seconds and, when there
+  was any, the last `WATCH_TAIL_LINES` lines of what it saw (via the existing
+  `tail_lines`). A timeout that shows nothing must say the shell produced no
+  output rather than implying it produced none of interest.
+- **Everything shown is masked.** `mask_sensitive` on any body, as
+  `build_body` and `find_in_shells_in` already do.
+
+### Task 5 — the tool definition
+
+`deferred_group: None`, `category: Category::Read` — it observes and changes
+nothing (`WatchPane` and `AwaitAgentResult` are both `Read`).
+
+- Params: `shell` (`ParamTy::Str`, required), `timeout_secs` (`ParamTy::Int`,
+  optional, "Default 300, capped at 3600"), `pattern` (`ParamTy::Str`,
+  optional).
+- The description must say, and say only, what is true on this tree: it
+  blocks; the pattern matches output arriving **after** the call and
+  `read_shell` is how to search what already happened; with no pattern it
+  waits for the command running in the shell to finish; the shell that has a
+  command running today is the **dedicated** shell a background
+  `run_terminal_command` creates, which `list_shells` shows.
+- **Name no tool that does not exist and no parameter that does not exist.**
+  In particular do **not** mention `send_input`, `wait`, `wait: false`, or a
+  `shell` parameter on `run_terminal_command`. Cite no milestone or phase
+  identifier.
+
+**Not in `APPROVAL_GATED_TOOLS`.** It sends no `Response::*Prompt` and blocks
+on no reply, and that list also exempts a tool from every budget cap in
+`daemon::stream`. **Do not add `shell` or `pattern` to `enum_values`** in
+`src/ai/tools/schema.rs`; that map is keyed by param name globally.
+
+### Task 6 — wire the tool
+
+All five compiler-forced sites from § Pre-flight **in one batch**, plus the
+two compiler-invisible arms (`summary`, `should_emit_tool_feedback`), plus
+`args.rs` (`WatchShellArgs` with `#[serde(default = "default_300")]` on
+`timeout_secs`, as `WatchPaneArgs` already has), `dispatch.rs` (the arm **and**
+a row in the conformant-args table — `dispatch_roundtrip_all_tools` fails
+without it), and the `knowledge/mod.rs` re-export.
+
+The executor arm is the `with_keepalive` form quoted in § Pre-flight.
+`execute_tool_call` is already `async`, so the `.await` needs no signature
+change.
+
+### Task 7 — the two doc tables and the prompt asset
+
+- `CLAUDE.md` § "Current AI tools": count line to **`45 tools: 33 core + 12
+  deferred.`** plus one row, `Loaded` = `core`.
+- `README.md` § "AI tools": one Core-table row and the numbers at "The model
+  has **44 tools**" → **45**, **32** → **33**, 12 unchanged. No `**⚠**`.
+- `assets/prompts/sre.toml`: a `### ``watch_shell``` section beside the other
+  shell tools (they run from line 105). Same honesty restriction as task 5.
+
+### Task 8 — run the mutation checks and record them
+
+Both with the `patch` tool (`sed -i`, `perl -i` and `>` redirects are
+forbidden by the executor contract). Capture each red-then-green transcript
+mechanically. Each names the **property**; find the line yourself. **If a
+mutation does not turn its test red, record exactly that — do not invent a
+failure, and do not report an outcome the applied patch cannot produce.**
+Check that the test you expect to redden is one the mutated line can reach.
+
+1. **`read_output_since` must not consume a partial trailing line.** Make it
+   advance the returned offset to the file's full length regardless of where
+   the last newline is → the partial-line test must go **red**.
+2. **`watch_shell` must start from the cast's current length, not from 0.**
+   Make the initial offset `0` → the "ignores output written before the call"
+   test must go **red**, because the pre-existing line then matches at once.
+
+After each, revert with `patch` and show the test green again. When you quote
+a `test result:` line, **quote it from the run whose command you are
+showing**.
+
+### Task 9 — capture the end-to-end evidence
+
+Run the block in § End-to-end verification **verbatim and unmodified**, then
+paste the resulting `/tmp/e2e-m22-04b.txt` into a new Update Log entry headed
+`### Update — <date> (end-to-end verification)`, and record the `PASTE MATCH`
+self-check verdict in the same entry. The server-authored `(complete)` entry
+does not satisfy this, and neither does a summary asserting the block was
+pasted. Capture **fresh**.
+
+**Section E runs the lib suite three times and keeps failure names.** If any
+of the three fails, that is a real result: **do not re-run until green and
+file the green one** — file the failure, name the test, and say what you
+found. A supplementary clean rerun does not satisfy a three-consecutive-runs
+criterion.
+
+## Acceptance criteria
+
+Each was run against the tree at drafting and returns the "now" value shown.
+`<W>` abbreviates
+`sed -n '/name: "watch_shell"/,/^    },/p' src/ai/tools/defs.rs |`.
+
+- [ ] **The tool exists, core + Read:**
+      `grep -c 'name: "watch_shell"' src/ai/tools/defs.rs` → **1** (now `0`);
+      `<W> grep -c 'category: Category::Read'` → **1**;
+      `<W> grep -c 'deferred_group: None'` → **1**.
+- [ ] **Its three parameters, one required:**
+      `<W> grep -cE 'name: "(shell|timeout_secs|pattern)"'` → **3**;
+      `<W> grep -c 'required: true'` → **1**;
+      `<W> grep -cE 'name: "(pane_id|host|wait)"'` → **0**.
+- [ ] **Counts moved together:** `grep -c 'ToolDef {' src/ai/tools/defs.rs` →
+      **45** (now `44`); `grep -c '45 tools: 33 core + 12 deferred' CLAUDE.md`
+      → **1** (now `0`); `grep -c '44 tools: 32 core + 12 deferred' CLAUDE.md`
+      → **0** (now `1`); `grep -c 'The model has \*\*45 tools\*\*' README.md`
+      → **1** (now `0`).
+- [ ] **Not approval-gated:**
+      `sed -n '/APPROVAL_GATED_TOOLS: &\[&str\] = &\[/,/^\];/p' src/ai/tools/defs.rs | grep -c 'watch_shell'`
+      → **0**.
+- [ ] **`enum_values` untouched:**
+      `sed -n '/pub(super) fn enum_values/,/^}/p' src/ai/tools/schema.rs | grep -cE '"shell"|"pattern"'`
+      → **0**, and the same range `grep -c '"session", "knowledge", "incident"'`
+      → **1**, unchanged.
+- [ ] **The two compiler-invisible arms were done:**
+      `sed -n '/pub fn should_emit_tool_feedback/,/^    }/p' src/ai/types/pending.rs | grep -c 'WatchShell'`
+      → **1** (now `0`), and
+      `sed -n '/pub fn summary(&self)/,/^    }/p' src/ai/types/pending.rs | grep -c 'WatchShell'`
+      → **1** (now `0`). *(Neither is enforced by any gate.)*
+- [ ] **The rest of the wiring:**
+      `grep -c 'WatchShell' src/ai/types/pending.rs` → **5 or more**;
+      `grep -c 'WatchShell' src/ai/types/events.rs` → **1**;
+      `grep -c 'WatchShell' src/daemon/stream.rs` → **2 or more**;
+      `grep -c 'WatchShell' src/daemon/executor/mod.rs` → **1 or more**;
+      `grep -c 'watch_shell' src/ai/tools/dispatch.rs` → **2 or more**;
+      `grep -c 'WatchShellArgs' src/ai/tools/args.rs` → **2 or more**;
+      `grep -c 'watch_shell' assets/prompts/sre.toml` → **1 or more**.
+      All now `0`.
+- [ ] **The executor arm keeps the daemon alive:**
+      `grep -A20 'PendingCall::WatchShell {' src/daemon/executor/mod.rs | grep -c 'with_keepalive'`
+      → **1**. *(Without it a 300 s block trips the CLI's dead-daemon
+      deadline; nothing else catches this.)*
+- [ ] **No blocking sleep in the new code:**
+      `sed -n '/fn watch_shell_with/,/^}/p' src/daemon/executor/knowledge/shell.rs | grep -c 'std::thread::sleep'`
+      → **0**, and the same range `grep -c 'tokio::time::sleep'` → **1 or
+      more**.
+- [ ] **It reads the cast, not the dead command index:**
+      `sed -n '/fn watch_shell_with/,/^}/p' src/daemon/executor/knowledge/shell.rs | grep -cE 'MetaIndex|read_command_output|read_shell_log'`
+      → **0**, and the same range `grep -c 'read_output_since'` → **1 or
+      more**.
+- [ ] **It does not trust the record's timestamp alone:**
+      `sed -n '/fn watch_shell_with/,/^}/p' src/daemon/executor/knowledge/shell.rs | grep -c 'parse_cast_name'`
+      → **1 or more**.
+- [ ] **The third copy was folded, with no message change:**
+      `grep -c 'fn live_shell_ids' src/daemon/executor/knowledge/shell.rs` →
+      **1** (now `0`);
+      `grep -c 'ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));' src/daemon/executor/knowledge/shell.rs`
+      → **1** (now `2`);
+      `grep -c 'Live shell ids:' src/daemon/executor/knowledge/shell.rs` →
+      **2**, unchanged.
+- [ ] **The new reader is public and re-exported:**
+      `grep -c 'pub fn read_output_since' src/shell/log.rs` → **1** (now `0`);
+      `grep -c 'read_output_since' src/shell/mod.rs` → **1** (now `0`).
+- [ ] **`read_shell` and `find_in_shells` were not rewritten:**
+      `grep -cE '^    (async )?fn (list_shells|read_shell|find_in_shells|formatter|open_shell|close_shell)' src/daemon/executor/knowledge/shell.rs`
+      → **27 or more** (now **27**).
+- [ ] **The thirteen new tests exist by name:**
+      `grep -cE '^    fn (read_output_since_returns_only_new_output|read_output_since_stops_at_the_last_complete_line|read_output_since_skips_input_and_marker_events)' src/shell/log.rs`
+      → **3** (now `0`), and
+      `grep -cE '^    (async )?fn (visible_text_strips_ansi_escapes|visible_text_keeps_the_text_after_the_last_carriage_return|watch_shell_returns_when_the_pattern_appears|watch_shell_ignores_output_written_before_the_call|watch_shell_times_out_and_reports_what_it_saw|watch_shell_unknown_id_is_an_error_naming_live_shells|watch_shell_invalid_pattern_is_an_error|watch_shell_finds_the_cast_when_the_records_timestamp_is_stale|watch_shell_stops_when_the_host_is_gone|watch_shell_reports_that_nothing_was_running)' src/daemon/executor/knowledge/shell.rs`
+      → **10** (now `0`).
+- [ ] **The prompt asset stays honest:**
+      ``sed -n '/^### `watch_shell`/,/^### /p' assets/prompts/sre.toml | grep -cE 'send_input|wait:|03a|03b|03c|04a|04b|M2[0-9]'``
+      → **0**.
+- [ ] No new `unsafe` / `unwrap` / `expect` / `panic!` in **production** code:
+      `sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/knowledge/shell.rs | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe '`
+      → **0**, unchanged; and
+      `sed -n '1,/^#\[cfg(test)\]/p' src/shell/log.rs | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe '`
+      → **0**, unchanged. *(Test-module `unsafe` around `set_var` is the
+      project's mandated `test_home_guard` idiom and is expected.)*
+- [ ] `cargo test --lib 'knowledge::shell'` → **37 or more**, `0 failed` (now
+      **27**). *Arithmetic: 27 existing + 10 named above.*
+- [ ] `cargo test --lib 'shell::log'` → **16 or more**, `0 failed` (now
+      **13**).
+- [ ] `cargo test --lib 'ai::tools'` → **22**, unchanged, `0 failed`.
+- [ ] `cargo test --test doc_truth` → **10**, `0 failed`, unchanged.
+- [ ] **Preservation:** `cargo test --lib 'config::'` → **92**;
+      `cargo test --test isolation` → **9**;
+      `cargo test --lib 'shell::'` → **207 or more** (now **204**);
+      `cargo test --lib 'daemon::executor::'` → **272 or more** (now **262**).
+- [ ] Full lib suite **1860 or more**, `0 failed`, on **three consecutive
+      runs** (now **1847**).
+- [ ] All four gates pass.
+
+## Test plan
+
+Thirteen new tests. The three cast-reader tests are plain `#[test]`s in
+`src/shell/log.rs`; the two `visible_text` tests are plain `#[test]`s; the
+eight `watch_shell` tests are `#[tokio::test]`s holding `lifecycle_home()`.
+
+**In `src/shell/log.rs`:**
+
+1. **`read_output_since_returns_only_new_output`** — write a cast with three
+   `"o"` events, read from 0, then append a fourth and read from the returned
+   offset: the second read returns only the fourth event's payload.
+2. **`read_output_since_stops_at_the_last_complete_line`** — append a complete
+   line plus a partial one (no trailing `\n`). The read returns the complete
+   line's payload only, and the returned offset points at the start of the
+   partial line, so a follow-up read that completes the line returns it whole.
+   Mutation 1's test: consuming to EOF loses that line forever.
+3. **`read_output_since_skips_input_and_marker_events`** — a cast mixing
+   `"o"`, `"i"` and `"m"` events plus one malformed line; only the `"o"`
+   payloads come back and the malformed line is skipped, not fatal.
+
+**In `src/daemon/executor/knowledge/shell.rs`:**
+
+4. **`visible_text_strips_ansi_escapes`** — the real prompt line from
+   § Pre-flight (`\u001b]0;…\u0007\u001b[01;32mmatt@scrappy\u001b[00m…`)
+   reduces to its plain text, with no `\x1b` left in the output.
+5. **`visible_text_keeps_the_text_after_the_last_carriage_return`** —
+   `"10%\r50%\r100% done\nnext"` → `"100% done\nnext"`.
+6. **`watch_shell_returns_when_the_pattern_appears`** — a registry record, a
+   held lock (`hold_lock`), a cast file with some prior content; spawn a task
+   that appends an `"o"` event containing `READY` after ~200 ms; the call
+   returns naming the pattern and showing the matching line.
+7. **`watch_shell_ignores_output_written_before_the_call`** — the same setup
+   with `READY` **already** in the cast and nothing appended; a 1 s timeout.
+   The call must time out, not match. Mutation 2's test, and the one that
+   pins the tool's stated semantics.
+8. **`watch_shell_times_out_and_reports_what_it_saw`** — output appended that
+   does **not** match; the timeout sentence names the elapsed seconds and
+   contains a line of the appended output.
+9. **`watch_shell_unknown_id_is_an_error_naming_live_shells`** — an id absent
+   from a non-empty registry returns text naming it and listing the live ids,
+   and the function returns a `String` (not a `Result` the caller unwraps).
+10. **`watch_shell_invalid_pattern_is_an_error`** — `"[unclosed"` returns an
+    error naming the pattern **before** any waiting: assert the call returns
+    in well under its timeout.
+11. **`watch_shell_finds_the_cast_when_the_records_timestamp_is_stale`** — the
+    record carries `started_unix = N` but the cast on disk is named
+    `<id>-<N+1>.cast`. The pattern still matches. Without the
+    `parse_cast_name` scan this times out; it is the only test that covers
+    § Pre-flight's measured fact 2.
+12. **`watch_shell_stops_when_the_host_is_gone`** — a record and a cast but
+    **no** lock held; the call returns promptly saying the host is gone rather
+    than waiting out the timeout.
+13. **`watch_shell_reports_that_nothing_was_running`** — no pattern, a real
+    in-process host (`spawn_in_process_host`) sitting idle, a short injected
+    grace: the call returns the "nothing was running" sentence, distinct from
+    the "command finished" one.
+
+**Negatives are named on purpose.** A suite asserting only that a pattern
+matches passes against an implementation that scans from byte 0 (7), trusts
+the record's timestamp (11), waits out a dead host (12), and cannot tell an
+idle shell from a finished command (13).
+
+**The one arm no test drives end to end** is `Running` → `Idle` on a real
+command, because it needs a host, a `spawn_command` round trip and a real
+sleeping process. It is exercised by hand in § End-to-end verification
+section C instead, and that is a deliberate limit, not an oversight: say so in
+the Update Log rather than writing a flaky timing test for it.
+
+## End-to-end verification
+
+Run from the repo root, verbatim:
+
+```sh
+A=/tmp/e2e-m22-04b.txt
+: > "$A"
+RUNS_BEFORE=$(ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l)
+CASTS_BEFORE=$(ls ~/.daemoneye/var/log/shells/ 2>/dev/null | wc -l)
+{
+echo "== A. build =="
+echo "real HOME run logs BEFORE: $RUNS_BEFORE; shell logs BEFORE: $CASTS_BEFORE"
+cargo build 2>&1 | tail -2; echo "cargo_exit=${PIPESTATUS[0]}"
+
+echo "== B. the two modules' tests =="
+cargo test --lib 'knowledge::shell' -- --nocapture 2>&1 \
+  | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test daemon::executor::knowledge::shell|^test result'
+echo "cargo_exit=${PIPESTATUS[0]}"
+cargo test --lib 'shell::log' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test shell::log|^test result'
+cargo test --lib 'ai::tools' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test result'
+
+echo "== C. the Running -> Idle arm, by hand (no unit test covers it) =="
+echo "--- the cast format read_output_since parses, from a real recording ---"
+ls -1 ~/.daemoneye/var/log/shells/*.cast 2>/dev/null | head -1 \
+  | xargs -r head -3 2>/dev/null | cut -c1-100
+echo "--- ShellState is the only state vocabulary on the wire ---"
+sed -n '/pub enum ShellState/,/^}/p' src/shell/proto.rs
+echo "--- nothing in production writes the command index (expect only log.rs + the reader) ---"
+grep -rn 'MetaIndex::save\|\.save(&meta_path' --include=*.rs src/ | sed 's/:.*//' | sort -u
+
+echo "== D. structural greps (each must print the stated number) =="
+D=src/ai/tools/defs.rs; S=src/ai/tools/schema.rs; K=src/daemon/executor/knowledge/shell.rs
+P=src/ai/types/pending.rs; L=src/shell/log.rs; X=src/daemon/executor/mod.rs
+W() { sed -n '/name: "watch_shell"/,/^    },/p' $D; }
+F() { sed -n '/fn watch_shell_with/,/^}/p' $K; }
+printf 'watch_shell defined          (1): %s\n' "$(grep -c 'name: "watch_shell"' $D)"
+printf 'category Read                (1): %s\n' "$(W | grep -c 'category: Category::Read')"
+printf 'deferred_group None          (1): %s\n' "$(W | grep -c 'deferred_group: None')"
+printf 'three params                 (3): %s\n' "$(W | grep -cE 'name: "(shell|timeout_secs|pattern)"')"
+printf 'one required                 (1): %s\n' "$(W | grep -c 'required: true')"
+printf 'no pane_id/host/wait param   (0): %s\n' "$(W | grep -cE 'name: "(pane_id|host|wait)"')"
+printf 'ToolDef literals            (45): %s\n' "$(grep -c 'ToolDef {' $D)"
+printf 'categories assigned         (45): %s\n' "$(grep -c 'category: Category::' $D)"
+printf 'not approval-gated           (0): %s\n' "$(sed -n '/APPROVAL_GATED_TOOLS: &\[&str\] = &\[/,/^\];/p' $D | grep -c 'watch_shell')"
+printf 'enum_values untouched        (0): %s\n' "$(sed -n '/pub(super) fn enum_values/,/^}/p' $S | grep -cE '"shell"|"pattern"')"
+printf 'memory param set intact      (1): %s\n' "$(sed -n '/pub(super) fn enum_values/,/^}/p' $S | grep -c '"session", "knowledge", "incident"')"
+printf 'should_emit arm              (1): %s\n' "$(sed -n '/pub fn should_emit_tool_feedback/,/^    }/p' $P | grep -c 'WatchShell')"
+printf 'summary arm                  (1): %s\n' "$(sed -n '/pub fn summary(&self)/,/^    }/p' $P | grep -c 'WatchShell')"
+printf 'pending wiring              (5+): %s\n' "$(grep -c 'WatchShell' $P)"
+printf 'events wiring                (1): %s\n' "$(grep -c 'WatchShell' src/ai/types/events.rs)"
+printf 'stream wiring               (2+): %s\n' "$(grep -c 'WatchShell' src/daemon/stream.rs)"
+printf 'executor wiring             (1+): %s\n' "$(grep -c 'WatchShell' $X)"
+printf 'executor arm keepalives      (1): %s\n' "$(grep -A20 'PendingCall::WatchShell {' $X | grep -c 'with_keepalive')"
+printf 'dispatch wiring             (2+): %s\n' "$(grep -c 'watch_shell' src/ai/tools/dispatch.rs)"
+printf 'args wiring                 (2+): %s\n' "$(grep -c 'WatchShellArgs' src/ai/tools/args.rs)"
+printf 'no blocking sleep            (0): %s\n' "$(F | grep -c 'std::thread::sleep')"
+printf 'async sleep used            (1+): %s\n' "$(F | grep -c 'tokio::time::sleep')"
+printf 'does not use the dead index  (0): %s\n' "$(F | grep -cE 'MetaIndex|read_command_output|read_shell_log')"
+printf 'reads the cast              (1+): %s\n' "$(F | grep -c 'read_output_since')"
+printf 'resolves the cast by name   (1+): %s\n' "$(F | grep -c 'parse_cast_name')"
+printf 'live_shell_ids extracted     (1): %s\n' "$(grep -c 'fn live_shell_ids' $K)"
+printf 'the folded block is once     (1): %s\n' "$(grep -c 'ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));' $K)"
+printf 'both sentences unchanged     (2): %s\n' "$(grep -c 'Live shell ids:' $K)"
+printf 'reader public                (1): %s\n' "$(grep -c 'pub fn read_output_since' $L)"
+printf 'reader re-exported           (1): %s\n' "$(grep -c 'read_output_since' src/shell/mod.rs)"
+printf 'existing shell tests survive(27+): %s\n' "$(grep -cE '^    (async )?fn (list_shells|read_shell|find_in_shells|formatter|open_shell|close_shell)' $K)"
+printf 'three log tests              (3): %s\n' "$(grep -cE '^    fn (read_output_since_returns_only_new_output|read_output_since_stops_at_the_last_complete_line|read_output_since_skips_input_and_marker_events)' $L)"
+printf 'ten knowledge tests         (10): %s\n' "$(grep -cE '^    (async )?fn (visible_text_strips_ansi_escapes|visible_text_keeps_the_text_after_the_last_carriage_return|watch_shell_returns_when_the_pattern_appears|watch_shell_ignores_output_written_before_the_call|watch_shell_times_out_and_reports_what_it_saw|watch_shell_unknown_id_is_an_error_naming_live_shells|watch_shell_invalid_pattern_is_an_error|watch_shell_finds_the_cast_when_the_records_timestamp_is_stale|watch_shell_stops_when_the_host_is_gone|watch_shell_reports_that_nothing_was_running)' $K)"
+printf 'sre.toml documents it       (1+): %s\n' "$(grep -c 'watch_shell' assets/prompts/sre.toml)"
+printf 'sre.toml stays honest        (0): %s\n' "$(sed -n '/^### `watch_shell`/,/^### /p' assets/prompts/sre.toml | grep -cE 'send_input|wait:|03a|03b|03c|04a|04b|M2[0-9]')"
+printf 'CLAUDE.md new count          (1): %s\n' "$(grep -c '45 tools: 33 core + 12 deferred' CLAUDE.md)"
+printf 'CLAUDE.md old count gone     (0): %s\n' "$(grep -c '44 tools: 32 core + 12 deferred' CLAUDE.md)"
+printf 'README new count             (1): %s\n' "$(grep -c 'The model has \*\*45 tools\*\*' README.md)"
+printf 'prod unwrap/panic knowledge  (0): %s\n' "$(sed -n '1,/^#\[cfg(test)\]/p' $K | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe ')"
+printf 'prod unwrap/panic log.rs     (0): %s\n' "$(sed -n '1,/^#\[cfg(test)\]/p' $L | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe ')"
+
+echo "== E. preservation: config 92, isolation 9, doc_truth 10, shell 207+, executor 272+ =="
+for m in 'config::' 'shell::' 'daemon::executor::'; do
+  printf '%-26s ' "$m"; cargo test --lib "$m" 2>&1 | grep '^test result'
+done
+printf '%-26s ' 'test isolation'; cargo test --test isolation 2>&1 | grep '^test result'
+printf '%-26s ' 'test doc_truth'; cargo test --test doc_truth 2>&1 | grep '^test result'
+
+echo "== F. lib suite, three consecutive runs (failure names preserved) =="
+for i in 1 2 3; do
+  cargo test --lib 2>&1 | sed 's/\x1b\[[0-9;]*m//g' \
+    | grep -E '^test result|\.\.\. FAILED|^    [a-z_]+::tests::'
+done
+
+echo "== G. gates =="
+cargo fmt --all --check 2>&1 | tail -2; echo "fmt_exit=${PIPESTATUS[0]}"
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2; echo "clippy_exit=${PIPESTATUS[0]}"
+
+echo "== H. no HOME litter from the suite =="
+printf 'real HOME run logs AFTER (==BEFORE):   %s\n' "$(ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l)"
+printf 'real HOME shell logs AFTER (==BEFORE): %s\n' "$(ls ~/.daemoneye/var/log/shells/ 2>/dev/null | wc -l)"
+} >> "$A" 2>&1
+cat "$A"
+```
+
+Then the paste self-check. **Anchor on the transcript fence.** Lay the entry
+out with the transcript as the **first** fenced block after the heading, so
+`c==1` selects it; if you lay it out differently, adjust the index and say so
+in the entry:
+
+```sh
+D=docs/dev/milestones/M22-tool-surface/phase-04b-watch-shell.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m22-04b.txt
+diff /tmp/pasted-m22-04b.txt /tmp/e2e-m22-04b.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Paste the captured block **unmodified** — do not retype, trim, or realign it.
+
+## Authorizations
+
+The executor may modify **only**:
+
+- `src/shell/log.rs` — task 1 and its three tests. **Do not change
+  `read_command_output`'s behaviour, `MetaIndex`, `CommandRecord`,
+  `CastWriter` or `meta_path_for`**; sharing the per-line decode with
+  `read_command_output` is a refactor, not a behaviour change, and the 13
+  existing tests must stay green by name.
+- `src/shell/mod.rs` — the `read_output_since` re-export line only.
+- `src/daemon/executor/knowledge/shell.rs` — tasks 2–4. **Do not change
+  `list_shells`, `read_shell`, `find_in_shells`, `open_shell` or
+  `close_shell`** beyond substituting `live_shell_ids` for the duplicated
+  block; a criterion pins their test names and their message text.
+- `src/daemon/executor/knowledge/mod.rs` — the re-export line only.
+- `src/ai/types/pending.rs`, `src/ai/types/events.rs`, `src/ai/tools/args.rs`,
+  `src/ai/tools/dispatch.rs`, `src/ai/tools/defs.rs`, `src/daemon/stream.rs`,
+  `src/daemon/executor/mod.rs` — task 6, this tool's wiring only.
+- `CLAUDE.md` (§ "Current AI tools" table + count line only), `README.md`
+  (§ "AI tools" table + the tool-count prose only), `assets/prompts/sre.toml` —
+  task 7.
+- `docs/dev/milestones/M22-tool-surface/phase-04b-watch-shell.md` —
+  **append to the Update Log only.** Do not rewrite, reorder or delete any
+  section above it; the reviewer checks that every `## ` heading survives.
+
+No other file. In particular **do not touch `src/shell/proto.rs`,
+`src/shell/host.rs`, `src/shell/backend.rs`, `src/shell/client.rs`,
+`src/shell/registry.rs` or `src/shell/session.rs`** — no new `ShellState` or
+`ShellSignal` variant, no `ShellRecord` field, no new wire frame. Also do not
+touch `tests/doc_truth.rs`, `src/daemon/executor/pane.rs`,
+`src/daemon/executor/knowledge/pane.rs`, `src/daemon/executor/bg_shell.rs` or
+`src/config/`.
+
+## Out of scope
+
+- **Reading the live screen.** The wire carries no frame that asks for the
+  vt100 grid, and `ShellScreen` lives in the host process. `watch_shell`
+  reads the cast, which is a file the daemon already owns. A screen read is
+  its own protocol phase if the design still wants one.
+- **Fixing `read_shell` / `find_in_shells`.** Both stand on the dead
+  `.meta.json` index and on the record's `started_unix`. Both defects are
+  recorded in the milestone README; repairing them is a phase of its own and
+  this one is already at ~580 lines.
+- **Writing the `.meta.json` index.** Its producer is a host-side change and
+  belongs with phase 06 (`list_shell_logs` / `read_shell_log`), which is the
+  phase that needs the index to exist.
+- **`send_input`.** Phase 05, approval-gated, every keystroke in the `"i"`
+  log. `watch_shell` observes; it never types.
+- **`wait: false` on `run_terminal_command`.** Phase 07. Until then the only
+  shell with a running command is the dedicated one background execution
+  creates.
+- **A non-blocking mode, or injecting a `[Watch Shell …]` message into the
+  session** the way `watch_pane` does. This tool returns its answer as the
+  tool result. If a caller wants the turn back, that is `wait: false` in
+  phase 07, not a second mode here.
+- **Removing `watch_pane`** or any pane tool. Phase 09.
+
+## Update Log
+
+<!-- entries appended below this line -->

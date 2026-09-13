@@ -63,7 +63,7 @@ final surface, so they go last.
 | 03b | read-shell ([phase-03b-read-shell.md](phase-03b-read-shell.md)) — `read_shell { shell, lines?, since_command?, filter? }` over the asciicast log; builds the read-one-shell primitive | done        |
 | 03c | find-in-shells ([phase-03c-find-in-shells.md](phase-03c-find-in-shells.md)) — `find_in_shells { pattern, scope? }`, 03b's reader in a loop over 03a's collector; completes the 03 row | done        |
 | 04a | shell-lifecycle ([phase-04a-shell-lifecycle.md](phase-04a-shell-lifecycle.md)) — `open_shell {}` + `close_shell { shell }`, both `Category::Run`; share the in-process-host test fixture | done        |
-| 04b | watch-shell — `watch_shell { shell, pattern?, timeout_secs }`, the blocking observer | todo (not drafted) |
+| 04b | watch-shell ([phase-04b-watch-shell.md](phase-04b-watch-shell.md)) — `watch_shell { shell, pattern?, timeout_secs? }`, the blocking observer; reads the **live cast file**, not the dead `.meta.json` index | todo        |
 | 05 | send-input — `send_input`, approval-gated; every keystroke into the `"i"` log | todo (not drafted) |
 | 06 | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the `.meta.json` index | todo (not drafted) |
 | 07 | run-terminal-command-reshape — `shell?`/`host?`/`wait?`/`timeout_secs?`; retire `target_pane`, `retry_in_pane`, `background` | todo (not drafted) |
@@ -150,6 +150,34 @@ final surface, so they go last.
   what exempts a tool from the per-turn, per-session and per-tool budget caps
   in `daemon::stream`. A tool added there without a real prompt gets an
   uncapped call budget.
+
+- **Two defects in the shell reading path, both measured at 04b drafting, both
+  affecting `read_shell` and `find_in_shells` — neither fixed there.**
+
+  1. **Nothing in production writes a `.meta.json` command index.**
+     `MetaIndex::save` (`src/shell/log.rs:159`) has no production caller: the
+     host writes the `.cast` (`PtyBackend::spawn` → `CastWriter::create`) and
+     nothing ever writes the sidecar. The real home shows one real shell's
+     `s0-<ts>.cast` with no sidecar beside it. So every `read_shell` /
+     `find_in_shells` call against a live shell lands on the *"has a cast log
+     but its command index is missing or unreadable"* branch. **This is why
+     04b reads the cast file directly instead of "reusing 03b's reader", as
+     this table's row for it originally proposed.** The index's producer is a
+     host-side change and belongs with **phase 06**, which is the phase that
+     needs it to exist.
+  2. **The record's `started_unix` and the cast file's are stamped in
+     different processes.** `spawn_for` (`src/shell/registry.rs:195`) stamps
+     the record in the daemon; `run_host` (`src/shell/launch.rs:63-70`)
+     computes its own `now` in the child and names the cast with *that*. A
+     spawn crossing a second boundary leaves `cast_path(id,
+     record.started_unix)` pointing at no file, and nothing reconciles them for
+     a live shell (`recover_started_unix` runs only in `adopt_at_startup`).
+     04b works around it by resolving the cast with `parse_cast_name` over
+     `shell_logs_dir()`; `read_shell` and `find_in_shells` still trust the
+     record.
+
+  Repairing (2) for the 03-row tools is a phase of its own — 04b's
+  Authorizations forbid touching them, and a criterion pins their message text.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24

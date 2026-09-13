@@ -6,11 +6,69 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-04a — shell-lifecycle closed
-**approved_first_try 2026-09-13**
+**Active phase: M22 phase-04b — watch-shell**
+(`docs/dev/milestones/M22-tool-surface/phase-04b-watch-shell.md`, status: todo,
+drafted 2026-09-13). Dispatch with `/rexymcp:dispatch phase-04b`.
+
+Phase-04a — shell-lifecycle closed **approved_first_try 2026-09-13**
 (`docs/dev/milestones/M22-tool-surface/phase-04a-shell-lifecycle.md`, status:
-done). Next up is **04b — watch-shell**, not yet drafted; run
-`/rexymcp:architect next` to draft it.
+done).
+
+**Scope for 04b:** `watch_shell { shell, pattern?, timeout_secs? }` — core,
+`Category::Read`, not approval-gated, **45 tools: 33 core + 12 deferred**. It
+is the second tool that genuinely blocks the turn, so the
+executor arm must wrap in `with_keepalive` (the CLI's dead-daemon deadline is
+derived from `KEEPALIVE_PERIOD_SECS`, and nothing but a criterion catches a
+missing wrap). `await_agent_result` is the one existing blocking tool and is
+quoted verbatim as the pattern.
+
+**Drafting measured two defects that reshaped the phase, both recorded in the
+milestone README, neither fixed here:**
+
+1. **Nothing in production writes a `.meta.json` command index.**
+   `MetaIndex::save` has no production caller — the host writes the `.cast`
+   and never the sidecar, and the real home shows a live shell's cast with no
+   sidecar beside it. So `read_shell` and `find_in_shells` land on their
+   "command index is missing" branch against any real shell, and a
+   `watch_shell` built on 03b's reader — which is what the charter row
+   proposed — **could never match in production**. 04b reads the live cast
+   file directly instead; `CastWriter` flushes per record, so a tail sees
+   motion immediately.
+2. **The registry record's `started_unix` and the cast filename's are stamped
+   in different processes** (`spawn_for` in the daemon, `run_host`'s own `now`
+   in the child), and nothing reconciles them for a live shell. A spawn that
+   crosses a second boundary leaves `cast_path(id, record.started_unix)`
+   naming no file. 04b resolves the cast with the already-public
+   `parse_cast_name` over `shell_logs_dir()` and pins it with a named test.
+
+That makes **three** consecutive M22 phases where the design's own description
+of a shell tool did not survive contact with the tree — after 03a's `scope`
+collapsing three ways to two and 04a's two non-existent `open_shell`
+parameters. That is now the milestone's most-earned
+rule — write specs against the tree as it is, not as the design describes it.
+
+**`watch_pane` is the analogue and deliberately not the model.** Its `ToolDef`
+says *"Blocks until the pane's command completes"* and it does not — it spawns
+a watcher and injects a `[Watch Pane Match]` user message later. `watch_shell`
+returns its own answer as the tool result, so none of that machinery ports.
+Only two numbers do: the 500 ms poll and the 5 s start grace.
+
+**Deliberate limits, each with its reason in the doc:** no ownership check
+(observers read any shell; only `close_shell` checks), the watch starts at the
+cast's **current length** so a pattern already in the log must time out (the
+load-bearing negative test), and the `Running → Idle` arm on a real command is
+verified by hand in § End-to-end verification rather than by a flaky timing
+test. The phase also folds the third copy of the live-shell-ids block into
+`live_shell_ids`, with no message text changed.
+
+**Four mis-specified criteria were caught by running them before dispatch** —
+two `sed` ranges that restarted on same-named test functions (fixed with
+`pub fn` anchors), one arm range that closed at the destructuring brace before
+reaching `with_keepalive`, and one `fn` grep that missed every
+`#[tokio::test] async fn`. **That is the eighth through eleventh
+mis-specified grep in M22**, still with no code defect behind any of them, and
+still only ever caught by running the instrument rather than reasoning about
+it.
 
 `open_shell {}` + `close_shell { shell }` ship core + `Category::Run` — M22's
 first non-read-only tools. **44 tools: 32 core + 12 deferred.** `src/shell/` is
@@ -99,8 +157,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-04b — watch-shell**.
-Phases 04b–10 are not drafted; each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:dispatch phase-04b`. Phases 05–10 are not drafted;
+each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 
