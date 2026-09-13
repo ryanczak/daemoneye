@@ -8,37 +8,34 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 **Active phase: phase-03c — find-in-shells**
 (`docs/dev/milestones/M22-tool-surface/phase-03c-find-in-shells.md`, status:
-todo, drafted 2026-09-13). Dispatch with `/rexymcp:dispatch phase-03c`.
-Phase-03b — read-shell closed **approved_first_try 2026-09-13**; 01, 02 and 03a
-closed `approved_after_1`.
+in-progress — **bounced 2026-09-13, bug-03c-1**). Re-dispatch with
+`/rexymcp:dispatch phase-03c`.
 
-Scope for 03c: `find_in_shells { pattern, scope? }` — core, `Category::Read`.
-One regex across every in-scope shell's recorded output, matches reported with
-shell id, line number and ±1 context, **capped at 50 in total**. Counts move to
-**42 tools: 30 core + 12 deferred**. This **completes the 03 charter row**,
-which shipped as three phases (03a `list_shells`, 03b `read_shell`, 03c), and
-is the last additive read-only phase.
+**The code is correct and needs no behavioural change** — verified at review:
+42 tools / 30 core, both mutation checks reproduce by hand (each reddening
+exactly its named test), the shared resolver is single with the hardcoded tool
+name gone, and **all 15 pre-existing `knowledge::shell` tests are
+byte-identical** across the refactor, checked function-by-function.
 
-**Two shared extractions at their second caller, deliberately.** `STANDARDS.md`
-§ 2.2 says abstract at the *fourth* caller, so the spec justifies both rather
-than leaving the executor to weigh it: the recorded-output read is ~50 lines
-with five distinct error paths that would drift if duplicated, and the scope
-resolver must stay single so `list_shells` and `find_in_shells` cannot disagree
-about what `"all"` means. Both are refactors of passing code — **all 15 existing
-`knowledge::shell` tests must pass unmodified**, pinned by a criterion.
+**What bounced it:** the filed three-consecutive-runs evidence contains a
+failure — `1840 passed; 1 failed` on the first run — so an explicit acceptance
+criterion is unmet, and **the capture cannot say which test failed** because
+section E piped through `grep '^test result'` and discarded the name. That
+second part is **architect-side**: a capture that can record a failure but not
+name it is not evidence. Section E is amended in the phase doc to keep
+`... FAILED` lines and the `failures:` block.
 
-**Pre-injected:** the five compiler-forced match sites re-derived empirically
-for the current tree (they shift each phase), the two compiler-invisible sites
-pinned again, and `find_in_panes`'s `search_buffer`/`BufferMatch` quoted with
-an explicit instruction to **copy rather than export** it — `pane.rs` is deleted
-in phase 09 and a cross-module dependency would have to be unpicked then.
+The one name that surfaces anywhere in the session logs is
+`find_in_shells_searches_only_scoped_shells` — one of this phase's six new
+tests. It did **not** reproduce in 10 consecutive full-suite runs at review, so
+frequency is roughly 1 in 16. The run's summary asserts the flake is
+"pre-existing… not a phase file"; **nothing supports that** and the only
+evidence points the other way. Treat the mechanism as unknown until the
+required flake-investigation entry establishes it.
 
-**A criterion caught at drafting and corrected before commit:** the obvious
-`grep -c 'Some("all") =>'` counts **2**, because `format_shell_rows` has a
-`Some("all") => "all"` display-label arm — it discriminates nothing. Replaced
-with `Accepted values:` (must stay 1, proving one resolver) plus
-`unknown list_shells scope` (must go 1 → 0, proving the hardcoded tool name was
-parameterised).
+An earlier run of this phase also `hard_fail`ed on a `BackendError` when a
+network switch rebooted mid-run — infrastructure, no edits made, re-dispatched
+plain.
 
 **PE signed off on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default
 also closed **approved_after_1 2026-09-12**; both of M22's closed phases bounced
@@ -103,8 +100,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:dispatch phase-03c`. Phases 04–10 are not drafted;
-each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:dispatch phase-03c` once bug-03c-1 is addressed.
+Phases 04–10 are not drafted; each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 

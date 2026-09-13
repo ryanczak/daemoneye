@@ -1,7 +1,7 @@
 # Phase 03c: `find_in_shells` — one regex across every shell
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-03c-1.md`)
 **Depends on:** 03a (the scope resolution and row collector) and 03b (the
 recorded-output reader). Both **done**.
 **Estimated diff:** ~450 lines incl. tests
@@ -401,6 +401,53 @@ Each was run against the tree at drafting and returns the "now" value shown.
       (now **1835**).
 - [ ] All four gates pass.
 
+### Re-dispatch criteria (bug-03c-1, filed 2026-09-13)
+
+**Every other criterion above is met and the code is correct** — verified
+independently at review, including both mutation checks re-run by hand, all 15
+pre-existing tests byte-identical across the refactor, and a faithful paste.
+**No behavioural change to `find_in_shells` is wanted.** The outstanding work
+is an intermittent full-suite failure and the evidence that cannot diagnose it.
+
+Doc greps are scoped — `<E2E>` is
+`sed -n '/^## End-to-end verification/,/^## Authorizations/p' <this doc> |` and
+`<UL>` is `sed -n '/^## Update Log/,$p' <this doc> |`. Each was run against
+commit `0e661b92`.
+
+- [ ] **The capture preserves failure diagnostics:** `<E2E> grep -c 'FAILED'`
+      → **1 or more** (now **0** before the amendment; the block in
+      § End-to-end verification has been amended by the architect and this
+      confirms you ran *that* block).
+- [ ] **The filed section E is three clean runs:** in your new
+      `(end-to-end verification)` entry's pasted transcript,
+      `<UL> sed -n '/^== E\./,/^== F\./p' | grep -cE '[1-9][0-9]* failed'` →
+      **0** (now **1**), and the same range `grep -c '0 failed'` → **3 or
+      more** (now **2**).
+- [ ] **The flake is accounted for:** an entry headed
+      `### Update — <date> (flake investigation)` exists —
+      `<UL> grep -c '^### Update.*flake investigation'` → **1** (now **0**).
+      It must contain **either** a named root cause and the change that fixes
+      it, **or** evidence that the failure is independent of this phase's six
+      new tests — and in both cases **20 consecutive full-suite runs** with the
+      amended capture: `<UL> grep -c '^test result: ok. 1841 passed; 0 failed'` → **20 or
+      more** (now **5**) — anchored to the line start so prose mentioning the
+      phrase cannot satisfy it.
+- [ ] **No behavioural regression:** `cargo test --lib 'knowledge::shell'` →
+      **21**, unchanged; `grep -cE '    fn (list_shells|read_shell|formatter)' src/daemon/executor/knowledge/shell.rs`
+      → **15**; `grep -c 'ToolDef {' src/ai/tools/defs.rs` → **42**;
+      `cargo test --test doc_truth` → **10**; all four gates pass.
+
+**What is known, so you do not start cold.** The failing run is in the filed
+transcript as `1840 passed; 1 failed`; the test name was discarded by the old
+section E. The only name that survives anywhere in the prior session logs is
+`find_in_shells_searches_only_scoped_shells`, one of this phase's six. At
+review it did **not** reproduce in 10 consecutive full-suite runs. The six new
+tests do real filesystem I/O under a process-global `HOME` swapped by
+`with_home`, which takes `crate::test_home_guard()`; anything in the suite that
+mutates `HOME` **without** that guard could move `shell_logs_dir()` mid-search.
+`TmpHome::new()` is `pid` + an atomic counter, so temp-HOME collisions between
+tests are **not** the mechanism — already ruled out at review.
+
 ## Test plan
 
 Six new tests in `src/daemon/executor/knowledge/shell.rs`, alongside the 15
@@ -494,7 +541,10 @@ printf '%-26s ' 'test isolation'; cargo test --test isolation 2>&1 | grep '^test
 printf '%-26s ' 'test doc_truth'; cargo test --test doc_truth 2>&1 | grep '^test result'
 
 echo "== E. lib suite, three consecutive runs =="
-for i in 1 2 3; do cargo test --lib 2>&1 | grep '^test result'; done
+for i in 1 2 3; do
+  cargo test --lib 2>&1 | sed 's/\x1b\[[0-9;]*m//g' \
+    | grep -E '^test result|\.\.\. FAILED|^    [a-z_]+::tests::'
+done
 
 echo "== F. gates =="
 cargo fmt --all --check 2>&1 | tail -2; echo "fmt_exit=${PIPESTATUS[0]}"
