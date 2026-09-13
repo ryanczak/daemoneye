@@ -6,34 +6,39 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-03b — read-shell closed **approved_first_try
-2026-09-13** (`docs/dev/milestones/M22-tool-surface/phase-03b-read-shell.md`,
-status: done). Next up is **03c — find-in-shells**, not yet drafted; run
-`/rexymcp:architect next` to draft it.
+**Active phase: phase-03c — find-in-shells**
+(`docs/dev/milestones/M22-tool-surface/phase-03c-find-in-shells.md`, status:
+todo, drafted 2026-09-13). Dispatch with `/rexymcp:dispatch phase-03c`.
+Phase-03b — read-shell closed **approved_first_try 2026-09-13**; 01, 02 and 03a
+closed `approved_after_1`.
 
-`read_shell { shell, lines?, since_command?, filter? }` ships core +
-`Category::Read` over the asciicast log — **41 tools: 29 core + 12 deferred**.
-`src/shell/` is untouched: no protocol frame was added, because the daemon↔host
-wire has no way to ask for a live screen and the log needs none.
+Scope for 03c: `find_in_shells { pattern, scope? }` — core, `Category::Read`.
+One regex across every in-scope shell's recorded output, matches reported with
+shell id, line number and ±1 context, **capped at 50 in total**. Counts move to
+**42 tools: 30 core + 12 deferred**. This **completes the 03 charter row**,
+which shipped as three phases (03a `list_shells`, 03b `read_shell`, 03c), and
+is the last additive read-only phase.
 
-**M22's first phase with no bounce and no escalation**, and it is the
-measurement that 03a's two calibrations worked:
+**Two shared extractions at their second caller, deliberately.** `STANDARDS.md`
+§ 2.2 says abstract at the *fourth* caller, so the spec justifies both rather
+than leaving the executor to weigh it: the recorded-output read is ~50 lines
+with five distinct error paths that would drift if duplicated, and the scope
+resolver must stay single so `list_shells` and `find_in_shells` cannot disagree
+about what `"all"` means. Both are refactors of passing code — **all 15 existing
+`knowledge::shell` tests must pass unmodified**, pinned by a criterion.
 
-- **Batching the enum-variant edits.** 03a `hard_fail`ed on
-  `VerifierFailurePersistent` because the tree cannot compile between adding a
-  variant and landing the last match arm. 03b enumerated the five
-  compiler-forced sites empirically at drafting and instructed one contiguous
-  batch — straight through, 251 turns, no escalation.
-- **Pinning the two compiler-invisible sites.** `summary()` ends in
-  `_ => String::new()` and `should_emit_tool_feedback()` is a `matches!` chain,
-  so a missing arm compiles clean and is silently wrong. Both arms landed first
-  try. No gate would have caught their absence; the criteria did.
+**Pre-injected:** the five compiler-forced match sites re-derived empirically
+for the current tree (they shift each phase), the two compiler-invisible sites
+pinned again, and `find_in_panes`'s `search_buffer`/`BufferMatch` quoted with
+an explicit instruction to **copy rather than export** it — `pane.rs` is deleted
+in phase 09 and a cross-module dependency would have to be unpicked then.
 
-Noted at review rather than silently passed: three new `unsafe` blocks, all
-inside the `#[cfg(test)]` module in a `with_home` helper that takes
-`crate::test_home_guard()`. `read_shell`'s cast path is HOME-derived so its
-tests need an isolated HOME, and Edition 2024 makes `set_var` unsafe. Prod-scoped
-`unsafe` is **0** across all nine touched files.
+**A criterion caught at drafting and corrected before commit:** the obvious
+`grep -c 'Some("all") =>'` counts **2**, because `format_shell_rows` has a
+`Some("all") => "all"` display-label arm — it discriminates nothing. Replaced
+with `Accepted values:` (must stay 1, proving one resolver) plus
+`unknown list_shells scope` (must go 1 → 0, proving the hardcoded tool name was
+parameterised).
 
 **PE signed off on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default
 also closed **approved_after_1 2026-09-12**; both of M22's closed phases bounced
@@ -98,8 +103,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-03c — find-in-shells**.
-Phases 03c–10 are not drafted; each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:dispatch phase-03c`. Phases 04–10 are not drafted;
+each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 

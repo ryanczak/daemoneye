@@ -61,7 +61,7 @@ final surface, so they go last.
 | 02 | tool-category ([phase-02-tool-category.md](phase-02-tool-category.md)) — `Category` + `mutates_state()` on every `ToolDef`; pure, additive, unblocks M25 | done        |
 | 03a | list-shells ([phase-03a-list-shells.md](phase-03a-list-shells.md)) — `list_shells { scope? }`, core + `Category::Read`; establishes the eleven-step wiring on one tool | done        |
 | 03b | read-shell ([phase-03b-read-shell.md](phase-03b-read-shell.md)) — `read_shell { shell, lines?, since_command?, filter? }` over the asciicast log; builds the read-one-shell primitive | done        |
-| 03c | find-in-shells — `find_in_shells { pattern, scope? }`, 03b's reader in a loop over 03a's collector | todo (not drafted) |
+| 03c | find-in-shells ([phase-03c-find-in-shells.md](phase-03c-find-in-shells.md)) — `find_in_shells { pattern, scope? }`, 03b's reader in a loop over 03a's collector; completes the 03 row | todo |
 | 04 | shell-tools-lifecycle — `open_shell`, `close_shell`, `watch_shell` | todo (not drafted) |
 | 05 | send-input — `send_input`, approval-gated; every keystroke into the `"i"` log | todo (not drafted) |
 | 06 | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the `.meta.json` index | todo (not drafted) |
