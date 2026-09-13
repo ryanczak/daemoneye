@@ -103,13 +103,14 @@ pub fn dispatch_tool_event(
 
 #[cfg(test)]
 mod tests {
-    use super::super::defs::TOOLS;
+    use super::super::defs::{APPROVAL_GATED_TOOLS, TOOLS};
     use super::super::schema::{
-        ToolDef, enum_values, get_tool_definition, render_anthropic, render_gemini, select_tools,
-        tools_in_group,
+        Category, ToolDef, category_of, enum_values, get_tool_definition, render_anthropic,
+        render_gemini, select_tools, tools_in_group,
     };
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     /// Every tool in TOOLS must appear in the Gemini render, in order.
     /// This is the regression test that would have caught every previous
@@ -642,5 +643,70 @@ mod tests {
         }
         // A group that was not loaded stays hidden.
         assert!(!names.contains(&"delete_memory".to_string()));
+    }
+
+    #[test]
+    fn every_tool_has_a_category() {
+        assert_eq!(
+            TOOLS.len(),
+            39,
+            "tool count should match the 27 core + 12 deferred claim"
+        );
+        for t in TOOLS {
+            assert!(
+                category_of(t.name).is_some(),
+                "tool {:?} not resolvable via category_of",
+                t.name
+            );
+        }
+    }
+
+    #[test]
+    fn category_counts_match_the_assignment() {
+        let mut counts: BTreeMap<Category, usize> = BTreeMap::new();
+        for t in TOOLS {
+            *counts.entry(t.category).or_insert(0) += 1;
+        }
+        assert_eq!(counts.get(&Category::Read), Some(&17), "Read count");
+        assert_eq!(counts.get(&Category::Write), Some(&13), "Write count");
+        assert_eq!(counts.get(&Category::Search), Some(&4), "Search count");
+        assert_eq!(counts.get(&Category::Run), Some(&4), "Run count");
+        assert_eq!(counts.get(&Category::Meta), Some(&1), "Meta count");
+        assert_eq!(counts.values().sum::<usize>(), TOOLS.len());
+    }
+
+    #[test]
+    fn approval_gated_tools_all_mutate_state() {
+        for name in APPROVAL_GATED_TOOLS {
+            let cat = category_of(name)
+                .unwrap_or_else(|| panic!("approval-gated tool {name:?} not in TOOLS"));
+            assert!(
+                cat.mutates_state(),
+                "approval-gated tool {name:?} has category {cat:?} that does not mutate state"
+            );
+        }
+    }
+
+    #[test]
+    fn mutates_state_is_write_and_run_only() {
+        assert!(Category::Write.mutates_state(), "Write mutates state");
+        assert!(Category::Run.mutates_state(), "Run mutates state");
+        assert!(!Category::Read.mutates_state(), "Read must not mutate");
+        assert!(!Category::Search.mutates_state(), "Search must not mutate");
+        assert!(!Category::Meta.mutates_state(), "Meta must not mutate");
+    }
+
+    #[test]
+    fn category_of_resolves_every_tool_name_and_nothing_else() {
+        assert_eq!(
+            category_of("run_terminal_command"),
+            Some(Category::Run),
+            "run_terminal_command should be Run"
+        );
+        assert_eq!(
+            category_of("no_such_tool"),
+            None,
+            "unknown tool name must not resolve to a category"
+        );
     }
 }

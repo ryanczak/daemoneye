@@ -2,7 +2,7 @@
 //! internal seam — kept whole rather than split (see phase-07). It is data, not
 //! logic; size here is expected.
 
-use super::schema::{ParamDef, ParamTy, ToolDef};
+use super::schema::{Category, ParamDef, ParamTy, ToolDef};
 
 /// Tools that send the user an approval prompt and wait for a decision before
 /// they do anything. Derived by reading every executor arm, not by copying a
@@ -90,6 +90,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Run,
     },
     ToolDef {
         name: "schedule_command",
@@ -161,12 +162,14 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Write,
     },
     ToolDef {
         name: "list_schedules",
         description: "Return the current list of scheduled jobs with their status, schedule, and next run time.",
         params: &[],
         deferred_group: None,
+        category: Category::Read,
     },
     ToolDef {
         name: "cancel_schedule",
@@ -179,6 +182,7 @@ pub static TOOLS: &[ToolDef] = &[
             description: "UUID of the scheduled job to cancel.",
         }],
         deferred_group: None,
+        category: Category::Write,
     },
     ToolDef {
         name: "delete_schedule",
@@ -192,6 +196,7 @@ pub static TOOLS: &[ToolDef] = &[
             description: "UUID of the scheduled job to delete.",
         }],
         deferred_group: None,
+        category: Category::Write,
     },
     ToolDef {
         name: "write_script",
@@ -221,16 +226,19 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Write,
     },
     ToolDef {
         name: "list_scripts",
         deferred_group: Some("scripts"),
+        category: Category::Read,
         description: "Return the list of scripts in ~/.daemoneye/scripts/ with their sizes.",
         params: &[],
     },
     ToolDef {
         name: "read_script",
         deferred_group: Some("scripts"),
+        category: Category::Read,
         description: "Read the content of a script from ~/.daemoneye/scripts/.",
         params: &[ParamDef {
             name: "script_name",
@@ -250,6 +258,7 @@ pub static TOOLS: &[ToolDef] = &[
             description: "Name of the script to delete.",
         }],
         deferred_group: None,
+        category: Category::Write,
     },
     ToolDef {
         name: "watch_pane",
@@ -282,6 +291,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Read,
     },
     ToolDef {
         name: "read_file",
@@ -327,6 +337,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Read,
     },
     ToolDef {
         name: "edit_file",
@@ -395,6 +406,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Write,
     },
     ToolDef {
         name: "write_runbook",
@@ -417,6 +429,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Write,
     },
     ToolDef {
         name: "delete_runbook",
@@ -429,10 +442,12 @@ pub static TOOLS: &[ToolDef] = &[
             description: "Name of the runbook to delete (no extension).",
         }],
         deferred_group: None,
+        category: Category::Write,
     },
     ToolDef {
         name: "read_runbook",
         deferred_group: Some("runbooks"),
+        category: Category::Read,
         description: "Read the full content of a named runbook from ~/.daemoneye/runbooks/.",
         params: &[ParamDef {
             name: "name",
@@ -444,12 +459,14 @@ pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "list_runbooks",
         deferred_group: Some("runbooks"),
+        category: Category::Read,
         description: "List all runbooks in ~/.daemoneye/runbooks/ with their tags.",
         params: &[],
     },
     ToolDef {
         name: "run_log_tail",
         deferred_group: Some("runs"),
+        category: Category::Read,
         description: "Read the last N records of a run's turn log (var/log/runs/<run_id>.jsonl), \
                       oldest first. Records are run_started / turn_started / note / run_finished \
                       events with timestamps. limit defaults to 50 and is capped at 200; the \
@@ -475,6 +492,7 @@ pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "run_log_search",
         deferred_group: Some("runs"),
+        category: Category::Search,
         description: "Search one run's turn log for records whose text contains the query, \
                       case-insensitively. Returns matching events (notes, turn boundaries, \
                       finish states) oldest first. limit defaults to 50 and is capped at 200. \
@@ -504,6 +522,7 @@ pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "get_turn",
         deferred_group: Some("runs"),
+        category: Category::Read,
         description: "Read every record one turn logged, in order — the uncapped form of \
                       run_log_tail for a caller that has already narrowed to a single turn. \
                       Returns the turn_started line, each note after it, and the next \
@@ -552,6 +571,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Write,
     },
     ToolDef {
         name: "update_memory",
@@ -610,10 +630,12 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Write,
     },
     ToolDef {
         name: "delete_memory",
         deferred_group: Some("memory"),
+        category: Category::Write,
         description: "Remove a memory entry from ~/.daemoneye/memory/<category>/<key>.md.",
         params: &[
             ParamDef {
@@ -648,6 +670,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Read,
     },
     ToolDef {
         name: "list_memories",
@@ -659,6 +682,7 @@ pub static TOOLS: &[ToolDef] = &[
             description: "Optional: 'session', 'knowledge', or 'incident'. Omit to list all.",
         }],
         deferred_group: None,
+        category: Category::Read,
     },
     ToolDef {
         name: "search_repository",
@@ -683,6 +707,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Search,
     },
     ToolDef {
         name: "recall_context",
@@ -718,6 +743,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Search,
     },
     ToolDef {
         name: "get_terminal_context",
@@ -736,6 +762,7 @@ pub static TOOLS: &[ToolDef] = &[
                           (home session plus foreign-session pane metadata).",
         }],
         deferred_group: None,
+        category: Category::Read,
     },
     ToolDef {
         name: "load_tools",
@@ -751,6 +778,7 @@ pub static TOOLS: &[ToolDef] = &[
                           Accepts a real JSON array or a JSON-encoded string of an array.",
         }],
         deferred_group: None,
+        category: Category::Meta,
     },
     ToolDef {
         name: "list_panes",
@@ -764,6 +792,7 @@ pub static TOOLS: &[ToolDef] = &[
                       immediately with no tmux subprocess overhead.",
         params: &[],
         deferred_group: None,
+        category: Category::Read,
     },
     ToolDef {
         name: "read_pane",
@@ -798,6 +827,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Read,
     },
     ToolDef {
         name: "find_in_panes",
@@ -825,6 +855,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Search,
     },
     ToolDef {
         name: "tmux_control",
@@ -870,6 +901,7 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Run,
     },
     ToolDef {
         name: "close_background_window",
@@ -888,6 +920,7 @@ pub static TOOLS: &[ToolDef] = &[
                               a [BACKGROUND PANE] context block.",
         }],
         deferred_group: None,
+        category: Category::Run,
     },
     ToolDef {
         name: "spawn_ghost_shell",
@@ -927,10 +960,12 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Run,
     },
     ToolDef {
         name: "create_agent",
         deferred_group: Some("agents"),
+        category: Category::Write,
         description: "Create or update a named agent config in ~/.daemoneye/agents/<name>/config.toml. \
                       An agent defines *who* executes a ghost shell — the role, model, memory namespace, \
                       and trust boundaries — separate from *what* the runbook asks it to do. \
@@ -989,6 +1024,7 @@ pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "read_agent",
         deferred_group: Some("agents"),
+        category: Category::Read,
         description: "Read the full config of a named agent from ~/.daemoneye/agents/<name>/config.toml.",
         params: &[ParamDef {
             name: "name",
@@ -1000,12 +1036,14 @@ pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "list_agents",
         deferred_group: Some("agents"),
+        category: Category::Read,
         description: "List all named agents in ~/.daemoneye/agents/ with their descriptions and models.",
         params: &[],
     },
     ToolDef {
         name: "delete_agent",
         deferred_group: Some("agents"),
+        category: Category::Write,
         description: "Delete a named agent from ~/.daemoneye/agents/<name>/. User approval required. \
                       Will warn if any runbooks reference this agent.",
         params: &[ParamDef {
@@ -1044,5 +1082,6 @@ pub static TOOLS: &[ToolDef] = &[
             },
         ],
         deferred_group: None,
+        category: Category::Read,
     },
 ];

@@ -1,7 +1,7 @@
 # Phase 02: `Category` and `mutates_state()` on every `ToolDef`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** nothing in M22. Phase-01 is `done` but this phase does not
 touch config or execution. It is the milestone's one **pure, additive** phase.
 **Estimated diff:** ~130 lines incl. tests (39 one-line literal additions, a
@@ -506,3 +506,12 @@ No other file. In particular do not touch `README.md`, `tests/doc_truth.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-13 00:35 (started)
+
+**Executor:** Claude (Opus 4.5, headless run).
+**Status flip:** `todo` → `in-progress` (milestone README row updated to match).
+**Plan:** task 1 enum + `mutates_state()` + `category_of` in `schema.rs`; task 2
+all 39 `category:` literals in `defs.rs` per the fixed assignment table; task 3
+re-export; task 4 CLAUDE.md checklist sentence; task 5 two mutation checks with
+red-then-green transcripts; then the phase's end-to-end block.

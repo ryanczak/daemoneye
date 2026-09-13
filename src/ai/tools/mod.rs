@@ -9,6 +9,7 @@ pub(crate) mod schema;
 pub use defs::{APPROVAL_GATED_TOOLS, TOOLS};
 pub use dispatch::dispatch_tool_event;
 pub use schema::{
-    ParamDef, ParamTy, ToolDef, deferred_catalog_text, get_gemini_tool_definition,
-    get_openai_tool_definition, get_tool_definition, render_gemini, select_tools, tools_in_group,
+    Category, ParamDef, ParamTy, ToolDef, category_of, deferred_catalog_text,
+    get_gemini_tool_definition, get_openai_tool_definition, get_tool_definition, render_gemini,
+    select_tools, tools_in_group,
 };

@@ -30,6 +30,32 @@ impl ParamTy {
     }
 }
 
+/// What a tool does to the world it operates on. Single source of truth for
+/// "did this call change anything": the governor's no-progress stall detection
+/// asks [`Category::mutates_state`] instead of each caller keeping a private
+/// list that can drift from the table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Category {
+    Read,
+    Write,
+    Search,
+    Run,
+    Meta,
+}
+
+impl Category {
+    /// Does a call of this category mutate state?
+    ///
+    /// `Run` counts, and must: a Run tool executes arbitrary commands on a live
+    /// host — restarting a service, spawning an autonomous agent — and so
+    /// changes state even though it writes no file the broker knows about. This
+    /// is the one place that answers "did anything change"; a second
+    /// hand-kept list is exactly what it exists to prevent.
+    pub fn mutates_state(self) -> bool {
+        matches!(self, Category::Write | Category::Run)
+    }
+}
+
 pub struct ParamDef {
     pub name: &'static str,
     pub ty: ParamTy,
@@ -45,6 +71,18 @@ pub struct ToolDef {
     /// `Some(group)` = deferred: omitted from the default render, loaded on demand
     /// via `load_tools`, and listed in that tool's generated catalog under `group`.
     pub deferred_group: Option<&'static str>,
+    /// What the tool does to the system. Required, no default — the compiler
+    /// refuses a `ToolDef` that omits it.
+    pub category: Category,
+}
+
+/// Resolve a tool name to its category by reading the `TOOLS` table. `None` for
+/// a name that is not in the table.
+pub fn category_of(tool_name: &str) -> Option<Category> {
+    TOOLS
+        .iter()
+        .find(|t| t.name == tool_name)
+        .map(|t| t.category)
 }
 
 // ---------------------------------------------------------------------------
