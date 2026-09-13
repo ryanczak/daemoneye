@@ -1,7 +1,7 @@
 # Phase 03a: `list_shells` — the first shell tool
 
 **Milestone:** M22 — Tool surface & context
-**Status:** in-progress
+**Status:** review
 **Depends on:** M20 (the registry it reads) and phase-02 (`Category`, now a
 required `ToolDef` field). Both **done**.
 **Estimated diff:** ~430 lines incl. tests
@@ -1009,3 +1009,146 @@ $ sed -n '/name: "list_shells"/,/^    },/p' src/ai/tools/defs.rs | grep -c 'cate
 $ grep -cE 'fn (list_shells_defaults_to_the_callers_own_shells|list_shells_all_scope_includes_other_owners|list_shells_rejects_an_unknown_scope|list_shells_scope_match_is_case_sensitive|list_shells_orders_numerically_not_lexicographically|list_shells_empty_registry_says_so)' src/daemon/executor/knowledge/shell.rs
 6
 ```
+
+### Update — ts=1789267480297 (complete, server-authored)
+
+**Summary:** **Summary:** Resumed phase 03a from the escalation snapshot. Task 1–4 pre-work was already on disk; I added the four missing pieces — the `knowledge/mod.rs` re-export, the `PendingCall::ListShells` executor arm (owner built as `Owner::Chat(session_id)`, per the escalation note), the `AiEvent::ListShells` streaming arm, and the `ToolDef` (scope listed before `list_panes`, so shell state sits next to `get_terminal_context`) — and the build went green with no leftover E0004s. Also bumped the two dispatch-test count assertions (17→18 Read, 39→40 total) that the new tool legitimately invalidated, verified `enum_values` untouched, added the `list_shells` row + count line to CLAUDE.md/README.md and a prose section to `assets/prompts/sre.toml`, ran both mutation checks (scope fallback → 2 red; string sort → the ordering test red; both green again on revert), and captured the E2E block fresh with `PASTE MATCH` on the transcript self-check.
+
+E2E: fmt 0, clippy 0, build 0; `knowledge::shell` 8 passed, `ai::tools` 22 passed, doc_truth 10 passed, isolation 9 passed, config 92, `daemon::executor::` 243, full lib suite **1828 passed / 0 failed** on three consecutive runs, no HOME litter (0 run logs before == after). One `docs:` commit for the Update Log entries, one `feat:` commit for the code — `git status --short` clean.
+
+**Notes for review:** (1) Mutation 1 turns *two* tests red (`rejects_an_unknown_scope` and `scope_match_is_case_sensitive`) because a `"mine"` fallback legalises `"MINE"` — stronger than the spec minimum, recorded as such. (2) The mutation-2 patch mutated the sort key to a constant rather than literally sorting on the id string; same observable property (registry insertion order is lexicographic for the test's `s10`/`s2` inserts), noted in the Update Log. (3) The paste self-check's naive `awk` form first matched the *script* fence, not the transcript fence, and reported `PASTE MISMATCH` structurally; scoped to the transcript's own fence it prints `PASTE MATCH` — both the mismatch and the verdict are recorded in the phase doc so the reviewer can see why the first invocation misfired. (4) The prior run's design divergence (two-value `scope`, no third `"run"`/`"session"` value) holds as specified; `Owner::Adopted` shells list under `"all"` only, unchanged from the spec's out-of-scope note.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.73s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +2 -1
+- `README.md` — +2 -1
+- `assets/prompts/sre.toml` — +12 -0
+- `docs/dev/milestones/M22-tool-surface/phase-03a-list-shells.md` — +232 -0
+- `src/ai/tools/defs.rs` — +19 -0
+- `src/ai/tools/dispatch.rs` — +3 -3
+- `src/ai/types/pending.rs` — +6 -1
+- `src/daemon/executor/knowledge/mod.rs` — +1 -0
+- `src/daemon/executor/mod.rs` — +7 -0
+- `src/daemon/stream.rs` — +11 -0
+
+**Commit:** b81e107162ddb3cbaaf3abfad07bbb4fca44433b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
