@@ -6,49 +6,50 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: phase-02 — tool-category**
-(`docs/dev/milestones/M22-tool-surface/phase-02-tool-category.md`, status:
-in-progress — **bounced 2026-09-12, bug-02-1**). Re-dispatch with
-`/rexymcp:dispatch phase-02`.
+**Active phase: none.** Phase-02 — tool-category closed **approved_after_1
+2026-09-12** (`docs/dev/milestones/M22-tool-surface/phase-02-tool-category.md`,
+status: done). Next up is **03 — shell-tools-read**, not yet drafted; run
+`/rexymcp:architect next` to draft it.
 
-**The code is correct and needs no change** — verified independently at review
-(all 39 categories tool-by-tool, both mutation checks re-run by hand, 1820 lib
-tests, four gates green). What is missing is the end-to-end Update Log entry,
-and the **root cause is architect-side**: `WORKFLOW.md` § End-to-end
-verification says a block placed only in that section is never seeded into the
-executor's task list, because the seeder parses only the section headed exactly
-`## Spec` — and phase-02's Spec omitted the `Capture the end-to-end evidence`
-task that phase-01 had as its Task 5. The bounce adds it as Task 6. **PE signed off
-on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default closed
-**approved_after_1 2026-09-12**.
+Phase-02's one bounce (bug-02-1, `closed`) was an evidence defect on correct
+code: the end-to-end block was run but never pasted, and the completion summary
+claimed it had been. **Root cause was architect-side** — `WORKFLOW.md`
+§ End-to-end verification states that a block placed only in that section is
+never seeded into the executor's task list, because the seeder parses only the
+section headed exactly `## Spec`, and phase-02's Spec omitted the capture task
+that phase-01 carried as its Task 5. Added as Task 6 at the bounce; the
+re-dispatch changed **no `src/` line**.
 
-Scope for 02: the milestone's one **pure, additive** phase. `Category`
-(`Read | Write | Search | Run | Meta`) becomes a required field on every one of
-the 39 `ToolDef` literals, with `Category::mutates_state()` derived from it and
-`category_of(name)` resolving through the table. `docs/design/daemoneye-2.0.md`
-§ 2.3 states the dependency outright — the governor *"Requires `Category` on
-`TOOLS` first"* — which is why the PE ordered it second.
+**Before dispatching any future phase, check the Spec carries the capture
+task:** `awk '/^## Spec/{f=1} f && /^## Acceptance/{exit} f' <doc> | grep -c 'end-to-end'`
+must be ≥ 1.
 
-**Two deliberate divergences from the rexyMCP original**, both pre-injected
-because copying it verbatim gets both wrong: `mutates_state()` must count
+**PE signed off on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default
+also closed **approved_after_1 2026-09-12**; both of M22's closed phases bounced
+once, and both bounces were evidence defects on correct code with an
+architect-side root cause.
+
+**What 02 shipped:** `Category` (`Read | Write | Search | Run | Meta`) is now a
+required field on all 39 `ToolDef` literals, with `Category::mutates_state()`
+derived from it and `category_of(name)` resolving through the table. Read 17 /
+Write 13 / Search 4 / Run 4 / Meta 1, verified tool-by-tool at review. **M25's
+governor dependency is satisfied** — `docs/design/daemoneye-2.0.md` § 2.3 named
+it outright.
+
+**Two deliberate divergences from the rexyMCP original**, worth remembering
+because copying that code verbatim gets both wrong: `mutates_state()` counts
 `Run` as mutating (rexyMCP's narrower `mutates_files` excludes `bash`; a
 DaemonEye `Run` tool restarts services on a live host), and `category` is a
 **struct field** rather than a name-keyed `match`, so a tool added without one
 is a compile error rather than a silent `None`.
 
-The phase is kept from being speculative by the one invariant that is true
-today and checkable now: **every tool in `APPROVAL_GATED_TOOLS` mutates
-state** — verified across all ten at drafting. That list is not just
-documentation; it is what exempts a tool from every budget cap in
-`daemon::stream`, so a read-only entry would hand it an uncapped call budget.
+The live invariant that keeps it from being speculative until M25 arrives:
+**every tool in `APPROVAL_GATED_TOOLS` mutates state**, pinned by
+`approval_gated_tools_all_mutate_state`. That list is not just documentation —
+it exempts a tool from every budget cap in `daemon::stream`, so a read-only
+entry would hand it an uncapped call budget.
 
-No tool is added, removed or re-grouped: the count stays **39 (27 core + 12
-deferred)** and `tests/doc_truth.rs` must stay at 10.
-
-Drafting note: `cargo test --lib 'ai::tools'` is **17**, not the 21 first
-written into the criteria — the number was reasoned rather than run, caught by
-running the block before commit. That is the second half of the calibration
-phase-01 produced; see below.
+Tool count unchanged at **39 (27 core + 12 deferred)**; `doc_truth` stays at 10.
 
 Phase-01's one bounce (bug-01-1, `closed`) was an evidence defect on correct
 code — the mutation-2 entry applied the inverse mutant and reported a red that
@@ -86,8 +87,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:dispatch phase-02`. Phases 03–10 are not drafted;
-`/rexymcp:architect next` drafts each one after its predecessor is approved.
+**Next step:** `/rexymcp:architect next` drafts **phase-03 — shell-tools-read**.
+Phases 03–10 are not drafted; each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 

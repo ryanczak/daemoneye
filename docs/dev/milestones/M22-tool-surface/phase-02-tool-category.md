@@ -1,7 +1,7 @@
 # Phase 02: `Category` and `mutates_state()` on every `ToolDef`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** nothing in M22. Phase-01 is `done` but this phase does not
 touch config or execution. It is the milestone's one **pure, additive** phase.
 **Estimated diff:** ~130 lines incl. tests (39 one-line literal additions, a
@@ -995,3 +995,54 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 59fdd39e03505aa3df9612f4ddcbf80246739151
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-12
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-02-1, major — the end-to-end block was run but never
+  pasted, and the completion summary claimed it had been)
+- **Executor:** GLM-5.3-Flash-NVFP4-Spark (via rexyMCP)
+- **Scope deviations:** none. The re-dispatch changed **no `src/` line**
+  (`git diff 329386c8..HEAD --stat -- src/` → 0), exactly as bug-02-1 required.
+  One derive beyond the spec's list — `Hash, PartialOrd, Ord` on `Category` —
+  is forced by the `BTreeMap` tally in `category_counts_match_the_assignment`
+  and is accepted.
+- **Calibration:** one, architect-side — see below.
+
+Re-verified independently at review: all four gates green; the full lib suite
+**1820 passed, 0 failed** on three consecutive runs; `ai::tools` **22**;
+`doc_truth` **10**; preservation all holds (`daemon::executor::` 235,
+`daemon::stream` 8, `config::` 92, `isolation` 9). Every acceptance criterion
+returns its pinned value.
+
+**The categorisation was checked tool-by-tool, not by count.** Counts alone
+cannot see a swap between two categories, so the 39 assignments were compared
+against the spec table entry by entry: zero mismatches, zero uncategorised.
+
+**Both mutation checks re-run by hand, not read.** Dropping `Run` from
+`mutates_state()` turns `approval_gated_tools_all_mutate_state` red naming
+`run_terminal_command` (and `mutates_state_is_write_and_run_only` red as well —
+the mutant is caught by two tests, which is stronger than the spec predicted);
+flipping `list_schedules` to `Write` turns `category_counts_match_the_assignment`
+red with `left: Some(16) / right: Some(17)`. Both reverted, tree left clean.
+
+**The paste self-check was re-run at review**, not taken on trust: extracting the
+fenced block from the `(end-to-end verification)` entry the same way the spec's
+snippet does yields 4167 bytes byte-identical to `/tmp/e2e-m22-02.txt` — a real
+`PASTE MATCH`. The capture is **fresh**: mtime 18:07:59, sixteen minutes after
+the 17:52:06 bounce commit, and a different size from the stale 17:42 file the
+bug flagged. Every value in its sections D–G matches what this review measured
+independently.
+
+**Calibration — a criterion over a prose-bearing document must match the
+verdict line, not the phrase.** bug-02-1's DoD pinned
+`grep -c 'PASTE MISMATCH'` → **0**. It reads **2** on the finished tree, and
+both hits are prose in the server-authored completion summary asserting that
+`PASTE MISMATCH` did *not* occur. The property is true; the instrument cannot
+distinguish a verdict from a sentence about a verdict. The working instrument is
+an anchored whole-line match — `grep -cx 'PASTE MATCH'` → 1 and
+`grep -cx 'PASTE MISMATCH'` → 0, both confirmed at review. This is the second
+instance in M22 of an architect criterion that was blind rather than wrong
+(phase-01's was a count pinned without its filter), and it is the case
+`WORKFLOW.md` § "Run every count criterion" already names: *"Text-based greps
+count prose … ask what the instrument cannot see."* Recorded; fold on a third.
