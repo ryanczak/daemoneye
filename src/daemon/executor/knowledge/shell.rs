@@ -4,7 +4,6 @@
 //! substrate (03b).
 
 use crate::ai::filter::mask_sensitive;
-use crate::daemon::utils::normalize_output;
 use crate::shell::{
     Owner, ShellId, ShellRecord, ShellRegistry, cast_path, meta_path_for, with_shells,
 };
@@ -185,7 +184,7 @@ const READ_SHELL_DEFAULT_LINES: usize = 200;
 /// Hard ceiling on a single `read_shell` capture. Same value as `read_pane`'s.
 const READ_SHELL_MAX_LINES: usize = 2000;
 
-/// Pure: the command indices `read_shell` should read. `since_command` selects
+/// Pure: the command indices a reader should read. `since_command` selects
 /// from that index onward (absent = every recorded command); no filesystem
 /// access, no registry — it only sees the loaded `MetaIndex`.
 fn select_command_indices(
@@ -208,60 +207,33 @@ fn select_command_indices(
     }
 }
 
-/// Pure: turn the concatenated command output + the optional `lines` clamp and
-/// `filter` into the body text. Everything above this function is I/O; this is
-/// the part tests can hand-build. `Ok(None)` is the filtered-empty case.
-fn build_body(
-    bytes: Vec<u8>,
-    lines: Option<u64>,
-    filter: Option<&regex::Regex>,
-) -> Result<Option<String>, String> {
-    let decoded = String::from_utf8_lossy(&bytes);
-    let normalized = normalize_output(&decoded);
-    let matched: Vec<&str> = if let Some(re) = filter {
-        normalized.lines().filter(|l| re.is_match(l)).collect()
-    } else {
-        normalized.lines().collect()
-    };
-    let matched: String = {
-        let depth = compile_depth(lines);
-        let start = matched.len().saturating_sub(depth);
-        matched[start..].join("\n")
-    };
-    let trimmed = matched.trim_end();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(mask_sensitive(trimmed).to_string()))
-}
-
-/// Pure: the tail depth `lines` requests, with `read_pane`'s defaults (200,
-/// capped at 2000, `0` or absent → default). Split from `build_body` so the
-/// clamp arithmetic is assertable directly.
-fn compile_depth(requested: Option<u64>) -> usize {
-    match requested {
-        Some(n) if n > 0 => (n as usize).min(READ_SHELL_MAX_LINES),
-        _ => READ_SHELL_DEFAULT_LINES,
-    }
-}
-
-/// One shell's recording, resolved far enough to read: the registry record's
-/// owner key, the cast path, and the loaded command index. Built by
-/// `resolve_shell_log`, consumed with `read_commands` by both readers.
-struct ShellLog {
-    id: String,
+/// One shell's recorded output — the text `read_shell` renders and what
+/// `find_in_shells` searches, so a hit's line number means the same thing to
+/// both.
+struct ShellOutput {
     owner_key: String,
-    cast: std::path::PathBuf,
-    meta: crate::shell::MetaIndex,
+    /// How many commands the output was assembled from. Searchable text is the
+    /// concatenation of a subset: empty output can mean either "recorded
+    /// nothing yet" (0) or "the selected commands wrote nothing" (non-zero).
+    command_count: usize,
+    /// Raw (lossy-UTF-8) recorded output of the selected commands, in command
+    /// order. Normalization lives with each caller's rendering.
+    text: String,
 }
 
-/// The registry + cast-file half of `read_shell`'s reader: look the id up,
-/// name the cast file, load the command index. The unknown-id, no-cast and
-/// no-index error sentences live here so `read_shell` and `find_in_shells`
-/// cannot drift about what a bad id or a missing recording says. Only the
-/// empty-commands case stays with the reader: `read_shell` reports it as a
-/// notice, while `find_in_shells` reads an empty recording as search-hit-nothing.
-fn resolve_shell_log(reg: &ShellRegistry, id: &str) -> Result<ShellLog, String> {
+/// The recorded-output read `read_shell` and `find_in_shells` share:
+/// registry lookup → cast path → `MetaIndex` → byte-range read, decoded and
+/// normalized. `since_command` selects a suffix of the commands; `None` reads
+/// every one. `Err` carries the exact sentence the caller shows — five
+/// distinct failure reasons end here, and a second copy of them would drift.
+/// A live shell that has recorded no commands is a success with `command_count`
+/// 0, not an error: a search over it finds nothing, while `read_shell` says so
+/// in its own words.
+fn read_shell_log(
+    reg: &ShellRegistry,
+    id: &str,
+    since_command: Option<u32>,
+) -> Result<ShellOutput, String> {
     let resolved = with_shells(reg, |store| {
         store
             .get(id)
@@ -306,37 +278,81 @@ fn resolve_shell_log(reg: &ShellRegistry, id: &str) -> Result<ShellLog, String> 
             meta_path.display()
         ));
     };
-    Ok(ShellLog {
-        id: id.to_string(),
-        owner_key,
-        cast,
-        meta,
-    })
-}
-
-/// Concatenate the chosen commands' recorded output bytes. Raw `"o"` payloads
-/// joined in index order — decoding, `normalize_output` and masking happen
-/// above this, and `Ok`/`Err` stay split the same way in both readers.
-fn read_commands(log: &ShellLog, indices: &[u32]) -> Result<Vec<u8>, String> {
+    if meta.commands.is_empty() {
+        return Ok(ShellOutput {
+            owner_key,
+            command_count: 0,
+            text: String::new(),
+        });
+    }
+    let Some(indices) = select_command_indices(&meta, since_command) else {
+        let highest = meta.commands.iter().map(|c| c.index).max().unwrap_or(0);
+        return Err(format!(
+            "Error: since_command {since:?} is beyond every recorded command \
+             of shell {id} — the highest recorded index is {highest}. Call \
+             with a smaller index (0 is always valid: it is the shell's \
+             first recorded command).",
+            since = since_command.unwrap_or_default(),
+        ));
+    };
     let mut bytes = Vec::new();
-    for index in indices {
-        match crate::shell::read_command_output(&log.cast, &log.meta, *index) {
+    for index in &indices {
+        match crate::shell::read_command_output(&cast, &meta, *index) {
             Ok(mut out) => bytes.append(&mut out),
             Err(e) => {
                 return Err(format!(
-                    "Error: failed reading shell {}'s recorded output at command \
+                    "Error: failed reading shell {id}'s recorded output at command \
                      index {index}: {e}. The cast file may have been rotated; \
-                     list_shells and re-read.",
-                    log.id
+                     list_shells and re-read."
                 ));
             }
         }
     }
-    Ok(bytes)
+    Ok(ShellOutput {
+        owner_key,
+        command_count: indices.len(),
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+    })
 }
 
-/// The registry + cast-file half of `read_shell`. `registry` and `now` are
-/// parameters rather than module reads: `list_shells`'s `list_shells_in` seam,
+/// Pure: turn the recorded output + the optional `lines` clamp and
+/// `filter` into the body text. Everything above this function is I/O;
+/// this is the part tests can hand-build. `Ok(None)` is the filtered-empty
+/// case.
+fn build_body(
+    text: &str,
+    lines: Option<u64>,
+    filter: Option<&regex::Regex>,
+) -> Result<Option<String>, String> {
+    let matched: Vec<&str> = if let Some(re) = filter {
+        text.lines().filter(|l| re.is_match(l)).collect()
+    } else {
+        text.lines().collect()
+    };
+    let matched: String = {
+        let depth = compile_depth(lines);
+        let start = matched.len().saturating_sub(depth);
+        matched[start..].join("\n")
+    };
+    let trimmed = matched.trim_end();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(mask_sensitive(trimmed).to_string()))
+}
+
+/// Pure: the tail depth `lines` requests, with `read_pane`'s defaults (200,
+/// capped at 2000, `0` or absent → default). Split from `build_body` so the
+/// clamp arithmetic is assertable directly.
+fn compile_depth(requested: Option<u64>) -> usize {
+    match requested {
+        Some(n) if n > 0 => (n as usize).min(READ_SHELL_MAX_LINES),
+        _ => READ_SHELL_DEFAULT_LINES,
+    }
+}
+
+/// The registry + cast-file half of `read_shell`. `registry` is
+/// a parameter rather than a module read: `list_shells`'s `list_shells_in` seam,
 /// so the lookup can be driven from a hand-built registry without touching the
 /// process-global one.
 fn read_shell_in(
@@ -346,31 +362,17 @@ fn read_shell_in(
     since_command: Option<u32>,
     filter: Option<&str>,
 ) -> String {
-    let log = match resolve_shell_log(reg, id) {
-        Ok(log) => log,
+    let out = match read_shell_log(reg, id, since_command) {
+        Ok(out) => out,
         Err(msg) => return msg,
     };
-    let owner_key = log.owner_key.clone();
-    if log.meta.commands.is_empty() {
+    if out.command_count == 0 {
         return format!(
-            "Shell {id} ({owner_key}) is live but has recorded no commands yet — \
-             the recording starts with the first command run in it."
+            "Shell {id} ({}) is live but has recorded no commands yet — \
+             the recording starts with the first command run in it.",
+            out.owner_key
         );
     }
-    let Some(indices) = select_command_indices(&log.meta, since_command) else {
-        let highest = log.meta.commands.iter().map(|c| c.index).max().unwrap_or(0);
-        return format!(
-            "Error: since_command {since:?} is beyond every recorded command \
-             of shell {id} — the highest recorded index is {highest}. Call \
-             with a smaller index (0 is always valid: it is the shell's \
-             first recorded command).",
-            since = since_command.unwrap_or_default(),
-        );
-    };
-    let bytes = match read_commands(&log, &indices) {
-        Ok(bytes) => bytes,
-        Err(msg) => return msg,
-    };
     let filter_re = match filter {
         Some(p) => match regex::RegexBuilder::new(p).size_limit(1 << 20).build() {
             Ok(re) => Some(re),
@@ -383,14 +385,15 @@ fn read_shell_in(
         },
         None => None,
     };
-    let body = match build_body(bytes, lines, filter_re.as_ref()) {
+    let body = match build_body(&out.text, lines, filter_re.as_ref()) {
         Ok(body) => body,
         Err(msg) => return msg,
     };
     let header = format!(
-        "Shell {id} ({owner_key}) — {} command{}{}{}:",
-        indices.len(),
-        if indices.len() == 1 { "" } else { "s" },
+        "Shell {id} ({}) — {} command{}{}{}:",
+        out.owner_key,
+        out.command_count,
+        if out.command_count == 1 { "" } else { "s" },
         match since_command {
             Some(i) => format!(" from command index {i}"),
             None => String::new(),
@@ -542,22 +545,14 @@ fn find_in_shells_in(
         if total >= FIND_MAX_MATCHES {
             break;
         }
-        let log = match resolve_shell_log(reg, &row.id) {
-            Ok(log) => log,
+        let out = match read_shell_log(reg, &row.id, None) {
+            Ok(out) => out,
             Err(_) => {
                 unsearchable.push(row.id.clone());
                 continue;
             }
         };
-        let raw = match read_commands(&log, &all_command_indices(&log)) {
-            Ok(raw) => raw,
-            Err(_) => {
-                unsearchable.push(row.id.clone());
-                continue;
-            }
-        };
-        let text = String::from_utf8_lossy(&raw);
-        let tail = tail_lines(&text, READ_SHELL_MAX_LINES);
+        let tail = tail_lines(&out.text, READ_SHELL_MAX_LINES);
         let limit = FIND_MAX_MATCHES - total;
         let matches = search_shell_buffer(&tail, &re, limit);
         if !matches.is_empty() {
@@ -624,11 +619,6 @@ fn find_in_shells_in(
         ));
     }
     out
-}
-
-/// Every recorded command index of a shell, in order.
-fn all_command_indices(log: &ShellLog) -> Vec<u32> {
-    log.meta.commands.iter().map(|c| c.index).collect()
 }
 
 /// The last `max` non-empty-collapsed lines of `text`.

@@ -615,6 +615,19 @@ unchanged.
 
 <!-- entries appended below this line -->
 
+### Update — 2026-09-13 (started, executor, re-dispatch for bug-03c-1)
+
+**Working on:** phase-03c, third dispatch. Prior state: the code shipped in
+`5f0ddc2a` and was bounced on its evidence, not its behaviour —
+`bugs/bug-03c-1.md` details it (the filed three-run capture contains a failed
+run whose test name was discarded; criteria demand three clean consecutive
+runs plus a named-flake investigation with 20 consecutive clean runs). All
+pre-existing and phase code is committed and green; this run re-runs the two
+mutation checks on the current tree, captures the amended end-to-end block
+fresh, pastes it, and opens the flake investigation. There are no code changes
+to make; every edit below is Update Log append-only. Status stays
+`in-progress`; the completion entry and the flip to `review` are the server's.
+
 ### Update — 2026-09-13 06:14 (started, executor)
 
 **Working on:** phase-03c. Flipped Status `todo → in-progress` here and in the
