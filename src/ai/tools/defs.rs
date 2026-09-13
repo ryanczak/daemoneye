@@ -766,12 +766,11 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "list_shells",
-        description: "List the PTY shells the daemon is running on the daemon host: your \
-                      background shells and their state. Each shell has an id like \"s3\" — \
-                      that id is what run_terminal_command (background=true), send_input, \
-                      read_shell and the other shell tools take as their target. Call this \
-                      before any shell tool call so you pass an id that exists. Reports the \
-                      owner, age, and flags (interactive / dedicated / exited) of each shell.",
+        description: "List the PTY shells the daemon is running on the daemon host, with \
+                      each shell's id (like \"s3\"), owner, age, and flags (interactive / \
+                      dedicated / exited; exited shells are kept listed). An \
+                      observability tool: use it to see which shells exist and what \
+                      state they are in.",
         params: &[ParamDef {
             name: "scope",
             ty: ParamTy::Str,

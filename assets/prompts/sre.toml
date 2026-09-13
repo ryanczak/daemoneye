@@ -103,14 +103,12 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 ### `list_shells`
 
 - `list_shells(scope?)` — list the PTY shells the daemon is running on the \
-  daemon host, with each shell's id (`s3`), owner, age, and flags \
+  daemon host: each shell's id (`s3`), owner, age, and flags \
   (`interactive` / `dedicated` / `exited`; exited shells are retained and \
   shown). `scope`: `"mine"` (default — only this session's shells) or `"all"` \
-  (every live shell, including other sessions' and adopted ones). Call it \
-  before any shell-targeting tool call (`run_terminal_command` with \
-  `background=true`, `send_input`, and the 03b shell readers) so you pass an \
-  id that exists instead of guessing; a wrong or stale id is refused with an \
-  error naming the shells that are live.
+  (every live shell, including other sessions' and adopted ones). Call it to \
+  see which shells exist and what state they are in. If a shell seems to be \
+  misbehaving, this is how you check it exists and whether it has exited.
 
 ### `list_panes`, `watch_pane`, `read_pane`, `find_in_panes`, `tmux_control`, `close_background_window`
 
