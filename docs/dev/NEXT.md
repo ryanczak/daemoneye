@@ -6,11 +6,39 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-01 — pty-default closed
-**approved_after_1 2026-09-12**
-(`docs/dev/milestones/M22-tool-surface/phase-01-pty-default.md`, status: done).
-**PE signed off on the ten-phase breakdown 2026-09-12.** Next up is **02 —
-tool-category**, not yet drafted; run `/rexymcp:architect next` to draft it.
+**Active phase: phase-02 — tool-category**
+(`docs/dev/milestones/M22-tool-surface/phase-02-tool-category.md`, status: todo,
+drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-02`. **PE signed off
+on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default closed
+**approved_after_1 2026-09-12**.
+
+Scope for 02: the milestone's one **pure, additive** phase. `Category`
+(`Read | Write | Search | Run | Meta`) becomes a required field on every one of
+the 39 `ToolDef` literals, with `Category::mutates_state()` derived from it and
+`category_of(name)` resolving through the table. `docs/design/daemoneye-2.0.md`
+§ 2.3 states the dependency outright — the governor *"Requires `Category` on
+`TOOLS` first"* — which is why the PE ordered it second.
+
+**Two deliberate divergences from the rexyMCP original**, both pre-injected
+because copying it verbatim gets both wrong: `mutates_state()` must count
+`Run` as mutating (rexyMCP's narrower `mutates_files` excludes `bash`; a
+DaemonEye `Run` tool restarts services on a live host), and `category` is a
+**struct field** rather than a name-keyed `match`, so a tool added without one
+is a compile error rather than a silent `None`.
+
+The phase is kept from being speculative by the one invariant that is true
+today and checkable now: **every tool in `APPROVAL_GATED_TOOLS` mutates
+state** — verified across all ten at drafting. That list is not just
+documentation; it is what exempts a tool from every budget cap in
+`daemon::stream`, so a read-only entry would hand it an uncapped call budget.
+
+No tool is added, removed or re-grouped: the count stays **39 (27 core + 12
+deferred)** and `tests/doc_truth.rs` must stay at 10.
+
+Drafting note: `cargo test --lib 'ai::tools'` is **17**, not the 21 first
+written into the criteria — the number was reasoned rather than run, caught by
+running the block before commit. That is the second half of the calibration
+phase-01 produced; see below.
 
 Phase-01's one bounce (bug-01-1, `closed`) was an evidence defect on correct
 code — the mutation-2 entry applied the inverse mutant and reported a red that
@@ -22,23 +50,10 @@ demanded the literal string `4 passed; 1 failed` without naming the filter that
 produces it, and that alone caused a second, milder mismatch in the corrected
 entry.
 
-Scope: `[execution] backend` defaults to `"pty"`; `"tmux"` becomes the explicit
-opt-out; an **invalid value now falls back to the default** rather than to tmux
-— the old fallback's own comment justified it by a substrate that "does not
-exist yet", and it does now. Three tests rewritten in place, one negative added,
-three executor comments, the seeded template and the README row corrected. The
-config doc comment that has been false since M20 phase-07c goes too.
-
-The four-run-kind live check on the substrate is **architect-run at review**
-(M14 convention), not executor work — the executor's evidence is the config
-behaviour, which is fully decidable in tests.
-
-Drafting note, recorded so the next phase does not repeat it: two of this doc's
-"now" values were wrong on the first pass — one because a sentence wraps across
-two lines and the grep counts lines, one because the real comment text has a
-backtick between `"tmux"` and `(the default)` and the pattern lacked it, so it
-matched nothing against a tree with three such comments. Both caught by running
-the criteria before commit; both fixed.
+**Still owed from phase-01:** the four-run-kind live check on the PTY
+substrate — chat, ghost, scheduled, background — is **architect-run** per the
+M14 convention and was not part of 01's executor work. It is an M22 exit
+criterion, not a phase-01 one; run it before the milestone closes.
 
 PE chose M22 next at the M24 close, ahead of M21 and M23: `Category` on `TOOLS`
 is M25's stated dependency, and M21's `host?` params and M23's
@@ -56,14 +71,13 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   three of § 2.5's twelve "additions" (`run_log_tail`, `run_log_search`,
   `get_turn`) already shipped in M24 phase-02b. Real delta: **39 − 6 + 9 = 42**.
   Phase docs cite the README, not § 2.5's numbers.
-- **`[execution] backend` still defaults to `"tmux"`**, so everything M20 and
-  M24 built is opt-in. **Phase 01 flips it** (PE decision at the M24 close) so
-  later milestones' live checks exercise the real path. Its config doc comment
-  is also stale — "Nothing reads the value yet" went false when M20 phase-07c
-  became the consumer.
+- **`[execution] backend` defaulted to `"tmux"`**, so everything M20 and M24
+  built was opt-in. **Phase 01 flipped it** (PE decision at the M24 close) so
+  later milestones' live checks exercise the real path. Done 2026-09-12; the
+  stale config doc comment went with it.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-02 — tool-category**.
-Nothing is dispatched until then.
+**Next step:** `/rexymcp:dispatch phase-02`. Phases 03–10 are not drafted;
+`/rexymcp:architect next` drafts each one after its predecessor is approved.
 
 **Carried out of M24, still open:**
 
