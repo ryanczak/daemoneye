@@ -61,6 +61,7 @@ pub fn dispatch_tool_event(
         "read_file" => dispatch::<ReadFileArgs>(id, args, ts),
         "read_pane" => dispatch::<ReadPaneArgs>(id, args, ts),
         "find_in_panes" => dispatch::<FindInPanesArgs>(id, args, ts),
+        "read_shell" => dispatch::<ReadShellArgs>(id, args, ts),
         "tmux_control" => dispatch::<TmuxControlArgs>(id, args, ts),
         "edit_file" => dispatch::<EditFileArgs>(id, args, ts),
         "write_runbook" => dispatch::<WriteRunbookArgs>(id, args, ts),
@@ -240,6 +241,9 @@ mod tests {
                 "search_repository" => json!({"query": "x", "kind": "all"}),
                 "get_terminal_context" => json!({"scope": "session"}),
                 "list_shells" => json!({"scope": "mine"}),
+                "read_shell" => {
+                    json!({"shell": "s3", "lines": 10, "since_command": 0, "filter": "."})
+                }
                 "list_panes" => json!({}),
                 "close_background_window" => json!({"pane_id": "%1"}),
                 "spawn_ghost_shell" => json!({"runbook": "rb", "message": "investigate"}),
@@ -651,8 +655,8 @@ mod tests {
     fn every_tool_has_a_category() {
         assert_eq!(
             TOOLS.len(),
-            40,
-            "tool count should match the 28 core + 12 deferred claim"
+            41,
+            "tool count should match the 29 core + 12 deferred claim"
         );
         for t in TOOLS {
             assert!(
@@ -669,7 +673,7 @@ mod tests {
         for t in TOOLS {
             *counts.entry(t.category).or_insert(0) += 1;
         }
-        assert_eq!(counts.get(&Category::Read), Some(&18), "Read count");
+        assert_eq!(counts.get(&Category::Read), Some(&19), "Read count");
         assert_eq!(counts.get(&Category::Write), Some(&13), "Write count");
         assert_eq!(counts.get(&Category::Search), Some(&4), "Search count");
         assert_eq!(counts.get(&Category::Run), Some(&4), "Run count");

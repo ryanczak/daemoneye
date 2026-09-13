@@ -493,7 +493,7 @@ While the search prompt is open, typing edits the query, `Enter` commits it and 
 
 ## AI tools
 
-The model has **40 tools**. The 28 **core** tools are sent with every request; the 12 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
+The model has **41 tools**. The 29 **core** tools are sent with every request; the 12 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
 
 Tools marked **⚠** require explicit user approval before they execute.
 
@@ -512,6 +512,7 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `search_repository` | Search runbooks, scripts, memory, or the event log |
 | `get_terminal_context` | Capture a fresh tmux snapshot on demand; `scope` selects the window, the session (default), or all sessions |
 | `list_shells` | List the PTY shells the daemon is running — id (`s3`), owner, age, and interactive / dedicated / exited flags; `scope` selects this session's shells (default) or all |
+| `read_shell` | Read a PTY shell's recorded output — the per-command log behind its asciicast recording, not the live screen. `since_command` starts at a command index, `filter` regex-selects lines, `lines` clamps the tail (default 200, max 2000); output is masked |
 | `list_panes` | Enumerate panes grouped by window, with ID, index, command, cwd, title and live status — plus a labelled section for panes in other tmux sessions |
 | `read_pane` | Read any pane's buffer on demand at a requested scrollback depth, including other sessions and daemon background windows; ANSI-annotated, optionally regex-filtered, masked |
 | `find_in_panes` | One regex search across every pane's buffer — answers "which pane has the error?" in a single call |

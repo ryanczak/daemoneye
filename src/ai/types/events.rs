@@ -187,6 +187,15 @@ pub enum AiEvent {
         scope: Option<String>,
         thought_signature: Option<String>,
     },
+    /// Read a shell's recorded output (asciicast log slice).
+    ReadShell {
+        id: String,
+        shell: String,
+        lines: Option<u64>,
+        since_command: Option<u32>,
+        filter: Option<String>,
+        thought_signature: Option<String>,
+    },
     TmuxControl {
         id: String,
         action: String,

@@ -3,7 +3,11 @@
 //! screen-grid access and no asciicast reads — those are the buffer readers'
 //! substrate (03b).
 
-use crate::shell::{Owner, ShellId, ShellRecord, ShellRegistry, with_shells};
+use crate::ai::filter::mask_sensitive;
+use crate::daemon::utils::normalize_output;
+use crate::shell::{
+    Owner, ShellId, ShellRecord, ShellRegistry, cast_path, meta_path_for, with_shells,
+};
 
 /// One collected shell, shaped for the formatter. Holds the owner's `key()`
 /// string rather than the `Owner` itself, so the formatter can never compare
@@ -159,11 +163,277 @@ fn format_age(age_secs: u64) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// read_shell (M22 phase-03b)
+// ---------------------------------------------------------------------------
+
+/// Default tail depth when `lines` is omitted. Same values as `read_pane`'s,
+/// which is the analogue this tool's parameters were measured against.
+const READ_SHELL_DEFAULT_LINES: usize = 200;
+/// Hard ceiling on a single `read_shell` capture. Same value as `read_pane`'s.
+const READ_SHELL_MAX_LINES: usize = 2000;
+
+/// Pure: the command indices `read_shell` should read. `since_command` selects
+/// from that index onward (absent = every recorded command); no filesystem
+/// access, no registry — it only sees the loaded `MetaIndex`.
+fn select_command_indices(
+    meta: &crate::shell::MetaIndex,
+    since_command: Option<u32>,
+) -> Option<Vec<u32>> {
+    let Some(since) = since_command else {
+        return Some(meta.commands.iter().map(|c| c.index).collect());
+    };
+    let highest = meta.commands.iter().map(|c| c.index).max();
+    match highest {
+        Some(h) if since <= h => Some(
+            meta.commands
+                .iter()
+                .filter(|c| c.index >= since)
+                .map(|c| c.index)
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+/// Pure: turn the concatenated command output + the optional `lines` clamp and
+/// `filter` into the body text. Everything above this function is I/O; this is
+/// the part tests can hand-build. `Ok(None)` is the filtered-empty case.
+fn build_body(
+    bytes: Vec<u8>,
+    lines: Option<u64>,
+    filter: Option<&regex::Regex>,
+) -> Result<Option<String>, String> {
+    let decoded = String::from_utf8_lossy(&bytes);
+    let normalized = normalize_output(&decoded);
+    let matched: Vec<&str> = if let Some(re) = filter {
+        normalized.lines().filter(|l| re.is_match(l)).collect()
+    } else {
+        normalized.lines().collect()
+    };
+    let matched: String = {
+        let depth = compile_depth(lines);
+        let start = matched.len().saturating_sub(depth);
+        matched[start..].join("\n")
+    };
+    let trimmed = matched.trim_end();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(mask_sensitive(trimmed).to_string()))
+}
+
+/// Pure: the tail depth `lines` requests, with `read_pane`'s defaults (200,
+/// capped at 2000, `0` or absent → default). Split from `build_body` so the
+/// clamp arithmetic is assertable directly.
+fn compile_depth(requested: Option<u64>) -> usize {
+    match requested {
+        Some(n) if n > 0 => (n as usize).min(READ_SHELL_MAX_LINES),
+        _ => READ_SHELL_DEFAULT_LINES,
+    }
+}
+
+/// The registry + cast-file half of `read_shell`. `registry` and `now` are
+/// parameters rather than module reads: `list_shells`'s `list_shells_in` seam,
+/// so the lookup can be driven from a hand-built registry without touching the
+/// process-global one.
+fn read_shell_in(
+    reg: &ShellRegistry,
+    id: &str,
+    lines: Option<u64>,
+    since_command: Option<u32>,
+    filter: Option<&str>,
+) -> String {
+    let resolved = with_shells(reg, |store| {
+        store
+            .get(id)
+            .map(|record| (record.started_unix, record.owner.key()))
+    });
+    let Some((started_unix, owner_key)) = resolved else {
+        let live = with_shells(reg, |store| {
+            let mut ids: Vec<String> = store.values().map(|r| r.id.as_str().to_string()).collect();
+            ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));
+            ids
+        });
+        return if live.is_empty() {
+            format!(
+                "Error: no shell with id {id:?} is in the registry. No shells are \
+                 live; call list_shells to confirm, or run a command first — \
+                 run_terminal_command creates a shell on demand."
+            )
+        } else {
+            format!(
+                "Error: no shell with id {id:?} is in the registry — it may have \
+                 exited and aged out, or the listing you are working from is \
+                 stale. Live shell ids: {}. Call list_shells to refresh.",
+                live.join(", ")
+            )
+        };
+    };
+    let cast = cast_path(id, started_unix);
+    let meta_path = meta_path_for(&cast);
+    let Some(meta) = crate::shell::MetaIndex::load(&meta_path).ok() else {
+        if std::fs::metadata(&cast).is_err() {
+            return format!(
+                "Error: shell {id} ({owner_key}) has no recorded cast log at {} yet — \
+                 nothing this shell ran has been recorded. Run a command in it, or \
+                 check the shell survived restart.",
+                meta_path.display()
+            );
+        }
+        return format!(
+            "Error: shell {id} ({owner_key}) has a cast log but its command index \
+             {} is missing or unreadable. The command index is rebuilt by the \
+             shell host; retry, or list_shells and use an id that reports commands.",
+            meta_path.display()
+        );
+    };
+    if meta.commands.is_empty() {
+        return format!(
+            "Shell {id} ({owner_key}) is live but has recorded no commands yet — \
+             the recording starts with the first command run in it."
+        );
+    }
+    let indices = match select_command_indices(&meta, since_command) {
+        Some(i) => i,
+        None => {
+            let highest = meta.commands.iter().map(|c| c.index).max().unwrap_or(0);
+            return format!(
+                "Error: since_command {since:?} is beyond every recorded command \
+                 of shell {id} — the highest recorded index is {highest}. Call \
+                 with a smaller index (0 is always valid: it is the shell's \
+                 first recorded command).",
+                since = since_command.unwrap_or_default(),
+            );
+        }
+    };
+    let mut bytes = Vec::new();
+    for index in &indices {
+        match crate::shell::read_command_output(&cast, &meta, *index) {
+            Ok(mut out) => bytes.append(&mut out),
+            Err(e) => {
+                return format!(
+                    "Error: failed reading shell {id}'s recorded output at command \
+                     index {index}: {e}. The cast file may have been rotated; \
+                     list_shells and re-read."
+                );
+            }
+        }
+    }
+    let filter_re = match filter {
+        Some(p) => match regex::RegexBuilder::new(p).size_limit(1 << 20).build() {
+            Ok(re) => Some(re),
+            Err(e) => {
+                return format!(
+                    "Error: invalid filter regex {p:?}: {e}. Fix the expression and \
+                     call again; the filter is applied as a regex, not a literal."
+                );
+            }
+        },
+        None => None,
+    };
+    let body = match build_body(bytes, lines, filter_re.as_ref()) {
+        Ok(body) => body,
+        Err(msg) => return msg,
+    };
+    let header = format!(
+        "Shell {id} ({owner_key}) — {} command{}{}{}:",
+        indices.len(),
+        if indices.len() == 1 { "" } else { "s" },
+        match since_command {
+            Some(i) => format!(" from command index {i}"),
+            None => String::new(),
+        },
+        match filter {
+            Some(p) => format!(" matching /{p}/"),
+            None => String::new(),
+        },
+    );
+    match body {
+        Some(b) => {
+            let line_count = b.lines().count().max(1);
+            format!(
+                "{header} {line_count} line{}.\n{b}",
+                if line_count == 1 { "" } else { "s" }
+            )
+        }
+        None => {
+            let depth = compile_depth(lines);
+            if let Some(p) = filter {
+                format!(
+                    "{header} no lines matched /{p}/ in the last {depth} lines. \
+                     Record the pattern without anchors, check the previous \
+                     commands' output with list_shells, or use read_pane for a \
+                     live pane."
+                )
+            } else {
+                format!(
+                    "{header} the recorded output is empty — nothing to show in the \
+                     last {depth} lines."
+                )
+            }
+        }
+    }
+}
+
+/// Resolve a shell id to its recorded output: registry lookup → cast path →
+/// meta index → byte-range slice → clamp → filter → mask. Splits like
+/// `list_shells`: the registry and filesystem access live here, the selection
+/// and formatting below it are pure and hand-buildable in tests.
+pub fn read_shell(
+    id: &str,
+    lines: Option<u64>,
+    since_command: Option<u32>,
+    filter: Option<&str>,
+) -> String {
+    read_shell_in(crate::shell::registry(), id, lines, since_command, filter)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     use crate::shell::ShellRegistry;
+
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// A throwaway `HOME` so `cast_path` (which resolves through
+    /// `shell_logs_dir()`) lands inside a temp directory the test owns. Every
+    /// read_shell test holds this for its whole body, so a module-level
+    /// `std::path` touch never reaches the real home.
+    struct TmpHome(std::path::PathBuf);
+    impl TmpHome {
+        fn new() -> Self {
+            let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let p =
+                std::env::temp_dir().join(format!("de_kshell_test_{}_{}", std::process::id(), n));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpHome(p)
+        }
+    }
+    impl Drop for TmpHome {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
+        let _guard = crate::test_home_guard();
+        let old = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &tmp.0);
+        }
+        f();
+        match old {
+            Some(v) => unsafe {
+                std::env::set_var("HOME", v);
+            },
+            None => unsafe {
+                std::env::remove_var("HOME");
+            },
+        }
+    }
 
     fn row(
         id: &str,
@@ -328,5 +598,226 @@ mod tests {
         let out = format_shell_rows(&rows, None, NOW);
         assert!(out.contains("1 shell (scope \"mine\")"), "get: {out}");
         assert!(out.contains("age:30s"), "age: {out}");
+    }
+
+    /// A shell with `per_command` recorded commands, each writing `output`,
+    /// plus the registry record pointing at the cast. Returns the `TmpHome`
+    /// keeping the files alive, the registry (already holding the record), and
+    /// the id the fixture wrote. Command output is one line per command.
+    ///
+    /// The whole fixture runs with `HOME` pointed at the temp dir, because
+    /// `cast_path` resolves through `shell_logs_dir()` — a fixed id +
+    /// `started_unix` pair always names the same file per `HOME`, so between
+    /// two tests running concurrently the writes would otherwise collide.
+    fn fixture(per_command: &[&str]) -> (TmpHome, ShellRegistry, String) {
+        let tmp = TmpHome::new();
+        let reg = ShellRegistry::default();
+        with_home(&tmp, || {
+            let id = "s3";
+            let started_unix = 1_788_470_000;
+            let cast = crate::shell::cast_path(id, started_unix);
+            std::fs::create_dir_all(cast.parent().expect("cast has a parent")).unwrap();
+
+            let mut w = crate::shell::CastWriter::create(&cast, 80, 24, started_unix).unwrap();
+            let mut records = Vec::new();
+            for (i, out) in per_command.iter().enumerate() {
+                let t = 1.0 + i as f64;
+                w.mark(Duration::from_secs_f64(t), &format!("cmd {i}"))
+                    .unwrap();
+                let first_byte = w.byte_len();
+                w.write_output(
+                    Duration::from_secs_f64(t + 0.5),
+                    format!("{out}\n").as_bytes(),
+                )
+                .unwrap();
+                let end_byte = w.byte_len();
+                w.mark(Duration::from_secs_f64(t + 1.0), &format!("end {i}"))
+                    .unwrap();
+                records.push(crate::shell::CommandRecord {
+                    index: i as u32,
+                    command: format!("cmd {i}"),
+                    started: t,
+                    ended: t + 0.5,
+                    exit_code: 0,
+                    first_byte,
+                    end_byte,
+                });
+            }
+            drop(w);
+            let meta = crate::shell::MetaIndex {
+                shell_id: id.into(),
+                cast: cast.file_name().unwrap().to_string_lossy().into_owned(),
+                started_unix,
+                commands: records,
+            };
+            let meta_path = crate::shell::meta_path_for(&cast);
+            meta.save(&meta_path).unwrap();
+
+            insert(&reg, 3, Owner::Chat("a".into()), started_unix);
+        });
+        (tmp, reg, "s3".to_string())
+    }
+
+    #[test]
+    fn read_shell_returns_recorded_output() {
+        let (tmp, reg, id) = fixture(&["alpha-1", "alpha-2"]);
+        with_home(&tmp, || {
+            let out = read_shell_in(&reg, &id, None, None, None);
+            assert!(out.contains("alpha-1"), "command 1's output present: {out}");
+            assert!(out.contains("alpha-2"), "command 2's output present: {out}");
+            assert!(out.contains("s3"), "the id is named in the header: {out}");
+        });
+    }
+
+    #[test]
+    fn read_shell_since_command_selects_from_that_index() {
+        let (tmp, reg, id) = fixture(&["one", "two", "three"]);
+        with_home(&tmp, || {
+            let out = read_shell_in(&reg, &id, None, Some(2), None);
+            assert!(
+                out.contains("three"),
+                "command 3 must be included (index >= 2): {out}"
+            );
+            assert!(
+                !out.contains("two") && !out.contains("one"),
+                "commands 0 and 1 must be excluded: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_shell_since_command_past_the_end_says_so() {
+        let (tmp, reg, id) = fixture(&["only"]);
+        with_home(&tmp, || {
+            let out = read_shell_in(&reg, &id, None, Some(9), None);
+            assert!(
+                out.starts_with("Error:"),
+                "out-of-range says so as an error the model reads: {out}"
+            );
+            assert!(
+                out.contains("9"),
+                "the requested index must be named: {out}"
+            );
+            assert!(
+                out.contains("highest recorded index is 0"),
+                "the highest recorded index must be named: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_shell_filter_selects_matching_lines() {
+        let (tmp, reg, id) = fixture(&["alpha-noise", "beta-treasure", "alpha-noise-2"]);
+        with_home(&tmp, || {
+            let out = read_shell_in(&reg, &id, None, None, Some("treasure"));
+            assert!(
+                out.contains("beta-treasure"),
+                "the matching line is present: {out}"
+            );
+            assert!(
+                !out.contains("alpha-noise"),
+                "non-matching lines are excluded: {out}"
+            );
+        });
+
+        // A regex that matches nothing: a sentence, not an empty body.
+        let (tmp, reg, id) = fixture(&["plenty", "of", "output"]);
+        with_home(&tmp, || {
+            let out = read_shell_in(&reg, &id, None, None, Some("never-present"));
+            assert!(
+                out.contains("no lines matched /never-present/"),
+                "filtered-empty is a sentence naming the pattern: {out}"
+            );
+            assert!(
+                out.contains("Record the pattern"),
+                "the sentence must say what to do next, not just that nothing matched: {out}"
+            );
+            assert!(
+                !out.contains("plenty"),
+                "nothing matched, so no shell content is returned: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_shell_invalid_filter_regex_is_an_error() {
+        let (tmp, reg, id) = fixture(&["has [ in it", "clean line"]);
+        with_home(&tmp, || {
+            let out = read_shell_in(&reg, &id, None, None, Some("["));
+            assert!(
+                out.starts_with("Error:"),
+                "a malformed regex is an error, not a fallback: {out}"
+            );
+            assert!(out.contains("["), "the offending pattern is named: {out}");
+            assert!(
+                out.contains("character class") || out.contains("unterminated"),
+                "the parse error is named: {out}"
+            );
+            assert!(
+                !out.contains("clean line"),
+                "no shell content may accompany a parse failure: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_shell_unknown_id_is_an_error_naming_live_shells() {
+        let (tmp, reg, _id) = fixture(&["present"]);
+        with_home(&tmp, || {
+            let out = read_shell_in(&reg, "s99", None, None, None);
+            assert!(
+                out.starts_with("Error:"),
+                "an unknown id is an error, returned as a value not a Result: {out}"
+            );
+            assert!(out.contains("s99"), "the bad id is named: {out}");
+            assert!(
+                out.contains("s3"),
+                "the live ids are named so the model knows what to pass: {out}"
+            );
+        });
+
+        // An empty registry: different sentence, same error contract.
+        let empty = ShellRegistry::default();
+        with_home(&tmp, || {
+            let out = read_shell_in(&empty, "s99", None, None, None);
+            assert!(
+                out.starts_with("Error:"),
+                "even with nothing live, the answer is a sentence: {out}"
+            );
+            assert!(
+                out.contains("s99") && out.contains("No shells"),
+                "the message names both the bad id and the empty registry: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_shell_lines_clamps_to_the_tail() {
+        let (tmp, reg, id) = fixture(&["line-1", "line-2", "line-3", "line-4", "line-5"]);
+        with_home(&tmp, || {
+            let out = read_shell_in(&reg, &id, Some(2), None, None);
+            assert!(
+                out.contains("line-5") && out.contains("line-4"),
+                "the tail is what survives a clamp: {out}"
+            );
+            assert!(
+                !out.contains("line-1") && !out.contains("line-3"),
+                "earlier lines are dropped: {out}"
+            );
+        });
+
+        // Shorter than `lines`: everything is returned without padding.
+        let (tmp, reg, id) = fixture(&["short-a", "short-b"]);
+        with_home(&tmp, || {
+            let out = read_shell_in(&reg, &id, Some(50), None, None);
+            assert!(
+                out.contains("short-a") && out.contains("short-b"),
+                "output shorter than the limit is returned whole: {out}"
+            );
+            assert!(
+                !out.contains("(padded") && !out.contains("pad"),
+                "no padding is added: {out}"
+            );
+        });
     }
 }

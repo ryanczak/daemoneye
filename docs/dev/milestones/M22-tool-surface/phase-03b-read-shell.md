@@ -1,7 +1,7 @@
 # Phase 03b: `read_shell` — reading a shell's recorded output
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03a (`list_shells`, which tells the model the ids this tool
 takes) and M20 (the asciicast log this reads). Both **done**.
 **Estimated diff:** ~400 lines incl. tests
@@ -609,3 +609,273 @@ criterion asserts that directory is unchanged. Also do not touch
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-13 04:33 (started)
+
+**Executor:** executor (headless run, phase-03b `read_shell`)
+**Status:** in-progress — flipped from `todo`; milestone README row updated to match.
+
+Working through the Spec in order: the reader primitive and its parameter
+semantics in the existing `knowledge/shell.rs` module (tasks 1–2), the tool
+definition (task 3), the seven-site wiring batch (task 4), the two doc tables
+and the prompt asset (task 5), then the two mutation checks and the
+end-to-end capture (tasks 6–7). No deviations from the Spec yet.
+
+### Update — 2026-09-13 (mutation checks)
+
+Two red-then-green transcripts, each applied with `patch` and reverted with
+`patch`. The properties broken are exactly the two the Spec names. The tree
+was green and `knowledge::shell` at 15 passed before mutation 1; after each
+revert `cargo test --lib 'knowledge::shell'` returned to **15 passed**, so the
+mutant left no residue.
+
+**Mutation 1 — an out-of-range `since_command` must not silently return
+everything.** The selector was mutated to fall back to "all indices" whenever
+`since_command` exceeds the highest recorded index, exactly the silent
+out-of-range behaviour the property forbids. **First red run caught the mutant
+not yet in the tree** (the patch landed after that run started; both runs' full
+transcripts are kept, so the reader can see the ordering): the mutant's red run
+is the second, and it fails by returning output instead of the sentence.
+
+```
+== MUTATION 1: out-of-range since_command silently returns everything (property: it must not) ==
+-- red run (mutant freshly applied; the first green line is the pre-patch tree, second is the mutant):
+test daemon::executor::knowledge::shell::tests::read_shell_since_command_past_the_end_says_so ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1838 filtered out; finished in 0.00s
+cargo_exit=0
+-- (mutant applied: a `Some(_) => all indices` arm added to select_command_indices)
+test daemon::executor::knowledge::shell::tests::read_shell_since_command_past_the_end_says_so ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1838 filtered out; finished in 0.01s
+cargo_exit=101
+-- revert applied (arm removed, original match restored)
+-- green run:
+test daemon::executor::knowledge::shell::tests::read_shell_since_command_past_the_end_says_so ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1838 filtered out; finished in 0.00s
+cargo_exit=0
+-- green (whole module, reverted):
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.01s
+cargo_exit=0
+```
+
+**Mutation 2 — an invalid `filter` regex must not be treated as a literal.**
+The filter's compile-failure arm was mutated to ignore the parse error and
+compile an escaped literal instead — the substring fallback the property
+forbids. Same ordering as mutation 1 (the mutant's red line is the second
+run).
+
+```
+== MUTATION 2: invalid filter regex falls back to a literal (property: it must be an error) ==
+-- red run (mutant freshly applied; first line is the pre-patch tree, second is the mutant):
+test daemon::executor::knowledge::shell::tests::read_shell_invalid_filter_regex_is_an_error ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1838 filtered out; finished in 0.00s
+cargo_exit=0
+-- (mutant applied: the Err arm compiled regex::escape(p) instead of returning the error string)
+test daemon::executor::knowledge::shell::tests::read_shell_invalid_filter_regex_is_an_error ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1838 filtered out; finished in 0.01s
+cargo_exit=101
+-- revert applied (Err arm restored to the error path)
+-- green run:
+test daemon::executor::knowledge::shell::tests::read_shell_invalid_filter_regex_is_an_error ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1838 filtered out; finished in 0.00s
+cargo_exit=0
+-- green (whole module, reverted):
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.01s
+cargo_exit=0
+```
+
+The `1838 filtered out` count above is the single-test filter's own arithmetic
+(one test selected from a suite that by then held 1839), distinct from the
+module filter's `1824 filtered out`. **When a `test result:` line is quoted
+here it is from the same invocation whose command is shown beside it** — the
+test counts differ by filter, and each line was captured from its own run; the
+whole-module green runs quote the module filter's count.
+
+
+### Update — 2026-09-13 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block **verbatim and unmodified**
+from the repo root. Fresh capture for this run — no reuse of a prior
+`/tmp/e2e-m22-03b.txt`. The transcript below is this run's capture file,
+pasted byte-for-byte:
+
+```sh
+A=/tmp/e2e-m22-03b.txt
+: > "$A"
+RUNS_BEFORE=$(ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l)
+{
+echo "== A. build =="
+echo "real HOME run logs BEFORE: $RUNS_BEFORE"
+cargo build 2>&1 | tail -2; echo "cargo_exit=${PIPESTATUS[0]}"
+
+echo "== B. the module's tests =="
+cargo test --lib 'knowledge::shell' -- --nocapture 2>&1 \
+  | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test daemon::executor::knowledge::shell|^test result'
+echo "cargo_exit=${PIPESTATUS[0]}"
+cargo test --lib 'ai::tools' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test result'
+
+echo "== C. structural greps (each must print the stated number) =="
+D=src/ai/tools/defs.rs; S=src/ai/tools/schema.rs; K=src/daemon/executor/knowledge/shell.rs; P=src/ai/types/pending.rs
+TD() { sed -n '/name: "read_shell"/,/^    },/p' $D; }
+printf 'tool defined                 (1): %s\n' "$(grep -c 'name: "read_shell"' $D)"
+printf 'category Read                (1): %s\n' "$(TD | grep -c 'category: Category::Read')"
+printf 'deferred_group None          (1): %s\n' "$(TD | grep -c 'deferred_group: None')"
+printf 'shell param                  (1): %s\n' "$(TD | grep -c 'name: "shell"')"
+printf 'three optional params        (3): %s\n' "$(TD | grep -cE 'name: "(lines|since_command|filter)"')"
+printf 'exactly one required         (1): %s\n' "$(TD | grep -c 'required: true')"
+printf 'ToolDef literals            (41): %s\n' "$(grep -c 'ToolDef {' $D)"
+printf 'categories assigned         (41): %s\n' "$(grep -c 'category: Category::' $D)"
+printf 'not approval-gated           (0): %s\n' "$(sed -n '/APPROVAL_GATED_TOOLS: &\[&str\] = &\[/,/^\];/p' $D | grep -c 'read_shell')"
+printf 'enum_values untouched        (0): %s\n' "$(sed -n '/pub(super) fn enum_values/,/^}/p' $S | grep -cE '"filter"|"lines"|"since_command"|"shell"')"
+printf 'memory param set intact      (1): %s\n' "$(sed -n '/pub(super) fn enum_values/,/^}/p' $S | grep -c '"session", "knowledge", "incident"')"
+printf 'ShellRequest unchanged       (1): %s\n' "$(grep -c 'pub enum ShellRequest' src/shell/proto.rs)"
+printf 'src/shell untouched          (0): %s\n' "$(git diff --stat -- src/shell/ | wc -l)"
+printf 'no live-client calls         (0): %s\n' "$(grep -cE 'crate::shell::status|run_command|spawn_command' $K)"
+printf 'selector exists              (1): %s\n' "$(grep -c 'fn select_command_indices' $K)"
+printf 'selector is pure             (0): %s\n' "$(sed -n '/fn select_command_indices/,/^}/p' $K | grep -cE 'Path|File|with_shells|ShellRegistry')"
+printf 'should_emit arm              (1): %s\n' "$(sed -n '/fn should_emit_tool_feedback/,/^    }/p' $P | grep -c 'ReadShell')"
+printf 'summary arm                  (1): %s\n' "$(sed -n '/fn summary(&self)/,/^    }/p' $P | grep -c 'ReadShell')"
+printf 'pending wiring              (5+): %s\n' "$(grep -c 'ReadShell' $P)"
+printf 'events wiring               (1+): %s\n' "$(grep -c 'ReadShell' src/ai/types/events.rs)"
+printf 'stream wiring               (2+): %s\n' "$(grep -c 'ReadShell' src/daemon/stream.rs)"
+printf 'executor wiring             (1+): %s\n' "$(grep -c 'ReadShell' src/daemon/executor/mod.rs)"
+printf 'dispatch wiring             (2+): %s\n' "$(grep -c 'read_shell' src/ai/tools/dispatch.rs)"
+printf 'args wiring                 (2+): %s\n' "$(grep -c 'ReadShellArgs' src/ai/tools/args.rs)"
+printf 'sre.toml documents it       (1+): %s\n' "$(grep -c 'read_shell' assets/prompts/sre.toml)"
+printf 'sre.toml stays honest        (0): %s\n' "$(sed -n '/^### `read_shell`/,/^### /p' assets/prompts/sre.toml | grep -cE 'send_input|03b|03c|M22')"
+printf 'CLAUDE.md new count          (1): %s\n' "$(grep -c '41 tools: 29 core + 12 deferred' CLAUDE.md)"
+printf 'CLAUDE.md old count gone     (0): %s\n' "$(grep -c '40 tools: 28 core + 12 deferred' CLAUDE.md)"
+printf 'README new count             (1): %s\n' "$(grep -c 'The model has \*\*41 tools\*\*' README.md)"
+printf 'seven tests                  (7): %s\n' "$(grep -cE 'fn (read_shell_returns_recorded_output|read_shell_since_command_selects_from_that_index|read_shell_since_command_past_the_end_says_so|read_shell_filter_selects_matching_lines|read_shell_invalid_filter_regex_is_an_error|read_shell_unknown_id_is_an_error_naming_live_shells|read_shell_lines_clamps_to_the_tail)' $K)"
+printf 'prod unwrap/panic in module  (0): %s\n' "$(sed -n '1,/^#\[cfg(test)\]/p' $K | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe ')"
+
+echo "== D. preservation: config 92, isolation 9, doc_truth 10 =="
+for m in 'config::' 'daemon::executor::'; do
+  printf '%-26s ' "$m"; cargo test --lib "$m" 2>&1 | grep '^test result'
+done
+printf '%-26s ' 'test isolation'; cargo test --test isolation 2>&1 | grep '^test result'
+printf '%-26s ' 'test doc_truth'; cargo test --test doc_truth 2>&1 | grep '^test result'
+
+echo "== E. lib suite, three consecutive runs =="
+for i in 1 2 3; do cargo test --lib 2>&1 | grep '^test result'; done
+
+echo "== F. gates =="
+cargo fmt --all --check 2>&1 | tail -2; echo "fmt_exit=${PIPESTATUS[0]}"
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2; echo "clippy_exit=${PIPESTATUS[0]}"
+
+echo "== G. no HOME litter from the suite =="
+printf 'real HOME run logs AFTER (==BEFORE): %s\n' "$(ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l)"
+} >> "$A" 2>&1
+cat "$A"
+```
+
+The block's own output, arrived at by running exactly the script above — this
+is the transcript the block produced and it is what was appended inside the
+`{ … } >> "$A"` above:
+
+```
+== A. build ==
+real HOME run logs BEFORE: 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. the module's tests ==
+test daemon::executor::knowledge::shell::tests::formatter_reports_a_single_shell_without_plural_splitting ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_rejects_an_unknown_scope ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_scope_match_is_case_sensitive ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_empty_registry_says_so ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_defaults_to_the_callers_own_shells ... ok
+test daemon::executor::knowledge::shell::tests::formatter_marks_flags_and_exits_without_the_registry ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_orders_numerically_not_lexicographically ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_all_scope_includes_other_owners ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_invalid_filter_regex_is_an_error ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_since_command_past_the_end_says_so ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_unknown_id_is_an_error_naming_live_shells ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_filter_selects_matching_lines ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_returns_recorded_output ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_since_command_selects_from_that_index ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_lines_clamps_to_the_tail ... ok
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.01s
+cargo_exit=0
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1817 filtered out; finished in 0.00s
+== C. structural greps (each must print the stated number) ==
+tool defined                 (1): 1
+category Read                (1): 1
+deferred_group None          (1): 1
+shell param                  (1): 1
+three optional params        (3): 3
+exactly one required         (1): 1
+ToolDef literals            (41): 41
+categories assigned         (41): 41
+not approval-gated           (0): 0
+enum_values untouched        (0): 0
+memory param set intact      (1): 1
+ShellRequest unchanged       (1): 1
+src/shell untouched          (0): 0
+no live-client calls         (0): 0
+selector exists              (1): 1
+selector is pure             (0): 0
+should_emit arm              (1): 1
+summary arm                  (1): 1
+pending wiring              (5+): 6
+events wiring               (1+): 1
+stream wiring               (2+): 2
+executor wiring             (1+): 1
+dispatch wiring             (2+): 2
+args wiring                 (2+): 2
+sre.toml documents it       (1+): 2
+sre.toml stays honest        (0): 0
+CLAUDE.md new count          (1): 1
+CLAUDE.md old count gone     (0): 0
+README new count             (1): 1
+seven tests                  (7): 7
+prod unwrap/panic in module  (0): 0
+== D. preservation: config 92, isolation 9, doc_truth 10 ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1747 filtered out; finished in 0.00s
+daemon::executor::         test result: ok. 250 passed; 0 failed; 4 ignored; 0 measured; 1585 filtered out; finished in 1.08s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== E. lib suite, three consecutive runs ==
+test result: ok. 1835 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.16s
+test result: ok. 1835 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.43s
+test result: ok. 1835 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.15s
+== F. gates ==
+fmt_exit=0
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.04s
+clippy_exit=0
+== G. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+
+Read: every structural grep returns its stated number, `knowledge::shell` is
+15 passed including the seven named tests, `ai::tools` 22 / 0, doc_truth 10 /
+0, config 92, isolation 9, `daemon::executor::` 250 (243 + 7 new), and the
+lib suite is **1835 passed / 0 failed** on three consecutive runs. Fmt and
+clippy exit 0. `src/shell/` has a 0-line diff (the screen half was not
+touched) and no HOME litter (0 run logs before == after).
+
+Paste self-check, run after appending this entry:
+
+```sh
+D=docs/dev/milestones/M22-tool-surface/phase-03b-read-shell.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==3{print} c==4{exit}' > /tmp/pasted-m22-03b.txt
+diff /tmp/pasted-m22-03b.txt /tmp/e2e-m22-03b.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Verdict recorded after running it: `PASTE MATCH`. *(The `c==3` index selects
+this entry's transcript fence — the entry holds the `sh` script first and the
+transcript second, exactly as the phase doc's note anticipates.)*
+
+### Update — 2026-09-13 (grep proof for the spec-pinned literals)
+
+Per the executor contract's grep requirement for pinned byte sequences — the
+tool-name string in the `ToolDef`, and the seven specced test names:
+
+```sh
+$ grep -c 'name: "read_shell"' src/ai/tools/defs.rs
+1
+$ sed -n '/name: "read_shell"/,/^    },/p' src/ai/tools/defs.rs | grep -c 'category: Category::Read'
+1
+$ grep -cE 'fn (read_shell_returns_recorded_output|read_shell_since_command_selects_from_that_index|read_shell_since_command_past_the_end_says_so|read_shell_filter_selects_matching_lines|read_shell_invalid_filter_regex_is_an_error|read_shell_unknown_id_is_an_error_naming_live_shells|read_shell_lines_clamps_to_the_tail)' src/daemon/executor/knowledge/shell.rs
+7
+```

@@ -104,6 +104,17 @@ pub(super) struct FindInPanesArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct ReadShellArgs {
+    shell: String,
+    #[serde(default)]
+    lines: Option<u64>,
+    #[serde(default)]
+    since_command: Option<u32>,
+    #[serde(default)]
+    filter: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub(super) struct TmuxControlArgs {
     action: String,
     pane_id: String,
@@ -454,6 +465,22 @@ impl ToolArgs for FindInPanesArgs {
             id: id.to_string(),
             pattern: self.pattern,
             scope: self.scope,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for ReadShellArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ReadShell {
+            id: id.to_string(),
+            shell: self.shell,
+            lines: self.lines,
+            since_command: self.since_command,
+            filter: self.filter,
             thought_signature: ts,
         }
     }

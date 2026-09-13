@@ -110,6 +110,19 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   see which shells exist and what state they are in. If a shell seems to be \
   misbehaving, this is how you check it exists and whether it has exited.
 
+### `read_shell`
+
+- `read_shell(shell, lines?, since_command?, filter?)` — read what a shell has \
+  **recorded**, from its per-command log: not a live screen buffer, so the \
+  output of a command still running arrives only when it has written something. \
+  `shell` is the id from `list_shells` (e.g. `"s3"`). `since_command` reads from \
+  a command's index onward (the first command is index 0; an index beyond the \
+  highest recorded one is an error saying so). `filter` keeps only lines \
+  matching the regex; a syntactically invalid regex is an error, not a literal \
+  match. `lines` clamps the result to its last N lines (default 200, capped at \
+  2000). Output is masked before it is returned. Reading a shell changes \
+  nothing in it.
+
 ### `list_panes`, `watch_pane`, `read_pane`, `find_in_panes`, `tmux_control`, `close_background_window`
 
 - `list_panes` — enumerate panes grouped by window with id, index, cmd, cwd, title, status; includes a foreign-session section for panes in other tmux sessions. Call when context \

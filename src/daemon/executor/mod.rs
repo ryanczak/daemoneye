@@ -883,6 +883,19 @@ where
             knowledge::read_pane(cache, chat_pane, pane_id, *lines, grep.as_deref()).await,
         )),
 
+        PendingCall::ReadShell {
+            shell,
+            lines,
+            since_command,
+            filter,
+            ..
+        } => Ok(ToolCallOutcome::Result(knowledge::read_shell(
+            shell,
+            *lines,
+            *since_command,
+            filter.as_deref(),
+        ))),
+
         PendingCall::FindInPanes { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
             knowledge::find_in_panes(cache, chat_pane, pattern, scope.as_deref()).await,
         )),

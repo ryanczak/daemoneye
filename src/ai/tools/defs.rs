@@ -783,6 +783,49 @@ pub static TOOLS: &[ToolDef] = &[
         category: Category::Read,
     },
     ToolDef {
+        name: "read_shell",
+        description: "Read the recorded output of a PTY shell's past commands — its command \
+                      log, not the live screen. Each command the shell ran is recorded with \
+                      its exit code; `since_command` selects from one command's index \
+                      onward, `filter` matches lines of the recorded output, `lines` clamps \
+                      the result to its last N lines. Use it after or during a background \
+                      command's run to see what it printed. This does not change or drive a \
+                      shell; it reads what the shell already recorded.",
+        params: &[
+            ParamDef {
+                name: "shell",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Shell id to read (e.g. \"s3\"). Get ids from list_shells.",
+            },
+            ParamDef {
+                name: "lines",
+                ty: ParamTy::Int,
+                required: false,
+                description: "How many lines of the tail to return. Defaults to 200, \
+                              capped at 2000. Omit to get the whole selection clamped.",
+            },
+            ParamDef {
+                name: "since_command",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Only commands from this command index onward — 0 is the \
+                              shell's first recorded command. Omit to read everything. \
+                              An index beyond the highest recorded one is an error.",
+            },
+            ParamDef {
+                name: "filter",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional regex; only matching lines of the recorded output \
+                              are returned. A syntactically invalid regex is an error, \
+                              not a literal match.",
+            },
+        ],
+        deferred_group: None,
+        category: Category::Read,
+    },
+    ToolDef {
         name: "load_tools",
         description: "Load an additional group of tools into your available tool set for the rest \
                       of this session. Some rarely-used tools are not loaded by default to save \

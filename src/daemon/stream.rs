@@ -707,6 +707,23 @@ where
                         scope,
                     });
                 }
+                AiEvent::ReadShell {
+                    id,
+                    shell,
+                    lines,
+                    since_command,
+                    filter,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadShell {
+                        id,
+                        thought_signature,
+                        shell,
+                        lines,
+                        since_command,
+                        filter,
+                    });
+                }
                 AiEvent::TmuxControl {
                     id,
                     action,
