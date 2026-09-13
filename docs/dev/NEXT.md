@@ -6,74 +6,40 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-03a — list-shells closed **approved_after_1
-2026-09-12** (`docs/dev/milestones/M22-tool-surface/phase-03a-list-shells.md`,
-status: done). Next up is **03b — shell-tools-read** (`read_shell`,
-`find_in_shells`), not yet drafted; run `/rexymcp:architect next` to draft it.
+**Active phase: phase-03b — read-shell**
+(`docs/dev/milestones/M22-tool-surface/phase-03b-read-shell.md`, status: todo,
+drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-03b`. Phase-03a —
+list-shells closed **approved_after_1 2026-09-12**; 01 and 02 likewise.
 
-`list_shells { scope? }` ships as a core `Category::Read` tool — **40 tools:
-28 core + 12 deferred**. `list_panes` is untouched; the six pane tools go in
-phase 09.
+Scope for 03b: `read_shell { shell, lines?, since_command?, filter? }` — core,
+`Category::Read`. 03a gave the model shell **ids**; this lets it **read** what
+a shell produced. Counts move to **41 tools: 29 core + 12 deferred**.
 
-03a took **three dispatches**: a `hard_fail` on `VerifierFailurePersistent`
-resumed rather than re-dispatched (284 of 296 attempts had succeeded — adding
-an enum variant makes every match site red until the last arm lands), then a
-bounce on bug-03a-1. **No architect code was written at any point.**
-
-**bug-03a-1's root cause was architect-side**: § Spec task 4 dictated a tool
-description saying the shell id "is what `run_terminal_command` and the other
-shell tools take" — written from the design's end state. No tool has a `shell`
-parameter (07 adds it; `send_input` is 05, `read_shell` is 03b), and because
-`list_shells` is core the false sentence shipped to the model on every request.
-**Spec the tree, not the design** — and grep the API before pinning prose about
-it.
-
-Phase-02 — tool-category closed **approved_after_1 2026-09-12**.
-
-Scope for 03a: `list_shells { scope? }` — the first of M22's nine new shell
-tools, core and `Category::Read`. The model cannot use any other shell tool
-until something tells it which shell ids exist.
-
-**Phase 03 split at drafting, on a measured seam.** The charter row named three
-read-only tools; `list_shells` reads **only** the registry (an in-process
-`HashMap` behind one mutex), while `read_shell` and `find_in_shells` read shell
-**buffers** — screen grid, asciicast log, `.meta.json` index — a different
-substrate with its own failure modes. 03a also establishes the eleven-step
-wiring pattern once, on the smallest complete vertical slice. **03b** takes the
-two buffer readers and is not drafted.
+**Split again at drafting, for the second time in this charter row.** 03a's row
+named three read-only tools and shipped one. Measuring the remaining two gave a
+seam: `read_shell` builds the *read-one-shell* primitive (registry lookup →
+cast path → `MetaIndex` → byte-range slice → clamp → filter → mask), and
+`find_in_shells` is that primitive in a loop plus match-context and a cap.
+Together ~580 lines, over the <500 guideline, and 03a needed three dispatches at
+~430. **03c** takes `find_in_shells` and reuses a proven reader.
 
 **A design divergence found by measuring, recorded in the milestone README:**
-§ 2.5 specifies `scope` as *"Own run's shells, or session's, or all"*, but
-`Owner` is keyed by **session**, not run — `ShellRecord` carries no run id, and
-a shell outlives many turns of one session. "Own run" and "own session" name
-the same set. **03a ships `"mine" | "all"`** and *rejects* `"run"`/`"session"`
-rather than aliasing them, because a silent fallback on a typo would either
-leak another session's shells or answer a different question than the one
-asked. Phase 08's `get_shell_context { scope }` is unaffected — it scopes
-context, not shell ownership.
+§ 2.5 calls `read_shell` a *"Screen or log slice"*, but **the screen is not
+reachable from the daemon.** The whole daemon↔host wire is `Subscribe | Input |
+Resize | Signal | Status` in, `Ok | Error | Chunk | Status | Exited` out — no
+frame asks for the screen grid, and `ShellScreen` lives in the host process.
+The log half needs no protocol change at all. **03b implements the log slice**
+and a criterion asserts `src/shell/` is untouched.
 
-Counts move to **40 tools: 28 core + 12 deferred**; `list_panes` is *not*
-removed here (the six pane tools go in phase 09), which is why the total grows
-rather than staying flat.
-
-Pre-injected: the registry is already reachable via the `crate::shell::registry()`
-`OnceLock`, so `execute_tool_call`'s signature does not change; `with_shells`
-is non-reentrant, so the spec splits collection from formatting; and `"scope"`
-must **not** join `enum_values`, which is keyed by param name and would
-otherwise apply one value set to both `list_shells` and `get_terminal_context`.
-
-Phase-02's one bounce (bug-02-1, `closed`) was an evidence defect on correct
-code: the end-to-end block was run but never pasted, and the completion summary
-claimed it had been. **Root cause was architect-side** — `WORKFLOW.md`
-§ End-to-end verification states that a block placed only in that section is
-never seeded into the executor's task list, because the seeder parses only the
-section headed exactly `## Spec`, and phase-02's Spec omitted the capture task
-that phase-01 carried as its Task 5. Added as Task 6 at the bounce; the
-re-dispatch changed **no `src/` line**.
-
-**Before dispatching any future phase, check the Spec carries the capture
-task:** `awk '/^## Spec/{f=1} f && /^## Acceptance/{exit} f' <doc> | grep -c 'end-to-end'`
-must be ≥ 1.
+**Pre-injected, and this one is the lesson from 03a's `hard_fail`:** the five
+match sites the compiler forces were obtained *empirically* — by adding a
+throwaway variant, running `cargo build`, and reading the errors — and the doc
+tells the executor to edit all seven sites in **one batch** before running the
+verifier, because the tree cannot compile in between. **Two of the seven are
+sites the compiler cannot see**: `summary()` ends in `_ => String::new()` and
+`should_emit_tool_feedback()` is a `matches!` chain, so a missing arm compiles
+clean and is silently wrong. Both are pinned as criteria because no gate
+catches them.
 
 **PE signed off on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default
 also closed **approved_after_1 2026-09-12**; both of M22's closed phases bounced
@@ -138,8 +104,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-03b — shell-tools-read**.
-Phases 03b–10 are not drafted; each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:dispatch phase-03b`. Phases 03c–10 are not drafted;
+each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 

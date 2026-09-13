@@ -60,7 +60,8 @@ final surface, so they go last.
 | 01 | pty-default ([phase-01-pty-default.md](phase-01-pty-default.md)) — flip `[execution] backend` to `"pty"`; `"tmux"` becomes the explicit opt-out and an invalid value falls back to the default; stale comments/template/README corrected | done                            |
 | 02 | tool-category ([phase-02-tool-category.md](phase-02-tool-category.md)) — `Category` + `mutates_state()` on every `ToolDef`; pure, additive, unblocks M25 | done        |
 | 03a | list-shells ([phase-03a-list-shells.md](phase-03a-list-shells.md)) — `list_shells { scope? }`, core + `Category::Read`; establishes the eleven-step wiring on one tool | done        |
-| 03b | shell-tools-read — `read_shell`, `find_in_shells` (the buffer readers) | todo (not drafted) |
+| 03b | read-shell ([phase-03b-read-shell.md](phase-03b-read-shell.md)) — `read_shell { shell, lines?, since_command?, filter? }` over the asciicast log; builds the read-one-shell primitive | todo |
+| 03c | find-in-shells — `find_in_shells { pattern, scope? }`, 03b's reader in a loop over 03a's collector | todo (not drafted) |
 | 04 | shell-tools-lifecycle — `open_shell`, `close_shell`, `watch_shell` | todo (not drafted) |
 | 05 | send-input — `send_input`, approval-gated; every keystroke into the `"i"` log | todo (not drafted) |
 | 06 | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the `.meta.json` index | todo (not drafted) |
@@ -94,6 +95,17 @@ final surface, so they go last.
   three numbers that must move together. Expect a phase that adds tools to
   touch all three docs, and expect `doc_truth` to catch it when it doesn't —
   that gate exists because the README went three tools stale before it.
+
+- **`read_shell` reads the log, not the live screen — the screen is not
+  reachable.** § 2.5 calls it a *"Screen or log slice"*, but the entire
+  daemon↔host wire (`src/shell/proto.rs`) is `Subscribe | Input | Resize |
+  Signal | Status` in and `Ok | Error | Chunk | Status | Exited` out — **no
+  frame asks for the screen grid**, and `ShellScreen` lives in the host
+  process. The log half needs no protocol change: `cast_path` →
+  `meta_path_for` → `MetaIndex::load` → `read_command_output` are all plain
+  file reads the daemon already owns. 03b implements the log slice; a screen
+  read would need `proto.rs` + `host.rs` + `client.rs` + `backend.rs` and is
+  its own phase if the design still wants it after 03c.
 
 - **Three phases in, every M22 defect has had an architect-side root cause.**
   01: a bug-doc criterion pinned a count without the filter that produces it.
