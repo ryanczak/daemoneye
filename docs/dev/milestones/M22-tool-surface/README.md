@@ -59,7 +59,7 @@ final surface, so they go last.
 |----|-------|--------|
 | 01 | pty-default ([phase-01-pty-default.md](phase-01-pty-default.md)) — flip `[execution] backend` to `"pty"`; `"tmux"` becomes the explicit opt-out and an invalid value falls back to the default; stale comments/template/README corrected | done                            |
 | 02 | tool-category ([phase-02-tool-category.md](phase-02-tool-category.md)) — `Category` + `mutates_state()` on every `ToolDef`; pure, additive, unblocks M25 | done        |
-| 03a | list-shells ([phase-03a-list-shells.md](phase-03a-list-shells.md)) — `list_shells { scope? }`, core + `Category::Read`; establishes the eleven-step wiring on one tool | todo |
+| 03a | list-shells ([phase-03a-list-shells.md](phase-03a-list-shells.md)) — `list_shells { scope? }`, core + `Category::Read`; establishes the eleven-step wiring on one tool | in-progress |
 | 03b | shell-tools-read — `read_shell`, `find_in_shells` (the buffer readers) | todo (not drafted) |
 | 04 | shell-tools-lifecycle — `open_shell`, `close_shell`, `watch_shell` | todo (not drafted) |
 | 05 | send-input — `send_input`, approval-gated; every keystroke into the `"i"` log | todo (not drafted) |

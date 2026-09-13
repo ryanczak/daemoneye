@@ -1,7 +1,7 @@
 # Phase 03a: `list_shells` — the first shell tool
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** M20 (the registry it reads) and phase-02 (`Category`, now a
 required `ToolDef` field). Both **done**.
 **Estimated diff:** ~430 lines incl. tests
@@ -659,3 +659,121 @@ touch `tests/doc_truth.rs`, `src/daemon/executor/knowledge/pane.rs`, or
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-13 01:23 (started)
+
+**Executor:** executor (headless run, phase-03a `list_shells`)
+**Status:** in-progress — flipped from `todo`; milestone README row updated to match.
+
+Working through the Spec in order: registry-shaped module first (tasks 1–3),
+the eleven wiring steps (task 4), doc tables (task 5), then the two mutation
+checks and the end-to-end capture (tasks 6–7). No deviations from the Spec yet.
+
+### Update — 2026-09-12 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** the spec held and the work is ~70% landed and good — the run was
+killed by a `VerifierFailurePersistent` that is an artifact of this change
+shape, not of a mistake, so a fresh re-dispatch would throw away correct work
+and re-enter the same red window.
+
+**What the briefing actually shows.** `hard_fail` after 296 turns on
+`VerifierFailurePersistent { consecutive_failures: 6 }`, with exactly two
+diagnostics, both `E0004 non-exhaustive patterns` — `PendingCall::ListShells`
+at `src/daemon/executor/mod.rs:281` and `AiEvent::ListShells` at
+`src/daemon/stream.rs:309`. **284 of the 296 attempts succeeded; only 12
+failed**, and the tail of `what_was_tried` is steady forward progress through
+tasks 1–4, not a loop.
+
+**Diagnosis: adding an enum variant guarantees a long red window.** The moment
+`PendingCall::ListShells` and `AiEvent::ListShells` exist, every exhaustive
+match over those enums fails to compile until the last arm lands. The tree
+*cannot* be green in between, so a verifier that runs after each edit sees
+consecutive failures for a structural reason. The executor was doing the right
+thing and the detector counted it as persistence. Recorded as calibration for
+the milestone, not as an executor fault.
+
+**Verified at escalation, against the partial tree:** `cargo build` fails with
+those two errors and no others. `src/daemon/executor/knowledge/shell.rs` is 350
+lines, holds all six specced test names plus two more, collects inside
+`with_shells` and formats outside it, compares `Owner::key()`, orders on
+`ShellId::index()`, and errors on an unknown scope with no fallback. It also
+injects the registry *and* the clock (`list_shells_in`) — a testability seam
+better than the one specced. Wiring done: `pending.rs`, `events.rs`, `args.rs`,
+`dispatch.rs`, `knowledge/mod.rs` (`mod shell;`). Wiring missing: the two match
+arms above, the `ToolDef` in `defs.rs` (zero references), the `knowledge/mod.rs`
+re-export, and tasks 5–7.
+
+### Notes for executor — 2026-09-12 (resume)
+
+**READ THIS FIRST. This is a resume, not a fresh start.**
+
+**`cargo build` currently FAILS with two `E0004` errors, and that is the
+expected state — it is where the previous run stopped, not damage to repair.**
+Adding an enum variant makes every exhaustive match over that enum fail until
+the last arm lands; the tree cannot be green in between. **Make all of edits
+1–4 below before you run the verifier again.** Running it after each single
+edit will show red for structural reasons and is what ended the last run.
+
+**Already done and verified by the architect — do NOT redo, rewrite, or
+re-derive any of it:**
+
+- `src/daemon/executor/knowledge/shell.rs` (350 lines) — `list_shells`,
+  `list_shells_in`, `collect_row`, `format_shell_rows`, `ShellRow`,
+  `ShellIndex`, and all six specced tests plus two more. **It is correct.**
+- `src/ai/types/pending.rs` — variant + all five arms.
+- `src/ai/types/events.rs` — the `ListShells` variant.
+- `src/ai/tools/args.rs` — `ListShellsArgs` + its `ToolArgs` impl.
+- `src/ai/tools/dispatch.rs` — the dispatch arm and the conformant-args row.
+- `src/daemon/executor/knowledge/mod.rs` — the `mod shell;` line.
+
+**Exactly four edits remain before the build is green:**
+
+1. **`src/daemon/executor/knowledge/mod.rs`** — add the re-export beside the
+   other modules', so `executor` can call it:
+   `pub(super) use shell::list_shells;`
+
+2. **`src/daemon/executor/mod.rs`** — the `PendingCall::ListShells` arm, next
+   to the `ListPanes` arm already quoted in § Pre-flight. **Build the owner
+   exactly the way `src/daemon/executor/mod.rs:330` does:**
+
+   ```rust
+   let owner = Owner::Chat(session_id.unwrap_or_default().to_string());
+   ```
+
+   **Do NOT use `Owner::Ghost` for a ghost session.** Verified at escalation:
+   `Owner::Ghost` is **never constructed anywhere in production** — both shell
+   creation sites (`:330` and `:454`) use `Owner::Chat(session_id)` for ghost
+   sessions too. A `list_shells` that built `Owner::Ghost` would compare
+   `"ghost:<id>"` against shells stored under `"chat:<id>"` and report **zero
+   shells** to every ghost.
+
+3. **`src/daemon/stream.rs`** — the `AiEvent::ListShells` arm, next to the
+   `ListPanes` arm quoted in § Pre-flight, pushing a `PendingCall::ListShells`
+   carrying the `scope`.
+
+4. **`src/ai/tools/defs.rs`** — the `ToolDef` entry, which does **not** exist
+   yet (`grep -c 'list_shells' src/ai/tools/defs.rs` → 0). It is not a compile
+   error, so the verifier will not remind you, but `dispatch_roundtrip_all_tools`
+   and `tests/doc_truth.rs` both fail without it. Per § Spec task 4:
+   `deferred_group: None`, `category: Category::Read`, one optional `scope`
+   param, and **not** in `APPROVE_GATED`/`APPROVAL_GATED_TOOLS`.
+
+**Then finish Spec tasks 5, 6 and 7** — the doc tables, the two mutation
+checks, and the end-to-end capture. Task 7 is not optional and the
+server-authored `(complete)` entry does not satisfy it.
+
+**Falsifiable finish conditions**, each checkable by you before you report:
+
+- `cargo build` exits 0.
+- `grep -c 'ToolDef {' src/ai/tools/defs.rs` → **40**, and
+  `grep -c 'category: Category::' src/ai/tools/defs.rs` → **40**.
+- `cargo test --lib 'knowledge::shell'` → **8 passed**, `0 failed`. *(Counted
+  at escalation: `grep -c '#\[test\]' src/daemon/executor/knowledge/shell.rs`
+  → 8 — the six specced names plus `formatter_marks_flags_and_exits_without_the_registry`
+  and `formatter_reports_a_single_shell_without_plural_splitting`.)*
+- `cargo test --test doc_truth` → **10 passed**, `0 failed`.
+- Full lib suite → **1828 or more**, `0 failed`. *(1820 before the phase + the 8
+  above. This one is **arithmetic, not measured** — the tree does not currently
+  build, so it could not be run at escalation. Treat the measured `8` and the
+  `0 failed` as the binding parts.)*
