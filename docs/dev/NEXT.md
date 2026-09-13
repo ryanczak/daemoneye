@@ -7,8 +7,18 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
 **Active phase: phase-02 — tool-category**
-(`docs/dev/milestones/M22-tool-surface/phase-02-tool-category.md`, status: todo,
-drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-02`. **PE signed off
+(`docs/dev/milestones/M22-tool-surface/phase-02-tool-category.md`, status:
+in-progress — **bounced 2026-09-12, bug-02-1**). Re-dispatch with
+`/rexymcp:dispatch phase-02`.
+
+**The code is correct and needs no change** — verified independently at review
+(all 39 categories tool-by-tool, both mutation checks re-run by hand, 1820 lib
+tests, four gates green). What is missing is the end-to-end Update Log entry,
+and the **root cause is architect-side**: `WORKFLOW.md` § End-to-end
+verification says a block placed only in that section is never seeded into the
+executor's task list, because the seeder parses only the section headed exactly
+`## Spec` — and phase-02's Spec omitted the `Capture the end-to-end evidence`
+task that phase-01 had as its Task 5. The bounce adds it as Task 6. **PE signed off
 on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default closed
 **approved_after_1 2026-09-12**.
 

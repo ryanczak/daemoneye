@@ -1,7 +1,7 @@
 # Phase 02: `Category` and `mutates_state()` on every `ToolDef`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-02-1.md`)
 **Depends on:** nothing in M22. Phase-01 is `done` but this phase does not
 touch config or execution. It is the milestone's one **pure, additive** phase.
 **Estimated diff:** ~130 lines incl. tests (39 one-line literal additions, a
@@ -160,7 +160,11 @@ Values below were run against the tree at drafting (2026-09-12, commit
 
 ## Spec
 
-Five tasks. Task 5 is the mutation checks, as a numbered Spec task.
+Six tasks. Tasks 5 and 6 are the mutation checks and the end-to-end
+capture, both as numbered Spec tasks — `docs/dev/WORKFLOW.md` § End-to-end
+verification requires the capture to be a task, because the seeder parses only
+the section headed exactly `## Spec` and an obligation stated anywhere else is
+never tracked.
 
 ### Task 1 — the enum and the two functions
 
@@ -292,6 +296,18 @@ are showing.** Counts differ by filter — `cargo test --lib ai::tools` selects 
 different set than a run naming one test — so a number pasted from a different
 invocation than the one above it is a defect even when both numbers are real.
 
+### Task 6 — capture the end-to-end evidence
+
+Run the block in § End-to-end verification **verbatim and unmodified**, then
+paste the resulting `/tmp/e2e-m22-02.txt` into a new Update Log entry headed
+`### Update — <date> (end-to-end verification)`. Then run the `PASTE MATCH`
+self-check that follows the block and record its verdict line in the same
+entry. The server-authored `(complete)` entry does not satisfy this, and
+neither does a summary asserting the block was pasted.
+
+Capture **fresh**; do not paste an older `/tmp/e2e-m22-02.txt` from an earlier
+attempt. A transcript must describe the tree it is filed against.
+
 ## Acceptance criteria
 
 Each was run against the tree at drafting and returns the "now" value shown.
@@ -348,6 +364,35 @@ Counts marked *prod* use `sed -n '1,/^#\[cfg(test)\]/p' <file> |`.
 - [ ] Full lib suite **1820 or more** passing, `0 failed`, on **three
       consecutive runs** (now **1815**).
 - [ ] All four gates pass.
+
+### Re-dispatch criteria (bug-02-1, filed 2026-09-12)
+
+**Every criterion above is met on the current tree and the code is correct** —
+verified independently at review, including all 39 categories tool-by-tool and
+both mutation checks re-run by hand. **No `src/` change is needed or wanted.**
+The outstanding work is one Update Log entry, now tracked as Spec Task 6.
+
+Each is scoped to the Update Log with the prefix
+`sed -n '/^## Update Log/,$p' docs/dev/milestones/M22-tool-surface/phase-02-tool-category.md |`
+so that neither this criteria block nor the `sh` block in § End-to-end
+verification can satisfy it. Each was run against commit `329386c8`.
+
+- [ ] **The entry exists:** `… | grep -c '^### Update.*end-to-end verification'`
+      → **1** (now **0**).
+- [ ] **The block is pasted, both ends present:**
+      `… | grep -c '^== C. structural greps'` → **1** (now **0**), and
+      `… | grep -c '^== G. no HOME litter'` → **1** (now **0**).
+- [ ] **The three consecutive lib runs are in the paste:**
+      `… | grep -c '1820 passed'` → **3 or more** (now **0**). *(Section E of
+      the block runs `cargo test --lib` three times; each prints one such line.
+      Do not quote this number from any other invocation — a filtered run
+      reports a different total.)*
+- [ ] **The self-check ran and passed:** `… | grep -c 'PASTE MATCH'` → **1 or
+      more** (now **0**), and `… | grep -c 'PASTE MISMATCH'` → **0** (now
+      **0**, and it must stay **0**).
+- [ ] **No code change:** `git diff 329386c8..HEAD --stat -- src/ | wc -l` →
+      **0**; `cargo test --lib` → **1820** and `cargo test --lib ai::tools` →
+      **22**, both unchanged; all four gates pass.
 
 ## Test plan
 
