@@ -777,3 +777,235 @@ server-authored `(complete)` entry does not satisfy it.
   above. This one is **arithmetic, not measured** — the tree does not currently
   build, so it could not be run at escalation. Treat the measured `8` and the
   `0 failed` as the binding parts.)*
+
+### Update — 2026-09-13 (mutation checks)
+
+Two red-then-green transcripts, captured mechanically with `tee`, both applied
+with `patch` and reverted with `patch`. The properties broken are exactly the
+two the Spec names.
+
+**Mutation 1 — an unknown scope must not fall back.** The scope resolver's
+`Some(other)` error arm was replaced with a recursion into `list_shells_in(reg,
+Some("mine"), …)`. Red: `list_shells_rejects_an_unknown_scope` **and**
+`list_shells_scope_match_is_case_sensitive` both failed — a `"mine"` fallback
+also legalises `"MINE"`, so the case-sensitivity test is load-bearing the same
+way. Two failures is stronger than the spec minimum.
+
+```
+== MUTATION 1: unknown scope falls back to mine (property: an unknown scope must not fall back) ==
+-- patch applied:
+ src/daemon/executor/knowledge/shell.rs | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+-- red run:
+test daemon::executor::knowledge::shell::tests::formatter_reports_a_single_shell_without_plural_splitting ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_scope_match_is_case_sensitive ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_rejects_an_unknown_scope ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_empty_registry_says_so ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_defaults_to_the_callers_own_shells ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_orders_numerically_not_lexicographically ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_scope_match_is_case_sensitive ... FAILED
+test daemon::executor::knowledge::shell::tests::list_shells_rejects_an_unknown_scope ... FAILED
+test result: FAILED. 6 passed; 2 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.00s
+cargo_exit=101
+-- revert applied:
+-- green run:
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.00s
+cargo_exit=0
+```
+
+**Mutation 2 — shells are ordered numerically, not lexicographically.**
+`ShellIndex::new` (the sort key) was mutated to ignore `ShellId::parse` and
+return `ShellIndex(0)` for every id — order then collapses to registry
+insertion order, which for the test's `s10`-then-`s2` inserts is
+lexicographic, the exact failure the property forbids. Red: only
+`list_shells_orders_numerically_not_lexicographically` failed, as expected —
+the ordering property is isolated to that one test.
+
+```
+== MUTATION 2: sort key becomes the id string (property: shells are ordered numerically, not lexicographically) ==
+-- patch applied:
+ src/daemon/executor/knowledge/shell.rs | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+-- red run:
+test daemon::executor::knowledge::shell::tests::list_shells_orders_numerically_not_lexicographically ... FAILED
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.00s
+cargo_exit=101
+-- revert applied:
+-- green run:
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.00s
+cargo_exit=0
+```
+
+Both mutations applied with the `patch` tool, both reverted with `patch`; after
+each revert `git diff --stat` printed nothing, so the mutation left no residue
+in the tree.
+
+### Update — 2026-09-13 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim from the repo
+root; the captured transcript is below, byte-for-byte, followed by the
+`PASTE MATCH` self-check verdict. Fresh capture for this run — no reuse of a
+prior `/tmp/e2e-m22-03a.txt`.
+
+```sh
+A=/tmp/e2e-m22-03a.txt
+: > "$A"
+RUNS_BEFORE=$(ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l)
+{
+echo "== A. build =="
+echo "real HOME run logs BEFORE: $RUNS_BEFORE"
+cargo build 2>&1 | tail -2; echo "cargo_exit=${PIPESTATUS[0]}"
+
+echo "== B. the tool as the model sees it, and the new module's tests =="
+cargo test --lib 'knowledge::shell' -- --nocapture 2>&1 \
+  | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test daemon::executor::knowledge::shell|^test result'
+echo "cargo_exit=${PIPESTATUS[0]}"
+cargo test --lib 'ai::tools' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test result'
+
+echo "== C. structural greps (each must print the stated number) =="
+D=src/ai/tools/defs.rs; S=src/ai/tools/schema.rs; K=src/daemon/executor/knowledge/shell.rs
+printf 'tool defined                 (1): %s\n' "$(grep -c 'name: "list_shells"' $D)"
+printf 'category Read                (1): %s\n' "$(sed -n '/name: "list_shells"/,/^    },/p' $D | grep -c 'category: Category::Read')"
+printf 'ToolDef literals            (40): %s\n' "$(grep -c 'ToolDef {' $D)"
+printf 'categories assigned         (40): %s\n' "$(grep -c 'category: Category::' $D)"
+printf 'not approval-gated           (0): %s\n' "$(sed -n '/APPROVAL_GATED_TOOLS: &\[&str\] = &\[/,/^\];/p' $D | grep -c 'list_shells')"
+printf 'enum_values has no scope     (0): %s\n' "$(sed -n '/pub(super) fn enum_values/,/^}/p' $S | grep -c '"scope"')"
+printf 'memory param set intact      (1): %s\n' "$(sed -n '/pub(super) fn enum_values/,/^}/p' $S | grep -c '"session", "knowledge", "incident"')"
+printf 'module declared              (1): %s\n' "$(grep -c '^mod shell;' src/daemon/executor/knowledge/mod.rs)"
+printf 'formatter is pure            (0): %s\n' "$(sed -n '/fn format_shell_rows/,/^}/p' $K | grep -c 'ShellRegistry\|with_shells\|SystemTime')"
+printf 'no per-shell status calls    (0): %s\n' "$(grep -c 'status(' $K)"
+printf 'numeric ordering            (1+): %s\n' "$(grep -c 'index()' $K)"
+printf 'six tests                    (6): %s\n' "$(grep -cE 'fn (list_shells_defaults_to_the_callers_own_shells|list_shells_all_scope_includes_other_owners|list_shells_rejects_an_unknown_scope|list_shells_scope_match_is_case_sensitive|list_shells_orders_numerically_not_lexicographically|list_shells_empty_registry_says_so)' $K)"
+printf 'pending wiring              (6+): %s\n' "$(grep -c 'ListShells' src/ai/types/pending.rs)"
+printf 'events wiring               (1+): %s\n' "$(grep -c 'ListShells' src/ai/types/events.rs)"
+printf 'stream wiring               (2+): %s\n' "$(grep -c 'ListShells' src/daemon/stream.rs)"
+printf 'executor wiring             (1+): %s\n' "$(grep -c 'ListShells' src/daemon/executor/mod.rs)"
+printf 'dispatch wiring             (2+): %s\n' "$(grep -c 'list_shells' src/ai/tools/dispatch.rs)"
+printf 'args wiring                 (2+): %s\n' "$(grep -c 'ListShellsArgs' src/ai/tools/args.rs)"
+printf 'sre.toml documents it       (1+): %s\n' "$(grep -c 'list_shells' assets/prompts/sre.toml)"
+printf 'CLAUDE.md new count          (1): %s\n' "$(grep -c '40 tools: 28 core + 12 deferred' CLAUDE.md)"
+printf 'CLAUDE.md old count gone     (0): %s\n' "$(grep -c '39 tools: 27 core + 12 deferred' CLAUDE.md)"
+printf 'README new count             (1): %s\n' "$(grep -c 'The model has \*\*40 tools\*\*' README.md)"
+printf 'prod unwrap/panic in module  (0): %s\n' "$(sed -n '1,/^#\[cfg(test)\]/p' $K | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe ')"
+
+echo "== D. preservation: config 92, isolation 9, doc_truth 10 =="
+for m in 'config::' 'daemon::executor::'; do
+  printf '%-26s ' "$m"; cargo test --lib "$m" 2>&1 | grep '^test result'
+done
+printf '%-26s ' 'test isolation'; cargo test --test isolation 2>&1 | grep '^test result'
+printf '%-26s ' 'test doc_truth'; cargo test --test doc_truth 2>&1 | grep '^test result'
+
+echo "== E. lib suite, three consecutive runs =="
+for i in 1 2 3; do cargo test --lib 2>&1 | grep '^test result'; done
+
+echo "== F. gates =="
+cargo fmt --all --check 2>&1 | tail -2; echo "fmt_exit=${PIPESTATUS[0]}"
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2; echo "clippy_exit=${PIPESTATUS[0]}"
+
+echo "== G. no HOME litter from the suite =="
+printf 'real HOME run logs AFTER (==BEFORE): %s\n' "$(ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l)"
+} >> "$A" 2>&1
+cat "$A"
+```
+
+The transcript the block produced, pasted unmodified from `/tmp/e2e-m22-03a.txt`:
+
+```
+== A. build ==
+real HOME run logs BEFORE: 0
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.04s
+cargo_exit=0
+== B. the tool as the model sees it, and the new module's tests ==
+test daemon::executor::knowledge::shell::tests::formatter_reports_a_single_shell_without_plural_splitting ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_scope_match_is_case_sensitive ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_rejects_an_unknown_scope ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_empty_registry_says_so ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_defaults_to_the_callers_own_shells ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_orders_numerically_not_lexicographically ... ok
+test daemon::executor::knowledge::shell::tests::formatter_marks_flags_and_exits_without_the_registry ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_all_scope_includes_other_owners ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.00s
+cargo_exit=0
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1810 filtered out; finished in 0.00s
+== C. structural greps (each must print the stated number) ==
+tool defined                 (1): 1
+category Read                (1): 1
+ToolDef literals            (40): 40
+categories assigned         (40): 40
+not approval-gated           (0): 0
+enum_values has no scope     (0): 0
+memory param set intact      (1): 1
+module declared              (1): 1
+formatter is pure            (0): 0
+no per-shell status calls    (0): 0
+numeric ordering            (1+): 1
+six tests                    (6): 6
+pending wiring              (6+): 7
+events wiring               (1+): 1
+stream wiring               (2+): 2
+executor wiring             (1+): 1
+dispatch wiring             (2+): 2
+args wiring                 (2+): 2
+sre.toml documents it       (1+): 2
+CLAUDE.md new count          (1): 1
+CLAUDE.md old count gone     (0): 0
+README new count             (1): 1
+prod unwrap/panic in module  (0): 0
+== D. preservation: config 92, isolation 9, doc_truth 10 ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1740 filtered out; finished in 0.00s
+daemon::executor::         test result: ok. 243 passed; 0 failed; 4 ignored; 0 measured; 1585 filtered out; finished in 1.08s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== E. lib suite, three consecutive runs ==
+test result: ok. 1828 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.13s
+test result: ok. 1828 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.10s
+test result: ok. 1828 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.12s
+== F. gates ==
+fmt_exit=0
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.00s
+clippy_exit=0
+== G. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+
+Paste self-check (run after appending the entry; captures the block exactly as
+filed and diffs it against the transcript file):
+
+```sh
+D=docs/dev/milestones/M22-tool-surface/phase-03a-list-shells.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m22-03a.txt
+diff /tmp/pasted-m22-03a.txt /tmp/e2e-m22-03a.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Verdict recorded after running it: `PASTE MATCH`.
+
+### Update — 2026-09-13 (paste self-check)
+
+The verification block was pasted with the script block, the transcript block,
+and the `PASTE MATCH` fence in it, so the naive `tail | awk` invocation first
+matched the **script** fence and diffed the shell source against the transcript
+file — `PASTE MISMATCH` on structure, not on content. Re-run limited to the
+transcript's own fence, it prints:
+
+```
+PASTE MATCH
+```
+
+Verdict: the filed transcript and `/tmp/e2e-m22-03a.txt` are byte-identical.
+
+### Update — 2026-09-13 (grep proof for the spec-pinned literals)
+
+Per the executor contract's grep requirement for pinned byte sequences — the
+tool name string in the `ToolDef`, and the six test names:
+
+```sh
+$ grep -c 'name: "list_shells"' src/ai/tools/defs.rs
+1
+$ sed -n '/name: "list_shells"/,/^    },/p' src/ai/tools/defs.rs | grep -c 'category: Category::Read'
+1
+$ grep -cE 'fn (list_shells_defaults_to_the_callers_own_shells|list_shells_all_scope_includes_other_owners|list_shells_rejects_an_unknown_scope|list_shells_scope_match_is_case_sensitive|list_shells_orders_numerically_not_lexicographically|list_shells_empty_registry_says_so)' src/daemon/executor/knowledge/shell.rs
+6
+```
