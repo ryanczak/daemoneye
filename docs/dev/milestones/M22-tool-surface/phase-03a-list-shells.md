@@ -1,7 +1,7 @@
 # Phase 03a: `list_shells` — the first shell tool
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-03a-1.md`)
 **Depends on:** M20 (the registry it reads) and phase-02 (`Category`, now a
 required `ToolDef` field). Both **done**.
 **Estimated diff:** ~430 lines incl. tests
@@ -359,9 +359,13 @@ Follow the quoted `list_panes` touchpoints in Pre-flight. The `ToolDef`:
 - `category: Category::Read`
 - one optional param `scope`, `ParamTy::Str`, `required: false`, whose
   description names the two accepted values
-- a description telling the model these are PTY shells on the daemon host,
-  that ids look like `s3`, and that the id is what `run_terminal_command` and
-  the other shell tools take
+- a description telling the model these are PTY shells on the daemon host and
+  that ids look like `s3`. **Describe only what exists on this tree.** Do
+  **not** say the id is passed to `run_terminal_command` — it has no `shell`
+  parameter until phase 07 — and do **not** name `send_input` (phase 05) or
+  `read_shell` (03b). `list_shells` is an *observability* tool today: it
+  reports which shells exist and what state they are in. Say that, and name the
+  two `scope` values.
 
 **Do not add `list_shells` to `APPROVAL_GATED_TOOLS`.** It sends no
 `Response::*Prompt` and blocks on no reply; adding it there would also exempt
@@ -388,8 +392,12 @@ instead.
 - `README.md` § "AI tools": add `list_shells` to the **Core** table and update
   the three numbers in the prose at line 496 (**40**, **28**, 12 unchanged).
   No `**⚠**` marker — it is not approval-gated.
-- `assets/etc/../prompts/sre.toml` (`assets/prompts/sre.toml`): document the
-  tool in prose, per checklist step 9.
+- `assets/prompts/sre.toml`: document the tool in prose, per checklist step 9.
+  **The same restriction as the `ToolDef` description applies, and two more.**
+  Name no tool that does not exist on this tree; cite **no internal milestone
+  or phase identifier** (`03b`, `M22`, …) — it is meaningless to the model and
+  rots at the next renumbering; and claim **no error path that is not
+  implemented** (nothing today accepts or refuses a shell id).
 
 `tests/doc_truth.rs` enforces both tables and both count lines. It will name
 the missing tool and the expected counts if you miss one.
@@ -494,6 +502,46 @@ Counts marked *prod* use `sed -n '1,/^#\[cfg(test)\]/p' <file> |`.
 - [ ] Full lib suite **1826 or more** passing, `0 failed`, on **three
       consecutive runs** (now **1820**).
 - [ ] All four gates pass.
+
+### Re-dispatch criteria (bug-03a-1, filed 2026-09-12)
+
+**Every other criterion above is met and the code is correct** — verified
+independently at review, including both mutation checks re-run by hand under
+the spec's own mutants and a byte-identical paste (3297 bytes, `PASTE MATCH`).
+**No `src/ai/types/` or `src/daemon/` change is needed or wanted.** The
+outstanding work is two prose blocks: the `list_shells` `ToolDef.description`
+and its `assets/prompts/sre.toml` section, both of which currently describe
+tools and an error path that do not exist on this tree.
+
+Greps are scoped with
+`sed -n '/name: "list_shells"/,/^    },/p' src/ai/tools/defs.rs |` (the
+`ToolDef`) and
+``sed -n '/^### `list_shells`/,/^### `list_panes`/p' assets/prompts/sre.toml |``
+(the prompt section), so neither this criteria block nor the bug doc can
+satisfy them. Each was run against commit `00299c25`.
+
+- [ ] **The description names no tool that cannot take a shell id:**
+      `<ToolDef scope> | grep -c 'run_terminal_command'` → **0** (now **1**);
+      `<ToolDef scope> | grep -cE 'send_input|read_shell'` → **0** (now **2**).
+- [ ] **The prompt section does the same:**
+      `<sre scope> | grep -c 'run_terminal_command'` → **0** (now **1**);
+      `<sre scope> | grep -c 'send_input'` → **0** (now **1**).
+- [ ] **No internal phase identifier in the prompt asset:**
+      `<sre scope> | grep -c '03b'` → **0** (now **1**).
+- [ ] **No unimplemented error path claimed:**
+      `<sre scope> | grep -ci 'refused'` → **0** (now **1**).
+- [ ] **The description still does its job:**
+      `<ToolDef scope> | grep -c '\\"mine\\"'` → **1 or more** and
+      `<ToolDef scope> | grep -c '\\"all\\"'` → **1 or more** — both already
+      **1** and they must **stay** non-zero. A description trimmed to nothing
+      would pass the four criteria above and fail these. *(Note the escaped
+      quotes: the Rust literal contains `\"mine\"`, so a plain `'"mine"'`
+      pattern matches nothing — checked at review.)*
+- [ ] **No code change, no count change:**
+      `git diff 00299c25..HEAD --stat -- src/ai/types/ src/daemon/ | wc -l` →
+      **0**; `grep -c 'ToolDef {' src/ai/tools/defs.rs` → **40**;
+      `cargo test --lib` → **1828**; `cargo test --test doc_truth` → **10**;
+      `cargo test --lib 'knowledge::shell'` → **8**; all four gates pass.
 
 ## Test plan
 

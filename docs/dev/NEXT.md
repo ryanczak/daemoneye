@@ -7,9 +7,21 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
 **Active phase: phase-03a — list-shells**
-(`docs/dev/milestones/M22-tool-surface/phase-03a-list-shells.md`, status: todo,
-drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-03a`. Phase-02 —
-tool-category closed **approved_after_1 2026-09-12**.
+(`docs/dev/milestones/M22-tool-surface/phase-03a-list-shells.md`, status:
+in-progress — **bounced 2026-09-12, bug-03a-1**). Re-dispatch with
+`/rexymcp:dispatch phase-03a`.
+
+The tool works and the code is correct — verified at review, including both
+mutation checks re-run by hand under the spec's own mutants and a
+byte-identical paste. What is wrong is **two prose blocks**: the `ToolDef`
+description (shipped to the model on every request) tells it the shell id is
+what `run_terminal_command`, `send_input` and `read_shell` take. **No tool has a
+`shell` parameter** — `run_terminal_command` gains one in phase 07, `send_input`
+arrives in 05, `read_shell` in 03b. **Root cause is architect-side: the Spec
+dictated that sentence**, written as if 07's reshape had landed. Fixed in the
+Spec at the bounce.
+
+Phase-02 — tool-category closed **approved_after_1 2026-09-12**.
 
 Scope for 03a: `list_shells { scope? }` — the first of M22's nine new shell
 tools, core and `Category::Read`. The model cannot use any other shell tool

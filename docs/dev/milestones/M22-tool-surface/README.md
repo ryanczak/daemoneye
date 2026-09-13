@@ -59,7 +59,7 @@ final surface, so they go last.
 |----|-------|--------|
 | 01 | pty-default ([phase-01-pty-default.md](phase-01-pty-default.md)) — flip `[execution] backend` to `"pty"`; `"tmux"` becomes the explicit opt-out and an invalid value falls back to the default; stale comments/template/README corrected | done                            |
 | 02 | tool-category ([phase-02-tool-category.md](phase-02-tool-category.md)) — `Category` + `mutates_state()` on every `ToolDef`; pure, additive, unblocks M25 | done        |
-| 03a | list-shells ([phase-03a-list-shells.md](phase-03a-list-shells.md)) — `list_shells { scope? }`, core + `Category::Read`; establishes the eleven-step wiring on one tool | review      |
+| 03a | list-shells ([phase-03a-list-shells.md](phase-03a-list-shells.md)) — `list_shells { scope? }`, core + `Category::Read`; establishes the eleven-step wiring on one tool | in-progress |
 | 03b | shell-tools-read — `read_shell`, `find_in_shells` (the buffer readers) | todo (not drafted) |
 | 04 | shell-tools-lifecycle — `open_shell`, `close_shell`, `watch_shell` | todo (not drafted) |
 | 05 | send-input — `send_input`, approval-gated; every keystroke into the `"i"` log | todo (not drafted) |
@@ -94,6 +94,17 @@ final surface, so they go last.
   three numbers that must move together. Expect a phase that adds tools to
   touch all three docs, and expect `doc_truth` to catch it when it doesn't —
   that gate exists because the README went three tools stale before it.
+
+- **Three phases in, every M22 defect has had an architect-side root cause.**
+  01: a bug-doc criterion pinned a count without the filter that produces it.
+  02: the Spec omitted the end-to-end capture task that `WORKFLOW.md` already
+  requires, so the obligation was never seeded. 03a: the Spec dictated a tool
+  description saying the shell id "is what `run_terminal_command` … take",
+  written as if phase 07's reshape had landed — it has no `shell` parameter, and
+  the executor faithfully wrote the false sentence into a prompt the model reads
+  on every request. The executor's *code* has been correct in all three. Revisit
+  at close: the lesson is about writing specs against the tree as it is, not as
+  the design describes it.
 
 - **`list_shells`'s three-way `scope` collapses to two — found by measuring at
   03a drafting.** § 2.5 specifies *"Own run's shells, or session's, or all"*,
