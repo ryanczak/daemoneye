@@ -20,7 +20,7 @@ pub(super) use memory::{
 pub(super) use pane::{
     close_bg_window, find_in_panes, kill_window_refusal, list_panes, read_pane, watch_pane,
 };
-pub(super) use shell::{find_in_shells, list_shells, read_shell};
+pub(super) use shell::{close_shell, find_in_shells, list_shells, open_shell, read_shell};
 
 use crate::daemon::session::{SessionStore, with_sessions};
 

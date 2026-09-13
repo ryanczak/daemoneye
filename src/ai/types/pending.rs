@@ -290,6 +290,20 @@ pub enum PendingCall {
         pattern: String,
         scope: Option<String>,
     },
+    /// Open a new PTY shell for this session (M22 phase-04a). Takes no
+    /// arguments this tree: `host` and `label` are registry fields that do not
+    /// exist yet (M21/M23).
+    OpenShell {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    /// Close one of this session's PTY shells (M22 phase-04a). Sends Term and
+    /// reports what it observed; there is no kill frame on this wire.
+    CloseShell {
+        id: String,
+        thought_signature: Option<String>,
+        shell: String,
+    },
     TmuxControl {
         id: String,
         thought_signature: Option<String>,
@@ -849,6 +863,27 @@ impl PendingCall {
                     "scope": scope,
                 })),
             },
+            PendingCall::OpenShell {
+                id,
+                thought_signature,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "open_shell".to_string(),
+                arguments: args_to_string(serde_json::json!({})),
+            },
+            PendingCall::CloseShell {
+                id,
+                thought_signature,
+                shell,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "close_shell".to_string(),
+                arguments: args_to_string(serde_json::json!({
+                    "shell": shell,
+                })),
+            },
             PendingCall::TmuxControl {
                 id,
                 thought_signature,
@@ -899,6 +934,8 @@ impl PendingCall {
             PendingCall::RecallContext { id, .. } => id,
             PendingCall::GetTerminalContext { id, .. } => id,
             PendingCall::ListShells { id, .. } => id,
+            PendingCall::OpenShell { id, .. } => id,
+            PendingCall::CloseShell { id, .. } => id,
             PendingCall::ListPanes { id, .. } => id,
             PendingCall::CloseBackgroundWindow { id, .. } => id,
             PendingCall::SpawnGhost { id, .. } => id,
@@ -948,6 +985,8 @@ impl PendingCall {
                 | PendingCall::FindInPanes { .. }
                 | PendingCall::ReadShell { .. }
                 | PendingCall::FindInShells { .. }
+                | PendingCall::OpenShell { .. }
+                | PendingCall::CloseShell { .. }
                 | PendingCall::LoadTools { .. }
                 | PendingCall::RunLogTail { .. }
                 | PendingCall::RunLogSearch { .. }
@@ -1016,6 +1055,10 @@ impl PendingCall {
             }
             PendingCall::GetTerminalContext { scope, .. } => scope.clone().unwrap_or_default(),
             PendingCall::ListShells { scope, .. } => scope.clone().unwrap_or_default(),
+            // A close has an argument worth showing (which shell); an open has
+            // none, and an empty summary here is the decided value for it.
+            PendingCall::OpenShell { .. } => String::new(),
+            PendingCall::CloseShell { shell, .. } => shell.clone(),
             PendingCall::ListPanes { .. } => String::new(),
             PendingCall::CloseBackgroundWindow { pane_id, .. } => pane_id.clone(),
             PendingCall::SpawnGhost { runbook, .. } => runbook.clone(),
@@ -1119,6 +1162,8 @@ impl PendingCall {
             PendingCall::RecallContext { .. } => "recall_context",
             PendingCall::GetTerminalContext { .. } => "get_terminal_context",
             PendingCall::ListShells { .. } => "list_shells",
+            PendingCall::OpenShell { .. } => "open_shell",
+            PendingCall::CloseShell { .. } => "close_shell",
             PendingCall::ListPanes { .. } => "list_panes",
             PendingCall::CloseBackgroundWindow { .. } => "close_background_window",
             PendingCall::SpawnGhost { .. } => "spawn_ghost_shell",
@@ -1252,6 +1297,15 @@ mod tests {
                 id: "x".to_string(),
                 thought_signature: None,
                 pane_id: "%5".to_string(),
+            },
+            PendingCall::OpenShell {
+                id: "x".to_string(),
+                thought_signature: None,
+            },
+            PendingCall::CloseShell {
+                id: "x".to_string(),
+                thought_signature: None,
+                shell: "s9".to_string(),
             },
             PendingCall::SpawnGhost {
                 id: "x".to_string(),

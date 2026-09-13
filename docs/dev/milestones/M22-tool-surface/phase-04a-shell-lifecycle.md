@@ -1,7 +1,7 @@
 # Phase 04a: `open_shell` and `close_shell` — the lifecycle pair
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03a (`list_shells`, the module and the scope resolver) and M20
 (the registry and the PTY host). Both **done**.
 **Estimated diff:** ~450 lines incl. tests
@@ -623,3 +623,205 @@ touch `tests/doc_truth.rs`, `src/daemon/executor/shell_exec.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-13 18:11 (started)
+
+**Executor:** executor (headless run, phase-04a `open_shell`/`close_shell`)
+**Status:** in-progress — flipped from `todo`; milestone README row updated to
+match.
+
+Pre-flight state confirmed against the measurements in this doc: 42 `ToolDef`
+literals, neither identifier in `src/`, CLAUDE.md and README.md still carry the
+42/30 counts, `knowledge::shell` at 21 passed, lib suite 1841, and
+`git diff --stat -- src/shell/` empty. Working through the Spec in order: the
+two functions in `knowledge/shell.rs` (tasks 1–2), the two tool definitions
+(task 3), the seven-site wiring batch taken as **one contiguous edit** before
+the first verifier run exactly as § Pre-flight prescribes (task 4, since both
+variants being absent means the tree cannot compile from the first variant
+until the last arm lands), the two doc tables and the prompt asset (task 5),
+then the two mutation checks (task 6) and the fresh end-to-end capture
+(task 7). No deviations from the Spec yet.
+
+### Update — 2026-09-13 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block **verbatim and unmodified**
+from the repo root. Fresh capture for this run — `/tmp/e2e-m22-04a.txt` written
+by the block itself, then pasted below byte-for-byte as the first fenced block
+of this entry (so the paste self-check's `c==1` selects it).
+
+```sh
+== A. build ==
+real HOME run logs BEFORE: 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. the module's tests ==
+test daemon::executor::knowledge::shell::tests::formatter_reports_a_single_shell_without_plural_splitting ... ok
+test daemon::executor::knowledge::shell::tests::formatter_marks_flags_and_exits_without_the_registry ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_all_scope_includes_other_owners ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_defaults_to_the_callers_own_shells ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_rejects_an_unknown_scope ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_empty_registry_says_so ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_orders_numerically_not_lexicographically ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_scope_match_is_case_sensitive ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_caps_total_matches_across_shells ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_searches_only_scoped_shells ... ok
+test daemon::executor::knowledge::shell::tests::close_shell_ends_the_callers_shell ... ok
+test daemon::executor::knowledge::shell::tests::close_shell_unknown_id_is_an_error ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_reports_matches_with_context ... ok
+test daemon::executor::knowledge::shell::tests::open_shell_refuses_past_the_owner_cap ... ok
+test daemon::executor::knowledge::shell::tests::open_shell_removes_the_record_when_readiness_fails ... ok
+test daemon::executor::knowledge::shell::tests::open_shell_returns_a_new_id ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_returns_recorded_output ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_since_command_past_the_end_says_so ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_unknown_id_is_an_error_naming_live_shells ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_no_matches_differs_from_no_shells ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_skips_an_unreadable_shell ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_invalid_filter_regex_is_an_error ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_invalid_pattern_is_an_error ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_since_command_selects_from_that_index ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_lines_clamps_to_the_tail ... ok
+test daemon::executor::knowledge::shell::tests::close_shell_refuses_another_owners_shell ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_filter_selects_matching_lines ... ok
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 1.74s
+cargo_exit=0
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1829 filtered out; finished in 0.00s
+== C. structural greps (each must print the stated number) ==
+open_shell defined           (1): 1
+close_shell defined          (1): 1
+open category Run            (1): 1
+close category Run           (1): 1
+open params empty            (1): 1
+open has no host/label/shell (0): 0
+close shell param            (1): 1
+close one required           (1): 1
+ToolDef literals            (44): 44
+categories assigned         (44): 44
+neither approval-gated       (0): 0
+enum_values untouched        (0): 0
+memory param set intact      (1): 1
+src/shell untouched          (0): 0
+no Hup/Kill on the wire      (0): 0
+open is non-dedicated       (1+): 2
+open avoids wrong helpers    (0): 0
+close compares key()        (1+): 3
+should_emit arms             (2): 4
+summary arms                 (2): 2
+pending wiring              (8+): 14
+events wiring                (2): 2
+stream wiring               (4+): 4
+executor wiring             (2+): 2
+dispatch wiring             (4+): 4
+args wiring                 (4+): 4
+sre.toml documents both     (2+): 6
+sre.toml stays honest        (0): 0
+CLAUDE.md new count          (1): 1
+CLAUDE.md old count gone     (0): 0
+README new count             (1): 1
+existing 21 tests survive  (21+): 21
+six new tests                (6): 6
+prod unwrap/panic in module  (0): 0
+== D. preservation: config 92, isolation 9, doc_truth 10 ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1759 filtered out; finished in 0.00s
+daemon::executor::         test result: ok. 262 passed; 0 failed; 4 ignored; 0 measured; 1585 filtered out; finished in 2.81s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== E. lib suite, three consecutive runs (failure names preserved) ==
+test result: ok. 1847 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 9.95s
+test result: ok. 1847 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 9.92s
+test result: ok. 1847 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 9.93s
+== F. gates ==
+fmt_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+clippy_exit=0
+== G. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+
+Read: every structural grep returns its stated number (the `should_emit arms`
+count reads 4 rather than 2 only because the criterion's substring range
+`fn should_emit_tool_feedback … ^    }` includes the two arms *and* the two
+`PendingCall::OpenShell`/`CloseShell` tokens the `matches!` chain carries —
+the criterion's own floor is **2 or more**, and 4 satisfies it), the module's
+tests are **27 passed / 0 failed** including the six named new tests,
+`ai::tools` 22 / 0, doc_truth 10 / 0, config 92, `daemon::executor::` 262
+(256 + 6 new), full lib suite **1847 passed / 0 failed** on three consecutive
+runs, fmt 0, clippy 0, `src/shell/` has a 0-line diff from `56aa6956`, no
+`Hup`/`Kill` anywhere in `proto.rs`, and no HOME litter (0 run logs before ==
+after).
+
+Paste self-check, run after appending this entry:
+
+```sh
+D=docs/dev/milestones/M22-tool-surface/phase-04a-shell-lifecycle.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m22-04a.txt
+diff /tmp/pasted-m22-04a.txt /tmp/e2e-m22-04a.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Verdict recorded after running it: `PASTE MATCH`.
+
+### Update — 2026-09-13 (mutation checks)
+
+Two red-then-green transcripts, each applied with `patch` and reverted with
+`patch`. The properties broken are exactly the two the Spec names. The tree
+was green and `knowledge::shell` at **27 passed / 0 failed** before mutation 1;
+after each revert the filter returned to the same green, so the mutant left no
+residue.
+
+**Mutation 1 — a readiness failure must not leave a record behind.** The
+record-removal step inside `open_shell_with`'s readiness-failure arm was
+deleted (the `with_shells(reg, |store| store.remove(...))` block that follows
+`await_ready`'s `Err`). The readiness-rollback test alone goes red; it is the
+only test the mutated line can reach, because the other two `open_shell` tests
+never take the readiness-failure branch.
+
+```
+== MUTATION 1: a host that never came up leaves its record (property: the record must be removed) ==
+-- red run (mutant applied to src/daemon/executor/knowledge/shell.rs):
+$ timeout 200 cargo test --lib 'open_shell_removes' 2>&1 | tail -3
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1850 filtered out; finished in 0.21s
+error: test failed, to rerun pass `--lib`
+-- revert applied (record-removal block restored)
+-- green run (same filter, reverted):
+$ timeout 200 cargo test --lib 'open_shell_removes' 2>&1 | tail -2
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1850 filtered out; finished in 0.21s
+$ timeout 200 cargo test --lib 'knowledge::shell' 2>&1 | tail -2
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 1.74s
+cargo_exit=0
+```
+
+**Mutation 2 — `close_shell` must refuse another owner's shell before
+signalling.** The ownership comparison was mutated to compare the **inner id
+string** after stripping both `Owner::key()`'s kind prefixes (`chat:` /
+`ghost:`) from both sides — exactly the shape a chat session and a ghost job
+sharing `"a"` then pass. `close_shell_refuses_another_owners_shell` is the
+test the mutated line can reach (the unknown-id test never reaches the
+comparison; the ends-the-caller's-shell test is same-owner by construction).
+
+```
+== MUTATION 2: ownership compares the inner id string, not Owner::key() (property: kinds are part of ownership) ==
+-- red run (mutant applied to src/daemon/executor/knowledge/shell.rs, the kind prefix stripped on both sides):
+$ timeout 120 cargo test --lib 'close_shell_refuses' 2>&1 | grep -E 'test result|FAILED'
+test daemon::executor::knowledge::shell::tests::close_shell_refuses_another_owners_shell ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1850 filtered out; finished in 0.00s
+-- revert applied (the `Owner::key()` comparison restored)
+-- green run (same filter, reverted):
+$ timeout 120 cargo test --lib 'close_shell_refuses' 2>&1 | tail -2
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1850 filtered out; finished in 0.00s
+$ timeout 200 cargo test --lib 'knowledge::shell' 2>&1 | tail -2
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 1.73s
+cargo_exit=0
+```
+
+**A mutation note the Spec asks for:** mutation 2's *first* attempt —
+replacing `record.owner.key()` with the matched inner string of a
+`Owner::Chat(s) | Owner::Ghost(s)` pattern — did **not** turn the test red
+(it produced the identical `String` value for `Ghost("cross")` and
+`Chat("cross")`, so the comparison never disagreed). Recorded rather than
+deleted: the mutant that produces the property violation is the
+**both-sides-stripped** compare, and that is the one quoted above. The
+first attempt proves nothing about the property either way, so it is not
+counted as a red run.
+
+When a `test result:` line is quoted here it is from the invocation whose
+command is shown beside it.

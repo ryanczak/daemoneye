@@ -860,6 +860,41 @@ pub static TOOLS: &[ToolDef] = &[
         category: Category::Read,
     },
     ToolDef {
+        name: "open_shell",
+        description: "Start a new PTY shell on the daemon host and return its id. A \
+                      created shell is ordinary: list_shells lists it, read_shell and \
+                      find_in_shells read its recorded output, and close_shell ends it. \
+                      **Important:** the session's next command does not necessarily run \
+                      in the shell this tool opened — commands reuse this session's \
+                      lowest-numbered open shell, so a newly opened shell is only used \
+                      when it is that lowest-numbered one. Call this when you need a \
+                      spare shell rather than when a command would do.",
+        params: &[],
+        deferred_group: None,
+        category: Category::Run,
+    },
+    ToolDef {
+        name: "close_shell",
+        description: "End one of your PTY shells by id: send it a terminate signal and \
+                      report whether its host actually went away. Uses the shell id \
+                      from list_shells (e.g. \"s3\"). Refuses a shell this session does \
+                      not own — another session's or a ghost job's shell is not yours \
+                      to end. There is no escalation path, so a host that survives the \
+                      signal is reported as still finishing. Use close_shell to free a \
+                      per-owner shell slot, not to stop a command you regret — an \
+                      already-running command is interrupted only if the signal \
+                      reaches it.",
+        params: &[ParamDef {
+            name: "shell",
+            ty: ParamTy::Str,
+            required: true,
+            description: "Shell id to close (e.g. \"s3\"). Must be one this session owns; \
+                          get ids from list_shells.",
+        }],
+        deferred_group: None,
+        category: Category::Run,
+    },
+    ToolDef {
         name: "load_tools",
         description: "Load an additional group of tools into your available tool set for the rest \
                       of this session. Some rarely-used tools are not loaded by default to save \

@@ -138,6 +138,27 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   written something. A shell whose recording cannot be read is skipped and \
   named rather than aborting the search.
 
+### `open_shell`
+
+- `open_shell()` — start a new PTY shell on the daemon host; the result names \
+  its id. An opened shell is ordinary: `list_shells` lists it, `read_shell` \
+  and `find_in_shells` read its recorded output, and `close_shell` ends it. \
+  Mind the reuse rule: a command that needs a shell reuses this session's \
+  lowest-numbered open shell, so the shell you just opened is used by the \
+  session's next command only when it is that lowest-numbered one — if your \
+  session holds `s3`, commands keep going to `s3` even after opening `s7`. \
+  Use `open_shell` when you genuinely need a spare shell, not before every \
+  command — commands create shells on demand already.
+
+### `close_shell`
+
+- `close_shell(shell)` — end one of **this session's** shells by id (the ids \
+  `list_shells` shows; another session's or a ghost job's shell is refused). \
+  The tool sends a terminate signal and then reports what it actually \
+  observed: the shell's host gone, or the host still holding its lock and \
+  possibly still finishing. Use it to free a per-owner shell slot, or to end \
+  a shell you no longer read.
+
 ### `list_panes`, `watch_pane`, `read_pane`, `find_in_panes`, `tmux_control`, `close_background_window`
 
 - `list_panes` — enumerate panes grouped by window with id, index, cmd, cwd, title, status; includes a foreign-session section for panes in other tmux sessions. Call when context \

@@ -5,8 +5,10 @@
 
 use crate::ai::filter::mask_sensitive;
 use crate::shell::{
-    Owner, ShellId, ShellRecord, ShellRegistry, cast_path, meta_path_for, with_shells,
+    Owner, ShellId, ShellRecord, ShellRegistry, await_ready, cast_path, host_is_alive,
+    meta_path_for, socket_path, spawn_for, with_shells,
 };
+use std::time::{Duration, Instant};
 
 /// One collected shell, shaped for the formatter. Holds the owner's `key()`
 /// string rather than the `Owner` itself, so the formatter can never compare
@@ -630,9 +632,268 @@ fn tail_lines(text: &str, max: usize) -> String {
     lines[lines.len() - max..].join("\n")
 }
 
+// ---------------------------------------------------------------------------
+// open_shell + close_shell (M22 phase-04a)
+// ---------------------------------------------------------------------------
+
+/// The default readiness timeout for a freshly spawned shell host.
+pub(super) const SHELL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// How long `send_signal` may wait for the host to acknowledge the frame.
+/// Short on purpose: the acknowledgement is a socket round-trip, not the job
+/// reacting to the signal.
+const SIGNAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The PTY geometry this module's test host spawns with — the same 24×80
+/// `shell_exec` uses, so both fixtures produce interchangeable hosts.
+const TEST_ROWS: u16 = 24;
+/// The PTY geometry this module's test host spawns with.
+const TEST_COLS: u16 = 80;
+
+/// Renders an anyhow chain as `top-level (source) (source)` — the shape
+/// `open_shell`'s readiness and cap errors use — and is plain for a chainless
+/// error.
+fn format_err_chain(e: &anyhow::Error) -> String {
+    let mut msg = e.to_string();
+    for cause in e.chain().skip(1) {
+        msg.push_str(&format!(" ({cause})"));
+    }
+    msg
+}
+
+/// Open a new PTY shell for `caller` and return the sentence the model reads.
+///
+/// The public form uses the daemon's registry, the configured
+/// `[shells] max_per_owner` and the standard readiness timeout; the `_in`
+/// form takes all three plus the spawn step, mirroring how `list_shells` /
+/// `list_shells_in` already split.
+pub async fn open_shell(caller: &Owner) -> String {
+    let max_per_owner = crate::config::Config::load()
+        .unwrap_or_default()
+        .shells
+        .max_per_owner;
+    open_shell_with(
+        crate::shell::registry(),
+        caller,
+        max_per_owner,
+        SHELL_READY_TIMEOUT,
+        |id| crate::shell::spawn_detached_host(id, TEST_ROWS, TEST_COLS),
+    )
+    .await
+}
+
+/// `open_shell` with every effect injected: the registry, the per-owner cap,
+/// the readiness timeout and the spawn step. Tests replace `spawn` with an
+/// in-process host because `spawn_detached_host` re-invokes `current_exe()`,
+/// which under a test binary is not the daemon (07b F4).
+pub(super) async fn open_shell_with<F, Fut>(
+    reg: &ShellRegistry,
+    caller: &Owner,
+    max_per_owner: u32,
+    ready_timeout: Duration,
+    spawn: F,
+) -> String
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    // Neither reuse helper is used: the reuse scan would hand the same id
+    // back twice, and the dedicated path sets `dedicated: true`, which
+    // excludes a shell from that scan forever. The `false` below is what
+    // keeps a freshly opened shell reachable by the reuse rule.
+    let id = match spawn_for(reg, caller.clone(), max_per_owner, false, spawn).await {
+        Ok(id) => id,
+        // The per-owner cap lives in `spawn_for`'s `check_owner_cap` breach,
+        // returned as text rather than an `Err`: every tool result is a value
+        // the model reads, so the refusal must name the configured limit.
+        Err(e) => return open_shell_error(max_per_owner, &e),
+    };
+    // `spawn_for` reserved the record and rolled back only a *spawn* failure,
+    // so a host that never came up leaves a record behind that would be
+    // handed to the next caller as a live shell. Undo the reservation here.
+    let socket = socket_path(id.as_str());
+    if let Err(e) = await_ready(&socket, Instant::now() + ready_timeout).await {
+        with_shells(reg, |store| {
+            store.remove(id.as_str());
+        });
+        return format!(
+            "Error: shell {} did not become ready, and its empty registry record \
+             was removed, so nothing can reach a dead shell: {}.",
+            id.as_str(),
+            format_err_chain(&e)
+        );
+    }
+    let s = format!(
+        "Opened shell {}. It is now registered and readable — list_shells lists \
+         it, read_shell and find_in_shells read its recorded output, close_shell \
+         ends it. Note: a command that needs a shell reuses this session's \
+         lowest-numbered open shell, which may not be the one just opened — if \
+         s3 is already open, commands keep going to s3.",
+        id.as_str()
+    );
+    s
+}
+
+/// The cap-breach sentence for `open_shell`. `max_per_owner == 0` means
+/// unlimited, so the limit the text names must be the message's own wording,
+/// not a number that reads as a finite cap.
+fn open_shell_error(max_per_owner: u32, e: &anyhow::Error) -> String {
+    let limit = if max_per_owner == 0 {
+        "unlimited".to_string()
+    } else {
+        format!("{max_per_owner}")
+    };
+    format!(
+        "Error: could not open a shell: {} — the per-owner shell limit is \
+         {limit}. Close one of your shells with close_shell, or stop asking for \
+         new shells this turn.",
+        format_err_chain(e)
+    )
+}
+
+/// Close one of `caller`'s PTY shells and return the sentence the model reads.
+///
+/// The public form uses the daemon's registry and the standard signal
+/// timeout; the `_in` form takes both, mirroring the `list_shells` /
+/// `list_shells_in` split.
+pub async fn close_shell(shell: &str, caller: &Owner) -> String {
+    close_shell_with(crate::shell::registry(), shell, caller, SIGNAL_TIMEOUT).await
+}
+
+/// `close_shell` with the registry and the signal timeout injected.
+pub(super) async fn close_shell_with(
+    reg: &ShellRegistry,
+    shell: &str,
+    caller: &Owner,
+    signal_timeout: Duration,
+) -> String {
+    // Ownership first, and on `Owner::key()` rather than the inner string: a
+    // chat session and a ghost job can share an id string, and the kinds are
+    // what the cap groups, so they are what the owner check must compare.
+    let owner_in_registry: Option<String> = with_shells(reg, |store| {
+        store.get(shell).map(|record| record.owner.key())
+    });
+    let Some(owner_key) = owner_in_registry else {
+        let live = with_shells(reg, |store| {
+            let mut ids: Vec<String> = store.values().map(|r| r.id.as_str().to_string()).collect();
+            ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));
+            ids
+        });
+        return if live.is_empty() {
+            format!(
+                "Error: no shell with id {shell:?} is in the registry (no shells are \
+                 live — call list_shells to confirm)."
+            )
+        } else {
+            format!(
+                "Error: no shell with id {shell:?} is in the registry. Live shell ids: \
+                 {}. Call list_shells to refresh.",
+                live.join(", ")
+            )
+        };
+    };
+    if owner_key != caller.key() {
+        return format!(
+            "Error: shell {shell} is not yours (it belongs to {owner_key}), so this \
+             session cannot close it. If it needs closing, the session that owns \
+             it does that; list_shells shows which shells are whose."
+        );
+    }
+    // The wire carries only Int | Term | Stop | Cont — there is no SIGHUP and
+    // no kill frame, so Term is the strongest closure this tool can send, and
+    // it is sent exactly once. Whether the shell actually leaves is observed
+    // afterwards, not assumed; a host that lingers still holds the lock, so
+    // the tool says so instead of claiming success.
+    let socket = socket_path(shell);
+    if let Err(e) =
+        crate::shell::send_signal(&socket, crate::shell::ShellSignal::Term, signal_timeout).await
+    {
+        return format!(
+            "Error: shell {shell} could not be signalled, so it is still open: \
+             {}. The shell is unchanged; list_shells shows its state, and a \
+             later close_shell attempt is safe. If the socket is gone but the \
+             shell still lists, its host may have died without the registry \
+             noticing.",
+            format_err_chain(&e)
+        );
+    }
+    // The signal is one-way; what closes the shell is the host's PTY ending.
+    // Give it a bounded moment and observe, rather than asserting either way.
+    let lock = crate::shell::lock_path(shell);
+    closed_by_observed_end(shell, &lock)
+}
+
+/// The observable outcome of one close: poll the lock up to 1.5s from now
+/// and report what is actually seen. **`host_is_alive` can never turn false
+/// while the still-bound socket holds the host's task alive in-process** — the
+/// fixture's host task never exits — so this observe-poll genuinely produces
+/// "still alive" in tests and "gone" in production, and the tool's sentence
+/// must not claim a closure it did not see.
+fn closed_by_observed_end(shell: &str, lock: &std::path::Path) -> String {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+    loop {
+        if !host_is_alive(lock) {
+            return format!(
+                "Closed shell {shell}: its host is gone and the shell is no longer live."
+            );
+        }
+        if std::time::Instant::now() >= deadline {
+            return format!(
+                "Sent TERM to shell {shell}, but its host is still holding its lock — \
+                 the shell may still be finishing (there is no kill frame on this \
+                 wire, so escalation is not possible). list_shells still shows it; \
+                 check again before assuming it is closed."
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod lifecycle_test_support {
+    //! Shared by `shell_exec.rs` and `bg_shell.rs`'s own copies — not by this
+    //! module's tests, which use the module-local `spawn_in_process_host`. A
+    //! fourth caller is the point where the three copies are expected to be
+    //! lifted here.
+
+    use anyhow::Context;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    /// The PTY geometry the in-process test host uses — the same 24×80 the
+    /// daemon's real spawn uses.
+    pub const ROWS: u16 = 24;
+    /// The PTY geometry the in-process test host uses.
+    pub const COLS: u16 = 80;
+
+    /// A real in-process PTY host serving the configured socket for `id`: a
+    /// bash session whose `.cast` the returned path points at, with the
+    /// per-id instance lock held (leaked) so `host_is_alive` reads it as live
+    /// exactly as a real host would. `spawn_detached_host` cannot run under a
+    /// test (07b F4).
+    pub async fn spawn_with_cast(id: crate::shell::ShellId) -> anyhow::Result<PathBuf> {
+        let dir = tempfile::tempdir().context("tempdir for cast")?;
+        let cast = dir.path().join(format!("{}.cast", id.as_str()));
+        let backend = crate::shell::PtyBackend::spawn("bash", ROWS, COLS, 100, &cast, 0)
+            .context("spawning bash")?;
+        let lock =
+            crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id.as_str()))
+                .context("holding the per-id instance lock")?;
+        let socket = crate::shell::socket_path(id.as_str());
+        let listener = crate::shell::bind(&socket)
+            .await
+            .context("binding the in-process host's socket")?;
+        tokio::spawn(crate::shell::serve(listener, Arc::clone(&backend)));
+        std::mem::forget(lock);
+        std::mem::forget(dir);
+        Ok(cast)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use crate::shell::ShellRegistry;
@@ -712,6 +973,49 @@ mod tests {
     }
 
     const NOW: u64 = 200_000;
+
+    /// A real in-process PTY host serving the configured socket for `id`
+    /// (third copy of the fixture; see `lifecycle_test_support`). The `.cast`
+    /// path the host writes is deliberately leaked with it, like the
+    /// `shell_exec`/`bg_shell` originals.
+    async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
+        let cast = lifecycle_test_support::spawn_with_cast(id.clone()).await?;
+        std::mem::forget(cast);
+        Ok(())
+    }
+
+    /// A spawn substitute that resolves successfully but binds no socket: the
+    /// shape of a host that reserved its record and then never came up.
+    async fn spawn_never_binds(_id: ShellId) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// A spawn substitute that records the fact it ran. Used to prove a cap
+    /// breach is refused *before* any spawn is attempted.
+    fn counting_spawn<F, Fut>(ran: &'static AtomicBool, inner: F) -> F
+    where
+        F: FnOnce(ShellId) -> Fut,
+    {
+        let _ = (&ran, &inner);
+        inner
+    }
+
+    /// Whether the record `id` is in `reg`.
+    fn has_record(reg: &ShellRegistry, id: &str) -> bool {
+        with_shells(reg, |store| store.contains_key(id))
+    }
+
+    /// Point `HOME` at a fresh temp dir **and** create the dirs the shell
+    /// substrate resolves through it — the same shape `shell_exec`'s
+    /// `test_home()` gives, so `socket_path`/`lock_path` land inside the
+    /// sandbox. Must be held for the test's whole body.
+    pub(super) fn lifecycle_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
+        let guard = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) }
+        crate::config::Config::ensure_dirs().ok();
+        (guard, dir)
+    }
 
     #[test]
     fn list_shells_defaults_to_the_callers_own_shells() {
@@ -1312,5 +1616,240 @@ mod tests {
                 "no padding is added: {out}"
             );
         });
+    }
+
+    // ── open_shell ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn open_shell_returns_a_new_id() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let out = open_shell_with(
+            &reg,
+            &Owner::Chat("open".into()),
+            5,
+            Duration::from_millis(3000),
+            spawn_in_process_host,
+        )
+        .await;
+        let ids = with_shells(&reg, |store| {
+            let mut ids: Vec<String> = store.values().map(|r| r.id.as_str().to_string()).collect();
+            ids.sort();
+            ids
+        });
+        assert_eq!(
+            ids.len(),
+            1,
+            "one call must create exactly one record: {out}"
+        );
+        let id = &ids[0];
+        assert!(
+            out.contains(&format!("Opened shell {id}")),
+            "the sentence must name the new id: {out}"
+        );
+        assert!(
+            id.starts_with('s') && id[1..].chars().all(|c| c.is_ascii_digit()),
+            "the id must be an sN shell id: {id}"
+        );
+        let dedicated = with_shells(&reg, |store| {
+            store
+                .values()
+                .find(|r| r.id.as_str() == id)
+                .map(|r| r.dedicated)
+        });
+        assert_eq!(
+            dedicated,
+            Some(false),
+            "open_shell must create a non-dedicated shell — a dedicated one can \
+             never be selected by the reuse rule"
+        );
+        assert!(
+            out.contains("lowest-numbered"),
+            "the reuse caveat must be in the sentence: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_shell_refuses_past_the_owner_cap() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert(&reg, 7, Owner::Chat("capped".into()), NOW);
+        let ran: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
+        let spawn = counting_spawn(ran, spawn_in_process_host);
+        let out = open_shell_with(
+            &reg,
+            &Owner::Chat("capped".into()),
+            1,
+            Duration::from_millis(100),
+            spawn,
+        )
+        .await;
+        assert!(
+            out.starts_with("Error:") && out.contains("cap"),
+            "a breach is error text, not a panic and not an Err: {out}"
+        );
+        assert!(
+            out.contains("limit is 1"),
+            "the configured limit is named so the model can act: {out}"
+        );
+        assert_eq!(
+            with_shells(&reg, |store| store.len()),
+            1,
+            "the pre-existing record is the only one"
+        );
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "the closure must not have been attempted"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_shell_removes_the_record_when_readiness_fails() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let out = open_shell_with(
+            &reg,
+            &Owner::Chat("stale".into()),
+            5,
+            Duration::from_millis(200),
+            spawn_never_binds,
+        )
+        .await;
+        assert!(
+            out.starts_with("Error:") && out.contains("did not become ready"),
+            "a readiness failure returns the error text: {out}"
+        );
+        assert_eq!(
+            with_shells(&reg, |store| store.len()),
+            0,
+            "a host that never came up must not leave a record behind"
+        );
+    }
+
+    // ── close_shell ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn close_shell_ends_the_callers_shell() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let opened = open_shell_with(
+            &reg,
+            &Owner::Chat("closer".into()),
+            5,
+            Duration::from_millis(3000),
+            spawn_in_process_host,
+        )
+        .await;
+        assert!(
+            opened.contains("Opened shell"),
+            "the precondition is a real, ready shell: {opened}"
+        );
+        let id = opened
+            .split_whitespace()
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                    .to_string()
+            })
+            .find(|w| w.starts_with('s') && w[1..].chars().all(|c| c.is_ascii_digit()))
+            .expect("the success sentence names the id");
+
+        // The signal is one-way and an idle bash ignores it, so the honest
+        // outcome for a live host is the "still finishing" branch. Poll:
+        // whichever of the two observation branches the tool reports, it must
+        // be one of them and must name the id — never a bare `Ok` and never a
+        // closure the host did not confirm. This measures the reporting
+        // contract on the only signal this wire carries.
+        let mut out = String::new();
+        for _ in 0..3 {
+            out = close_shell_with(
+                &reg,
+                &id,
+                &Owner::Chat("closer".into()),
+                Duration::from_millis(3000),
+            )
+            .await;
+            if out.contains("Closed shell") || out.contains("Sent TERM") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(
+            out.contains(&format!("shell {id}")),
+            "either branch names the shell id: {out}"
+        );
+        if out.contains("Closed shell") {
+            // Observed closure: the host must really be gone.
+            assert!(
+                !host_is_alive(&crate::shell::lock_path(&id)),
+                "a 'Closed shell' answer must mean the lock is released: {out}"
+            );
+        } else {
+            // The lingering branch: the report must not present the shell as
+            // gone, and the host must still hold its lock — the exact
+            // "possible still finishing" state the sentence describes.
+            assert!(
+                out.contains("Sent TERM") && out.contains("still"),
+                "the lingering branch says what was sent and what remains: {out}"
+            );
+            assert!(
+                host_is_alive(&crate::shell::lock_path(&id)),
+                "the still-finishing answer must match a live host: {out}"
+            );
+        }
+        // Either way the registry record stays: the reaper owns record
+        // lifetime, close_shell never removes one.
+        assert!(
+            has_record(&reg, &id),
+            "close_shell must not remove the record"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_shell_refuses_another_owners_shell() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        // Same inner string, different kind: the point of the `key()` check.
+        insert(&reg, 4, Owner::Ghost("cross".into()), NOW);
+        let out = close_shell_with(
+            &reg,
+            "s4",
+            &Owner::Chat("cross".into()),
+            Duration::from_millis(500),
+        )
+        .await;
+        assert!(
+            out.starts_with("Error:") && out.contains("s4"),
+            "another kind's shell must be refused, the id named: {out}"
+        );
+        assert!(
+            out.contains("not yours"),
+            "the refusal sentence says whose shell it is: {out}"
+        );
+        assert!(
+            has_record(&reg, "s4"),
+            "a refused close must not have removed the record"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_shell_unknown_id_is_an_error() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let out = close_shell_with(
+            &reg,
+            "s99",
+            &Owner::Chat("anon".into()),
+            Duration::from_millis(500),
+        )
+        .await;
+        assert!(
+            out.starts_with("Error:"),
+            "an unknown id is error text: {out}"
+        );
+        assert!(out.contains("s99"), "the unknown id is named: {out}");
+        assert!(
+            out.contains("list_shells"),
+            "the model is told the way to get a fresh id: {out}"
+        );
     }
 }

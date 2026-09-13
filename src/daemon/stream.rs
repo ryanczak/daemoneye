@@ -737,6 +737,26 @@ where
                         scope,
                     });
                 }
+                AiEvent::OpenShell {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::OpenShell {
+                        id,
+                        thought_signature,
+                    });
+                }
+                AiEvent::CloseShell {
+                    id,
+                    shell,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::CloseShell {
+                        id,
+                        thought_signature,
+                        shell,
+                    });
+                }
                 AiEvent::TmuxControl {
                     id,
                     action,

@@ -143,6 +143,16 @@ pub(super) struct ListShellsArgs {
     scope: Option<String>,
 }
 
+/// `open_shell` takes no arguments on this tree — the registry has no
+/// `host` / `label` fields yet.
+#[derive(Deserialize)]
+pub(super) struct OpenShellArgs {}
+
+#[derive(Deserialize)]
+pub(super) struct CloseShellArgs {
+    shell: String,
+}
+
 #[derive(Deserialize)]
 pub(super) struct EditFileArgs {
     path: String,
@@ -544,6 +554,31 @@ impl ToolArgs for FindInShellsArgs {
             id: id.to_string(),
             pattern: self.pattern,
             scope: self.scope,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for OpenShellArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::OpenShell {
+            id: id.to_string(),
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for CloseShellArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::CloseShell {
+            id: id.to_string(),
+            shell: self.shell,
             thought_signature: ts,
         }
     }

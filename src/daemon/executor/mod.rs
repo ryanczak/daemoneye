@@ -904,6 +904,18 @@ where
             )))
         }
 
+        PendingCall::OpenShell { .. } => Ok(ToolCallOutcome::Result(
+            knowledge::open_shell(&Owner::Chat(session_id.unwrap_or_default().to_string())).await,
+        )),
+
+        PendingCall::CloseShell { shell, .. } => Ok(ToolCallOutcome::Result(
+            knowledge::close_shell(
+                shell,
+                &Owner::Chat(session_id.unwrap_or_default().to_string()),
+            )
+            .await,
+        )),
+
         PendingCall::FindInPanes { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
             knowledge::find_in_panes(cache, chat_pane, pattern, scope.as_deref()).await,
         )),
