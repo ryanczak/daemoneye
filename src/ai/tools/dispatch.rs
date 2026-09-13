@@ -37,6 +37,7 @@ pub fn dispatch_tool_event(
             thought_signature: ts,
         }),
         "get_terminal_context" => dispatch::<GetTerminalContextArgs>(id, args, ts),
+        "list_shells" => dispatch::<ListShellsArgs>(id, args, ts),
         "list_panes" => Some(AiEvent::ListPanes {
             id: id.to_string(),
             thought_signature: ts,
@@ -238,6 +239,7 @@ mod tests {
                 "list_memories" => json!({}),
                 "search_repository" => json!({"query": "x", "kind": "all"}),
                 "get_terminal_context" => json!({"scope": "session"}),
+                "list_shells" => json!({"scope": "mine"}),
                 "list_panes" => json!({}),
                 "close_background_window" => json!({"pane_id": "%1"}),
                 "spawn_ghost_shell" => json!({"runbook": "rb", "message": "investigate"}),
@@ -649,8 +651,8 @@ mod tests {
     fn every_tool_has_a_category() {
         assert_eq!(
             TOOLS.len(),
-            39,
-            "tool count should match the 27 core + 12 deferred claim"
+            40,
+            "tool count should match the 28 core + 12 deferred claim"
         );
         for t in TOOLS {
             assert!(
@@ -667,7 +669,7 @@ mod tests {
         for t in TOOLS {
             *counts.entry(t.category).or_insert(0) += 1;
         }
-        assert_eq!(counts.get(&Category::Read), Some(&17), "Read count");
+        assert_eq!(counts.get(&Category::Read), Some(&18), "Read count");
         assert_eq!(counts.get(&Category::Write), Some(&13), "Write count");
         assert_eq!(counts.get(&Category::Search), Some(&4), "Search count");
         assert_eq!(counts.get(&Category::Run), Some(&4), "Run count");

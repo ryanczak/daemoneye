@@ -120,6 +120,12 @@ pub(super) struct GetTerminalContextArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct ListShellsArgs {
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub(super) struct EditFileArgs {
     path: String,
     #[serde(default = "default_edit")]
@@ -475,6 +481,19 @@ impl ToolArgs for GetTerminalContextArgs {
     }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
         AiEvent::GetTerminalContext {
+            id: id.to_string(),
+            thought_signature: ts,
+            scope: self.scope,
+        }
+    }
+}
+
+impl ToolArgs for ListShellsArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ListShells {
             id: id.to_string(),
             thought_signature: ts,
             scope: self.scope,

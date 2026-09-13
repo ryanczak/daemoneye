@@ -765,6 +765,25 @@ pub static TOOLS: &[ToolDef] = &[
         category: Category::Read,
     },
     ToolDef {
+        name: "list_shells",
+        description: "List the PTY shells the daemon is running on the daemon host: your \
+                      background shells and their state. Each shell has an id like \"s3\" — \
+                      that id is what run_terminal_command (background=true), send_input, \
+                      read_shell and the other shell tools take as their target. Call this \
+                      before any shell tool call so you pass an id that exists. Reports the \
+                      owner, age, and flags (interactive / dedicated / exited) of each shell.",
+        params: &[ParamDef {
+            name: "scope",
+            ty: ParamTy::Str,
+            required: false,
+            description: "Optional: \"mine\" (default — only the shells this session owns) \
+                          or \"all\" (every shell the daemon is running). Any other value \
+                          is rejected.",
+        }],
+        deferred_group: None,
+        category: Category::Read,
+    },
+    ToolDef {
         name: "load_tools",
         description: "Load an additional group of tools into your available tool set for the rest \
                       of this session. Some rarely-used tools are not loaded by default to save \

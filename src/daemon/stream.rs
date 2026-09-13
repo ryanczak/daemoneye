@@ -668,6 +668,17 @@ where
                         thought_signature,
                     });
                 }
+                AiEvent::ListShells {
+                    id,
+                    thought_signature,
+                    scope,
+                } => {
+                    pending_calls.push(PendingCall::ListShells {
+                        id,
+                        thought_signature,
+                        scope,
+                    });
+                }
                 AiEvent::ReadPane {
                     id,
                     pane_id,

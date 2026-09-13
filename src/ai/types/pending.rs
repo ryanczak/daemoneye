@@ -172,6 +172,11 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         scope: Option<String>,
     },
+    ListShells {
+        id: String,
+        thought_signature: Option<String>,
+        scope: Option<String>,
+    },
     ListPanes {
         id: String,
         thought_signature: Option<String>,
@@ -659,6 +664,16 @@ impl PendingCall {
                 name: "get_terminal_context".to_string(),
                 arguments: args_to_string(serde_json::json!({"scope": scope})),
             },
+            PendingCall::ListShells {
+                id,
+                thought_signature,
+                scope,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "list_shells".to_string(),
+                arguments: args_to_string(serde_json::json!({"scope": scope})),
+            },
             PendingCall::ListPanes {
                 id,
                 thought_signature,
@@ -831,6 +846,7 @@ impl PendingCall {
             PendingCall::SearchRepository { id, .. } => id,
             PendingCall::RecallContext { id, .. } => id,
             PendingCall::GetTerminalContext { id, .. } => id,
+            PendingCall::ListShells { id, .. } => id,
             PendingCall::ListPanes { id, .. } => id,
             PendingCall::CloseBackgroundWindow { id, .. } => id,
             PendingCall::SpawnGhost { id, .. } => id,
@@ -867,6 +883,7 @@ impl PendingCall {
                 | PendingCall::SearchRepository { .. }
                 | PendingCall::RecallContext { .. }
                 | PendingCall::GetTerminalContext { .. }
+                | PendingCall::ListShells { .. }
                 | PendingCall::ListPanes { .. }
                 | PendingCall::CloseBackgroundWindow { .. }
                 | PendingCall::SpawnGhost { .. }
@@ -942,6 +959,7 @@ impl PendingCall {
                 format!("\"{q}\"")
             }
             PendingCall::GetTerminalContext { scope, .. } => scope.clone().unwrap_or_default(),
+            PendingCall::ListShells { scope, .. } => scope.clone().unwrap_or_default(),
             PendingCall::ListPanes { .. } => String::new(),
             PendingCall::CloseBackgroundWindow { pane_id, .. } => pane_id.clone(),
             PendingCall::SpawnGhost { runbook, .. } => runbook.clone(),
@@ -1021,6 +1039,7 @@ impl PendingCall {
             PendingCall::SearchRepository { .. } => "search_repository",
             PendingCall::RecallContext { .. } => "recall_context",
             PendingCall::GetTerminalContext { .. } => "get_terminal_context",
+            PendingCall::ListShells { .. } => "list_shells",
             PendingCall::ListPanes { .. } => "list_panes",
             PendingCall::CloseBackgroundWindow { .. } => "close_background_window",
             PendingCall::SpawnGhost { .. } => "spawn_ghost_shell",
@@ -1066,7 +1085,7 @@ mod tests {
 
     #[test]
     fn should_emit_tool_feedback_silent_tools_true() {
-        // All 16 silent tools should return true.
+        // All 17 silent tools should return true.
         let cases: &[PendingCall] = &[
             PendingCall::CancelSchedule {
                 id: "x".to_string(),
@@ -1135,6 +1154,11 @@ mod tests {
                 scope: None,
             },
             PendingCall::GetTerminalContext {
+                id: "x".to_string(),
+                thought_signature: None,
+                scope: None,
+            },
+            PendingCall::ListShells {
                 id: "x".to_string(),
                 thought_signature: None,
                 scope: None,

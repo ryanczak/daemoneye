@@ -3,6 +3,7 @@ mod artifacts;
 mod ghost;
 mod memory;
 mod pane;
+mod shell;
 
 pub(super) use agents::{
     CreateAgentArgs, await_agent_result, create_agent, delete_agent, list_agents_tool, read_agent,
@@ -19,6 +20,7 @@ pub(super) use memory::{
 pub(super) use pane::{
     close_bg_window, find_in_panes, kill_window_refusal, list_panes, read_pane, watch_pane,
 };
+pub(super) use shell::list_shells;
 
 use crate::daemon::session::{SessionStore, with_sessions};
 

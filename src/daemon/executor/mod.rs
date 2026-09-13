@@ -867,6 +867,13 @@ where
             cache, chat_pane,
         ))),
 
+        PendingCall::ListShells { scope, .. } => {
+            Ok(ToolCallOutcome::Result(knowledge::list_shells(
+                scope.as_deref(),
+                &Owner::Chat(session_id.unwrap_or_default().to_string()),
+            )))
+        }
+
         PendingCall::ReadPane {
             pane_id,
             lines,

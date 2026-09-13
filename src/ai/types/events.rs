@@ -165,6 +165,11 @@ pub enum AiEvent {
         thought_signature: Option<String>,
         scope: Option<String>,
     },
+    ListShells {
+        id: String,
+        thought_signature: Option<String>,
+        scope: Option<String>,
+    },
     ListPanes {
         id: String,
         thought_signature: Option<String>,
