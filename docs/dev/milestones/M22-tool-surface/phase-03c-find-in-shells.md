@@ -1,7 +1,7 @@
 # Phase 03c: `find_in_shells` — one regex across every shell
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03a (the scope resolution and row collector) and 03b (the
 recorded-output reader). Both **done**.
 **Estimated diff:** ~450 lines incl. tests
@@ -564,3 +564,31 @@ unchanged.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-13 06:14 (started, executor)
+
+**Working on:** phase-03c. Flipped Status `todo → in-progress` here and in the
+milestone README's phase table; code work follows the Spec order (tasks 1–7).
+The completion entry and the `in-progress → review` flip are the server's, per
+the executor contract.
+
+### Update — 2026-09-13 (escalation)
+
+**Chosen lever:** plain re-dispatch (no refinement)
+**Rationale:** `hard_fail` after 68 turns on
+`BackendError: error sending request for url (http://brain:8000/v1/chat/completions)`
+— a network switch rebooted and the executor lost its endpoint mid-run. 65 of
+67 attempts had succeeded. An infrastructure fault the governor cannot see, not
+a spec gap and not executor behaviour.
+
+**Verified at escalation:** no `src/` file changed
+(`git status --short` shows only this doc and the README row), `cargo build`
+exits 0, and every wiring grep is 0 — the run had not reached its first edit.
+There is no partial work to resume and nothing in the spec to refine, so the
+next dispatch starts the phase fresh on a clean tree.
+
+### Notes for executor — 2026-09-13
+
+The previous run of this phase was lost to a network fault before it made any
+edit. **There is no partial work on disk** — do not look for it. Start from
+§ Spec task 1 on the clean tree.
