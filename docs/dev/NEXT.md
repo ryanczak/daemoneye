@@ -6,10 +6,42 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-02 — tool-category closed **approved_after_1
-2026-09-12** (`docs/dev/milestones/M22-tool-surface/phase-02-tool-category.md`,
-status: done). Next up is **03 — shell-tools-read**, not yet drafted; run
-`/rexymcp:architect next` to draft it.
+**Active phase: phase-03a — list-shells**
+(`docs/dev/milestones/M22-tool-surface/phase-03a-list-shells.md`, status: todo,
+drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-03a`. Phase-02 —
+tool-category closed **approved_after_1 2026-09-12**.
+
+Scope for 03a: `list_shells { scope? }` — the first of M22's nine new shell
+tools, core and `Category::Read`. The model cannot use any other shell tool
+until something tells it which shell ids exist.
+
+**Phase 03 split at drafting, on a measured seam.** The charter row named three
+read-only tools; `list_shells` reads **only** the registry (an in-process
+`HashMap` behind one mutex), while `read_shell` and `find_in_shells` read shell
+**buffers** — screen grid, asciicast log, `.meta.json` index — a different
+substrate with its own failure modes. 03a also establishes the eleven-step
+wiring pattern once, on the smallest complete vertical slice. **03b** takes the
+two buffer readers and is not drafted.
+
+**A design divergence found by measuring, recorded in the milestone README:**
+§ 2.5 specifies `scope` as *"Own run's shells, or session's, or all"*, but
+`Owner` is keyed by **session**, not run — `ShellRecord` carries no run id, and
+a shell outlives many turns of one session. "Own run" and "own session" name
+the same set. **03a ships `"mine" | "all"`** and *rejects* `"run"`/`"session"`
+rather than aliasing them, because a silent fallback on a typo would either
+leak another session's shells or answer a different question than the one
+asked. Phase 08's `get_shell_context { scope }` is unaffected — it scopes
+context, not shell ownership.
+
+Counts move to **40 tools: 28 core + 12 deferred**; `list_panes` is *not*
+removed here (the six pane tools go in phase 09), which is why the total grows
+rather than staying flat.
+
+Pre-injected: the registry is already reachable via the `crate::shell::registry()`
+`OnceLock`, so `execute_tool_call`'s signature does not change; `with_shells`
+is non-reentrant, so the spec splits collection from formatting; and `"scope"`
+must **not** join `enum_values`, which is keyed by param name and would
+otherwise apply one value set to both `list_shells` and `get_terminal_context`.
 
 Phase-02's one bounce (bug-02-1, `closed`) was an evidence defect on correct
 code: the end-to-end block was run but never pasted, and the completion summary
@@ -87,8 +119,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-03 — shell-tools-read**.
-Phases 03–10 are not drafted; each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:dispatch phase-03a`. Phases 03b–10 are not drafted;
+each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 

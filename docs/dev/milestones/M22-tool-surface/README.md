@@ -59,7 +59,8 @@ final surface, so they go last.
 |----|-------|--------|
 | 01 | pty-default ([phase-01-pty-default.md](phase-01-pty-default.md)) — flip `[execution] backend` to `"pty"`; `"tmux"` becomes the explicit opt-out and an invalid value falls back to the default; stale comments/template/README corrected | done                            |
 | 02 | tool-category ([phase-02-tool-category.md](phase-02-tool-category.md)) — `Category` + `mutates_state()` on every `ToolDef`; pure, additive, unblocks M25 | done        |
-| 03 | shell-tools-read — `list_shells`, `read_shell`, `find_in_shells` (the read-only three) | todo (not drafted) |
+| 03a | list-shells ([phase-03a-list-shells.md](phase-03a-list-shells.md)) — `list_shells { scope? }`, core + `Category::Read`; establishes the eleven-step wiring on one tool | todo |
+| 03b | shell-tools-read — `read_shell`, `find_in_shells` (the buffer readers) | todo (not drafted) |
 | 04 | shell-tools-lifecycle — `open_shell`, `close_shell`, `watch_shell` | todo (not drafted) |
 | 05 | send-input — `send_input`, approval-gated; every keystroke into the `"i"` log | todo (not drafted) |
 | 06 | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the `.meta.json` index | todo (not drafted) |
@@ -93,6 +94,19 @@ final surface, so they go last.
   three numbers that must move together. Expect a phase that adds tools to
   touch all three docs, and expect `doc_truth` to catch it when it doesn't —
   that gate exists because the README went three tools stale before it.
+
+- **`list_shells`'s three-way `scope` collapses to two — found by measuring at
+  03a drafting.** § 2.5 specifies *"Own run's shells, or session's, or all"*,
+  but `Owner` (`src/shell/registry.rs:50`) is `Chat(String) | Ghost(String) |
+  Adopted` and that `String` is a **session** id — `executor/mod.rs:330` builds
+  `Owner::Chat(session_id)`. A run is one turn; a shell outlives many turns of
+  one session, and `ShellRecord` carries no run id. So "own run" and "own
+  session" name the same set, and shipping both would be two spellings of one
+  behaviour. **03a ships `"mine" | "all"`**, rejecting `"run"` and `"session"`
+  rather than aliasing them. A third value becomes meaningful only when runs
+  own shells. Phase 08's `get_shell_context { scope }` keeps § 2.5's own
+  three-way vocabulary — it scopes *context*, not shell ownership, so it is a
+  different question and is not affected.
 
 - **`send_input` is the one genuinely dangerous addition.** It drives an
   interactive program keystroke by keystroke, so it belongs in

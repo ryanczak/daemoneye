@@ -1,0 +1,661 @@
+# Phase 03a: `list_shells` — the first shell tool
+
+**Milestone:** M22 — Tool surface & context
+**Status:** todo
+**Depends on:** M20 (the registry it reads) and phase-02 (`Category`, now a
+required `ToolDef` field). Both **done**.
+**Estimated diff:** ~430 lines incl. tests
+**Tags:** language=rust, kind=feature, size=m
+
+## Goal
+
+The first of M22's nine new shell tools. `list_shells` reports the PTY shells
+the daemon is running, which is the tool the model needs before any of the
+others make sense — `read_shell`, `send_input` and the reshaped
+`run_terminal_command` all take a `shell` id, and today nothing tells the model
+what ids exist.
+
+After this phase:
+
+1. `list_shells { scope? }` is a **core** tool, `Category::Read`, no approval.
+2. It reports every live shell the caller may see: id, owner, state, age, and
+   the flags the substrate actually records (`interactive`, `dedicated`,
+   `exited`).
+3. `scope` is `"mine"` (default) or `"all"`. An unknown value is an error the
+   model can read, not a silent fallback.
+4. Tool counts move to **40 tools: 28 core + 12 deferred** in both doc tables.
+
+**Phase 03 was split at drafting.** The charter row named three read-only tools
+(`list_shells`, `read_shell`, `find_in_shells`). The measured seam is the
+substrate each one touches: `list_shells` reads **only** the registry, which is
+an in-process `HashMap` behind one mutex; `read_shell` and `find_in_shells`
+read shell **buffers**, which means the screen grid, the asciicast log and the
+`.meta.json` index — a different substrate with its own failure modes. Doing
+one tool here also establishes the eleven-step wiring pattern once, on the
+smallest possible vertical slice. `read_shell` + `find_in_shells` become
+**03b**, not drafted.
+
+### The design's three-way `scope` collapses to two — measured, not assumed
+
+`docs/design/daemoneye-2.0.md` § 2.5 specifies
+`list_shells { scope? }` as *"Own run's shells, or session's, or all"*. **That
+three-way split is not implementable on the substrate as built, and the reason
+is structural.** `Owner` (`src/shell/registry.rs:50`) has exactly three forms:
+
+```rust
+pub enum Owner {
+    Chat(String),
+    Ghost(String),
+    Adopted,
+}
+```
+
+The `String` is a **session** id, not a run id — `src/daemon/executor/mod.rs:330`
+builds `Owner::Chat(session_id.unwrap_or_default().to_string())`. A run is one
+turn; a shell outlives many turns of the same session. So "own run's shells"
+and "own session's shells" name the **same set** today, and `ShellRecord` holds
+no run id to distinguish them with. Offering both would be two spellings of one
+behaviour — the kind of distinction-without-a-difference STANDARDS § 2.2 calls
+a speculative shim.
+
+This phase therefore ships `"mine" | "all"`. When a later milestone gives runs
+ownership of shells, a third value can be added against a real distinction.
+**Do not add a `"run"` or `"session"` value in this phase**, and do not accept
+them as aliases — a criterion asserts they are rejected.
+
+## Architecture references
+
+- `docs/design/daemoneye-2.0.md` § 2.5 — the tool's row and the `[SHELLS]`
+  context sketch. Note the divergence recorded above; cite this phase doc for
+  `scope`, not § 2.5.
+- `docs/dev/milestones/M22-tool-surface/README.md` § Notes — the tool
+  arithmetic. The tree has 39 tools today; this phase makes it 40, **not** a
+  step toward § 2.5's stale "36 → 42".
+- `CLAUDE.md` § "Adding a new AI tool (checklist)" — **eleven steps**, two of
+  them (`10` and `11`) enforced by `tests/doc_truth.rs`. Step 4 now also
+  requires `category`, added by phase-02.
+
+## Pre-flight
+
+### The registry is already reachable — no plumbing needed
+
+`src/shell/mod.rs:37-46` exposes a process-wide accessor:
+
+```rust
+static REGISTRY: OnceLock<ShellRegistry> = OnceLock::new();
+
+/// The daemon's single live shell registry. `ShellRegistry` is `Default` and
+/// holds its own `Arc<Mutex<…>>`, so this needs no initialisation step and
+/// has no ordering hazard: the first caller creates it, everyone gets the
+/// same one.
+pub fn registry() -> &'static ShellRegistry {
+    REGISTRY.get_or_init(ShellRegistry::default)
+}
+```
+
+`src/daemon/executor/mod.rs:336` already calls `crate::shell::registry()`.
+**Do not add a registry parameter to `execute_tool_call`** — its signature
+stays exactly as it is.
+
+### Reading the registry: `with_shells`, and the deadlock rule
+
+```rust
+/// Run `f` with exclusive access to the shell map. The guard's lifetime is the
+/// closure body, so it cannot escape or be held across an `.await`. Never call
+/// anything inside `f` that takes this lock again: `std::sync::Mutex` is not
+/// reentrant and a nested acquisition would deadlock every IPC handler that
+/// touches the registry. Collect what you need, return it, and act after the
+/// closure returns.
+pub fn with_shells<T>(
+    reg: &ShellRegistry,
+    f: impl FnOnce(&mut HashMap<String, ShellRecord>) -> T,
+) -> T
+```
+
+**Collect inside the closure, format outside it.** The formatting function must
+not take the registry at all — it takes an already-collected `&[ShellRow]`.
+That is what makes it unit-testable without a live registry, and it is why the
+Spec splits the two.
+
+### What `ShellRecord` actually holds — and what it does not
+
+`src/shell/registry.rs:74-95`:
+
+```rust
+pub struct ShellRecord {
+    pub id: ShellId,
+    pub owner: Owner,
+    pub started_unix: u64,
+    pub interactive: bool,
+    pub dedicated: bool,
+    pub exited_unix: Option<u64>,
+}
+```
+
+**There is no `host`, no `cwd`, and no last-command field.** The design's
+`[SHELLS]` sketch shows all three; they arrive with M21/M23 (`host`) and with
+03b's buffer reads (`cwd`, last command). **Do not invent them, do not shell
+out to discover them, and do not call `crate::shell::status()`** — that opens a
+socket per shell and would turn a cheap listing into N round-trips that can
+each block. A criterion asserts `status` is not referenced.
+
+`Owner::key()` (`registry.rs:64`) is the comparison to use — it prefixes the
+kind, so a chat session and a ghost job sharing an id string are distinct:
+
+```rust
+pub fn key(&self) -> String {
+    match self {
+        Owner::Chat(id) => format!("chat:{id}"),
+        Owner::Ghost(id) => format!("ghost:{id}"),
+        Owner::Adopted => "adopted".to_string(),
+    }
+}
+```
+
+### The eleven-step wiring, quoted from `list_panes`
+
+`list_panes` is the closest analogue in shape — a core, read-only, no-approval
+tool. Every touchpoint it has is quoted below; make the same shape for
+`list_shells`, adding the one optional `scope` param.
+
+**1. `src/ai/types/pending.rs:175` — the variant:**
+
+```rust
+    ListPanes {
+        id: String,
+        thought_signature: Option<String>,
+    },
+```
+
+**2. `pending.rs:662` — `to_tool_call()`.** Note how an optional param is
+serialised; copy the `get_terminal_context` arm just above it, which does
+`args_to_string(serde_json::json!({"scope": scope}))`:
+
+```rust
+            PendingCall::ListPanes {
+                id,
+                thought_signature,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "list_panes".to_string(),
+                arguments: "{}".to_string(),
+            },
+```
+
+**3. `pending.rs:834` — `id()`:** `PendingCall::ListPanes { id, .. } => id,`
+
+**4. `pending.rs:870` — `should_emit_tool_feedback()`**, the `true` arm's
+`|`-chain. `list_shells` is silent/non-approval-gated, so it belongs **in**
+this chain: `| PendingCall::ListPanes { .. }`
+
+**5. `pending.rs:945` — `summary()`.** `list_panes` has no args so it returns
+`String::new()`; `list_shells` has `scope`, so follow the
+`GetTerminalContext` arm one line above instead:
+
+```rust
+            PendingCall::GetTerminalContext { scope, .. } => scope.clone().unwrap_or_default(),
+            PendingCall::ListPanes { .. } => String::new(),
+```
+
+**6. `pending.rs:1024` — `tool_name()`:**
+`PendingCall::ListPanes { .. } => "list_panes",`
+
+**7. `src/ai/types/events.rs:168` — the event:**
+
+```rust
+    ListPanes {
+        id: String,
+        thought_signature: Option<String>,
+    },
+```
+
+**8. `src/ai/tools/args.rs:116` — the args struct**, and its `ToolArgs` impl at
+`:472`. This is the pattern for one optional string param:
+
+```rust
+#[derive(Deserialize)]
+pub(super) struct GetTerminalContextArgs {
+    #[serde(default)]
+    scope: Option<String>,
+}
+```
+
+**9. `src/ai/tools/dispatch.rs:40` — the dispatch arm.** A tool with args goes
+through `dispatch::<T>`, like the `get_terminal_context` line directly above:
+
+```rust
+        "get_terminal_context" => dispatch::<GetTerminalContextArgs>(id, args, ts),
+        "list_panes" => Some(AiEvent::ListPanes {
+            id: id.to_string(),
+            thought_signature: ts,
+        }),
+```
+
+**10. `src/daemon/stream.rs:662` — the streaming arm:**
+
+```rust
+                AiEvent::ListPanes {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListPanes {
+                        id,
+                        thought_signature,
+                    });
+                }
+```
+
+**11. `src/daemon/executor/mod.rs:866` — the executor arm:**
+
+```rust
+        PendingCall::ListPanes { .. } => Ok(ToolCallOutcome::Result(knowledge::list_panes(
+            cache, chat_pane,
+        ))),
+```
+
+### One more gate you will hit
+
+`src/ai/tools/dispatch.rs:241` holds a **conformant-args table** used by
+`dispatch_roundtrip_all_tools`, which asserts every tool in `TOOLS` has a
+dispatch arm that accepts valid args. A new tool missing from it fails that
+test with `tool list_shells missing from TOOLS`-style output. Add a row:
+
+```rust
+                "list_panes" => json!({}),
+```
+
+## Current state
+
+Values run against the tree at drafting (2026-09-12, commit `c31b5740`).
+Re-derive with the commands shown if the tree has moved.
+
+- `grep -c 'ToolDef {' src/ai/tools/defs.rs` → **39**;
+  `grep -c 'category: Category::' src/ai/tools/defs.rs` → **39**.
+- `grep -c 'list_shells' src/ai/tools/defs.rs` → **0**; the identifier appears
+  nowhere in `src/`: `grep -rc 'list_shells' --include=*.rs src/ | grep -v ':0' | wc -l`
+  → **0**.
+- `grep -c '39 tools: 27 core + 12 deferred' CLAUDE.md` → **1** (line 139).
+- `grep -c 'The model has \*\*39 tools\*\*' README.md` → **1** (line 496).
+- `src/daemon/executor/knowledge/mod.rs` declares five submodules
+  (`agents`, `artifacts`, `ghost`, `memory`, `pane`) — `grep -c '^mod ' ` → **5**.
+- `cargo test --lib 'ai::tools'` → **22 passed**; `cargo test --test doc_truth`
+  → **10 passed**; lib suite **1820 passed**.
+- `grep -rc 'shell::status\|crate::shell::status' --include=*.rs src/daemon/executor/`
+  → no hits (`| grep -v ':0' | wc -l` → **0**).
+
+## Spec
+
+Seven tasks. Task 6 is the mutation checks and task 7 the end-to-end capture,
+both as numbered Spec tasks — `docs/dev/WORKFLOW.md` § End-to-end verification
+requires the capture to be a task, because the seeder parses only the section
+headed exactly `## Spec` and an obligation stated anywhere else is never
+tracked.
+
+### Task 1 — the new module and its two pure functions
+
+Create `src/daemon/executor/knowledge/shell.rs` and declare it in
+`knowledge/mod.rs` alongside the existing five, re-exporting `list_shells`
+the same way `pane`'s functions are re-exported.
+
+Two functions, deliberately separate:
+
+- `pub(super) fn list_shells(scope: Option<&str>, caller: &Owner) -> String` —
+  resolves the scope, reads the registry through `with_shells`, collects rows,
+  and returns the formatted listing (or the error string for a bad scope).
+- A **pure** formatter that takes already-collected rows and `now_unix`, and
+  returns the listing text. It must not mention `ShellRegistry`, must not read
+  the clock, and must be callable from tests with a hand-built `Vec`. Define a
+  small row struct for what it needs (id, owner key, started_unix,
+  interactive, dedicated, exited_unix).
+
+**Collect inside `with_shells`, format outside it** — the closure's doc comment
+above forbids doing anything reentrant inside, and formatting wants the clock.
+
+### Task 2 — scope resolution, including the negative
+
+- `None` and `Some("mine")` → only shells whose `record.owner.key()` equals
+  `caller.key()`.
+- `Some("all")` → every shell in the registry.
+- Comparison is on the **`key()` string**, never on the inner id alone: a chat
+  session and a ghost job can share an id string and must not see each other's
+  shells.
+- Any other value — including `"run"`, `"session"`, `""`, and `"MINE"` —
+  returns an error string naming the bad value and listing the two accepted
+  ones. **It must not fall back to `"mine"`, and it must not fall back to
+  `"all"`.** Falling back to `"all"` would leak another session's shells on a
+  typo; falling back to `"mine"` would silently answer a different question
+  than the one asked.
+
+Matching is **exact and case-sensitive**. `"MINE"` is an error, not an alias —
+pinned as a named test, because "be liberal in what you accept" is the
+reflex here and it is wrong: the enum in the schema already constrains a
+well-behaved model, so a loose match only hides a malformed call.
+
+### Task 3 — the listing format
+
+Behaviour to pin, not exact bytes:
+
+- A header line stating how many shells are shown and under which scope.
+- One line per shell, sorted by `ShellId::index()` ascending so `s2` precedes
+  `s10` — **not** lexicographic on the id string, which would order `s10`
+  before `s2`. `ShellId::index()` (`registry.rs:30`) returns the `u32`.
+- Each line carries: the id, the owner key, an age derived from
+  `started_unix`, and whichever of `interactive` / `dedicated` / exited apply.
+  A shell with `exited_unix: Some(_)` is marked exited and its line must say so
+  — it is retained deliberately so an operator can see it existed.
+- The empty case returns a plain sentence, not an empty string or a bare
+  header — the model must be able to tell "no shells" from a truncated reply.
+
+Do not add a host column, a cwd column, or a last-command column. None of the
+three is in `ShellRecord`; see Pre-flight.
+
+### Task 4 — wire the tool through all eleven steps
+
+Follow the quoted `list_panes` touchpoints in Pre-flight. The `ToolDef`:
+
+- `name: "list_shells"`
+- `deferred_group: None` (core)
+- `category: Category::Read`
+- one optional param `scope`, `ParamTy::Str`, `required: false`, whose
+  description names the two accepted values
+- a description telling the model these are PTY shells on the daemon host,
+  that ids look like `s3`, and that the id is what `run_terminal_command` and
+  the other shell tools take
+
+**Do not add `list_shells` to `APPROVAL_GATED_TOOLS`.** It sends no
+`Response::*Prompt` and blocks on no reply; adding it there would also exempt
+it from every budget cap in `daemon::stream`.
+
+**`scope` must not be added to `enum_values` in `src/ai/tools/schema.rs`.**
+That function is keyed by **param name**, and its own doc comment records the
+assumption this would break:
+
+> Param names are globally unique across `TOOLS` (operation→edit_file,
+> kind→search_repository) or share one set (category→the five memory tools), so
+> name-keying is unambiguous.
+
+`get_terminal_context` already has a `scope` param with a **different** value
+set (`run | session | all`). Adding `"scope"` to `enum_values` would apply one
+set to both tools and constrain the wrong one. A criterion asserts
+`enum_values` is unchanged. Put the accepted values in the param description
+instead.
+
+### Task 5 — the two doc tables
+
+- `CLAUDE.md` § "Current AI tools": bump the count line to **`40 tools: 28 core
+  + 12 deferred.`** and add a `list_shells` row with `Loaded` = `core`.
+- `README.md` § "AI tools": add `list_shells` to the **Core** table and update
+  the three numbers in the prose at line 496 (**40**, **28**, 12 unchanged).
+  No `**⚠**` marker — it is not approval-gated.
+- `assets/etc/../prompts/sre.toml` (`assets/prompts/sre.toml`): document the
+  tool in prose, per checklist step 9.
+
+`tests/doc_truth.rs` enforces both tables and both count lines. It will name
+the missing tool and the expected counts if you miss one.
+
+### Task 6 — run the mutation checks and record them
+
+Both mutations below, applied with the `patch` tool (`sed -i`, `perl -i` and
+`>` redirects are forbidden by the executor contract). Capture each
+red-then-green transcript mechanically and paste it into the Update Log. Each
+names the **property** to break; find the line in your own implementation.
+**If a mutation does not turn its test red, record exactly that — do not invent
+a failure, and do not report an outcome the applied patch cannot produce.**
+
+1. **An unknown scope must not fall back.** Make the scope resolver treat an
+   unrecognised value as `"mine"` → the unknown-scope test must go **red**.
+2. **Shells are ordered numerically, not lexicographically.** Make the sort key
+   the id string instead of `ShellId::index()` → the ordering test must go
+   **red** on a registry containing `s2` and `s10`.
+
+After each, revert with `patch` and show the test green again.
+
+When you quote a `test result:` line, **quote it from the run whose command you
+are showing.** Counts differ by filter, so a number pasted from a different
+invocation than the one above it is a defect even when both numbers are real.
+
+### Task 7 — capture the end-to-end evidence
+
+Run the block in § End-to-end verification **verbatim and unmodified**, then
+paste the resulting `/tmp/e2e-m22-03a.txt` into a new Update Log entry headed
+`### Update — <date> (end-to-end verification)`. Then run the `PASTE MATCH`
+self-check that follows the block and record its verdict line in the same
+entry. The server-authored `(complete)` entry does not satisfy this, and
+neither does a summary asserting the block was pasted.
+
+Capture **fresh**; do not paste a `/tmp/e2e-m22-03a.txt` from an earlier
+attempt. A transcript must describe the tree it is filed against.
+
+## Acceptance criteria
+
+Each was run against the tree at drafting and returns the "now" value shown.
+Counts marked *prod* use `sed -n '1,/^#\[cfg(test)\]/p' <file> |`.
+
+- [ ] **The tool exists and is core + Read:**
+      `grep -c 'name: "list_shells"' src/ai/tools/defs.rs` → **1** (now `0`),
+      and the same `ToolDef` block carries `deferred_group: None` and
+      `category: Category::Read` —
+      `sed -n '/name: "list_shells"/,/^    },/p' src/ai/tools/defs.rs | grep -c 'category: Category::Read'`
+      → **1** (now `0`).
+- [ ] **Tool counts moved together:**
+      `grep -c 'ToolDef {' src/ai/tools/defs.rs` → **40** (now `39`);
+      `grep -c '40 tools: 28 core + 12 deferred' CLAUDE.md` → **1** (now `0`);
+      `grep -c 'The model has \*\*40 tools\*\*' README.md` → **1** (now `0`);
+      and the old line is gone —
+      `grep -c '39 tools: 27 core + 12 deferred' CLAUDE.md` → **0** (now `1`).
+- [ ] **Not approval-gated:**
+      `sed -n '/APPROVAL_GATED_TOOLS: &\[&str\] = &\[/,/^\];/p' src/ai/tools/defs.rs | grep -c 'list_shells'`
+      → **0** (now `0`, and it must stay `0`).
+- [ ] **`enum_values` untouched:**
+      `sed -n '/pub(super) fn enum_values/,/^}/p' src/ai/tools/schema.rs | grep -c '"scope"'`
+      → **0** (now `0`), and the same range
+      `grep -c '"session", "knowledge", "incident"'` → **1**, unchanged.
+- [ ] **The new module exists and is declared:**
+      `grep -c '^mod shell;' src/daemon/executor/knowledge/mod.rs` → **1** (now
+      `0`), and `test -f src/daemon/executor/knowledge/shell.rs` succeeds.
+- [ ] **The formatter is pure — it cannot see the registry:** prod
+      `grep -c 'ShellRegistry\|with_shells' src/daemon/executor/knowledge/shell.rs`
+      → **1 or more** (the collector uses them), **and** the formatter's own
+      body does not —
+      `sed -n '/fn format_shell_rows/,/^}/p' src/daemon/executor/knowledge/shell.rs | grep -c 'ShellRegistry\|with_shells\|SystemTime'`
+      → **0**. *(Name the formatter `format_shell_rows`; the criterion greps
+      for it.)*
+- [ ] **No per-shell socket round-trips:**
+      `grep -c 'status(' src/daemon/executor/knowledge/shell.rs` → **0**.
+- [ ] **Ordering is numeric:**
+      `grep -c 'index()' src/daemon/executor/knowledge/shell.rs` → **1 or more**
+      (now `0`).
+- [ ] **The eleven wiring points are all present** — one grep each, all now
+      `0`: `grep -c 'ListShells' src/ai/types/pending.rs` → **6 or more**
+      (variant + five arms); `grep -c 'ListShells' src/ai/types/events.rs` →
+      **1**; `grep -c 'ListShells' src/daemon/stream.rs` → **2 or more**;
+      `grep -c 'ListShells' src/daemon/executor/mod.rs` → **1 or more**;
+      `grep -c 'list_shells' src/ai/tools/dispatch.rs` → **2 or more** (arm +
+      conformant-args row); `grep -c 'ListShellsArgs' src/ai/tools/args.rs` →
+      **2 or more**.
+- [ ] **The prompt asset documents it:**
+      `grep -c 'list_shells' assets/prompts/sre.toml` → **1 or more** (now `0`).
+- [ ] **The six tests exist by name** in
+      `src/daemon/executor/knowledge/shell.rs`:
+      `grep -cE 'fn (list_shells_defaults_to_the_callers_own_shells|list_shells_all_scope_includes_other_owners|list_shells_rejects_an_unknown_scope|list_shells_scope_match_is_case_sensitive|list_shells_orders_numerically_not_lexicographically|list_shells_empty_registry_says_so)' src/daemon/executor/knowledge/shell.rs`
+      → **6** (now `0`).
+- [ ] No new `unsafe` / `unwrap` / `expect` / `panic!` in production code: prod
+      on `src/daemon/executor/knowledge/shell.rs` → **0**.
+- [ ] `cargo test --lib 'ai::tools'` → **22**, unchanged, `0 failed`.
+- [ ] `cargo test --lib 'knowledge::shell'` → **6 or more** passing, `0 failed`
+      (now **0** — the module does not exist).
+- [ ] `cargo test --test doc_truth` → **10**, `0 failed`, unchanged.
+- [ ] **Preservation, each must not move:**
+      `cargo test --lib 'daemon::executor::'` → **235 or more** (now **235**;
+      it grows by this phase's tests since they live under that path);
+      `cargo test --lib 'config::'` → **92**, unchanged;
+      `cargo test --test isolation` → **9**, unchanged.
+- [ ] Full lib suite **1826 or more** passing, `0 failed`, on **three
+      consecutive runs** (now **1820**).
+- [ ] All four gates pass.
+
+## Test plan
+
+Six tests, co-located in `src/daemon/executor/knowledge/shell.rs`. Build the
+rows by hand — a `ShellRegistry::default()` plus `with_shells` inserts is
+enough where the collector is under test, and the pure formatter needs no
+registry at all.
+
+1. **`list_shells_defaults_to_the_callers_own_shells`** — registry holds shells
+   for `Owner::Chat("a")` and `Owner::Chat("b")`; caller is `Chat("a")`;
+   `scope` `None`. Only `a`'s ids appear; `b`'s do not. Asserts both halves —
+   a listing that returns everything passes a contains-check and fails this.
+2. **`list_shells_all_scope_includes_other_owners`** — same registry,
+   `scope: Some("all")`, both owners' ids appear.
+3. **`list_shells_rejects_an_unknown_scope`** — `Some("run")` and
+   `Some("session")` (the design's two retired values) and `Some("")` each
+   produce the error string, and the output does **not** contain any shell id.
+   The negative half is load-bearing: an implementation that errors *and* then
+   lists everything would pass a message-only assertion.
+4. **`list_shells_scope_match_is_case_sensitive`** — `Some("MINE")` and
+   `Some("All")` are errors, not aliases.
+5. **`list_shells_orders_numerically_not_lexicographically`** — a registry
+   holding `s2` and `s10` lists `s2` before `s10`. This is the one a string
+   sort silently gets wrong, and it is mutation check 2.
+6. **`list_shells_empty_registry_says_so`** — an empty registry, and a registry
+   holding only *another* owner's shells under the default scope, both produce
+   the "no shells" sentence rather than an empty or header-only string.
+
+**A chat and a ghost owner that share an id string must not see each other's
+shells.** Fold this into test 1 by giving the second shell `Owner::Ghost("a")`
+while the caller is `Owner::Chat("a")` — `key()` prefixes the kind, so the
+correct implementation separates them and an implementation comparing the inner
+`String` does not.
+
+## End-to-end verification
+
+The artifact is the tool as the model receives it, so section B renders the
+real provider schema and greps the rendered JSON for the new tool rather than
+grepping the source literal.
+
+Run from the repo root, verbatim:
+
+```sh
+A=/tmp/e2e-m22-03a.txt
+: > "$A"
+RUNS_BEFORE=$(ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l)
+{
+echo "== A. build =="
+echo "real HOME run logs BEFORE: $RUNS_BEFORE"
+cargo build 2>&1 | tail -2; echo "cargo_exit=${PIPESTATUS[0]}"
+
+echo "== B. the tool as the model sees it, and the new module's tests =="
+cargo test --lib 'knowledge::shell' -- --nocapture 2>&1 \
+  | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test daemon::executor::knowledge::shell|^test result'
+echo "cargo_exit=${PIPESTATUS[0]}"
+cargo test --lib 'ai::tools' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test result'
+
+echo "== C. structural greps (each must print the stated number) =="
+D=src/ai/tools/defs.rs; S=src/ai/tools/schema.rs; K=src/daemon/executor/knowledge/shell.rs
+printf 'tool defined                 (1): %s\n' "$(grep -c 'name: "list_shells"' $D)"
+printf 'category Read                (1): %s\n' "$(sed -n '/name: "list_shells"/,/^    },/p' $D | grep -c 'category: Category::Read')"
+printf 'ToolDef literals            (40): %s\n' "$(grep -c 'ToolDef {' $D)"
+printf 'categories assigned         (40): %s\n' "$(grep -c 'category: Category::' $D)"
+printf 'not approval-gated           (0): %s\n' "$(sed -n '/APPROVAL_GATED_TOOLS: &\[&str\] = &\[/,/^\];/p' $D | grep -c 'list_shells')"
+printf 'enum_values has no scope     (0): %s\n' "$(sed -n '/pub(super) fn enum_values/,/^}/p' $S | grep -c '"scope"')"
+printf 'memory param set intact      (1): %s\n' "$(sed -n '/pub(super) fn enum_values/,/^}/p' $S | grep -c '"session", "knowledge", "incident"')"
+printf 'module declared              (1): %s\n' "$(grep -c '^mod shell;' src/daemon/executor/knowledge/mod.rs)"
+printf 'formatter is pure            (0): %s\n' "$(sed -n '/fn format_shell_rows/,/^}/p' $K | grep -c 'ShellRegistry\|with_shells\|SystemTime')"
+printf 'no per-shell status calls    (0): %s\n' "$(grep -c 'status(' $K)"
+printf 'numeric ordering            (1+): %s\n' "$(grep -c 'index()' $K)"
+printf 'six tests                    (6): %s\n' "$(grep -cE 'fn (list_shells_defaults_to_the_callers_own_shells|list_shells_all_scope_includes_other_owners|list_shells_rejects_an_unknown_scope|list_shells_scope_match_is_case_sensitive|list_shells_orders_numerically_not_lexicographically|list_shells_empty_registry_says_so)' $K)"
+printf 'pending wiring              (6+): %s\n' "$(grep -c 'ListShells' src/ai/types/pending.rs)"
+printf 'events wiring               (1+): %s\n' "$(grep -c 'ListShells' src/ai/types/events.rs)"
+printf 'stream wiring               (2+): %s\n' "$(grep -c 'ListShells' src/daemon/stream.rs)"
+printf 'executor wiring             (1+): %s\n' "$(grep -c 'ListShells' src/daemon/executor/mod.rs)"
+printf 'dispatch wiring             (2+): %s\n' "$(grep -c 'list_shells' src/ai/tools/dispatch.rs)"
+printf 'args wiring                 (2+): %s\n' "$(grep -c 'ListShellsArgs' src/ai/tools/args.rs)"
+printf 'sre.toml documents it       (1+): %s\n' "$(grep -c 'list_shells' assets/prompts/sre.toml)"
+printf 'CLAUDE.md new count          (1): %s\n' "$(grep -c '40 tools: 28 core + 12 deferred' CLAUDE.md)"
+printf 'CLAUDE.md old count gone     (0): %s\n' "$(grep -c '39 tools: 27 core + 12 deferred' CLAUDE.md)"
+printf 'README new count             (1): %s\n' "$(grep -c 'The model has \*\*40 tools\*\*' README.md)"
+printf 'prod unwrap/panic in module  (0): %s\n' "$(sed -n '1,/^#\[cfg(test)\]/p' $K | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe ')"
+
+echo "== D. preservation: config 92, isolation 9, doc_truth 10 =="
+for m in 'config::' 'daemon::executor::'; do
+  printf '%-26s ' "$m"; cargo test --lib "$m" 2>&1 | grep '^test result'
+done
+printf '%-26s ' 'test isolation'; cargo test --test isolation 2>&1 | grep '^test result'
+printf '%-26s ' 'test doc_truth'; cargo test --test doc_truth 2>&1 | grep '^test result'
+
+echo "== E. lib suite, three consecutive runs =="
+for i in 1 2 3; do cargo test --lib 2>&1 | grep '^test result'; done
+
+echo "== F. gates =="
+cargo fmt --all --check 2>&1 | tail -2; echo "fmt_exit=${PIPESTATUS[0]}"
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2; echo "clippy_exit=${PIPESTATUS[0]}"
+
+echo "== G. no HOME litter from the suite =="
+printf 'real HOME run logs AFTER (==BEFORE): %s\n' "$(ls ~/.daemoneye/var/log/runs/ 2>/dev/null | wc -l)"
+} >> "$A" 2>&1
+cat "$A"
+```
+
+Then the paste self-check:
+
+```sh
+D=docs/dev/milestones/M22-tool-surface/phase-03a-list-shells.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m22-03a.txt
+diff /tmp/pasted-m22-03a.txt /tmp/e2e-m22-03a.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Paste the captured block into the Update Log **unmodified** — do not retype it,
+do not trim it, do not fix its alignment. The self-check must print
+`PASTE MATCH`; if it prints `PASTE MISMATCH`, re-paste rather than editing the
+transcript to agree.
+
+## Authorizations
+
+The executor may modify **only**:
+
+- `src/daemon/executor/knowledge/shell.rs` — **new file**, task 1–3.
+- `src/daemon/executor/knowledge/mod.rs` — the `mod` declaration and the
+  `pub(super) use` re-export only.
+- `src/ai/types/pending.rs`, `src/ai/types/events.rs`, `src/ai/tools/args.rs`,
+  `src/ai/tools/dispatch.rs`, `src/ai/tools/defs.rs`, `src/daemon/stream.rs`,
+  `src/daemon/executor/mod.rs` — task 4, the `list_shells` wiring only. Do not
+  alter any other tool's arms.
+- `src/ai/tools/schema.rs` — **only if** the `ToolDef` literal needs no change
+  there; `enum_values` and the renderers are off limits and a criterion checks
+  it. In practice this file should not change at all.
+- `CLAUDE.md` (§ "Current AI tools" table + count line only), `README.md`
+  (§ "AI tools" tables + the line-496 prose only), `assets/prompts/sre.toml` —
+  task 5.
+- `docs/dev/milestones/M22-tool-surface/phase-03a-list-shells.md` — **append to
+  the Update Log only.** Do not rewrite, reorder or delete any section above
+  it; the reviewer checks that every `## ` heading in this file survives.
+
+No other file. In particular do not touch `src/shell/` — the registry,
+`Owner`, `ShellRecord` and `with_shells` are read as they are — and do not
+touch `tests/doc_truth.rs`, `src/daemon/executor/knowledge/pane.rs`, or
+`src/config/`.
+
+## Out of scope
+
+- **`read_shell` and `find_in_shells`.** Phase 03b. They read shell buffers
+  (screen grid, asciicast log, `.meta.json` index), which is a different
+  substrate; see the split rationale in the Goal.
+- **A `host` column, a `cwd` column, or a last-command column.** None exists in
+  `ShellRecord`. Hosts arrive in M21/M23; cwd and last command need 03b's
+  buffer reads.
+- **A `"run"` or `"session"` scope value.** The registry keys ownership by
+  session, not run, so they would be a second spelling of `"mine"`. Recorded as
+  a design divergence in the Goal.
+- **Removing `list_panes`.** The six pane tools go in phase 09. Both tools
+  coexist in this phase, which is why the count goes 39 → 40 rather than
+  staying flat.
+- **The `[SHELLS]` prompt context block.** Phase 08 (`get_shell_context`).
+  This phase adds a tool the model calls, not a block the daemon injects.
+- **Reclaiming `Owner::Adopted` shells.** They list under `"all"` and never
+  under `"mine"`; that is correct and needs no new behaviour here.
+
+## Update Log
+
+<!-- entries appended below this line -->
