@@ -1,7 +1,7 @@
 # Phase 03c: `find_in_shells` — one regex across every shell
 
 **Milestone:** M22 — Tool surface & context
-**Status:** in-progress
+**Status:** review
 **Depends on:** 03a (the scope resolution and row collector) and 03b (the
 recorded-output reader). Both **done**.
 **Estimated diff:** ~450 lines incl. tests
@@ -791,3 +791,158 @@ the capture was written before the run and the check was not run; the
 mutated. Reverting restored `continue` and the green run above is from the
 reverted tree.*
 
+### Update — ts=1789313323595 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 03c (`find_in_shells`) is implemented and committed (`5f0ddc2a`), working tree clean. Tasks 1–3 extracted the two shared helpers in `knowledge/shell.rs` — `resolve_scope` (parameterised by tool name, so the error names whichever tool was called) and `resolve_shell_log` + `read_commands` (the registry→cast-path→`MetaIndex`→byte-range read) — as pure refactors; all 15 pre-existing `knowledge::shell` tests pass **unmodified**, and `find_in_shells` itself builds the regex before any lock, searches the last 2000 recorded lines per shell in ascending id order, caps the **grand total** at 50 matches (announced when hit), skips an unreadable recording while naming it, and keeps "no shells to search" a distinct sentence from "no matches". Task 4 wired all seven sites (both compiler-invisible ones — `summary()` and `should_emit_tool_feedback()` — included); task 5 bumped CLAUDE.md and README.md to **42 tools: 30 core + 12 deferred** and added an honest `sre.toml` section (no nonexistent tools, no phase ids); tasks 6–7 recorded both mutation checks (per-shell cap and early-abort each flipped their named test red, then green after revert) and captured the verbatim end-to-end block fresh to `/tmp/e2e-m22-03c.txt`, pasted unmodified into the phase doc with the paste self-check recorded (`PASTE MATCH`, fence index `c==1` since the entry leads with the transcript — noted in the entry). End-to-end run: build clean, `knowledge::shell` 21 passed (15 old + 6 new), `ai::tools` 22, `doc_truth` 10, `config::` 92, `daemon::executor::` 256, isolation 9, all greps at their stated values, gates green, no HOME litter.
+
+**Notes for review**
+
+- One flake inside the captured E2E transcript: the **first** of run E's three lib-suite runs shows `1840 passed; 1 failed`; the other two and all reruns show `1841 passed; 0 failed` (the flake is a pre-existing suite-timing test, not a phase file — it does not reproduce; the rerun block is pasted in the same Update Log as separate evidence for the three-consecutive-runs criterion). Worth identifying on review, since the criterion text assumes clean consecutive runs.
+- `ShellHits::owner_key` was dropped as dead — the render keys off shell id only; the scope filter already enforced ownership upstream.
+- dispatch.rs's two `ai::tools` count/category assertions were updated (41→42, Read 19→20) — they are the tools module's own cross-checks of the `TOOLS` table, inside an authorized file.
+- The mutation-2 capture transcript preserves a stale sketch line in its heading; the entry carries a correction note naming the actually-applied patch (`return format!(...)` in the `resolve_shell_log` arm) so the red run is attributable.
+- `sre.toml` documents the resolver rejecting unknown scope values in shared prose ("also accepts the unknown-value error…"); the honest-claims grep (`send_input|03a|03b|03c|M22`) is 0, per the criterion.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ed in 8.10s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_reads_bare_word ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +2 -1
+- `README.md` — +2 -1
+- `assets/prompts/sre.toml` — +15 -0
+- `docs/dev/milestones/M22-tool-surface/phase-03c-find-in-shells.md` — +199 -0
+- `src/ai/tools/args.rs` — +21 -0
+- `src/ai/tools/defs.rs` — +34 -0
+- `src/ai/tools/dispatch.rs` — +5 -3
+- `src/ai/types/events.rs` — +7 -0
+- `src/ai/types/pending.rs` — +30 -0
+- `src/daemon/executor/knowledge/mod.rs` — +1 -1
+- `src/daemon/executor/knowledge/shell.rs` — +567 -64
+- `src/daemon/executor/mod.rs` — +8 -0
+- `src/daemon/stream.rs` — +13 -0
+
+**Commit:** 5f0ddc2ab960bb82fff626bbe57b09d533256024
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
