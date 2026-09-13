@@ -1,7 +1,7 @@
 # Phase 03c: `find_in_shells` — one regex across every shell
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 03a (the scope resolution and row collector) and 03b (the
 recorded-output reader). Both **done**.
 **Estimated diff:** ~450 lines incl. tests
@@ -1406,3 +1406,82 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 201e0b989ad160c3099aef925b9e4bc730b94686
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-13
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-03c-1, major — a failed run inside the filed
+  three-consecutive-runs evidence, with the failing test's name discarded by
+  the capture). Separately, an earlier dispatch `hard_fail`ed on a
+  `BackendError` when a network switch rebooted mid-run — infrastructure, no
+  edits made, re-dispatched plain; not a bounce.
+- **Executor:** GLM-5.3-Flash-NVFP4-Spark (via rexyMCP)
+- **Scope deviations:** none that breach the bug's terms. The re-dispatch did
+  go further than the minimum, consolidating `resolve_shell_log` +
+  `read_commands` + `all_command_indices` into a single
+  `read_shell_log(reg, id, since_command)`. Behaviour preservation was verified
+  independently, not assumed — see below.
+- **Calibration:** one, architect-side, already applied — see below.
+
+Re-verified independently at review: all four gates; the full lib suite
+**1841 passed, 0 failed**; `knowledge::shell` **21**; `daemon::executor::`
+**256**; `ai::tools` **22**; `doc_truth` **10**; `config::` **92**;
+`isolation` **9**. Every acceptance criterion and all four bug-03c-1 criteria
+return their pinned values.
+
+**The further refactor is behaviour-preserving, and that was checked rather
+than trusted.** All 15 `knowledge::shell` tests that predate this phase are
+**byte-identical** to their form at `d24a13ba`, compared function-by-function
+across the consolidation — the same check run at the previous review, repeated
+because the code moved again. Both mutation checks were re-run by hand on the
+refactored tree: the per-shell cap mutation reddens
+`find_in_shells_caps_total_matches_across_shells` alone (20 passed, 1 failed),
+and aborting on an unreadable shell reddens
+`find_in_shells_skips_an_unreadable_shell` alone (20 passed, 1 failed). Both
+reverted; tree clean at 21 green.
+
+**The paste** is 4814 bytes, byte-identical to `/tmp/e2e-m22-03c.txt`, captured
+at 10:25 — eight minutes after the refactor commit, so genuinely fresh — and
+its section E is three clean runs under the amended, failure-preserving
+capture.
+
+**The flake: no root cause named, and the independence evidence checks out.**
+The bug allowed either a named cause or evidence that the failure is
+independent of this phase's six tests; the entry claims the second, and the
+claim survives inspection:
+
+- **`/tmp/flake-runs-100.txt` is real**: exactly **100** lines, **100** matching
+  `^test result: ok. 1841 passed; 0 failed`, **zero** failing lines, zero
+  `FAILED` names.
+- **The load-bearing claim — every `HOME` writer holds the guard — verified
+  independently.** Scanning every function in `src/` that touches
+  `set_var("HOME")` / `remove_var("HOME")` finds **161**, of which **5** lack a
+  guard acquisition in the function body. All five are `Drop::drop` impls on
+  RAII `TestHome` structs that carry `_lock: crate::TestHomeGuard` as a
+  **field**. Rust runs `Drop::drop` before dropping fields, so HOME is restored
+  while the lock is still held — correct, and not the race. No unguarded writer
+  exists.
+- Added to this review's own 10 clean full-suite runs before the bounce, the
+  observed mechanism has not reproduced in 110+ runs.
+
+**This is the right outcome rather than a weaker one:** the entry declines to
+name a cause the evidence does not carry, which is the honest reading. The
+residual risk is bounded by the amended capture — if it recurs, the transcript
+will name the test.
+
+**Calibration — a capture must preserve failure diagnostics.** bug-03c-1's root
+cause was architect-side: section E was written as
+`cargo test --lib 2>&1 | grep '^test result'`, which records *that* a run failed
+and destroys *which test*. Every M22 phase used that shape and got away with it
+until one run failed. The block now keeps `... FAILED` lines and the
+`failures:` block. A corollary worth carrying forward: **a supplementary clean
+rerun does not satisfy a three-consecutive-runs criterion** — that criterion
+exists to catch intermittency, so when it fires the answer is to diagnose, not
+to re-run until green and file the green one alongside.
+
+*(Minor, not blocking: the mutation-check transcript retains two capture-scaffold
+lines — `(note: RED payload captured below)` and `(payload pending — see RED
+line below)` — written before the RED run landed. They assert nothing false,
+the mechanical RED/GREEN lines follow them, and the executor disclosed them
+rather than silently trimming the paste. Left as filed under the
+unmodified-paste rule.)*

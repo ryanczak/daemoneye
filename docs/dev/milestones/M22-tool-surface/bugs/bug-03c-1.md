@@ -1,7 +1,7 @@
 # Bug 1 on phase-03c: a new test failed in the filed three-consecutive-runs evidence, and the capture cannot say which
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-09-13 — capture amended to preserve failure names; three clean runs filed; flake independence evidenced (100 clean runs, every HOME writer verified guarded) and re-verified at review
 **Filed:** 2026-09-13
 
 ## What's wrong

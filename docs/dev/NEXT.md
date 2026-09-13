@@ -6,36 +6,38 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: phase-03c — find-in-shells**
-(`docs/dev/milestones/M22-tool-surface/phase-03c-find-in-shells.md`, status:
-in-progress — **bounced 2026-09-13, bug-03c-1**). Re-dispatch with
-`/rexymcp:dispatch phase-03c`.
+**Active phase: none.** Phase-03c — find-in-shells closed **approved_after_1
+2026-09-13** (`docs/dev/milestones/M22-tool-surface/phase-03c-find-in-shells.md`,
+status: done). **This completes the 03 charter row** — `list_shells`,
+`read_shell`, `find_in_shells` all shipped. Next up is **04 —
+shell-tools-lifecycle** (`open_shell`, `close_shell`, `watch_shell`), not yet
+drafted; run `/rexymcp:architect next` to draft it.
 
-**The code is correct and needs no behavioural change** — verified at review:
-42 tools / 30 core, both mutation checks reproduce by hand (each reddening
-exactly its named test), the shared resolver is single with the hardcoded tool
-name gone, and **all 15 pre-existing `knowledge::shell` tests are
-byte-identical** across the refactor, checked function-by-function.
+`find_in_shells { pattern, scope? }` is core + `Category::Read` — **42 tools:
+30 core + 12 deferred**, which is M22's headline tool count reached, though six
+pane tools still have to go in phase 09 and six more tools arrive first.
 
-**What bounced it:** the filed three-consecutive-runs evidence contains a
-failure — `1840 passed; 1 failed` on the first run — so an explicit acceptance
-criterion is unmet, and **the capture cannot say which test failed** because
-section E piped through `grep '^test result'` and discarded the name. That
-second part is **architect-side**: a capture that can record a failure but not
-name it is not evidence. Section E is amended in the phase doc to keep
-`... FAILED` lines and the `failures:` block.
+03c took **four dispatches**: a `BackendError` `hard_fail` when a network switch
+rebooted (infrastructure, no edits), a clean run, a bounce on bug-03c-1, and the
+fix. No architect code was written at any point.
 
-The one name that surfaces anywhere in the session logs is
-`find_in_shells_searches_only_scoped_shells` — one of this phase's six new
-tests. It did **not** reproduce in 10 consecutive full-suite runs at review, so
-frequency is roughly 1 in 16. The run's summary asserts the flake is
-"pre-existing… not a phase file"; **nothing supports that** and the only
-evidence points the other way. Treat the mechanism as unknown until the
-required flake-investigation entry establishes it.
+**bug-03c-1 was architect-side**: section E of the E2E block was
+`cargo test --lib 2>&1 | grep '^test result'`, which records *that* a run failed
+and destroys *which test*. One run in the filed evidence read
+`1840 passed; 1 failed` and nothing could say what broke. The block now keeps
+`... FAILED` lines and the `failures:` block. **Corollary worth carrying:** a
+supplementary clean rerun does not satisfy a three-consecutive-runs criterion —
+that criterion exists to catch intermittency, so when it fires, diagnose.
 
-An earlier run of this phase also `hard_fail`ed on a `BackendError` when a
-network switch rebooted mid-run — infrastructure, no edits made, re-dispatched
-plain.
+**The flake has no named root cause, and that is the honest outcome.** The
+investigation evidenced independence instead: 100 consecutive clean full-suite
+runs (file verified at review — exactly 100 lines, 100 clean, 0 failing), and
+the load-bearing claim re-checked independently — of 161 functions in `src/`
+touching `HOME`, the 5 without an in-body guard are all `Drop` impls on RAII
+structs holding `_lock` as a **field**, and Rust runs `Drop::drop` before
+dropping fields, so HOME is restored under the lock. No unguarded writer
+exists. Not reproduced in 110+ runs across the review and the investigation.
+Residual risk is bounded: the amended capture will name any recurrence.
 
 **PE signed off on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default
 also closed **approved_after_1 2026-09-12**; both of M22's closed phases bounced
@@ -100,8 +102,9 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:dispatch phase-03c` once bug-03c-1 is addressed.
-Phases 04–10 are not drafted; each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:architect next` drafts **phase-04 —
+shell-tools-lifecycle**. Phases 04–10 are not drafted; each is drafted after
+its predecessor is approved.
 
 **Carried out of M24, still open:**
 
