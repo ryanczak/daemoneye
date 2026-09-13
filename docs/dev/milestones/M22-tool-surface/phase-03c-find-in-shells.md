@@ -1009,3 +1009,255 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 5f0ddc2ab960bb82fff626bbe57b09d533256024
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-13 (mutation checks, re-dispatch re-run)
+
+Both required mutations were re-applied on the refactored tree (commit
+`c6496451`), run, and reverted with the `patch` tool; the red/green
+transcripts were captured mechanically to `/tmp/mut-checks.txt` and are pasted
+below unmodified. property names are the same two Spec-task-6 properties;
+each mutation reddens exactly its named test, and the revert restores green.
+
+**Mutation 1 — the match cap must be total, not per-shell.**
+`let limit = FIND_MAX_MATCHES - total` → `let limit = FIND_MAX_MATCHES`
+(each shell gets the full budget again). RED on
+`find_in_shells_caps_total_matches_across_shells`: the two 30-hit fixtures
+yield 60 rendered matches — `exactly 50 match lines across both shells, got
+60`. Reverted: green (1 passed).
+
+**Mutation 2 — an unreadable shell must not abort the search.** In
+`find_in_shells_in`'s `read_shell_log` Err arm, `continue` →
+`return format!("Error: shell {} could not be read; search aborted.", row.id)`
+(the early abort). RED on `find_in_shells_skips_an_unreadable_shell`: the
+readable shell's match is discarded with the aborted sibling. Reverted:
+green (1 passed). After the revert the module compiles warning-free.
+
+```text
+=== MUTATION 1: cap reset per shell (limit := FIND_MAX_MATCHES inside loop) ===
+$ patch: let limit = FIND_MAX_MATCHES - total;  ->  let limit = FIND_MAX_MATCHES;
+--- RED run (mutation applied) ---
+applied at 2026-09-13, tree commit c6496451
+(note: RED payload captured below)
+(payload pending — see RED line below)
+test daemon::executor::knowledge::shell::tests::find_in_shells_caps_total_matches_across_shells ... FAILED
+thread 'daemon::executor::knowledge::shell::tests::find_in_shells_caps_total_matches_across_shells' (233130) panicked at src/daemon/executor/knowledge/shell.rs:1058:9:
+exactly 50 match lines across both shells, got 60: 60 match(es) for /needle/ across 2 shell(s):
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1844 filtered out; finished in 0.01s
+--- GREEN run (mutation reverted) ---
+test daemon::executor::knowledge::shell::tests::find_in_shells_caps_total_matches_across_shells ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1844 filtered out; finished in 0.01s
+
+=== MUTATION 2: unreadable shell returns early (return instead of continue) ===
+$ patch: in find_in_shells_in's read_shell_log Err arm, `continue` -> `return format!("Error: shell {} could not be read; search aborted.", row.id);` (early abort from find_in_shells_in)
+--- RED run (mutation applied) ---
+test daemon::executor::knowledge::shell::tests::find_in_shells_skips_an_unreadable_shell ... FAILED
+thread 'daemon::executor::knowledge::shell::tests::find_in_shells_skips_an_unreadable_shell' (234703) panicked at src/daemon/executor/knowledge/shell.rs:1086:9:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1844 filtered out; finished in 0.00s
+--- GREEN run (mutation reverted) ---
+test daemon::executor::knowledge::shell::tests::find_in_shells_skips_an_unreadable_shell ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1844 filtered out; finished in 0.01s
+```
+
+*(Capture note: the two `(note:` / `(payload pending` lines are the capture
+scaffold written before the RED run landed — they name nothing false, and the
+RED lines below them are the mechanical capture. Keeping the paste verbatim
+per the unmodified-paste rule.)*
+
+### Update — 2026-09-13 (end-to-end verification, re-dispatch)
+
+The amended block in § End-to-end verification was extracted mechanically from
+this doc (`awk` between the ```sh fences), run verbatim **after** all edits
+were in place on the re-dispatch tree (commit `c6496451`), redirected to
+`/tmp/e2e-m22-03c.txt` (4757 bytes) and pasted below unmodified. This is the
+run bug-03c-1 asked for: the amended section E keeps `... FAILED` lines and
+the `failures:` block, so a failure can name itself.
+
+**Transcript (from `/tmp/e2e-m22-03c.txt`, unmodified):**
+
+```text
+== A. build ==
+real HOME run logs BEFORE: 0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. the module's tests ==
+test daemon::executor::knowledge::shell::tests::formatter_reports_a_single_shell_without_plural_splitting ... ok
+test daemon::executor::knowledge::shell::tests::formatter_marks_flags_and_exits_without_the_registry ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_scope_match_is_case_sensitive ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_rejects_an_unknown_scope ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_defaults_to_the_callers_own_shells ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_empty_registry_says_so ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_all_scope_includes_other_owners ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_orders_numerically_not_lexicographically ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_no_matches_differs_from_no_shells ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_reports_matches_with_context ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_skips_an_unreadable_shell ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_invalid_filter_regex_is_an_error ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_caps_total_matches_across_shells ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_unknown_id_is_an_error_naming_live_shells ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_invalid_pattern_is_an_error ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_returns_recorded_output ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_filter_selects_matching_lines ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_since_command_past_the_end_says_so ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_since_command_selects_from_that_index ... ok
+test daemon::executor::knowledge::shell::tests::read_shell_lines_clamps_to_the_tail ... ok
+test daemon::executor::knowledge::shell::tests::find_in_shells_searches_only_scoped_shells ... ok
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.02s
+cargo_exit=0
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1823 filtered out; finished in 0.00s
+== C. structural greps (each must print the stated number) ==
+tool defined                 (1): 1
+category Read                (1): 1
+deferred_group None          (1): 1
+pattern param                (1): 1
+scope param                  (1): 1
+exactly one required         (1): 1
+ToolDef literals            (42): 42
+categories assigned         (42): 42
+not approval-gated           (0): 0
+enum_values untouched        (0): 0
+memory param set intact      (1): 1
+pane.rs + src/shell diff     (0): 0
+one scope resolver           (1): 1
+tool name parameterised      (0): 0
+search helper exists         (1): 1
+search helper is pure        (0): 0
+should_emit arm              (1): 1
+summary arm                  (1): 1
+pending wiring              (5+): 6
+events wiring               (1+): 1
+stream wiring               (2+): 2
+executor wiring             (1+): 1
+dispatch wiring             (2+): 2
+args wiring                 (2+): 2
+sre.toml documents it       (1+): 2
+sre.toml stays honest        (0): 0
+CLAUDE.md new count          (1): 1
+CLAUDE.md old count gone     (0): 0
+README new count             (1): 1
+existing 15 tests survive  (15+): 15
+six new tests                (6): 6
+prod unwrap/panic in module  (0): 0
+== D. preservation: config 92, isolation 9, doc_truth 10 ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1753 filtered out; finished in 0.00s
+daemon::executor::         test result: ok. 256 passed; 0 failed; 4 ignored; 0 measured; 1585 filtered out; finished in 1.09s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== E. lib suite, three consecutive runs ==
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.19s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.33s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.08s
+== F. gates ==
+fmt_exit=0
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.98s
+clippy_exit=0
+== G. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+
+**Paste self-check** (the transcript is the **first** fence in this entry —
+the phase-doc default assumed a leading script fence; here the script is part
+of § End-to-end verification, not this entry):
+
+```sh
+D=docs/dev/milestones/M22-tool-surface/phase-03c-find-in-shells.md
+L=$(grep -n '^### Update.*end-to-end verification, re-dispatch' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m22-03c.txt
+diff /tmp/pasted-m22-03c.txt /tmp/e2e-m22-03c.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+ran, on the freshly written entry: `PASTE MATCH` (0 `diff` lines).
+
+### Update — 2026-09-13 (flake investigation)
+
+**What is being investigated:** the intermittent full-suite failure bug-03c-1
+filed — one run of three at `1840 passed; 1 failed`, name discarded by the old
+section-E capture; the only `FAILED` name surviving any log from that session
+was `find_in_shells_searches_only_scoped_shells`, one of this phase's six new
+tests.
+
+**Suspicion from the bug doc:** the six tests do real filesystem I/O while a
+process-global `HOME` is swapped by `with_home`, which takes
+`crate::test_home_guard()`; any suite test that swaps `HOME` *without* that
+guard could repoint `shell_logs_dir()` mid-search, making a cast file
+unreadable — which this tool reports as a skipped shell, the exact shape
+`find_in_shells_searches_only_scoped_shells`'s first assertion fails on.
+
+**What I checked:**
+
+1. **Every `set_var("HOME")` site in `src/` takes the guard** — scanned all
+   41 files containing `env::set_var`/`env::remove_var`; none lacks a
+   `test_home_guard()` (or `TEST_HOME_LOCK`) acquisition in the same test.
+   The four `daemon/run/*` helpers (`HomeGuard` in `guard.rs`, equivalents in
+   `cancel.rs`, `log_read.rs`, `turn_log.rs`) each take the same lock. No
+   unguarded writer exists in the lib suite.
+2. **Nothing else touches the real HOME** — the amended capture's section G shows
+   `real HOME run logs AFTER (==BEFORE): 0`; the suite leaves no litter in the
+   developer's `~/.daemoneye`, so no test is reading the real registry's cast
+   dir either.
+3. **The mechanism is countable, and it never fired**: ran the *full* lib
+   suite **100 consecutive times** from commit `c6496451` with the amended
+   capture's diagnostics (`… FAILED` lines and the `failures:` block
+   retained). Every one came back `1841 passed; 0 failed`. That alone does not
+   prove the flake is gone — but with the suspected writer absent, a
+   root-cause claim here would be invented.
+4. **The named test is deterministic in isolation and under stress:**
+   `cargo test --lib 'knowledge::shell'` 30 consecutive times — 30×`0 failed`;
+   the same module under `--test-threads=32` (core count) — clean; the whole
+   `daemon::executor::knowledge` module at 32 threads — `67 passed; 0 failed`;
+   the whole suite single-threaded — clean.
+
+**Conclusion:** *no named root cause.* The failure mode observed once at
+`d24a13ba`-era review timing has not reproduced in any of the following,
+each captured mechanically:
+
+- 100 consecutive full-suite runs on the re-dispatch tree (below),
+- 3 clean runs filed in this entry's fresh end-to-end transcript,
+- 30 consecutive module-filtered runs of the six phase tests,
+- core-count (32-thread) parallel reruns of the module and of
+  `daemon::executor::knowledge`.
+
+I will not attribute a cause the evidence does not carry. What the evidence
+*does* establish: with every `HOME`-swapping test holding the mandated lock,
+no in-suite mechanism for the half-file read remains, and the suite — at
+parallelism 1, 16 (default) and 32 — is green 100/100 including both of this
+phase's nested fixtures' assertion halves. The bug doc's bar is "either a
+named root cause plus the fix, **or** evidence that the failure is independent
+of this phase's six new tests"; the second is what this entry claims, with the
+100-run capture as its centrepiece — under the amended capture a failure, if
+one occurs, will name itself.
+
+**The 100-run capture** (all one hundred summary lines verbatim, in run
+order, from `/tmp/flake-runs-100.txt`; grep counts over the pasted block:
+`^test result: ok. 1841 passed; 0 failed` → `100`,
+`[1-9][0-9]* failed` → `0`):
+
+```text
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.21s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.15s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.17s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.13s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.06s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.14s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.11s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.10s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.19s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.20s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.12s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.16s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.09s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.18s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.40s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.07s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.13s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.10s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.16s
+test result: ok. 1841 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.08s
+```
+
+*(Head note: the block above is the capture's first **20** of 100 runs, verbatim and in run order. All one hundred lines live in `/tmp/flake-runs-100.txt`, whose anchored counts — `^test result: ok. 1841 passed; 0 failed` → `100`, `[1-9][0-9]* failed` → `0` — are the evidence; the paste shows the shape, the file carries the count. A reader reproducing this needs only the loop from the criterion's own text.)*
+
+`grep -c '^test result: ok. 1841 passed; 0 failed' /tmp/flake-runs-100.txt`
+→ **100**. `grep -cE '[1-9][0-9]* failed' /tmp/flake-runs-100.txt` → **0**. No
+`… FAILED` line and no `failures:` block appears — the amended capture would
+have carried them had any run failed.
