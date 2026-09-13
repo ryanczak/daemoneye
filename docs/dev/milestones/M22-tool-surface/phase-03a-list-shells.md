@@ -1,7 +1,7 @@
 # Phase 03a: `list_shells` — the first shell tool
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** M20 (the registry it reads) and phase-02 (`Category`, now a
 required `ToolDef` field). Both **done**.
 **Estimated diff:** ~430 lines incl. tests
@@ -1479,3 +1479,75 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e2483274ce07d4dd3ffd8f1c300ac31866a6bfdd
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-12
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-03a-1, major — the tool description named a `shell`
+  parameter that does not exist). Plus **one escalation** before that: the
+  first dispatch `hard_fail`ed on `VerifierFailurePersistent` and was resumed,
+  not taken over — no architect code was written at any point.
+- **Executor:** GLM-5.3-Flash-NVFP4-Spark (via rexyMCP)
+- **Scope deviations:** none in the final tree. The re-dispatch changed only
+  the two prose blocks (`git diff 00299c25..HEAD --stat -- src/ai/types/ src/daemon/`
+  → 0 lines).
+- **Calibration:** two, both architect-side — see below.
+
+Re-verified independently at review: all four gates; the full lib suite
+**1828 passed, 0 failed**; `knowledge::shell` **8**; `ai::tools` **22**;
+`doc_truth` **10**; `config::` **92**; `daemon::executor::` **243**;
+`isolation` **9**. Every acceptance criterion and every bug-03a-1 criterion
+returns its pinned value.
+
+**Both mutation checks re-run by hand, under the spec's own mutants.** Mutation
+1 (unknown scope falls back to `"mine"`) turns **two** tests red —
+`rejects_an_unknown_scope` and `scope_match_is_case_sensitive`, because a
+`"mine"` fallback also legalises `"MINE"`; stronger than the spec's minimum.
+Mutation 2 was re-applied **as specified** — sorting on the id string, which
+the executor had substituted with a constant sort key — and gives 7 passed /
+1 failed with the ordering test alone red. Reverted; tree left clean.
+
+**The paste was re-extracted and diffed at review**: 3183 bytes, byte-identical
+to `/tmp/e2e-m22-03a.txt`, captured 21:06 — three minutes after the prose fix
+at 21:03, so genuinely fresh.
+
+**Two executor claims checked rather than accepted.**
+
+1. *"One early capture had a single transient failure in its third consecutive
+   run."* **Not supported by the run's own session log**, which records **15**
+   full-suite results, every one `1828 passed; 0 failed`; the only two
+   `test result: FAILED` lines are the deliberate mutants (6/2 and 7/1). Six
+   further consecutive runs at review were clean. Structurally the phase's
+   tests cannot flake: every one drives `list_shells_in` with an injected
+   registry, and the process-global `crate::shell::registry()` is touched only
+   by the production `list_shells` at `shell.rs:46`. Recorded because an
+   unsubstantiated flake report sends future readers chasing a ghost.
+2. *The `sre.toml` whole-file write truncated the file to 11 lines and was
+   recovered from git.* **Verified whole**: the file is 362 lines (352 before
+   the phase) and `git diff a5ff9c6a..HEAD -- assets/prompts/sre.toml` is a
+   clean **+10 insertions, 0 deletions** — only the new section. The recovery
+   was complete.
+
+**Calibration 1 — spec the tree, not the design.** bug-03a-1's root cause was
+§ Spec task 4, which told the executor the description should say the id "is
+what `run_terminal_command` and the other shell tools take". That was written
+from the design's end state: `run_terminal_command` gains `shell?` in phase 07,
+`send_input` lands in 05, `read_shell` in 03b. Because `list_shells` is core,
+the executor faithfully shipped that false sentence into the description the
+model receives **on every request**. A phase spec — above all any text destined
+for a shipped artifact — must describe the tree that phase lands on. One grep
+(`grep -n 'name: "shell"' src/ai/tools/defs.rs`) would have caught it at
+drafting.
+
+**Calibration 2 — an enum-variant phase cannot be green mid-wiring.** The first
+dispatch `hard_fail`ed on `VerifierFailurePersistent { 6 }` with two `E0004`
+diagnostics while **284 of 296 attempts had succeeded**. Adding a variant to an
+exhaustively-matched enum makes every match site fail until the last arm lands,
+so a per-edit verifier counts correct progress as persistence. A future phase of
+this shape should enumerate every match site at drafting and instruct the
+executor to edit them in one contiguous batch before re-running the verifier.
+
+*(Also noted: one criterion written during the bounce was itself blind — the
+Rust literal holds `\"mine\"`, so a plain `'"mine"'` pattern matches nothing.
+Caught by running the criteria before committing the bounce and corrected in
+both docs. Third blind-instrument instance in M22; see phase-02's verdict.)*

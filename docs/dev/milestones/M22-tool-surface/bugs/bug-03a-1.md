@@ -1,7 +1,7 @@
 # Bug 1 on phase-03a: the tool description tells the model to pass shell ids to tools that have no shell parameter
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-09-12 — both prose blocks corrected and re-verified at review; no code change
 **Filed:** 2026-09-12
 
 ## What's wrong

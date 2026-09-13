@@ -6,20 +6,27 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: phase-03a — list-shells**
-(`docs/dev/milestones/M22-tool-surface/phase-03a-list-shells.md`, status:
-in-progress — **bounced 2026-09-12, bug-03a-1**). Re-dispatch with
-`/rexymcp:dispatch phase-03a`.
+**Active phase: none.** Phase-03a — list-shells closed **approved_after_1
+2026-09-12** (`docs/dev/milestones/M22-tool-surface/phase-03a-list-shells.md`,
+status: done). Next up is **03b — shell-tools-read** (`read_shell`,
+`find_in_shells`), not yet drafted; run `/rexymcp:architect next` to draft it.
 
-The tool works and the code is correct — verified at review, including both
-mutation checks re-run by hand under the spec's own mutants and a
-byte-identical paste. What is wrong is **two prose blocks**: the `ToolDef`
-description (shipped to the model on every request) tells it the shell id is
-what `run_terminal_command`, `send_input` and `read_shell` take. **No tool has a
-`shell` parameter** — `run_terminal_command` gains one in phase 07, `send_input`
-arrives in 05, `read_shell` in 03b. **Root cause is architect-side: the Spec
-dictated that sentence**, written as if 07's reshape had landed. Fixed in the
-Spec at the bounce.
+`list_shells { scope? }` ships as a core `Category::Read` tool — **40 tools:
+28 core + 12 deferred**. `list_panes` is untouched; the six pane tools go in
+phase 09.
+
+03a took **three dispatches**: a `hard_fail` on `VerifierFailurePersistent`
+resumed rather than re-dispatched (284 of 296 attempts had succeeded — adding
+an enum variant makes every match site red until the last arm lands), then a
+bounce on bug-03a-1. **No architect code was written at any point.**
+
+**bug-03a-1's root cause was architect-side**: § Spec task 4 dictated a tool
+description saying the shell id "is what `run_terminal_command` and the other
+shell tools take" — written from the design's end state. No tool has a `shell`
+parameter (07 adds it; `send_input` is 05, `read_shell` is 03b), and because
+`list_shells` is core the false sentence shipped to the model on every request.
+**Spec the tree, not the design** — and grep the API before pinning prose about
+it.
 
 Phase-02 — tool-category closed **approved_after_1 2026-09-12**.
 
@@ -131,8 +138,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:dispatch phase-03a`. Phases 03b–10 are not drafted;
-each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:architect next` drafts **phase-03b — shell-tools-read**.
+Phases 03b–10 are not drafted; each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 
