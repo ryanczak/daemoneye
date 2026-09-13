@@ -515,3 +515,67 @@ No other file. In particular do not touch `README.md`, `tests/doc_truth.rs`,
 all 39 `category:` literals in `defs.rs` per the fixed assignment table; task 3
 re-export; task 4 CLAUDE.md checklist sentence; task 5 two mutation checks with
 red-then-green transcripts; then the phase's end-to-end block.
+### Update — 2026-09-13 00:57 (mutation check 1 of 2: run must count as mutating)
+
+**Mutation applied** (`patch`, not sed): in `Category::mutates_state()`,
+`matches!(self, Category::Write | Category::Run)` → `matches!(self, Category::Write)`.
+This drops `Run` — the exact rexyMCP-vocabulary regression the divergence callout warns about.
+
+```
+
+---- ai::tools::dispatch::tests::approval_gated_tools_all_mutate_state stdout ----
+
+thread 'ai::tools::dispatch::tests::approval_gated_tools_all_mutate_state' (2460236) panicked at src/ai/tools/dispatch.rs:683:13:
+approval-gated tool "run_terminal_command" has category Run that does not mutate state
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ai::tools::dispatch::tests::approval_gated_tools_all_mutate_state
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1823 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+```
+
+RED as predicted: `run_terminal_command` (gated, `Run`) fails the invariant.
+
+**Reverted** with `patch` (`matches!(self, Category::Write)` → `matches!(self, Category::Write | Category::Run)`).
+Green again, same command, same invocation:
+
+```
+test ai::tools::dispatch::tests::approval_gated_tools_all_mutate_state ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1823 filtered out; finished in 0.00s
+```
+
+### Update — 2026-09-13 01:05 (mutation check 2 of 2: assignment table pinned)
+
+**Mutation applied** (`patch`, not sed): `list_schedules`'s `category: Category::Read` →
+`Category::Write` — one tool moved out of Read, redeploying the miscategorisation the test exists to catch.
+
+```
+
+thread 'ai::tools::dispatch::tests::category_counts_match_the_assignment' (2461548) panicked at src/ai/tools/dispatch.rs:670:9:
+assertion `left == right` failed: Read count
+  left: Some(16)
+ right: Some(17)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ai::tools::dispatch::tests::category_counts_match_the_assignment
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1823 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+```
+
+RED on the Read count exactly as the criterion requires.
+
+**Reverted** with `patch` (`category: Category::Write` → `category: Category::Read` on `list_schedules`).
+Green again, same command, same invocation:
+
+```
+test ai::tools::dispatch::tests::category_counts_match_the_assignment ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1823 filtered out; finished in 0.00s
+```
