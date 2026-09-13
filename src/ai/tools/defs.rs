@@ -826,6 +826,40 @@ pub static TOOLS: &[ToolDef] = &[
         category: Category::Read,
     },
     ToolDef {
+        name: "find_in_shells",
+        description: "Search the recorded output of the PTY shells the daemon is \
+                      running for a regular expression, in one call — the way \
+                      to answer \"which shell printed the error?\" without \
+                      reading each shell's log. Each match reports the shell \
+                      id, its 1-indexed line number in the recording, and the \
+                      line itself with one line of context either side. Like \
+                      read_shell, this searches the per-command recorded log, \
+                      not any live screen. The most recent 2000 lines of each \
+                      shell's recording are searched and the result is capped \
+                      at 50 matches across all shells; the output says when \
+                      the cap was hit. A shell whose recording cannot be read \
+                      is skipped and named, not fatal.",
+        params: &[
+            ParamDef {
+                name: "pattern",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Regular expression matched against every line of \
+                              every in-scope shell's recorded output.",
+            },
+            ParamDef {
+                name: "scope",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional: \"mine\" (default — only the shells this \
+                              session owns) or \"all\" (every shell the daemon is \
+                              running). Any other value is rejected.",
+            },
+        ],
+        deferred_group: None,
+        category: Category::Read,
+    },
+    ToolDef {
         name: "load_tools",
         description: "Load an additional group of tools into your available tool set for the rest \
                       of this session. Some rarely-used tools are not loaded by default to save \

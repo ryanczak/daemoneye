@@ -123,6 +123,21 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   2000). Output is masked before it is returned. Reading a shell changes \
   nothing in it.
 
+### `find_in_shells`
+
+- `find_in_shells(pattern, scope?)` — one regex search across the **recorded** \
+  output of every in-scope shell: the answer to "which shell printed the \
+  error?" without reading each shell's log in turn. Each match reports the \
+  shell id, its line number in the recording, and the line with one line of \
+  context either side; output is masked and capped at 50 matches across all \
+  shells (the output says when the cap was hit — narrow the pattern and \
+  search again). `scope`: `"mine"` (default — this session's shells) or \
+  `"all"` (every shell the daemon is running). Only the most recent 2000 \
+  lines of each recording are searched, and only what the shell has already \
+  recorded — a command still running contributes output only once it has \
+  written something. A shell whose recording cannot be read is skipped and \
+  named rather than aborting the search.
+
 ### `list_panes`, `watch_pane`, `read_pane`, `find_in_panes`, `tmux_control`, `close_background_window`
 
 - `list_panes` — enumerate panes grouped by window with id, index, cmd, cwd, title, status; includes a foreign-session section for panes in other tmux sessions. Call when context \

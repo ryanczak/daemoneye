@@ -136,7 +136,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Current AI tools
 
-**41 tools: 29 core + 12 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
+**42 tools: 30 core + 12 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
 `src/ai/tools/defs.rs` — `core` means `None` (rendered on every request); a group
 name means the tool is omitted until `load_tools` pulls the group in. **Note the
 asymmetry**: for scripts, runbooks and memory the *write* side is core while the
@@ -151,6 +151,7 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `get_terminal_context` | core | Fresh tmux snapshot on demand; optional `scope` param: `"window"` (chat pane's window only), `"session"` (default, user's session), `"all"` (home + foreign-session metadata) |
 | `list_shells` | core | List the PTY shells the daemon is running: id (`s3`), owner, age, and `interactive` / `dedicated` / `exited` flags; optional `scope`: `"mine"` (default, this session's shells) or `"all"` (every live shell). The id is what the shell tools take as their target |
 | `read_shell` | core | Read a shell's recorded output — its per-command log, not the live screen. `shell` is the id from `list_shells`; optional `since_command` (command index to start from; an index past the recorded commands is an error), `filter` (regex, invalid = error), `lines` (tail clamp, default 200, max 2000). Output is masked |
+| `find_in_shells` | core | One regex search across every in-scope shell's recorded output — answers "which shell printed the error?" in a single call. Returns shell id, 1-indexed line number and the matching line with ±1 line of context; masked, capped at 50 matches across all shells, searches the last 2000 lines of each recording; unreadable shells are skipped and named. `scope: "mine"` (default) or `"all"` |
 | `list_panes` | core | Enumerate all panes in session, grouped by window (pane ID, window-relative index, cmd, cwd, title, status); includes a foreign-session section for panes in other tmux sessions |
 | `read_pane` | core | Read any pane's buffer on demand at a requested scrollback depth (any session, incl. daemon windows); ANSI-annotated, optional regex filter, masked; chat pane refused |
 | `find_in_panes` | core | Regex search across every pane's buffer in one call; returns pane id, window, session (when foreign), status and matching lines with ±1 line of context; masked, capped at 50 matches; chat pane never searched. `scope: "all"` also captures other sessions live |

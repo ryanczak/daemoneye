@@ -281,6 +281,15 @@ pub enum PendingCall {
         since_command: Option<u32>,
         filter: Option<String>,
     },
+    /// Search every in-scope shell's recorded output for a regex (M22
+    /// phase-03c). Reads the **recordings**, like `read_shell` — not live
+    /// screens; shells whose recording cannot be read are skipped and named.
+    FindInShells {
+        id: String,
+        thought_signature: Option<String>,
+        pattern: String,
+        scope: Option<String>,
+    },
     TmuxControl {
         id: String,
         thought_signature: Option<String>,
@@ -826,6 +835,20 @@ impl PendingCall {
                     "filter": filter,
                 })),
             },
+            PendingCall::FindInShells {
+                id,
+                thought_signature,
+                pattern,
+                scope,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "find_in_shells".to_string(),
+                arguments: args_to_string(serde_json::json!({
+                    "pattern": pattern,
+                    "scope": scope,
+                })),
+            },
             PendingCall::TmuxControl {
                 id,
                 thought_signature,
@@ -887,6 +910,7 @@ impl PendingCall {
             PendingCall::ReadPane { id, .. } => id,
             PendingCall::FindInPanes { id, .. } => id,
             PendingCall::ReadShell { id, .. } => id,
+            PendingCall::FindInShells { id, .. } => id,
             PendingCall::TmuxControl { id, .. } => id,
             PendingCall::RunLogTail { id, .. } => id,
             PendingCall::RunLogSearch { id, .. } => id,
@@ -923,6 +947,7 @@ impl PendingCall {
                 | PendingCall::ReadPane { .. }
                 | PendingCall::FindInPanes { .. }
                 | PendingCall::ReadShell { .. }
+                | PendingCall::FindInShells { .. }
                 | PendingCall::LoadTools { .. }
                 | PendingCall::RunLogTail { .. }
                 | PendingCall::RunLogSearch { .. }
@@ -1037,6 +1062,10 @@ impl PendingCall {
                 }
                 s
             }
+            PendingCall::FindInShells { pattern, scope, .. } => match scope {
+                Some(s) => format!("/{pattern}/ scope={s}"),
+                None => format!("/{pattern}/"),
+            },
             PendingCall::TmuxControl {
                 action, pane_id, ..
             } => {
@@ -1101,6 +1130,7 @@ impl PendingCall {
             PendingCall::ReadPane { .. } => "read_pane",
             PendingCall::FindInPanes { .. } => "find_in_panes",
             PendingCall::ReadShell { .. } => "read_shell",
+            PendingCall::FindInShells { .. } => "find_in_shells",
             PendingCall::TmuxControl { .. } => "tmux_control",
             PendingCall::RunLogTail { .. } => "run_log_tail",
             PendingCall::RunLogSearch { .. } => "run_log_search",

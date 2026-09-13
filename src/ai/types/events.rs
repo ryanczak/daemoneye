@@ -196,6 +196,13 @@ pub enum AiEvent {
         filter: Option<String>,
         thought_signature: Option<String>,
     },
+    /// Regex-search every in-scope shell's recorded output (M22 phase-03c).
+    FindInShells {
+        id: String,
+        pattern: String,
+        scope: Option<String>,
+        thought_signature: Option<String>,
+    },
     TmuxControl {
         id: String,
         action: String,

@@ -115,6 +115,13 @@ pub(super) struct ReadShellArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct FindInShellsArgs {
+    pattern: String,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub(super) struct TmuxControlArgs {
     action: String,
     pane_id: String,
@@ -524,6 +531,20 @@ impl ToolArgs for ListShellsArgs {
             id: id.to_string(),
             thought_signature: ts,
             scope: self.scope,
+        }
+    }
+}
+
+impl ToolArgs for FindInShellsArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::FindInShells {
+            id: id.to_string(),
+            pattern: self.pattern,
+            scope: self.scope,
+            thought_signature: ts,
         }
     }
 }

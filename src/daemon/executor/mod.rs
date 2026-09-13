@@ -896,6 +896,14 @@ where
             filter.as_deref(),
         ))),
 
+        PendingCall::FindInShells { pattern, scope, .. } => {
+            Ok(ToolCallOutcome::Result(knowledge::find_in_shells(
+                pattern,
+                scope.as_deref(),
+                &Owner::Chat(session_id.unwrap_or_default().to_string()),
+            )))
+        }
+
         PendingCall::FindInPanes { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
             knowledge::find_in_panes(cache, chat_pane, pattern, scope.as_deref()).await,
         )),

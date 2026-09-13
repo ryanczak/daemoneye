@@ -724,6 +724,19 @@ where
                         filter,
                     });
                 }
+                AiEvent::FindInShells {
+                    id,
+                    pattern,
+                    scope,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::FindInShells {
+                        id,
+                        thought_signature,
+                        pattern,
+                        scope,
+                    });
+                }
                 AiEvent::TmuxControl {
                     id,
                     action,
