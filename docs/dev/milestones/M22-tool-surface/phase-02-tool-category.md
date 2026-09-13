@@ -763,3 +763,102 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7ded0f6242c05b02dca5429ddda1a65805dc7fb3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-13 (resumed dispatch on bug-02-1)
+
+**Executor:** Claude (Opus 4.5, headless re-dispatch).
+**Scope:** Spec Task 6 only — capture the end-to-end block **fresh** (not the
+stale 17:42 transcript), paste it unmodified under
+`### Update — <date> (end-to-end verification)`, and record the `PASTE MATCH`
+self-check verdict. No `src/` change; the tree already satisfies every code
+criterion (verified: enum 1/5 variants, 39 categories with counts 17/13/4/4/1,
+one `mutates_state`, one `category_of` reading `TOOLS`, five tests, checklist
+sentence).
+### Update — 2026-09-13 01:20 (end-to-end verification)
+
+**Executor:** Claude (Opus 4.5, headless re-dispatch on bug-02-1).
+**What this entry is:** Spec Task 6. The block below was captured **fresh**
+from the tree at commit `1f5f33e9` — not the stale 17:42 transcript bug-02-1
+found. Pasted unmodified, with the self-check verdict at the end.
+
+```sh
+== A. build ==
+real HOME run logs BEFORE: 0
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.45s
+cargo_exit=0
+== B. the table through the public API ==
+test ai::tools::dispatch::tests::approval_gated_tools_all_mutate_state ... ok
+test ai::tools::dispatch::tests::category_of_resolves_every_tool_name_and_nothing_else ... ok
+test ai::tools::dispatch::tests::enum_values_known_params ... ok
+test ai::tools::dispatch::tests::category_counts_match_the_assignment ... ok
+test ai::tools::dispatch::tests::every_tool_has_a_category ... ok
+test ai::tools::dispatch::tests::deferred_group_split_is_total ... ok
+test ai::tools::dispatch::tests::load_tools_accepts_array_and_string_groups ... ok
+test ai::tools::dispatch::tests::create_agent_accepts_array_and_string_scripts ... ok
+test ai::tools::dispatch::tests::mutates_state_is_write_and_run_only ... ok
+test ai::tools::dispatch::tests::read_tools_expose_no_namespace_param ... ok
+test ai::tools::dispatch::tests::tools_in_group_resolves_members ... ok
+test ai::tools::dispatch::tests::dispatch_roundtrip_all_tools ... ok
+test ai::tools::dispatch::tests::load_then_render_includes_group ... ok
+test ai::tools::dispatch::tests::default_render_omits_deferred ... ok
+test ai::tools::dispatch::tests::load_tools_catalog_lists_all_groups ... ok
+test ai::tools::dispatch::tests::anthropic_render_emits_enums ... ok
+test ai::tools::dispatch::tests::loaded_group_names_render_their_schemas ... ok
+test ai::tools::dispatch::tests::gemini_render_emits_enums ... ok
+test ai::tools::dispatch::tests::render_gemini_no_required_for_empty_params ... ok
+test ai::tools::dispatch::tests::render_gemini_types_are_uppercase ... ok
+test ai::tools::dispatch::tests::render_gemini_required_fields_correct ... ok
+test ai::tools::dispatch::tests::render_gemini_names_match_tools_slice ... ok
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1802 filtered out; finished in 0.00s
+cargo_exit=0
+== C. structural greps (each must print the stated number) ==
+enum Category                (1): 1
+five variants                (5): 5
+ToolDef literals            (39): 39
+categories assigned         (39): 39
+  Read                      (17): 17
+  Write                     (13): 13
+  Search                     (4): 4
+  Run                        (4): 4
+  Meta                       (1): 1
+mutates_state defined once   (1): 1
+mutates_state covers Run     (1+): 1
+category_of defined          (1): 1
+category_of reads TOOLS      (1+): 1
+memory param sets untouched  (1): 1
+no Category in enum_values   (0): 0
+exported from mod.rs        (1+): 1
+category_of exported         (1): 1
+five new tests               (5): 5
+checklist mentions category (1+): 1
+tool-count line unchanged    (1): 1
+README untouched             (0): 0
+schema.rs unwrap/panic       (0): 0
+defs.rs unwrap/panic         (0): 0
+== D. preservation: executor 235, config 92, isolation 9, doc_truth 10 ==
+daemon::executor::         test result: ok. 235 passed; 0 failed; 4 ignored; 0 measured; 1585 filtered out; finished in 1.10s
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1732 filtered out; finished in 0.00s
+daemon::stream             test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1816 filtered out; finished in 0.00s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== E. lib suite, three consecutive runs ==
+test result: ok. 1820 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.49s
+test result: ok. 1820 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.41s
+test result: ok. 1820 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 8.40s
+== F. gates ==
+fmt_exit=0
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.52s
+clippy_exit=0
+== G. no HOME litter from the suite ==
+real HOME run logs AFTER (==BEFORE): 0
+```
+
+**Self-check (run on the paste above):**
+
+```
+extracted bytes: 4167
+PASTE MATCH
+```
+
