@@ -6,40 +6,34 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: phase-03b — read-shell**
-(`docs/dev/milestones/M22-tool-surface/phase-03b-read-shell.md`, status: todo,
-drafted 2026-09-12). Dispatch with `/rexymcp:dispatch phase-03b`. Phase-03a —
-list-shells closed **approved_after_1 2026-09-12**; 01 and 02 likewise.
+**Active phase: none.** Phase-03b — read-shell closed **approved_first_try
+2026-09-13** (`docs/dev/milestones/M22-tool-surface/phase-03b-read-shell.md`,
+status: done). Next up is **03c — find-in-shells**, not yet drafted; run
+`/rexymcp:architect next` to draft it.
 
-Scope for 03b: `read_shell { shell, lines?, since_command?, filter? }` — core,
-`Category::Read`. 03a gave the model shell **ids**; this lets it **read** what
-a shell produced. Counts move to **41 tools: 29 core + 12 deferred**.
+`read_shell { shell, lines?, since_command?, filter? }` ships core +
+`Category::Read` over the asciicast log — **41 tools: 29 core + 12 deferred**.
+`src/shell/` is untouched: no protocol frame was added, because the daemon↔host
+wire has no way to ask for a live screen and the log needs none.
 
-**Split again at drafting, for the second time in this charter row.** 03a's row
-named three read-only tools and shipped one. Measuring the remaining two gave a
-seam: `read_shell` builds the *read-one-shell* primitive (registry lookup →
-cast path → `MetaIndex` → byte-range slice → clamp → filter → mask), and
-`find_in_shells` is that primitive in a loop plus match-context and a cap.
-Together ~580 lines, over the <500 guideline, and 03a needed three dispatches at
-~430. **03c** takes `find_in_shells` and reuses a proven reader.
+**M22's first phase with no bounce and no escalation**, and it is the
+measurement that 03a's two calibrations worked:
 
-**A design divergence found by measuring, recorded in the milestone README:**
-§ 2.5 calls `read_shell` a *"Screen or log slice"*, but **the screen is not
-reachable from the daemon.** The whole daemon↔host wire is `Subscribe | Input |
-Resize | Signal | Status` in, `Ok | Error | Chunk | Status | Exited` out — no
-frame asks for the screen grid, and `ShellScreen` lives in the host process.
-The log half needs no protocol change at all. **03b implements the log slice**
-and a criterion asserts `src/shell/` is untouched.
+- **Batching the enum-variant edits.** 03a `hard_fail`ed on
+  `VerifierFailurePersistent` because the tree cannot compile between adding a
+  variant and landing the last match arm. 03b enumerated the five
+  compiler-forced sites empirically at drafting and instructed one contiguous
+  batch — straight through, 251 turns, no escalation.
+- **Pinning the two compiler-invisible sites.** `summary()` ends in
+  `_ => String::new()` and `should_emit_tool_feedback()` is a `matches!` chain,
+  so a missing arm compiles clean and is silently wrong. Both arms landed first
+  try. No gate would have caught their absence; the criteria did.
 
-**Pre-injected, and this one is the lesson from 03a's `hard_fail`:** the five
-match sites the compiler forces were obtained *empirically* — by adding a
-throwaway variant, running `cargo build`, and reading the errors — and the doc
-tells the executor to edit all seven sites in **one batch** before running the
-verifier, because the tree cannot compile in between. **Two of the seven are
-sites the compiler cannot see**: `summary()` ends in `_ => String::new()` and
-`should_emit_tool_feedback()` is a `matches!` chain, so a missing arm compiles
-clean and is silently wrong. Both are pinned as criteria because no gate
-catches them.
+Noted at review rather than silently passed: three new `unsafe` blocks, all
+inside the `#[cfg(test)]` module in a `with_home` helper that takes
+`crate::test_home_guard()`. `read_shell`'s cast path is HOME-derived so its
+tests need an isolated HOME, and Edition 2024 makes `set_var` unsafe. Prod-scoped
+`unsafe` is **0** across all nine touched files.
 
 **PE signed off on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default
 also closed **approved_after_1 2026-09-12**; both of M22's closed phases bounced
@@ -104,8 +98,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:dispatch phase-03b`. Phases 03c–10 are not drafted;
-each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:architect next` drafts **phase-03c — find-in-shells**.
+Phases 03c–10 are not drafted; each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 

@@ -1,7 +1,7 @@
 # Phase 03b: `read_shell` — reading a shell's recorded output
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 03a (`list_shells`, which tells the model the ids this tool
 takes) and M20 (the asciicast log this reads). Both **done**.
 **Estimated diff:** ~400 lines incl. tests
@@ -1028,3 +1028,62 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 6b8285acc6f83a3bd4338c1f3011ec714a3c679e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-13
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash-NVFP4-Spark (via rexyMCP)
+- **Scope deviations:** none. `src/shell/` is untouched
+  (`git diff 6776c17c..HEAD --stat -- src/shell/` → 0 lines), so the log-slice
+  scoping held and no protocol frame was added.
+- **Calibration:** none new. This phase is the **evidence that 03a's two
+  calibrations worked** — see below.
+
+Re-verified independently at review: all four gates; the full lib suite
+**1835 passed, 0 failed**; `knowledge::shell` **15** (8 + 7);
+`daemon::executor::` **250**; `ai::tools` **22**; `doc_truth` **10**;
+`config::` **92**; `isolation` **9**; no HOME litter. Every acceptance
+criterion returns its pinned value, including all six `ToolDef` shape checks
+and the `exactly one required` param count.
+
+**Both mutation checks re-run by hand, under the spec's own mutants.**
+Mutation 1 (an out-of-range `since_command` silently returns everything) turns
+`read_shell_since_command_past_the_end_says_so` red alone — 14 passed, 1
+failed. Mutation 2 (an invalid filter regex falls back to an escaped literal)
+turns `read_shell_invalid_filter_regex_is_an_error` red alone — 14 passed, 1
+failed. Both reverted; tree left clean and 15 green.
+
+**The paste was re-extracted and diffed at review**: 4179 bytes, byte-identical
+to `/tmp/e2e-m22-03b.txt`, and every number inside it matches what this review
+measured separately.
+
+**The two calibrations from 03a both paid off, and this is the measurement.**
+
+1. **Batching the enum-variant edits.** 03a `hard_fail`ed on
+   `VerifierFailurePersistent` because the tree cannot compile between adding a
+   variant and landing the last match arm. This phase enumerated the five
+   compiler-forced sites empirically at drafting and instructed one contiguous
+   batch. **No `hard_fail`, no escalation** — 251 turns, straight through.
+2. **Pinning the two compiler-invisible sites.** `summary()` ends in
+   `_ => String::new()` and `should_emit_tool_feedback()` is a `matches!`
+   chain, so a missing arm compiles clean and is silently wrong. Both arms are
+   present (`grep` → 1 each). **No gate would have caught their absence**; the
+   criteria did, and the executor hit them first try.
+
+**One DoD box needs an explicit note rather than a silent pass: three new
+`unsafe` blocks.** They are at `shell.rs:424`, `:429` and `:432` — all inside
+the `#[cfg(test)]` module that begins at line 392, in a `with_home` helper that
+takes `crate::test_home_guard()` before touching the environment. `read_shell`
+resolves its cast path through `crate::config::shell_logs_dir()`, which is
+HOME-derived, so its tests need an isolated HOME; under Edition 2024
+`std::env::set_var` is `unsafe`, and this is the project's mandated idiom for
+exactly this case. **Production is clean**: prod-scoped `unsafe` is **0** in
+every one of the nine files this phase touched. Accepted as an
+idiom-mandated, test-only exception, recorded so the box is not silently
+ticked.
+
+**Spot-check beyond the mutants:** `read_shell_lines_clamps_to_the_tail`
+asserts both halves — `line-5`/`line-4` present **and** `line-1`/`line-3`
+absent — so a "first N" implementation fails it, and its second fixture pins
+the shorter-than-limit case. Not a vacuous test.
