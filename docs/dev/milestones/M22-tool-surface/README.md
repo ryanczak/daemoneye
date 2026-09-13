@@ -62,7 +62,8 @@ final surface, so they go last.
 | 03a | list-shells ([phase-03a-list-shells.md](phase-03a-list-shells.md)) — `list_shells { scope? }`, core + `Category::Read`; establishes the eleven-step wiring on one tool | done        |
 | 03b | read-shell ([phase-03b-read-shell.md](phase-03b-read-shell.md)) — `read_shell { shell, lines?, since_command?, filter? }` over the asciicast log; builds the read-one-shell primitive | done        |
 | 03c | find-in-shells ([phase-03c-find-in-shells.md](phase-03c-find-in-shells.md)) — `find_in_shells { pattern, scope? }`, 03b's reader in a loop over 03a's collector; completes the 03 row | done        |
-| 04 | shell-tools-lifecycle — `open_shell`, `close_shell`, `watch_shell` | todo (not drafted) |
+| 04a | shell-lifecycle ([phase-04a-shell-lifecycle.md](phase-04a-shell-lifecycle.md)) — `open_shell {}` + `close_shell { shell }`, both `Category::Run`; share the in-process-host test fixture | todo |
+| 04b | watch-shell — `watch_shell { shell, pattern?, timeout_secs }`, the blocking observer | todo (not drafted) |
 | 05 | send-input — `send_input`, approval-gated; every keystroke into the `"i"` log | todo (not drafted) |
 | 06 | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the `.meta.json` index | todo (not drafted) |
 | 07 | run-terminal-command-reshape — `shell?`/`host?`/`wait?`/`timeout_secs?`; retire `target_pane`, `retry_in_pane`, `background` | todo (not drafted) |
@@ -95,6 +96,18 @@ final surface, so they go last.
   three numbers that must move together. Expect a phase that adds tools to
   touch all three docs, and expect `doc_truth` to catch it when it doesn't —
   that gate exists because the README went three tools stale before it.
+
+- **`open_shell`'s two design parameters and `close_shell`'s signal escalation
+  all need `src/shell/` changes — measured at 04a drafting.** § 2.5 specifies
+  `open_shell { host?, label? }`, but `ShellRecord` has neither field, and
+  adding one is a **10-site** struct change across `registry.rs`, `session.rs`
+  and the knowledge module. `host` arrives with M21/M23, which must touch the
+  registry anyway; `label` belongs in that same change. **04a ships
+  `open_shell {}` with no parameters.** Separately, § 2.5 describes
+  `close_shell` as *"SIGHUP, then kill after grace"*, but the wire carries only
+  `Int | Term | Stop | Cont` — no `Hup`, no `Kill`, and `PtyShell::kill()` lives
+  in the host process, unreachable from the daemon. **04a sends `Term` and
+  reports what it observes**, escalation deferred to a protocol phase.
 
 - **`read_shell` reads the log, not the live screen — the screen is not
   reachable.** § 2.5 calls it a *"Screen or log slice"*, but the entire

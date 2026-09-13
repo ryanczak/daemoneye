@@ -6,38 +6,47 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-03c — find-in-shells closed **approved_after_1
-2026-09-13** (`docs/dev/milestones/M22-tool-surface/phase-03c-find-in-shells.md`,
-status: done). **This completes the 03 charter row** — `list_shells`,
-`read_shell`, `find_in_shells` all shipped. Next up is **04 —
-shell-tools-lifecycle** (`open_shell`, `close_shell`, `watch_shell`), not yet
-drafted; run `/rexymcp:architect next` to draft it.
+**Active phase: phase-04a — shell-lifecycle**
+(`docs/dev/milestones/M22-tool-surface/phase-04a-shell-lifecycle.md`, status:
+todo, drafted 2026-09-13). Dispatch with `/rexymcp:dispatch phase-04a`.
+Phase-03c closed **approved_after_1 2026-09-13**, completing the 03 charter row
+(`list_shells`, `read_shell`, `find_in_shells`).
 
-`find_in_shells { pattern, scope? }` is core + `Category::Read` — **42 tools:
-30 core + 12 deferred**, which is M22's headline tool count reached, though six
-pane tools still have to go in phase 09 and six more tools arrive first.
+Scope for 04a: `open_shell {}` + `close_shell { shell }`, both core and
+**`Category::Run`** — the first M22 tools that are not read-only. Counts move
+to **44 tools: 32 core + 12 deferred**.
 
-03c took **four dispatches**: a `BackendError` `hard_fail` when a network switch
-rebooted (infrastructure, no edits), a clean run, a bounce on bug-03c-1, and the
-fix. No architect code was written at any point.
+**Phase 04 split**, same measured-seam reasoning as 03: `open_shell` and
+`close_shell` are registry mutations with a socket side and **share the
+expensive part** — a real in-process PTY host fixture. `watch_shell` is a
+blocking observer with a timeout loop that spawns nothing and reuses 03b's
+reader, so it becomes **04b**.
 
-**bug-03c-1 was architect-side**: section E of the E2E block was
-`cargo test --lib 2>&1 | grep '^test result'`, which records *that* a run failed
-and destroys *which test*. One run in the filed evidence read
-`1840 passed; 1 failed` and nothing could say what broke. The block now keeps
-`... FAILED` lines and the `failures:` block. **Corollary worth carrying:** a
-supplementary clean rerun does not satisfy a three-consecutive-runs criterion —
-that criterion exists to catch intermittency, so when it fires, diagnose.
+**Two design divergences, both recorded in the milestone README, both because
+the field does not exist:**
 
-**The flake has no named root cause, and that is the honest outcome.** The
-investigation evidenced independence instead: 100 consecutive clean full-suite
-runs (file verified at review — exactly 100 lines, 100 clean, 0 failing), and
-the load-bearing claim re-checked independently — of 161 functions in `src/`
-touching `HOME`, the 5 without an in-body guard are all `Drop` impls on RAII
-structs holding `_lock` as a **field**, and Rust runs `Drop::drop` before
-dropping fields, so HOME is restored under the lock. No unguarded writer
-exists. Not reproduced in 110+ runs across the review and the investigation.
-Residual risk is bounded: the amended capture will name any recurrence.
+- § 2.5 specifies `open_shell { host?, label? }`. `ShellRecord` has **neither**,
+  and adding one is a **10-site** struct change across `src/shell/registry.rs`,
+  `session.rs` and the knowledge module — a blast radius every M22 phase has
+  stayed out of. `host` arrives with M21/M23, which must touch the registry
+  anyway, and `label` belongs in that same change. **04a ships `open_shell {}`
+  with no parameters**, pinned by a criterion.
+- § 2.5 describes `close_shell` as *"SIGHUP, then kill after grace"*. The wire
+  carries only `Int | Term | Stop | Cont`; `PtyShell::kill()` is host-side and
+  unreachable from the daemon. **04a sends `Term` and reports what it
+  observes** — no looping, no claimed success it did not see.
+
+**The bug-03a-1 trap is live here and is pre-answered in the spec:** no tool
+takes a `shell` id as a target for *running* a command until phase 07. What
+makes an opened shell useful today is the reuse rule — `shell_for_owner` picks
+the owner's **lowest-indexed** live, non-interactive, **non-dedicated** shell —
+which is why `open_shell` must create a non-dedicated one, and why the
+description has to carry the caveat that a new shell is used only if it is the
+lowest-numbered.
+
+**Also carried forward:** section E of the E2E block now preserves failure
+names, and the spec tells the executor that a failing run is a result to file
+and diagnose, not to re-run until green.
 
 **PE signed off on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default
 also closed **approved_after_1 2026-09-12**; both of M22's closed phases bounced
@@ -102,9 +111,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-04 —
-shell-tools-lifecycle**. Phases 04–10 are not drafted; each is drafted after
-its predecessor is approved.
+**Next step:** `/rexymcp:dispatch phase-04a`. Phases 04b–10 are not drafted;
+each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 
