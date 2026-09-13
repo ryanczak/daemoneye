@@ -6,47 +6,35 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: phase-04a — shell-lifecycle**
+**Active phase: none.** Phase-04a — shell-lifecycle closed
+**approved_first_try 2026-09-13**
 (`docs/dev/milestones/M22-tool-surface/phase-04a-shell-lifecycle.md`, status:
-todo, drafted 2026-09-13). Dispatch with `/rexymcp:dispatch phase-04a`.
-Phase-03c closed **approved_after_1 2026-09-13**, completing the 03 charter row
-(`list_shells`, `read_shell`, `find_in_shells`).
+done). Next up is **04b — watch-shell**, not yet drafted; run
+`/rexymcp:architect next` to draft it.
 
-Scope for 04a: `open_shell {}` + `close_shell { shell }`, both core and
-**`Category::Run`** — the first M22 tools that are not read-only. Counts move
-to **44 tools: 32 core + 12 deferred**.
+`open_shell {}` + `close_shell { shell }` ship core + `Category::Run` — M22's
+first non-read-only tools. **44 tools: 32 core + 12 deferred.** `src/shell/` is
+untouched: no `ShellSignal` variant, no `ShellRecord` field.
 
-**Phase 04 split**, same measured-seam reasoning as 03: `open_shell` and
-`close_shell` are registry mutations with a socket side and **share the
-expensive part** — a real in-process PTY host fixture. `watch_shell` is a
-blocking observer with a timeout loop that spawns nothing and reuses 03b's
-reader, so it becomes **04b**.
+**The honesty requirement is now enforced by a test.**
+`open_shell_returns_a_new_id` asserts `dedicated == false` — a dedicated shell
+can never be selected by `shell_for_owner`'s reuse rule, so the tool would
+return an id nothing could reach — **and** asserts the returned sentence
+contains `"lowest-numbered"`, the reuse caveat bug-03a-1 established. A
+description that overclaims now fails a test rather than waiting for review.
 
-**Two design divergences, both recorded in the milestone README, both because
-the field does not exist:**
+**The bug-03c-1 capture fix worked on its first outing:** section E of the
+filed transcript is three clean runs with failure names preserved.
 
-- § 2.5 specifies `open_shell { host?, label? }`. `ShellRecord` has **neither**,
-  and adding one is a **10-site** struct change across `src/shell/registry.rs`,
-  `session.rs` and the knowledge module — a blast radius every M22 phase has
-  stayed out of. `host` arrives with M21/M23, which must touch the registry
-  anyway, and `label` belongs in that same change. **04a ships `open_shell {}`
-  with no parameters**, pinned by a criterion.
-- § 2.5 describes `close_shell` as *"SIGHUP, then kill after grace"*. The wire
-  carries only `Int | Term | Stop | Cont`; `PtyShell::kill()` is host-side and
-  unreachable from the daemon. **04a sends `Term` and reports what it
-  observes** — no looping, no claimed success it did not see.
-
-**The bug-03a-1 trap is live here and is pre-answered in the spec:** no tool
-takes a `shell` id as a target for *running* a command until phase 07. What
-makes an opened shell useful today is the reuse rule — `shell_for_owner` picks
-the owner's **lowest-indexed** live, non-interactive, **non-dedicated** shell —
-which is why `open_shell` must create a non-dedicated one, and why the
-description has to carry the caveat that a new shell is used only if it is the
-lowest-numbered.
-
-**Also carried forward:** section E of the E2E block now preserves failure
-names, and the spec tells the executor that a failing run is a result to file
-and diagnose, not to re-run until green.
+**Two of the phase's criteria were mis-specified instruments — both mine,
+neither a defect.** One greped `close_shell_in` where the codebase (following
+`open_shell_with` / `run_in_shell_with`) named it `close_shell_with`; the other
+used a `sed` range whose `^    }` terminator does not close the function where
+assumed, so it counted 4 where 2 was pinned. Both properties verified correct
+with corrected greps. **That is the sixth and seventh mis-specified grep in
+M22** — every one caught by running the criteria rather than reasoning about
+them, and none ever a code defect. Worth stating plainly at milestone close as
+the milestone's dominant architect-side failure mode.
 
 **PE signed off on the ten-phase breakdown 2026-09-12.** Phase-01 — pty-default
 also closed **approved_after_1 2026-09-12**; both of M22's closed phases bounced
@@ -111,8 +99,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:dispatch phase-04a`. Phases 04b–10 are not drafted;
-each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:architect next` drafts **phase-04b — watch-shell**.
+Phases 04b–10 are not drafted; each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 

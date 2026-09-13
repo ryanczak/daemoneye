@@ -1,7 +1,7 @@
 # Phase 04a: `open_shell` and `close_shell` — the lifecycle pair
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 03a (`list_shells`, the module and the scope resolver) and M20
 (the registry and the PTY host). Both **done**.
 **Estimated diff:** ~450 lines incl. tests
@@ -976,3 +976,67 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 87992692ddb5eb39c23813308195c013ee28bbc0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-13
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash-NVFP4-Spark (via rexyMCP)
+- **Scope deviations:** none. `src/shell/` is untouched
+  (`git diff 56aa6956..HEAD --stat -- src/shell/` → 0 lines), so no
+  `ShellSignal` variant and no `ShellRecord` field were added, and
+  `grep -cE 'Hup|Kill' src/shell/proto.rs` is still **0**.
+- **Calibration:** two mis-specified criteria, both mine, both instrument
+  errors rather than defects — see below.
+
+Re-verified independently at review: all four gates; the full lib suite
+**1847 passed, 0 failed**; `knowledge::shell` **27** (21 + 6);
+`daemon::executor::` **262**; `ai::tools` **22**; `doc_truth` **10**;
+`config::` **92**; `isolation` **9**; no HOME litter. Tool counts moved
+together to **44 / 32 core**, with the old count line gone.
+
+**Both mutation checks re-run by hand**, each reddening exactly its named test
+(26 passed, 1 failed):
+
+- Deleting the readiness-failure rollback reddens
+  `open_shell_removes_the_record_when_readiness_fails` alone.
+- Replacing the `Owner::key()` comparison with an inner-string comparison
+  reddens `close_shell_refuses_another_owners_shell` alone — the
+  `Chat("a")`/`Ghost("a")` collision the key prefix exists to prevent.
+
+Both reverted; tree clean at 27 green.
+
+**The refactor-safety check again:** all **21** pre-existing `knowledge::shell`
+tests are **byte-identical** to their form at `56aa6956`, compared
+function-by-function, with exactly 6 added.
+
+**The paste** is 5414 bytes, byte-identical to `/tmp/e2e-m22-04a.txt`. Its
+section E shows **three clean runs under the amended, failure-preserving
+capture** — the bug-03c-1 fix doing its job on the first phase to use it.
+
+**The honesty requirement is enforced by a test, not just by prose.**
+`open_shell_returns_a_new_id` asserts `dedicated == false` (a dedicated shell
+can never be selected by `shell_for_owner`'s reuse rule, so the tool would
+return an id nothing could reach) **and** asserts the returned sentence
+contains `"lowest-numbered"` — the reuse caveat bug-03a-1 established as
+mandatory. A description that overclaims now fails a test.
+
+**Calibration — two criteria of mine were wrong instruments; neither was a
+defect.** Recorded because the phase doc's criteria block is read by future
+executors and both would mislead:
+
+1. `sed -n '/fn close_shell_in/,/^}/p' … | grep -c 'key()'` → **0**. The
+   function is `close_shell_with`, matching `open_shell_with` and the existing
+   `run_in_shell_with`; I invented `_in` from `list_shells_in`/`read_shell_in`,
+   and the codebase uses **both** conventions. With the right name the count is
+   **3** and the check is correct.
+2. `sed -n '/fn should_emit_tool_feedback/,/^    }/p' … | grep -cE 'OpenShell|CloseShell'`
+   → **4**, not the pinned 2. The `^    }` terminator does not close that
+   function where I assumed, so the 187-line range swallows a later one. Both
+   arms **are** in the `matches!` chain (verified by line number); the extra two
+   hits are from beyond the intended range.
+
+That is the **sixth and seventh** mis-specified grep in M22, every one caught by
+running the criteria rather than reasoning about them, and none ever a code
+defect. At milestone close this is worth stating plainly as the milestone's
+dominant architect-side failure mode.
