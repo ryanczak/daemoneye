@@ -1,7 +1,7 @@
 # Phase 04b: `watch_shell` — the blocking observer
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-04b-1.md`)
 **Depends on:** 03a (`list_shells`, the module and its registry seam), 03b
 (`read_shell`, the reader shape and its error sentences) and 04a
 (`open_shell`/`close_shell`, the in-process host fixture in
@@ -630,8 +630,11 @@ Each was run against the tree at drafting and returns the "now" value shown.
       → **0**, and the same range `grep -c 'read_output_since'` → **1 or
       more**.
 - [ ] **It does not trust the record's timestamp alone:**
-      `sed -n '/fn watch_shell_with/,/^}/p' src/daemon/executor/knowledge/shell.rs | grep -c 'parse_cast_name'`
-      → **1 or more**.
+      `grep -c 'parse_cast_name' src/daemon/executor/knowledge/shell.rs`
+      → **1 or more**. *(Corrected at review: the original pinned the call
+      inside `watch_shell_with`'s body, but it correctly lives in a helper —
+      a placement criterion where a behaviour criterion was meant. Architect
+      error; the property is satisfied.)*
 - [ ] **The third copy was folded, with no message change:**
       `grep -c 'fn live_shell_ids' src/daemon/executor/knowledge/shell.rs` →
       **1** (now `0`);
@@ -672,6 +675,27 @@ Each was run against the tree at drafting and returns the "now" value shown.
 - [ ] Full lib suite **1860 or more**, `0 failed`, on **three consecutive
       runs** (now **1847**).
 - [ ] All four gates pass.
+
+### Added at review 2026-09-13 (bug-04b-1) — each confirmed failing against the tree
+
+- [ ] **No lint-silencing shim:** `grep -c '#\[allow' src/daemon/executor/knowledge/shell.rs`
+      → **0** (now **1**), and
+      `git diff fa10352a..HEAD -- 'src/*.rs' | grep -cE '^\+.*#\[allow'` → **0**
+      (now **1**).
+- [ ] **The dead constant is gone:**
+      `grep -rn 'WATCH_DEFAULT_SECS' --include=*.rs src/ | wc -l` → **0** (now
+      **1** — its own definition, no reader).
+- [ ] **No new production `expect`:**
+      `sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/knowledge/shell.rs | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe '`
+      → **0** (now **2**; the module was at 0 before this phase, and the
+      phase's own § D transcript records the 2).
+- [ ] **A kept lazy-regex `expect` carries the crate's marker:**
+      `grep -c 'INVARIANT' src/daemon/executor/knowledge/shell.rs` → **1 or
+      more** (now **0**). See `src/daemon/utils/sudo.rs:36`,
+      `src/tmux/ansi.rs:59`, `src/ai/backends/gemini.rs:115`.
+- [ ] **The fix adds nothing:** `cargo test --lib` → **1861 passed, 0 failed**
+      — **not 1862**. `cargo test --lib 'knowledge::shell'` → **37**,
+      unchanged. A rising count is scope creep, not progress.
 
 ## Test plan
 
@@ -1639,3 +1663,52 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f0a50ddfe13d913709eeacef44a2acce8dfc2ff1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-13
+
+- **Verdict:** bounced (bug-04b-1)
+- **Bounces:** 1
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (two runs: a
+  `hard_fail` on the enum-variant wall, then a resume)
+- **Scope deviations:** none — every file touched was authorized.
+- **Calibration:** one architect-side criterion was wrong and is corrected in
+  place (the `parse_cast_name` grep pinned the call's *placement* inside
+  `watch_shell_with` rather than the *property*; the call correctly lives in a
+  helper). That is the twelfth mis-specified instrument in M22 and the first
+  of them that is a placement-over-behaviour error rather than a broken
+  `sed`/`grep` — `WORKFLOW.md` § "Specs pin behavior, not rendering" names
+  exactly this class. Worth raising at milestone close.
+
+**What was verified, independently rather than read from the transcript.**
+All four gates re-run as separate invocations: `cargo fmt --all --check`,
+`cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`
+(after `touch src/lib.rs` to force a real re-check) and `cargo test` — green,
+lib **1861 passed, 0 failed**, `doc_truth` 10, `isolation` 9.
+
+**Both mutation checks were re-run by hand, not read.** Mutation 1 (consume to
+EOF: `let consumed = len;`) reddens
+`read_output_since_stops_at_the_last_complete_line`; mutation 2 (initial
+offset `0`) reddens `watch_shell_ignores_output_written_before_the_call` at
+`shell.rs:2266`. Both revert green. The tests discriminate.
+
+**The end-to-end capture is genuine.** The 142-line A–H transcript in the
+first `(end-to-end verification)` entry is complete through section H, records
+three consecutive lib runs at 1861, and shows no `HOME` litter (shell logs 3
+before, 3 after). Note the entry-anchoring: the doc's self-check command takes
+the **last** matching entry, and a later second-capture entry now holds a
+7-line snippet as its fence-1, so the command as written no longer selects the
+full transcript. The transcript itself is not in doubt — extracted and checked
+at review — but the anchor is fragile; prefer one capture entry per phase.
+
+**The executor reported its own failing number.** § D of that transcript prints
+`prod unwrap/panic knowledge  (0): 2` against a criterion that pins 0. It was
+not massaged, hidden, or re-run until favourable. That is the standard this
+milestone has been asking for, and it is why this bounce is two four-line
+cleanups rather than a search.
+
+**Bounced on:** `bugs/bug-04b-1.md` — a `#[allow(dead_code)]` on a constant
+with no reader, and two new production `expect()`s where the module had zero.
+Both are DoD boxes, one is a stated acceptance criterion, and neither is a
+correctness defect: the `:780` control-flow invariant genuinely holds today
+(`WatchOutcome::Pattern` is returned only from inside
+`if re.as_ref().is_some_and(…)`, verified at review).
