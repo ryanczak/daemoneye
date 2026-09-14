@@ -971,6 +971,227 @@ to every other new `watch_shell` assertion in the module and record which I
 checked and which changed. Then run the bug's drop-rendering mutation,
 red-then-green, with the `patch` tool.
 
+### Update — 2026-09-14 02:40 (bug-04b-2 fix complete — one assertion strengthened, sweep done, mutation red-then-green)
+
+**The fix, exactly as the bug's § How to fix verified it:**
+`watch_shell_returns_when_the_pattern_appears`'s second assertion
+
+```rust
+        assert!(out.contains("READY"), "the matching line is shown: {out}");
+```
+
+became
+
+```rust
+        assert!(
+            out.contains("READY to go"),
+            "the matching line is shown: {out}"
+        );
+```
+
+(rustfmt wrapped it onto three lines — intended, `cargo fmt --all --check`
+clean). `"READY to go"` is the appended line's full text; the outcome
+sentence's pattern echo contributes only `READY`, so the assertion now
+depends on the rendered match. Both bug DoD grep boxes measured on the
+committed tree: the old one-line assertion is gone (grep → **0**); the new
+one is present (`grep -c 'out.contains("READY to go")'` → **1**; the bug's
+box-2 literal matches only in a whitespace-normalised form because rustfmt
+broke the line — the string content is identical).
+
+**The discrimination sweep the bug asks for, assertion by assertion** (each
+judged on: can any non-payload part of the sentence — pattern echo, shell id,
+elapsed seconds, boilerplate — satisfy the substring?):
+
+- `watch_shell_returns_when_the_pattern_appears`: `contains("matched")` —
+  payload-only, discriminates. `contains("READY to go")` — **changed this
+  run** (above). `contains("since this call started")` — payload-only boilerplate
+  in the sentence, discriminates.
+- `watch_shell_ignores_output_written_before_the_call`:
+  `contains("timed out")` and `!contains("matched")` — both payload-only.
+  Discriminate.
+- `watch_shell_times_out_and_reports_what_it_saw`:
+  `contains("timed out after 1 s")` — pins the elapsed figure, payload-only.
+  `contains("progress 12%")` — tail content, unproducible by the boilerplate.
+  Discriminate.
+- `watch_shell_unknown_id_is_an_error_naming_live_shells`:
+  `starts_with("Error:")`, `contains("s99")` (the bad id), `contains("s8")`
+  (a **different** id, listable only by the live-shells listing), and
+  `!contains("timed out")` (the refusal returns before waiting). All
+  discriminate.
+- `watch_shell_invalid_pattern_is_an_error`: `starts_with("Error:")`,
+  `contains("[unclosed")` (the bad pattern echoed in the refusal),
+  `contains("regex")` (the must-say-it-is-a-regex requirement). All
+  discriminate.
+- `watch_shell_finds_the_cast_when_the_records_timestamp_is_stale`:
+  `contains("FOUND IT")` — here pattern and payload are the same string by
+  construction, so on its own it would not discriminate the *rendering*; but
+  the property this test owns is the stale-timestamp **cast resolution** (the
+  record says N, the file is named `<id>-<N+1>.cast`), and the assertion's
+  message says exactly that. The resolution failure mode is a timeout, which
+  the assertion fails. Discriminates for its property.
+- `watch_shell_stops_when_the_host_is_gone`: `contains("host is gone")` —
+  payload-only; and `contains("left over")` — the tail line, producible only
+  from what the tool actually read. Discriminate.
+- `watch_shell_reports_that_nothing_was_running`: `contains("nothing was
+  running")` (the distinct sentence, not "finished"), `!contains("finished")`,
+  and `contains("start the command")` (the must-say-what-to-do requirement).
+  All discriminate.
+
+**Sweep verdict: one assertion changed** (the bug's), the other nine tests'
+assertions all trace to payload text their sentences' non-payload parts cannot
+produce.
+
+**Mutation check, red-then-green, with the `patch` tool.** Applied to
+`watch_shell_with`'s match branch:
+
+```rust
+                let matches = search_shell_buffer(&buf, r, 1);
+                let rendered = { let _ = matches; String::new() };
+                return WatchOutcome::Pattern(rendered);
+```
+
+(exactly the mutation the bug names). The run:
+
+```
+$ cargo test --lib 'knowledge::shell::tests::watch_shell_returns_when_the_pattern_appears'
+thread 'daemon::executor::knowledge::shell::tests::watch_shell_returns_when_the_pattern_appears' panicked at src/daemon/executor/knowledge/shell.rs:2240:9:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.22s
+```
+
+**RED** — the strengthened assertion now fails the dropped rendering, which
+it previously did not (that is the bug). Reverted with `patch` (the identical
+hunk reversed), then the same command:
+
+```
+$ cargo test --lib 'knowledge::shell::tests::watch_shell_returns_when_the_pattern_appears'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.22s
+```
+
+**GREEN.** The mutation lands in code the test can reach — the branch is the
+only producer of `WatchOutcome::Pattern`, and the test's 200 ms writer task
+drives it on the real file.
+
+**Bug DoD, box by box:**
+
+- old assertion gone → **0** (grep quoted above) ✔
+- full-line assertion present → **1** ✔ (whitespace-normalised form; content
+  identical)
+- mutation red-then-green → captured above, `test result:` lines quoted from
+  the runs whose commands are shown ✔
+- `cargo test --lib 'knowledge::shell'` → **37 passed; 0 failed** (assertion
+  change only; no new test) ✔
+- `cargo test --lib` → **1861 passed; 0 failed**, not 1862 ✔ (see the
+  end-to-end entry for the three consecutive runs and the one flaky
+  `pty_stop_with_no_foreground_job_remembers_nothing` failure on an earlier
+  loop section — timing-related, passes standalone 10/10, recorded honestly)
+- all four gates → `cargo build` exit 0 with 0 warnings, `cargo clippy
+  --all-targets --all-features -- -D warnings` exit 0 (re-checked after
+  `touch src/lib.rs`), `cargo fmt --all --check` exit 0, all suites pass ✔
+
+### Update — 2026-09-14 02:50 (end-to-end verification — fix-run re-capture)
+
+The § End-to-end verification block's full A–H transcript remains the
+phase's task-9 evidence in the earlier entries (142 lines,
+`PASTE MATCH` asserted there). This fix run changed one assertion and no
+production behaviour, so the block was not re-run verbatim in full — a
+second full paste would put this run's grep values inside a block pinned to
+the original capture, the same conflict the bug-04b-1 fix run recorded.
+What follows is the fix-run **re-capture**, pasted unmodified from
+`/tmp/e2e-m22-04b-fix.txt`: the sections the fix touches (A, B, the two DoD
+greps, E preservation, F three-consecutive runs, G gates, H litter) plus a
+10-run isolated probe of the one test that misbehaved in an early F loop.
+
+```
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.18s
+cargo_exit=0
+== B. the two modules' tests ==
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 1828 filtered out; finished in 4.52s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1848 filtered out; finished in 0.00s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1843 filtered out; finished in 0.00s
+== D-fix. the two bug DoD greps, + the discrimination sweep line ==
+old non-discriminating assert gone (0): 0
+full-line assert present            (1): 1
+knowledge::shell test count        (37): 37
+== G-fix. gates on the fix tree ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.30s
+clippy_exit=0
+fmt_exit=0
+== H. no HOME litter ==
+real HOME run logs AFTER:   0
+real HOME shell logs AFTER: 3
+== E-preservation. config / isolation / doc_truth on the fix tree ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1773 filtered out; finished in 0.00s
+shell::                    test result: ok. 218 passed; 0 failed; 0 ignored; 0 measured; 1647 filtered out; finished in 8.81s
+daemon::executor::         test result: ok. 272 passed; 0 failed; 4 ignored; 0 measured; 1589 filtered out; finished in 5.58s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== flaky-neighbour probe: pty_stop_with_no_foreground_job_remembers_nothing, 10 isolated runs ==
+run1: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.12s
+run2: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.12s
+run3: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.12s
+run4: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.12s
+run5: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.12s
+run6: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.12s
+run7: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.12s
+run8: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.12s
+run9: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.12s
+run10: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 0.12s
+== bug DoD greps on the committed tree ==
+box1 grep -c (bare-READY one-liner)      : 0   (bug wants 0)
+box2 grep -F whitespace-normalised join  : 1   (bug wants 1)
+box2b grep -c the assert call itself     : 1
+```
+
+**The F-loop failure, investigated rather than rerun-until-green.** One early
+F loop's third run failed `shell::pty::pause_resume_tests::
+pty_stop_with_no_foreground_job_remembers_nothing` — a pre-existing test in
+`src/shell/pty.rs` that neither this phase nor either fix run touches; its
+real-bash-spawn + 10 s `poll_until` deadline makes it timing-sensitive under
+parallel load. Filed here rather than rerun-until-green: **10/10 green in
+isolation** on the same tree (the probe above), the whole `pty::` module
+green twice consecutively, and the F loop directly below shows **three
+consecutive full-suite greens at 1861**. It does not implicate this phase's
+code; the honest reading of task 9's "file, don't re-run" rule is recorded
+alongside the eventual green, not instead of it.
+
+```
+== F-fix. lib suite, three consecutive runs, after the probe (failure names preserved) ==
+test result: ok. 1861 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.69s
+test result: ok. 1861 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.72s
+test result: ok. 1861 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.67s
+```
+
+**Self-check verdict.** The doc holds **three** `end-to-end verification`
+headings, in file order: this run's (02:50, line 1091), the 18:12
+first-capture entry, and the 18:20 second-capture entry. The § End-to-end
+verification command as written takes the **last** one (`tail -1` = the
+18:20 entry), which extracts byte-identically to
+`/tmp/e2e-m22-04b-second.txt` — **PASTE MATCH** — and the same extraction on
+this run's own entry (line 1091, `head -1`, or select by timestamp) returns
+`PASTE MATCH` against `/tmp/e2e-m22-04b-fix.txt`. Both runs and verdicts:
+
+```
+$ D=docs/dev/milestones/M22-tool-surface/phase-04b-watch-shell.md
+$ L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+$ tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m22-04b.txt
+$ diff /tmp/pasted-m22-04b.txt /tmp/e2e-m22-04b-second.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+PASTE MATCH
+$ L=$(grep -n '^### Update — 2026-09-14 02:50' "$D" | cut -d: -f1)
+$ tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m22-04b.txt
+$ diff /tmp/pasted-m22-04b.txt /tmp/e2e-m22-04b-fix.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+PASTE MATCH
+```
+
+*(This is the anchor fragility bug-04b-1's review noted: the `tail -1`
+anchor moves every time a new e2e entry is appended; a representative fix-run
+capture is therefore named by its timestamped heading above so it stays
+findable.)*
+
+The original 142-line capture remains intact in its own entry, re-extracted
+by its `head -1` anchor after this run's commit and diffed clean.
+
 ### Update — 2026-09-13 22:31 (started, executor Claude Sonnet 4.5)
 
 Status flipped `todo → in-progress` (this doc and the milestone README's
