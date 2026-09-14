@@ -136,7 +136,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Current AI tools
 
-**45 tools: 33 core + 12 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
+**46 tools: 34 core + 12 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
 `src/ai/tools/defs.rs` — `core` means `None` (rendered on every request); a group
 name means the tool is omitted until `load_tools` pulls the group in. **Note the
 asymmetry**: for scripts, runbooks and memory the *write* side is core while the
@@ -161,6 +161,7 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `open_shell` | core | Start a new PTY shell and return its id. The result names the reuse caveat: commands reuse this session's lowest-numbered open shell, so the new shell may not be the one the next command lands in |
 | `close_shell` | core | End one of this session's PTY shells by id: sends a terminate signal and reports whether the host actually went away, refusing another session's or a ghost job's shell |
 | `watch_shell` | core | Block on a live PTY shell's new output: with a pattern, until it matches (returns the matching line with context); without one, until the shell's running command finishes — or report nothing-running / paused / exited / gone / timeout |
+| `send_input` | core | Approval-gated write of raw text into a live PTY shell's input — type a command at a shell's prompt or answer a program's stdin prompt, the panel naming what the shell is doing (a shell at its prompt will run the text as a command). No exit code, no wait, no output: read the effect with `read_shell` or `watch_shell`. Every byte lands in the shell's cast log as an `"i"` event, which no read tool surfaces. A ghost shell may not use it unless the agent `ToolPolicy` **explicitly** allows it |
 | `recall_context` | core | Retrieve archived turns compacted out of live context — by BM25 query (ranked), by turn range, or both. Optional `scope: "all"` searches every session; cross-session hits are labeled. The answer to an `[elided: …]` placeholder or a too-coarse epoch summary. |
 | `load_tools` | core | Pull one or more deferred groups into the active tool set for the rest of the session. `groups` is an array of group names. |
 | `write_script` | core | Create/update a script in `~/.daemoneye/scripts/` (chmod 700); approval-gated with a diff |

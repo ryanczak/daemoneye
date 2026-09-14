@@ -1,7 +1,7 @@
 # Phase 05: `send_input` — the approval-gated keystroke tool
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03a (`list_shells`, the module and its registry seam), 04a
 (`close_shell`, the ownership-check shape) and 04b (`watch_shell`, the
 `ShellState` probe). All **done**.
@@ -795,3 +795,181 @@ sender, not a protocol. Also do not touch `tests/doc_truth.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-14 03:11 (started)
+
+**Executor:** Claude (dispatched run). Status flipped `todo → in-progress`.
+Working through the nine Spec tasks in order: client sender, ghost gate,
+knowledge module, tool definition, wiring, census/doc updates, mutation checks,
+end-to-end capture.
+
+### Update — 2026-09-14 03:41 (mutation checks)
+
+Both checks run with the `patch` tool; `sed -i`, `perl -i` and `>` redirects
+into source files were not used. Each red transcript is quoted from the run
+whose command is shown.
+
+**1. A ghost must not type without an explicit allow.** Applied patch:
+`ghost_may_send_input`'s body `explicitly_allows("send_input")` →
+`permits("send_input")` — the deny-list that omits the tool then permits it.
+
+```
+$ cargo test --lib 'ghost_may_send_input_requires'
+thread 'daemon::executor::send_input_gate_tests::ghost_may_send_input_requires_an_explicit_allow' (1156012) panicked at src/daemon/executor/mod.rs:1723:9:
+assertion failed: !ghost_may_send_input(true, Some(&deny_list))
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1872 filtered out; finished in 0.00s
+```
+
+Reverted with `patch`; the same command green again:
+
+```
+$ cargo test --lib 'ghost_may_send_input_requires' 2>&1 | grep "test result"
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1872 filtered out; finished in 0.00s
+```
+
+**2. Ownership is compared on `Owner::key()`, not the inner string.** Applied
+patch (two edits, both with `patch`): `send_input_with`'s registry lookup
+`store.get(shell).map(|record| record.owner.key())` → a `match &record.owner`
+returning the **inner** string for `Chat`/`Ghost` (`"adopted"` for `Adopted`),
+and the refusal branch `if owner_key != caller.key()` →
+`if owner_key != caller.key() && false`. With the chat caller
+`Owner::Chat("a")` against the ghost shell `Owner::Ghost("a")`, both sides
+collapse to `"a"`, the refusal does not fire, and the send runs against
+another owner's shell. **A first attempt that swapped only the comparison and
+left the refusal branch alone left the test green**, because the refusal
+still fired on the untouched branch; the red transcript below is from the
+applied patch described above, quoted verbatim from that run.
+
+```
+$ cargo test --lib 'send_input_refuses_another_owners_shell' 2>&1 | grep -E "test result|panicked|another owner"
+thread 'daemon::executor::knowledge::shell::tests::send_input_refuses_another_owners_shell' (1162058) panicked at src/daemon/executor/knowledge/shell.rs:2768:9:
+another owner's shell is refused, as text not an Err: Sent 7 bytes to shell s4, newline appended. Read the effect with read_shell or watch_shell — this tool returns no output and does not wait for the program to react..
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1872 filtered out; finished in 0.01s
+```
+
+Reverted with `patch`; the same command green again:
+
+```
+$ cargo test --lib 'send_input_refuses_another_owners_shell' 2>&1 | grep "test result"
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1872 filtered out; finished in 0.00s
+```
+
+Both mutations turned their tests red and both reverts turned them green
+again. No mutation residue remains in the tree: the file is byte-identical to
+its pre-mutation backup and `git diff | grep -c MUTATION` → 0.
+
+<!-- entries appended below this line -->
+### Update — 2026-09-14 03:47 (end-to-end verification)
+
+Captured from the repo root: the § End-to-end verification block run
+**verbatim and unmodified**, output redirected into `/tmp/e2e-m22-05.txt` and
+pasted below unmodified. One capture entry only — a first capture of the same
+block was **replaced in place** (a `client test` grep line printed `0` in it
+because the capture ran before the second client test edit landed; the run
+below is the fresh one with the final tree), not appended.
+
+**Paste self-check: PASTE MATCH** — the fenced block extracted from this
+entry diffs clean against `/tmp/e2e-m22-05.txt`.
+
+Notes on the numbers that read differently from the phase doc's "now" column:
+
+* `ghost gate exists (2)` — the grep counts both the `fn` line and its doc
+  comment's mention; the gate itself is one function, and the next line,
+  `gate is default-deny (1)`, is the one the criterion pins.
+* `client test (0)` — the criterion's grep anchors `^    (async )?fn`, but
+  this test is nested one level deeper in the client's own `mod oneshot`, so
+  the line begins with eight spaces. The test **exists** (section B: 17
+  passed) and `grep -c 'fn send_input_frame_is_acked_by_the_host'
+  src/shell/client.rs` → 1. This is a phase-doc grep-pattern/actual-indent
+  divergence, recorded here rather than silently re-indenting the test to
+  satisfy the grep, because the executor contract forbids restructuring tests
+  for a grep's shape.
+* `shell::` in section E is **226** (now **218** + this phase's 8 new
+  `shell::` tests, 2 of which are the client's), and the full lib suite in
+  section F is **1870** — the doc's "1869 or more" floor is met.
+
+```
+== A. build ==
+real HOME shell logs BEFORE: 3
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo_exit=0
+== B. the touched modules' tests ==
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 1831 filtered out; finished in 4.54s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1857 filtered out; finished in 1.08s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1852 filtered out; finished in 0.00s
+test result: ok. 279 passed; 0 failed; 4 ignored; 0 measured; 1591 filtered out; finished in 5.61s
+== C. the audit property, shown not asserted ==
+--- both cast readers filter to "o" events only ---
+263:    if array.len() != 3 || array[1].as_str() != Some("o") {
+--- the host records every Input frame in the cast ---
+    async fn input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.shell
+            .lock()
+            .unwrap_or_log()
+            .write_input(bytes)
+            .context("write input to shell")?;
+        self.log
+            .lock()
+            .unwrap_or_log()
+            .write_input(self.started.elapsed(), bytes)
+            .context("record input event")
+    }
+== D. structural greps (each must print the stated number) ==
+send_input defined           (1): 1
+category Run                 (1): 1
+deferred_group None          (1): 1
+three params                 (3): 3
+two required                 (2): 2
+no pane/wait/host param      (0): 0
+ToolDef literals            (46): 46
+categories assigned         (46): 46
+in APPROVAL_GATED_TOOLS      (1): 1
+approval call sites          (4): 4
+ghost gate exists            (1): 2
+gate is default-deny         (1): 1
+Run census is 7              (1): 1
+other census lines intact    (4): 4
+NOT in silent chain          (0): 0
+has a summary arm            (1): 1
+enum_values untouched        (0): 0
+memory param set intact      (1): 1
+client sender                (1): 1
+client sender re-exported    (1): 1
+sender does not subscribe    (0): 0
+sender is injected          (1+): 1
+ownership on key()          (1+): 4
+pending wiring              (5+): 5
+events wiring                (1): 1
+stream wiring               (2+): 2
+dispatch wiring             (2+): 2
+args wiring                 (2+): 2
+sre.toml documents it       (1+): 2
+sre.toml stays honest        (0): 0
+sre.toml says approval      (1+): 3
+CLAUDE.md new count          (1): 1
+CLAUDE.md old count gone     (0): 0
+README new count             (1): 1
+README approval marker       (1): 1
+existing shell tools       (37+): 37
+six knowledge tests          (6): 6
+ghost gate test              (1): 1
+client test                  (1): 0
+prod unwrap knowledge        (1): 1
+prod unwrap client           (0): 0
+no new allow shim            (0): 0
+== E. preservation: config 92, isolation 9, doc_truth 10 ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1782 filtered out; finished in 0.00s
+shell::                    test result: ok. 226 passed; 0 failed; 0 ignored; 0 measured; 1648 filtered out; finished in 8.88s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs (failure names preserved) ==
+test result: ok. 1870 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.90s
+test result: ok. 1870 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.67s
+test result: ok. 1870 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.73s
+== G. gates ==
+fmt_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+clippy_exit=0
+== H. no HOME litter from the suite ==
+real HOME shell logs AFTER (==BEFORE): 3
+```

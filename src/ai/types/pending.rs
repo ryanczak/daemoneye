@@ -317,6 +317,15 @@ pub enum PendingCall {
         timeout_secs: u64,
         pattern: Option<String>,
     },
+    /// Write text into a live PTY shell's input (M22 phase-05). Approval-
+    /// gated on every call; `enter` appends the newline (default true).
+    SendInput {
+        id: String,
+        thought_signature: Option<String>,
+        shell: String,
+        text: String,
+        enter: bool,
+    },
     TmuxControl {
         id: String,
         thought_signature: Option<String>,
@@ -505,6 +514,20 @@ impl PendingCall {
                 name: "watch_shell".to_string(),
                 arguments: args_to_string(
                     serde_json::json!({"shell": shell, "timeout_secs": timeout_secs, "pattern": pattern}),
+                ),
+            },
+            PendingCall::SendInput {
+                id,
+                thought_signature,
+                shell,
+                text,
+                enter,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "send_input".to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"shell": shell, "text": text, "enter": enter}),
                 ),
             },
             PendingCall::ReadFile {
@@ -947,6 +970,7 @@ impl PendingCall {
             PendingCall::DeleteScript { id, .. } => id,
             PendingCall::WatchPane { id, .. } => id,
             PendingCall::WatchShell { id, .. } => id,
+            PendingCall::SendInput { id, .. } => id,
             PendingCall::ReadFile { id, .. } => id,
             PendingCall::EditFile { id, .. } => id,
             PendingCall::WriteRunbook { id, .. } => id,
@@ -1100,6 +1124,7 @@ impl PendingCall {
             // none, and an empty summary here is the decided value for it.
             PendingCall::OpenShell { .. } => String::new(),
             PendingCall::CloseShell { shell, .. } => shell.clone(),
+            PendingCall::SendInput { shell, .. } => shell.clone(),
             PendingCall::ListPanes { .. } => String::new(),
             PendingCall::CloseBackgroundWindow { pane_id, .. } => pane_id.clone(),
             PendingCall::SpawnGhost { runbook, .. } => runbook.clone(),
@@ -1189,6 +1214,7 @@ impl PendingCall {
             PendingCall::DeleteScript { .. } => "delete_script",
             PendingCall::WatchPane { .. } => "watch_pane",
             PendingCall::WatchShell { .. } => "watch_shell",
+            PendingCall::SendInput { .. } => "send_input",
             PendingCall::ReadFile { .. } => "read_file",
             PendingCall::EditFile { .. } => "edit_file",
             PendingCall::WriteRunbook { .. } => "write_runbook",

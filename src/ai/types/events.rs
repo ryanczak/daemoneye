@@ -225,6 +225,16 @@ pub enum AiEvent {
         pattern: Option<String>,
         thought_signature: Option<String>,
     },
+    /// Write text into a live PTY shell's input (M22 phase-05). Approval-
+    /// gated; the result is the host's ack, not the program's reaction —
+    /// reading that is `read_shell` / `watch_shell`.
+    SendInput {
+        id: String,
+        shell: String,
+        text: String,
+        enter: bool,
+        thought_signature: Option<String>,
+    },
     TmuxControl {
         id: String,
         action: String,

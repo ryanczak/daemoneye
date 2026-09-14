@@ -31,6 +31,29 @@ pub async fn send_signal(sock: &Path, sig: ShellSignal, timeout: Duration) -> an
     read_ack(sock, &mut reader, timeout).await
 }
 
+/// Write `bytes` into the shell hosted at `sock`. Returns when the host has
+/// acknowledged the write, which is not the same as the program having
+/// reacted — reading what happened is `read_shell`'s or `watch_shell`'s job.
+pub async fn send_input(sock: &Path, bytes: &[u8], timeout: Duration) -> anyhow::Result<()> {
+    let stream = UnixStream::connect(sock)
+        .await
+        .with_context(|| format!("connecting to shell socket at {}", sock.display()))?;
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+
+    let wire = encode(ShellRequest::Input {
+        bytes: bytes.to_vec(),
+    })
+    .context("encoding Input frame")?;
+    writer
+        .write_all(wire.as_bytes())
+        .await
+        .context("sending Input frame")?;
+    writer.flush().await.context("flushing Input frame")?;
+
+    read_ack(sock, &mut reader, timeout).await
+}
+
 /// The shell's current state, rows, cols and pid.
 pub async fn status(sock: &Path, timeout: Duration) -> anyhow::Result<ShellResponse> {
     let stream = UnixStream::connect(sock)
@@ -609,12 +632,14 @@ mod tests {
         #[derive(Debug, Clone, PartialEq, Eq)]
         enum Call {
             Signal(ShellSignal),
+            Input(Vec<u8>),
             Status,
         }
 
         struct SignalBackend {
             calls: Mutex<Vec<Call>>,
             status: ShellResponse,
+            fail_input: std::sync::atomic::AtomicBool,
         }
 
         impl SignalBackend {
@@ -622,17 +647,27 @@ mod tests {
                 Arc::new(Self {
                     calls: Mutex::new(Vec::new()),
                     status,
+                    fail_input: std::sync::atomic::AtomicBool::new(false),
                 })
             }
             fn calls(&self) -> Vec<Call> {
                 self.calls.lock().unwrap().clone()
             }
+            fn fail_input(&self, yes: bool) {
+                self.fail_input
+                    .store(yes, std::sync::atomic::Ordering::SeqCst);
+            }
         }
 
         #[async_trait::async_trait]
         impl ShellBackend for SignalBackend {
-            async fn input(&self, _bytes: &[u8]) -> anyhow::Result<()> {
-                Ok(())
+            async fn input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+                self.calls.lock().unwrap().push(Call::Input(bytes.to_vec()));
+                if self.fail_input.load(std::sync::atomic::Ordering::SeqCst) {
+                    Err(anyhow::anyhow!("input rejected"))
+                } else {
+                    Ok(())
+                }
             }
             async fn resize(&self, _rows: u16, _cols: u16) -> anyhow::Result<()> {
                 Ok(())
@@ -755,6 +790,32 @@ mod tests {
                 server.backend.calls(),
                 vec![Call::Status],
                 "exactly one Status dispatch"
+            );
+        }
+
+        #[tokio::test]
+        async fn send_input_frame_is_acked_by_the_host() {
+            let server = start_server(ShellResponse::Ok).await;
+            send_input(&server.path, b"hello\n", Duration::from_secs(5))
+                .await
+                .expect("the host acknowledges the input write");
+            send_input(&server.path, b"", Duration::from_secs(5))
+                .await
+                .expect("an empty write is still acknowledged");
+        }
+
+        #[tokio::test]
+        async fn send_input_frame_reports_a_host_error() {
+            let server = start_server(ShellResponse::Ok).await;
+            server.backend.fail_input(true);
+            let err = send_input(&server.path, b"hello\n", Duration::from_secs(5)).await;
+            assert!(
+                err.is_err(),
+                "an Error frame surfaces as an Err, not an ack: {err:?}"
+            );
+            assert!(
+                format!("{:#}", err.unwrap_err()).contains("rejected"),
+                "the host's message reaches the caller"
             );
         }
     }

@@ -772,6 +772,21 @@ where
                         pattern,
                     });
                 }
+                AiEvent::SendInput {
+                    id,
+                    shell,
+                    text,
+                    enter,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::SendInput {
+                        id,
+                        thought_signature,
+                        shell,
+                        text,
+                        enter,
+                    });
+                }
                 AiEvent::TmuxControl {
                     id,
                     action,

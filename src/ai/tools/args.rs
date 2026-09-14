@@ -162,6 +162,14 @@ pub(super) struct WatchShellArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct SendInputArgs {
+    shell: String,
+    text: String,
+    #[serde(default = "default_enter")]
+    enter: bool,
+}
+
+#[derive(Deserialize)]
 pub(super) struct EditFileArgs {
     path: String,
     #[serde(default = "default_edit")]
@@ -297,6 +305,10 @@ pub(super) fn default_unnamed() -> String {
 
 pub(super) fn default_300() -> u64 {
     300
+}
+
+pub(super) fn default_enter() -> bool {
+    true
 }
 
 pub(super) fn default_edit() -> String {
@@ -602,6 +614,21 @@ impl ToolArgs for WatchShellArgs {
             shell: self.shell,
             timeout_secs: self.timeout_secs,
             pattern: self.pattern,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for SendInputArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::SendInput {
+            id: id.to_string(),
+            shell: self.shell,
+            text: self.text,
+            enter: self.enter,
             thought_signature: ts,
         }
     }

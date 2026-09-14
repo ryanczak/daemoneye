@@ -33,6 +33,7 @@ pub static APPROVAL_GATED_TOOLS: &[&str] = &[
     "edit_file",
     "run_terminal_command",
     "schedule_command",
+    "send_input",
     "tmux_control",
     "write_runbook",
     "write_script",
@@ -933,6 +934,43 @@ pub static TOOLS: &[ToolDef] = &[
         ],
         deferred_group: None,
         category: Category::Read,
+    },
+    ToolDef {
+        name: "send_input",
+        description: "Write text into a live PTY shell's input as if typed — the way to \
+                      answer a program's stdin prompt or drive an interactive \
+                      process the daemon is already running (e.g. typing a \
+                      command at a shell you opened, or responding to a \
+                      `(y/n)` question). It does **not** run the text through a \
+                      command wrapper: there is no exit code, it does not wait \
+                      for the program to react, and it returns **no output** — \
+                      read the effect afterwards with read_shell or watch_shell. \
+                      A shell sitting at its prompt will run the text as a \
+                      command, without that command's approval, capture or exit \
+                      code. Requires user approval; a ghost shell may not use \
+                      it unless its agent ToolPolicy explicitly allows it.",
+        params: &[
+            ParamDef {
+                name: "shell",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Shell id to type into (e.g. \"s3\"). Get ids from list_shells.",
+            },
+            ParamDef {
+                name: "text",
+                ty: ParamTy::Str,
+                required: true,
+                description: "The characters to write, exactly as if typed.",
+            },
+            ParamDef {
+                name: "enter",
+                ty: ParamTy::Bool,
+                required: false,
+                description: "Append a newline. Default true.",
+            },
+        ],
+        deferred_group: None,
+        category: Category::Run,
     },
     ToolDef {
         name: "load_tools",

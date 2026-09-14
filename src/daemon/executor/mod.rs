@@ -138,6 +138,25 @@ pub(crate) fn ghost_may_use_tmux_control(
     !is_ghost || policy.is_some_and(|p| p.explicitly_allows("tmux_control")) // ghost needs an explicit allow
 }
 
+/// Whether a ghost shell may use `send_input`.
+///
+/// Typing into a PTY displaces whatever the shell is doing and covers the same
+/// no-auto-approve ground as `tmux_control`, so the default is deny — a ghost
+/// needs an explicit agent `ToolPolicy` allow. Deliberately **not** routed
+/// through `prompt_and_await_approval`, whose ghost branch auto-approves any
+/// non-sudo string via `GhostPolicy::is_safe`.
+///
+/// This is a deliberate second copy of `ghost_may_use_tmux_control`, not an
+/// oversight: two gates are under the three-caller abstraction point in
+/// `STANDARDS.md` § 2.2, and a third collapses them into one
+/// `ghost_may_use(tool, is_ghost, policy)`.
+pub(crate) fn ghost_may_send_input(
+    is_ghost: bool,
+    policy: Option<&crate::agents::policy::ToolPolicy>,
+) -> bool {
+    !is_ghost || policy.is_some_and(|p| p.explicitly_allows("send_input")) // ghost needs an explicit allow
+}
+
 /// True when this session may run a **foreground** command.
 ///
 /// Foreground execution is deliberately outside the container — the user is
@@ -929,6 +948,83 @@ where
             .await?,
         )),
 
+        PendingCall::SendInput {
+            id,
+            shell,
+            text,
+            enter,
+            ..
+        } => {
+            // 1. Ghost gate — before any approval prompt, so a ghost is never
+            //    shown a panel it cannot use. Default-deny: the agent
+            //    `ToolPolicy` must *explicitly* allow `send_input`, the same
+            //    rule `tmux_control` applies.
+            if !ghost_may_send_input(is_ghost, tool_policy.as_ref()) {
+                return Ok(ToolCallOutcome::Result(
+                    "send_input is denied for ghost shells unless the agent's tool \
+                     policy explicitly allows it."
+                        .to_string(),
+                ));
+            }
+
+            // 2. What the shell is doing, for the approval panel. `Idle`
+            //    genuinely means "at its prompt" — a program waiting on stdin
+            //    reports `Running` — so the note names the it-will-be-run-as-
+            //    a-command hazard instead of refusing it.
+            let target_note = match crate::shell::status(
+                &crate::shell::socket_path(shell),
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            {
+                Ok(crate::shell::ShellResponse::Status { state, .. }) => {
+                    knowledge::input_target_note(Some(state))
+                }
+                _ => knowledge::input_target_note(None),
+            };
+
+            // 3. Approval. `ghost_policy` is `None` on purpose, the reason
+            //    `tmux_control`'s arm gives: step 1 already made the ghost
+            //    decision, and passing the live policy here would re-enter the
+            //    helper's auto-approve branch. `target_pane_hint` is `None`
+            //    because this is a PTY shell, not a tmux pane.
+            let approval_cmd = format!(
+                "send_input into shell {}: {:?}{} — {}",
+                shell,
+                text,
+                if *enter { " (newline appended)" } else { "" },
+                target_note
+            );
+            match prompt_and_await_approval(
+                ApprovalRequest {
+                    id: id.as_str(),
+                    cmd: &approval_cmd,
+                    background: false,
+                    target_pane_hint: None,
+                },
+                session_id,
+                None,
+                tx,
+                rx,
+            )
+            .await?
+            {
+                Ok(_cmd_id) => {}
+                Err(outcome) => return Ok(outcome),
+            }
+
+            // 4. Execute.
+            Ok(ToolCallOutcome::Result(
+                knowledge::send_input(
+                    shell,
+                    text,
+                    *enter,
+                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
+                )
+                .await,
+            ))
+        }
+
         PendingCall::FindInPanes { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
             knowledge::find_in_panes(cache, chat_pane, pattern, scope.as_deref()).await,
         )),
@@ -1603,6 +1699,37 @@ mod tmux_control_gate_tests {
             deny: None,
         };
         assert!(ghost_may_use_tmux_control(true, Some(&policy)));
+    }
+}
+
+#[cfg(test)]
+mod send_input_gate_tests {
+    use super::ghost_may_send_input;
+    use crate::agents::policy::ToolPolicy;
+
+    #[test]
+    fn ghost_may_send_input_requires_an_explicit_allow() {
+        assert!(
+            ghost_may_send_input(false, None),
+            "non-ghost needs no policy"
+        );
+        assert!(
+            !ghost_may_send_input(true, None),
+            "a ghost with no policy is denied"
+        );
+        let deny_list = ToolPolicy {
+            allow: None,
+            deny: Some(vec!["read_pane".to_string()]),
+        };
+        // The tool is permitted by the policy, but not *explicitly allowed* —
+        // `permits` would get this case wrong.
+        assert!(deny_list.permits("send_input"));
+        assert!(!ghost_may_send_input(true, Some(&deny_list)));
+        let allow_list = ToolPolicy {
+            allow: Some(vec!["send_input".to_string()]),
+            deny: None,
+        };
+        assert!(ghost_may_send_input(true, Some(&allow_list)));
     }
 }
 

@@ -66,6 +66,7 @@ pub fn dispatch_tool_event(
         "open_shell" => dispatch::<OpenShellArgs>(id, args, ts),
         "close_shell" => dispatch::<CloseShellArgs>(id, args, ts),
         "watch_shell" => dispatch::<WatchShellArgs>(id, args, ts),
+        "send_input" => dispatch::<SendInputArgs>(id, args, ts),
         "tmux_control" => dispatch::<TmuxControlArgs>(id, args, ts),
         "edit_file" => dispatch::<EditFileArgs>(id, args, ts),
         "write_runbook" => dispatch::<WriteRunbookArgs>(id, args, ts),
@@ -262,6 +263,7 @@ mod tests {
                 "open_shell" => json!({}),
                 "close_shell" => json!({"shell": "s3"}),
                 "watch_shell" => json!({"shell": "s3", "timeout_secs": 5, "pattern": "x"}),
+                "send_input" => json!({"shell": "s3", "text": "y", "enter": false}),
                 "load_tools" => json!({"groups": ["agents"]}),
                 _ => json!({}),
             }
@@ -663,8 +665,8 @@ mod tests {
     fn every_tool_has_a_category() {
         assert_eq!(
             TOOLS.len(),
-            45,
-            "tool count should match the 33 core + 12 deferred claim"
+            46,
+            "tool count should match the 34 core + 12 deferred claim"
         );
         for t in TOOLS {
             assert!(
@@ -684,7 +686,7 @@ mod tests {
         assert_eq!(counts.get(&Category::Read), Some(&21), "Read count");
         assert_eq!(counts.get(&Category::Write), Some(&13), "Write count");
         assert_eq!(counts.get(&Category::Search), Some(&4), "Search count");
-        assert_eq!(counts.get(&Category::Run), Some(&6), "Run count");
+        assert_eq!(counts.get(&Category::Run), Some(&7), "Run count");
         assert_eq!(counts.get(&Category::Meta), Some(&1), "Meta count");
         assert_eq!(counts.values().sum::<usize>(), TOOLS.len());
     }

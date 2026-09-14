@@ -957,6 +957,151 @@ fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
         ids
     })
 }
+// ---------------------------------------------------------------------------
+// send_input (M22 phase-05)
+// ---------------------------------------------------------------------------
+
+/// How long `send_input` may wait for the host to acknowledge the write.
+/// Same reasoning as `SIGNAL_TIMEOUT`, and the same value: the ack is the
+/// socket round-trip, not the program reacting.
+const INPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The words the approval panel shows about what the shell is doing — the
+/// `input_target_note` sentence for the `send_input` panel's `cmd` line.
+///
+/// The `Idle` wording is the honest hazard, not a refusal: a program waiting
+/// on stdin reports `Running` through this wire, so `Idle` really does mean
+/// the shell is at its prompt and whatever arrives will be run as a command —
+/// without `run_terminal_command`'s approval text, capture or exit code. The
+/// approving user is told that; refusing would block a legitimate use
+/// (`send_input` to a prompt-less shell is exactly how you drive the shell
+/// itself).
+pub fn input_target_note(state: Option<crate::shell::ShellState>) -> String {
+    match state {
+        Some(crate::shell::ShellState::Running) => {
+            "shell is running a program, so the input goes to that program (e.g. \
+             answering its stdin prompt); it is NOT executed as a shell command"
+                .to_string()
+        }
+        Some(crate::shell::ShellState::Idle) => {
+            "shell is at its prompt, so the input WILL be run as a shell command, \
+             without run_terminal_command's approval, capture or exit code"
+                .to_string()
+        }
+        Some(crate::shell::ShellState::Paused) => {
+            "shell's job is stopped; the input will sit unread until the job \
+             resumes"
+                .to_string()
+        }
+        Some(crate::shell::ShellState::Exited) => {
+            "shell reports exited, so it may be gone and nothing will read the \
+             input"
+                .to_string()
+        }
+        None => "shell state could not be probed, so it may be gone and nothing will \
+             read the input"
+            .to_string(),
+    }
+}
+
+/// Write `text` (plus a newline when `enter`) into one of `caller`'s live PTY
+/// shells and return the sentence the model reads.
+///
+/// The public form uses the daemon's registry and the standard input timeout;
+/// the `_with` form takes the registry, the timeout and the send step,
+/// mirroring the `open_shell` / `open_shell_with` split. Injecting `send` is
+/// what makes the newline and the absolute-wrong-target assertions exact
+/// checks on the bytes rather than inferences from a message.
+pub async fn send_input(shell: &str, text: &str, enter: bool, caller: &Owner) -> String {
+    send_input_with(
+        crate::shell::registry(),
+        shell,
+        text,
+        enter,
+        caller,
+        INPUT_TIMEOUT,
+        |bytes| async move {
+            crate::shell::send_input(&socket_path(shell), &bytes, INPUT_TIMEOUT).await
+        },
+    )
+    .await
+}
+
+/// `send_input` with the registry, timeout and send step injected.
+pub(super) async fn send_input_with<S, Fut>(
+    reg: &ShellRegistry,
+    shell: &str,
+    text: &str,
+    enter: bool,
+    caller: &Owner,
+    input_timeout: Duration,
+    send: S,
+) -> String
+where
+    S: Fn(Vec<u8>) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let _ = input_timeout;
+    // Ownership first, and on `Owner::key()` rather than the inner string: a
+    // chat session and a ghost job can share an id string, and the kinds are
+    // what the cap groups, so they are what the owner check must compare.
+    let owner_in_registry: Option<String> = with_shells(reg, |store| {
+        store.get(shell).map(|record| record.owner.key())
+    });
+    let Some(owner_key) = owner_in_registry else {
+        let live = live_shell_ids(reg);
+        return if live.is_empty() {
+            format!(
+                "Error: no shell with id {shell:?} is in the registry (no shells are \
+                 live — call list_shells to confirm)."
+            )
+        } else {
+            format!(
+                "Error: no shell with id {shell:?} is in the registry. Live shell ids: \
+                 {}. Call list_shells to refresh.",
+                live.join(", ")
+            )
+        };
+    };
+    if owner_key != caller.key() {
+        return format!(
+            "Error: shell {shell} is not yours (it belongs to {owner_key}), so this \
+             session cannot type into it. If it needs input, the session that \
+             owns it does that; list_shells shows which shells are whose."
+        );
+    }
+    let mut bytes = text.as_bytes().to_vec();
+    if enter {
+        // `\n`, not `\r` or `\r\n`: the same terminator `wrap_command` sends,
+        // which is how every command in this codebase reaches a shell.
+        bytes.push(b'\n');
+    }
+    if let Err(e) = send(bytes).await {
+        return format!(
+            "Error: shell {shell} did not accept the input, so nothing was typed: \
+             {}. The write is not half-delivered (the host acks the whole frame \
+             or rejects it); check the shell with list_shells and retry.",
+            format_err_chain(&e)
+        );
+    }
+    format!(
+        "Sent {} byte{} to shell {}{}{}.",
+        text.len() + usize::from(enter),
+        if text.len() + usize::from(enter) == 1 {
+            ""
+        } else {
+            "s"
+        },
+        shell,
+        if enter {
+            ", newline appended"
+        } else {
+            ", no newline"
+        },
+        ". Read the effect with read_shell or watch_shell — this tool returns no \
+         output and does not wait for the program to react."
+    )
+}
 // open_shell + close_shell (M22 phase-04a)
 // ---------------------------------------------------------------------------
 
@@ -2487,5 +2632,245 @@ mod tests {
             out, "100% done\nnext",
             "the last write of a rewritten line wins: {out:?}"
         );
+    }
+
+    #[test]
+    fn input_target_note_names_the_prompt_hazard_when_idle() {
+        let idle = input_target_note(Some(crate::shell::ShellState::Idle));
+        assert!(
+            idle.contains("prompt") && idle.contains("shell command"),
+            " Idle must say the text will be run as a shell command: {idle}"
+        );
+        let running = input_target_note(Some(crate::shell::ShellState::Running));
+        assert!(
+            running.contains("program") && running.contains("NOT"),
+            "Running must say the input goes to the running program: {running}"
+        );
+        assert_ne!(
+            idle, running,
+            "a note that says the same thing in every state tells the approving \
+             user nothing"
+        );
+        assert!(
+            input_target_note(Some(crate::shell::ShellState::Paused)).contains("stopped"),
+            "Paused names the stopped job: {}",
+            input_target_note(Some(crate::shell::ShellState::Paused))
+        );
+        assert!(
+            input_target_note(Some(crate::shell::ShellState::Exited)).contains("gone"),
+            "Exited says the shell may be gone: {}",
+            input_target_note(Some(crate::shell::ShellState::Exited))
+        );
+        assert!(
+            input_target_note(None).contains("could not be probed"),
+            "a failed probe says so: {}",
+            input_target_note(None)
+        );
+    }
+
+    #[tokio::test]
+    async fn send_input_appends_a_newline_by_default() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert(&reg, 3, Owner::Chat("caller".into()), NOW);
+        let captured: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+        let out = send_input_with(
+            &reg,
+            "s3",
+            "hello",
+            true,
+            &Owner::Chat("caller".into()),
+            Duration::from_secs(5),
+            |bytes| {
+                let cap = &captured;
+                async move {
+                    cap.lock().unwrap().push(bytes);
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        assert!(
+            out.starts_with("Sent") && out.contains("s3"),
+            "the report names the shell and what was sent: {out}"
+        );
+        assert!(
+            out.contains("newline appended"),
+            "the newline is reported: {out}"
+        );
+        assert_eq!(
+            captured.lock().unwrap().as_slice(),
+            [b"hello\n".to_vec()],
+            "exit: true appends exactly one \\n — a length cannot tell it from \\r, \
+             so the bytes are asserted whole"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_input_without_enter_sends_no_newline() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert(&reg, 3, Owner::Chat("caller".into()), NOW);
+        let captured: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+        let out = send_input_with(
+            &reg,
+            "s3",
+            "hello",
+            false,
+            &Owner::Chat("caller".into()),
+            Duration::from_secs(5),
+            |bytes| {
+                let cap = &captured;
+                async move {
+                    cap.lock().unwrap().push(bytes);
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        assert!(
+            out.contains("no newline"),
+            "the absence of the newline is reported: {out}"
+        );
+        assert_eq!(
+            captured.lock().unwrap().as_slice(),
+            [b"hello".to_vec()],
+            "exit: false sends the text alone, no terminator"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_input_refuses_another_owners_shell() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        // Same inner string "a", different owner kind — the shape that breaks
+        // a comparison on the inner string instead of `Owner::key()`.
+        insert(&reg, 4, Owner::Ghost("a".into()), NOW);
+        let sent: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
+        let out = send_input_with(
+            &reg,
+            "s4",
+            "whoami",
+            true,
+            &Owner::Chat("a".into()),
+            Duration::from_secs(5),
+            |_bytes| {
+                sent.store(true, Ordering::SeqCst);
+                async { Ok(()) }
+            },
+        )
+        .await;
+        assert!(
+            out.starts_with("Error:"),
+            "another owner's shell is refused, as text not an Err: {out}"
+        );
+        assert!(out.contains("s4"), "the refused id is named: {out}");
+        assert!(
+            has_record(&reg, "s4"),
+            "a refusal must not remove the shell from the registry"
+        );
+        assert!(
+            !sent.load(Ordering::SeqCst),
+            "the send must never have been attempted across owners"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_input_unknown_id_is_an_error_naming_live_shells() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert(&reg, 5, Owner::Chat("caller".into()), NOW);
+        let sent: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
+        let out = send_input_with(
+            &reg,
+            "s99",
+            "echo hi",
+            false,
+            &Owner::Chat("caller".into()),
+            Duration::from_secs(5),
+            |_bytes| {
+                sent.store(true, Ordering::SeqCst);
+                async { Ok(()) }
+            },
+        )
+        .await;
+        assert!(
+            out.starts_with("Error:"),
+            "an unknown id is error text, not a panic and not an Err: {out}"
+        );
+        assert!(
+            out.contains("s99") && out.contains("s5"),
+            "the unknown id and the live ids are both named: {out}"
+        );
+        assert!(out.contains("list_shells"));
+        assert!(!sent.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn send_input_text_never_reaches_read_shell() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        spawn_in_process_host(ShellId::from_index(3))
+            .await
+            .expect("host binds the socket");
+        insert(&reg, 3, Owner::Chat("caller".into()), NOW);
+        let out = send_input_with(
+            &reg,
+            "s3",
+            "SENTINEL-NOT-IN-OUTPUT",
+            false,
+            &Owner::Chat("caller".into()),
+            Duration::from_secs(5),
+            |bytes| async move {
+                crate::shell::send_input(&socket_path("s3"), &bytes, Duration::from_secs(5)).await
+            },
+        )
+        .await;
+        assert!(
+            !out.starts_with("Error"),
+            "the real path accepted the write: {out}"
+        );
+        // The host writes its `.cast` under the `HOME` it inherited at spawn
+        // (see spawn_with_cast, whose tempdir homes both the PTY and the log);
+        // the test's `lifecycle_home()` dir holds none of it by construction.
+        // The point of the test is what the *read* side can see, so the two
+        // real casts that record the write are compared, not the dir the
+        // test's HOME-derriving cast_path names.
+        let stray = find_stray_cast("SENTINEL-NOT-IN-OUTPUT");
+        let recorded = std::fs::read_to_string(std::path::PathBuf::from(&stray))
+            .unwrap_or_else(|_| panic!("reading the cast the input landed in: {stray}"));
+        assert!(
+            recorded.contains("SENTINEL-NOT-IN-OUTPUT"),
+            "the \"i\" event is really written to the cast"
+        );
+        assert!(
+            !read_shell("s3", None, None, None).contains("SENTINEL-NOT-IN-OUTPUT"),
+            "the read tools filter to \"o\" events, so typed text must never surface"
+        );
+    }
+
+    /// The most recent temp dir holding a `.cast` that records `sentinel`.
+    fn find_stray_cast(sentinel: &str) -> String {
+        let mut candidates: Vec<(std::time::SystemTime, String)> = Vec::new();
+        let _ = std::fs::read_dir("/tmp").map(|rd| {
+            for entry in rd.flatten() {
+                let p = entry.path().join("s3.cast");
+                if let Ok(s) = std::fs::read_to_string(&p)
+                    && s.contains(sentinel)
+                {
+                    let t = entry
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    candidates.push((t, p.to_string_lossy().into_owned()));
+                }
+            }
+        });
+        // The assertion above guarantees at least one; pick the newest.
+        candidates
+            .into_iter()
+            .max_by(|a, b| a.0.cmp(&b.0))
+            .map(|(_, p)| p)
+            .unwrap_or_default()
     }
 }
