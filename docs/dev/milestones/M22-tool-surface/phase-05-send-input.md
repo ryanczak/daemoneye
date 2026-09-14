@@ -1,7 +1,7 @@
 # Phase 05: `send_input` — the approval-gated keystroke tool
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 03a (`list_shells`, the module and its registry seam), 04a
 (`close_shell`, the ownership-check shape) and 04b (`watch_shell`, the
 `ShellState` probe). All **done**.
@@ -601,7 +601,7 @@ Each was run against the tree at drafting and returns the "now" value shown.
       `send_input_text_never_reaches_read_shell_in_a_reachable_cast`
       (`1 passed; 1 failed`) and reverting greens it (`2 passed`). The
       production-path half survives in the original test.
-- [ ] **No collateral in `src/shell/log.rs`:**
+- [x] **No collateral in `src/shell/log.rs`:**
       `git diff e99eca21..HEAD --stat -- src/shell/log.rs` prints **nothing**
       (now `36 ++++` — see `bugs/bug-05-2.md`), and
       `cargo test --lib 'shell::log'` → **17** (now **18**).
@@ -1870,3 +1870,66 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 061937a12b1e8a355b79568dda77d8ed1e388798
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-14
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bug-05-1, bug-05-2 — both `closed`)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (three runs:
+  437 + 324 + 49 turns)
+- **Scope deviations:** one, now reverted — `bug-05-2`'s probe code in
+  `src/shell/log.rs`. The file is byte-identical to `e99eca21` again.
+- **Calibration:** **three architect-side instrument errors on this phase**,
+  all corrected in place: `grep -c 'fn ghost_may_send_input'` matched the
+  test name as a superstring; the client-test criterion pinned a four-space
+  indent where the test lives in a nested `mod` at eight; and
+  `cargo test --lib 'shell::'` is a **substring** filter that also selects
+  `daemon::executor::knowledge::shell::tests::*`, so a "226 unchanged" box
+  conflated two modules and would have moved on a clean fix. That is **six**
+  across M22.
+
+**`send_input` ships.** `{ shell, text, enter? }` — core, `Category::Run`,
+approval-gated, **46 tools: 34 core + 12 deferred**. All four gates re-run at
+review as separate invocations with clippy after `touch src/lib.rs`:
+`cargo test --lib` → **1871 passed, 0 failed**; `knowledge::shell` 44,
+`shell::log` 17, `shell::client` 17, `daemon::executor::` 280, `ai::tools`
+22, `config::` 92, `doc_truth` 10, `isolation` 9.
+
+Every acceptance criterion re-run: **all pass**, including both halves of the
+approval gate (the `APPROVAL_GATED_TOOLS` entry *and* the file's
+`prompt_and_await_approval` call sites at 4), the census touching only the
+`Run` line, and the deliberate inversion — `SendInput` **absent** from the
+`should_emit_tool_feedback` chain and **present** in `summary()`, which no
+gate checks and which points the opposite way from the four phases before it.
+
+**Four mutations re-run by hand across the three runs, never read:**
+
+- `explicitly_allows` → `permits` in `ghost_may_send_input` reddens the
+  default-deny test (`mod.rs:1727`).
+- Stripping the owner kind prefix reddens the cross-owner refusal
+  (`shell.rs:2764`).
+- Widening the **shipped** `"o"` filter at `log.rs:263` reddens
+  `send_input_text_never_reaches_read_shell_in_a_reachable_cast`
+  (`1 passed; 1 failed` at `shell.rs:2865`), green on revert — run once with
+  the probe present and again after its removal, which is what proves the
+  probe was never load-bearing.
+- The same filter against the *original* test left it green — the defect
+  `bug-05-1` was filed for.
+
+**The phase's headline safety property is now genuinely pinned.** Typed input
+is recorded as an `"i"` event by a real host and cannot be surfaced by any
+read tool, and breaking the filter breaks a test. Both halves are covered:
+the production path by a real in-process host via `find_stray_cast`, the read
+side by a hand-built cast under the test's own `HOME` read through the
+`read_shell_in` registry seam.
+
+**Both bounces were worth making and neither was a code defect in the tool.**
+`bug-05-1` was a vacuous assertion on the one claim the phase exists to make;
+`bug-05-2` was a reasoned deviation from an explicit authorization, which is
+the kind worth correcting precisely because it was reasoned. The `send_input`
+implementation itself never changed across either.
+
+**One nit carried forward, still not fixed:** the
+`// open_shell + close_shell (M22 phase-04a)` banner at
+`src/daemon/executor/knowledge/shell.rs` lost its opening `// ---` rule back
+in 04b. Cosmetic, no DoD box; phase 06 or 07 can restore it in passing.

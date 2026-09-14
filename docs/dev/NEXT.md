@@ -6,9 +6,36 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: M22 phase-05 — send-input**
-(`docs/dev/milestones/M22-tool-surface/phase-05-send-input.md`, status: todo,
-drafted 2026-09-14). Dispatch with `/rexymcp:dispatch phase-05`.
+**Active phase: none.** Phase-05 — send-input closed **approved_after_2
+2026-09-14** (`docs/dev/milestones/M22-tool-surface/phase-05-send-input.md`,
+status: done; `bugs/bug-05-1.md` and `bugs/bug-05-2.md` both `closed`). Next
+up is **06 — shell-history**, not yet drafted; run `/rexymcp:architect next`
+to draft it.
+
+`send_input { shell, text, enter? }` ships core + `Category::Run`,
+**approval-gated** — **46 tools: 34 core + 12 deferred**. Both halves of the
+gate are real and pinned: the `APPROVAL_GATED_TOOLS` entry *and* the file's
+`prompt_and_await_approval` call sites at 4. A ghost needs an **explicit**
+allow (`ghost_may_send_input`, mirroring `ghost_may_use_tmux_control`); a
+deny-list that merely omits the tool is not enough.
+
+**The safety property is genuinely pinned now**, which took both bounces to
+get right. Typed input is recorded as an `"i"` event by a real host and no
+read tool can surface it — the production half via a real in-process host,
+the read half via a hand-built cast under the test's own `HOME` read through
+the `read_shell_in` registry seam. Widening the shipped `"o"` filter at
+`log.rs:263` reddens it; that was re-run at review with and without the
+probe.
+
+**Neither bounce was a code defect in the tool** — the `send_input`
+implementation never changed across either. `bug-05-1` was a vacuous
+assertion on the one claim the phase exists to make (it passed with the
+rendered read replaced entirely, because `read_shell` consults the global
+registry while the test built a local one). `bug-05-2` was probe code
+committed into a file the bug put off-limits — **a reasoned deviation, not a
+slip**: the run's own summary said *"Pre-patching this tree's shipped filter
+was the honest form and I skipped it."* That is the kind worth correcting,
+because an authorization only works if it is not negotiable.
 
 Phase-04b — watch-shell closed **approved_after_2 2026-09-14**
 (`docs/dev/milestones/M22-tool-surface/phase-04b-watch-shell.md`, status:
@@ -230,8 +257,18 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:dispatch phase-05`. Phases 06–10 are not drafted;
-each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:architect next` drafts **phase-06 — shell-history**.
+Phases 06–10 are not drafted; each is drafted after its predecessor is
+approved.
+
+**Owed at milestone close, now at three occurrences — fold it.** Six
+architect-side instrument errors across M22, and the deeper version has hit
+three times: a criterion pinning a test's **name** where its *discriminating
+power* was what mattered (04b's `bug-04b-2`, 05's `bug-05-1`, and the
+`shell::` substring conflation). `WORKFLOW.md` § "Specs pin behavior, not
+rendering" covers the class and is not being followed. Proposed fold: **for
+any test whose job is to pin a safety or negative property, the phase doc
+must name the mutation that makes it red — not just the test's name.**
 
 **Carried out of M24, still open:**
 
