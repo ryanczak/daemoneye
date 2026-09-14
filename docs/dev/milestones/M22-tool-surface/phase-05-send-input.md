@@ -1,7 +1,7 @@
 # Phase 05: `send_input` — the approval-gated keystroke tool
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-05-1.md`)
 **Depends on:** 03a (`list_shells`, the module and its registry seam), 04a
 (`close_shell`, the ownership-check shape) and 04b (`watch_shell`, the
 `ShellState` probe). All **done**.
@@ -491,8 +491,10 @@ Each was run against the tree at drafting and returns the "now" value shown.
       (now **3**). *(The list entry alone would hand a keystroke tool an
       uncapped budget, so neither half alone is enough.)*
 - [ ] **The ghost gate exists and is default-deny:**
-      `grep -c 'fn ghost_may_send_input' src/daemon/executor/mod.rs` → **1**
-      (now `0`), and
+      `grep -cE '^pub\(crate\) fn ghost_may_send_input' src/daemon/executor/mod.rs`
+      → **1** (now `0`) — *(corrected at review: the original dropped the
+      anchor, so the test name `ghost_may_send_input_requires_an_explicit_allow`
+      matched too and it read 2. Architect error, no defect.)*, and
       `sed -n '/fn ghost_may_send_input/,/^}/p' src/daemon/executor/mod.rs | grep -c 'explicitly_allows'`
       → **1** (now `0`). The behaviour itself is pinned by
       `ghost_may_send_input_requires_an_explicit_allow` and by mutation 1 —
@@ -556,8 +558,10 @@ Each was run against the tree at drafting and returns the "now" value shown.
       → **6** (now `0`);
       `grep -cE '^    fn (ghost_may_send_input_requires_an_explicit_allow)' src/daemon/executor/mod.rs`
       → **1** (now `0`);
-      `grep -cE '^    (async )?fn (send_input_frame_is_acked_by_the_host)' src/shell/client.rs`
-      → **1** (now `0`).
+      `grep -cE '^\s*(async )?fn send_input_frame_is_acked_by_the_host' src/shell/client.rs`
+      → **1** (now `0`) — *(corrected at review: the original pinned a
+      four-space indent, but the test lives in a nested `mod` at eight. It
+      exists and passes. Architect error, no defect.)*
 - [ ] No new `unsafe` / `unwrap` / `expect` / `panic!` in **production** code:
       `sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/knowledge/shell.rs | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe '`
       → **1**, unchanged — the one marker-carrying lazy-regex `expect`; and
@@ -578,6 +582,22 @@ Each was run against the tree at drafting and returns the "now" value shown.
       `pty_stop_with_no_foreground_job_remembers_nothing` is the known flake —
       record it and re-run.
 - [ ] All four gates pass.
+
+### Added at review 2026-09-14 (bug-05-1) — confirmed failing against the tree
+
+- [ ] **The safety-property test actually tests the property.** Widening the
+      cast reader's filter at `src/shell/log.rs:263` to
+      `!matches!(array[1].as_str(), Some("o") | Some("i"))` must turn
+      `send_input_text_never_reaches_read_shell` **red**. Against the tree
+      today it stays **green** (`1 passed`) — the assertion never reaches a
+      cast file, because `read_shell` reads the process-global registry while
+      the test builds a local one, and the host's cast lives in a different
+      directory than `cast_path` names under the test's `HOME`. Both halves
+      are shown in `bugs/bug-05-1.md`.
+- [ ] **The production-path half survives:** the test still proves a real host
+      writes the `"i"` event to its cast.
+- [ ] **No collateral:** `cargo test --lib 'shell::'` → **226**, unchanged —
+      the filter mutation is applied and reverted, never left in.
 
 ## Test plan
 
@@ -1153,3 +1173,63 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 46d6cda38396d53d0d3d1a076c751048d9b180ee
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-14
+
+- **Verdict:** bounced (bug-05-1)
+- **Bounces:** 1
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (437 turns)
+- **Scope deviations:** none — every file touched was authorized, and
+  `src/shell/proto.rs`, `host.rs`, `backend.rs`, `pty.rs`, `registry.rs`,
+  `session.rs`, `log.rs`, `tests/doc_truth.rs`, `src/config/types.rs` and
+  `src/agents/policy.rs` are all untouched as § Authorizations required.
+- **Calibration:** **two more architect-side grep slips, both corrected in
+  place, neither a defect** — `grep -c 'fn ghost_may_send_input'` read 2
+  because the test name is a superstring of the function name, and the client
+  test's criterion pinned a four-space indent where the test lives in a nested
+  `mod` at eight. With the three from 04b that is **five** on this milestone,
+  all the same family: an under-anchored or proxy instrument. The bug itself
+  is the *third* instance of the deeper version — a criterion pinning a test's
+  **name** where its discriminating power was what mattered (04b's
+  `bug-04b-2`, and now this). **That is three occurrences and it should be
+  folded at milestone close.**
+
+**Everything verified independently, nothing read from a transcript.** All
+four gates re-run as separate invocations, clippy after `touch src/lib.rs`:
+green, `cargo test --lib` → **1870 passed, 0 failed** (no flake this run).
+`knowledge::shell` 43, `shell::client` 17, `shell::` 226,
+`daemon::executor::` 279, `ai::tools` 22, `config::` 92, `doc_truth` 10,
+`isolation` 9 — every count meets or exceeds its pin.
+
+Every structural criterion re-run at review: **all pass**, including both
+halves of the approval gate (the `APPROVAL_GATED_TOOLS` entry *and* the
+file's `prompt_and_await_approval` call sites going 3 → 4), the census
+edit touching only the `Run` line, and the deliberate inversion —
+`SendInput` is **absent** from the `should_emit_tool_feedback` chain and
+**present** in `summary()`, which is the opposite of the previous three
+phases and is the one thing in this row no gate checks.
+
+**Both specified mutations re-run by hand, not read.** Mutation 1 —
+`explicitly_allows` → `permits` in `ghost_may_send_input` — reddens
+`ghost_may_send_input_requires_an_explicit_allow` at `mod.rs:1727`. Mutation
+2 — stripping the kind prefix so the ownership check compares the inner owner
+string — reddens `send_input_refuses_another_owners_shell` at
+`shell.rs:2764`. Both revert green. The default-deny and cross-owner
+properties are genuinely pinned.
+
+**The executor added a test the spec did not ask for**,
+`send_input_frame_reports_a_host_error`, covering `read_ack`'s `Error` branch
+on the new sender. Unprompted, in scope, and the right instinct.
+
+**Bounced on `bugs/bug-05-1.md`, found by mutating the one claim this phase
+is really making.** `send_input_text_never_reaches_read_shell`'s read-side
+assertion cannot fail: widening the cast reader's `"o"` filter to accept
+`"i"` leaves it green. A diagnostic panic shows why — `read_shell` returns
+*"no shell with id \"s3\" is in the registry"*, because the public reader
+consults the process-global registry while the test builds a local one, and
+separately because the in-process host's cast lives in `spawn_with_cast`'s
+tempdir rather than under the test's `lifecycle_home()`. Two independent
+reasons, either sufficient. The property is **true** — `read_command_output`
+filters at `src/shell/log.rs:263` — but nothing tests it, and this phase's
+whole safety argument rests on it. The test's *first* assertion, which proves
+a real host really writes the `"i"` event, is sound and must survive.
