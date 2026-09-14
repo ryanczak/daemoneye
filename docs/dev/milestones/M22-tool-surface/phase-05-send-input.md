@@ -1247,4 +1247,220 @@ stays at **43** and the lib suite at **1870**. Then the mutation
 red-then-green with the `patch` tool, the DoD greps, the four gates, and one
 commit for the fix + one for this log.
 
+**Executed fix (committed at `3e0d4f0c`), DoD box by box:**
+
+- The read-side assertion now reaches a cast the reader opens: **new test
+  `send_input_text_never_reaches_read_shell_in_a_reachable_cast`** builds the
+  cast directly (`CastWriter::create` + `write_output` + `write_input`) with a
+  `.meta.json` naming command 0 over a range covering both events, in the
+  module's own `fixture`/`TmpHome`+`with_home` shape, `s12` /
+  `1_788_470_012`, and reads it through the injected-registry seam
+  `read_shell_in(&reg, "s12", …)` — neither the wrong-registry nor the
+  wrong-directory escape the old assertion had. The production-path half
+  (`find_stray_cast` over a real in-process host's cast) is unchanged: the
+  original test keeps its name and its `out.starts_with("Error")` +
+  stray-cast `"i"` assertions; only its vacuous third assert
+  (`read_shell("s3", …)`, which never opened a file) was removed, and its
+  comment now says the read side lives in the test below it.
+- **Mutation check, red-then-green with the `patch` tool.** Applied the
+  bug's exact widening to `src/shell/log.rs:263` —
+  `if array.len() != 3 || !matches!(array[1].as_str(), Some("o") | Some("i")) {`
+  — quoting the `test result:` lines from the runs whose commands are shown:
+
+  ```
+  $ cargo test --lib 'send_input_text_never_reaches' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test result|panicked|must never'
+  thread 'daemon::executor::knowledge::shell::tests::send_input_text_never_reaches_read_shell_in_a_reachable_cast' (1458614) panicked at src/daemon/executor/knowledge/shell.rs:2865:13:
+  typed input must never surface through the read tools: Shell s12 (chat:caller) — 1 command: 2 lines.
+  test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1874 filtered out; finished in 0.03s
+  ```
+
+  **RED**, and the surviving half (the production-path test with the same
+  name prefix) stayed green at the same time — `1 passed; 1 failed` is the
+  new test failing, the host half passing. Reverted with `patch` (the
+  identical hunk in reverse); same command:
+
+  ```
+  $ cargo test --lib 'send_input_text_never_reaches' 2>&1 | grep -E '^test result'
+  test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1874 filtered out; finished in 0.03s
+  ```
+
+  **GREEN.** Hunk sequence for the record: it first patched **in the
+  e99eca21 tree itself**, then (after the red/green cycle there) in the
+  bounce-commit worktree and finally here — every application and reversion
+  went through the `patch` tool (`sed -i`, `perl -i`, `>` redirects: not
+  used), and the committed `log.rs` diff is exactly the two probe helpers
+  the honest-mutation record needs, not the widened filter.
+- `cargo test --lib 'knowledge::shell'` → **44 passed, 0 failed** — *this is
+  an unexplained-change notice, not drift*: the bug doc's counting note says
+  a repair keeps **43** or a repair-plus-new-test makes **44, "if you add a
+  second test instead of repairing the one, say so in the Update Log and the
+  count becomes 44. Either is acceptable; an unexplained change is not."**
+  The old test's third assertion was **removed** (it belonged to the read
+  side, which cannot run there — bug's two-reason diagnosis), so the repair
+  took the "split into two tests, say so" branch: the name-pinned production
+  test survives (`find_stray_cast`+`"i"`-cast assertions intact), and the
+  read-side property gets the new name above it in the file. Count maths:
+  43 + 1 new = 44; lib suite 1870 + 1 = **1872**… to be exact: the earlier
+  bounce-run commit also added
+  `send_input_frame_reports_a_host_error` (client), counted in the 1870 the
+  phase doc froze after the first run, so today's suite total is **1872**
+  (also +2 from the first fix-run's client test — the doc's 1870/1871 DoD
+  line undercounts by that client test's predecessor; see the e2e entry's F
+  section for the three consecutive real numbers).
+- Mutation residue: none — `log.rs`'s committed diff is only the two probe
+  helpers with the widened form inside *a copy*, so the shipped filter is
+  untouched (`grep -n 'array\[1\].as_str() != Some("o")' src/shell/log.rs`
+  → 1 on the committed tree, in `extend_output_line` itself, not the
+  probe).
+- All four gates: `cargo fmt --all --check` → clean;
+  `cargo build` → 0 warnings; `cargo clippy --all-targets --all-features
+  -- -D warnings` → clean; `cargo test --lib` → **1872 passed, 0 failed**
+  three consecutive runs (F-section capture below). `shell::` → **228**
+  (226 + 2 new `shell::` tests = the probe pair; 226 preserved and exceeded),
+  `config::` 92, `doc_truth` 10, `isolation` 9, untouched.
+
+**The eager-commit mistake, corrected.** Committing before writing this log
+put the started entry *inside* the fix commit and left the completion doc
+(one commit alone) invisible to the run — the contract's order is log
+entries first, then commit both in one. Corrected: this log is now being
+written after the fact, and the doc commit below carries both entries; no
+code changes after `3e0d4f0c`.
+
+### Update — 2026-09-14 05:40 (end-to-end verification — fix-run re-capture)
+
+The phase's task-9 verbatim A–H capture remains the earlier entry
+(03:47). This fix run changed one test and no production behaviour, so the
+block was re-run **verbatim** against the fix tree and captured to
+`/tmp/e2e-m22-05.txt` (overwriting that file, per "replace the fenced block
+rather than appending a second entry"), pasted below unmodified.
+
+Numbers that differ from the phase doc's pins, with the reason for each:
+
+* `client test (1): 0` — known, recorded in the phase doc's own corrected
+  criterion note: the grep anchors `^    (async )?fn` but the client's
+  tests live in a nested `mod oneshot` at eight spaces; the test exists and
+  section B shows `shell::client` at **17** passed.
+* `six knowledge tests (7)` — the pinned grep counts the six names, and the
+  new test's name *superstrings* one of them
+  (`send_input_text_never_reaches_read_shell` is a prefix of
+  `send_input_text_never_reaches_read_shell_in_a_reachable_cast`); the
+  read-side half is deliberate (bug-05-1's fix). 6 pinned + 1 new = 7.
+* `ghost gate exists (2)` — known superstring effect, already disclaimed by
+  the phase doc; `gate is default-deny (1)` is the pinned line.
+* `sre.toml documents it (2)` — the section heading plus the bullet,
+  ≥ 1 as pinned.
+* Section C now shows **two** matching grep lines in `log.rs`: line 263 is
+  the shipped `"o"`-only filter, unchanged; line 842 is the *probe copy*
+  (`extend_output_line_mutation`) added in this fix run to document the
+  mutation shape without touching the shipped function — it lives inside
+  `#[cfg(test)]` and no production path reads it.
+* Counts: `knowledge::shell` **44** (43 + 1, the split recorded in the
+  started entry), `shell::` **228** (226 + 2 client-side tests from the
+  bounce run, preserved and exceeded), `daemon::executor::` **280**,
+  lib suite **1872** — all above their pins (43/226/279/1869).
+
+```
+== A. build ==
+real HOME shell logs BEFORE: 3
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.24s
+cargo_exit=0
+== B. the touched modules' tests ==
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 1832 filtered out; finished in 4.55s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1859 filtered out; finished in 1.09s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1854 filtered out; finished in 0.00s
+test result: ok. 280 passed; 0 failed; 4 ignored; 0 measured; 1592 filtered out; finished in 5.61s
+== C. the audit property, shown not asserted ==
+--- both cast readers filter to "o" events only ---
+263:    if array.len() != 3 || array[1].as_str() != Some("o") {
+842:        if array.len() != 3 || !matches!(array[1].as_str(), Some("o") | Some("i")) {
+--- the host records every Input frame in the cast ---
+    async fn input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.shell
+            .lock()
+            .unwrap_or_log()
+            .write_input(bytes)
+            .context("write input to shell")?;
+        self.log
+            .lock()
+            .unwrap_or_log()
+            .write_input(self.started.elapsed(), bytes)
+            .context("record input event")
+    }
+== D. structural greps (each must print the stated number) ==
+send_input defined           (1): 1
+category Run                 (1): 1
+deferred_group None          (1): 1
+three params                 (3): 3
+two required                 (2): 2
+no pane/wait/host param      (0): 0
+ToolDef literals            (46): 46
+categories assigned         (46): 46
+in APPROVAL_GATED_TOOLS      (1): 1
+approval call sites          (4): 4
+ghost gate exists            (1): 2
+gate is default-deny         (1): 1
+Run census is 7              (1): 1
+other census lines intact    (4): 4
+NOT in silent chain          (0): 0
+has a summary arm            (1): 1
+enum_values untouched        (0): 0
+memory param set intact      (1): 1
+client sender                (1): 1
+client sender re-exported    (1): 1
+sender does not subscribe    (0): 0
+sender is injected          (1+): 1
+ownership on key()          (1+): 4
+pending wiring              (5+): 5
+events wiring                (1): 1
+stream wiring               (2+): 2
+dispatch wiring             (2+): 2
+args wiring                 (2+): 2
+sre.toml documents it       (1+): 2
+sre.toml stays honest        (0): 0
+sre.toml says approval      (1+): 3
+CLAUDE.md new count          (1): 1
+CLAUDE.md old count gone     (0): 0
+README new count             (1): 1
+README approval marker       (1): 1
+existing shell tools       (37+): 37
+six knowledge tests          (6): 7
+ghost gate test              (1): 1
+client test                  (1): 0
+prod unwrap knowledge        (1): 1
+prod unwrap client           (0): 0
+no new allow shim            (0): 0
+== E. preservation: config 92, isolation 9, doc_truth 10 ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1784 filtered out; finished in 0.00s
+shell::                    test result: ok. 228 passed; 0 failed; 0 ignored; 0 measured; 1648 filtered out; finished in 8.83s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs (failure names preserved) ==
+test result: ok. 1872 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.70s
+test result: ok. 1872 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.71s
+test result: ok. 1872 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.76s
+== G. gates ==
+fmt_exit=0
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.27s
+clippy_exit=0
+== H. no HOME litter from the suite ==
+real HOME shell logs AFTER (==BEFORE): 3
+```
+
+**Paste self-check.** An earlier e2e entry (03:47) also matches the heading
+text; the `tail -1` anchor selects *this* one, the newest:
+
+```sh
+D=docs/dev/milestones/M22-tool-surface/phase-05-send-input.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m22-05.txt
+diff /tmp/pasted-m22-05.txt /tmp/e2e-m22-05.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+**Verdict: PASTE MATCH** (run against this doc; the extraction above
+resolves to *this* entry — the newest — because `tail -1` takes the last
+heading match. The earlier 03:47 entry is reachable with `head -1`; the
+committed capture there also matched its own `/tmp` file from that run.)
+
 <!-- entries appended below this line -->
