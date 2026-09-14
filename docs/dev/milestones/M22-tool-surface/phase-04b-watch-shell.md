@@ -1,7 +1,7 @@
 # Phase 04b: `watch_shell` — the blocking observer
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-04b-2.md`)
 **Depends on:** 03a (`list_shells`, the module and its registry seam), 03b
 (`read_shell`, the reader shape and its error sentences) and 04a
 (`open_shell`/`close_shell`, the in-process host fixture in
@@ -685,10 +685,14 @@ Each was run against the tree at drafting and returns the "now" value shown.
 - [ ] **The dead constant is gone:**
       `grep -rn 'WATCH_DEFAULT_SECS' --include=*.rs src/ | wc -l` → **0** (now
       **1** — its own definition, no reader).
-- [ ] **No new production `expect`:**
+- [x] **No new production `expect` outside the crate's lazy-regex idiom:**
       `sed -n '1,/^#\[cfg(test)\]/p' src/daemon/executor/knowledge/shell.rs | grep -cE '\.(unwrap|expect)\(|panic!\(|unsafe '`
-      → **0** (now **2**; the module was at 0 before this phase, and the
-      phase's own § D transcript records the 2).
+      → **1** — the one kept, marker-carrying lazy-regex `expect` at `:937`.
+      *(Corrected at review: this originally pinned **0** while the next box
+      authorised keeping that `expect`. Both cannot hold — the count's regex
+      matches it. Architect error; the executor took the authorised route,
+      reached 1, and disclosed it rather than reporting 0. The `:780`
+      control-flow `expect` is gone: `grep -c 'pattern checked'` → **0**.)*
 - [ ] **A kept lazy-regex `expect` carries the crate's marker:**
       `grep -c 'INVARIANT' src/daemon/executor/knowledge/shell.rs` → **1 or
       more** (now **0**). See `src/daemon/utils/sudo.rs:36`,
@@ -696,6 +700,21 @@ Each was run against the tree at drafting and returns the "now" value shown.
 - [ ] **The fix adds nothing:** `cargo test --lib` → **1861 passed, 0 failed**
       — **not 1862**. `cargo test --lib 'knowledge::shell'` → **37**,
       unchanged. A rising count is scope creep, not progress.
+
+### Added at review 2026-09-13 (bug-04b-2) — confirmed failing against the tree
+
+- [ ] **The pattern test's assertion discriminates.** Test plan item 6 asks for
+      two properties — the sentence names the pattern **and** shows the
+      matching line — and only the first is currently tested, because the
+      echoed pattern satisfies `out.contains("READY")` on its own.
+      `grep -c 'out.contains("READY"), "the matching line is shown' src/daemon/executor/knowledge/shell.rs`
+      → **0** (now **1**), and
+      `grep -c 'READY to go", "the matching line is shown' src/daemon/executor/knowledge/shell.rs`
+      → **1** (now **0**).
+- [ ] **Proven by mutation, captured red-then-green:** replacing the rendering
+      in `watch_shell_with` with `let rendered = { let _ = matches; String::new() };`
+      must turn `watch_shell_returns_when_the_pattern_appears` **red**. Against
+      the tree today it stays green — that is the defect.
 
 ## Test plan
 
@@ -2013,3 +2032,71 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** c542f2b6f046db890b4b76930b41447b0b881b22
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-13 (second review, after the bug-04b-1 fix run)
+
+- **Verdict:** bounced (bug-04b-2)
+- **Bounces:** 2
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none — the fix run touched exactly the two files the
+  bug named.
+- **Calibration:** **two architect-side instrument errors in one phase, both
+  the same shape** — pinning a *number* that the property actually wanted does
+  not imply. (1) `bug-04b-1`'s box 3 pinned the module-head `expect` count at
+  0 while box 4 authorised keeping a marker-carrying one; the two cannot both
+  hold. (2) The criterion for the pattern test pinned only the test's **name**,
+  which cannot see whether its assertion discriminates — and it does not
+  (`bug-04b-2`). Both are corrected in § Acceptance criteria. Taken with the
+  earlier `parse_cast_name` placement error, that is **three** architect-side
+  criterion defects on this phase, and the milestone total stands at twelve.
+  This wants raising at close: `WORKFLOW.md` § "Specs pin behavior, not
+  rendering" already covers it, and it is not being followed.
+
+**bug-04b-1 is fixed and closed.** Verified independently, not read:
+`WATCH_DEFAULT_SECS` and its `#[allow(dead_code)]` gone (`grep -rn` → 0,
+`#[allow` in the module → 0, `#[allow` added anywhere in the phase diff → 0);
+`expect("pattern checked")` → 0; the kept `:937` lazy-regex `expect` carries
+`// INVARIANT: literal is a valid regex` (→ 1), matching the three existing
+production sites.
+
+**The `:780` fix is better than the constraint I wrote.** Rather than guarding
+the `Option` at the render site, `WatchOutcome::Pattern` now carries the
+rendered match as `Pattern(String)`, produced inside
+`if let Some(r) = re.as_ref() && r.is_match(&buf)`. The regex is bound where it
+is used; there is no `Option` on the path at all, so the compiler carries the
+invariant instead of a runtime assertion. That is the right shape.
+
+**Gates, re-run independently as separate invocations** (clippy after
+`touch src/lib.rs` to force a real re-check): all green. `cargo test --lib` →
+**1861 passed, 0 failed** — the inverted count held, the fix added no tests.
+`doc_truth` 10, `isolation` 9.
+
+**Mutation 2 re-run against the restructured code** — initial offset `0` still
+reddens `watch_shell_ignores_output_written_before_the_call`, so the
+restructure did not weaken the load-bearing negative.
+
+**The executor disclosed its own divergence rather than gaming it.** Its
+Update Log records the post-fix `expect` count as **1** against a DoD box
+pinning 0, states why keeping the marker-carrying expect and printing 0 are
+mutually exclusive, and cites the box that authorises the route it took. It
+would have been trivial to delete the expect and report 0. It did not. That is
+the second run in a row this executor has reported a red number in its own
+evidence.
+
+**Bounced on:** `bugs/bug-04b-2.md`, found by mutating rather than reading.
+`watch_shell_returns_when_the_pattern_appears` asserts
+`out.contains("READY")`, but the outcome sentence interpolates the pattern
+itself, so the assertion passes even when the rendered match is replaced with
+an empty string — demonstrated at review. Its own message says "the matching
+line is shown", and that property is untested. It matters more after this run
+than before, because this run **moved the rendering** into the match branch
+and that test is now the only thing standing over the relocated code. The fix
+is one assertion; it was applied at review, confirmed green on the intact tree
+and red under the mutation, and is quoted in the bug's `## How to fix`.
+
+**One nit, not bounced on.** The `// open_shell + close_shell (M22 phase-04a)`
+section banner at `src/daemon/executor/knowledge/shell.rs:960` lost its
+opening `// ---` rule and the blank line above it when `live_shell_ids` was
+inserted at the end of the preceding section (first run, not this one).
+Cosmetic, no DoD box, not worth a dispatch cycle — phase 05 edits this module
+and can restore it in passing.

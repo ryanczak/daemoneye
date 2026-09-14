@@ -1,7 +1,7 @@
 # Bug 1 on phase-04b: a `#[allow(dead_code)]` shim and two new production `expect()`s
 
 **Severity:** minor
-**Status:** open
+**Status:** closed (fixed 2026-09-13, commit `dfe43b60`)
 **Filed:** 2026-09-13
 
 ## What's wrong
@@ -119,3 +119,37 @@ against it, and the executor reported that honestly rather than massaging it.
 - [ ] `watch_shell_returns_when_the_pattern_appears` and
       `watch_shell_ignores_output_written_before_the_call` still pass — the
       `:780` restructure must not change which outcome is produced.
+
+
+## Resolution — 2026-09-13
+
+Both items fixed, verified at review against the tree:
+
+- `WATCH_DEFAULT_SECS` and its `#[allow(dead_code)]` are gone.
+  `grep -rn 'WATCH_DEFAULT_SECS' --include=*.rs src/ | wc -l` → **0**;
+  `grep -c '#\[allow' src/daemon/executor/knowledge/shell.rs` → **0**;
+  `git diff fa10352a..HEAD -- 'src/*.rs' | grep -cE '^\+.*#\[allow'` → **0**.
+- The `:780` `expect("pattern checked")` is gone **by restructuring**, which is
+  a better fix than the one this doc's constraint implied.
+  `WatchOutcome::Pattern` now carries the rendered match as
+  `Pattern(String)`, produced inside `if let Some(r) = re.as_ref() && …`, so
+  the regex is bound where it is used and the compiler carries the invariant
+  that the `expect` used to assert. `grep -c 'pattern checked'` → **0**.
+- The `:938` lazy-regex `expect` was kept under route two and now carries
+  `// INVARIANT: literal is a valid regex`, matching `src/daemon/utils/sudo.rs:36`,
+  `src/tmux/ansi.rs:59` and `src/ai/backends/gemini.rs:115`.
+  `grep -c 'INVARIANT'` → **1**.
+- `cargo test --lib` → **1861**, not 1862. The fix added no tests, as pinned.
+
+**One box in this doc was self-contradictory and is the architect's error.**
+Box 3 pinned the module-head `unwrap|expect|panic|unsafe` count at **0** while
+box 4 authorised *keeping* a marker-carrying lazy-regex `expect`. Both cannot
+hold: the count's regex matches the kept `expect`. The executor took route
+two, reached **1**, and **disclosed the divergence in its own Update Log
+rather than deleting the expect to satisfy a number or reporting 0**. That is
+the right call and the right disclosure.
+
+The property the box was reaching for — *no production `expect` outside the
+crate's compile-time-provable lazy-regex idiom, and that one carrying the
+crate's marker* — **is met**. The count is corrected to **1** in the phase
+doc's acceptance criteria.
