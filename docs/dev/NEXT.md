@@ -6,11 +6,55 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-05 — send-input closed **approved_after_2
-2026-09-14** (`docs/dev/milestones/M22-tool-surface/phase-05-send-input.md`,
-status: done; `bugs/bug-05-1.md` and `bugs/bug-05-2.md` both `closed`). Next
-up is **06 — shell-history**, not yet drafted; run `/rexymcp:architect next`
-to draft it.
+**Active phase: M22 phase-06a — meta-index-producer**
+(`docs/dev/milestones/M22-tool-surface/phase-06a-meta-index-producer.md`,
+status: todo, drafted 2026-09-14). Dispatch with
+`/rexymcp:dispatch phase-06a`.
+
+Phase-05 — send-input closed **approved_after_2 2026-09-14**
+(`docs/dev/milestones/M22-tool-surface/phase-05-send-input.md`, status: done;
+`bugs/bug-05-1.md` and `bugs/bug-05-2.md` both `closed`).
+
+**06 split at a measured seam, and the seam is a missing prerequisite.** The
+charter row asks for two tools *"over the `.meta.json` index"*. That index has
+never existed: `MetaIndex::save`, `mark` and `byte_len` have **zero**
+production callers, which is why `read_shell` and `find_in_shells` have been
+landing on their "command index is missing" branch against every real shell
+since 03b. **06a gives the index a producer; 06b builds the tools on it.**
+That order is forced — 06b's tests cannot use real data until 06a exists.
+
+**06a ships no tool and moves no count.** 46/34/12 stay put, `doc_truth`
+stays 10, `sre.toml` is not edited. Its deliverable is that two existing
+tools start working in production, which the milestone README recorded as an
+open defect after 04b found it.
+
+**One correction to the README's own note, measured at drafting:** it guessed
+the producer *"is a host-side change"*. It is not. The host writes bytes it
+does not interpret; the daemon knows the command text, the nonce and the exit
+code, and `run_in_shell_with` already holds the `ShellId` and awaits the
+outcome. 06a touches no protocol frame and no host file — a criterion asserts
+all six of `proto.rs`/`host.rs`/`backend.rs`/`registry.rs`/`session.rs`/`client.rs`
+are unchanged.
+
+**The load-bearing design choice** is that the producer stores the **clean
+inner range** between the BEGIN and END markers rather than the raw
+before/after range. That keeps `read_command_output`, `CommandRecord` and
+every hand-built fixture in the tree unchanged — no schema migration — and it
+is what stops every future `read_shell` result carrying `\x1fDE_BEG <32
+hex>\x1f`. Mutation 1 breaks exactly that.
+
+**Pre-injected trap:** the `DE_''BEG` split-quote in `wrap_command` is
+load-bearing. A search for the bare `DE_BEG` substring matches the **echoed
+command line** as well as the real marker, so the range would start too early.
+A named test feeds the echo in ahead of the real marker.
+
+**Two more instrument errors of mine, caught by running the criteria before
+dispatch** — both in the *same* family as M22's other six. One used
+`grep -ch fileA fileB` where the two could resolve to the same file, which
+double-counts (verified: it reports 10 for a function appearing 5 times).
+The other made the criterion guess which file the new function would live in.
+Both replaced with a tree-wide matching-**line** count, which cannot double
+count and does not care where the code lands.
 
 `send_input { shell, text, enter? }` ships core + `Category::Run`,
 **approval-gated** — **46 tools: 34 core + 12 deferred**. Both halves of the
@@ -257,9 +301,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-06 — shell-history**.
-Phases 06–10 are not drafted; each is drafted after its predecessor is
-approved.
+**Next step:** `/rexymcp:dispatch phase-06a`. Phases 06b–10 are not drafted;
+each is drafted after its predecessor is approved.
 
 **Owed at milestone close, now at three occurrences — fold it.** Six
 architect-side instrument errors across M22, and the deeper version has hit

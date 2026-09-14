@@ -65,7 +65,8 @@ final surface, so they go last.
 | 04a | shell-lifecycle ([phase-04a-shell-lifecycle.md](phase-04a-shell-lifecycle.md)) — `open_shell {}` + `close_shell { shell }`, both `Category::Run`; share the in-process-host test fixture | done        |
 | 04b | watch-shell ([phase-04b-watch-shell.md](phase-04b-watch-shell.md)) — `watch_shell { shell, pattern?, timeout_secs? }`, the blocking observer; reads the **live cast file**, not the dead `.meta.json` index | done                    |
 | 05 | send-input ([phase-05-send-input.md](phase-05-send-input.md)) — `send_input { shell, text, enter? }`, **approval-gated**; the `"i"` log is real and no read tool can surface it | done                    |
-| 06 | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the `.meta.json` index | todo (not drafted) |
+| 06a | meta-index-producer ([phase-06a-meta-index-producer.md](phase-06a-meta-index-producer.md)) — give the `.meta.json` index a **producer**; makes `read_shell`/`find_in_shells` work in production at last. No new tools | todo                    |
+| 06b | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the index 06a makes real | todo (not drafted) |
 | 07 | run-terminal-command-reshape — `shell?`/`host?`/`wait?`/`timeout_secs?`; retire `target_pane`, `retry_in_pane`, `background` | todo (not drafted) |
 | 08 | shell-context — `get_terminal_context` → `get_shell_context { scope }`; `[HOSTS]`/`[SHELLS]`/`[DEFAULT SHELL]` blocks; approval panel names shell + host | todo (not drafted) |
 | 09 | pane-tool-removal — delete the six pane tools and their executor arms | todo (not drafted) |
@@ -191,6 +192,26 @@ final surface, so they go last.
   its own task; until then, a full-suite red naming *only* this test is a flake,
   not a regression. **Re-measure at the baseline before attributing it to a
   phase** — that is the check that settled it here.
+
+- **06 split at a measured seam: the index it is "backed by" has no
+  producer.** § 2.5 specifies `list_shell_logs` / `read_shell_log` as *"Backed
+  by the `.meta.json` index"*, and 04b measured that `MetaIndex::save`, `mark`
+  and `byte_len` have **zero** production callers — the whole index is
+  test-only scaffolding. **06a** gives it a producer, **06b** builds the two
+  tools on it. That order is forced: 06b's tests cannot use real data until
+  06a exists.
+
+  **One correction to this file's own earlier note.** It said the producer
+  *"is a host-side change"*. Measured at 06a drafting: it is **not**. The host
+  writes bytes it does not interpret; the daemon is what knows a command's
+  text, nonce and exit code, and `run_in_shell_with`
+  (`src/daemon/executor/shell_exec.rs:62`) already holds the `ShellId` and
+  awaits the outcome. 06a touches no protocol frame and no host file.
+
+  **06a's real deliverable is a bug fix**: `read_shell` and `find_in_shells`
+  have been landing on their "command index is missing" branch against every
+  real shell since 03b. This is the phase that closes it, which is why it
+  ships no tool and moves no count.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24
