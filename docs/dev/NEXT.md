@@ -6,12 +6,58 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-04b — watch-shell closed
-**approved_after_2 2026-09-14**
+**Active phase: M22 phase-05 — send-input**
+(`docs/dev/milestones/M22-tool-surface/phase-05-send-input.md`, status: todo,
+drafted 2026-09-14). Dispatch with `/rexymcp:dispatch phase-05`.
+
+Phase-04b — watch-shell closed **approved_after_2 2026-09-14**
 (`docs/dev/milestones/M22-tool-surface/phase-04b-watch-shell.md`, status:
-done; `bugs/bug-04b-1.md` and `bugs/bug-04b-2.md` both `closed`). Next up is
-**05 — send-input**, not yet drafted; run `/rexymcp:architect next` to draft
-it.
+done; `bugs/bug-04b-1.md` and `bugs/bug-04b-2.md` both `closed`).
+
+**Scope for 05:** `send_input { shell, text, enter? }` — core,
+`Category::Run`, **approval-gated**, **46 tools: 34 core + 12 deferred**. The
+milestone's one genuinely dangerous addition, and the first tool in the shell
+row that types rather than observes.
+
+**The gated-list entry and the real prompt are one decision, not two.**
+`APPROVAL_GATED_TOOLS` is also what exempts a tool from every budget cap in
+`daemon::stream`, so a list entry without a working
+`prompt_and_await_approval` hands a keystroke tool an uncapped call budget.
+A criterion pins both halves — the list membership *and* the file's approval
+call sites going 3 → 4.
+
+**Two design claims measured before drafting, and this time both hold.** The
+`"i"` log is real — `PtyBackend::input` writes the bytes to the PTY *and*
+records them via `CastWriter::write_input` on every frame. And **no read tool
+can surface them**: `read_command_output` and 04b's `read_output_since` both
+filter to `"o"` events, so text typed with this tool is auditable but
+unreachable from `read_shell` / `find_in_shells` / `watch_shell`. That is a
+safety property, and a named test pins it rather than leaving it incidental.
+This is the first M22 phase where the design's own description of a shell tool
+survived contact with the tree unchanged — after 03a's collapsed `scope`, 04a's
+two non-existent `open_shell` parameters, and 04b's dead `.meta.json` index.
+
+**Default-deny for ghosts.** The central `ToolPolicy::permits` check is not
+enough: a deny-list that merely omits `send_input` would permit it. The phase
+adds `ghost_may_send_input` mirroring `ghost_may_use_tmux_control`'s
+`explicitly_allows` shape — a deliberate second copy, with the third being the
+point at which they collapse into one parameterised helper.
+
+**One inversion to watch:** `send_input` must **not** join the
+`should_emit_tool_feedback` chain that 03a–04b all joined. It has an approval
+panel; a `ToolStarted` line as well is duplicate UI. It does get a `summary`
+arm. Both are compiler-invisible and point opposite ways.
+
+**Four mis-specified criteria caught by running them before dispatch** — and
+three of them were the *proxy* shape the 04b review just folded, not broken
+`sed` ranges: a `grep -A30` window too small to reach the approval call (the
+same window misses on `tmux_control` even at `-A60`), a "passes no
+`ghost_policy`" grep that was measuring a *comment*, and a `\r` escape that
+matched nothing anywhere. All three replaced with properties: an approval
+call-site count, a named test plus a mutation for default-deny, and an
+**injected sender seam** so the newline is asserted on the exact bytes rather
+than inferred from a length — a byte count cannot tell `\n` from `\r`, which
+is precisely why the seam earns its place.
 
 `watch_shell { shell, pattern?, timeout_secs? }` ships core + `Category::Read`,
 not approval-gated — **45 tools: 33 core + 12 deferred**. It is the second
@@ -184,9 +230,8 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-05 — send-input**.
-Phases 05–10 are not drafted; each is drafted after its predecessor is
-approved.
+**Next step:** `/rexymcp:dispatch phase-05`. Phases 06–10 are not drafted;
+each is drafted after its predecessor is approved.
 
 **Carried out of M24, still open:**
 
