@@ -830,6 +830,24 @@ mod tests {
         );
     }
 
+    /// Fix-run probe for bug-05-1 (not a tree test: removed before commit).
+    fn extend_output_line_mutation(line: Option<String>, out: &mut Vec<u8>) {
+        let Some(line) = line else { return };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            return;
+        };
+        let Some(array) = value.as_array() else {
+            return;
+        };
+        if array.len() != 3 || !matches!(array[1].as_str(), Some("o") | Some("i")) {
+            return;
+        }
+        let Some(data) = array[2].as_str() else {
+            return;
+        };
+        out.extend_from_slice(data.as_bytes());
+    }
+
     #[test]
     fn read_output_since_past_the_file_end_returns_unmoved_offset() {
         let dir = tempdir().unwrap();
@@ -841,5 +859,23 @@ mod tests {
         let (got, offset) = read_output_since(&path, len + 9).unwrap();
         assert!(got.is_empty(), "nothing beyond the end: {got:?}");
         assert_eq!(offset, len + 9, "the offset is returned unchanged");
+    }
+
+    #[test]
+    fn probe_mutated_reader_accepts_input_events() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("probe.cast");
+        let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+        w.write_input(Duration::from_secs_f64(1.0), b"typed text\n")
+            .unwrap();
+        drop(w);
+        let mut out = Vec::new();
+        for line in BufReader::new(File::open(&path).unwrap()).lines() {
+            extend_output_line_mutation(line.ok(), &mut out);
+        }
+        assert!(
+            String::from_utf8_lossy(&out).contains("typed text"),
+            "the mutation must accept an \"i\" event for the fix run's red check"
+        );
     }
 }

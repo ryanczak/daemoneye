@@ -2805,7 +2805,6 @@ mod tests {
         assert!(out.contains("list_shells"));
         assert!(!sent.load(Ordering::SeqCst));
     }
-
     #[tokio::test]
     async fn send_input_text_never_reaches_read_shell() {
         let (_home, _dir) = lifecycle_home();
@@ -2833,9 +2832,10 @@ mod tests {
         // The host writes its `.cast` under the `HOME` it inherited at spawn
         // (see spawn_with_cast, whose tempdir homes both the PTY and the log);
         // the test's `lifecycle_home()` dir holds none of it by construction.
-        // The point of the test is what the *read* side can see, so the two
-        // real casts that record the write are compared, not the dir the
-        // test's HOME-derriving cast_path names.
+        // Production-path half of the safety property: the typed text really
+        // reached a real host's cast as an `"i"` event. The read-side half —
+        // that no reader surfaces it — is `…_in_a_reachable_cast` below,
+        // which holds the cast the reader opens under the test's own `HOME`.
         let stray = find_stray_cast("SENTINEL-NOT-IN-OUTPUT");
         let recorded = std::fs::read_to_string(std::path::PathBuf::from(&stray))
             .unwrap_or_else(|_| panic!("reading the cast the input landed in: {stray}"));
@@ -2843,10 +2843,78 @@ mod tests {
             recorded.contains("SENTINEL-NOT-IN-OUTPUT"),
             "the \"i\" event is really written to the cast"
         );
-        assert!(
-            !read_shell("s3", None, None, None).contains("SENTINEL-NOT-IN-OUTPUT"),
-            "the read tools filter to \"o\" events, so typed text must never surface"
-        );
+    }
+
+    /// The read-side half of the safety property, over a cast the read tools
+    /// can actually open. The production half above proves a real host writes
+    /// the `"i"` event; this proves a reader that stopped filtering on `"o"`
+    /// would surface the typed text through `read_shell`. The fixture builds
+    /// the cast directly (`CastWriter::create` + `write_output`/`write_input`)
+    /// in the module's own `fixture` shape — `.meta.json` included, the same
+    /// index the host screenshots through `mark` — so the reader really opens
+    /// the file, and a widened filter in `src/shell/log.rs` turns this red.
+    #[test]
+    fn send_input_text_never_reaches_read_shell_in_a_reachable_cast() {
+        let (tmp, reg) = unreachable_cast_fixture();
+        with_home(&tmp, || {
+            let out = read_shell_in(&reg, "s12", None, None, None);
+            assert!(
+                out.contains("READY to go"),
+                "the \"o\" output the fixture wrote is what the read tool returns: {out}"
+            );
+            assert!(
+                !out.contains("SENTINEL-TYPED-BY-SEND-INPUT"),
+                "typed input must never surface through the read tools: {out}"
+            );
+        });
+    }
+
+    /// A one-shell fixture whose cast holds an `"o"` event and an `"i"` event
+    /// and a `.meta.json` that names command 0 over a range covering both —
+    /// a future host that begins recording input inside a command's slice is
+    /// the shape this test defends against. Registry record `s12` under
+    /// `Owner::Chat("caller")`, `started_unix` 1_788_470_012 (index-derived,
+    /// so no other test's cast collides). Runs with `HOME` pointed at its own
+    /// tmp dir, the way `fixture` does, because `cast_path` resolves through
+    /// `HOME`.
+    fn unreachable_cast_fixture() -> (TmpHome, ShellRegistry) {
+        let tmp = TmpHome::new();
+        let reg = ShellRegistry::default();
+        with_home(&tmp, || {
+            let (id, started_unix) = ("s12", 1_788_470_012u64);
+            let cast = cast_path(id, started_unix);
+            std::fs::create_dir_all(cast.parent().unwrap()).unwrap();
+            let mut w = crate::shell::CastWriter::create(&cast, 80, 24, started_unix).unwrap();
+            w.mark(Duration::from_secs_f64(1.0), "probe --yes").unwrap();
+            let first_byte = w.byte_len();
+            w.write_output(Duration::from_secs_f64(1.5), b"READY to go\n")
+                .unwrap();
+            w.write_input(
+                Duration::from_secs_f64(2.0),
+                b"SENTINEL-TYPED-BY-SEND-INPUT\n",
+            )
+            .unwrap();
+            let end_byte = w.byte_len();
+            w.mark(Duration::from_secs_f64(2.5), "end 0").unwrap();
+            drop(w);
+            let meta = crate::shell::MetaIndex {
+                shell_id: id.into(),
+                cast: cast.file_name().unwrap().to_string_lossy().into_owned(),
+                started_unix,
+                commands: vec![crate::shell::CommandRecord {
+                    index: 0,
+                    command: "probe --yes".into(),
+                    started: 1.0,
+                    ended: 2.5,
+                    exit_code: 0,
+                    first_byte,
+                    end_byte,
+                }],
+            };
+            meta.save(&crate::shell::meta_path_for(&cast)).unwrap();
+            insert(&reg, 12, Owner::Chat("caller".into()), started_unix);
+        });
+        (tmp, reg)
     }
 
     /// The most recent temp dir holding a `.cast` that records `sentinel`.

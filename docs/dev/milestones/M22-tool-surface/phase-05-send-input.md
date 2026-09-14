@@ -1233,3 +1233,18 @@ reasons, either sufficient. The property is **true** — `read_command_output`
 filters at `src/shell/log.rs:263` — but nothing tests it, and this phase's
 whole safety argument rests on it. The test's *first* assertion, which proves
 a real host really writes the `"i"` event, is sound and must survive.
+
+### Update — 2026-09-14 05:20 (started, fix run for bug-05-1, executor Claude Opus 4.5)
+
+Resuming on the bug-05-1 bounce. The bounce run's work is intact at `46d6cda3`
+(43 `knowledge::shell` tests green, all suites at their pins), so this run is
+one test repair: make `send_input_text_never_reaches_read_shell`'s read-side
+assertion reach a cast a reader can actually open, so the bug's `log.rs:263`
+filter mutation (accepting `"i"`) turns it red. The test keeps its name and
+its first, sound assertion (a real host really writes the `"i"` event); per
+the bug doc this is an assertion repair, not a new test, so `knowledge::shell`
+stays at **43** and the lib suite at **1870**. Then the mutation
+red-then-green with the `patch` tool, the DoD greps, the four gates, and one
+commit for the fix + one for this log.
+
+<!-- entries appended below this line -->
