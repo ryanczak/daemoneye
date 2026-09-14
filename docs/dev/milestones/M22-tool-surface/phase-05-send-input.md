@@ -973,3 +973,26 @@ clippy_exit=0
 == H. no HOME litter from the suite ==
 real HOME shell logs AFTER (==BEFORE): 3
 ```
+
+### Update — 2026-09-14 04:00 (flake observation, gate re-run)
+
+The gate's `cargo test --lib` run on the committed tree failed naming only
+`shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`
+("an idle shell must not remember a stopped group (F1)", `panic` inside
+`src/shell/pty.rs` — a file this phase does not touch and the phase doc does
+not authorise). This is the known flake from § Pre-flight. Re-ran the lib
+suite three consecutive times:
+
+```
+$ for i in 1 2 3; do cargo test --lib 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test result|\.\.\. FAILED'; done
+test result: ok. 1870 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.72s
+test result: ok. 1870 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.68s
+test result: ok. 1870 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.74s
+```
+
+Three consecutive greens after a run that named only the documented flake: no
+other test name appeared, no code changed between the runs, and the tree is
+unchanged (working tree clean at commit `057bf8d5`). Per § Pre-flight and
+task 9's instruction, this is recorded with the run that showed it and the
+re-run; the flake is out of scope (a `src/shell/pty.rs` fix would be its own
+task).
