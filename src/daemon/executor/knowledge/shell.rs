@@ -2237,7 +2237,10 @@ mod tests {
             out.contains("matched"),
             "a hit is reported as a match: {out}"
         );
-        assert!(out.contains("READY"), "the matching line is shown: {out}");
+        assert!(
+            out.contains("READY to go"),
+            "the matching line is shown: {out}"
+        );
         assert!(
             out.contains("since this call started"),
             "the line number's meaning is named: {out}"

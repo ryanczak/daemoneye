@@ -959,6 +959,18 @@ touch `tests/doc_truth.rs`, `src/daemon/executor/pane.rs`,
 
 <!-- entries appended below this line -->
 
+### Update — 2026-09-14 02:25 (started, fix run for bug-04b-2, executor Claude Sonnet 4.5)
+
+Resuming on the bug-04b-2 bounce. The tree compiles (the bug-04b-1 fix run
+left it clean at `dfe43b60`), so this run is one assertion rewrite and the
+specified mutation check. Plan: strengthen
+`watch_shell_returns_when_the_pattern_appears`'s second assertion to the full
+matched line (`"READY to go"`, the exact text the bug's § How to fix was
+verified against at review), then — as the bug asks — apply the same scrutiny
+to every other new `watch_shell` assertion in the module and record which I
+checked and which changed. Then run the bug's drop-rendering mutation,
+red-then-green, with the `patch` tool.
+
 ### Update — 2026-09-13 22:31 (started, executor Claude Sonnet 4.5)
 
 Status flipped `todo → in-progress` (this doc and the milestone README's
