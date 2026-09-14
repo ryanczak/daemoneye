@@ -1,7 +1,7 @@
 # Bug 2 on phase-04b: the pattern-match test's assertion does not discriminate
 
 **Severity:** minor
-**Status:** open
+**Status:** closed (fixed 2026-09-14, commit `f47d7721`)
 **Filed:** 2026-09-13
 
 ## What's wrong
@@ -94,3 +94,31 @@ checked and which you changed.
       This is an assertion change, not a new test.
 - [ ] `cargo test --lib` → **1861 passed, 0 failed** — **not 1862**.
 - [ ] All four gates pass.
+
+
+## Resolution — 2026-09-14
+
+Fixed and verified independently at review.
+
+- The weak assertion is gone (`grep` → **0**) and the full-line form is present
+  (`grep -c 'out.contains("READY to go")'` → **1**). rustfmt wrapped it across
+  three lines; content is what this doc specified.
+- **The mutation was re-run at review, not read.** Replacing the rendering with
+  `let rendered = { let _ = matches; String::new() };` turns
+  `watch_shell_returns_when_the_pattern_appears` **red** (panic at
+  `shell.rs:2240`, `0 passed; 1 failed`); reverting turns it **green**
+  (`1 passed`). The assertion now discriminates, which is the whole point.
+- `cargo test --lib 'knowledge::shell'` → **37**, unchanged — an assertion
+  change, not a new test.
+
+**The sweep this doc asked for was done and holds on spot-check.** The executor
+walked all ten new `watch_shell` assertions and judged each on whether a
+non-payload part of the sentence (pattern echo, shell id, elapsed seconds)
+could satisfy its substring. It flagged
+`watch_shell_finds_the_cast_when_the_records_timestamp_is_stale` as the one
+case where pattern and payload are the same string by construction, and argued
+it still discriminates for *its own* property — the stale-timestamp cast
+resolution — because that failure mode is a timeout. **Verified at review:**
+disabling the resolution (`cast_path(id, record_started_unix)` unconditionally,
+discarding the `parse_cast_name` scan) turns that test **red**; reverting turns
+it green. The argument was correct.

@@ -1,7 +1,7 @@
 # Phase 04b: `watch_shell` — the blocking observer
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 03a (`list_shells`, the module and its registry seam), 03b
 (`read_shell`, the reader shape and its error sentences) and 04a
 (`open_shell`/`close_shell`, the in-process host fixture in
@@ -2470,3 +2470,77 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 10d28fc82ce526f643601a2a2a492e6b6b4a4281
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-14
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bug-04b-1, bug-04b-2 — both `closed`)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (four runs: a
+  `hard_fail` on the enum-variant wall, a resume, and two fix runs)
+- **Scope deviations:** none across all four runs — every file touched was
+  authorized, and the phase doc's sections above the Update Log survived
+  intact.
+- **Calibration:** **three architect-side criterion defects on this one
+  phase, all the same shape** — pinning a *number* the intended property does
+  not imply. (1) `parse_cast_name` pinned the call's placement inside
+  `watch_shell_with`; it correctly lives in `resolve_live_cast`. (2)
+  bug-04b-1's box 3 pinned the production-`expect` count at 0 while box 4
+  authorised keeping a marker-carrying one — mutually exclusive. (3) The
+  pattern test's criterion pinned only the test's **name**, which cannot see
+  whether its assertion discriminates; it did not. All three corrected in
+  place. `WORKFLOW.md` § "Specs pin behavior, not rendering" already covers
+  this class and was not followed. **Raise at milestone close** — M22's total
+  is twelve mis-specified instruments, and these three are a distinct
+  sub-species from the earlier broken `sed`/`grep` ranges.
+
+**Everything verified independently, nothing read from a transcript.**
+
+All four gates re-run as separate invocations, clippy after `touch src/lib.rs`
+to force a real re-check: `fmt` clean, `build` 0 warnings, `clippy -D warnings`
+exit 0, suite green at **1861 passed, 0 failed** — the inverted count held
+across both fix runs, so neither added a test. `doc_truth` 10, `isolation` 9,
+`knowledge::shell` 37, `shell::log` 17.
+
+Every acceptance criterion in this doc re-run at review: **all pass**,
+including the three corrected ones.
+
+**Three mutations re-run by hand, not read:**
+
+- bug-04b-2's: dropping the rendering (`let rendered = { let _ = matches;
+  String::new() };`) reddens `watch_shell_returns_when_the_pattern_appears` at
+  `shell.rs:2240`; revert green. The strengthened assertion discriminates.
+- The phase's mutation 2: initial offset `0` still reddens
+  `watch_shell_ignores_output_written_before_the_call` after the
+  `WatchOutcome::Pattern(String)` restructure.
+- **A spot-check of the executor's own sweep argument.** It flagged
+  `watch_shell_finds_the_cast_when_the_records_timestamp_is_stale` as the one
+  test where pattern and payload are the same string, and argued it still
+  discriminates for its own property because a resolution failure is a
+  timeout. Disabling the resolution (`cast_path(id, record_started_unix)`
+  unconditionally) reddens it; revert green. **The argument was correct.**
+
+**The one red in my own gate run was a pre-existing flake, and I measured that
+rather than accepting the claim.** `cargo test` failed once on
+`shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`
+— roughly 1 run in 4. It is not this phase's:
+`git diff --stat fa10352a..HEAD -- src/shell/pty.rs` is empty for the whole
+phase, and a `git worktree` at the pre-phase baseline `fa10352a` running
+`cargo test --lib 'shell::pty'` five times **failed once with none of this
+phase's code present**. Recorded in the milestone README so it is not
+re-litigated. The executor had reached the same conclusion from isolated runs
+on the fix tree; the baseline A/B is the stronger check and confirms it.
+
+**The executor's evidence discipline was the story of this phase.** Across
+four runs it reported a failing number in its own § D transcript twice
+(`prod unwrap/panic knowledge (0): 2`, then the post-fix count of 1 against a
+box pinning 0), disclosed the reason rather than deleting code to satisfy a
+figure, filed a flaky neighbour with a 10-run isolation probe instead of
+re-running until green, and produced an assertion-by-assertion discrimination
+sweep that survived spot-checking. Two of the three defects this phase
+bounced on were mine.
+
+**One nit, not fixed and not bounced on:** the
+`// open_shell + close_shell (M22 phase-04a)` banner at
+`src/daemon/executor/knowledge/shell.rs:960` lost its opening `// ---` rule
+when `live_shell_ids` was inserted in the first run. Cosmetic, no DoD box;
+phase 05 edits this module and can restore it in passing.

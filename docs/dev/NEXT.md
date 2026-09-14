@@ -6,13 +6,40 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: M22 phase-04b — watch-shell**
-(`docs/dev/milestones/M22-tool-surface/phase-04b-watch-shell.md`, status: todo,
-drafted 2026-09-13). Dispatch with `/rexymcp:dispatch phase-04b`.
+**Active phase: none.** Phase-04b — watch-shell closed
+**approved_after_2 2026-09-14**
+(`docs/dev/milestones/M22-tool-surface/phase-04b-watch-shell.md`, status:
+done; `bugs/bug-04b-1.md` and `bugs/bug-04b-2.md` both `closed`). Next up is
+**05 — send-input**, not yet drafted; run `/rexymcp:architect next` to draft
+it.
 
-Phase-04a — shell-lifecycle closed **approved_first_try 2026-09-13**
-(`docs/dev/milestones/M22-tool-surface/phase-04a-shell-lifecycle.md`, status:
-done).
+`watch_shell { shell, pattern?, timeout_secs? }` ships core + `Category::Read`,
+not approval-gated — **45 tools: 33 core + 12 deferred**. It is the second
+tool that genuinely blocks the turn, and its executor arm wraps in
+`with_keepalive`; without that a 300 s block trips the CLI's dead-daemon
+deadline and nothing but a criterion catches it.
+
+**Both bounces were minor and two of the three defects were architect-side.**
+bug-04b-1: a `#[allow(dead_code)]` on a constant with no reader, plus two new
+production `expect()`s. bug-04b-2: the pattern test asserted
+`out.contains("READY")` while the outcome sentence echoes the pattern itself,
+so it passed even with the rendered match replaced by an empty string — found
+by mutating at review, not by reading.
+
+**Three architect-side criterion defects on one phase, all the same shape:**
+pinning a *number* the intended property does not imply — a call's placement
+instead of its behaviour, a count that contradicted the box authorising the
+thing it counted, and a test's *name* where its assertion's discriminating
+power was what mattered. `WORKFLOW.md` § "Specs pin behavior, not rendering"
+covers this and was not followed. **Fold candidate at milestone close**; M22's
+running total is twelve mis-specified instruments, and these three are a
+distinct sub-species from the earlier broken `sed`/`grep` ranges.
+
+**A pre-existing flake is now measured and recorded** in the milestone README:
+`pty_stop_with_no_foreground_job_remembers_nothing` fails about 1 full-suite
+run in 4, reproduces at the pre-phase baseline `fa10352a` in a throwaway
+worktree, and `src/shell/pty.rs` is untouched by the whole phase. Re-measure
+at the baseline before attributing it to a phase.
 
 **Scope for 04b:** `watch_shell { shell, pattern?, timeout_secs? }` — core,
 `Category::Read`, not approval-gated, **45 tools: 33 core + 12 deferred**. It
@@ -157,8 +184,9 @@ description**. Measured at scoping — `sre.toml` 47 pane/tmux refs, tool defs 7
   later milestones' live checks exercise the real path. Done 2026-09-12; the
   stale config doc comment went with it.
 
-**Next step:** `/rexymcp:dispatch phase-04b`. Phases 05–10 are not drafted;
-each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:architect next` drafts **phase-05 — send-input**.
+Phases 05–10 are not drafted; each is drafted after its predecessor is
+approved.
 
 **Carried out of M24, still open:**
 

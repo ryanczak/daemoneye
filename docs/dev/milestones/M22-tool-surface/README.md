@@ -63,7 +63,7 @@ final surface, so they go last.
 | 03b | read-shell ([phase-03b-read-shell.md](phase-03b-read-shell.md)) — `read_shell { shell, lines?, since_command?, filter? }` over the asciicast log; builds the read-one-shell primitive | done        |
 | 03c | find-in-shells ([phase-03c-find-in-shells.md](phase-03c-find-in-shells.md)) — `find_in_shells { pattern, scope? }`, 03b's reader in a loop over 03a's collector; completes the 03 row | done        |
 | 04a | shell-lifecycle ([phase-04a-shell-lifecycle.md](phase-04a-shell-lifecycle.md)) — `open_shell {}` + `close_shell { shell }`, both `Category::Run`; share the in-process-host test fixture | done        |
-| 04b | watch-shell ([phase-04b-watch-shell.md](phase-04b-watch-shell.md)) — `watch_shell { shell, pattern?, timeout_secs? }`, the blocking observer; reads the **live cast file**, not the dead `.meta.json` index | review                  |
+| 04b | watch-shell ([phase-04b-watch-shell.md](phase-04b-watch-shell.md)) — `watch_shell { shell, pattern?, timeout_secs? }`, the blocking observer; reads the **live cast file**, not the dead `.meta.json` index | done                    |
 | 05 | send-input — `send_input`, approval-gated; every keystroke into the `"i"` log | todo (not drafted) |
 | 06 | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the `.meta.json` index | todo (not drafted) |
 | 07 | run-terminal-command-reshape — `shell?`/`host?`/`wait?`/`timeout_secs?`; retire `target_pane`, `retry_in_pane`, `background` | todo (not drafted) |
@@ -178,6 +178,19 @@ final surface, so they go last.
 
   Repairing (2) for the 03-row tools is a phase of its own — 04b's
   Authorizations forbid touching them, and a criterion pins their message text.
+
+- **A pre-existing flaky test, measured at the baseline so it is not
+  re-litigated.** `shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`
+  (`src/shell/pty.rs`) fails intermittently under parallel load — roughly 1 run
+  in 4 of the full lib suite on this machine. It surfaced during phase-04b's
+  review and **is not phase-04b's**: `git diff --stat fa10352a..HEAD -- src/shell/pty.rs`
+  is empty for the whole phase, and the failure **reproduces at the pre-phase
+  baseline** — a `git worktree` at `fa10352a` running `cargo test --lib 'shell::pty'`
+  five times failed once with none of the phase's code present. It spawns a real
+  bash and polls against a 10 s deadline, which is the mechanism. Fixing it is
+  its own task; until then, a full-suite red naming *only* this test is a flake,
+  not a regression. **Re-measure at the baseline before attributing it to a
+  phase** — that is the check that settled it here.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24
