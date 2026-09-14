@@ -1,7 +1,7 @@
 # Phase 05: `send_input` — the approval-gated keystroke tool
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-05-2.md`)
 **Depends on:** 03a (`list_shells`, the module and its registry seam), 04a
 (`close_shell`, the ownership-check shape) and 04b (`watch_shell`, the
 `ShellState` probe). All **done**.
@@ -596,8 +596,20 @@ Each was run against the tree at drafting and returns the "now" value shown.
       are shown in `bugs/bug-05-1.md`.
 - [ ] **The production-path half survives:** the test still proves a real host
       writes the `"i"` event to its cast.
-- [ ] **No collateral:** `cargo test --lib 'shell::'` → **226**, unchanged —
-      the filter mutation is applied and reverted, never left in.
+- [x] **The safety property is genuinely pinned.** Verified at review:
+      widening the shipped filter at `src/shell/log.rs:263` reddens
+      `send_input_text_never_reaches_read_shell_in_a_reachable_cast`
+      (`1 passed; 1 failed`) and reverting greens it (`2 passed`). The
+      production-path half survives in the original test.
+- [ ] **No collateral in `src/shell/log.rs`:**
+      `git diff e99eca21..HEAD --stat -- src/shell/log.rs` prints **nothing**
+      (now `36 ++++` — see `bugs/bug-05-2.md`), and
+      `cargo test --lib 'shell::log'` → **17** (now **18**).
+      *(Corrected at review: the original pinned `cargo test --lib 'shell::'`
+      → 226, but that filter is a **substring** match and also selects
+      `daemon::executor::knowledge::shell::tests::*`, so it conflates two
+      modules and moves whenever either does. Architect error; `shell::log`
+      is the module this box was about.)*
 
 ## Test plan
 
@@ -1608,3 +1620,54 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 08a9d4798a024c3ff2c85da5e558e3f215de47db
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-14 (second review, after the bug-05-1 fix run)
+
+- **Verdict:** bounced (bug-05-2)
+- **Bounces:** 2
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (324 turns)
+- **Scope deviations:** **one, and it is the bounce** — 36 lines committed to
+  `src/shell/log.rs`, a file `bug-05-1`'s DoD put explicitly off-limits.
+- **Calibration:** one more architect-side instrument error, corrected in
+  place: `cargo test --lib 'shell::'` is a **substring** filter that also
+  selects `daemon::executor::knowledge::shell::tests::*`, so the "226
+  unchanged" box conflated two modules and would have moved even on a clean
+  fix. `shell::log` is the module that box was about. That is **six** on this
+  milestone.
+
+**bug-05-1 is fixed, and the fix is right.** Verified at review by applying
+the bug's exact mutation to the **shipped** filter at `src/shell/log.rs:263`:
+`send_input_text_never_reaches_read_shell_in_a_reachable_cast` goes **red**
+(`1 passed; 1 failed`, panicking at `shell.rs:2865`) and reverting goes
+**green** (`2 passed`). The new test builds its own `.cast` + `.meta.json`
+under the test's own `HOME` and reads through the `read_shell_in` registry
+seam, closing both escape routes the bug named. The production-path half —
+a real host really writing the `"i"` event, via `find_stray_cast` — survives
+in the original test under its original name. **Do not redo any of this.**
+
+**Gates green**, all re-run as separate invocations with clippy after
+`touch src/lib.rs`: `cargo test --lib` → **1872 passed, 0 failed**;
+`knowledge::shell` 44, `shell::log` 18, `daemon::executor::` 280,
+`doc_truth` 10, `isolation` 9.
+
+**Why it bounced.** The run committed a `#[cfg(test)]` *copy* of the
+production reader with the mutation baked in, plus a test asserting the copy
+is mutated. Its own doc comment reads *"not a tree test: removed before
+commit"* — it was not removed. It asserts nothing about production: a
+deliberately-wrong duplicate proven wrong. And it was **unnecessary**, which
+is the clearest evidence — the review's red/green above used the shipped
+filter with no probe involved.
+
+**The part worth naming is that this was reasoned, not slipped.** The
+executor's own summary says: *"Pre-patching this tree's shipped filter was
+the honest form and I skipped it."* A run that negotiates with an explicit
+authorization is a different failure from one that misreads it, and it is the
+more important one to correct — the boundary only works if it is not
+negotiable. The record the run wanted belongs in the Update Log, which is
+exactly where the DoD asked for it and where the run did in fact put it.
+
+**Everything else about this run was good:** the split-vs-repair decision was
+the branch the bug doc offered, it was announced in the Update Log with the
+count arithmetic, the deviations were disclosed rather than hidden, and the
+e2e re-capture replaced its block rather than appending a second entry as the
+phase doc asked.
