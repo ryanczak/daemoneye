@@ -627,12 +627,6 @@ pub(super) const WATCH_POLL: std::time::Duration = std::time::Duration::from_mil
 /// start grace.
 pub(super) const WATCH_START_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// `watch_shell`'s default timeout, when `timeout_secs` is omitted. The
-/// seeded `WatchShellArgs` default and the `ToolDef` description carry the
-/// same number; changing this means changing both.
-#[allow(dead_code)]
-pub(super) const WATCH_DEFAULT_SECS: u64 = 300;
-
 /// `watch_shell`'s hard ceiling on `timeout_secs` — `await_agent_result`'s cap.
 pub(super) const WATCH_MAX_SECS: u64 = 3600;
 
@@ -745,8 +739,12 @@ pub(super) async fn watch_shell_with(
             let text = visible_text(&String::from_utf8_lossy(&raw));
             buf.push_str(&text);
             buf.push('\n');
-            if re.as_ref().is_some_and(|r| r.is_match(&buf)) {
-                return WatchOutcome::Pattern;
+            if let Some(r) = re.as_ref()
+                && r.is_match(&buf)
+            {
+                let matches = search_shell_buffer(&buf, r, 1);
+                let rendered = render_match(matches.first());
+                return WatchOutcome::Pattern(rendered);
             }
             if pattern.is_none() {
                 match crate::shell::status(&socket_path(shell), SIGNAL_TIMEOUT).await {
@@ -776,16 +774,14 @@ pub(super) async fn watch_shell_with(
     .await;
 
     let body = match outcome {
-        Ok(WatchOutcome::Pattern) => {
-            let matches = search_shell_buffer(&buf, re.as_ref().expect("pattern checked"), 1);
-            let first = matches.first();
+        Ok(WatchOutcome::Pattern(rendered_match)) => {
             format!(
                 "watch_shell {shell}: matched {} after {} s. The line numbers are \
                  relative to the output seen since this call started, not the \
                  log's own.\n{}",
                 pattern.unwrap_or_default(),
                 capped_secs,
-                render_match(first)
+                rendered_match
             )
         }
         Ok(WatchOutcome::Finished) => {
@@ -851,7 +847,9 @@ pub(super) async fn watch_shell_with(
 /// The state that ended a `watch_shell` loop — a server-side summary of the
 /// branch taken so the caller's sentence is written once, after the wait.
 enum WatchOutcome {
-    Pattern,
+    /// The pattern matched; carries the match rendered with ±1 line of
+    /// context, because rendering must happen where the regex already is.
+    Pattern(String),
     Finished,
     /// No command was running and none ever appeared within the grace.
     NothingRunning,
@@ -930,6 +928,7 @@ fn strip_ansi(text: &str, re: &regex::Regex) -> String {
 fn visible_text(raw: &str) -> String {
     static ANSI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let ansi = ANSI.get_or_init(|| {
+        // INVARIANT: literal is a valid regex
         regex::Regex::new(concat!(
             r"\x1b\[[0-9;?]*[ -/]*[@-~]",           // CSI
             r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?", // OSC (BEL or ST)
@@ -949,8 +948,6 @@ fn visible_text(raw: &str) -> String {
 }
 
 /// The shell ids currently in `reg`, numerically sorted. `read_shell_log`,
-/// `close_shell_with` and the new `watch_shell` all need this; extracted here
-/// at the third copy rather than a second round of three.
 /// `close_shell_with` and the new `watch_shell` all need this; extracted here
 /// at the third copy rather than a second round of three.
 fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
