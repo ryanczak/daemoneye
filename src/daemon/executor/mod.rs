@@ -916,6 +916,19 @@ where
             .await,
         )),
 
+        PendingCall::WatchShell {
+            shell,
+            pattern,
+            timeout_secs,
+            ..
+        } => Ok(ToolCallOutcome::Result(
+            crate::daemon::utils::with_keepalive(
+                tx,
+                knowledge::watch_shell(shell, pattern.as_deref(), *timeout_secs),
+            )
+            .await?,
+        )),
+
         PendingCall::FindInPanes { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
             knowledge::find_in_panes(cache, chat_pane, pattern, scope.as_deref()).await,
         )),

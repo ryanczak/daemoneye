@@ -627,7 +627,10 @@ pub(super) const WATCH_POLL: std::time::Duration = std::time::Duration::from_mil
 /// start grace.
 pub(super) const WATCH_START_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// `watch_shell`'s default timeout, when `timeout_secs` is omitted.
+/// `watch_shell`'s default timeout, when `timeout_secs` is omitted. The
+/// seeded `WatchShellArgs` default and the `ToolDef` description carry the
+/// same number; changing this means changing both.
+#[allow(dead_code)]
 pub(super) const WATCH_DEFAULT_SECS: u64 = 300;
 
 /// `watch_shell`'s hard ceiling on `timeout_secs` — `await_agent_result`'s cap.
@@ -669,11 +672,11 @@ fn watch_shell_unknown_error(reg: &ShellRegistry, shell: &str) -> String {
 /// and carriage-return-normalised) output written **after this call** matches
 /// it; without one, until the shell's running command finishes, the shell
 /// turns out to have none, or it exits/pauses/dies/`timeout_secs` elapses.
-pub(super) async fn watch_shell(
-    shell: &str,
-    pattern: Option<&str>,
-    timeout_secs: u64,
-) -> String {
+///
+/// `pub` rather than `pub(super)`: `knowledge/mod.rs` re-exports it for
+/// `executor` the way `list_shells` and its siblings are re-exported, and a
+/// `pub(super)` item cannot be given wider visibility on re-export.
+pub async fn watch_shell(shell: &str, pattern: Option<&str>, timeout_secs: u64) -> String {
     watch_shell_with(
         crate::shell::registry(),
         shell,
@@ -696,11 +699,7 @@ pub(super) async fn watch_shell_with(
     grace: Duration,
 ) -> String {
     // 1. Refusals first, cheapest first: an invalid pattern costs nothing.
-    let re = match pattern.map(|p| {
-        regex::RegexBuilder::new(p)
-            .size_limit(1 << 20)
-            .build()
-    }) {
+    let re = match pattern.map(|p| regex::RegexBuilder::new(p).size_limit(1 << 20).build()) {
         Some(Ok(re)) => Some(re),
         Some(Err(e)) => {
             return format!(
@@ -740,8 +739,8 @@ pub(super) async fn watch_shell_with(
     let mut buf = String::new();
     let outcome = tokio::time::timeout(deadline, async {
         loop {
-            let (raw, new_offset) = crate::shell::read_output_since(&cast, offset)
-                .unwrap_or((Vec::new(), offset));
+            let (raw, new_offset) =
+                crate::shell::read_output_since(&cast, offset).unwrap_or((Vec::new(), offset));
             offset = new_offset;
             let text = visible_text(&String::from_utf8_lossy(&raw));
             buf.push_str(&text);
@@ -932,9 +931,9 @@ fn visible_text(raw: &str) -> String {
     static ANSI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let ansi = ANSI.get_or_init(|| {
         regex::Regex::new(concat!(
-            r"\x1b\[[0-9;?]*[ -/]*[@-~]",             // CSI
-            r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?",   // OSC (BEL or ST)
-            r"|\x1b[@-Z\\-_]",                        // two-character escape
+            r"\x1b\[[0-9;?]*[ -/]*[@-~]",           // CSI
+            r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?", // OSC (BEL or ST)
+            r"|\x1b[@-Z\\-_]",                      // two-character escape
         ))
         .expect("ANSI-strip regex is valid")
     });
@@ -956,10 +955,7 @@ fn visible_text(raw: &str) -> String {
 /// at the third copy rather than a second round of three.
 fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
     with_shells(reg, |store| {
-        let mut ids: Vec<String> = store
-            .values()
-            .map(|r| r.id.as_str().to_string())
-            .collect();
+        let mut ids: Vec<String> = store.values().map(|r| r.id.as_str().to_string()).collect();
         ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));
         ids
     })
@@ -2206,7 +2202,7 @@ mod tests {
         let line = format!(
             "[{}, \"o\", {}]\n",
             t,
-            serde_json::json!(payload).to_string()
+            serde_json::to_string(payload).unwrap_or_default()
         );
         use std::io::Write as _;
         let mut f = std::fs::OpenOptions::new()
@@ -2223,11 +2219,7 @@ mod tests {
         let (_home, _dir) = lifecycle_home();
         let reg = ShellRegistry::default();
         insert_watch_record(&reg, 5, 1_788_470_005);
-        append_event(
-            &cast_path("s5", 1_788_470_005),
-            1.0,
-            "warming up\n",
-        );
+        append_event(&cast_path("s5", 1_788_470_005), 1.0, "warming up\n");
         hold_lock("s5");
         let path = cast_path("s5", 1_788_470_005);
         let writer = tokio::spawn(async move {
@@ -2413,8 +2405,9 @@ mod tests {
         let path = cast_path("s11", 1_788_470_011);
         // A leased rather than leaked lock: dropping it makes the shell's
         // host look dead to `host_is_alive`.
-        let leased = crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path("s11"))
-            .expect("acquiring the per-id lock for the test host");
+        let leased =
+            crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path("s11"))
+                .expect("acquiring the per-id lock for the test host");
         let writer = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
             append_event(&path, 1.0, "left over\n");
@@ -2480,10 +2473,7 @@ mod tests {
         // set, SGR colour onset and reset, around the visible text.
         let raw = "\u{1b}]0;matt@scrappy:~\u{7}\u{1b}]0;matt@scrappy: ~\u{7}\u{1b}[01;32mmatt@scrappy\u{1b}[00m:\u{1b}[01;34m~\u{1b}[00m$ ";
         let out = visible_text(raw);
-        assert!(
-            !out.contains('\u{1b}'),
-            "no escape survives: {out:?}"
-        );
+        assert!(!out.contains('\u{1b}'), "no escape survives: {out:?}");
         assert!(
             out.contains("matt@scrappy") && out.contains('$'),
             "the plain text is what is left: {out:?}"
@@ -2493,6 +2483,9 @@ mod tests {
     #[test]
     fn visible_text_keeps_the_text_after_the_last_carriage_return() {
         let out = visible_text("10%\r50%\r100% done\nnext");
-        assert_eq!(out, "100% done\nnext", "the last write of a rewritten line wins: {out:?}");
+        assert_eq!(
+            out, "100% done\nnext",
+            "the last write of a rewritten line wins: {out:?}"
+        );
     }
 }

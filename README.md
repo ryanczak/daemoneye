@@ -493,7 +493,7 @@ While the search prompt is open, typing edits the query, `Enter` commits it and 
 
 ## AI tools
 
-The model has **44 tools**. The 32 **core** tools are sent with every request; the 12 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
+The model has **45 tools**. The 33 **core** tools are sent with every request; the 12 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
 
 Tools marked **⚠** require explicit user approval before they execute.
 
@@ -516,6 +516,7 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `find_in_shells` | One regex search across every in-scope shell's recorded output — answers "which shell has the error?" in a single call. Reports shell id, 1-indexed line number and the ±1 context; capped at 50 matches across all shells, last 2000 lines per shell; unreadable shells are skipped and named. `scope` selects this session's shells (default) or all |
 | `open_shell` | Start a new PTY shell and return its id, with the caveat spelled out: subsequent commands reuse this session's lowest-numbered open shell, so the new shell is only used when it is that one. Readable via `read_shell` / `find_in_shells`, ended via `close_shell` |
 | `close_shell` | End this session's PTY shell by id — the id from `list_shells`. Sends a terminate signal and reports whether the shell's host actually went away; another session's or a ghost job's shell is refused |
+| `watch_shell` | Block on a live PTY shell's new output — the `.cast` recording, read as it is written. With `pattern` (regex) it waits until a line of output written *after the call* matches and returns that line with context; without one it waits until the shell's running command finishes, and reports nothing-running, paused, exited, gone or timeout distinctly. `timeout_secs` optional (default 300, capped 3600). For what a shell already recorded, use `read_shell` / `find_in_shells` |
 | `list_panes` | Enumerate panes grouped by window, with ID, index, command, cwd, title and live status — plus a labelled section for panes in other tmux sessions |
 | `read_pane` | Read any pane's buffer on demand at a requested scrollback depth, including other sessions and daemon background windows; ANSI-annotated, optionally regex-filtered, masked |
 | `find_in_panes` | One regex search across every pane's buffer — answers "which pane has the error?" in a single call |

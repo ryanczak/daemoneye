@@ -493,6 +493,20 @@ impl PendingCall {
                     serde_json::json!({"pane_id": pane_id, "timeout_secs": timeout_secs, "pattern": pattern}),
                 ),
             },
+            PendingCall::WatchShell {
+                id,
+                thought_signature,
+                shell,
+                timeout_secs,
+                pattern,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "watch_shell".to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"shell": shell, "timeout_secs": timeout_secs, "pattern": pattern}),
+                ),
+            },
             PendingCall::ReadFile {
                 id,
                 thought_signature,
@@ -932,6 +946,7 @@ impl PendingCall {
             PendingCall::ReadScript { id, .. } => id,
             PendingCall::DeleteScript { id, .. } => id,
             PendingCall::WatchPane { id, .. } => id,
+            PendingCall::WatchShell { id, .. } => id,
             PendingCall::ReadFile { id, .. } => id,
             PendingCall::EditFile { id, .. } => id,
             PendingCall::WriteRunbook { id, .. } => id,
@@ -977,6 +992,7 @@ impl PendingCall {
                 | PendingCall::DeleteSchedule { .. }
                 | PendingCall::ReadScript { .. }
                 | PendingCall::WatchPane { .. }
+                | PendingCall::WatchShell { .. }
                 | PendingCall::ReadFile { .. }
                 | PendingCall::ReadRunbook { .. }
                 | PendingCall::AddMemory { .. }
@@ -1024,6 +1040,18 @@ impl PendingCall {
                     format!("{pane_id} pattern=\"{pat}\"")
                 } else {
                     format!("{pane_id} {timeout_secs}s")
+                }
+            }
+            PendingCall::WatchShell {
+                shell,
+                timeout_secs,
+                pattern,
+                ..
+            } => {
+                if let Some(pat) = pattern {
+                    format!("{shell} pattern=\"{pat}\"")
+                } else {
+                    format!("{shell} {timeout_secs}s")
                 }
             }
             PendingCall::ReadFile {
@@ -1160,6 +1188,7 @@ impl PendingCall {
             PendingCall::ReadScript { .. } => "read_script",
             PendingCall::DeleteScript { .. } => "delete_script",
             PendingCall::WatchPane { .. } => "watch_pane",
+            PendingCall::WatchShell { .. } => "watch_shell",
             PendingCall::ReadFile { .. } => "read_file",
             PendingCall::EditFile { .. } => "edit_file",
             PendingCall::WriteRunbook { .. } => "write_runbook",

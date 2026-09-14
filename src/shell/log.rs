@@ -257,11 +257,15 @@ fn extend_output_line(line: Option<String>, out: &mut Vec<u8>) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
         return;
     };
-    let Some(array) = value.as_array() else { return };
+    let Some(array) = value.as_array() else {
+        return;
+    };
     if array.len() != 3 || array[1].as_str() != Some("o") {
         return;
     }
-    let Some(data) = array[2].as_str() else { return };
+    let Some(data) = array[2].as_str() else {
+        return;
+    };
     out.extend_from_slice(data.as_bytes());
 }
 
@@ -730,7 +734,10 @@ mod tests {
 
         // Append a third event after the first read: reading from the
         // returned offset sees only the third.
-        appender(&path, format!("[3.0, \"o\", {}]", serde_json::json!("third")));
+        appender(
+            &path,
+            format!("[3.0, \"o\", {}]", serde_json::json!("third")),
+        );
         let (again, _next) = read_output_since(&path, offset).unwrap();
         assert!(
             again.windows(5).any(|w| w == b"third"),

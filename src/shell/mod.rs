@@ -19,7 +19,9 @@ pub use backend::PtyBackend;
 pub use client::{CommandHandle, run_command, send_signal, spawn_command, status};
 pub use host::{ShellBackend, bind, serve};
 pub use launch::{await_ready, cast_path, lock_path, run_host, socket_path, spawn_detached};
-pub use log::{CastWriter, CommandRecord, MetaIndex, meta_path_for, read_command_output, read_output_since};
+pub use log::{
+    CastWriter, CommandRecord, MetaIndex, meta_path_for, read_command_output, read_output_since,
+};
 pub use proto::{ShellRequest, ShellResponse, ShellSignal, ShellState, encode};
 pub use pty::{
     CommandOutcome, Nonce, PtyShell, exit_var, parse_outcome, strip_markers, wrap_command,
