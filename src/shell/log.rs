@@ -210,28 +210,59 @@ pub fn read_command_output(cast: &Path, meta: &MetaIndex, index: u32) -> Result<
     let reader = BufReader::new(&bytes[..]);
     let mut out = Vec::new();
     for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
-        let Some(array) = value.as_array() else {
-            continue;
-        };
-        if array.len() != 3 {
-            continue;
-        }
-        if array[1].as_str() != Some("o") {
-            continue;
-        }
-        let Some(data) = array[2].as_str() else {
-            continue;
-        };
-        out.extend_from_slice(data.as_bytes());
+        extend_output_line(line.ok(), &mut out);
     }
     Ok(out)
+}
+
+/// Concatenated `"o"` payload bytes of the **complete** cast lines in
+/// `cast[from..]`, and the byte offset one past the last complete line. The
+/// offset deliberately stops before a still-unterminated final line, so the
+/// next call — after the host has finished writing it — sees it whole. `"i"`
+/// and `"m"` events and malformed lines are skipped, never fatal. A `from`
+/// past the file's length (a truncated or rotated file) returns empty bytes
+/// and `from` unchanged rather than seeking past the end.
+pub fn read_output_since(cast: &Path, from: u64) -> Result<(Vec<u8>, u64)> {
+    let mut file = File::open(cast)?;
+    let len = file.metadata()?.len();
+    if from >= len {
+        return Ok((Vec::new(), from));
+    }
+    file.seek(SeekFrom::Start(from))?;
+    let mut buf = Vec::with_capacity((len - from).min(1 << 20) as usize);
+    file.read_to_end(&mut buf)?;
+    let consumed = from + last_complete_line_end(&buf) as u64;
+    let reader = BufReader::new(&buf[..last_complete_line_end(&buf)]);
+    let mut out = Vec::new();
+    for line in reader.lines() {
+        extend_output_line(line.ok(), &mut out);
+    }
+    Ok((out, consumed))
+}
+
+/// Index one past the last `\n` in `buf`, or 0 when there is none — the bytes
+/// after it are an incomplete final line and must stay unconsumed.
+fn last_complete_line_end(buf: &[u8]) -> usize {
+    match buf.iter().rposition(|b| *b == b'\n') {
+        Some(i) => i + 1,
+        None => 0,
+    }
+}
+
+/// Extend `out` with the `"o"` payload of one cast event line. An unparsable
+/// line, a malformed JSON line and any non-output event contribute nothing —
+/// skipping rather than failing is the contract both readers share.
+fn extend_output_line(line: Option<String>, out: &mut Vec<u8>) {
+    let Some(line) = line else { return };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+        return;
+    };
+    let Some(array) = value.as_array() else { return };
+    if array.len() != 3 || array[1].as_str() != Some("o") {
+        return;
+    }
+    let Some(data) = array[2].as_str() else { return };
+    out.extend_from_slice(data.as_bytes());
 }
 
 #[cfg(test)]
@@ -651,5 +682,157 @@ mod tests {
                 "{label} file must carry the explicit 0600 mode, regardless of umask"
             );
         }
+    }
+
+    /// Write one raw cast event line (`kind` = `"o"`, `"i"`, `"m"`), through
+    /// the writer's real event path.
+    fn event(w: &mut CastWriter, t: f64, kind: &str, data: &str) {
+        let bytes = data.as_bytes();
+        match kind {
+            "o" => w.write_output(Duration::from_secs_f64(t), bytes).unwrap(),
+            "i" => w.write_input(Duration::from_secs_f64(t), bytes).unwrap(),
+            _ => w.mark(Duration::from_secs_f64(t), data).unwrap(),
+        }
+    }
+
+    /// Append one raw line to `path` — a cast line the way a host would emit
+    /// it, or any arbitrary bytes. The trailing newline is supplied only when
+    /// `line` does not end with one.
+    fn appender(path: &std::path::Path, line: String) {
+        let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        f.write_all(line.as_bytes()).unwrap();
+        f.write_all(b"\n").unwrap();
+    }
+
+    /// Append raw bytes to `path` with no newline appended.
+    fn appender_raw(path: &std::path::Path, bytes: &[u8]) {
+        let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        f.write_all(bytes).unwrap();
+    }
+
+    #[test]
+    fn read_output_since_returns_only_new_output() {
+        let dir = tempdir().unwrap();
+        let path = cast(dir.path());
+        let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+        event(&mut w, 1.0, "o", "first\n");
+        event(&mut w, 2.0, "o", "second\n");
+        drop(w);
+        let (first, offset) = read_output_since(&path, 0).unwrap();
+        assert!(
+            first.windows(5).any(|w| w == b"first"),
+            "the first event's payload is in the read: {first:?}"
+        );
+        assert!(
+            first.windows(6).any(|w| w == b"second"),
+            "the second event's payload is in the read: {first:?}"
+        );
+
+        // Append a third event after the first read: reading from the
+        // returned offset sees only the third.
+        appender(&path, format!("[3.0, \"o\", {}]", serde_json::json!("third")));
+        let (again, _next) = read_output_since(&path, offset).unwrap();
+        assert!(
+            again.windows(5).any(|w| w == b"third"),
+            "the appended event's payload comes back from the new offset: {again:?}"
+        );
+        assert!(
+            !again.windows(5).any(|w| w == b"first"),
+            "already-consumed bytes are never returned again: {again:?}"
+        );
+    }
+
+    #[test]
+    fn read_output_since_stops_at_the_last_complete_line() {
+        let dir = tempdir().unwrap();
+        let path = cast(dir.path());
+        let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+        event(&mut w, 1.0, "o", "whole line\n");
+        drop(w);
+        let (_, after_first) = read_output_since(&path, 0).unwrap();
+
+        appender(&path, r#"[2.0, "o", "complete\n"]"#.to_string());
+        // No trailing newline: the final cast line is still being written.
+        appender_raw(&path, b"[2.1, \"o\", \"partX");
+
+        let (got, offset) = read_output_since(&path, after_first).unwrap();
+        assert!(
+            got.windows(8).any(|w| w == b"complete"),
+            "the complete line's payload is returned: {got:?}"
+        );
+        assert!(
+            !got.windows(4).any(|w| w == b"part"),
+            "the unterminated final line must stay unconsumed: {got:?}"
+        );
+        let len = std::fs::metadata(&path).unwrap().len();
+        assert!(
+            offset <= len,
+            "the offset must not exceed the file length: {offset} > {len}"
+        );
+        assert_ne!(
+            offset, len,
+            "a partial final line's bytes must be left unconsumed: {offset} == {len}"
+        );
+        assert!(
+            offset > after_first,
+            "the complete line before the partial one was consumed: {offset} vs {after_first}"
+        );
+
+        // Now complete the line: the appended text finishes the partial JSON.
+        appender(&path, r#"ial line"]"#.to_string());
+        let (more, _) = read_output_since(&path, offset).unwrap();
+        assert!(
+            more.windows(10).any(|w| w == b"partXial l"),
+            "a line assembled across two reads comes back whole: {more:?}"
+        );
+        let (_, off2) = read_output_since(&path, offset).unwrap();
+        assert_eq!(
+            off2,
+            std::fs::metadata(&path).unwrap().len(),
+            "after completion a read consumes to the new end"
+        );
+    }
+
+    #[test]
+    fn read_output_since_skips_input_and_marker_events() {
+        let dir = tempdir().unwrap();
+        let path = cast(dir.path());
+        let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+        event(&mut w, 1.0, "o", "out-1\n");
+        event(&mut w, 2.0, "i", "keystrokes");
+        event(&mut w, 3.0, "m", "a marker");
+        event(&mut w, 4.0, "o", "out-2\n");
+        drop(w);
+        appender(&path, "not json at all".to_string());
+        appender(&path, "[5.0, \"o\", \"out-3\\\\n\"]".to_string());
+        let (got, _) = read_output_since(&path, 0).unwrap();
+        let text = String::from_utf8_lossy(&got).into_owned();
+        assert!(text.contains("out-1"), "first output kept: {text:?}");
+        assert!(text.contains("out-2"), "second output kept: {text:?}");
+        assert!(
+            text.contains("out-3"),
+            "output after the bad line kept, newline decoded: {text:?}"
+        );
+        assert!(
+            !text.contains("keystrokes") && !text.contains("a marker"),
+            "input and marker events are this tool's blind spot: {text:?}"
+        );
+        assert!(
+            !text.contains("not json"),
+            "a malformed line is skipped, not fatal: {text:?}"
+        );
+    }
+
+    #[test]
+    fn read_output_since_past_the_file_end_returns_unmoved_offset() {
+        let dir = tempdir().unwrap();
+        let path = cast(dir.path());
+        let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+        event(&mut w, 1.0, "o", "short\n");
+        drop(w);
+        let len = std::fs::metadata(&path).unwrap().len();
+        let (got, offset) = read_output_since(&path, len + 9).unwrap();
+        assert!(got.is_empty(), "nothing beyond the end: {got:?}");
+        assert_eq!(offset, len + 9, "the offset is returned unchanged");
     }
 }

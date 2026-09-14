@@ -154,6 +154,14 @@ pub(super) struct CloseShellArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct WatchShellArgs {
+    shell: String,
+    #[serde(default = "default_300")]
+    timeout_secs: u64,
+    pattern: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub(super) struct EditFileArgs {
     path: String,
     #[serde(default = "default_edit")]
@@ -579,6 +587,21 @@ impl ToolArgs for CloseShellArgs {
         AiEvent::CloseShell {
             id: id.to_string(),
             shell: self.shell,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for WatchShellArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::WatchShell {
+            id: id.to_string(),
+            shell: self.shell,
+            timeout_secs: self.timeout_secs,
+            pattern: self.pattern,
             thought_signature: ts,
         }
     }

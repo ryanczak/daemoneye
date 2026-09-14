@@ -215,6 +215,16 @@ pub enum AiEvent {
         shell: String,
         thought_signature: Option<String>,
     },
+    /// Block on a PTY shell's arriving output: pattern match on the output
+    /// written after the call, the running command's finish, or a timeout
+    /// (M22 phase-04b).
+    WatchShell {
+        id: String,
+        shell: String,
+        timeout_secs: u64,
+        pattern: Option<String>,
+        thought_signature: Option<String>,
+    },
     TmuxControl {
         id: String,
         action: String,

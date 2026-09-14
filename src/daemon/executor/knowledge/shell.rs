@@ -242,25 +242,7 @@ fn read_shell_log(
             .map(|record| (record.started_unix, record.owner.key()))
     });
     let Some((started_unix, owner_key)) = resolved else {
-        let live = with_shells(reg, |store| {
-            let mut ids: Vec<String> = store.values().map(|r| r.id.as_str().to_string()).collect();
-            ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));
-            ids
-        });
-        return Err(if live.is_empty() {
-            format!(
-                "Error: no shell with id {id:?} is in the registry. No shells are \
-                 live; call list_shells to confirm, or run a command first — \
-                 run_terminal_command creates a shell on demand."
-            )
-        } else {
-            format!(
-                "Error: no shell with id {id:?} is in the registry — it may have \
-                 exited and aged out, or the listing you are working from is \
-                 stale. Live shell ids: {}. Call list_shells to refresh.",
-                live.join(", ")
-            )
-        });
+        return Err(unknown_shell_error(reg, id));
     };
     let cast = cast_path(id, started_unix);
     let meta_path = meta_path_for(&cast);
@@ -633,6 +615,355 @@ fn tail_lines(text: &str, max: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// watch_shell — the blocking observer (M22 phase-04b)
+// ---------------------------------------------------------------------------
+
+/// How often `watch_shell` polls the cast file and the shell's state.
+/// `watch_pane`'s poll interval — its shape proved it out.
+pub(super) const WATCH_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// How long `watch_shell` tolerates an `Idle` shell it has never seen
+/// `Running`: a command sent to the PTY has not taken it yet. `watch_pane`'s
+/// start grace.
+pub(super) const WATCH_START_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// `watch_shell`'s default timeout, when `timeout_secs` is omitted.
+pub(super) const WATCH_DEFAULT_SECS: u64 = 300;
+
+/// `watch_shell`'s hard ceiling on `timeout_secs` — `await_agent_result`'s cap.
+pub(super) const WATCH_MAX_SECS: u64 = 3600;
+
+/// How many lines of what `watch_shell` saw it reports on a timeout or a
+/// gone host.
+pub(super) const WATCH_TAIL_LINES: usize = 50;
+
+/// The string `read_shell_log`, `close_shell_with` and `watch_shell` all show
+/// for an id not in `reg` — one 03b sentence when the registry is empty, one
+/// naming the live ids otherwise. Written once so the wording cannot drift
+/// between callers.
+fn unknown_shell_error(reg: &ShellRegistry, id: &str) -> String {
+    let live = live_shell_ids(reg);
+    if live.is_empty() {
+        format!(
+            "Error: no shell with id {id:?} is in the registry. No shells are \
+             live; call list_shells to confirm, or run a command first — \
+             run_terminal_command creates a shell on demand."
+        )
+    } else {
+        format!(
+            "Error: no shell with id {id:?} is in the registry — it may have \
+             exited and aged out, or the listing you are working from is \
+             stale. Live shell ids: {}. Call list_shells to refresh.",
+            live.join(", ")
+        )
+    }
+}
+
+/// The `read_shell`-sentence shape `watch_shell` returns for an id not in
+/// `reg` — the shared 03b wording. A value, never `Err`.
+fn watch_shell_unknown_error(reg: &ShellRegistry, shell: &str) -> String {
+    unknown_shell_error(reg, shell)
+}
+
+/// Wait on a live shell's arriving output: with a `pattern`, until the (ANSI-
+/// and carriage-return-normalised) output written **after this call** matches
+/// it; without one, until the shell's running command finishes, the shell
+/// turns out to have none, or it exits/pauses/dies/`timeout_secs` elapses.
+pub(super) async fn watch_shell(
+    shell: &str,
+    pattern: Option<&str>,
+    timeout_secs: u64,
+) -> String {
+    watch_shell_with(
+        crate::shell::registry(),
+        shell,
+        pattern,
+        timeout_secs,
+        WATCH_POLL,
+        WATCH_START_GRACE,
+    )
+    .await
+}
+
+/// `watch_shell` with the registry, poll interval and start grace injected —
+/// the seam the tests drive.
+pub(super) async fn watch_shell_with(
+    reg: &ShellRegistry,
+    shell: &str,
+    pattern: Option<&str>,
+    timeout_secs: u64,
+    poll: Duration,
+    grace: Duration,
+) -> String {
+    // 1. Refusals first, cheapest first: an invalid pattern costs nothing.
+    let re = match pattern.map(|p| {
+        regex::RegexBuilder::new(p)
+            .size_limit(1 << 20)
+            .build()
+    }) {
+        Some(Ok(re)) => Some(re),
+        Some(Err(e)) => {
+            return format!(
+                "Error: invalid watch_shell pattern /{pattern:?}/: {e}. The pattern \
+                 is a Rust `regex`-crate regular expression applied to the shell's \
+                 new output, not a literal substring."
+            );
+        }
+        None => None,
+    };
+
+    // 2. The id must be in the registry.
+    let started_unix = with_shells(reg, |store| store.get(shell).map(|r| r.started_unix));
+    let Some(record_started_unix) = started_unix else {
+        return watch_shell_unknown_error(reg, shell);
+    };
+
+    // 3. Resolve the cast by name, never by the record's `started_unix`: the
+    //    record and the cast are stamped in different processes, and a spawn
+    //    crossing a second boundary leaves `cast_path(id, record.started_unix)`
+    //    naming no file.
+    let cast = resolve_live_cast(shell, record_started_unix);
+    let mut offset = match std::fs::metadata(&cast) {
+        Ok(m) => m.len(),
+        // No cast yet is not an error — the host creates it when it has
+        // something to record.
+        Err(_) => 0,
+    };
+
+    // 4. Poll until the pattern hits, the shell's command ends, or the
+    //    timeout elapses. The whole loop runs inside one `tokio::time::timeout`
+    //    like `await_agent_result`'s, so nothing here can run past the cap.
+    let capped_secs = timeout_secs.min(WATCH_MAX_SECS);
+    let deadline = tokio::time::Duration::from_secs(capped_secs);
+    let started = std::time::Instant::now();
+    let mut seen_running = false;
+    let mut buf = String::new();
+    let outcome = tokio::time::timeout(deadline, async {
+        loop {
+            let (raw, new_offset) = crate::shell::read_output_since(&cast, offset)
+                .unwrap_or((Vec::new(), offset));
+            offset = new_offset;
+            let text = visible_text(&String::from_utf8_lossy(&raw));
+            buf.push_str(&text);
+            buf.push('\n');
+            if re.as_ref().is_some_and(|r| r.is_match(&buf)) {
+                return WatchOutcome::Pattern;
+            }
+            if pattern.is_none() {
+                match crate::shell::status(&socket_path(shell), SIGNAL_TIMEOUT).await {
+                    Ok(crate::shell::ShellResponse::Status { state, .. }) => match state {
+                        crate::shell::ShellState::Running => seen_running = true,
+                        crate::shell::ShellState::Idle => {
+                            if seen_running {
+                                return WatchOutcome::Finished;
+                            }
+                            if started.elapsed() >= grace {
+                                return WatchOutcome::NothingRunning;
+                            }
+                        }
+                        crate::shell::ShellState::Paused => return WatchOutcome::Paused,
+                        crate::shell::ShellState::Exited => return WatchOutcome::Exited,
+                    },
+                    Ok(_) => {}
+                    Err(_) => return WatchOutcome::Unreachable,
+                }
+            }
+            if !host_is_alive(&crate::shell::lock_path(shell)) {
+                return WatchOutcome::HostGone;
+            }
+            tokio::time::sleep(poll).await;
+        }
+    })
+    .await;
+
+    let body = match outcome {
+        Ok(WatchOutcome::Pattern) => {
+            let matches = search_shell_buffer(&buf, re.as_ref().expect("pattern checked"), 1);
+            let first = matches.first();
+            format!(
+                "watch_shell {shell}: matched {} after {} s. The line numbers are \
+                 relative to the output seen since this call started, not the \
+                 log's own.\n{}",
+                pattern.unwrap_or_default(),
+                capped_secs,
+                render_match(first)
+            )
+        }
+        Ok(WatchOutcome::Finished) => {
+            format!(
+                "watch_shell {shell}: the command running in it finished after {} s.\n{}",
+                capped_secs,
+                tail_of(&buf, WATCH_TAIL_LINES)
+            )
+        }
+        Ok(WatchOutcome::NothingRunning) => format!(
+            "watch_shell {shell}: nothing was running in it for {} s, so there was \
+             no command to wait for. Start the command (run_terminal_command with \
+             background=true creates a dedicated shell), then watch it. This \
+             tool watches output that arrives after the call — read_shell reads \
+             what was already recorded.",
+            capped_secs
+        ),
+        Ok(WatchOutcome::Paused) => format!(
+            "watch_shell {shell}: its job is stopped (SUSPENDED), so it will not \
+             finish on its own. The tool returns now rather than burn the {} s.\n{}",
+            capped_secs,
+            tail_of(&buf, WATCH_TAIL_LINES)
+        ),
+        Ok(WatchOutcome::Exited) => format!(
+            "watch_shell {shell}: the shell itself ended while watching.\n{}",
+            tail_of(&buf, WATCH_TAIL_LINES)
+        ),
+        Ok(WatchOutcome::HostGone) => format!(
+            "watch_shell {shell}: its host is gone.{}\n{}",
+            if buf.trim().is_empty() {
+                String::new()
+            } else {
+                " The tail of what it had written:".to_string()
+            },
+            tail_of(&buf, WATCH_TAIL_LINES)
+        ),
+        Ok(WatchOutcome::Unreachable) => format!(
+            "watch_shell {shell}: the shell is unreachable — its socket exists in \
+             the registry but the host did not answer a status round-trip. Do not \
+             keep watching it; list_shells and close_shell are the tools that act \
+             on a shell in this state."
+        ),
+        Err(_) => {
+            if buf.trim().is_empty() {
+                format!(
+                    "watch_shell {shell}: timed out after {capped_secs} s. The shell \
+                     produced no output after the call started. If you expected a \
+                     match in output written before the call, that is not what this \
+                     tool watches — read_shell reads what was already recorded."
+                )
+            } else {
+                format!(
+                    "watch_shell {shell}: timed out after {capped_secs} s without the \
+                     pattern matching. What it saw:\n{}",
+                    tail_of(&buf, WATCH_TAIL_LINES)
+                )
+            }
+        }
+    };
+    mask_sensitive(&body).to_string()
+}
+
+/// The state that ended a `watch_shell` loop — a server-side summary of the
+/// branch taken so the caller's sentence is written once, after the wait.
+enum WatchOutcome {
+    Pattern,
+    Finished,
+    /// No command was running and none ever appeared within the grace.
+    NothingRunning,
+    /// The shell's foreground job was stopped and will not finish on its own.
+    Paused,
+    Exited,
+    HostGone,
+    /// A `status` round-trip failed — the socket is gone.
+    Unreachable,
+}
+
+/// The one match rendered with its line and ±1 line of context, the shape
+/// `find_in_shells` renders with (the same half-open edges, the same
+/// `+/-` markers) so the two tools' bodies look alike.
+fn render_match(m: Option<&ShellBufferMatch>) -> String {
+    let Some(m) = m else {
+        return String::new();
+    };
+    let mut out = String::new();
+    if let Some(before) = &m.before {
+        out.push_str(&format!("{:>5}- {}", m.line_no - 1, before));
+        out.push('\n');
+    }
+    out.push_str(&format!("{:>5}: {}", m.line_no, m.line));
+    out.push('\n');
+    if let Some(after) = &m.after {
+        out.push_str(&format!("{:>5}- {}", m.line_no + 1, after));
+        out.push('\n');
+    }
+    out
+}
+
+/// The last `max` non-empty-collapsed lines of `text` — the same shape
+/// `tail_lines` computes; `buf` is cleared between reads so `tail_lines`
+/// itself is reused where the text is already trimmed.
+/// (Kept separate because `tail_lines` takes `&str` while `buf` accumulates.)
+fn tail_of(text: &str, max: usize) -> String {
+    let trimmed = text.trim_end();
+    if trimmed.is_empty() {
+        return "(the shell produced no output after the call started)".to_string();
+    }
+    tail_lines(trimmed, max)
+}
+
+/// The cast file a live shell's host is writing right now: the highest
+/// `started_unix` any `<id>-<ts>.cast` in the logs dir names for this id,
+/// falling back to `cast_path(id, record.started_unix)`. The fallback covers a
+/// host whose logs dir has not been written at all yet.
+fn resolve_live_cast(id: &str, record_started_unix: u64) -> std::path::PathBuf {
+    let logs = crate::config::shell_logs_dir();
+    let mut best: Option<u64> = None;
+    if let Ok(entries) = std::fs::read_dir(&logs) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if let Some((pid, ts)) = crate::shell::parse_cast_name(&name.to_string_lossy())
+                && pid.as_str() == id
+                && best.is_none_or(|b| ts > b)
+            {
+                best = Some(ts);
+            }
+        }
+    }
+    match best {
+        Some(ts) => cast_path(id, ts),
+        None => cast_path(id, record_started_unix),
+    }
+}
+
+/// Strip ANSI escape sequences: CSI, OSC and the short two-character forms.
+fn strip_ansi(text: &str, re: &regex::Regex) -> String {
+    re.replace_all(text, "").into_owned()
+}
+
+/// Raw PTY output → what a human reads: escape sequences gone, and each line
+/// reduced to what follows its **last** carriage return, because a progress
+fn visible_text(raw: &str) -> String {
+    static ANSI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let ansi = ANSI.get_or_init(|| {
+        regex::Regex::new(concat!(
+            r"\x1b\[[0-9;?]*[ -/]*[@-~]",             // CSI
+            r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?",   // OSC (BEL or ST)
+            r"|\x1b[@-Z\\-_]",                        // two-character escape
+        ))
+        .expect("ANSI-strip regex is valid")
+    });
+    let stripped = strip_ansi(raw, ansi);
+    stripped
+        .lines()
+        .map(|line| match line.rfind('\r') {
+            Some(i) => &line[i + 1..],
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The shell ids currently in `reg`, numerically sorted. `read_shell_log`,
+/// `close_shell_with` and the new `watch_shell` all need this; extracted here
+/// at the third copy rather than a second round of three.
+/// `close_shell_with` and the new `watch_shell` all need this; extracted here
+/// at the third copy rather than a second round of three.
+fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
+    with_shells(reg, |store| {
+        let mut ids: Vec<String> = store
+            .values()
+            .map(|r| r.id.as_str().to_string())
+            .collect();
+        ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));
+        ids
+    })
+}
 // open_shell + close_shell (M22 phase-04a)
 // ---------------------------------------------------------------------------
 
@@ -774,11 +1105,7 @@ pub(super) async fn close_shell_with(
         store.get(shell).map(|record| record.owner.key())
     });
     let Some(owner_key) = owner_in_registry else {
-        let live = with_shells(reg, |store| {
-            let mut ids: Vec<String> = store.values().map(|r| r.id.as_str().to_string()).collect();
-            ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));
-            ids
-        });
+        let live = live_shell_ids(reg);
         return if live.is_empty() {
             format!(
                 "Error: no shell with id {shell:?} is in the registry (no shells are \
@@ -1851,5 +2178,321 @@ mod tests {
             out.contains("list_shells"),
             "the model is told the way to get a fresh id: {out}"
         );
+    }
+
+    // ── watch_shell (phase-04b) ──────────────────────────────────────────
+
+    /// Hold (and leak) the per-id instance lock so `host_is_alive` reads the
+    /// shell as live without a real host — what a pattern-arm test needs and
+    /// what a real host would otherwise provide.
+    fn hold_lock(id: &str) {
+        let lock = crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id))
+            .expect("acquiring the per-id lock");
+        std::mem::forget(lock);
+    }
+
+    /// A registry record for `index` under `Owner::Chat("watcher")`, written
+    /// inside a `lifecycle_home` scope (paths resolve through `HOME`).
+    fn insert_watch_record(reg: &ShellRegistry, index: u32, started_unix: u64) {
+        insert(reg, index, Owner::Chat("watcher".into()), started_unix);
+    }
+
+    /// Append one pre-encoded cast event line to `path` (with its newline),
+    /// creating the logs dir the way a host's first write does.
+    fn append_event(path: &std::path::Path, t: f64, payload: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("creating the shell logs dir");
+        }
+        let line = format!(
+            "[{}, \"o\", {}]\n",
+            t,
+            serde_json::json!(payload).to_string()
+        );
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+            .unwrap();
+        f.write_all(line.as_bytes()).unwrap();
+        f.flush().unwrap();
+    }
+
+    #[tokio::test]
+    async fn watch_shell_returns_when_the_pattern_appears() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert_watch_record(&reg, 5, 1_788_470_005);
+        append_event(
+            &cast_path("s5", 1_788_470_005),
+            1.0,
+            "warming up\n",
+        );
+        hold_lock("s5");
+        let path = cast_path("s5", 1_788_470_005);
+        let writer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            append_event(&path, 2.0, "READY to go\n");
+        });
+        let out = watch_shell_with(
+            &reg,
+            "s5",
+            Some("READY"),
+            5,
+            Duration::from_millis(50),
+            Duration::from_millis(0),
+        )
+        .await;
+        writer.await.unwrap();
+        assert!(
+            out.contains("matched"),
+            "a hit is reported as a match: {out}"
+        );
+        assert!(out.contains("READY"), "the matching line is shown: {out}");
+        assert!(
+            out.contains("since this call started"),
+            "the line number's meaning is named: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_shell_ignores_output_written_before_the_call() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert_watch_record(&reg, 6, 1_788_470_006);
+        append_event(&cast_path("s6", 1_788_470_006), 1.0, "READY already\n");
+        hold_lock("s6");
+        let out = watch_shell_with(
+            &reg,
+            "s6",
+            Some("READY"),
+            1,
+            Duration::from_millis(50),
+            Duration::from_millis(0),
+        )
+        .await;
+        assert!(
+            out.contains("timed out"),
+            "pre-call output must not match — the tool watches from now: {out}"
+        );
+        assert!(
+            !out.contains("matched"),
+            "the stale line is not what a match report shows: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_shell_times_out_and_reports_what_it_saw() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert_watch_record(&reg, 7, 1_788_470_007);
+        hold_lock("s7");
+        let path = cast_path("s7", 1_788_470_007);
+        let writer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            append_event(&path, 1.0, "progress 12%\n");
+        });
+        let out = watch_shell_with(
+            &reg,
+            "s7",
+            Some("never-appears"),
+            1,
+            Duration::from_millis(50),
+            Duration::from_millis(0),
+        )
+        .await;
+        writer.await.unwrap();
+        assert!(
+            out.contains("timed out after 1 s"),
+            "the timeout names the elapsed seconds: {out}"
+        );
+        assert!(
+            out.contains("progress 12%"),
+            "the tail shows what was actually seen: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_shell_unknown_id_is_an_error_naming_live_shells() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert_watch_record(&reg, 8, NOW);
+        let out = watch_shell_with(
+            &reg,
+            "s99",
+            Some("x"),
+            5,
+            Duration::from_millis(50),
+            Duration::from_millis(0),
+        )
+        .await;
+        assert!(
+            out.starts_with("Error:"),
+            "an unknown id is error text, returned as a String: {out}"
+        );
+        assert!(out.contains("s99"), "the bad id is named: {out}");
+        assert!(
+            out.contains("s8"),
+            "the live ids are named so the model knows what to pass: {out}"
+        );
+        assert!(
+            !out.contains("timed out"),
+            "the refusal returns before any waiting: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_shell_invalid_pattern_is_an_error() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert_watch_record(&reg, 9, NOW);
+        let early = std::time::Instant::now();
+        let out = watch_shell_with(
+            &reg,
+            "s9",
+            Some("[unclosed"),
+            30,
+            Duration::from_millis(50),
+            Duration::from_millis(0),
+        )
+        .await;
+        assert!(
+            early.elapsed() < Duration::from_secs(1),
+            "the refusal must return before the timeout, not after waiting: {out}"
+        );
+        assert!(
+            out.starts_with("Error:"),
+            "an invalid pattern is error text: {out}"
+        );
+        assert!(
+            out.contains("[unclosed"),
+            "the offending pattern is named: {out}"
+        );
+        assert!(
+            out.contains("regex"),
+            "the error says the pattern is applied as a regex: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_shell_finds_the_cast_when_the_records_timestamp_is_stale() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        // The record says the shell started at N, but the host stamped the
+        // cast N+1 — a spawn that crossed a second boundary.
+        insert_watch_record(&reg, 10, 1_788_470_010);
+        let path = cast_path("s10", 1_788_470_011);
+        append_event(&path, 1.0, "warm\n");
+        hold_lock("s10");
+        let writer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            append_event(&path, 2.0, "FOUND IT\n");
+        });
+        let out = watch_shell_with(
+            &reg,
+            "s10",
+            Some("FOUND IT"),
+            5,
+            Duration::from_millis(50),
+            Duration::from_millis(0),
+        )
+        .await;
+        writer.await.unwrap();
+        assert!(
+            out.contains("FOUND IT"),
+            "the scan by parse_cast_name must find the fresh cast, \
+             not the record's stale timestamp: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_shell_stops_when_the_host_is_gone() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert_watch_record(&reg, 11, 1_788_470_011);
+        let path = cast_path("s11", 1_788_470_011);
+        // A leased rather than leaked lock: dropping it makes the shell's
+        // host look dead to `host_is_alive`.
+        let leased = crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path("s11"))
+            .expect("acquiring the per-id lock for the test host");
+        let writer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            append_event(&path, 1.0, "left over\n");
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            drop(leased);
+        });
+        let out = watch_shell_with(
+            &reg,
+            "s11",
+            Some("never"),
+            30,
+            Duration::from_millis(50),
+            Duration::from_millis(0),
+        )
+        .await;
+        writer.await.expect("the writer task");
+        assert!(
+            out.contains("host is gone"),
+            "the host-gone sentence is what comes back: {out}"
+        );
+        assert!(
+            out.contains("left over"),
+            "the tail of what was seen is reported: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_shell_reports_that_nothing_was_running() {
+        let (guard, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        spawn_in_process_host(ShellId::from_index(12))
+            .await
+            .expect("the host fixture needs bash");
+        insert_watch_record(&reg, 12, NOW);
+        let out = watch_shell_with(
+            &reg,
+            "s12",
+            None,
+            5,
+            Duration::from_millis(50),
+            Duration::from_millis(100),
+        )
+        .await;
+        drop(_dir);
+        drop(guard);
+        assert!(
+            out.contains("nothing was running"),
+            "an idle shell with no command is reported as such: {out}"
+        );
+        assert!(
+            !out.contains("finished"),
+            "an idle shell that never ran anything must not be called finished: {out}"
+        );
+        assert!(
+            out.contains("start the command") || out.contains("Start the command"),
+            "the sentence says what to do next: {out}"
+        );
+    }
+
+    #[test]
+    fn visible_text_strips_ansi_escapes() {
+        // The real prompt line from the measured production cast: OSC title
+        // set, SGR colour onset and reset, around the visible text.
+        let raw = "\u{1b}]0;matt@scrappy:~\u{7}\u{1b}]0;matt@scrappy: ~\u{7}\u{1b}[01;32mmatt@scrappy\u{1b}[00m:\u{1b}[01;34m~\u{1b}[00m$ ";
+        let out = visible_text(raw);
+        assert!(
+            !out.contains('\u{1b}'),
+            "no escape survives: {out:?}"
+        );
+        assert!(
+            out.contains("matt@scrappy") && out.contains('$'),
+            "the plain text is what is left: {out:?}"
+        );
+    }
+
+    #[test]
+    fn visible_text_keeps_the_text_after_the_last_carriage_return() {
+        let out = visible_text("10%\r50%\r100% done\nnext");
+        assert_eq!(out, "100% done\nnext", "the last write of a rewritten line wins: {out:?}");
     }
 }

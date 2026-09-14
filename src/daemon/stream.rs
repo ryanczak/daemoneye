@@ -757,6 +757,21 @@ where
                         shell,
                     });
                 }
+                AiEvent::WatchShell {
+                    id,
+                    shell,
+                    timeout_secs,
+                    pattern,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::WatchShell {
+                        id,
+                        thought_signature,
+                        shell,
+                        timeout_secs,
+                        pattern,
+                    });
+                }
                 AiEvent::TmuxControl {
                     id,
                     action,

@@ -1,7 +1,7 @@
 # Phase 04b: `watch_shell` — the blocking observer
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03a (`list_shells`, the module and its registry seam), 03b
 (`read_shell`, the reader shape and its error sentences) and 04a
 (`open_shell`/`close_shell`, the in-process host fixture in
@@ -915,3 +915,191 @@ touch `tests/doc_truth.rs`, `src/daemon/executor/pane.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-13 22:31 (started, executor Claude Sonnet 4.5)
+
+Status flipped `todo → in-progress` (this doc and the milestone README's
+phase-table row). Nine Spec tasks: the cast reader (1), `visible_text` (2),
+the `live_shell_ids` extraction (3), the tool itself (4), its `ToolDef` (5),
+the wiring (6), the two doc tables + `sre.toml` (7), the two mutation checks
+(8) and the end-to-end capture (9). Beginning with task 1.
+
+
+### Update — 2026-09-13 (escalation)
+
+**Chosen lever:** resume, executed as a re-dispatch onto this `in-progress`
+doc (`execute_phase`, not `continue_phase` — the latter is a blocking call
+with no run id, so it cannot be governed or stopped).
+**Rationale:** `hard_fail` was `VerifierFailurePersistent{consecutive_failures:
+6}` and the four diagnostics are **one** error repeated — `E0004`
+non-exhaustive `PendingCall::WatchShell`. The spec was not the problem: ~990
+lines of correct work are on disk and the design matches the Spec. This is the
+enum-variant compile wall § Pre-flight predicted, and the recorded calibration
+for it is *resume, do not re-dispatch fresh*.
+
+### Notes for executor — 2026-09-13
+
+### STOP — READ THIS BEFORE YOU EDIT ANYTHING
+
+**The tree does not compile right now. That is expected, it is not your
+mistake to re-investigate, and it is not a reason to start over.** The
+previous run added the `PendingCall::WatchShell` variant and then ran the
+verifier before the match arms existed. `cargo build` reports exactly **four**
+`E0004` errors, all the same one. Nothing else is broken.
+
+**Most of this phase is already DONE and is on disk. Do not redo it, do not
+re-derive it, and do not rewrite it.** Already landed and verified by the
+architect:
+
+- **Task 1** — `pub fn read_output_since` in `src/shell/log.rs`, re-exported
+  from `src/shell/mod.rs`, with all **3** named tests.
+- **Task 2** — `visible_text`, with both named tests.
+- **Task 3** — `live_shell_ids` extracted; the duplicated block is down to
+  **1** and both existing `Live shell ids:` sentences are unchanged.
+- **Task 4** — `watch_shell` + `watch_shell_with` (161 lines), the five
+  `WATCH_*` constants, the cast resolver using `parse_cast_name`, and all
+  **10** named tests.
+- **Task 5** — the `watch_shell` `ToolDef`, `Category::Read`,
+  `deferred_group: None`, three params. `ToolDef` literals are at **45**.
+- **Task 6, partly** — the `PendingCall` and `AiEvent` variants,
+  `WatchShellArgs`, the `dispatch.rs` arm and its conformant-args row, and the
+  `stream.rs` arm.
+
+**There is no verification to re-run until the four arms land. Write all six
+arms below in ONE contiguous batch, then run `cargo build` once.** Running the
+verifier between them reproduces the exact failure that halted the last run.
+
+### The remaining work — six edits, then tasks 7–9
+
+**Edit 1 — `src/daemon/executor/knowledge/shell.rs:672`.** The wrapper is
+`pub(super)`; `knowledge/mod.rs` cannot re-export it as `pub`. Change only the
+visibility:
+
+```rust
+pub async fn watch_shell(
+```
+
+**Edit 2 — `src/daemon/executor/knowledge/mod.rs:23`.** Add it to the existing
+line, alphabetically last:
+
+```rust
+pub(super) use shell::{close_shell, find_in_shells, list_shells, open_shell, read_shell, watch_shell};
+```
+
+**Edit 3 — `to_tool_call()` in `src/ai/types/pending.rs`.** Put it directly
+after the `PendingCall::WatchPane` arm, whose shape it copies:
+
+```rust
+            PendingCall::WatchShell {
+                id,
+                thought_signature,
+                shell,
+                timeout_secs,
+                pattern,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "watch_shell".to_string(),
+                arguments: args_to_string(
+                    serde_json::json!({"shell": shell, "timeout_secs": timeout_secs, "pattern": pattern}),
+                ),
+            },
+```
+
+**Edit 4 — `id()` in `src/ai/types/pending.rs`.** Beside the other shell tools:
+
+```rust
+            PendingCall::WatchShell { id, .. } => id,
+```
+
+**Edit 5 — `tool_name()` in `src/ai/types/pending.rs`.** Same place:
+
+```rust
+            PendingCall::WatchShell { .. } => "watch_shell",
+```
+
+**Edit 6 — `execute_tool_call()` in `src/daemon/executor/mod.rs`.** Beside the
+`OpenShell`/`CloseShell` arms. **The `with_keepalive` wrap is load-bearing —
+this tool blocks for up to 300 s and without it the CLI's dead-daemon deadline
+fires.** This is the exact text from § Pre-flight:
+
+```rust
+        PendingCall::WatchShell {
+            shell,
+            pattern,
+            timeout_secs,
+            ..
+        } => Ok(ToolCallOutcome::Result(
+            crate::daemon::utils::with_keepalive(
+                tx,
+                knowledge::watch_shell(shell, pattern.as_deref(), *timeout_secs),
+            )
+            .await?,
+        )),
+```
+
+### Then the two arms no compiler error will ever tell you about
+
+These compile clean when missing and are silently wrong. **Both are currently
+missing — verified by the architect.** Add them in the same batch.
+
+**`should_emit_tool_feedback()`** (`src/ai/types/pending.rs`) is a `matches!`
+chain ending in an implicit `false`. Without this line a tool that blocks for
+five minutes emits **no** `ToolStarted`, so the chat looks frozen. Add beside
+`PendingCall::WatchPane { .. }`:
+
+```rust
+                | PendingCall::WatchShell { .. }
+```
+
+**`summary()`** (`src/ai/types/pending.rs`) ends in `_ => String::new()`.
+Without an arm the blocking tool shows no arguments for the whole wait. Copy
+`WatchPane`'s shape:
+
+```rust
+            PendingCall::WatchShell {
+                shell,
+                timeout_secs,
+                pattern,
+                ..
+            } => {
+                if let Some(pat) = pattern {
+                    format!("{shell} pattern=\"{pat}\"")
+                } else {
+                    format!("{shell} {timeout_secs}s")
+                }
+            }
+```
+
+### Then finish tasks 7, 8 and 9 as written
+
+**Task 7 is entirely undone** — `CLAUDE.md`, `README.md` and
+`assets/prompts/sre.toml` are all still untouched. `tests/doc_truth.rs` fails
+until they are done; it is the gate that exists precisely for this.
+
+Then **task 8** (both mutation checks) and **task 9** (the end-to-end capture,
+pasted verbatim with its `PASTE MATCH` verdict).
+
+### Finish condition — check it yourself before reporting
+
+1. `cargo build` reports **0 errors** (it reports 4 right now).
+2. `cargo test --test doc_truth` → **10 passed** (it fails right now).
+3. `cargo test --lib 'knowledge::shell'` → **37 or more**, and
+   `cargo test --lib 'shell::log'` → **16 or more**. These counts should
+   already be reachable once the build is clean — **the tests are written**.
+   If either comes in **below** its number, a test was lost; if either comes in
+   far above, scope crept.
+4. Section D of the end-to-end block prints every one of its stated numbers.
+
+**One correction to this doc's own § Acceptance criteria**, so you do not
+contort correct code to satisfy a bad instrument: the criterion
+
+> `sed -n '/fn watch_shell_with/,/^}/p' … | grep -c 'parse_cast_name'` → **1 or more**
+
+is **wrong as written**. The cast resolution correctly lives in a helper
+function rather than inline in `watch_shell_with`, which is better structure
+and is what is on disk. The property it was trying to pin — *the cast is
+resolved by scanning with `parse_cast_name`, not by trusting
+`record.started_unix`* — **is satisfied**. Use the file-wide form instead:
+`grep -c 'parse_cast_name' src/daemon/executor/knowledge/shell.rs` → **1 or
+more**. Do not move the call inline. Architect error, not yours.

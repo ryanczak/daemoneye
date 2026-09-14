@@ -895,6 +895,46 @@ pub static TOOLS: &[ToolDef] = &[
         category: Category::Run,
     },
     ToolDef {
+        name: "watch_shell",
+        description: "Block on a PTY shell's arriving output and return what it shows. \
+                      With `pattern`: wait until a line of the output written **after \
+                      this call** matches the regex, then return that line with one \
+                      line of context either side — the way to wait for \"build \
+                      finished\" or \"listening on port \\d+\" from a command still \
+                      running in a dedicated shell. Without `pattern`: wait until the \
+                      command running in the shell finishes, the shell is reported \
+                      idle with nothing running, or it pauses, exits or dies. This \
+                      tool sees only new output — it never searches what the shell \
+                      already recorded; use read_shell for history. The shell to \
+                      watch is the dedicated one a background run_terminal_command \
+                      creates; list_shells shows which shells exist and which are \
+                      dedicated.",
+        params: &[
+            ParamDef {
+                name: "shell",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Shell id to watch (e.g. \"s3\"). Get ids from list_shells.",
+            },
+            ParamDef {
+                name: "timeout_secs",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Maximum seconds to wait. Default 300, capped at 3600.",
+            },
+            ParamDef {
+                name: "pattern",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional regex matched against the shell's output written \
+                              after the call. A syntactically invalid regex is an error, \
+                              not a literal match.",
+            },
+        ],
+        deferred_group: None,
+        category: Category::Read,
+    },
+    ToolDef {
         name: "load_tools",
         description: "Load an additional group of tools into your available tool set for the rest \
                       of this session. Some rarely-used tools are not loaded by default to save \

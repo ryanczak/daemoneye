@@ -304,6 +304,19 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         shell: String,
     },
+    /// Block on a PTY shell's arriving output (M22 phase-04b): with a
+    /// `pattern`, until output written *after the call* matches it; without
+    /// one, until the shell's running command finishes (or is found absent,
+    /// paused, exited); or until `timeout_secs` elapses. Reads the live
+    /// `.cast` recording, never the command index — nothing in production
+    /// writes that index.
+    WatchShell {
+        id: String,
+        thought_signature: Option<String>,
+        shell: String,
+        timeout_secs: u64,
+        pattern: Option<String>,
+    },
     TmuxControl {
         id: String,
         thought_signature: Option<String>,
