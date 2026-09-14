@@ -1671,3 +1671,52 @@ the branch the bug doc offered, it was announced in the Update Log with the
 count arithmetic, the deviations were disclosed rather than hidden, and the
 e2e re-capture replaced its block rather than appending a second entry as the
 phase doc asked.
+
+### Update — 2026-09-14 21:25 (started, fix run for bug-05-2, executor Claude Opus 4.5)
+
+Resuming on the second bounce. The review verified the bug-05-1 repair is
+correct and said **do not redo it** — this run is the probe removal and
+nothing else: `src/shell/log.rs` back to byte-identical with `e99eca21`,
+`shell::log` back to **17**, the lib suite to **1871**, then the bug-05-1
+red/green on the **shipped** filter with the mutation applied and reverted
+through `patch` (never left in this run's tree either), the bug-05-2 DoD
+greps, the four gates, one code commit and one doc commit.
+
+**Executed (code committed at `33a01615`):**
+
+- The 36 probe lines are gone. On the committed tree `git diff
+  e99eca21..HEAD --stat -- src/shell/log.rs` prints **nothing**,
+  `grep -c 'extend_output_line_mutation' src/shell/log.rs` → **0**,
+  `grep -c 'probe_mutated_reader_accepts_input_events' src/shell/log.rs` →
+  **0**, and the file diffs clean against `git show
+  e99eca21:src/shell/log.rs` (exit 0). `cargo test --lib 'shell::log'` →
+  **17 passed, 0 failed**.
+- `cargo test --lib` → **1871 passed, 0 failed** — the removed probe is the
+  one test the bug said would go. `knowledge::shell` stays **44 passed, 0
+  failed** (the bug-05-1 repair is untouched, as instructed); `config::` 92,
+  `doc_truth` 10, `isolation` 9 all unchanged.
+- The bug-05-1 mutation check, against the **shipped** filter at
+  `src/shell/log.rs:263` — the honest form the previous run skipped. Both
+  applications went through the `patch` tool (`sed -i`, `perl -i` and `>`
+  redirects were not used); the probe removal itself was `patch_lines` +
+  commit. **RED then GREEN, quoted from the runs whose commands are shown:**
+
+```
+$ patch → log.rs:263 widened to !matches!(array[1].as_str(), Some("o") | Some("i"))
+$ cargo test --lib 'send_input_text_never_reaches' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test result|panicked'
+test daemon::executor::knowledge::shell::tests::send_input_text_never_reaches_read_shell_in_a_reachable_cast ... FAILED
+thread 'daemon::executor::knowledge::shell::tests::send_input_text_never_reaches_read_shell_in_a_reachable_cast' (1587936) panicked at src/daemon/executor/knowledge/shell.rs:2865:13:
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1873 filtered out; finished in 0.04s
+$ patch → log.rs:263 reverted to array[1].as_str() != Some("o")
+$ cargo test --lib 'send_input_text_never_reaches' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^test result'
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1873 filtered out; finished in 0.04s
+```
+
+  The surviving half (`send_input_text_never_reaches_read_shell`, the
+  production-path host test) stayed green throughout — `1 passed; 1 failed`
+  is the read-side test failing, the host test passing, the bug doc's
+  expected shape. The shipped filter was left reverted: the committed
+  `log.rs` diff vs `e99eca21` is empty, so no mutation residue can exist.
+- All four gates on the committed tree: `cargo fmt --all --check` → clean;
+  `cargo build` → 0 warnings; `cargo clippy --all-targets --all-features
+  -- -D warnings` → clean; the `cargo test --lib` runs quoted above.
