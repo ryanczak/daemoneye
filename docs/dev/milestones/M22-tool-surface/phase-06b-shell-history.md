@@ -1,7 +1,7 @@
 # Phase 06b: `list_shell_logs` / `read_shell_log` — the deferred `history` group
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 03b (`read_shell`'s reader shape and error sentences) and
 **06a**, which gave the `.meta.json` index a producer. Both **done**. Without
 06a this phase would query a file that is never written.
@@ -390,8 +390,15 @@ Each was run against the tree at drafting and returns the "now" value shown.
 - [ ] **The private reader was renamed, not duplicated:**
       `grep -c 'fn read_recorded_output' src/daemon/executor/knowledge/shell.rs`
       → **1** (now `0`), and
-      `grep -c 'fn read_shell_log' src/daemon/executor/knowledge/shell.rs` →
-      **0** (now `1`).
+      `grep -c '^fn read_shell_log(' src/daemon/executor/knowledge/shell.rs` →
+      **0** (now `1`). *(Corrected at review: the original dropped the `^…(`
+      anchor and demanded **0** for the bare substring — impossible, because
+      this very phase adds the public `fn read_shell_log(` tool and four test
+      names embedding the string, so the literal reads **5**. The executor
+      flagged it, held the intent, and did not contort the code; the intent —
+      the old private reader renamed, not duplicated — is pinned by
+      `fn read_recorded_output` → 1 and exactly one column-0 definition of
+      `read_shell_log`. Architect error, no defect.)*
 - [ ] **The sidecar sweep matches the producer's spelling:**
       `sed -n '/fn sweep_shell_logs/,/^}/p' src/daemon/utils/mod.rs | grep -c 'meta_path_for\|"\.meta\.json"'`
       → **1 or more**, and the sweep's test builds its fixture from the
@@ -928,3 +935,64 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b88dda49ae4ba8dd0d2f39ffb114cb7d70d89b6a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-15
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (448 turns)
+- **Scope deviations:** one, ruled in scope — `src/ai/tools/dispatch.rs`'s
+  `category_counts_match_the_assignment` and the deferred-split table were
+  updated to 48 / 14. That file is in § Authorizations for task 6's wiring and
+  the census is exactly the compiler-invisible test the phase had to move.
+- **Calibration:** one architect-side criterion was **impossible as written**
+  and is corrected in place — `grep -c 'fn read_shell_log' … → 0` cannot hold
+  in a phase that *adds* `fn read_shell_log`. Same family as this milestone's
+  other instrument errors, now eight, and the third of the
+  sub-species "the criterion forbids the thing the phase creates".
+
+**All four gates re-run at review as separate invocations** (clippy after
+`touch src/lib.rs`): fmt clean, build 0 warnings, clippy `-D warnings` exit 0,
+`cargo test --lib` → **1886 passed, 0 failed**. `knowledge::shell` 51,
+`daemon::utils` 110, `ai::tools` 22, `shell_exec` 13, `config::` 92,
+`doc_truth` 10, `isolation` 9.
+
+**Every acceptance criterion re-run: all pass**, including `ToolDef` 48,
+deferred 14, the `history` group with **no hard-coded group list added
+anywhere**, no phantom `host`/`owner`/`offset` parameter on either tool,
+`enum_values` untouched, and `src/shell/log.rs` + `src/shell/pty.rs`
+**unchanged** — the phase stayed out of the seam that produced four defects
+in 06a, as designed.
+
+**Both mutations re-run by hand, and my first attempt at each was a bad
+mutant — worth recording.**
+
+- *Bare id resolved, not refused.* My first mutant disabled the shape gate,
+  which merely fell through to the unknown-log error — an observable the test
+  correctly tolerates. Applying the mutation the Spec actually describes
+  (resolve `"s3"` to the newest matching recording): **6 of 6 red**, green on
+  revert. The test's load-bearing assertion is the negative,
+  `!out.contains("the only s3 recording")`.
+- *Unindexed cast skipped.* My first mutant `continue`d in the enrichment
+  loop, which is a **no-op** here: the implementation scans in two passes and
+  pushes every cast with `commands: None` before loading any index, so the
+  Spec's single-pass mutation is unexpressible against it — better code than
+  the spec assumed. The mutant that matches the structure (`rows.retain(|r|
+  r.commands.is_some())`): **6 of 6 red**. A bonus mutant rendering `unknown`
+  as `0 commands` is **3 of 3 red**, so both halves of that test discriminate.
+
+That is the second phase running where a *mutation* turned out to be the
+proxy, not the test — see the calibration note in 06a's verdict. Constructing
+the mutant against the code as written, rather than as the spec imagined it,
+is the habit this milestone keeps asking for.
+
+**The end-to-end capture is genuine:** 68 lines, all eight sections A–H,
+§ F three consecutive runs at **1886 passed, 0 failed** with the known `pty`
+flake not firing, and `PASTE MATCH` recorded in the same entry.
+
+**What the phase delivered:** `list_shell_logs` / `read_shell_log` as the
+deferred `history` group — **48 tools: 34 core + 14 deferred** — plus the
+retention fix for the sidecar sweep that 06a made live, with its test fixture
+now built through `meta_path_for` so writer and test cannot drift apart
+again. The three design parameters that do not exist on this tree
+(`host`, `owner`, `offset`) stayed out.
