@@ -67,7 +67,8 @@ final surface, so they go last.
 | 05 | send-input ([phase-05-send-input.md](phase-05-send-input.md)) — `send_input { shell, text, enter? }`, **approval-gated**; the `"i"` log is real and no read tool can surface it | done                    |
 | 06a | meta-index-producer ([phase-06a-meta-index-producer.md](phase-06a-meta-index-producer.md)) — give the `.meta.json` index a **producer**; makes `read_shell`/`find_in_shells` work in production at last. No new tools | done                    |
 | 06b | shell-history ([phase-06b-shell-history.md](phase-06b-shell-history.md)) — `list_shell_logs` / `read_shell_log` as the deferred `history` group over the index 06a made real; also fixes the sidecar-sweep defect 06a made live | done                    |
-| 07 | run-terminal-command-reshape — `shell?`/`host?`/`wait?`/`timeout_secs?`; retire `target_pane`, `retry_in_pane`, `background` | todo (not drafted) |
+| 07a | run-command-shell-target ([phase-07a-run-command-shell-target.md](phase-07a-run-command-shell-target.md)) — `shell?` + `timeout_secs?` on `run_terminal_command`; additive, no count change | todo                    |
+| 07b | run-command-wait — `wait?` replacing `background` on the background path | todo (not drafted) |
 | 08 | shell-context — `get_terminal_context` → `get_shell_context { scope }`; `[HOSTS]`/`[SHELLS]`/`[DEFAULT SHELL]` blocks; approval panel names shell + host | todo (not drafted) |
 | 09 | pane-tool-removal — delete the six pane tools and their executor arms | todo (not drafted) |
 | 10 | prompt-assets — rewrite `sre.toml` and the seeded memories; retire the two tmux knowledge memories; `doc_truth` updated | todo (not drafted) |
@@ -251,6 +252,18 @@ final surface, so they go last.
   agreeing on a shape production does not produce — the same class as the
   escape-mismatch and the non-firing boundary assertion. 06b rebuilds the
   fixture through `meta_path_for` so they cannot drift apart again.
+
+- **Phase 07 re-scoped at drafting, measured.** The charter row bundles two
+  additions, one rename and two retirements. Measured: `target_pane` has
+  **170** references including the **IPC wire** (`src/ipc.rs:197`, `:447` —
+  the approval panel's pane hint) plus 23 in `src/cli/`, 55 in the executor,
+  33 in `src/ai/` and 9 in the prompt; `retry_in_pane` has 13. Those are the
+  pane *substrate*, not tool parameters, and they die with the pane tools in
+  **phase 09**. `host?` has nowhere to land for the third time in this
+  milestone (after `open_shell` in 04a and `list_shell_logs` in 06b) and
+  waits for M21/M23. So: **07a** adds `shell?` + `timeout_secs?` (additive,
+  no count change), **07b** does `wait?` for `background`, and the two
+  retirements fold into 09's row.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24

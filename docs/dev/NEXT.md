@@ -6,48 +6,61 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-06b — shell-history closed
-**approved_first_try 2026-09-15**
-(`docs/dev/milestones/M22-tool-surface/phase-06b-shell-history.md`, status:
-done). Next up is **07 — run-terminal-command-reshape**, not yet drafted; run
-`/rexymcp:architect next` to draft it.
+**Active phase: M22 phase-07a — run-command-shell-target**
+(`docs/dev/milestones/M22-tool-surface/phase-07a-run-command-shell-target.md`,
+status: todo, drafted 2026-09-15). Dispatch with
+`/rexymcp:dispatch phase-07a`.
 
-`list_shell_logs { since?, limit? }` and `read_shell_log { log, command_index?,
-lines?, filter? }` ship as the deferred **`history`** group — **48 tools: 34
-core + 14 deferred**. The group needed no machinery: `tools_in_group` derives
-it from `TOOLS`, and a criterion confirmed **no hard-coded group list was
-added anywhere**. The three design parameters that do not exist on this tree
-(`host`, `owner`, `offset`) stayed out.
+Phase-06b — shell-history closed **approved_first_try 2026-09-15**
+(status: done) — the deferred `history` group at **48 tools: 34 core + 14
+deferred**, plus the sidecar-sweep retention fix.
 
-**06b also closed the retention defect 06a made live** — the sweep now
-accepts `meta_path_for`'s spelling, and its fixture is built through the
-producer so writer and test cannot drift apart again.
+**Phase 07 is re-scoped into 07a/07b, measured rather than assumed.** The
+charter row bundles two additions, one rename and two retirements.
+`target_pane` turns out to have **170** references — including the **IPC
+wire** (`src/ipc.rs:197`, `:447`, the approval panel's pane hint), 23 in
+`src/cli/`, 55 in the executor, 33 in `src/ai/` and 9 in the prompt — and
+`retry_in_pane` 13. Those are the pane *substrate*, not tool parameters, and
+they die with the pane tools in **phase 09**. `host?` has nowhere to land for
+the **third** time this milestone (after `open_shell` in 04a and
+`list_shell_logs` in 06b) and waits for M21/M23.
 
-**First clean run of the milestone's back half: `approved_first_try`, 448
-turns, no bounce, no escalation.** After 06a's three runs and a takeover, the
-difference was a phase deliberately kept host-free — all seven tests are
-directory-driven — and out of `log.rs`'s raw-bytes-versus-decoded-payload
-seam, which a criterion asserted was untouched.
+**Scope for 07a:** `run_terminal_command` gains `shell?` (`"sN"` targets that
+shell, `"new"` opens one) and `timeout_secs?`. **Additive — nothing is
+retired and no count moves**; still 48/34/14, `doc_truth` 10. This closes the
+gap `open_shell`'s own result sentence has advertised since 04a, so that
+sentence and its `ToolDef` description get updated in the same phase — while
+keeping the word `lowest-numbered`, which 04a made a test assertion.
 
-**Calibration, and it is the same lesson twice now.** Both of my first-attempt
-mutants at review were **no-ops against the code as written**: one disabled a
-shape gate that merely fell through to another error the test tolerates, and
-one `continue`d in an enrichment loop that runs *after* every row is already
-pushed — the implementation scans in two passes, so the spec's single-pass
-mutation is unexpressible against it. Re-constructed against the actual
-structure, both reddened **6 of 6**. With 06a's withdrawn mutation this is the
-second phase running where **the mutation was the proxy, not the test**.
+**The compile wall here is a positional tuple.** `AiEvent::ToolCall` is a
+six-field tuple variant, not a struct, so adding two fields breaks every
+construction and match at once — **four sites**, tabled in the doc, to be
+edited in one batch. The doc also says to append rather than insert, and
+explicitly forbids converting it to a struct variant as out of scope.
 
-One more architect instrument error, corrected in place: a criterion demanded
-`grep -c 'fn read_shell_log' → 0` in the very phase that *adds*
-`fn read_shell_log`. The executor flagged it, held the intent, and did not
-contort the code to satisfy a literal — the right call. Eight instrument
-errors across M22, and this is the third of the sub-species *the criterion
-forbids the thing the phase creates*.
+**Ownership is the security-relevant part:** a `shell` id the caller does not
+own is refused before the command is written anywhere, compared on
+`Owner::key()` and never the inner string — the rule `close_shell` and
+`send_input` already follow. An unknown or exited id is refused too, never
+silently fallen back to the reuse shell.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-07 —
-run-terminal-command-reshape**. Phases 07–10 are not drafted; each is drafted
-after its predecessor is approved.
+**Three of my own criteria were wrong and were corrected before dispatch**,
+all caught by running them:
+- a param count that forgot the `sed` range also prints the tool's own
+  `name:` line (5, not 4);
+- a `LOCAL_CMD_TIMEOUT` count pinned at the wrong now-value, and redundant
+  with the criterion that actually matters (the error message must stop
+  hard-coding the constant);
+- a `summary` criterion that was **already vacuously satisfied** — the word
+  `shell` appears 8 times in that function, and scoping to the
+  `PendingCall::Foreground {` range does not help because `sed` restarts a
+  range on each match and would also select the `to_tool_call` and `id()`
+  arms. Re-pinned on the fact that `summary` has **no** `Foreground` arm at
+  all today, so `run_terminal_command`'s `ToolStarted` line currently shows
+  no argument whatsoever.
+
+**Next step:** `/rexymcp:dispatch phase-07a`. Phases 07b–10 are not drafted;
+each is drafted after its predecessor is approved.
 
 **Owed at milestone close, now at three occurrences — fold it.** Six
 architect-side instrument errors across M22, and the deeper version has hit
