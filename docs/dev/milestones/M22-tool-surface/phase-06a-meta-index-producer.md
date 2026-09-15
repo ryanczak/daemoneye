@@ -1325,3 +1325,60 @@ first to report.
 **Recorded as a follow-up, not fixed here:** `windowed_payload`'s END branch
 can compute `stop > from.len()` and panic on a payload truncated mid-marker.
 Reachable from hostile cast content. Noted in the milestone README.
+
+### Update — 2026-09-15 (escalation 3 — run 511b0b6d stopped by explicit human instruction)
+
+**Chosen lever:** deferred — findings reported to the PE; recommendation is
+session takeover (see below).
+**Rationale:** run `511b0b6d` was cancelled at **89 turns after 4h41m**
+(`claude_stop`, stage `awaiting_model`) on the PE's explicit instruction —
+about 3 min/turn against the prior runs' 600/600/356 turns, the
+"alive but not converging" signature the governor cannot see. Its diff is one
+file, `src/shell/log.rs` (+76 −28), uncommitted, no gates run, no Update Log
+entry, finding 2 untouched.
+
+**What the diff contains, verified at review.** A rewrite of
+`marked_inner_range` that joins every decoded `"o"` payload into one stream,
+searches that stream for both markers (so a marker split across two cast
+lines is contiguous), and maps the hits back to whole cast lines — exactly
+the lead in `bug-06a-1` finding 1. Plus, in `windowed_payload`, a
+`leading_fragment_len` helper for a BEGIN tail-fragment and a
+`.min(from.len())` clamp on `stop`. It builds, clippy is clean, `shell::log`
+stays 21.
+
+**But the flake did not go away — it changed shape.** Under this diff the
+deliverable test still fails ~1 in 10 (measured 1/10, then failures on runs
+4, 7 and 4 of three capture loops), and the assertion that fails is now
+`no marker framing may leak into the recorded output` rather than "index
+missing". The leaked bytes, control characters visible:
+
+```
+Shell s0 (chat:read-shell-e2e) — 1 command: 3 lines.
+SENTINEL_TWO
+
+^_DE_END 0bfd272150df44c3aff8e6242fbd0705 0^_
+```
+
+A **complete** END marker, not a fragment. So the range is now found
+reliably and the split-marker mechanism was real; the leak is in the reader.
+
+**Root cause — a one-token off-by-`start` in `windowed_payload`.** The END
+branch computes `p` relative to `from = &data[start..]` and then returns
+`Some(start + p)`, but the caller slices `from[..stop]`, which is already
+`start`-based. When BEGIN and END land in the **same** PTY chunk (`start >
+0`), `stop` overshoots by `start` bytes and the slice runs past the END
+marker instead of stopping before it. That is timing-dependent, hence ~1 in
+10. It is also the true cause of the "latent panic" the previous run flagged
+(`range end index 427 out of range for slice of length 61`) — the same
+overshoot, which the new `.min(from.len())` clamp turned from a panic into a
+silent leak. It was never a hostile-content edge case.
+
+**Proof, run at review on the executor's dirty tree:** changing that one
+return from `Some(start + p)` to `Some(p)` → deliverable test **0 failures in
+30**, record test 5/5, `shell::log` 21, clippy clean. The executor's file was
+then restored byte-for-byte (`git diff --stat` unchanged, +76 −28).
+
+**Still open after that fix:** `bug-06a-1` finding 2 — a test that reddens
+mutation 1 (raw range) **6 of 6**; the current boundary assertion reads raw
+JSON bytes and cannot fire. And the phase's own end-to-end capture and
+mutation record for the corrected code.

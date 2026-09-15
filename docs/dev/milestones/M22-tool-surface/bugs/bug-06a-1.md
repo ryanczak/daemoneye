@@ -133,6 +133,28 @@ adopted correction in the escalation entry did not either.
 - [ ] All four gates pass, and no `#[allow(...)]` is added:
       `git diff a8f93ef2..HEAD -- 'src/*.rs' | grep -cE '^\+.*#\[allow'` → **0**.
 
+## How to fix — finding 1 (run at review, admissible)
+
+Applied to the tree left by run `511b0b6d` (whose `marked_inner_range`
+rewrite is correct and should be kept), this single change eliminates the
+flake — **0 failures in 30 consecutive runs** of
+`read_shell_returns_clean_output_after_a_real_command`, record test 5/5,
+`shell::log` 21, clippy clean:
+
+```rust
+// src/shell/log.rs, windowed_payload, END branch — `p` is already relative to
+// `from = &data[start..]`, and the caller slices `from[..stop]`.
+-                Some(start + p)
++                Some(p)
+```
+
+With that, the `.min(from.len())` clamp is no longer load-bearing (it was
+masking this overshoot); it may stay or go. The "latent panic" recorded by the
+earlier run was this same overshoot, not hostile content — remove that
+follow-up from the milestone README when this lands.
+
+Finding 2 is **not** addressed by this and still needs its own test.
+
 ## Not in scope for this bug
 
 - **The `windowed_payload` panic** the run flagged

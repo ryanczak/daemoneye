@@ -147,42 +147,67 @@ pub struct CommandRecord {
     pub first_byte: u64,
     pub end_byte: u64,
 }
-
 /// The byte range, as cast-file offsets relative to the given slice, of one
-/// command's clean output: the decoded bytes strictly between this run's BEGIN
-/// marker line and the line carrying its END marker. `None` when either marker
-/// is absent — a command whose markers never landed has no clean range and
-/// must not be indexed.
+/// command's clean output. `None` when either marker is absent — a command
+/// whose markers never landed has no clean range and must not be indexed.
 ///
-/// The finder is driven by the same marker bytes `parse_outcome` reads
-/// (`begin_marker` / `end_marker`), never a hand-written `DE_BEG` substring. A
-/// cast line stores a marker's `0x1f` as the JSON escape `\u001f`, so the raw
-/// bytes the PTY wrote cannot appear in a cast file — the search must decode
-/// each line's payload exactly the way `read_command_output` decodes it. The
-/// on-screen **echo** of the wrapped command line carries `DE_BEG <nonce>`
-/// verbatim but never the framed form: the split-quote in `wrap_command` means
-/// only the shell's own `printf` output has `\x1f` on both sides of the nonce.
+/// A cast event line holds exactly one PTY read chunk (the host's pump thread
+/// writes one `"o"` event per chunk), and a PTY read boundary can fall
+/// anywhere — including in the middle of a marker — so a marker can be split
+/// across two event lines, visible to neither line alone. The finder
+/// therefore decodes each line's `"o"` payload — a cast line stores a
+/// marker's `0x1f` as the JSON escape `\u001f`, so the raw bytes the PTY
+/// wrote cannot appear in a cast file — joins the payloads in cast order,
+/// which is the PTY's byte stream itself, and searches **that** stream for
+/// the framing `parse_outcome` reads (`begin_marker` / `end_marker`, never a
+/// hand-written `DE_BEG` substring). The found positions are mapped back to
+/// whole cast lines: the range starts where the line carrying the BEGIN
+/// marker's first byte starts and ends where the line carrying the END
+/// marker's last byte ends — the boundaries `read_command_output` decodes.
+///
+/// The on-screen **echo** of the wrapped command line carries `DE_BEG <nonce>`
+/// verbatim but never the framed form: the split-quote in `wrap_command`
+/// means only the shell's own `printf` output has `\x1f` on both sides of the
+/// nonce, so searching the framed needles cannot match the echo.
 pub fn marked_inner_range(cast_slice: &[u8], nonce: &Nonce) -> Option<(u64, u64)> {
     let begin = begin_marker(nonce);
     let end = end_marker(nonce);
-    let mut inner_start: Option<u64> = None;
+    // One cast line = one PTY chunk. Each entry is the line's cast offset,
+    // its raw length (for the range end) and its decoded payload.
+    let mut lines: Vec<(u64, u64, Vec<u8>)> = Vec::new();
+    let mut stream_len = 0usize;
     let mut offset = 0u64;
     for line in String::from_utf8_lossy(cast_slice).lines() {
         let mut decoded = Vec::new();
         decode_payload(Some(line.to_owned()), &mut decoded);
-        if find_subslice(&decoded, &begin).is_some() {
-            // A PTY read can bundle the BEGIN marker with the command's
-            // first bytes, so the clean bytes may begin inside this cast
-            // line; include the line and let the reader's decoded-payload
-            // framing strip erase the marker.
-            inner_start = Some(offset);
-        } else if find_subslice(&decoded, &end).is_some() {
-            // Same bundling on the END side: the line's tail can be output.
-            return inner_start.map(|start| (start, offset + line.len() as u64 + 1));
-        }
-        offset += line.len() as u64 + 1;
+        let raw_len = line.len() as u64;
+        stream_len += decoded.len();
+        lines.push((offset, raw_len, std::mem::take(&mut decoded)));
+        offset += raw_len + 1;
     }
-    None
+    // The joined payloads are the PTY output in write order, so a marker
+    // split across two chunks is contiguous here even though no single cast
+    // line holds it.
+    let mut stream = Vec::with_capacity(stream_len);
+    for (_, _, payload) in &lines {
+        stream.extend_from_slice(payload);
+    }
+    let beg_pos = find_subslice(&stream, &begin)?;
+    let end_pos = find_subslice(&stream[beg_pos + begin.len()..], &end)? + beg_pos + begin.len();
+    let line_holding = |stream_pos: usize| -> usize {
+        let mut consumed = 0usize;
+        for (i, (_, _, payload)) in lines.iter().enumerate() {
+            if stream_pos < consumed + payload.len() {
+                return i;
+            }
+            consumed += payload.len();
+        }
+        lines.len().saturating_sub(1)
+    };
+    let (start_line, end_line) = (line_holding(beg_pos), line_holding(end_pos + end.len() - 1));
+    let (start_cast, end_line_offset, end_line_len) =
+        (lines[start_line].0, lines[end_line].0, lines[end_line].1);
+    Some((start_cast, end_line_offset + end_line_len + 1))
 }
 
 /// Rebuildable index derived from a cast file; never a second source of truth.
@@ -394,7 +419,17 @@ fn windowed_payload(data: &[u8]) -> Vec<u8> {
                 _ => p,
             }
         })
-        .unwrap_or(0);
+        .unwrap_or_else(|| {
+            // No complete BEGIN marker here — but a PTY read can cut one
+            // anywhere, so this payload may still begin inside the marker
+            // (`G <nonce>…`). Such a fragment is framing the reader must
+            // drop, or the split marker leaks its tail as output.
+            if leading_fragment_len(data, begin) > 0 {
+                data.len()
+            } else {
+                0
+            }
+        });
     let from = &data[start..];
     let stop = find_subslice(from, end)
         .and_then(|p| {
@@ -419,8 +454,21 @@ fn windowed_payload(data: &[u8]) -> Vec<u8> {
                 None
             }
         })
-        .unwrap_or(from.len());
+        .unwrap_or(from.len())
+        .min(from.len());
     from[..stop].to_vec()
+}
+
+/// Length of the needle's head fragment sitting at the start of `data`: the
+/// longest `k` such that `data[..k]` equals the needle's last `k` bytes. A
+/// PTY read can split a marker, so a cast payload may start inside one.
+/// `0` when `data` does not begin inside `needle`.
+fn leading_fragment_len(data: &[u8], needle: &[u8]) -> usize {
+    let limit = needle.len().saturating_sub(1).min(data.len());
+    (1..=limit)
+        .rev()
+        .find(|&k| data[..k] == needle[needle.len() - k..])
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
