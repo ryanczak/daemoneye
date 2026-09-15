@@ -718,3 +718,98 @@ and is *not* the example to follow — 04b's doc says so explicitly.)
   a real record with the command's text and its real **non-zero** exit code,
   and that `read_shell`'s output contains the sentinel and **not** `DE_`.
   Do not relax either assertion to make them pass.
+
+### Update — 2026-09-14 20:21 (blocker)
+
+**Blocked on:** two structural defects in this doc's mechanism — the
+`before`/`after` window is measured too late to ever contain the command, and
+`marked_inner_range` is specced to search raw PTY marker bytes that a cast
+file never contains. Implementing the doc exactly produces a producer that
+silently indexes nothing; both findings below were measured against the real
+tree, and the tree currently sits at one of the two fixes applied while the
+other requires an authorized file the doc freezes.
+
+**What I tried**, in order:
+
+1. **The corrected settle loop as written (escalation 2026-09-14).** Built
+   it inside `run_in_shell_with` with `tokio::time::sleep` (the doc's
+   corrected step, async variant), named constants, and the shared helpers.
+   Result: the settle loop's `after` is **already** the command's full
+   length on the first iteration — `strace -e statx` shows every one of the
+   181 polls seeing the same `stx_size` — so `before == after` forever and
+   the record is never written. The host pump's write happens before the
+   daemon's task resumes at all. This is not a version of the race the
+   escalation answered; it is "the length read that was supposed to be
+   *before* the command is in fact *after* everything", because
+   `index_command_output` runs only after `run_command` returns. The
+   mechanism's premise (a length delta around the command) is unimplementable
+   from inside that function.
+
+2. **Keying the finder on the nonce instead of the window.** Scanning the
+   whole cast for *this run's* markers (nonce-unique) rather than
+   `[before, after)` finds the command wherever the pump happened to write
+   it, and needs no second counter. Same files, same signature. This is now
+   on disk and the file-level fix works: the record gets a real, non-zero
+   range.
+
+3. **Testing the finder against what a cast actually stores.** The four
+   pure tests fed `marked_inner_range` slices built from
+   `begin_marker`/`end_marker`'s **raw** bytes and passed — while the
+   production finder found nothing on a real cast. strace's write capture
+   and a fixture built through `CastWriter` show why: a cast line is
+   `["<t>","o",<json-string>]`, and a JSON string escapes the marker's
+   `0x1f` — `"DE_BEG \u001f"` is what lands on disk, six literal characters,
+   never the raw byte (reproducible with
+   `python3 -c "import json; print(json.dumps('DE_BEG \x1f'))"`). The
+   writer, the finder's specced needle and the tests all agreed on the
+   raw-byte literal, so the suite was green against a mechanism that cannot
+   match any real cast. I rebuilt the pure fixture through `CastWriter` and
+   taught the finder to decode each line's payload exactly the way
+   `read_command_output`'s `extend_output_line` decodes it; the pure tests
+   stay green against the encoded form now.
+
+4. **The remaining impossibility — the reason for this blocker.** PTY read
+   chunking is arbitrary, and on the real tree the BEGIN marker's chunk
+   **bundles the command's first output**: the observed cast line decodes to
+   `"\x1fDE_BEG <nonce>\x1f\r\nSENTINEL_ONE\r\n"`. `read_command_output` (frozen
+   by § Authorizations) slices the stored range into **whole cast lines** and
+   concatenates their `"o"` payloads — so for such a cast there is **no range**
+   whose decode is the clean output: excluding the marker line loses
+   `SENTINEL_ONE`, including it leaks the marker framing. This is not an
+   implementation gap; it is a contradiction between three freezes in the doc:
+   (a) `wrap_command` frozen, so the producer cannot force marker/body onto
+   different lines; (b) `read_command_output` frozen, so the reader cannot
+   strip the framing; (c) the acceptance criterion
+   `read_shell_returns_clean_output_after_a_real_command` — which the same
+   doc pins as unweakenable — cannot pass on a real PTY cast. Every combination
+   of two holds; all three do not.
+
+**What I need:** a decision on the marker-bundling contradiction. The
+candidate that touches least and satisfies every criterion: have
+`read_command_output` strip this run's framed markers from decoded payloads
+(`strip_markers` runs per-record range with the nonce already available in
+`CommandRecord`'s bytes? — note: the nonce is **not** in `CommandRecord`, which
+is why the doc forbade touching it; the reader would need the nonce via
+`MetaIndex`), i.e. an explicit authorization to amend `read_command_output`
+in `src/shell/log.rs` — a file the phase already authorizes — with the
+stripping made no-op for every existing fixture (their ranges carry no
+marker bytes). Alternatively: authorize the producer to write the marker
+lines as separate cast events by re-implementing `wrap_command`'s printf in
+the host (out of this phase's file set). Either resolves it; both exceed
+today's authorization, so I stopped rather than improvising.
+
+**State of the tree at this stop:** `resolve_cast` lift, `CommandOutcome.nonce`,
+`MetaIndex::append`, the nonce-keyed finder, the settle loop and the
+`index_command_output` wiring are on disk; `cargo test --lib 'shell::log'`
+→ 21 passed; `cargo test --lib 'daemon::executor::shell_exec'` → 11 passed,
+1 failed (`a_run_command_appends_a_meta_index_record` — the mutation-2
+guard: my fixture asserts a **non-empty** clean range, and the bundled-line
+cast yields the empty `893..893` range above); `cargo test --lib
+'knowledge::shell'` → 44 passed unchanged. `cargo fmt --all` clean,
+`cargo clippy --all-targets --all-features -- -D warnings` clean. No probe
+lines remain (`grep -c PROBE src/daemon/executor/shell_exec.rs` → 2, both the
+pre-existing `PROBE_ALIVE` sentinel inside an unrelated test, which the
+escalation's criterion counts; I cannot touch that test under this phase's
+authorizations — it asserts that module's own shell-aliveness sentinel, not
+a debug print). Full lib suite 1876 passed, 1 failed, the one failure being
+the same mutation-2 guard.

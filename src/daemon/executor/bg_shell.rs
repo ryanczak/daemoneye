@@ -19,8 +19,8 @@ use crate::daemon::run::{
 };
 use crate::daemon::session::{SessionStore, append_session_message, with_sessions};
 use crate::shell::{
-    CommandHandle, CommandOutcome, Owner, ShellId, ShellRegistry, login_shell,
-    spawn_command, spawn_dedicated_for,
+    CommandHandle, CommandOutcome, Owner, ShellId, ShellRegistry, login_shell, spawn_command,
+    spawn_dedicated_for,
 };
 
 /// How long a started background command may run before its reader task gives

@@ -23,6 +23,14 @@ use crate::shell::{CommandRecord, marked_inner_range};
 /// How long a fresh host may take to come up and answer `Status`.
 pub(super) const SHELL_READY_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// How long the producer waits for the command's bytes to land in the cast
+/// file before giving up on indexing. The host broadcasts a chunk to
+/// subscribers before writing it to the cast, so `run_command` may return
+/// while the END marker is still only in flight.
+const CAST_SETTLE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How often the settle loop re-reads the cast file length between polls.
+const CAST_SETTLE_POLL: Duration = Duration::from_millis(10);
+
 /// The PTY geometry every shell host is spawned with.
 const ROWS: u16 = 24;
 /// The PTY geometry every shell host is spawned with.
@@ -107,7 +115,7 @@ where
                 id.as_str()
             ))
         })?;
-    index_command_output(reg, cmd, &id, &outcome);
+    index_command_output(reg, cmd, &id, &outcome).await;
     let raw = String::from_utf8_lossy(&outcome.output);
     let mut text = format_for_model(&raw);
     if let Some(note) = foreground::exit_status_annotation(Some(outcome.exit_code)) {
@@ -127,16 +135,19 @@ where
 /// Everything here is best-effort: the index is derived data, exactly like the
 /// memory FTS index, and a failure must never change what the command returns
 /// to the model.
-fn index_command_output(reg: &ShellRegistry, cmd: &str, id: &ShellId, outcome: &CommandOutcome) {
-    eprintln!("PROBE enter: id={id:?} cmd={cmd:?}");
-    let record_started_unix = with_shells(reg, |store| {
+async fn index_command_output(
+    reg: &ShellRegistry,
+    cmd: &str,
+    id: &ShellId,
+    outcome: &CommandOutcome,
+) {
+    let started_unix = with_shells(reg, |store| {
         store
             .get(id.as_str())
             .map(|record| record.started_unix)
             .unwrap_or(0)
     });
-    let cast = crate::shell::resolve_cast(id.as_str(), record_started_unix);
-    eprintln!("PROBE cast={cast:?} rec_started={record_started_unix}");
+    let cast = crate::shell::resolve_cast(id.as_str(), started_unix);
     let before = match std::fs::metadata(&cast) {
         Ok(m) => m.len(),
         Err(_) => {
@@ -147,69 +158,50 @@ fn index_command_output(reg: &ShellRegistry, cmd: &str, id: &ShellId, outcome: &
             return;
         }
     };
-    let after = match std::fs::metadata(&cast) {
-        Ok(m) => m.len(),
-        Err(e) => {
-            eprintln!("PROBE after-fail: cast={cast:?} e={e}");
-            log::warn!("meta index: cast {} vanished mid-read: {e}", cast.display());
-            return;
+    // The host broadcasts a chunk before it writes that chunk to the cast
+    // (backend.rs pump thread), so `run_command` can return before the
+    // command's bytes are on disk. Wait for the END marker rather than
+    // assuming the file has caught up.
+    let deadline = tokio::time::Instant::now() + CAST_SETTLE_TIMEOUT;
+    let range = loop {
+        let after = match std::fs::metadata(&cast) {
+            Ok(m) => m.len(),
+            Err(e) => {
+                log::warn!("meta index: cast {} vanished mid-read: {e}", cast.display());
+                return;
+            }
+        };
+        if after > 0
+            && let Ok(slice) = read_cast_slice(&cast, 0, after)
+            && let Some((first, end)) = marked_inner_range(&slice, &outcome.nonce)
+        {
+            break Some((first, end));
         }
+        if tokio::time::Instant::now() >= deadline {
+            break None;
+        }
+        tokio::time::sleep(CAST_SETTLE_POLL).await;
     };
-    scan_and_append(reg, cmd, id, outcome, &cast, before, after);
-}
-
-fn scan_and_append(
-    reg: &ShellRegistry,
-    cmd: &str,
-    id: &ShellId,
-    outcome: &CommandOutcome,
-    cast: &Path,
-    before: u64,
-    after: u64,
-) {
-    if after <= before {
-        eprintln!("PROBE empty-window: before={before} after={after}");
+    let Some((first_byte, end_byte)) = range else {
+        log::warn!(
+            "meta index: markers for shell {} command `{cmd}` never landed in {} \
+             within {CAST_SETTLE_TIMEOUT:?}; not indexed",
+            id.as_str(),
+            cast.display()
+        );
         return;
-    }
-    let slice = match read_cast_slice(cast, before, after) {
-        Ok(slice) => slice,
-        Err(e) => {
-            log::warn!(
-                "meta index: reading {} for markers failed: {e}",
-                cast.display()
-            );
-            return;
-        }
-    };
-    let (inner_start, inner_end) = match marked_inner_range(&slice, &outcome.nonce) {
-        Some(range) => (before + range.0, before + range.1),
-        None => {
-            eprintln!(
-                "PROBE no-markers: cast={cast:?} slice_len={} nonce={:?}",
-                slice.len(),
-                outcome.nonce
-            );
-            log::warn!(
-                "meta index: markers for shell {} command `{cmd}` never landed; not indexed",
-                id.as_str()
-            );
-            return;
-        }
     };
     let record = CommandRecord {
         index: 0,
         command: cmd.to_owned(),
         started: before as f64,
-        ended: after as f64,
+        ended: after_cast_len(&cast, before) as f64,
         exit_code: outcome.exit_code,
-        first_byte: inner_start,
-        end_byte: inner_end,
+        first_byte,
+        end_byte,
     };
-    let meta_path = meta_path_for(cast);
-    eprintln!("PROBE append: meta={meta_path:?} inner={inner_start}..{inner_end}");
-    if let Err(e) =
-        MetaIndex::append(&meta_path, cast, id.as_str(), started_unix_of(reg, id), record)
-    {
+    let meta_path = meta_path_for(&cast);
+    if let Err(e) = MetaIndex::append(&meta_path, &cast, id.as_str(), started_unix, record) {
         log::warn!(
             "meta index: appending to {} failed, command output is unaffected: {e}",
             meta_path.display()
@@ -217,13 +209,13 @@ fn scan_and_append(
     }
 }
 
-fn started_unix_of(reg: &ShellRegistry, id: &ShellId) -> u64 {
-    with_shells(reg, |store| {
-        store
-            .get(id.as_str())
-            .map(|record| record.started_unix)
-            .unwrap_or(0)
-    })
+/// The cast length at the time the record closes, so `ended` lands after the
+/// command's final write. Best-effort: a vanished cast yields `before`.
+fn after_cast_len(cast: &Path, before: u64) -> u64 {
+    std::fs::metadata(cast)
+        .map(|m| m.len())
+        .unwrap_or(before)
+        .max(before)
 }
 
 /// The `[before, after)` bytes of `cast`, read back after the command ran.
@@ -296,18 +288,10 @@ mod tests {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let cast = crate::shell::cast_path(id.as_str(), started);
-        eprintln!("PROBE spawn: cast={cast:?} started={started}");
         std::fs::create_dir_all(cast.parent().context("cast has a parent")?)
             .context("creating the logs dir")?;
-        let backend = crate::shell::PtyBackend::spawn(
-            "bash",
-            ROWS,
-            COLS,
-            100,
-            &cast,
-            started,
-        )
-        .context("spawning bash into the logs dir")?;
+        let backend = crate::shell::PtyBackend::spawn("bash", ROWS, COLS, 100, &cast, started)
+            .context("spawning bash into the logs dir")?;
         let lock = crate::daemon::instance::InstanceLock::acquire(&lock_path(id.as_str()))
             .context("holding the per-id instance lock")?;
         let socket = socket_path(id.as_str());

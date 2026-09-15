@@ -148,33 +148,36 @@ pub struct CommandRecord {
     pub end_byte: u64,
 }
 
-/// The byte range of one command's clean output inside the cast bytes recorded
-/// while that command ran: the first byte **after** the BEGIN marker line and
-/// the first byte **of** the END marker line, both relative to the given
-/// slice. `None` when either marker is absent — a command whose markers never
-/// landed has no clean range and must not be indexed.
+/// The byte range, as cast-file offsets relative to the given slice, of one
+/// command's clean output: the decoded bytes strictly between this run's BEGIN
+/// marker line and the line carrying its END marker. `None` when either marker
+/// is absent — a command whose markers never landed has no clean range and
+/// must not be indexed.
 ///
-/// Built on the same framing `parse_outcome` reads, and keyed on the framed
-/// marker forms rather than a bare `DE_BEG` substring, because a PTY **echoes**
-/// the joined `DE_BEG` command line before the real marker arrives.
+/// The finder is driven by the same marker bytes `parse_outcome` reads
+/// (`begin_marker` / `end_marker`), never a hand-written `DE_BEG` substring. A
+/// cast line stores a marker's `0x1f` as the JSON escape `\u001f`, so the raw
+/// bytes the PTY wrote cannot appear in a cast file — the search must decode
+/// each line's payload exactly the way `read_command_output` decodes it. The
+/// on-screen **echo** of the wrapped command line carries `DE_BEG <nonce>`
+/// verbatim but never the framed form: the split-quote in `wrap_command` means
+/// only the shell's own `printf` output has `\x1f` on both sides of the nonce.
 pub fn marked_inner_range(cast_slice: &[u8], nonce: &Nonce) -> Option<(u64, u64)> {
     let begin = begin_marker(nonce);
     let end = end_marker(nonce);
-    let begin_at = find_subslice(cast_slice, &begin)?;
-    let inner_start = begin_at + begin.len();
-    let line_feed = cast_slice[inner_start..]
-        .iter()
-        .position(|b| *b == b'\n')
-        .map(|p| inner_start + p + 1)?;
-    let end_at = find_subslice(&cast_slice[line_feed..], &end)?;
-    let mut range_end = line_feed + end_at;
-    // The CRLF between the command's last write and the END marker belongs to
-    // the framing, same as `parse_outcome` trims it — never the command's own
-    // final newline-delimited CR within the output.
-    if range_end >= line_feed + 2 && &cast_slice[range_end - 2..range_end] == b"\r\n" {
-        range_end -= 2;
+    let mut inner_start: Option<u64> = None;
+    let mut offset = 0u64;
+    for line in String::from_utf8_lossy(cast_slice).lines() {
+        let mut decoded = Vec::new();
+        extend_output_line(Some(line.to_owned()), &mut decoded);
+        if find_subslice(&decoded, &begin).is_some() {
+            inner_start = Some(offset + line.len() as u64 + 1);
+        } else if inner_start.is_some() && find_subslice(&decoded, &end).is_some() {
+            return Some((inner_start?, offset));
+        }
+        offset += line.len() as u64 + 1;
     }
-    Some((line_feed as u64, range_end as u64))
+    None
 }
 
 /// Rebuildable index derived from a cast file; never a second source of truth.
@@ -222,7 +225,11 @@ impl MetaIndex {
             Ok(m) => m,
             Err(_) => MetaIndex {
                 shell_id: shell_id.to_owned(),
-                cast: cast.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                cast: cast
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
                 started_unix,
                 commands: Vec::new(),
             },
@@ -901,20 +908,46 @@ mod tests {
         assert_eq!(offset, len + 9, "the offset is returned unchanged");
     }
 
+    /// Assemble the cast bytes one command's window would hold: the echoed
+    /// command line, then BEGIN, the body and END, all through `CastWriter` so
+    /// the encoding matches what a real cast stores (the marker's `0x1f`
+    /// escapes as `\u001f`, never a raw byte).
     fn framed(nonce: &Nonce, echoed_line: &str, body: &[u8], exit: u32) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("framed.cast");
+        let mut w = CastWriter::create(&path, 80, 24, 1).unwrap();
         if !echoed_line.is_empty() {
-            buf.extend_from_slice(echoed_line.as_bytes());
+            w.write_output(Duration::ZERO, echoed_line.as_bytes())
+                .unwrap();
         }
-        buf.extend_from_slice(&begin_marker(nonce));
-        buf.extend_from_slice(b"\r\n");
-        buf.extend_from_slice(body);
-        buf.extend_from_slice(b"\r\n");
-        buf.extend_from_slice(&end_marker(nonce));
-        buf.extend_from_slice(exit.to_string().as_bytes());
-        buf.push(0x1f);
-        buf.extend_from_slice(b"\r\n");
-        buf
+        w.write_output(Duration::ZERO, &begin_marker(nonce))
+            .unwrap();
+        w.write_output(Duration::ZERO, body).unwrap();
+        w.write_output(Duration::ZERO, &{
+            let mut e = end_marker(nonce);
+            e.extend_from_slice(exit.to_string().as_bytes());
+            e.push(0x1f);
+            e
+        })
+        .unwrap();
+        drop(w);
+        std::fs::read(&path).unwrap()
+    }
+
+    /// The `"o"` payloads `read_command_output` would return for the recorded
+    /// range: decode each complete cast line in `[first, end)` the same way the
+    /// reader does. The same `extend_output_line` the shippers use, so a test
+    /// cannot drift from production's decoding.
+    fn decoded_range(slice: &[u8], first: u64, end: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        for line in String::from_utf8_lossy(&slice[first as usize..end as usize])
+            .lines()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+        {
+            extend_output_line(Some(line), &mut out);
+        }
+        out
     }
 
     #[test]
@@ -922,11 +955,18 @@ mod tests {
         let nonce = Nonce::new();
         let body: &[u8] = b"stdout line one\nstdout line two\n";
         let slice = framed(&nonce, "", body, 0);
-        let (first, end) =
-            marked_inner_range(&slice, &nonce).expect("both markers present");
-        assert_eq!(&slice[first as usize..end as usize], body);
-        let text = String::from_utf8_lossy(&slice[first as usize..end as usize]).into_owned();
-        assert!(!text.contains("DE_"), "no marker text in the range: {text:?}");
+        let (first, end) = marked_inner_range(&slice, &nonce).expect("both markers present");
+        let decoded = decoded_range(&slice, first, end);
+        assert_eq!(decoded, body, "the range decodes to exactly the body");
+        let text = String::from_utf8_lossy(&decoded).into_owned();
+        assert!(
+            !text.contains("DE_"),
+            "no marker text in the range: {text:?}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&slice[first as usize..end as usize]).contains("\\u001f"),
+            "the marker lines themselves are outside the range"
+        );
     }
 
     #[test]
@@ -963,8 +1003,9 @@ mod tests {
         let slice = framed(&nonce, echoed, body, 0);
         let (first, end) =
             marked_inner_range(&slice, &nonce).expect("the real markers are present");
-        assert_eq!(&slice[first as usize..end as usize], body);
-        let text = String::from_utf8_lossy(&slice[first as usize..end as usize]).into_owned();
+        let decoded = decoded_range(&slice, first, end);
+        assert_eq!(decoded, body, "the range decodes to exactly the body");
+        let text = String::from_utf8_lossy(&decoded).into_owned();
         assert!(
             !text.contains("printf"),
             "the echoed command line must not leak into the range: {text:?}"
