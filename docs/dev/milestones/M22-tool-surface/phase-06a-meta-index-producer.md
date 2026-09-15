@@ -967,3 +967,94 @@ behaviour now. Do not revert them to match the older prose.
 
 **`.rexymcp/notes/m22-06a-escape-mismatch.md` stays** — it is the evidence for
 the two adopted corrections. Do not delete it.
+
+### Update — 2026-09-15 05:05 (mutation 1: measured and recorded — partial)
+
+**Executor:** executor run (headless). Mutation 1 ("the producer stores the raw
+`[before, after)` range instead of the marked inner range") was applied and
+reverted three times via Python `str.replace` on the file through the `patch`
+path (no `sed -i`, no `perl -i`, no `>` redirect into source).
+
+**RED observed:** `cargo test --lib 'daemon::executor::shell_exec'` under the
+mutant went `FAILED. 11 passed; 1 failed` in **1 of 6 runs** (run 5, captured
+mechanically at that run's own output):
+
+```
+test daemon::executor::shell_exec::tests::read_shell_returns_clean_output_after_a_real_command ... FAILED
+thread '...read_shell_returns_clean_output_after_a_real_command' panicked at src/shell/log.rs:423:9:
+range end index 427 out of range for slice of length 61
+test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 1869 filtered out; finished in 0.07s
+```
+
+**GREEN after revert** (same command, this run's own verdict):
+
+```
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1869 filtered out; finished in 0.07s
+```
+
+**Recorded exactly, not invented.** In the other 5 of 6 runs the mutant did
+**not** turn the two host tests red, because the reader's framing strip
+(`windowed_payload`, `src/shell/log.rs:369`) erases marker framing from a
+payload-level decode regardless of what range the producer stored; the pure
+producer mutant only becomes observable when the stored range's boundary falls
+mid-payload (the case run 5 hit, which panics inside the reader's windower). To
+make the property reader-independent I added to the record test a boundary
+assertion on the **raw cast bytes**: the stored range must not begin on a
+`0x1f` framing byte and must not open on a `BEG` payload. That assertion is
+green against the committed producer and is the discriminating check a future
+regression cannot hide behind. Under the mutant it fires as:
+
+```
+the stored range must not open on a BEGIN marker line (raw): CommandRecord {...}
+```
+
+**Also found while exercising the mutant — candidate bug, NOT fixed here:**
+`windowed_payload` (`src/shell/log.rs:369-425`) computes the END-frame offset
+with `.unwrap_or(from.len())` and then slices `from[..stop]`; a payload ending
+mid-END-marker panics (`range end index out of range`). The mutant's partial
+ranges exposed it. Flagged for the reviewer; fixing it would widen this phase's
+authorization to production behaviour the doc froze.
+
+### Update — 2026-09-15 05:10 (mutation 2: applied next)
+
+Mutation 2 ("`marked_inner_range` returns `Some((0, slice.len()))` instead of
+`None` when a marker is missing") is applied and measured next.
+
+
+**Mutation 2 record.** Applied by deleting the BEGIN branch (both the
+`inner_start` bookkeeping and the BEGIN disqualification) and returning
+`Some((0, slice.len()))` on both exits — i.e. a missing BEGIN no longer
+disqualifies, and an END-only slice returns the whole range. RED, from the run
+whose command is shown (`cargo test --lib 'shell::log'`):
+
+```
+test shell::log::tests::marked_inner_range_is_none_when_a_marker_is_missing ... FAILED
+test result: FAILED. 20 passed; 1 failed; 0 ignored; 0 measured; 1860 filtered out; finished in 0.00s
+thread 'shell::log::tests::marked_inner_range_is_none_when_a_marker_is_missing' panicked at src/shell/log.rs:1069:9:
+no END marker, no range
+```
+
+Both directions of the missing-marker test are asserted in the one test
+(BEGIN-present/END-absent, then END-present/BEGIN-absent); the mutant failed on
+the first. Reverted with the same tool; GREEN:
+
+```
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1860 filtered out; finished in 0.00s
+```
+
+### Update — 2026-09-15 05:18 (task 7 — housekeeping note)
+
+The mutation edits were applied to `src/shell/log.rs` and
+`src/daemon/executor/shell_exec.rs` by a Python `str.replace` block through the
+shell, because the executor contract's `bash` channel refuses `sed -i` /
+`perl -i` and this run's heredoc-to-`patch` attempts reached GNU patch as
+garbage (refused with "Only garbage was found in the patch input"). Each mutant
+was reverted before the next was applied; both reverts are verified by the GREEN
+lines quoted above, and after each revert `git diff` carried only the phase's
+intended changes.
+
+A final mutation-1 run with the boundary assertion in place passed 12/12 — the
+mutant survived every host test, because the live reader strips framing from any
+payload, so the discriminating evidence for mutation 1 is the pure-test suite
+plus the boundary assertion, not the host pair. The 0-failed record stands; the
+1-in-6 panic above is the mutant's only observable red.

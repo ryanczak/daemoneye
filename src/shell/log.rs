@@ -322,7 +322,7 @@ fn last_complete_line_end(buf: &[u8]) -> usize {
 /// Extend `out` with the `"o"` payload of one cast event line. An unparsable
 /// line, a malformed JSON line and any non-output event contribute nothing —
 /// skipping rather than failing is the contract both readers share.
-fn extend_output_line(line: Option<String>, out: &mut Vec<u8>) {
+pub(crate) fn extend_output_line(line: Option<String>, out: &mut Vec<u8>) {
     decode_payload(line, out);
     let data = std::mem::take(out);
     *out = windowed_payload(&data);

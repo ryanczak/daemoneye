@@ -25,6 +25,8 @@ pub use log::{
     CastWriter, CommandRecord, MetaIndex, marked_inner_range, meta_path_for, read_command_output,
     read_output_since,
 };
+#[cfg(test)]
+pub(crate) use log::extend_output_line;
 pub use proto::{ShellRequest, ShellResponse, ShellSignal, ShellState, encode};
 pub use pty::{
     CommandOutcome, Nonce, PtyShell, exit_var, parse_outcome, strip_markers, wrap_command,

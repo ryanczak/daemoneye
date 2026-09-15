@@ -682,6 +682,22 @@ mod tests {
             record.first_byte < record.end_byte,
             "a non-empty clean range is stored: {record:?}"
         );
+        let bytes = std::fs::read(&cast).expect("the cast is on disk");
+        let start = record.first_byte as usize;
+        // A clean range begins where the output begins. The raw cast bytes are
+        // checked at the boundary so the assertion is reader-independent: a
+        // reader that strips framing per payload would otherwise also pass a
+        // raw marker-bearing range.
+        assert_ne!(
+            bytes.get(start),
+            Some(&0x1f),
+            "the stored range must not begin on a marker's framing byte (raw): {record:?}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&bytes[start..(start + 8).min(record.end_byte as usize)])
+                .contains("BEG"),
+            "the stored range must not open on a BEGIN marker line (raw): {record:?}"
+        );
     }
 
     /// The phase's deliverable: after a real command through the producer,
