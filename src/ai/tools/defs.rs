@@ -973,6 +973,82 @@ pub static TOOLS: &[ToolDef] = &[
         category: Category::Run,
     },
     ToolDef {
+        name: "list_shell_logs",
+        description: "List the PTY shell recordings on disk — live sessions and finished \
+                      ones alike, newest first. Each row carries the recording's \
+                      **log id** (like \"s3-1788470000\", the shell id plus the session's \
+                      start timestamp), its age, its command count, and the first \
+                      command as a hint of what the session was. Recordings without a \
+                      readable command index are listed with \"commands: unknown\" — \
+                      never 0. This is the way to ask \"which shell sessions ran \
+                      recently?\" and to find the log id read_shell_log takes.",
+        params: &[
+            ParamDef {
+                name: "since",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Optional unix timestamp: keep only recordings started at or \
+                              after it.",
+            },
+            ParamDef {
+                name: "limit",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Optional: how many recordings to show. Default 50, \
+                              capped at 500 (the result says when a request was clamped).",
+            },
+        ],
+        deferred_group: Some("history"),
+        category: Category::Read,
+    },
+    ToolDef {
+        name: "read_shell_log",
+        description: "Read one PTY shell **recording** by its log id — the id \
+                      `list_shell_logs` prints, like \"s3-1788470000\" (the shell id plus \
+                      the session's start timestamp; a bare shell id is refused, because \
+                      ids are reused across daemon restarts). Reads finished sessions as \
+                      well as live ones: each recorded command's output, masked, with its \
+                      exit code in the header when a single command is selected. \
+                      `command_index` selects one command, `lines` clamps the tail, \
+                      `filter` regex-selects lines. For a live shell by plain id, use \
+                      read_shell instead.",
+        params: &[
+            ParamDef {
+                name: "log",
+                ty: ParamTy::Str,
+                required: true,
+                description: "The log id to read, exactly as list_shell_logs prints it \
+                              (e.g. \"s3-1788470000\") — not the bare shell id.",
+            },
+            ParamDef {
+                name: "command_index",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Optional: read one command by its recorded index (0 is the \
+                              first). An index past the highest recorded is an error \
+                              naming the highest. Omit to read every recorded command \
+                              in order.",
+            },
+            ParamDef {
+                name: "lines",
+                ty: ParamTy::Int,
+                required: false,
+                description: "How many lines of the tail to return. Defaults to 200, \
+                              capped at 2000.",
+            },
+            ParamDef {
+                name: "filter",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional regex; only matching lines are returned. A \
+                              syntactically invalid regex is an error, not a literal \
+                              match.",
+            },
+        ],
+        deferred_group: Some("history"),
+        category: Category::Read,
+    },
+    ToolDef {
         name: "load_tools",
         description: "Load an additional group of tools into your available tool set for the rest \
                       of this session. Some rarely-used tools are not loaded by default to save \

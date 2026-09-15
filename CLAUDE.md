@@ -136,7 +136,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Current AI tools
 
-**46 tools: 34 core + 12 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
+**48 tools: 34 core + 14 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
 `src/ai/tools/defs.rs` — `core` means `None` (rendered on every request); a group
 name means the tool is omitted until `load_tools` pulls the group in. **Note the
 asymmetry**: for scripts, runbooks and memory the *write* side is core while the
@@ -190,6 +190,8 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `read_agent` | **agents** | Read a named agent's full config |
 | `list_agents` | **agents** | List agents with descriptions and models |
 | `delete_agent` | **agents** | Delete an agent; approval-gated, warns if runbooks reference it |
+| `list_shell_logs` | **history** | List the PTY shell recordings on disk — live and finished sessions alike, newest first. Each row carries the recording's **log id** (`s3-1788470000`, shell id + start timestamp), its age, its command count and the first command. Recordings without a readable index show `commands: unknown`, never 0. Optional `since` (unix timestamp, keeps recordings at or after it) and `limit` (default 50, cap 500 — the result says when clamped) |
+| `read_shell_log` | **history** | Read one shell **recording** by its log id — the id `list_shell_logs` prints, not the bare shell id (which is reused across daemon restarts and refused). Reads finished sessions as well as live ones. `command_index` reads one command (with its **exit code** in the header; an index past the highest recorded is an error naming the highest), `filter` is a regex (invalid = error), `lines` clamps the tail (default 200, max 2000). Output is masked |
 
 ## Important Invariants
 

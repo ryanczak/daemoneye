@@ -1025,6 +1025,23 @@ where
             ))
         }
 
+        PendingCall::ListShellLogs { since, limit, .. } => Ok(ToolCallOutcome::Result(
+            knowledge::list_shell_logs(*since, *limit),
+        )),
+
+        PendingCall::ReadShellLog {
+            log,
+            command_index,
+            lines,
+            filter,
+            ..
+        } => Ok(ToolCallOutcome::Result(knowledge::read_shell_log(
+            log,
+            *command_index,
+            *lines,
+            filter.as_deref(),
+        ))),
+
         PendingCall::FindInPanes { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
             knowledge::find_in_panes(cache, chat_pane, pattern, scope.as_deref()).await,
         )),

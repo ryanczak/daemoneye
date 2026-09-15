@@ -493,7 +493,7 @@ While the search prompt is open, typing edits the query, `Enter` commits it and 
 
 ## AI tools
 
-The model has **46 tools**. The 34 **core** tools are sent with every request; the 12 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
+The model has **48 tools**. The 34 **core** tools are sent with every request; the 14 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
 
 Tools marked **⚠** require explicit user approval before they execute.
 
@@ -545,10 +545,13 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `scripts` | `read_script`, `list_scripts` |
 | `memory` | `delete_memory` |
 | `runs` | `run_log_tail`, `run_log_search`, `get_turn` |
+| `history` | `list_shell_logs`, `read_shell_log` |
 
 * `run_log_tail` reads the last N records of one run's turn log (`~/.daemoneye/var/log/runs/<run_id>.jsonl`); limit clamped inside the reader at 200, default 50 — the header says when a request was clamped.
 * `run_log_search` searches one run's turn log for records containing a substring, case-insensitively, under the same clamp.
 * `get_turn` reads every record one turn logged — the one uncapped escape hatch, since the caller has already narrowed to a single turn.
+* `list_shell_logs` lists the PTY shell recordings in `~/.daemoneye/var/log/shells/`, newest first — live and finished sessions alike. Each row carries the **log id** (`s3-1788470000`, shell id plus start timestamp), its age, its command count and the first command as a hint. Recordings without a readable command index are listed with `commands: unknown`, never 0. `since` (unix timestamp) keeps the recordings at or after it; `limit` defaults to 50, capped at 500, and the result says when a request was clamped.
+* `read_shell_log` reads one recording by its **log id** — the id `list_shell_logs` prints. A bare shell id (`"s3"`) is refused, because ids are reused across daemon restarts and picking the newest match would read the wrong session. `command_index` reads one command (its exit code is in the header; an index past the highest recorded is an error naming the highest), `filter` is a regex (invalid = error) and `lines` clamps the tail (default 200, max 2000). Output is masked.
 
 ---
 

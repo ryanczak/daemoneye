@@ -4,9 +4,10 @@
 //! substrate (03b).
 
 use crate::ai::filter::mask_sensitive;
+use crate::config::shell_logs_dir;
 use crate::shell::{
-    Owner, ShellId, ShellRecord, ShellRegistry, await_ready, cast_path, host_is_alive,
-    meta_path_for, socket_path, spawn_for, with_shells,
+    MetaIndex, Owner, ShellId, ShellRecord, ShellRegistry, await_ready, cast_path, host_is_alive,
+    meta_path_for, parse_cast_name, read_command_output, socket_path, spawn_for, with_shells,
 };
 use std::time::{Duration, Instant};
 
@@ -231,7 +232,7 @@ struct ShellOutput {
 /// A live shell that has recorded no commands is a success with `command_count`
 /// 0, not an error: a search over it finds nothing, while `read_shell` says so
 /// in its own words.
-fn read_shell_log(
+fn read_recorded_output(
     reg: &ShellRegistry,
     id: &str,
     since_command: Option<u32>,
@@ -346,7 +347,7 @@ fn read_shell_in(
     since_command: Option<u32>,
     filter: Option<&str>,
 ) -> String {
-    let out = match read_shell_log(reg, id, since_command) {
+    let out = match read_recorded_output(reg, id, since_command) {
         Ok(out) => out,
         Err(msg) => return msg,
     };
@@ -425,6 +426,383 @@ pub fn read_shell(
     filter: Option<&str>,
 ) -> String {
     read_shell_in(crate::shell::registry(), id, lines, since_command, filter)
+}
+
+// ---------------------------------------------------------------------------
+// list_shell_logs / read_shell_log (M22 phase-06b) — the recorded-log readers
+// ---------------------------------------------------------------------------
+
+/// How many rows `list_shell_logs` shows when `limit` is omitted.
+pub(super) const LIST_LOGS_DEFAULT_LIMIT: u64 = 50;
+/// Hard ceiling on a single `list_shell_logs` listing.
+pub(super) const LIST_LOGS_MAX_LIMIT: u64 = 500;
+
+/// One recording found in the log directory, shaped for the formatter. The
+/// row's id is the **log id** — `<shell id>-<started unix>` — which is what
+/// `read_shell_log` takes as its `log` argument.
+struct LogRow {
+    log_id: String,
+    started_unix: u64,
+    /// `Some(n)` when the recording has a readable `.meta.json` carrying `n`
+    /// commands; `None` when the sidecar is missing or unreadable. A cast
+    /// written before the index's producer existed and a shell that has
+    /// recorded nothing are different facts, and the listing must not equate
+    /// them with 0.
+    commands: Option<usize>,
+    /// The first recorded command's text, when the index carries one — the
+    /// hint of what the session was.
+    first_command: Option<String>,
+}
+
+/// Pure: fold the requested listing limit into its window. `None` (or `0`,
+/// nonsense for "show me the last N") takes the default; anything above the
+/// cap is clamped to it.
+pub(super) fn clamp_list_logs_limit(limit: Option<u64>) -> u64 {
+    match limit {
+        None | Some(0) => LIST_LOGS_DEFAULT_LIMIT,
+        Some(n) => n.min(LIST_LOGS_MAX_LIMIT),
+    }
+}
+
+/// Pure: whether the requested limit was reduced, phrased so the tool result
+/// can quote it. The model has to be able to tell a truncated listing from a
+/// complete one.
+fn list_logs_clamp_note(requested: Option<u64>) -> Option<String> {
+    match requested {
+        Some(r) if r > LIST_LOGS_MAX_LIMIT => Some(format!(
+            "requested limit {r} exceeded the maximum of {LIST_LOGS_MAX_LIMIT} and was clamped"
+        )),
+        _ => None,
+    }
+}
+
+/// List the shell recordings in `~/.daemoneye/var/log/shells/` — live and
+/// finished shells alike, newest first. Each row carries the **log id**
+/// (`s3-1788470000`), not the bare shell id: `s0` after a daemon restart is a
+/// different shell from today's `s0`, and the timestamp is what distinguishes
+/// two recordings of one id.
+///
+/// `pub` rather than `pub(super)`: `knowledge/mod.rs` re-exports it for
+/// `executor` the way every sibling module's functions are re-exported, and a
+/// `pub(super)` item cannot be given wider visibility on re-export.
+pub fn list_shell_logs(since: Option<u64>, limit: Option<u64>) -> String {
+    list_shell_logs_in(&shell_logs_dir(), since, limit, now_unix())
+}
+
+/// `list_shell_logs` against an injected directory and clock — the seam the
+/// tests drive. Mirrors `list_shells`'s split: I/O here, formatting below.
+pub(super) fn list_shell_logs_in(
+    dir: &std::path::Path,
+    since: Option<u64>,
+    limit: Option<u64>,
+    now_unix: u64,
+) -> String {
+    // Scan for casts, parsing `<id>-<started_unix>` from each name. Anything
+    // that does not parse — the `.meta.json` sidecars, any stray file — is not
+    // a recording and is not listed.
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return format!(
+            "No shell recordings found: log directory {} does not exist or \
+             cannot be read. A recording appears here when a command runs in \
+             a PTY shell; list_shells shows the live shells.",
+            dir.display()
+        );
+    };
+    let mut rows: Vec<LogRow> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some((_, started_unix)) = parse_cast_name(name) else {
+            continue;
+        };
+        rows.push(LogRow {
+            log_id: name.strip_suffix(".cast").unwrap_or(name).to_string(),
+            started_unix,
+            commands: None,
+            first_command: None,
+        });
+    }
+    // Best-effort sidecar read, after the scan: a row's index is loaded if it
+    // is there and left `None` if it is not — an unindexed cast stays listed
+    // with an unknown command count, never with 0.
+    for row in &mut rows {
+        let cast = dir.join(format!("{}.cast", row.log_id));
+        if let Ok(meta) = MetaIndex::load(&meta_path_for(&cast)) {
+            row.commands = Some(meta.commands.len());
+            row.first_command = meta.commands.first().map(|c| c.command.clone());
+        }
+    }
+    rows.sort_by_key(|row| std::cmp::Reverse(row.started_unix));
+    format_log_rows(&rows, dir, since, limit, now_unix)
+}
+
+/// Pure: filter, clamp and render already-collected rows. Takes `now_unix`
+/// rather than reading the clock so tests can pin the ages.
+fn format_log_rows(
+    rows: &[LogRow],
+    dir: &std::path::Path,
+    since: Option<u64>,
+    limit: Option<u64>,
+    now_unix: u64,
+) -> String {
+    if rows.is_empty() {
+        return format!(
+            "No shell recordings found in {} — nothing has been recorded yet. \
+             A recording appears when a command runs in a PTY shell; \
+             list_shells shows the live shells.",
+            dir.display()
+        );
+    }
+    let kept: Vec<&LogRow> = rows
+        .iter()
+        .filter(|row| since.is_none_or(|s| row.started_unix >= s))
+        .collect();
+    if kept.is_empty() {
+        return format!(
+            "No shell recordings at or after unix timestamp {} in {} — \
+             {} recording(s) found, all older. Omit `since` or lower it.",
+            since
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "0".to_string()),
+            dir.display(),
+            rows.len()
+        );
+    }
+    let applied = clamp_list_logs_limit(limit) as usize;
+    let note = list_logs_clamp_note(limit);
+    let total = kept.len();
+    let shown = &kept[..total.min(applied)];
+    let mut out = format!(
+        "{} shell recording{} at or after unix {s} (newest first), showing {} of them{}:",
+        total,
+        if total == 1 { "" } else { "s" },
+        shown.len(),
+        match &note {
+            Some(n) => format!(" (note: {n})"),
+            None => String::new(),
+        },
+        s = since.map(|v| v.to_string()).unwrap_or_default(),
+    );
+    for row in shown {
+        let count_part = match row.commands {
+            Some(n) => format!("{n} command{}", if n == 1 { "" } else { "s" }),
+            None => "commands: unknown (no readable command index)".to_string(),
+        };
+        let hint = match (&row.first_command, row.commands) {
+            (Some(first), Some(_)) => format!("  first: {}", mask_sensitive(first)),
+            _ => String::new(),
+        };
+        let age_part = if now_unix >= row.started_unix {
+            format_age(now_unix - row.started_unix)
+        } else {
+            "future".to_string()
+        };
+        out.push_str(&format!(
+            "\n  {}  age:{age_part}  {count_part}{hint}",
+            row.log_id
+        ));
+    }
+    if total > shown.len() {
+        out.push_str(&format!(
+            "\n[{} more recording(s) past the limit — raise `limit` or narrow `since`]",
+            total - shown.len()
+        ));
+    }
+    out
+}
+
+/// Read one shell recording by its **log id** and render its recorded
+/// commands. `log` is the `s3-1788470000` shape `list_shell_logs` prints; the
+/// timestamp is the point of the id — a bare shell id would be ambiguous
+/// across daemon restarts, so this tool refuses the bare form rather than
+/// picking the newest recording that happens to match.
+///
+/// `pub` rather than `pub(super)`: `knowledge/mod.rs` re-exports it for
+/// `executor` the way every sibling module's functions are re-exported, and a
+/// `pub(super)` item cannot be given wider visibility on re-export.
+pub fn read_shell_log(
+    log: &str,
+    command_index: Option<u32>,
+    lines: Option<u64>,
+    filter: Option<&str>,
+) -> String {
+    read_log_in(&shell_logs_dir(), log, command_index, lines, filter)
+}
+
+/// `read_shell_log` against an injected directory — the seam the tests drive.
+pub(super) fn read_log_in(
+    dir: &std::path::Path,
+    log: &str,
+    command_index: Option<u32>,
+    lines: Option<u64>,
+    filter: Option<&str>,
+) -> String {
+    // 1. The log id's shape first, before touching the directory: a bare
+    //    shell id ("s3") is a refusal, not a lookup that happens to resolve.
+    if parse_cast_name(&format!("{log}.cast")).is_none() {
+        return format!(
+            "Error: {log:?} is not a log id. A log id is the shell id plus the \
+             session's start timestamp, like \"s3-1788470000\" — shell ids are \
+             reused across daemon restarts, so \"s3\" alone does not name one \
+             recording. Call list_shell_logs and use a full id from its output."
+        );
+    }
+    // 2. The regex next, before any file read — an invalid pattern costs
+    //    nothing and reads nothing.
+    let re = match filter {
+        Some(p) => match regex::RegexBuilder::new(p).size_limit(1 << 20).build() {
+            Ok(re) => Some(re),
+            Err(e) => {
+                return format!(
+                    "Error: invalid filter regex {p:?}: {e}. Fix the expression and \
+                     call again; the filter is applied as a regex over each line, \
+                     not a literal substring match."
+                );
+            }
+        },
+        None => None,
+    };
+    let cast = dir.join(format!("{log}.cast"));
+    let meta_path = meta_path_for(&cast);
+    // 3. The sidecar is what makes a read possible. Its absence is not an
+    //    error response shape change: a recording from before the index's
+    //    producer, or one that has recorded nothing, simply has nothing
+    //    indexed to read.
+    let Ok(meta) = MetaIndex::load(&meta_path) else {
+        return if std::fs::metadata(&cast).is_ok() {
+            format!(
+                "Log {log} has a recording but no readable command index ({}): \
+                 the recording predates the command index or recorded nothing. \
+                 It can still be read **live** with read_shell if its shell is \
+                 still running — call list_shells to check.",
+                meta_path.display()
+            )
+        } else {
+            format!(
+                "Error: no recording named {log:?} in {} — no .cast file carries \
+                 that id. Available log ids: {}. Call list_shell_logs to refresh.",
+                dir.display(),
+                available_log_ids(dir)
+            )
+        };
+    };
+    // 4. The index exists: resolve the selected commands.
+    let highest = meta.commands.len();
+    if highest == 0 {
+        return format!(
+            "Log {log} has a readable command index with 0 commands — the shell \
+             has not run a command since the index was created. Read it with \
+             read_shell if its shell is still running."
+        );
+    }
+    let indices: Vec<u32> = match command_index {
+        Some(i) => {
+            if meta.commands.iter().any(|c| c.index == i) {
+                vec![i]
+            } else {
+                let max_index = meta.commands.iter().map(|c| c.index).max().unwrap_or(0);
+                return format!(
+                    "Error: command_index {i} is beyond every recorded command of log \
+                     {log} — the highest recorded index is {max_index}. Call with a \
+                     smaller index (0 is always valid: it is the first recorded \
+                     command), or omit it to read every recorded command."
+                );
+            }
+        }
+        None => meta.commands.iter().map(|c| c.index).collect(),
+    };
+    // 5. Read each selected command through the shared byte-range reader — no
+    //    new slicing here.
+    let mut bytes = Vec::new();
+    for index in &indices {
+        match read_command_output(&cast, &meta, *index) {
+            Ok(mut out) => bytes.append(&mut out),
+            Err(e) => {
+                return format!(
+                    "Error: failed reading log {log}'s recorded output at command \
+                     index {index}: {e}. The cast file may have been rotated; \
+                     call list_shell_logs and re-read with the fresh id."
+                );
+            }
+        }
+    }
+    let body = match build_body(&String::from_utf8_lossy(&bytes), lines, re.as_ref()) {
+        Ok(body) => body,
+        Err(msg) => return msg,
+    };
+    let exit_suffix = match command_index.map(|i| exit_code_of(&meta, i)) {
+        Some(Some(0)) => ", exit code 0".to_string(),
+        Some(Some(code)) => format!(", exit code {code} (non-zero)"),
+        Some(None) | None => String::new(),
+    };
+    let header = format!(
+        "Log {log} — {highest} command{} recorded; showing {}{exit_suffix}{}:",
+        if highest == 1 { "" } else { "s" },
+        match command_index {
+            Some(i) => format!("command {i}"),
+            None => format!("all {highest}"),
+        },
+        match filter {
+            Some(p) => format!(" matching /{p}/"),
+            None => String::new(),
+        }
+    );
+    match body {
+        Some(b) => {
+            let line_count = b.lines().count().max(1);
+            format!(
+                "{header} {line_count} line{}.\n{b}",
+                if line_count == 1 { "" } else { "s" }
+            )
+        }
+        None => {
+            let depth = compile_depth(lines);
+            if let Some(p) = filter {
+                format!(
+                    "{header} no lines matched /{p}/ in the last {depth} lines. \
+                     Record the pattern without anchors, or widen the line clamp."
+                )
+            } else {
+                format!(
+                    "{header} the recorded output is empty — nothing to show in the \
+                     last {depth} lines."
+                )
+            }
+        }
+    }
+}
+
+/// Pure: the exit code of command `index` in `meta`, for the single-command
+/// header. `None` when the index does not name one — the caller then cites
+/// nothing.
+fn exit_code_of(meta: &MetaIndex, index: u32) -> Option<i32> {
+    meta.commands
+        .iter()
+        .find(|c| c.index == index)
+        .map(|c| c.exit_code)
+}
+
+/// Pure: the log ids the directory actually holds, newest first, for the
+/// not-found sentence.
+fn available_log_ids(dir: &std::path::Path) -> String {
+    let mut ids: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if parse_cast_name(&name).is_some() {
+                ids.push(name.strip_suffix(".cast").unwrap_or(&name).to_string());
+            }
+        }
+    }
+    ids.sort();
+    ids.reverse();
+    if ids.is_empty() {
+        "(none)".to_string()
+    } else {
+        ids.join(", ")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -529,7 +907,7 @@ fn find_in_shells_in(
         if total >= FIND_MAX_MATCHES {
             break;
         }
-        let out = match read_shell_log(reg, &row.id, None) {
+        let out = match read_recorded_output(reg, &row.id, None) {
             Ok(out) => out,
             Err(_) => {
                 unsearchable.push(row.id.clone());
@@ -634,7 +1012,7 @@ pub(super) const WATCH_MAX_SECS: u64 = 3600;
 /// gone host.
 pub(super) const WATCH_TAIL_LINES: usize = 50;
 
-/// The string `read_shell_log`, `close_shell_with` and `watch_shell` all show
+/// The string `read_recorded_output`, `close_shell_with` and `watch_shell` all show
 /// for an id not in `reg` — one 03b sentence when the registry is empty, one
 /// naming the live ids otherwise. Written once so the wording cannot drift
 /// between callers.
@@ -923,7 +1301,7 @@ fn visible_text(raw: &str) -> String {
         .join("\n")
 }
 
-/// The shell ids currently in `reg`, numerically sorted. `read_shell_log`,
+/// The shell ids currently in `reg`, numerically sorted. `read_recorded_output`,
 /// `close_shell_with` and the new `watch_shell` all need this; extracted here
 /// at the third copy rather than a second round of three.
 fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
@@ -2916,5 +3294,310 @@ mod tests {
             .max_by(|a, b| a.0.cmp(&b.0))
             .map(|(_, p)| p)
             .unwrap_or_default()
+    }
+
+    // -----------------------------------------------------------------------
+    // list_shell_logs / read_shell_log (M22 phase-06b)
+    // -----------------------------------------------------------------------
+
+    /// A log directory under the temp `HOME` (where `shell_logs_dir()` points)
+    /// plus the dir path, for driving the `_in` seams directly. The whole
+    /// body must call the seams inside `with_home(&tmp, …)` so
+    /// `shell_logs_dir()` and the writing `meta_path_for` agree on the
+    /// directory.
+    fn logs_dir_fixture() -> (TmpHome, std::path::PathBuf) {
+        let tmp = TmpHome::new();
+        let dir = with_home(&tmp, || {
+            let dir = crate::config::shell_logs_dir();
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        });
+        (tmp, dir)
+    }
+
+    /// Write one recording named `log_id` into `dir`: a `.cast` holding
+    /// `per_command` (one line of output per command) and a `.meta.json`
+    /// sidecar indexing those commands with the given exit codes. The
+    /// commands' text is `per_command` joined with " && " — so a row's hint
+    /// is that row's own commanded output, not a label shared across rows —
+    /// and the artifact is built with the real producer paths so the test
+    /// cannot disagree with the sweep or the id grammar.
+    fn write_recording(
+        dir: &std::path::Path,
+        log_id: &str,
+        per_command: &[&str],
+        exit_codes: &[i32],
+    ) {
+        let cast = dir.join(format!("{log_id}.cast"));
+        let started_unix: u64 = log_id
+            .rsplit_once('-')
+            .and_then(|(_, ts)| ts.parse().ok())
+            .unwrap_or(0);
+        let mut w = crate::shell::CastWriter::create(&cast, 80, 24, started_unix).unwrap();
+        let mut records = Vec::new();
+        let shared_command = per_command.join(" && ");
+        for (i, out) in per_command.iter().enumerate() {
+            let t = 1.0 + i as f64;
+            let command = shared_command.clone();
+            w.mark(Duration::from_secs_f64(t), &command).unwrap();
+            let first_byte = w.byte_len();
+            w.write_output(
+                Duration::from_secs_f64(t + 0.5),
+                format!("{out}\n").as_bytes(),
+            )
+            .unwrap();
+            let end_byte = w.byte_len();
+            w.mark(Duration::from_secs_f64(t + 1.0), &format!("end {i}"))
+                .unwrap();
+            records.push(crate::shell::CommandRecord {
+                index: i as u32,
+                command,
+                started: t,
+                ended: t + 0.5,
+                exit_code: exit_codes.get(i).copied().unwrap_or(0),
+                first_byte,
+                end_byte,
+            });
+        }
+        drop(w);
+        let meta = crate::shell::MetaIndex {
+            shell_id: log_id
+                .rsplit_once('-')
+                .map(|(id, _)| id)
+                .unwrap_or("")
+                .into(),
+            cast: cast.file_name().unwrap().to_string_lossy().into_owned(),
+            started_unix,
+            commands: records,
+        };
+        meta.save(&meta_path_for(&cast)).unwrap();
+    }
+
+    /// The row's hint is its own first command's text. The slices guard on
+    /// `min`/`max` because a row id can also appear in the "past the limit"
+    /// suffix; the assertion needs the listed rows only.
+    fn row_hint(out: &str, id: &str, next: Option<&str>) -> String {
+        let start = out.find(id).expect("row listed");
+        let end = match next {
+            Some(n) => out[start + id.len()..]
+                .find(n)
+                .map(|i| start + id.len() + i)
+                .unwrap_or(out.len()),
+            None => out.len(),
+        };
+        out[start..end.min(out.len())].to_string()
+    }
+
+    #[test]
+    fn list_shell_logs_is_newest_first() {
+        let (tmp, dir) = logs_dir_fixture();
+        with_home(&tmp, || {
+            write_recording(&dir, "s3-1788470000", &["older output"], &[0]);
+            write_recording(&dir, "s9-1788480000", &["newer output"], &[0]);
+            write_recording(&dir, "s1-1788460000", &["oldest output"], &[0]);
+            let out = list_shell_logs_in(&dir, None, None, 1_788_480_100);
+            let s9 = out.find("s9-1788480000").expect("s9 listed");
+            let s3 = out.find("s3-1788470000").expect("s3 listed");
+            let s1 = out.find("s1-1788460000").expect("s1 listed");
+            assert!(
+                s9 < s3 && s3 < s1,
+                "rows are newest first by started_unix: {out}"
+            );
+            let s1_hint = row_hint(&out, "s1-1788460000", None);
+            assert!(
+                s1_hint.contains("oldest output"),
+                "the oldest row's hint is its own first command: {out}"
+            );
+            let s9_hint = row_hint(&out, "s9-1788480000", Some("s3-1788470000"));
+            assert!(
+                s9_hint.contains("newer output"),
+                "each row's hint is that row's own command: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn list_shell_logs_includes_a_cast_with_no_index() {
+        let (tmp, dir) = logs_dir_fixture();
+        with_home(&tmp, || {
+            write_recording(&dir, "s4-1788470400", &["indexed output"], &[0]);
+            let cast = dir.join("s5-1788470500.cast");
+            std::fs::write(&cast, b"{\"version\": 2, \"width\": 80}").unwrap();
+            let out = list_shell_logs_in(&dir, None, None, 1_788_480_100);
+            let s5 = out
+                .find("s5-1788470500")
+                .expect("the unindexed cast is listed");
+            assert!(
+                out[s5..].contains("unknown"),
+                "an unindexed recording shows an unknown command count, not 0: {out}"
+            );
+            assert!(
+                !out[s5..].contains("0 command"),
+                "unknown must never be rendered as 0 commands: {out}"
+            );
+            // The indexed sibling keeps its real count.
+            let s4 = out
+                .find("s4-1788470400")
+                .expect("the indexed cast is listed");
+            assert!(
+                out[s4..].contains("1 command"),
+                "a readable index shows its real count: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn list_shell_logs_since_and_limit_filter() {
+        let (tmp, dir) = logs_dir_fixture();
+        with_home(&tmp, || {
+            write_recording(&dir, "s2-1788460000", &["old output"], &[0]);
+            write_recording(&dir, "s4-1788470000", &["boundary output"], &[0]);
+            write_recording(&dir, "s6-1788480000", &["new output"], &[0]);
+            // `since` is inclusive: the boundary recording itself survives.
+            let out = list_shell_logs_in(&dir, Some(1_788_470_000), None, 1_788_480_100);
+            assert!(
+                !out.contains("s2-1788460000"),
+                "a recording older than `since` is excluded: {out}"
+            );
+            assert!(
+                out.contains("s4-1788470000") && out.contains("s6-1788480000"),
+                "recordings at or after `since` are included: {out}"
+            );
+            // `limit` caps the rows and the output says it clamped.
+            let out = list_shell_logs_in(&dir, None, Some(900), 1_788_480_100);
+            assert!(
+                out.contains("clamped"),
+                "a limit above the cap is reported as clamped: {out}"
+            );
+            let out = list_shell_logs_in(&dir, None, Some(2), 1_788_480_100);
+            assert!(
+                out.contains("1 more recording"),
+                "the truncated suffix is named, not silently dropped: {out}"
+            );
+            // The listed rows are the newest pair; the id string asserts on
+            // the rows only, so a listed id must not appear twice (once as a
+            // row, once in the suffix). Split the output at the suffix and
+            // assert on the rows.
+            let rows_part = out.split("[1 more recording").next().unwrap_or(&out);
+            assert!(
+                !rows_part.contains("s2-1788460000"),
+                "not every row survived the limit: {rows_part}"
+            );
+            assert!(
+                rows_part.contains("s6-1788480000"),
+                "the newest row survives a limit of 2: {rows_part}"
+            );
+            let without = list_shell_logs_in(&dir, Some(1_788_481_000), None, 1_788_480_100);
+            assert!(
+                without.contains("No shell recordings at or after"),
+                "a `since` past every recording says so plainly: {without}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_shell_log_refuses_a_bare_shell_id() {
+        let (tmp, dir) = logs_dir_fixture();
+        with_home(&tmp, || {
+            write_recording(&dir, "s3-1788470000", &["the only s3 recording"], &[0]);
+            let out = read_log_in(&dir, "s3", None, None, None);
+            assert!(
+                out.starts_with("Error:"),
+                "a bare shell id is a refusal, not a read: {out}"
+            );
+            assert!(
+                out.contains("s3"),
+                "the refusal names the offending value: {out}"
+            );
+            assert!(
+                out.contains("list_shell_logs"),
+                "the refusal points at the listing tool: {out}"
+            );
+            assert!(
+                !out.contains("the only s3 recording"),
+                "no recording is read even though exactly one s3-* exists: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_shell_log_reads_one_command_with_its_exit_code() {
+        let (tmp, dir) = logs_dir_fixture();
+        with_home(&tmp, || {
+            write_recording(
+                &dir,
+                "s7-1788477000",
+                &["first output", "second output"],
+                &[3, 0],
+            );
+            let out = read_log_in(&dir, "s7-1788477000", Some(1), None, None);
+            assert!(
+                out.contains("second output") && !out.contains("first output"),
+                "command_index 1 returns the second command's output only: {out}"
+            );
+            assert!(
+                out.contains("command 1"),
+                "the header names the selected index: {out}"
+            );
+            assert!(
+                out.contains("exit code 0"),
+                "command 1's real exit code is cited, not a default: {out}"
+            );
+            let failing = read_log_in(&dir, "s7-1788477000", Some(0), None, None);
+            assert!(
+                failing.contains("exit code 3") && failing.contains("non-zero"),
+                "command 0's real non-zero exit code is in the header, not a default: {failing}"
+            );
+            assert!(
+                failing.contains("first output") && !failing.contains("second output"),
+                "command_index 0 returns the first command's output only: {failing}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_shell_log_unknown_log_is_an_error_naming_what_exists() {
+        let (tmp, dir) = logs_dir_fixture();
+        with_home(&tmp, || {
+            write_recording(&dir, "s2-1788465000", &["real output"], &[0]);
+            let out = read_log_in(&dir, "s9-1788499999", None, None, None);
+            assert!(
+                out.starts_with("Error:"),
+                "an absent log id is an error, returned as a String: {out}"
+            );
+            assert!(
+                out.contains("s9-1788499999"),
+                "the error names what could not be found: {out}"
+            );
+            assert!(
+                out.contains("s2-1788465000"),
+                "the error lists the available log ids: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_shell_log_invalid_filter_is_an_error() {
+        let (tmp, dir) = logs_dir_fixture();
+        with_home(&tmp, || {
+            write_recording(&dir, "s6-1788476000", &["real output"], &[0]);
+            let out = read_log_in(&dir, "s6-1788476000", None, None, Some("[unclosed"));
+            assert!(
+                out.starts_with("Error:"),
+                "an invalid filter regex is an error, not a literal match: {out}"
+            );
+            assert!(
+                out.contains("[unclosed"),
+                "the error names the offending pattern: {out}"
+            );
+            assert!(
+                out.contains("regex"),
+                "the error says the filter is applied as a regex: {out}"
+            );
+            assert!(
+                !out.contains("real output"),
+                "the pattern is rejected before any file is read: {out}"
+            );
+        });
     }
 }

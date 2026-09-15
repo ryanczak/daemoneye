@@ -235,6 +235,25 @@ pub enum AiEvent {
         enter: bool,
         thought_signature: Option<String>,
     },
+    /// List the shell recordings on disk, newest first (M22 phase-06b). Each
+    /// row carries the **log id** (`<shell id>-<started unix>`), not the bare
+    /// shell id.
+    ListShellLogs {
+        id: String,
+        since: Option<u64>,
+        limit: Option<u64>,
+        thought_signature: Option<String>,
+    },
+    /// Read one shell recording by its **log id** (M22 phase-06b) — the
+    /// filename stem `list_shell_logs` prints, not the bare shell id.
+    ReadShellLog {
+        id: String,
+        log: String,
+        command_index: Option<u32>,
+        lines: Option<u64>,
+        filter: Option<String>,
+        thought_signature: Option<String>,
+    },
     TmuxControl {
         id: String,
         action: String,

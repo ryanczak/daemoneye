@@ -191,6 +191,31 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   program asks for a password, tell the user instead. A ghost shell may not \
   use it unless its agent `ToolPolicy` explicitly allows it.
 
+### `list_shell_logs` / `read_shell_log`
+
+- **Deferred (`history` group) — call `load_tools(groups=["history"])` first; \
+  neither tool is available until you do.** Both are read-only.
+- `list_shell_logs(since?, limit?)` — list the PTY shell **recordings** on \
+  disk, newest first, live and finished sessions alike. Each row carries the \
+  recording's **log id** (like `"s3-1788470000"`, the shell id plus the \
+  session's start timestamp), its age, its command count and the first \
+  command as a hint of what the session was. A recording with no readable \
+  command index is listed with `commands: unknown`, never 0 — an old \
+  recording and one that ran nothing are different facts. `since` (a unix \
+  timestamp) keeps only the recordings started at or after it; `limit` \
+  defaults to 50 and is capped at 500 (the result says when a request was \
+  clamped).
+- `read_shell_log(log, command_index?, lines?, filter?)` — read one \
+  recording by its **log id**, exactly as `list_shell_logs` prints it. A \
+  bare shell id (`"s3"`) is refused, not resolved: shell ids are reused \
+  across daemon restarts and picking "the newest s3" is how a post-mortem \
+  reads the wrong incident. `command_index` reads one command by index and \
+  names its **exit code** in the header; an index past the highest recorded \
+  is an error naming that highest. `lines` clamps the tail (default 200, \
+  capped at 2000). `filter` is a regex applied per line; a syntactically \
+  invalid regex is an error, not a literal match. Output is masked. For a \
+  **live** shell by plain id, use `read_shell`.
+
 ### `list_panes`, `watch_pane`, `read_pane`, `find_in_panes`, `tmux_control`, `close_background_window`
 
 - `list_panes` — enumerate panes grouped by window with id, index, cmd, cwd, title, status; includes a foreign-session section for panes in other tmux sessions. Call when context \

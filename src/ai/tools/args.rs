@@ -170,6 +170,25 @@ pub(super) struct SendInputArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct ListShellLogsArgs {
+    #[serde(default)]
+    since: Option<u64>,
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ReadShellLogArgs {
+    log: String,
+    #[serde(default)]
+    command_index: Option<u32>,
+    #[serde(default)]
+    lines: Option<u64>,
+    #[serde(default)]
+    filter: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub(super) struct EditFileArgs {
     path: String,
     #[serde(default = "default_edit")]
@@ -629,6 +648,36 @@ impl ToolArgs for SendInputArgs {
             shell: self.shell,
             text: self.text,
             enter: self.enter,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for ListShellLogsArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ListShellLogs {
+            id: id.to_string(),
+            since: self.since,
+            limit: self.limit,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for ReadShellLogArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ReadShellLog {
+            id: id.to_string(),
+            log: self.log,
+            command_index: self.command_index,
+            lines: self.lines,
+            filter: self.filter,
             thought_signature: ts,
         }
     }

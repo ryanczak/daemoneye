@@ -145,10 +145,16 @@ pub fn sweep_shell_logs(retention_days: u32, live_ids: &std::collections::BTreeS
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        let (extension, stem) = if let Some(stem) = name.strip_suffix(".cast") {
-            (".cast", stem)
-        } else if let Some(stem) = name.strip_suffix(".cast.meta.json") {
+        // `meta_path_for` writes `<stem>.meta.json` (the producer's spelling);
+        // a `.cast.meta.json` name is the legacy spelling the sweep once
+        // recognised. Note `.cast` is checked after the two `.meta.json`
+        // forms, so the arm order matches suffix specificity.
+        let (extension, stem) = if let Some(stem) = name.strip_suffix(".cast.meta.json") {
             (".meta.json", stem)
+        } else if let Some(stem) = name.strip_suffix(".meta.json") {
+            (".meta.json", stem)
+        } else if let Some(stem) = name.strip_suffix(".cast") {
+            (".cast", stem)
         } else {
             continue;
         };
@@ -454,7 +460,8 @@ mod sweep_tests {
         std::fs::create_dir_all(&logs_dir).unwrap();
 
         let cast = logs_dir.join("s7-1788699323-shell.cast");
-        let sidecar = logs_dir.join("s7-1788699323-shell.cast.meta.json");
+        let sidecar = crate::shell::meta_path_for(&cast);
+        let sidecar = logs_dir.join(sidecar.file_name().unwrap());
         std::fs::write(&cast, b"{\"version\": 2}").unwrap();
         std::fs::write(&sidecar, b"{\"shell_id\": \"s7\"}").unwrap();
         backdate(&cast, 30);
@@ -469,6 +476,43 @@ mod sweep_tests {
         assert!(
             !sidecar.exists(),
             "an expired .meta.json sidecar past retention must be swept"
+        );
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn utils_sweep_shell_logs_deletes_a_fresh_spelled_sidecar_but_keeps_a_young_one() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let logs_dir = crate::config::shell_logs_dir();
+        std::fs::create_dir_all(&logs_dir).unwrap();
+
+        let cast = logs_dir.join("s4-1788699323.cast");
+        let sidecar = crate::shell::meta_path_for(&cast);
+        let sidecar = logs_dir.join(sidecar.file_name().unwrap());
+        std::fs::write(&sidecar, b"{\"shell_id\": \"s4\"}").unwrap();
+
+        // The expired sidecar is swept under the producer's spelling.
+        backdate(&sidecar, 30);
+        sweep_shell_logs(7, &BTreeSet::new());
+        assert!(
+            !sidecar.exists(),
+            "an expired <stem>.meta.json sidecar past retention must be swept"
+        );
+
+        // A young sidecar at the producer's spelling survives retention.
+        std::fs::write(&sidecar, b"{\"shell_id\": \"s4\"}").unwrap();
+        sweep_shell_logs(7, &BTreeSet::new());
+        assert!(
+            sidecar.exists(),
+            "a young <stem>.meta.json sidecar within retention must never be swept"
         );
 
         match old_home {

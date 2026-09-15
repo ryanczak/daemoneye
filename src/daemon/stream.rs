@@ -787,6 +787,36 @@ where
                         enter,
                     });
                 }
+                AiEvent::ListShellLogs {
+                    id,
+                    since,
+                    limit,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListShellLogs {
+                        id,
+                        thought_signature,
+                        since,
+                        limit,
+                    });
+                }
+                AiEvent::ReadShellLog {
+                    id,
+                    log,
+                    command_index,
+                    lines,
+                    filter,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadShellLog {
+                        id,
+                        thought_signature,
+                        log,
+                        command_index,
+                        lines,
+                        filter,
+                    });
+                }
                 AiEvent::TmuxControl {
                     id,
                     action,

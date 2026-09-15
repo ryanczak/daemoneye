@@ -326,6 +326,26 @@ pub enum PendingCall {
         text: String,
         enter: bool,
     },
+    /// List the shell recordings on disk (M22 phase-06b) — the deferred
+    /// `history` group — newest first, each row carrying the recording's
+    /// **log id** (`<shell id>-<started unix>`).
+    ListShellLogs {
+        id: String,
+        thought_signature: Option<String>,
+        since: Option<u64>,
+        limit: Option<u64>,
+    },
+    /// Read one shell recording by its **log id** (M22 phase-06b). The log id
+    /// is the filename stem — not the bare shell id, which is reused across
+    /// daemon restarts and refused here.
+    ReadShellLog {
+        id: String,
+        thought_signature: Option<String>,
+        log: String,
+        command_index: Option<u32>,
+        lines: Option<u64>,
+        filter: Option<String>,
+    },
     TmuxControl {
         id: String,
         thought_signature: Option<String>,
@@ -529,6 +549,35 @@ impl PendingCall {
                 arguments: args_to_string(
                     serde_json::json!({"shell": shell, "text": text, "enter": enter}),
                 ),
+            },
+            PendingCall::ListShellLogs {
+                id,
+                thought_signature,
+                since,
+                limit,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "list_shell_logs".to_string(),
+                arguments: args_to_string(serde_json::json!({"since": since, "limit": limit})),
+            },
+            PendingCall::ReadShellLog {
+                id,
+                thought_signature,
+                log,
+                command_index,
+                lines,
+                filter,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "read_shell_log".to_string(),
+                arguments: args_to_string(serde_json::json!({
+                    "log": log,
+                    "command_index": command_index,
+                    "lines": lines,
+                    "filter": filter,
+                })),
             },
             PendingCall::ReadFile {
                 id,
@@ -971,6 +1020,8 @@ impl PendingCall {
             PendingCall::WatchPane { id, .. } => id,
             PendingCall::WatchShell { id, .. } => id,
             PendingCall::SendInput { id, .. } => id,
+            PendingCall::ListShellLogs { id, .. } => id,
+            PendingCall::ReadShellLog { id, .. } => id,
             PendingCall::ReadFile { id, .. } => id,
             PendingCall::EditFile { id, .. } => id,
             PendingCall::WriteRunbook { id, .. } => id,
@@ -1044,6 +1095,8 @@ impl PendingCall {
                 | PendingCall::RunLogTail { .. }
                 | PendingCall::RunLogSearch { .. }
                 | PendingCall::GetTurn { .. }
+                | PendingCall::ListShellLogs { .. }
+                | PendingCall::ReadShellLog { .. }
         )
     }
 
@@ -1180,6 +1233,31 @@ impl PendingCall {
             } => {
                 format!("{action} {pane_id}")
             }
+            PendingCall::ListShellLogs { since, limit, .. } => match (since, limit) {
+                (Some(s), Some(l)) => format!("since {s} limit={l}"),
+                (Some(s), None) => format!("since {s}"),
+                (None, Some(l)) => format!("limit={l}"),
+                (None, None) => String::new(),
+            },
+            PendingCall::ReadShellLog {
+                log,
+                command_index,
+                lines,
+                filter,
+                ..
+            } => {
+                let mut s = log.clone();
+                if let Some(i) = command_index {
+                    s.push_str(&format!(" command_index={i}"));
+                }
+                if let Some(n) = lines {
+                    s.push_str(&format!(" lines={n}"));
+                }
+                if let Some(f) = filter {
+                    s.push_str(&format!(" filter=\"{f}\""));
+                }
+                s
+            }
             PendingCall::LoadTools { groups, .. } => {
                 format!("load_tools: {}", groups.join(", "))
             }
@@ -1215,6 +1293,8 @@ impl PendingCall {
             PendingCall::WatchPane { .. } => "watch_pane",
             PendingCall::WatchShell { .. } => "watch_shell",
             PendingCall::SendInput { .. } => "send_input",
+            PendingCall::ListShellLogs { .. } => "list_shell_logs",
+            PendingCall::ReadShellLog { .. } => "read_shell_log",
             PendingCall::ReadFile { .. } => "read_file",
             PendingCall::EditFile { .. } => "edit_file",
             PendingCall::WriteRunbook { .. } => "write_runbook",

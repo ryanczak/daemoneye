@@ -67,6 +67,8 @@ pub fn dispatch_tool_event(
         "close_shell" => dispatch::<CloseShellArgs>(id, args, ts),
         "watch_shell" => dispatch::<WatchShellArgs>(id, args, ts),
         "send_input" => dispatch::<SendInputArgs>(id, args, ts),
+        "list_shell_logs" => dispatch::<ListShellLogsArgs>(id, args, ts),
+        "read_shell_log" => dispatch::<ReadShellLogArgs>(id, args, ts),
         "tmux_control" => dispatch::<TmuxControlArgs>(id, args, ts),
         "edit_file" => dispatch::<EditFileArgs>(id, args, ts),
         "write_runbook" => dispatch::<WriteRunbookArgs>(id, args, ts),
@@ -264,6 +266,10 @@ mod tests {
                 "close_shell" => json!({"shell": "s3"}),
                 "watch_shell" => json!({"shell": "s3", "timeout_secs": 5, "pattern": "x"}),
                 "send_input" => json!({"shell": "s3", "text": "y", "enter": false}),
+                "list_shell_logs" => json!({"since": 1_788_470_000u64, "limit": 10}),
+                "read_shell_log" => {
+                    json!({"log": "s3-1788470000", "command_index": 0, "lines": 10, "filter": "."})
+                }
                 "load_tools" => json!({"groups": ["agents"]}),
                 _ => json!({}),
             }
@@ -479,8 +485,8 @@ mod tests {
             .collect()
     }
 
-    /// The core/deferred partition is total and matches the Goal table: the
-    /// twelve deferred tools carry their group, a control core tool is None.
+    /// The core/deferred partition is total and matches the dispatch arms: the
+    /// fourteen deferred tools carry their group, a control core tool is None.
     #[test]
     fn deferred_group_split_is_total() {
         let expected: &[(&str, &str)] = &[
@@ -496,6 +502,8 @@ mod tests {
             ("run_log_tail", "runs"),
             ("run_log_search", "runs"),
             ("get_turn", "runs"),
+            ("list_shell_logs", "history"),
+            ("read_shell_log", "history"),
         ];
         for (name, group) in expected {
             let t = TOOLS
@@ -665,8 +673,8 @@ mod tests {
     fn every_tool_has_a_category() {
         assert_eq!(
             TOOLS.len(),
-            46,
-            "tool count should match the 34 core + 12 deferred claim"
+            48,
+            "tool count should match the 34 core + 14 deferred claim"
         );
         for t in TOOLS {
             assert!(
@@ -683,7 +691,7 @@ mod tests {
         for t in TOOLS {
             *counts.entry(t.category).or_insert(0) += 1;
         }
-        assert_eq!(counts.get(&Category::Read), Some(&21), "Read count");
+        assert_eq!(counts.get(&Category::Read), Some(&23), "Read count");
         assert_eq!(counts.get(&Category::Write), Some(&13), "Write count");
         assert_eq!(counts.get(&Category::Search), Some(&4), "Search count");
         assert_eq!(counts.get(&Category::Run), Some(&7), "Run count");

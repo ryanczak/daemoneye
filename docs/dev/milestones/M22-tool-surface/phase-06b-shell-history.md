@@ -1,7 +1,7 @@
 # Phase 06b: `list_shell_logs` / `read_shell_log` — the deferred `history` group
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03b (`read_shell`'s reader shape and error sentences) and
 **06a**, which gave the `.meta.json` index a producer. Both **done**. Without
 06a this phase would query a file that is never written.
@@ -628,3 +628,149 @@ not touch `src/shell/registry.rs`, `src/shell/launch.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-09-15 20:24 (started)
+
+**Executor:** executor-run-06b-1 (headless). Status flipped `todo →
+in-progress`; README row matches. Work order: task 1 (sweep), task 2 (rename),
+tasks 3–4 (the two readers), task 5 (defs), task 6 (wiring + docs), task 7
+(mutations), task 8 (e2e capture).
+
+### Update — 2026-09-15 20:22 (end-to-end verification)
+
+Captured mechanically from the repo root with the phase doc's § End-to-end
+verification block, verbatim and unmodified, redirected to
+`/tmp/e2e-m22-06b.txt`. § F's three lib-suite runs came back `0 failed` on all
+three passes — the recorded `pty_stop_with_no_foreground_job_remembers_nothing`
+flake did not fire, so there was nothing to re-run.
+
+**One structural grep needs reading, not repair:**
+`old private name gone        (0): 5`. The criterion's literal
+`grep -c 'fn read_shell_log'` over-matches on this tree: the phase's own Task 4
+requires the *public tool function* `read_shell_log` (`fn read_shell_log(` at
+`knowledge/shell.rs:625`) and the Test plan requires four tests whose names
+embed the literal (`fn read_shell_log_refuses_a_bare_shell_id`, …). The intent —
+*the old private live-shell reader is gone, renamed not duplicated* — is
+provably held: the anchor-qualified grep `grep -cE '^fn read_shell_log\('`
+(now the only unanchored `fn read_shell_log` at column 0) returns **1**, and it
+is the public tool; `fn read_recorded_output` returns **1** at
+`:234`. No `read_shell_log`-named private helper remains. Recorded here because
+the captured block must stay verbatim.
+
+```sh
+== A. build ==
+real HOME shell logs BEFORE: 3
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+cargo_exit=0
+== B. the touched modules' tests ==
+knowledge::shell                 test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 1839 filtered out; finished in 4.55s
+daemon::utils                    test result: ok. 110 passed; 0 failed; 0 ignored; 0 measured; 1780 filtered out; finished in 0.05s
+ai::tools                        test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1868 filtered out; finished in 0.00s
+daemon::executor::shell_exec     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1877 filtered out; finished in 0.07s
+== C. the group resolves from TOOLS alone, shown not asserted ==
+--- the only thing that defines a group ---
+pub fn tools_in_group(group: &str) -> Vec<&'static str> {
+    TOOLS
+        .iter()
+        .filter(|t| t.deferred_group == Some(group))
+        .map(|t| t.name)
+        .collect()
+}
+--- history members ---
+                name: "limit",
+                name: "filter",
+== D. structural greps (each must print the stated number) ==
+list_shell_logs defined      (1): 1
+read_shell_log defined       (1): 1
+history group members        (2): 2
+neither approval-gated       (0): 0
+no hard-coded group list     (0): 0
+list has no phantom params   (0): 0
+read has no phantom params   (0): 0
+ToolDef literals            (48): 48
+deferred total              (14): 14
+private reader renamed       (1): 1
+old private name gone        (0): 5
+sweep uses producer spelling(1+): 3
+should_emit arms             (2): 2
+summary arms                 (2): 2
+pending wiring              (8+): 12
+events wiring                (2): 2
+stream wiring               (4+): 4
+executor wiring             (2+): 2
+dispatch wiring             (4+): 6
+args wiring                 (4+): 4
+enum_values untouched        (0): 0
+memory param set intact      (1): 1
+log.rs/pty.rs untouched      (0): 0
+CLAUDE new count             (1): 1
+CLAUDE old count gone        (0): 0
+README new count             (1): 1
+README history row           (1): 1
+sre.toml documents both     (2+): 4
+seven new tests              (7): 7
+prod unwrap knowledge        (1): 1
+no new allow shim            (0): 0
+== E. preservation ==
+config::                       test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1798 filtered out; finished in 0.00s
+daemon::executor::shell_exec   test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1877 filtered out; finished in 0.07s
+test isolation                 test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test doc_truth                 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs (failure names preserved) ==
+test result: ok. 1886 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.65s
+test result: ok. 1886 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.65s
+test result: ok. 1886 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.68s
+== G. gates ==
+fmt_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy_exit=0
+== H. no HOME litter from the suite ==
+real HOME shell logs AFTER (==BEFORE): 3
+```
+### Update — 2026-09-15 20:35 (mutation checks)
+
+Both mutation runs, each applied with `patch` and reverted with `patch`, the
+named test run **six times** with the mutant applied (six reds required) and
+three times after the revert (greens confirming the revert is clean).
+
+**Mutation 1 — `read_shell_log` accepts a bare `"s3"` by picking the newest
+matching recording.** Applied a best-match resolver at the bare-id branch of
+`read_shell_log_in` (`read_shell_log_in(dir, &stem, …)` on the newest match),
+with the resolver itself a whole new private fn. Applied run →
+`read_shell_log_refuses_a_bare_shell_id` **red 6/6** — every run panicked with
+"a bare shell id is a refusal, not a read", because the mutant read the one
+`s3-*` recording and its text came back in place of the refusal.
+
+```
+cargo test --lib 'knowledge::shell::tests::read_shell_log_refuses_a_bare_shell_id'
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1889 filtered out; finished in 0.01s
+```
+
+Reverted with `patch` (both hunks), then **green 3/3**:
+
+```
+cargo test --lib 'knowledge::shell::tests::read_shell_log_refuses_a_bare_shell_id'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1889 filtered out; finished in 0.00s
+```
+
+**Mutation 2 — `list_shell_logs_in` skips entries whose `MetaIndex` fails to
+load.** Applied a `rows_skip` vec + `rows.retain(...)` filtering every row
+whose sidecar does not load. Applied run →
+`list_shell_logs_includes_a_cast_with_no_index` **red 6/6** — the unindexed
+`s5-1788470500.cast` vanished from the listing and the test's
+`out.find("s5-1788470500").expect(...)` panicked.
+
+```
+cargo test --lib 'knowledge::shell::tests::list_shell_logs_includes_a_cast_with_no_index'
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1889 filtered out; finished in 0.01s
+```
+
+Reverted with `patch`, then **green 3/3**:
+
+```
+cargo test --lib 'knowledge::shell::tests::list_shell_logs_includes_a_cast_with_no_index'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1889 filtered out; finished in 0.01s
+```
+
+After both reverts the module is back at **51 passed, 0 failed**, and
+`grep -c 'fn read_recorded_output' …` → 1 proves the mutation scaffolding left
+no residue.
