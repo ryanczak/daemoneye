@@ -169,11 +169,16 @@ pub fn marked_inner_range(cast_slice: &[u8], nonce: &Nonce) -> Option<(u64, u64)
     let mut offset = 0u64;
     for line in String::from_utf8_lossy(cast_slice).lines() {
         let mut decoded = Vec::new();
-        extend_output_line(Some(line.to_owned()), &mut decoded);
+        decode_payload(Some(line.to_owned()), &mut decoded);
         if find_subslice(&decoded, &begin).is_some() {
-            inner_start = Some(offset + line.len() as u64 + 1);
-        } else if inner_start.is_some() && find_subslice(&decoded, &end).is_some() {
-            return Some((inner_start?, offset));
+            // A PTY read can bundle the BEGIN marker with the command's
+            // first bytes, so the clean bytes may begin inside this cast
+            // line; include the line and let the reader's decoded-payload
+            // framing strip erase the marker.
+            inner_start = Some(offset);
+        } else if find_subslice(&decoded, &end).is_some() {
+            // Same bundling on the END side: the line's tail can be output.
+            return inner_start.map(|start| (start, offset + line.len() as u64 + 1));
         }
         offset += line.len() as u64 + 1;
     }
@@ -318,6 +323,15 @@ fn last_complete_line_end(buf: &[u8]) -> usize {
 /// line, a malformed JSON line and any non-output event contribute nothing —
 /// skipping rather than failing is the contract both readers share.
 fn extend_output_line(line: Option<String>, out: &mut Vec<u8>) {
+    decode_payload(line, out);
+    let data = std::mem::take(out);
+    *out = windowed_payload(&data);
+}
+
+/// The `"o"` payload of one cast event line, verbatim. Unparsable lines,
+/// non-`"o"` events and malformed JSON contribute nothing — skipping rather
+/// than failing is the contract both readers share.
+fn decode_payload(line: Option<String>, out: &mut Vec<u8>) {
     let Some(line) = line else { return };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
         return;
@@ -332,6 +346,86 @@ fn extend_output_line(line: Option<String>, out: &mut Vec<u8>) {
         return;
     };
     out.extend_from_slice(data.as_bytes());
+}
+
+/// Reduce one decoded `"o"` payload to the clean bytes the marker protocol
+/// frames as this command's output — the read-side twin of
+/// [`parse_outcome`](crate::shell::parse_outcome)'s trim on the
+/// subscription stream.
+///
+/// PTY read chunking is arbitrary: a read can carry the on-screen echo of
+/// the wrapped command, the BEGIN marker, the output and the END marker in
+/// one cast line, so a byte range that excludes whole cast lines cannot
+/// return clean output for a bundled cast. The reader therefore windows each
+/// payload itself: bytes before the payload's BEGIN marker are framing (the
+/// echo), bytes from the END marker's exit code on are framing too. This is
+/// a no-op for payloads without markers and for every pre-existing record
+/// whose range already excludes them.
+///
+/// The framed shapes — `\x1fDE_BEG <32 hex>\x1f` and
+/// `\x1fDE_END <32 hex> <digits>\x1f` — match protocol framing only; the
+/// on-screen echo carries the split-quoted command text, which never has an
+/// `\x1f` on both sides of the nonce.
+fn windowed_payload(data: &[u8]) -> Vec<u8> {
+    if !data.contains(&0x1f) {
+        return data.to_vec();
+    }
+    let begin = b"\x1fDE_BEG ";
+    let end = b"\x1fDE_END ";
+    let start = find_subslice(data, begin)
+        .map(|p| {
+            let after = p + begin.len();
+            let nonce_end = data[after..]
+                .iter()
+                .take_while(|b| b.is_ascii_hexdigit())
+                .count()
+                + after;
+            match data.get(nonce_end) {
+                Some(&0x1f) => {
+                    let mut at = nonce_end + 1;
+                    // BEGIN's own newline is framing.
+                    if data.get(at..at + 2) == Some(b"\r\n") {
+                        at += 2;
+                    } else if data.get(at) == Some(&b'\n') {
+                        at += 1;
+                    }
+                    at
+                }
+                _ => p,
+            }
+        })
+        .unwrap_or(0);
+    let from = &data[start..];
+    let stop = find_subslice(from, end)
+        .and_then(|p| {
+            let after = p + end.len();
+            let nonce_end = from[after..]
+                .iter()
+                .take_while(|b| b.is_ascii_hexdigit())
+                .count()
+                + after;
+            if from.get(nonce_end) != Some(&b' ') {
+                return None;
+            }
+            let mut at = nonce_end + 1;
+            let digits = from[at..].iter().take_while(|b| b.is_ascii_digit()).count();
+            if digits == 0 {
+                return None;
+            }
+            at += digits;
+            if from.get(at) == Some(&0x1f) {
+                at += 1;
+                // END's trailing CRLF is framing.
+                if from.get(at..at + 2) == Some(b"\r\n") {
+                    at += 2;
+                }
+                Some(start + p)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(from.len());
+    from[..stop].to_vec()
 }
 
 #[cfg(test)]
@@ -963,9 +1057,17 @@ mod tests {
             !text.contains("DE_"),
             "no marker text in the range: {text:?}"
         );
-        assert!(
-            !String::from_utf8_lossy(&slice[first as usize..end as usize]).contains("\\u001f"),
-            "the marker lines themselves are outside the range"
+        let range_text = String::from_utf8_lossy(&slice[first as usize..end as usize]).into_owned();
+        let mut stripped = Vec::new();
+        for line in range_text.lines() {
+            let mut d = Vec::new();
+            extend_output_line(Some(line.to_owned()), &mut d);
+            stripped.extend_from_slice(&d);
+        }
+        assert_eq!(
+            stripped,
+            body,
+            "after the reader's framing strip the range is exactly the body"
         );
     }
 

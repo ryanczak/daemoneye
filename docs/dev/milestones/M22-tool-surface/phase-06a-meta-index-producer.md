@@ -389,6 +389,25 @@ Each was run against the tree at drafting and returns the "now" value shown.
       failure — record and re-run.
 - [ ] All four gates pass.
 
+### Superseded at escalation 2 (2026-09-14) — read the disposition entry
+
+Two earlier criteria were written against a mechanism that cannot work and are
+**withdrawn**; the adopted replacements are pinned instead.
+
+- [ ] **The range finder matches what production actually stores:**
+      `sed -n '/pub fn marked_inner_range/,/^}/p' src/shell/log.rs | grep -cE 'decode_payload|extend_output_line'`
+      reaches **1 or more** — it decodes each cast line's payload before
+      matching, rather than searching raw file bytes. *(Either decoder
+      satisfies this; what is pinned is that a decode happens.)* *(A cast is newline-delimited JSON and escapes the
+      unit-separator byte, so matching raw marker bytes against raw file bytes
+      can never hit.)*
+- [ ] **The producer keys on the nonce, not the byte window:**
+      `grep -c 'nonce' src/daemon/executor/shell_exec.rs` reaches **1 or
+      more**. *(The pump thread has already written the output by the time the
+      producer runs, so a before/after window can never bracket the command.)*
+- [ ] **No lint-silencing shim for the dead assignment:**
+      `grep -c 'allow(unused_assignments)' src/shell/log.rs` is **0**.
+
 ### Added at escalation 2026-09-14 — confirmed failing against the tree
 
 - [ ] **No debug prints:** `grep -c 'PROBE' src/daemon/executor/shell_exec.rs`
@@ -855,3 +874,96 @@ for every PTY chunk boundary; the mutation checks and the end-to-end
 capture cannot be run green until the § Authorizations contradiction is
 resolved. Full suites: 1875-1877 pass with 1-2 named failures — always
 from this contradiction, plus the documented pty flake once.
+
+### Update — 2026-09-14 (escalation 2 — spec corrections adopted)
+
+**Chosen lever:** resume, executed as a re-dispatch onto this `in-progress`
+doc (`execute_phase`, not `continue_phase` — the latter is a blocking call
+with no run id, so it cannot be governed or stopped).
+**Rationale:** second `budget_exceeded` at 600 turns, but **not** a repeat of
+the first. This run **diagnosed two architecture-level defects in this
+document**, implemented measured replacements, and got the whole tree green —
+`cargo test --lib` reaches **1877 passed, 0 failed**, verified at review. It
+ran out of budget with **one clippy error and one rustfmt nit** left. That is
+the "most of the phase done, hit one wall" row, not "same-class failure".
+
+#### Disposition of the two defects the run filed — both ADOPTED
+
+The run wrote `.rexymcp/notes/m22-06a-escape-mismatch.md` and explicitly
+deferred the decision: *"The disposition decision ... belongs to the principal
+engineer."* That was the right call, and the answer is **adopt both**. Both
+defects are mine; the replacements are measured, correct, and stay inside this
+phase's authorizations. **Section Pre-flight and the first escalation's
+corrected snippet are hereby superseded by this entry.**
+
+**Defect 1 — the window is measured too late, and my first escalation
+misdiagnosed the direction.** I said the bytes arrive *late* and told you to
+wait for them. The run measured it at the syscall level: all 181 settle-poll
+`statx` calls return the **same** `stx_size`, because `index_command_output`
+runs *after* `run_command` returns and the pump thread has *already* written
+the output. The bytes arrive **early**, not late — `before` is sampled after
+the write it was supposed to precede, so the window is empty and no wait can
+ever close it. **Adopted replacement: key the search on the nonce, not the
+window** — scan from the start of the cast for *this command's* markers
+wherever they landed. `Nonce` is per-command and unique, and `CommandRecord`
+carries only byte ranges, so no schema changes. Keep the settle loop: the
+broadcast-before-write ordering is real and a chunk can still be in flight.
+
+**Defect 2 — `marked_inner_range` cannot match a cast file.** My spec had it
+search raw cast bytes for needles built from `begin_marker`/`end_marker`,
+which start with a raw unit-separator byte. A cast is newline-delimited JSON,
+and `serde_json` escapes that byte as a six-character escape sequence. The
+needle can **never** match. **Adopted replacement: decode each line's `"o"`
+payload through `extend_output_line` — production's own decoder, the one
+`read_command_output` uses — then match the decoded bytes.** Same signature,
+still pure, still `None` when either marker is absent, still built from the
+shared helpers.
+
+**The part of this worth keeping past the phase.** My four pure
+`marked_inner_range` tests **passed against the broken finder**, because the
+fixture built its slice from the same raw marker bytes the finder searched
+for: *"writer, finder and test all agreed on the wrong literal."* That is the
+vacuous-test class this milestone has now hit three times (`bug-04b-2`,
+`bug-05-1`, here) — and this instance is the sharpest, because the tests were
+internally consistent and still proved nothing. The run's own fix is the right
+one: the fixtures now build through `CastWriter`, so the encoding under test
+is the encoding production stores.
+
+#### Notes for executor — 2026-09-14 (second refinement)
+
+## STOP — the work is done and green. Do not redo it, and do not re-read the old mechanism.
+
+**Verified at review on the tree as you left it:** `cargo test --lib` reaches
+**1877 passed, 0 failed**; `shell::log` **21**; `daemon::executor::shell_exec`
+**12** (both host tests passing, asserting exit code 3 and clean sentinel
+output); `knowledge::shell` **44**, unchanged. `cargo build` succeeds.
+
+**Section Pre-flight's producer mechanism and the first escalation's corrected
+snippet are both superseded** by the entry above. The nonce-keyed scan and the
+decoded-payload matcher **you already implemented** are the specified
+behaviour now. Do not revert them to match the older prose.
+
+## There are exactly four things left
+
+1. **One clippy error**, `src/shell/log.rs:420` — *value assigned to `at` is
+   never read*. The `at += 2` inside the CRLF-framing branch is dead because
+   `at` is not read afterwards. Drop the assignment (keep the `if` if its
+   condition still documents the framing, or remove the branch entirely) —
+   **do not** add `#[allow(unused_assignments)]`; a criterion forbids it.
+2. **`cargo fmt --all`** — one diff remains at `src/shell/log.rs:1065`.
+3. **Remove the last two `eprintln!` PROBE lines** in
+   `src/daemon/executor/shell_exec.rs`. The `PROBE` grep must be **0**; it is
+   **2**.
+4. **Write the Update Log entry and Task 8's end-to-end capture.**
+
+## Finish condition
+
+- `cargo clippy --all-targets --all-features -- -D warnings` exits 0.
+- `cargo fmt --all --check` exits 0.
+- `grep -c 'PROBE' src/daemon/executor/shell_exec.rs` is **0**.
+- `cargo test --lib` reaches **1877 passed, 0 failed** — **not more**.
+  Everything needed is already written; a rising count means scope crept.
+- The six protocol/host files are still untouched.
+
+**`.rexymcp/notes/m22-06a-escape-mismatch.md` stays** — it is the evidence for
+the two adopted corrections. Do not delete it.

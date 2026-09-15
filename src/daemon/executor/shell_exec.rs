@@ -106,6 +106,20 @@ where
         );
         return Ok((id, ShellRunResult { text, exit_code: 0 }));
     }
+    let started_unix = with_shells(reg, |store| {
+        store
+            .get(id.as_str())
+            .map(|record| record.started_unix)
+            .unwrap_or(0)
+    });
+    // The cast length BEFORE the command runs — the producer window's left
+    // edge. Read here, not inside the indexing step: by the time a completed
+    // command is in hand the pump thread has usually flushed the whole
+    // command into the cast, so a length read any later is past the command
+    // and the window is empty.
+    let before = std::fs::metadata(crate::shell::resolve_cast(id.as_str(), started_unix))
+        .map(|m| m.len())
+        .ok();
     let outcome = run_command(&socket, cmd, &login_shell(), foreground::LOCAL_CMD_TIMEOUT)
         .await
         .map_err(|e| {
@@ -115,7 +129,7 @@ where
                 id.as_str()
             ))
         })?;
-    index_command_output(reg, cmd, &id, &outcome).await;
+    index_command_output(reg, cmd, &id, &outcome, before).await;
     let raw = String::from_utf8_lossy(&outcome.output);
     let mut text = format_for_model(&raw);
     if let Some(note) = foreground::exit_status_annotation(Some(outcome.exit_code)) {
@@ -140,6 +154,7 @@ async fn index_command_output(
     cmd: &str,
     id: &ShellId,
     outcome: &CommandOutcome,
+    before: Option<u64>,
 ) {
     let started_unix = with_shells(reg, |store| {
         store
@@ -148,15 +163,15 @@ async fn index_command_output(
             .unwrap_or(0)
     });
     let cast = crate::shell::resolve_cast(id.as_str(), started_unix);
-    let before = match std::fs::metadata(&cast) {
-        Ok(m) => m.len(),
-        Err(_) => {
-            log::warn!(
-                "meta index: no cast file yet for shell {}; command not indexed: {cmd}",
-                id.as_str()
-            );
-            return;
-        }
+    // `before` was snapshot in `run_in_shell_with`, before the command ran.
+    // A missing cast then is a shell with no recording at all — nothing to
+    // index into.
+    let Some(before) = before else {
+        log::warn!(
+            "meta index: no cast file before the command in shell {}; not indexed: {cmd}",
+            id.as_str()
+        );
+        return;
     };
     // The host broadcasts a chunk before it writes that chunk to the cast
     // (backend.rs pump thread), so `run_command` can return before the
@@ -171,11 +186,11 @@ async fn index_command_output(
                 return;
             }
         };
-        if after > 0
-            && let Ok(slice) = read_cast_slice(&cast, 0, after)
+        if after > before
+            && let Ok(slice) = read_cast_slice(&cast, before, after)
             && let Some((first, end)) = marked_inner_range(&slice, &outcome.nonce)
         {
-            break Some((first, end));
+            break Some((before + first, before + end));
         }
         if tokio::time::Instant::now() >= deadline {
             break None;
