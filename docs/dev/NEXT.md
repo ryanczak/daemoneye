@@ -6,40 +6,53 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-06a — meta-index-producer closed **escalated
-2026-09-15** (architect takeover, PE-authorized;
-`docs/dev/milestones/M22-tool-surface/phase-06a-meta-index-producer.md`,
-status: done; `bugs/bug-06a-1.md` `closed`). Next up is **06b —
-shell-history**, not yet drafted; run `/rexymcp:architect next` to draft it.
+**Active phase: M22 phase-06b — shell-history**
+(`docs/dev/milestones/M22-tool-surface/phase-06b-shell-history.md`, status:
+todo, drafted 2026-09-15). Dispatch with `/rexymcp:dispatch phase-06b`.
 
-**What 06a shipped:** the `.meta.json` command index has a producer, and
-`read_shell` / `find_in_shells` work in production for the first time since
-03b. No tool, no count change — 46/34/12, `doc_truth` 10.
+Phase-06a — meta-index-producer closed **escalated 2026-09-15** (architect
+takeover, PE-authorized; status: done, `bugs/bug-06a-1.md` `closed`). It gave
+the `.meta.json` index a producer, so `read_shell` and `find_in_shells` work
+in production for the first time since 03b.
 
-**Why it escalated, in one line each:** my spec's byte-window mechanism could
-not work (the host writes the cast before `run_command` returns, not after);
-my spec's marker search could not match (a cast is JSON and escapes the
-control byte); the executor's per-line search missed markers split across
-PTY chunks; and a one-token off-by-`start` in the reader's END branch leaked
-a complete marker ~1 run in 10 and had been masked as a "latent panic". Four
-defects on one seam — raw cast bytes versus decoded payloads — now named as a
-design hazard in the milestone README.
+**Scope for 06b:** `list_shell_logs { since?, limit? }` and
+`read_shell_log { log, command_index?, lines?, filter? }` as the deferred
+**`history`** group — **48 tools: 34 core + 14 deferred**. The group needs no
+machinery: `tools_in_group` derives it from `TOOLS`, so a `deferred_group:
+Some("history")` is the whole registration, and a criterion asserts no
+hard-coded group list was added.
 
-**Two runs of GLM-5.3-Flash diagnosed the first two defects correctly and
-filed them for the PE rather than working around them.** A fourth run hit
-the alive-but-not-converging pathology (89 turns in 4h41m) and was stopped on
-the PE's instruction; its split-marker rewrite was correct and was kept.
+**Three of the design's parameters do not exist and are dropped, measured
+rather than assumed.** `host?` — no host concept until M21/M23. `owner?` — a
+finished shell's owner died with the registry; neither the filename nor
+`MetaIndex` carries it. `offset?` — `command_index` + `lines` address the same
+need without exposing cast byte offsets to the model. That is the fourth M22
+phase where § 2.5's parameter list did not survive contact with the tree.
 
-**Calibration to carry to close:** a *mutation* is a proxy too. "Store the raw
-window" was not an observable defect — chunk bundling makes the raw window
-coincide with the clean range, and the reader self-heals a wide left
-boundary — so no test could redden it deterministically. The fix was to pin
-the property on the index, reader-independent. The vacuous-test class is at
-four instances; the fold proposed at 05 stands.
+**Two traps pre-injected.** The new tool name **collides with an existing
+private fn**: `read_shell_log` is already 03b's live-shell reader in
+`knowledge/shell.rs`, so the phase renames it to `read_recorded_output` first
+(two call sites, mechanical). And the `log` parameter is the **filename stem**
+(`s3-1788470000`), not a bare shell id — ids are reused across daemon
+restarts, so resolving `"s3"` to "the newest match" is how a post-mortem reads
+the wrong incident. A bare id is a refusal, with a named negative test.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-06b — shell-history**.
-Phases 06b–10 are not drafted; each is drafted after its predecessor is
-approved.
+**06b also fixes a retention defect 06a made live.** `meta_path_for` writes
+`<stem>.meta.json`; the sweep only matches `*.cast.meta.json`; its test passes
+because the fixture hand-writes the sweep's spelling. No sidecar is ever
+swept. Nothing leaked before 06a because nothing wrote sidecars. The fix
+rebuilds the fixture through `meta_path_for` so writer and test cannot drift
+again — this is the **fourth** instance in this file family of writer, finder
+and test agreeing on a shape production does not produce.
+
+**One spec-hygiene correction made at drafting.** Task 7 first claimed its
+mutations had been "applied and measured at drafting". They could not have
+been — they target code that does not exist yet. Corrected to say so
+explicitly and to require the executor measure **6 of 6** red, citing 06a
+where a mutation that could never redden burned two runs' budget.
+
+**Next step:** `/rexymcp:dispatch phase-06b`. Phases 07–10 are not drafted;
+each is drafted after its predecessor is approved.
 
 **Owed at milestone close, now at three occurrences — fold it.** Six
 architect-side instrument errors across M22, and the deeper version has hit

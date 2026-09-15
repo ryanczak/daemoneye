@@ -66,7 +66,7 @@ final surface, so they go last.
 | 04b | watch-shell ([phase-04b-watch-shell.md](phase-04b-watch-shell.md)) — `watch_shell { shell, pattern?, timeout_secs? }`, the blocking observer; reads the **live cast file**, not the dead `.meta.json` index | done                    |
 | 05 | send-input ([phase-05-send-input.md](phase-05-send-input.md)) — `send_input { shell, text, enter? }`, **approval-gated**; the `"i"` log is real and no read tool can surface it | done                    |
 | 06a | meta-index-producer ([phase-06a-meta-index-producer.md](phase-06a-meta-index-producer.md)) — give the `.meta.json` index a **producer**; makes `read_shell`/`find_in_shells` work in production at last. No new tools | done                    |
-| 06b | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the index 06a makes real | todo (not drafted) |
+| 06b | shell-history ([phase-06b-shell-history.md](phase-06b-shell-history.md)) — `list_shell_logs` / `read_shell_log` as the deferred `history` group over the index 06a made real; also fixes the sidecar-sweep defect 06a made live | todo                    |
 | 07 | run-terminal-command-reshape — `shell?`/`host?`/`wait?`/`timeout_secs?`; retire `target_pane`, `retry_in_pane`, `background` | todo (not drafted) |
 | 08 | shell-context — `get_terminal_context` → `get_shell_context { scope }`; `[HOSTS]`/`[SHELLS]`/`[DEFAULT SHELL]` blocks; approval panel names shell + host | todo (not drafted) |
 | 09 | pane-tool-removal — delete the six pane tools and their executor arms | todo (not drafted) |
@@ -240,6 +240,17 @@ final surface, so they go last.
   reader) shares it, so a poll slice containing `…END0 … BEGIN1 …` drops the
   text before `BEGIN1`. Not fixed; 06b or 07 should decide whether the reader
   windows per command record or per stream.
+
+- **A retention defect 06a made live, fixed in 06b.** `meta_path_for` writes
+  `<stem>.meta.json`, but `sweep_*` (`src/daemon/utils/mod.rs:148-152`) only
+  recognises `*.cast.meta.json` — so **no `.meta.json` sidecar is ever swept**.
+  Its test passes because the fixture hand-writes the sweep's spelling rather
+  than calling the producer. Before 06a nothing wrote sidecars, so nothing
+  leaked; now every indexed shell leaves a file retention cannot reach. This
+  is the **fourth** instance in this file family of writer, finder and test
+  agreeing on a shape production does not produce — the same class as the
+  escape-mismatch and the non-firing boundary assertion. 06b rebuilds the
+  fixture through `meta_path_for` so they cannot drift apart again.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24
