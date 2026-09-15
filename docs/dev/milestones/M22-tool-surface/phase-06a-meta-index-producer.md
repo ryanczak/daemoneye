@@ -1,7 +1,7 @@
 # Phase 06a: the `.meta.json` command index — give it a producer
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-06a-1.md`)
 **Depends on:** 03b (`read_shell`, the reader that has been waiting for this),
 04b (`resolve_live_cast`, and the measurement that found the gap). Both
 **done**.
@@ -388,6 +388,20 @@ Each was run against the tree at drafting and returns the "now" value shown.
       consecutive runs; a run failing **only** the known `pty` flake is not a
       failure — record and re-run.
 - [ ] All four gates pass.
+
+### Added at review 2026-09-15 (bug-06a-1) — confirmed failing against the tree
+
+- [ ] **The deliverable is reliable:**
+      `read_shell_returns_clean_output_after_a_real_command` passes **30
+      consecutive runs**. Measured at review: **2 failures in 20** — the cast
+      exists but no `.meta.json` record is written, so the settle loop broke
+      `None`.
+- [ ] **Mutation 1 reddens every time.** With the producer storing
+      `(before, after)` rather than the clean inner range, a named test goes
+      **red 6 of 6**. Measured at review: the record test's new boundary
+      assertion is green **6 of 6** under that mutant, because it reads raw
+      cast bytes (`start` is a JSON line boundary, so never `0x1f`) for
+      patterns that exist only after decoding.
 
 ### Superseded at escalation 2 (2026-09-14) — read the disposition entry
 
@@ -1255,3 +1269,59 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 487a67d892b3e8144d300a56a6d72721689df63b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-15
+
+- **Verdict:** bounced (bug-06a-1)
+- **Bounces:** 1 (plus two prior `budget_exceeded` escalations)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (three runs:
+  600 + 600 + 356 turns)
+- **Scope deviations:** one, **ruled scope-consistent**: `extend_output_line`
+  widened to `pub(crate)` with a `#[cfg(test)]` re-export in
+  `src/shell/mod.rs`. Both files were authorized, the change is test-only, and
+  the run disclosed it and asked. Keep it.
+- **Calibration:** the raw-cast-bytes-versus-decoded-payload seam has now
+  produced **three** defects in one phase — my escape-mismatch spec, the
+  per-line marker search, and the non-firing boundary assertion. Worth naming
+  at milestone close as a design hazard of this file, not just a bug.
+
+**All four gates are green and the counts are exact.** Re-run at review as
+separate invocations: `fmt` clean, `build` 0 warnings, `clippy -D warnings`
+exit 0, `cargo test --lib` → **1877 passed, 0 failed** — the finish condition
+said 1877 and not more, and it is exactly 1877. Every structural grep the doc
+pins returns its stated number, including the six frozen protocol/host files
+unchanged, `sre.toml` untouched, `ToolDef` still 46 and `doc_truth` still 10 —
+this phase really did ship no tool.
+
+**The two adopted spec corrections landed and are right.** The nonce-keyed
+scan and the decoded-payload matcher are in place, `resolve_cast` is lifted
+with the private copy gone, and `knowledge::shell` is still 44.
+
+**Bounced on two findings, both reproduced at review rather than read.**
+
+1. **The deliverable fails ~1 run in 10.** I measured 2/20. The run disclosed
+   3/20 and could not attribute it. I ruled out its own hypothesis — it
+   proposed that `before` is snapshot once per shell session, but
+   `shell_exec.rs:120` reads it per command, immediately before
+   `run_command`. The failing message shows the cast **exists**, so the
+   `no cast file` branch is not the path either. A plausible unverified lead
+   is in the bug: `marked_inner_range` decodes and searches one cast line at a
+   time, and a PTY read can split a marker across two events.
+2. **Mutation 1 still has no discriminating test.** The run honestly reported
+   that the mutant only reddened 1 of 6 runs and added a boundary assertion to
+   compensate. That assertion is green **6 of 6** under the same mutant: it
+   reads raw cast bytes at `start`, which with the raw range is a JSON line
+   boundary — `[`, never `0x1f`. The phase's central property is unpinned.
+
+**What this run did well, and it is most of it.** It diagnosed two
+architecture-level defects in my spec across the earlier escalations, filed
+the evidence rather than quietly working around it, reported a mutation as
+non-deterministic instead of filing the one green run, found a latent
+`windowed_payload` panic outside its authorization and flagged rather than
+touched it, and asked whether a visibility widening was scope-consistent
+instead of assuming. Finding 2 is a failed *fix* for a problem it was the
+first to report.
+
+**Recorded as a follow-up, not fixed here:** `windowed_payload`'s END branch
+can compute `stop > from.len()` and panic on a payload truncated mid-marker.
+Reachable from hostile cast content. Noted in the milestone README.
