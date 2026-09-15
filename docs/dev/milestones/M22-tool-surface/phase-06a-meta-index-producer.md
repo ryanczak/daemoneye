@@ -813,3 +813,13 @@ escalation's criterion counts; I cannot touch that test under this phase's
 authorizations — it asserts that module's own shell-aliveness sentinel, not
 a debug print). Full lib suite 1876 passed, 1 failed, the one failure being
 the same mutation-2 guard.
+
+**Gate re-run 2026-09-14 20:40 — the flake is gone, the pair still fails,
+unchanged.** `cargo test --lib` → 1875 passed, **2 failed** — the two host
+tests named above, failing on the same bundled-marker cast (`first_byte:
+893, end_byte: 893` / "recorded output is empty"), and the previously
+failing `pty_stop_with_no_foreground_job_remembers_nothing` passed this
+time, confirming the README's flake classification. Preservation holds:
+`shell::log` 21, `knowledge::shell` 44, `doc_truth` 10, `isolation` 9 (1
+ignored). Nothing new is actionable without the § Authorizations decision;
+this entry exists so the gate's own records and the blocker agree.
