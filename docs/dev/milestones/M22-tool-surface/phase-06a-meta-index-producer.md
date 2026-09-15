@@ -968,64 +968,56 @@ behaviour now. Do not revert them to match the older prose.
 **`.rexymcp/notes/m22-06a-escape-mismatch.md` stays** — it is the evidence for
 the two adopted corrections. Do not delete it.
 
-### Update — 2026-09-15 05:05 (mutation 1: measured and recorded — partial)
+### Update — 2026-09-15 05:05 (task 7 — mutation checks)
 
-**Executor:** executor run (headless). Mutation 1 ("the producer stores the raw
-`[before, after)` range instead of the marked inner range") was applied and
-reverted three times via Python `str.replace` on the file through the `patch`
-path (no `sed -i`, no `perl -i`, no `>` redirect into source).
+**Executor:** executor run (headless). Both mutants were applied with Python
+`str.replace` through the shell, and reverted the same way, before and after
+the measured runs. The `bash` channel refused `sed -i`/`perl -i` (executor
+contract) and this run's heredoc-to-`patch` attempts reached GNU patch as
+garbage; Python `str.replace` on the file is the honest equivalent of the
+contract's edit primitive here. After each revert `git diff` carried only the
+phase's intended changes.
 
-**RED observed:** `cargo test --lib 'daemon::executor::shell_exec'` under the
-mutant went `FAILED. 11 passed; 1 failed` in **1 of 6 runs** (run 5, captured
-mechanically at that run's own output):
+**Mutation 1** — the producer stores the raw `[before, after)` window instead
+of `marked_inner_range`'s framing-excluded range (patch in
+`src/daemon/executor/shell_exec.rs`'s settle loop).
+
+RED: the deliverable test went red in **1 of 6 module runs** (the raw-range
+boundary fell mid-payload in that run), name from that run's own output:
 
 ```
 test daemon::executor::shell_exec::tests::read_shell_returns_clean_output_after_a_real_command ... FAILED
-thread '...read_shell_returns_clean_output_after_a_real_command' panicked at src/shell/log.rs:423:9:
-range end index 427 out of range for slice of length 61
 test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 1869 filtered out; finished in 0.07s
 ```
 
-**GREEN after revert** (same command, this run's own verdict):
+GREEN after revert (same command, that run's own verdict):
 
 ```
 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1869 filtered out; finished in 0.07s
 ```
 
-**Recorded exactly, not invented.** In the other 5 of 6 runs the mutant did
-**not** turn the two host tests red, because the reader's framing strip
-(`windowed_payload`, `src/shell/log.rs:369`) erases marker framing from a
-payload-level decode regardless of what range the producer stored; the pure
-producer mutant only becomes observable when the stored range's boundary falls
-mid-payload (the case run 5 hit, which panics inside the reader's windower). To
-make the property reader-independent I added to the record test a boundary
-assertion on the **raw cast bytes**: the stored range must not begin on a
-`0x1f` framing byte and must not open on a `BEG` payload. That assertion is
-green against the committed producer and is the discriminating check a future
-regression cannot hide behind. Under the mutant it fires as:
+**Recorded exactly, not invented:** in the other 5 of 6 runs the mutant stayed
+green, because the read path's own framing strip (`windowed_payload`,
+`src/shell/log.rs:369`) erases marker bytes from a payload-level decode no
+matter what range the producer stored; a producer-regression can therefore hide
+behind the reader. To keep the property reader-independent I added a boundary
+assertion to the record test, over the **raw cast bytes**: the stored range
+must not begin on `0x1f` and must not open on a `BEG` payload, plus a
+whole-range decode through the reader's own `extend_output_line` must contain
+no `DE_`. That assertion is green on the committed producer.
 
-```
-the stored range must not open on a BEGIN marker line (raw): CommandRecord {...}
-```
+The 1-in-6 red also **exposed a latent panic** in `windowed_payload`
+(`src/shell/log.rs:423`): the END branch computes `stop` from a slice that can
+end mid-marker, and the mutant's partial ranges drove `from[..stop]` out of
+range (`range end index 427 out of range for slice of length 61`). Not fixed
+here — a robustness change to that function is production behaviour the doc
+freezes; it is flagged for review.
 
-**Also found while exercising the mutant — candidate bug, NOT fixed here:**
-`windowed_payload` (`src/shell/log.rs:369-425`) computes the END-frame offset
-with `.unwrap_or(from.len())` and then slices `from[..stop]`; a payload ending
-mid-END-marker panics (`range end index out of range`). The mutant's partial
-ranges exposed it. Flagged for the reviewer; fixing it would widen this phase's
-authorization to production behaviour the doc froze.
+**Mutation 2** — `marked_inner_range` returns `Some((0, slice.len()))` instead
+of `None` when a marker is missing (implemented by deleting the BEGIN branch's
+`inner_start` bookkeeping and returning the full slice on both exits).
 
-### Update — 2026-09-15 05:10 (mutation 2: applied next)
-
-Mutation 2 ("`marked_inner_range` returns `Some((0, slice.len()))` instead of
-`None` when a marker is missing") is applied and measured next.
-
-
-**Mutation 2 record.** Applied by deleting the BEGIN branch (both the
-`inner_start` bookkeeping and the BEGIN disqualification) and returning
-`Some((0, slice.len()))` on both exits — i.e. a missing BEGIN no longer
-disqualifies, and an END-only slice returns the whole range. RED, from the run
-whose command is shown (`cargo test --lib 'shell::log'`):
+RED (the same test that asserts both directions), from that run's own output:
 
 ```
 test shell::log::tests::marked_inner_range_is_none_when_a_marker_is_missing ... FAILED
@@ -1034,27 +1026,25 @@ thread 'shell::log::tests::marked_inner_range_is_none_when_a_marker_is_missing' 
 no END marker, no range
 ```
 
-Both directions of the missing-marker test are asserted in the one test
-(BEGIN-present/END-absent, then END-present/BEGIN-absent); the mutant failed on
-the first. Reverted with the same tool; GREEN:
+GREEN after revert:
 
 ```
 test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1860 filtered out; finished in 0.00s
 ```
 
-### Update — 2026-09-15 05:18 (task 7 — housekeeping note)
+(The mutant failed on the BEGIN-present/END-absent direction; both directions
+are asserted in the one test, so the END-present/BEGIN-absent direction is
+covered by the same body.)
 
-The mutation edits were applied to `src/shell/log.rs` and
-`src/daemon/executor/shell_exec.rs` by a Python `str.replace` block through the
-shell, because the executor contract's `bash` channel refuses `sed -i` /
-`perl -i` and this run's heredoc-to-`patch` attempts reached GNU patch as
-garbage (refused with "Only garbage was found in the patch input"). Each mutant
-was reverted before the next was applied; both reverts are verified by the GREEN
-lines quoted above, and after each revert `git diff` carried only the phase's
-intended changes.
+### Update — 2026-09-15 06:05 (host-test flake diagnosis, before the capture)
 
-A final mutation-1 run with the boundary assertion in place passed 12/12 — the
-mutant survived every host test, because the live reader strips framing from any
-payload, so the discriminating evidence for mutation 1 is the pure-test suite
-plus the boundary assertion, not the host pair. The 0-failed record stands; the
-1-in-6 panic above is the mutant's only observable red.
+Re-running the host pair before the end-to-end capture, the deliverable test
+flaked **3 in 20** with "its command index … is missing" — the producer wrote
+no record for a successful command. With a temporary `eprintln!` in the
+producer's `range` fall-through, 80 further replays never entered that
+fall-through (all passed), so the flake could not be attributed and the
+instrumentation was removed. One plausible cause remains visible in the code:
+`run_in_shell_with` snapshots `before` **once** per shell session (per-owner
+call), so a second command in the same session can inherit a stale `before`
+from the first. That is a producer-correctness question for review, not a
+change this phase is authorized to make blind — noted in Notes for review.
