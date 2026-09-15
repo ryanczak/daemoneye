@@ -698,6 +698,17 @@ mod tests {
                 .contains("BEG"),
             "the stored range must not open on a BEGIN marker line (raw): {record:?}"
         );
+        let decoded = {
+            let mut out = Vec::new();
+            for line in String::from_utf8_lossy(&bytes[start..record.end_byte as usize]).lines() {
+                crate::shell::extend_output_line(Some(line.to_owned()), &mut out);
+            }
+            out
+        };
+        assert!(
+            !String::from_utf8_lossy(&decoded).contains("DE_"),
+            "the stored range must not carry marker text: {record:?}"
+        );
     }
 
     /// The phase's deliverable: after a real command through the producer,
