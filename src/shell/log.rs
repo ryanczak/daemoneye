@@ -414,11 +414,6 @@ fn windowed_payload(data: &[u8]) -> Vec<u8> {
             }
             at += digits;
             if from.get(at) == Some(&0x1f) {
-                at += 1;
-                // END's trailing CRLF is framing.
-                if from.get(at..at + 2) == Some(b"\r\n") {
-                    at += 2;
-                }
                 Some(start + p)
             } else {
                 None
@@ -1065,8 +1060,7 @@ mod tests {
             stripped.extend_from_slice(&d);
         }
         assert_eq!(
-            stripped,
-            body,
+            stripped, body,
             "after the reader's framing strip the range is exactly the body"
         );
     }
