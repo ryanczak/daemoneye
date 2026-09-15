@@ -1048,3 +1048,66 @@ instrumentation was removed. One plausible cause remains visible in the code:
 call), so a second command in the same session can inherit a stale `before`
 from the first. That is a producer-correctness question for review, not a
 change this phase is authorized to make blind — noted in Notes for review.
+
+### Update — 2026-09-15 06:30 (end-to-end verification)
+
+**Executor:** executor run (headless). Ran § End-to-end verification verbatim;
+the captured transcript is /tmp/e2e-m22-06a.txt, pasted below as the first
+fenced block, and the PASTE MATCH verdict is recorded in the same entry.
+
+```sh
+== A. build ==
+real HOME shell logs BEFORE: 3
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+cargo_exit=0
+== B. the touched modules' tests ==
+shell::log                       test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1860 filtered out; finished in 0.00s
+shell::pty                       test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1864 filtered out; finished in 3.01s
+daemon::executor::shell_exec     test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1869 filtered out; finished in 0.06s
+knowledge::shell                 test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 1837 filtered out; finished in 4.55s
+== C. the gap this phase closes, shown not asserted ==
+--- MetaIndex producers OUTSIDE log.rs and test fixtures (was: none) ---
+src/daemon/executor/shell_exec.rs:219:    if let Err(e) = MetaIndex::append(&meta_path, &cast, id.as_str(), started_unix, record) {
+--- the marker helpers the range finder must use ---
+152:pub(crate) fn begin_marker(nonce: &Nonce) -> Vec<u8> {
+156:pub(crate) fn end_marker(nonce: &Nonce) -> Vec<u8> {
+160:pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+== D. structural greps (each must print the stated number) ==
+range finder in one file     (1): 1
+range finder is pure         (0): 0
+uses the marker helpers     (2+): 2
+no hand-written marker       (0): 0
+MetaIndex::append            (1): 1
+producer wired              (1+): 1
+resolve_cast lifted          (1): 1
+resolve_cast re-exported     (1): 1
+private copy gone            (0): 0
+CommandOutcome nonce         (1): 1
+04b stale-cast test kept     (1): 1
+ToolDef literals            (46): 46
+CLAUDE count unchanged       (1): 1
+README count unchanged       (1): 1
+sre.toml untouched           (0): 0
+no protocol/host change      (0): 0
+four pure tests              (4): 4
+two host tests               (2): 2
+prod unwrap shell_exec       (0): 0
+prod unwrap log.rs           (0): 0
+no new allow shim            (0): 0
+== E. preservation ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1789 filtered out; finished in 0.00s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs (failure names preserved) ==
+test result: ok. 1877 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.58s
+test result: ok. 1877 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.67s
+test result: ok. 1877 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.66s
+== G. gates ==
+fmt_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+clippy_exit=0
+== H. no HOME litter from the suite ==
+real HOME shell logs AFTER (==BEFORE): 3
+```
+
+PASTE MATCH
