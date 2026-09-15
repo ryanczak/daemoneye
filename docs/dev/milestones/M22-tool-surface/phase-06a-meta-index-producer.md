@@ -823,3 +823,18 @@ time, confirming the README's flake classification. Preservation holds:
 `shell::log` 21, `knowledge::shell` 44, `doc_truth` 10, `isolation` 9 (1
 ignored). Nothing new is actionable without the § Authorizations decision;
 this entry exists so the gate's own records and the blocker agree.
+
+**Gate re-runs, third suite + by-name replays (2026-09-14).** Third full
+run: 1876 passed, 1 failed, the failure **only**
+`pty_stop_with_no_foreground_job_remembers_nothing` — the documented
+pre-existing flake (milestone README § Notes; passes in isolation in
+0.12s). Recorded, not chased, per § Spec task 8. The by-name replays of
+the two host tests then sharpened the blocker's mechanism measurement:
+`a_run_command_appends_a_meta_index_record` produced the **empty range**
+(`first_byte == end_byte`, values 872..893 across runs) in **8 of 8**
+replays, and `read_shell_returns_clean_output_after_a_real_command`
+alternated between "index missing" (4/6), "recorded output is empty"
+(1/6) and passing (1/6) — i.e. whether the producer indexes at all, and
+whether the indexed range carries the body, is decided by where the PTY
+read lands, which **is the contradiction this blocker already names**.
+The gate's red is the blocker asserting itself, not new breakage.
