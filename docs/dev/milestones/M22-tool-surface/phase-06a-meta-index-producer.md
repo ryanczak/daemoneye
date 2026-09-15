@@ -838,3 +838,20 @@ alternated between "index missing" (4/6), "recorded output is empty"
 whether the indexed range carries the body, is decided by where the PTY
 read lands, which **is the contradiction this blocker already names**.
 The gate's red is the blocker asserting itself, not new breakage.
+
+**Task map at the stop (2026-09-14 21:04).** Done and verified on disk:
+task 1 (`resolve_cast` lift; private copy deleted; 04b's stale-cast test
+green by name), task 2 (`CommandOutcome.nonce` + 4 sites), task 3
+(`MetaIndex::append`), task 4 (the finder, decoded-line form + 4 pure
+tests), task 6 (nothing else moved: `ToolDef{` 46, CLAUDE/README counts 1
+each, sre.toml and the six protocol/host files untouched vs `bf637bca`,
+no `#[allow]` shims, no `unwrap/expect/panic!` in the touched production
+paths, `cargo fmt --all --check` clean, clippy `-D warnings` clean).
+Blocked: tasks 5/7/8 — the producer is wired and best-effort (no `?`
+escapes into the command's result), but § Pre-flight's premise, that the
+markers can be located "in the cast bytes recorded while the command ran"
+with a range whose whole-line decode is the clean output, does not hold
+for every PTY chunk boundary; the mutation checks and the end-to-end
+capture cannot be run green until the § Authorizations contradiction is
+resolved. Full suites: 1875-1877 pass with 1-2 named failures — always
+from this contradiction, plus the documented pty flake once.
