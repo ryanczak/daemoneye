@@ -65,7 +65,7 @@ final surface, so they go last.
 | 04a | shell-lifecycle ([phase-04a-shell-lifecycle.md](phase-04a-shell-lifecycle.md)) — `open_shell {}` + `close_shell { shell }`, both `Category::Run`; share the in-process-host test fixture | done        |
 | 04b | watch-shell ([phase-04b-watch-shell.md](phase-04b-watch-shell.md)) — `watch_shell { shell, pattern?, timeout_secs? }`, the blocking observer; reads the **live cast file**, not the dead `.meta.json` index | done                    |
 | 05 | send-input ([phase-05-send-input.md](phase-05-send-input.md)) — `send_input { shell, text, enter? }`, **approval-gated**; the `"i"` log is real and no read tool can surface it | done                    |
-| 06a | meta-index-producer ([phase-06a-meta-index-producer.md](phase-06a-meta-index-producer.md)) — give the `.meta.json` index a **producer**; makes `read_shell`/`find_in_shells` work in production at last. No new tools | in-progress (bug-06a-1)  |
+| 06a | meta-index-producer ([phase-06a-meta-index-producer.md](phase-06a-meta-index-producer.md)) — give the `.meta.json` index a **producer**; makes `read_shell`/`find_in_shells` work in production at last. No new tools | done                    |
 | 06b | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the index 06a makes real | todo (not drafted) |
 | 07 | run-terminal-command-reshape — `shell?`/`host?`/`wait?`/`timeout_secs?`; retire `target_pane`, `retry_in_pane`, `background` | todo (not drafted) |
 | 08 | shell-context — `get_terminal_context` → `get_shell_context { scope }`; `[HOSTS]`/`[SHELLS]`/`[DEFAULT SHELL]` blocks; approval panel names shell + host | todo (not drafted) |
@@ -213,8 +213,9 @@ final surface, so they go last.
   real shell since 03b. This is the phase that closes it, which is why it
   ships no tool and moves no count.
 
-- **A latent panic in `windowed_payload`, found during 06a and not fixed
-  there.** `src/shell/log.rs`'s END branch computes `stop` via
+- **~~A latent panic in `windowed_payload`~~ — resolved at 06a's takeover: it
+  was an off-by-`start` in the END branch (`Some(start + p)` where the caller
+  slices `from[..stop]`), fixed with a one-token change. Original note:** `src/shell/log.rs`'s END branch computes `stop` via
   `find_subslice(...).unwrap_or(from.len())` and then slices `from[..stop]`;
   a payload truncated mid-END-marker makes `stop` exceed `from.len()` and the
   slice panics. It surfaced under a mutation (`range end index 427 out of
@@ -231,6 +232,14 @@ final surface, so they go last.
   test assertion that checked raw bytes for patterns that exist only after
   decoding. Anything touching this file should state, per function, which
   side of that line it is on.
+
+  A fourth, found at 06a's takeover: **`extend_output_line` re-windows the
+  whole accumulated buffer on every line and keeps only the last
+  BEGIN..END.** Correct for one command's record; a hazard for any slice that
+  spans two commands' markers — `read_output_since` (the `watch_shell` tail
+  reader) shares it, so a poll slice containing `…END0 … BEGIN1 …` drops the
+  text before `BEGIN1`. Not fixed; 06b or 07 should decide whether the reader
+  windows per command record or per stream.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24

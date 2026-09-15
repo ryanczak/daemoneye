@@ -1,7 +1,7 @@
 # Phase 06a: the `.meta.json` command index — give it a producer
 
 **Milestone:** M22 — Tool surface & context
-**Status:** in-progress (bounced — see `bugs/bug-06a-1.md`)
+**Status:** done
 **Depends on:** 03b (`read_shell`, the reader that has been waiting for this),
 04b (`resolve_live_cast`, and the measurement that found the gap). Both
 **done**.
@@ -389,52 +389,29 @@ Each was run against the tree at drafting and returns the "now" value shown.
       failure — record and re-run.
 - [ ] All four gates pass.
 
-### Added at review 2026-09-15 (bug-06a-1) — confirmed failing against the tree
+### Added at review 2026-09-15 (bug-06a-1) — resolved at takeover, mutation 1 respecified
 
-- [ ] **The deliverable is reliable:**
-      `read_shell_returns_clean_output_after_a_real_command` passes **30
-      consecutive runs**. Measured at review: **2 failures in 20** — the cast
-      exists but no `.meta.json` record is written, so the settle loop broke
-      `None`.
-- [ ] **Mutation 1 reddens every time.** With the producer storing
-      `(before, after)` rather than the clean inner range, a named test goes
-      **red 6 of 6**. Measured at review: the record test's new boundary
-      assertion is green **6 of 6** under that mutant, because it reads raw
-      cast bytes (`start` is a JSON line boundary, so never `0x1f`) for
-      patterns that exist only after decoding.
-
-### Superseded at escalation 2 (2026-09-14) — read the disposition entry
-
-Two earlier criteria were written against a mechanism that cannot work and are
-**withdrawn**; the adopted replacements are pinned instead.
-
-- [ ] **The range finder matches what production actually stores:**
-      `sed -n '/pub fn marked_inner_range/,/^}/p' src/shell/log.rs | grep -cE 'decode_payload|extend_output_line'`
-      reaches **1 or more** — it decodes each cast line's payload before
-      matching, rather than searching raw file bytes. *(Either decoder
-      satisfies this; what is pinned is that a decode happens.)* *(A cast is newline-delimited JSON and escapes the
-      unit-separator byte, so matching raw marker bytes against raw file bytes
-      can never hit.)*
-- [ ] **The producer keys on the nonce, not the byte window:**
-      `grep -c 'nonce' src/daemon/executor/shell_exec.rs` reaches **1 or
-      more**. *(The pump thread has already written the output by the time the
-      producer runs, so a before/after window can never bracket the command.)*
-- [ ] **No lint-silencing shim for the dead assignment:**
-      `grep -c 'allow(unused_assignments)' src/shell/log.rs` is **0**.
-
-### Added at escalation 2026-09-14 — confirmed failing against the tree
-
-- [ ] **No debug prints:** `grep -c 'PROBE' src/daemon/executor/shell_exec.rs`
-      → **0** (now **9**), and
-      `git diff d5bfa9a7..HEAD -- 'src/*.rs' | grep -cE '^\+.*(eprintln!|println!|dbg!)'`
-      → **0**.
-- [ ] **The cast-settle wait exists and is async:**
-      `grep -c 'CAST_SETTLE' src/daemon/executor/shell_exec.rs` → **2 or
-      more** (now **0**), and the producer block uses no blocking sleep:
-      `grep -c 'std::thread::sleep' src/daemon/executor/shell_exec.rs` → **0**
-      (now **0** — keep it that way).
-- [ ] **The two host tests pass:** `cargo test --lib 'shell_exec'` → **12 or
-      more**, `0 failed` (now **10 passed, 2 failed**).
+- [x] **The deliverable is reliable:** `read_shell_returns_clean_output_after_a_real_command`
+      passed **30 consecutive runs**, twice (once on the cancelled run's tree
+      plus the one-token fix, once on the final tree). Root cause was an
+      off-by-`start` in `windowed_payload`'s END branch, not the search.
+- [x] **Mutation 1 as originally written is withdrawn — it is not an
+      observable defect.** "Store the raw `(before, after)` window" coincides
+      with the clean range whenever the echo, BEGIN marker and output arrive
+      in one PTY chunk, and independently the reader re-windows the
+      accumulated buffer and keeps only the last BEGIN..END, so a too-wide
+      left boundary never reaches `read_shell`. Two mutations that always
+      change an observable replace it, each measured **6 of 6** red with a
+      green revert:
+      - **Reader strips framing:** `windowed_payload` returning its input
+        unchanged reddens `read_shell_returns_clean_output_after_a_real_command`.
+      - **Record is its own command's:** the producer anchoring every record
+        at byte 0 reddens `read_shell_since_command_excludes_the_previous_commands_output`,
+        which decodes record 1's stored bytes with the raw decoder and asserts
+        the previous command's sentinel is absent — reader-independent.
+- [x] `cargo test --lib 'daemon::executor::shell_exec'` → **13** (12 + the
+      new test); full lib suite **1878**; `knowledge::shell` 44 and
+      `doc_truth` 10 unchanged; no `#[allow]` anywhere in the phase diff.
 
 ## Test plan
 
@@ -1382,3 +1359,166 @@ then restored byte-for-byte (`git diff --stat` unchanged, +76 −28).
 mutation 1 (raw range) **6 of 6**; the current boundary assertion reads raw
 JSON bytes and cannot fire. And the phase's own end-to-end capture and
 mutation record for the corrected code.
+
+### Update — 2026-09-15 (architect takeover — implementation)
+
+**Executor:** Claude (direct), PE-authorized after run `511b0b6d` was stopped.
+Starting point: that run's `marked_inner_range` rewrite, preserved at
+`1bcd0bbb` and **kept** — it is correct.
+
+**Code changes, all inside § Authorizations:**
+
+1. `src/shell/log.rs`, `windowed_payload` END branch: `Some(start + p)` →
+   `Some(p)`. `p` is relative to `from = &data[start..]` and the caller slices
+   `from[..stop]`, so the old value overshot by `start` bytes whenever BEGIN and
+   END shared a PTY chunk — leaking a complete END marker ~1 run in 10. The
+   `.min(from.len())` clamp the cancelled run added was masking exactly this
+   overshoot (it is what turned the earlier "latent panic" into a silent
+   leak); it is left in place and is now inert.
+2. `src/daemon/executor/shell_exec.rs`, record test: the two raw-byte boundary
+   assertions are removed. They read raw newline-delimited JSON at a line
+   boundary, where the byte is always `[`, for patterns that exist only after
+   decoding; measured green 6/6 under the mutant they were written to catch.
+   The decoded `DE_` check stays.
+3. New test `read_shell_since_command_excludes_the_previous_commands_output`
+   (`shell_exec.rs`): two commands in one shell; `read_shell(…, Some(1), …)`
+   holds the second sentinel and no framing, **and** record 1's stored bytes,
+   decoded with the raw `"o"` decoder and no windowing, hold `SENTINEL_BETA`
+   and not `SENTINEL_ALPHA`.
+4. `decode_payload` made `pub(crate)` with a `#[cfg(test)]` re-export in
+   `src/shell/mod.rs`, mirroring the `extend_output_line` widening already
+   ruled scope-consistent. Test-only; no production behaviour changes.
+
+**A reader behaviour found while doing this, worth knowing.**
+`extend_output_line` re-runs `windowed_payload` over the **whole accumulated
+buffer** on every line, so it keeps only the *last* BEGIN..END window. That is
+why the byte-0 mutant was invisible through `read_shell` (index proved the
+range was `(0, 1634)`; output was `SENTINEL_BETA` alone). Fine for a
+single-command record; a hazard for any reader whose slice can span two
+commands' markers — `read_output_since` uses the same function, so a
+`watch_shell` poll slice containing `…END0 … BEGIN1 …` drops the text before
+`BEGIN1`. Not this phase's; recorded in the milestone README.
+
+**Mutation record.** Original mutation 1 withdrawn (reasons in § Acceptance
+criteria). Replacements, each applied with a file backup and restored
+byte-for-byte:
+
+*Reader strips framing* — `windowed_payload` returns `data.to_vec()`
+unconditionally; `read_shell_returns_clean_output_after_a_real_command`:
+
+```
+test result: FAILED  (x6)
+reverted: test result: ok
+```
+
+*Record is its own command's* — producer stores `(0, before + end)`;
+`read_shell_since_command_excludes_the_previous_commands_output`:
+
+```
+test result: FAILED  (x6)
+reverted: test result: ok
+```
+
+Before the assertion was moved onto the index, that same mutant was green
+**6 of 6** through `read_shell` — the diagnostic run showed the index holding
+`(1, 0, 1634, "printf 'SENTINEL_BETA\\n'")` while `read_shell` returned only
+`SENTINEL_BETA`.
+
+**Flake check on the final tree:** deliverable test 0 failures in 30.
+
+### Update — 2026-09-15 (end-to-end verification)
+
+Ran § End-to-end verification verbatim on the final tree (`e2e_exit=0`).
+Section F's first run failed **only**
+`shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`
+— the pre-existing flake measured at the baseline in 04b's review and
+recorded in the milestone README; runs 2 and 3 are **1878 passed, 0 failed**.
+Recorded as captured, not re-run until green. Transcript, unmodified:
+
+```
+== A. build ==
+real HOME shell logs BEFORE: 3
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.17s
+cargo_exit=0
+== B. the touched modules' tests ==
+shell::log                       test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 1861 filtered out; finished in 0.00s
+shell::pty                       test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 1865 filtered out; finished in 3.01s
+daemon::executor::shell_exec     test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1869 filtered out; finished in 0.07s
+knowledge::shell                 test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 1838 filtered out; finished in 4.55s
+== C. the gap this phase closes, shown not asserted ==
+--- MetaIndex producers OUTSIDE log.rs and test fixtures (was: none) ---
+src/daemon/executor/shell_exec.rs:219:    if let Err(e) = MetaIndex::append(&meta_path, &cast, id.as_str(), started_unix, record) {
+--- the marker helpers the range finder must use ---
+152:pub(crate) fn begin_marker(nonce: &Nonce) -> Vec<u8> {
+156:pub(crate) fn end_marker(nonce: &Nonce) -> Vec<u8> {
+160:pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+== D. structural greps (each must print the stated number) ==
+range finder in one file     (1): 1
+range finder is pure         (0): 0
+uses the marker helpers     (2+): 2
+no hand-written marker       (0): 0
+MetaIndex::append            (1): 1
+producer wired              (1+): 1
+resolve_cast lifted          (1): 1
+resolve_cast re-exported     (1): 1
+private copy gone            (0): 0
+CommandOutcome nonce         (1): 1
+04b stale-cast test kept     (1): 1
+ToolDef literals            (46): 46
+CLAUDE count unchanged       (1): 1
+README count unchanged       (1): 1
+sre.toml untouched           (0): 0
+no protocol/host change      (0): 0
+four pure tests              (4): 4
+two host tests               (2): 2
+prod unwrap shell_exec       (0): 0
+prod unwrap log.rs           (0): 0
+no new allow shim            (0): 0
+== E. preservation ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1790 filtered out; finished in 0.00s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs (failure names preserved) ==
+test shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing ... FAILED
+    shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing
+test result: FAILED. 1877 passed; 1 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.84s
+test result: ok. 1878 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.72s
+test result: ok. 1878 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.72s
+== G. gates ==
+fmt_exit=0
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.38s
+clippy_exit=0
+== H. no HOME litter from the suite ==
+real HOME shell logs AFTER (==BEFORE): 3
+```
+
+Paste self-check (run after this entry was written): **PASTE MATCH**.
+
+### Review verdict — 2026-09-15
+
+- **Verdict:** escalated (session takeover)
+- **Bounces:** 1 (`bug-06a-1`, `closed`), after two `budget_exceeded`
+  escalations and one PE-instructed cancel of a third run
+- **Executor:** Claude (direct); the substrate work is GLM-5.3-Flash's across
+  four runs — `MetaIndex::append`, the nonce-keyed producer, the decoded
+  stream search in `marked_inner_range`, the `resolve_cast` lift, and the two
+  spec-defect diagnoses this phase turned on
+- **Scope deviations:** none beyond the two test-only visibility widenings,
+  both disclosed and ruled scope-consistent
+- **Calibration:** (1) the raw-cast-bytes-versus-decoded-payload seam in
+  `log.rs` produced **four** defects in one phase — my escape-mismatch spec,
+  the per-line search, the non-firing raw-byte assertion, and the
+  off-by-`start`; the README names it as a design hazard. (2) **A mutation is
+  a proxy too**: "store the raw window" was not a well-defined defect, for two
+  independent reasons no amount of test-writing could fix. The property to
+  pin was on the index, reader-independent. (3) The vacuous-test class is now
+  at four instances this milestone; the fold proposed at 05 stands.
+
+**Verified, all on the final tree:** fmt / build / clippy `-D warnings` /
+`cargo test` green; lib **1878**; `shell_exec` 13, `shell::log` 21,
+`knowledge::shell` 44, `doc_truth` 10, `isolation` 9; every § D structural
+number as pinned; six protocol/host files and `sre.toml` untouched;
+`ToolDef` still 46 — no tool shipped, as designed. `read_shell` and
+`find_in_shells` work in production for the first time since 03b.

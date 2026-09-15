@@ -1,7 +1,7 @@
 # Bug 1 on phase-06a: the producer is ~10% unreliable, and its core property has no discriminating test
 
 **Severity:** major
-**Status:** open
+**Status:** closed (fixed 2026-09-15 at architect takeover)
 **Filed:** 2026-09-15
 
 Two findings. Both were reproduced at review; both were disclosed in good
@@ -157,7 +157,7 @@ Finding 2 is **not** addressed by this and still needs its own test.
 
 ## Not in scope for this bug
 
-- **The `windowed_payload` panic** the run flagged
+- **The `windowed_payload` panic** the run flagged — **now known to be the same off-by-`start` fixed under finding 1, not hostile content; closed with it.** Original note:
   (`src/shell/log.rs`, END branch: `stop` can exceed `from.len()`, so
   `from[..stop]` panics on a payload truncated mid-marker). It is real and
   reachable from hostile cast content. It is **recorded as a follow-up in the
@@ -167,3 +167,17 @@ Finding 2 is **not** addressed by this and still needs its own test.
   re-export in `src/shell/mod.rs`. Both files were authorized, the change is
   test-only, and it was disclosed. **Ruled scope-consistent at review — keep
   it.**
+
+
+## Resolution — 2026-09-15 (architect takeover)
+
+- **Finding 1:** the `Some(start + p)` → `Some(p)` fix landed; deliverable
+  test 0/30 on the final tree. The cancelled run's split-marker search rewrite
+  was kept. The "latent panic" was this overshoot.
+- **Finding 2:** the original mutation was withdrawn as not observable (PTY
+  chunk bundling; the reader re-windows the accumulated buffer and keeps only
+  the last BEGIN..END). Replaced by two deterministic mutations, each 6/6 red
+  with green revert, and a new index-level test
+  `read_shell_since_command_excludes_the_previous_commands_output`. The
+  non-firing raw-byte assertions were removed.
+- `shell_exec` 13, lib 1878, all gates green.
