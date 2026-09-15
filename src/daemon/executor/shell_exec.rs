@@ -684,20 +684,10 @@ mod tests {
         );
         let bytes = std::fs::read(&cast).expect("the cast is on disk");
         let start = record.first_byte as usize;
-        // A clean range begins where the output begins. The raw cast bytes are
-        // checked at the boundary so the assertion is reader-independent: a
-        // reader that strips framing per payload would otherwise also pass a
-        // raw marker-bearing range.
-        assert_ne!(
-            bytes.get(start),
-            Some(&0x1f),
-            "the stored range must not begin on a marker's framing byte (raw): {record:?}"
-        );
-        assert!(
-            !String::from_utf8_lossy(&bytes[start..(start + 8).min(record.end_byte as usize)])
-                .contains("BEG"),
-            "the stored range must not open on a BEGIN marker line (raw): {record:?}"
-        );
+        // Decoded through the production reader: the stored range, read the
+        // way `read_command_output` reads it, carries no marker text. (Raw
+        // cast bytes are newline-delimited JSON, so a raw-byte check at the
+        // boundary can only ever see `[` — it cannot discriminate anything.)
         let decoded = {
             let mut out = Vec::new();
             for line in String::from_utf8_lossy(&bytes[start..record.end_byte as usize]).lines() {
@@ -751,6 +741,70 @@ mod tests {
         assert!(
             !out.contains("DE_"),
             "no marker framing may leak into the recorded output: {out}"
+        );
+    }
+
+    /// Each record's range is its own command's, not the whole cast. The check
+    /// is on the **index**, decoded with the raw `"o"` decoder and no windowing:
+    /// `read_shell` cannot see a too-wide left boundary, because the reader
+    /// re-windows the accumulated buffer and keeps only the last BEGIN..END, so
+    /// a producer anchoring every record at byte 0 would still read cleanly.
+    /// Decoding record 1's stored bytes directly is reader-independent and
+    /// deterministic: the first command's output is always on disk before the
+    /// second command is sent, so a range that reaches back must contain it.
+    #[tokio::test]
+    async fn read_shell_since_command_excludes_the_previous_commands_output() {
+        let (_home, _dir) = test_home();
+        let reg = crate::shell::registry();
+        let owner = Owner::Chat("since-command-e2e".into());
+        let id = crate::shell::spawn_for(reg, owner.clone(), 5, false, spawn_in_logs_dir)
+            .await
+            .expect("an ordinary shell spawns");
+        for cmd in ["printf 'SENTINEL_ALPHA\\n'", "printf 'SENTINEL_BETA\\n'"] {
+            let (got, _) = run_in_shell_with(reg, owner.clone(), cmd, 5, spawn_in_logs_dir)
+                .await
+                .expect("the command resolves");
+            assert_eq!(
+                got.as_str(),
+                id.as_str(),
+                "both commands land in the one shell"
+            );
+        }
+        let out = crate::daemon::executor::knowledge::read_shell(id.as_str(), None, Some(1), None);
+        assert!(
+            out.contains("SENTINEL_BETA"),
+            "command 1's own output is readable from its index: {out}"
+        );
+        assert!(
+            !out.contains("DE_"),
+            "no marker framing may leak into the recorded output: {out}"
+        );
+        // The reader-independent half: record 1's stored bytes, decoded raw.
+        let started = with_shells(reg, |st| {
+            st.get(id.as_str()).map(|r| r.started_unix).unwrap_or(0)
+        });
+        let cast = crate::shell::resolve_cast(id.as_str(), started);
+        let meta = MetaIndex::load(&meta_path_for(&cast)).expect("both commands were indexed");
+        let rec = meta
+            .commands
+            .iter()
+            .find(|c| c.index == 1)
+            .expect("command 1 has a record");
+        let bytes = std::fs::read(&cast).expect("the cast is on disk");
+        let mut raw = Vec::new();
+        for line in
+            String::from_utf8_lossy(&bytes[rec.first_byte as usize..rec.end_byte as usize]).lines()
+        {
+            crate::shell::decode_payload(Some(line.to_owned()), &mut raw);
+        }
+        let raw = String::from_utf8_lossy(&raw);
+        assert!(
+            raw.contains("SENTINEL_BETA"),
+            "record 1's range holds its own output: {raw:?}"
+        );
+        assert!(
+            !raw.contains("SENTINEL_ALPHA"),
+            "record 1's range must not reach back into command 0: {raw:?}"
         );
     }
 }

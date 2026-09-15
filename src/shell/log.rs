@@ -356,7 +356,7 @@ pub(crate) fn extend_output_line(line: Option<String>, out: &mut Vec<u8>) {
 /// The `"o"` payload of one cast event line, verbatim. Unparsable lines,
 /// non-`"o"` events and malformed JSON contribute nothing — skipping rather
 /// than failing is the contract both readers share.
-fn decode_payload(line: Option<String>, out: &mut Vec<u8>) {
+pub(crate) fn decode_payload(line: Option<String>, out: &mut Vec<u8>) {
     let Some(line) = line else { return };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
         return;
@@ -449,7 +449,7 @@ fn windowed_payload(data: &[u8]) -> Vec<u8> {
             }
             at += digits;
             if from.get(at) == Some(&0x1f) {
-                Some(start + p)
+                Some(p)
             } else {
                 None
             }
