@@ -76,6 +76,9 @@ pub struct CommandOutcome {
     pub output: Vec<u8>,
     /// The command's real exit status.
     pub exit_code: i32,
+    /// The command's marker nonce, so a caller that did not build the nonce
+    /// itself can still find this run's markers in a log.
+    pub nonce: Nonce,
 }
 
 /// Scan an accumulated buffer for this run's completed command.
@@ -105,7 +108,11 @@ pub fn parse_outcome(buf: &[u8], nonce: &Nonce) -> Option<CommandOutcome> {
         output.truncate(output.len() - 2);
     }
 
-    Some(CommandOutcome { output, exit_code })
+    Some(CommandOutcome {
+        output,
+        exit_code,
+        nonce: nonce.clone(),
+    })
 }
 
 /// The same input with every marker sequence for this nonce removed,
@@ -142,15 +149,15 @@ pub fn strip_markers(buf: &[u8], nonce: &Nonce) -> Vec<u8> {
     out
 }
 
-fn begin_marker(nonce: &Nonce) -> Vec<u8> {
+pub(crate) fn begin_marker(nonce: &Nonce) -> Vec<u8> {
     format!("\u{1f}DE_BEG {}\u{1f}", nonce.as_str()).into_bytes()
 }
 
-fn end_marker(nonce: &Nonce) -> Vec<u8> {
+pub(crate) fn end_marker(nonce: &Nonce) -> Vec<u8> {
     format!("\u{1f}DE_END {} ", nonce.as_str()).into_bytes()
 }
 
-fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
     }

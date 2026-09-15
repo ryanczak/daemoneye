@@ -715,7 +715,7 @@ pub(super) async fn watch_shell_with(
     //    record and the cast are stamped in different processes, and a spawn
     //    crossing a second boundary leaves `cast_path(id, record.started_unix)`
     //    naming no file.
-    let cast = resolve_live_cast(shell, record_started_unix);
+    let cast = crate::shell::resolve_cast(shell, record_started_unix);
     let mut offset = match std::fs::metadata(&cast) {
         Ok(m) => m.len(),
         // No cast yet is not an error — the host creates it when it has
@@ -892,30 +892,6 @@ fn tail_of(text: &str, max: usize) -> String {
         return "(the shell produced no output after the call started)".to_string();
     }
     tail_lines(trimmed, max)
-}
-
-/// The cast file a live shell's host is writing right now: the highest
-/// `started_unix` any `<id>-<ts>.cast` in the logs dir names for this id,
-/// falling back to `cast_path(id, record.started_unix)`. The fallback covers a
-/// host whose logs dir has not been written at all yet.
-fn resolve_live_cast(id: &str, record_started_unix: u64) -> std::path::PathBuf {
-    let logs = crate::config::shell_logs_dir();
-    let mut best: Option<u64> = None;
-    if let Ok(entries) = std::fs::read_dir(&logs) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if let Some((pid, ts)) = crate::shell::parse_cast_name(&name.to_string_lossy())
-                && pid.as_str() == id
-                && best.is_none_or(|b| ts > b)
-            {
-                best = Some(ts);
-            }
-        }
-    }
-    match best {
-        Some(ts) => cast_path(id, ts),
-        None => cast_path(id, record_started_unix),
-    }
 }
 
 /// Strip ANSI escape sequences: CSI, OSC and the short two-character forms.

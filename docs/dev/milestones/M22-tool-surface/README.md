@@ -65,7 +65,7 @@ final surface, so they go last.
 | 04a | shell-lifecycle ([phase-04a-shell-lifecycle.md](phase-04a-shell-lifecycle.md)) — `open_shell {}` + `close_shell { shell }`, both `Category::Run`; share the in-process-host test fixture | done        |
 | 04b | watch-shell ([phase-04b-watch-shell.md](phase-04b-watch-shell.md)) — `watch_shell { shell, pattern?, timeout_secs? }`, the blocking observer; reads the **live cast file**, not the dead `.meta.json` index | done                    |
 | 05 | send-input ([phase-05-send-input.md](phase-05-send-input.md)) — `send_input { shell, text, enter? }`, **approval-gated**; the `"i"` log is real and no read tool can surface it | done                    |
-| 06a | meta-index-producer ([phase-06a-meta-index-producer.md](phase-06a-meta-index-producer.md)) — give the `.meta.json` index a **producer**; makes `read_shell`/`find_in_shells` work in production at last. No new tools | todo                    |
+| 06a | meta-index-producer ([phase-06a-meta-index-producer.md](phase-06a-meta-index-producer.md)) — give the `.meta.json` index a **producer**; makes `read_shell`/`find_in_shells` work in production at last. No new tools | in-progress (escalated)  |
 | 06b | shell-history — `list_shell_logs` / `read_shell_log` as a deferred `history` group over the index 06a makes real | todo (not drafted) |
 | 07 | run-terminal-command-reshape — `shell?`/`host?`/`wait?`/`timeout_secs?`; retire `target_pane`, `retry_in_pane`, `background` | todo (not drafted) |
 | 08 | shell-context — `get_terminal_context` → `get_shell_context { scope }`; `[HOSTS]`/`[SHELLS]`/`[DEFAULT SHELL]` blocks; approval panel names shell + host | todo (not drafted) |

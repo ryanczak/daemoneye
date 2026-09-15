@@ -19,8 +19,8 @@ use crate::daemon::run::{
 };
 use crate::daemon::session::{SessionStore, append_session_message, with_sessions};
 use crate::shell::{
-    CommandHandle, CommandOutcome, Owner, ShellId, ShellRegistry, login_shell, spawn_command,
-    spawn_dedicated_for,
+    CommandHandle, CommandOutcome, Owner, ShellId, ShellRegistry, login_shell,
+    spawn_command, spawn_dedicated_for,
 };
 
 /// How long a started background command may run before its reader task gives
@@ -234,7 +234,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::daemon::session::SessionEntry;
-    use crate::shell::{PtyBackend, bind, lock_path, serve, socket_path};
+    use crate::shell::{Nonce, PtyBackend, bind, lock_path, serve, socket_path};
     use anyhow::Context;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -334,6 +334,7 @@ mod tests {
         let outcome = crate::shell::CommandOutcome {
             output: b"BODY\n".to_vec(),
             exit_code: 7,
+            nonce: Nonce::new(),
         };
         let msg = completion_message("cargo build", &run_id, &shell_id, &Ok(outcome));
         let first = msg.lines().next().expect("at least one line");
@@ -365,6 +366,7 @@ mod tests {
         let outcome = crate::shell::CommandOutcome {
             output: b"BUILD SUCCEEDED\n".to_vec(),
             exit_code: 0,
+            nonce: Nonce::new(),
         };
         let msg = completion_message("make", &run_id, &shell_id, &Ok(outcome));
         let start = msg
@@ -388,6 +390,7 @@ mod tests {
         let outcome = crate::shell::CommandOutcome {
             output: b"key=AKIAIOSFODNN7EXAMPLE\n".to_vec(),
             exit_code: 0,
+            nonce: Nonce::new(),
         };
         let msg = completion_message("env", &run_id, &shell_id, &Ok(outcome));
         assert!(

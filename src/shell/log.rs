@@ -13,6 +13,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::pty::{Nonce, begin_marker, end_marker, find_subslice};
+
 const MAX_CARRY: usize = 3;
 
 /// Writes an asciicast v2 recording, one JSON line per record, flushed per
@@ -146,6 +148,35 @@ pub struct CommandRecord {
     pub end_byte: u64,
 }
 
+/// The byte range of one command's clean output inside the cast bytes recorded
+/// while that command ran: the first byte **after** the BEGIN marker line and
+/// the first byte **of** the END marker line, both relative to the given
+/// slice. `None` when either marker is absent — a command whose markers never
+/// landed has no clean range and must not be indexed.
+///
+/// Built on the same framing `parse_outcome` reads, and keyed on the framed
+/// marker forms rather than a bare `DE_BEG` substring, because a PTY **echoes**
+/// the joined `DE_BEG` command line before the real marker arrives.
+pub fn marked_inner_range(cast_slice: &[u8], nonce: &Nonce) -> Option<(u64, u64)> {
+    let begin = begin_marker(nonce);
+    let end = end_marker(nonce);
+    let begin_at = find_subslice(cast_slice, &begin)?;
+    let inner_start = begin_at + begin.len();
+    let line_feed = cast_slice[inner_start..]
+        .iter()
+        .position(|b| *b == b'\n')
+        .map(|p| inner_start + p + 1)?;
+    let end_at = find_subslice(&cast_slice[line_feed..], &end)?;
+    let mut range_end = line_feed + end_at;
+    // The CRLF between the command's last write and the END marker belongs to
+    // the framing, same as `parse_outcome` trims it — never the command's own
+    // final newline-delimited CR within the output.
+    if range_end >= line_feed + 2 && &cast_slice[range_end - 2..range_end] == b"\r\n" {
+        range_end -= 2;
+    }
+    Some((line_feed as u64, range_end as u64))
+}
+
 /// Rebuildable index derived from a cast file; never a second source of truth.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MetaIndex {
@@ -175,6 +206,33 @@ impl MetaIndex {
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
         Ok(serde_json::from_str(&contents)?)
+    }
+
+    /// One more command in the index. The absolute `first_byte`/`end_byte` are
+    /// byte offsets into `cast`; the caller already excluded the marker
+    /// framing, so `read_command_output` needs no marker knowledge.
+    pub fn append(
+        meta_path: &Path,
+        cast: &Path,
+        shell_id: &str,
+        started_unix: u64,
+        record: CommandRecord,
+    ) -> Result<()> {
+        let mut meta = match MetaIndex::load(meta_path) {
+            Ok(m) => m,
+            Err(_) => MetaIndex {
+                shell_id: shell_id.to_owned(),
+                cast: cast.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                started_unix,
+                commands: Vec::new(),
+            },
+        };
+        let record = CommandRecord {
+            index: meta.commands.len() as u32,
+            ..record
+        };
+        meta.commands.push(record);
+        meta.save(meta_path)
     }
 }
 
@@ -841,5 +899,113 @@ mod tests {
         let (got, offset) = read_output_since(&path, len + 9).unwrap();
         assert!(got.is_empty(), "nothing beyond the end: {got:?}");
         assert_eq!(offset, len + 9, "the offset is returned unchanged");
+    }
+
+    fn framed(nonce: &Nonce, echoed_line: &str, body: &[u8], exit: u32) -> Vec<u8> {
+        let mut buf = Vec::new();
+        if !echoed_line.is_empty() {
+            buf.extend_from_slice(echoed_line.as_bytes());
+        }
+        buf.extend_from_slice(&begin_marker(nonce));
+        buf.extend_from_slice(b"\r\n");
+        buf.extend_from_slice(body);
+        buf.extend_from_slice(b"\r\n");
+        buf.extend_from_slice(&end_marker(nonce));
+        buf.extend_from_slice(exit.to_string().as_bytes());
+        buf.push(0x1f);
+        buf.extend_from_slice(b"\r\n");
+        buf
+    }
+
+    #[test]
+    fn marked_inner_range_excludes_the_marker_framing() {
+        let nonce = Nonce::new();
+        let body: &[u8] = b"stdout line one\nstdout line two\n";
+        let slice = framed(&nonce, "", body, 0);
+        let (first, end) =
+            marked_inner_range(&slice, &nonce).expect("both markers present");
+        assert_eq!(&slice[first as usize..end as usize], body);
+        let text = String::from_utf8_lossy(&slice[first as usize..end as usize]).into_owned();
+        assert!(!text.contains("DE_"), "no marker text in the range: {text:?}");
+    }
+
+    #[test]
+    fn marked_inner_range_is_none_when_a_marker_is_missing() {
+        let nonce = Nonce::new();
+        // BEGIN present, END absent: the command has not completed.
+        let begin_only = {
+            let mut b = begin_marker(&nonce);
+            b.extend_from_slice(b"\r\nbody\r\n");
+            b
+        };
+        assert!(
+            marked_inner_range(&begin_only, &nonce).is_none(),
+            "no END marker, no range"
+        );
+        // END present, BEGIN absent: an echoed indicator with no real start.
+        let end_only = {
+            let mut e = end_marker(&nonce);
+            e.push(0x1f);
+            e.extend_from_slice(b"0\r\n");
+            e
+        };
+        assert!(
+            marked_inner_range(&end_only, &nonce).is_none(),
+            "no BEGIN marker, no range"
+        );
+    }
+
+    #[test]
+    fn marked_inner_range_ignores_the_echoed_command_line() {
+        let nonce = Nonce::new();
+        let echoed = "model$ printf '\\x1fDE_BEG 3f9c2a1f\\x1f\\n'; cargo build; printf ...\r\n";
+        let body: &[u8] = b"cargo build output\n";
+        let slice = framed(&nonce, echoed, body, 0);
+        let (first, end) =
+            marked_inner_range(&slice, &nonce).expect("the real markers are present");
+        assert_eq!(&slice[first as usize..end as usize], body);
+        let text = String::from_utf8_lossy(&slice[first as usize..end as usize]).into_owned();
+        assert!(
+            !text.contains("printf"),
+            "the echoed command line must not leak into the range: {text:?}"
+        );
+    }
+
+    #[test]
+    fn meta_index_append_numbers_commands_from_zero() {
+        let dir = tempdir().unwrap();
+        let cast = cast(dir.path());
+        let meta = meta(dir.path());
+        CastWriter::create(&cast, 80, 24, 1_788_470_000)
+            .unwrap()
+            .byte_len();
+        for expected in 0u32..2 {
+            MetaIndex::append(
+                &meta,
+                &cast,
+                "s7",
+                1_788_470_000,
+                CommandRecord {
+                    index: 0,
+                    command: format!("cmd-{expected}"),
+                    started: 1_788_470_000.0,
+                    ended: 1_788_470_001.0,
+                    exit_code: 0,
+                    first_byte: expected as u64 * 10,
+                    end_byte: expected as u64 * 10 + 5,
+                },
+            )
+            .expect("append succeeds");
+            let loaded = MetaIndex::load(&meta).expect("the index round-trips");
+            assert_eq!(loaded.commands.len(), (expected + 1) as usize);
+            let last = loaded.commands.last().expect("just pushed one");
+            assert_eq!(last.index, expected, "commands number from zero");
+            assert_eq!(last.command, format!("cmd-{expected}"));
+        }
+        let loaded = MetaIndex::load(&meta).unwrap();
+        assert_eq!(loaded.shell_id, "s7");
+        assert_eq!(loaded.started_unix, 1_788_470_000);
+        assert_eq!(loaded.commands[0].index, 0);
+        assert_eq!(loaded.commands[1].index, 1);
     }
 }

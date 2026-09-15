@@ -5,6 +5,9 @@
 //! well as the annotator, dropping control bytes a mid-token escape could use
 //! to split a secret past its regex — then mask, then normalize.
 
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
 use std::time::Duration;
 
 use super::foreground;
@@ -12,8 +15,10 @@ use crate::ai::mask_sensitive;
 use crate::daemon::utils::normalize_output;
 use crate::shell::spawn_detached_host;
 use crate::shell::{
-    Owner, ShellId, ShellRegistry, login_shell, mark_interactive, run_command, shell_for_owner,
+    CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, login_shell, mark_interactive,
+    meta_path_for, run_command, shell_for_owner, with_shells,
 };
+use crate::shell::{CommandRecord, marked_inner_range};
 
 /// How long a fresh host may take to come up and answer `Status`.
 pub(super) const SHELL_READY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -102,6 +107,7 @@ where
                 id.as_str()
             ))
         })?;
+    index_command_output(reg, cmd, &id, &outcome);
     let raw = String::from_utf8_lossy(&outcome.output);
     let mut text = format_for_model(&raw);
     if let Some(note) = foreground::exit_status_annotation(Some(outcome.exit_code)) {
@@ -114,6 +120,121 @@ where
             exit_code: outcome.exit_code,
         },
     ))
+}
+
+/// Record one completed command in the shell's `.meta.json` index, so
+/// `read_shell` / `find_in_shells` return what the user would have seen.
+/// Everything here is best-effort: the index is derived data, exactly like the
+/// memory FTS index, and a failure must never change what the command returns
+/// to the model.
+fn index_command_output(reg: &ShellRegistry, cmd: &str, id: &ShellId, outcome: &CommandOutcome) {
+    eprintln!("PROBE enter: id={id:?} cmd={cmd:?}");
+    let record_started_unix = with_shells(reg, |store| {
+        store
+            .get(id.as_str())
+            .map(|record| record.started_unix)
+            .unwrap_or(0)
+    });
+    let cast = crate::shell::resolve_cast(id.as_str(), record_started_unix);
+    eprintln!("PROBE cast={cast:?} rec_started={record_started_unix}");
+    let before = match std::fs::metadata(&cast) {
+        Ok(m) => m.len(),
+        Err(_) => {
+            log::warn!(
+                "meta index: no cast file yet for shell {}; command not indexed: {cmd}",
+                id.as_str()
+            );
+            return;
+        }
+    };
+    let after = match std::fs::metadata(&cast) {
+        Ok(m) => m.len(),
+        Err(e) => {
+            eprintln!("PROBE after-fail: cast={cast:?} e={e}");
+            log::warn!("meta index: cast {} vanished mid-read: {e}", cast.display());
+            return;
+        }
+    };
+    scan_and_append(reg, cmd, id, outcome, &cast, before, after);
+}
+
+fn scan_and_append(
+    reg: &ShellRegistry,
+    cmd: &str,
+    id: &ShellId,
+    outcome: &CommandOutcome,
+    cast: &Path,
+    before: u64,
+    after: u64,
+) {
+    if after <= before {
+        eprintln!("PROBE empty-window: before={before} after={after}");
+        return;
+    }
+    let slice = match read_cast_slice(cast, before, after) {
+        Ok(slice) => slice,
+        Err(e) => {
+            log::warn!(
+                "meta index: reading {} for markers failed: {e}",
+                cast.display()
+            );
+            return;
+        }
+    };
+    let (inner_start, inner_end) = match marked_inner_range(&slice, &outcome.nonce) {
+        Some(range) => (before + range.0, before + range.1),
+        None => {
+            eprintln!(
+                "PROBE no-markers: cast={cast:?} slice_len={} nonce={:?}",
+                slice.len(),
+                outcome.nonce
+            );
+            log::warn!(
+                "meta index: markers for shell {} command `{cmd}` never landed; not indexed",
+                id.as_str()
+            );
+            return;
+        }
+    };
+    let record = CommandRecord {
+        index: 0,
+        command: cmd.to_owned(),
+        started: before as f64,
+        ended: after as f64,
+        exit_code: outcome.exit_code,
+        first_byte: inner_start,
+        end_byte: inner_end,
+    };
+    let meta_path = meta_path_for(cast);
+    eprintln!("PROBE append: meta={meta_path:?} inner={inner_start}..{inner_end}");
+    if let Err(e) =
+        MetaIndex::append(&meta_path, cast, id.as_str(), started_unix_of(reg, id), record)
+    {
+        log::warn!(
+            "meta index: appending to {} failed, command output is unaffected: {e}",
+            meta_path.display()
+        );
+    }
+}
+
+fn started_unix_of(reg: &ShellRegistry, id: &ShellId) -> u64 {
+    with_shells(reg, |store| {
+        store
+            .get(id.as_str())
+            .map(|record| record.started_unix)
+            .unwrap_or(0)
+    })
+}
+
+/// The `[before, after)` bytes of `cast`, read back after the command ran.
+/// Reads fail loudly for the caller to log; the command's own result is not at
+/// stake.
+fn read_cast_slice(cast: &Path, before: u64, after: u64) -> std::io::Result<Vec<u8>> {
+    let mut file = File::open(cast)?;
+    file.seek(SeekFrom::Start(before))?;
+    let mut buf = vec![0u8; (after - before) as usize];
+    file.read_exact(&mut buf)?;
+    Ok(buf)
 }
 
 #[cfg(test)]
@@ -161,6 +282,40 @@ mod tests {
     /// host writes so a test can read the raw log afterwards.
     async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
         let cast = spawn_with_cast(id.clone()).await?;
+        std::mem::forget(cast);
+        Ok(())
+    }
+
+    /// A spawn substitute whose cast the producer can resolve through the
+    /// ordinary path: `cast_path` under the test `HOME`'s `shell_logs_dir`,
+    /// the shape `resolve_cast` + `meta_path_for` operate on in production.
+    /// The per-id lock is leaked so the host reads as live.
+    async fn spawn_in_logs_dir(id: ShellId) -> anyhow::Result<()> {
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let cast = crate::shell::cast_path(id.as_str(), started);
+        eprintln!("PROBE spawn: cast={cast:?} started={started}");
+        std::fs::create_dir_all(cast.parent().context("cast has a parent")?)
+            .context("creating the logs dir")?;
+        let backend = crate::shell::PtyBackend::spawn(
+            "bash",
+            ROWS,
+            COLS,
+            100,
+            &cast,
+            started,
+        )
+        .context("spawning bash into the logs dir")?;
+        let lock = crate::daemon::instance::InstanceLock::acquire(&lock_path(id.as_str()))
+            .context("holding the per-id instance lock")?;
+        let socket = socket_path(id.as_str());
+        let listener = bind(&socket)
+            .await
+            .context("binding the in-process host's socket")?;
+        tokio::spawn(serve(listener, Arc::clone(&backend)));
+        std::mem::forget(lock);
         std::mem::forget(cast);
         Ok(())
     }
@@ -490,6 +645,86 @@ mod tests {
         assert!(
             !masked.contains('\x1b'),
             "no escape may survive into text a model reads: {masked:?}"
+        );
+    }
+
+    /// The full producer path: one command through `run_in_shell_with` ends up
+    /// as a `CommandRecord` in the shell's `.meta.json`, with the command's
+    /// text and its **real** exit code (3 here, so the assertion cannot pass on
+    /// a defaulted 0).
+    #[tokio::test]
+    async fn a_run_command_appends_a_meta_index_record() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let (id, result) = run_in_shell_with(
+            &reg,
+            Owner::Chat("index-producer".into()),
+            "printf 'SENTINEL_ONE\\n'; sh -c 'exit 3'",
+            5,
+            spawn_in_logs_dir,
+        )
+        .await
+        .expect("the command resolves");
+        assert_eq!(result.exit_code, 3, "sanity: the command really failed");
+
+        let record_started_unix = with_shells(&reg, |store| {
+            store.get(id.as_str()).map(|r| r.started_unix).unwrap_or(0)
+        });
+        let cast = crate::shell::resolve_cast(id.as_str(), record_started_unix);
+        let meta_path = meta_path_for(&cast);
+        let meta = MetaIndex::load(&meta_path)
+            .unwrap_or_else(|e| panic!("the command was indexed at {meta_path:?}: {e}"));
+        assert_eq!(meta.commands.len(), 1, "exactly one command indexed");
+        let record = &meta.commands[0];
+        assert_eq!(record.index, 0, "the first recorded command is index 0");
+        assert_eq!(record.command, "printf 'SENTINEL_ONE\\n'; sh -c 'exit 3'");
+        assert_eq!(record.exit_code, 3, "the real exit code is recorded");
+        assert!(
+            record.first_byte < record.end_byte,
+            "a non-empty clean range is stored: {record:?}"
+        );
+    }
+
+    /// The phase's deliverable: after a real command through the producer,
+    /// `read_shell` returns the command's clean output — sentinel present, no
+    /// marker text anywhere. Driven through the process-global registry, into
+    /// which `spawn_for` inserts the shell, exactly as production does.
+    #[tokio::test]
+    async fn read_shell_returns_clean_output_after_a_real_command() {
+        let (_home, _dir) = test_home();
+        let reg = crate::shell::registry();
+        let id = crate::shell::spawn_for(
+            reg,
+            Owner::Chat("read-shell-e2e".into()),
+            5,
+            false,
+            spawn_in_logs_dir,
+        )
+        .await
+        .expect("an ordinary shell spawns");
+        let result = run_in_shell_with(
+            reg,
+            Owner::Chat("read-shell-e2e".into()),
+            "printf 'SENTINEL_TWO\\n'",
+            5,
+            spawn_in_logs_dir,
+        )
+        .await
+        .expect("the command resolves");
+        assert_eq!(
+            result.0.as_str(),
+            id.as_str(),
+            "the second call reuses that shell"
+        );
+
+        let out = crate::daemon::executor::knowledge::read_shell(id.as_str(), None, None, None);
+        assert!(
+            out.contains("SENTINEL_TWO"),
+            "the command's output is recorded and readable: {out}"
+        );
+        assert!(
+            !out.contains("DE_"),
+            "no marker framing may leak into the recorded output: {out}"
         );
     }
 }

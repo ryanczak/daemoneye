@@ -42,6 +42,31 @@ pub fn cast_path(id: &str, started_unix: u64) -> PathBuf {
     crate::config::shell_logs_dir().join(format!("{id}-{started_unix}.cast"))
 }
 
+/// The cast file this id is writing to. The record's `started_unix` and the
+/// cast filename's timestamp are stamped in different processes and can
+/// disagree by one second across a spawn, so scan `shell_logs_dir()` for the
+/// cast whose name carries the id and the highest `started_unix`, falling back
+/// to `cast_path(id, fallback_started_unix)` when no cast exists yet.
+pub fn resolve_cast(id: &str, fallback_started_unix: u64) -> PathBuf {
+    let logs = crate::config::shell_logs_dir();
+    let mut best: Option<u64> = None;
+    if let Ok(entries) = std::fs::read_dir(&logs) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if let Some((pid, ts)) = crate::shell::parse_cast_name(&name.to_string_lossy())
+                && pid.as_str() == id
+                && best.is_none_or(|b| ts > b)
+            {
+                best = Some(ts);
+            }
+        }
+    }
+    match best {
+        Some(ts) => cast_path(id, ts),
+        None => cast_path(id, fallback_started_unix),
+    }
+}
+
 /// Run one shell host for `id` in-process: hold the per-id instance lock (the
 /// caller owns the id, so only the lockholder may unlink its socket), spawn
 /// the PTY backend, bind the socket, and serve until failure. `serve` runs

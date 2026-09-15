@@ -1,7 +1,7 @@
 # Phase 06a: the `.meta.json` command index — give it a producer
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress (escalated 2026-09-14 — spec defect corrected; see the Notes for executor)
 **Depends on:** 03b (`read_shell`, the reader that has been waiting for this),
 04b (`resolve_live_cast`, and the measurement that found the gap). Both
 **done**.
@@ -389,6 +389,20 @@ Each was run against the tree at drafting and returns the "now" value shown.
       failure — record and re-run.
 - [ ] All four gates pass.
 
+### Added at escalation 2026-09-14 — confirmed failing against the tree
+
+- [ ] **No debug prints:** `grep -c 'PROBE' src/daemon/executor/shell_exec.rs`
+      → **0** (now **9**), and
+      `git diff d5bfa9a7..HEAD -- 'src/*.rs' | grep -cE '^\+.*(eprintln!|println!|dbg!)'`
+      → **0**.
+- [ ] **The cast-settle wait exists and is async:**
+      `grep -c 'CAST_SETTLE' src/daemon/executor/shell_exec.rs` → **2 or
+      more** (now **0**), and the producer block uses no blocking sleep:
+      `grep -c 'std::thread::sleep' src/daemon/executor/shell_exec.rs` → **0**
+      (now **0** — keep it that way).
+- [ ] **The two host tests pass:** `cargo test --lib 'shell_exec'` → **12 or
+      more**, `0 failed` (now **10 passed, 2 failed**).
+
 ## Test plan
 
 Six new tests. Four are pure; two drive a real in-process host.
@@ -574,3 +588,133 @@ tool.**
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-14 23:08 (started)
+
+**Executor:** executor run (headless). Phase 06a is `in-progress` per the
+contract's step 1; the completion status flip and the `(complete)` entry remain
+server-authored.
+
+Work order: resolve_cast lift → CommandOutcome.nonce → MetaIndex::append →
+marked_inner_range (placed in `src/shell/log.rs`, beside `MetaIndex::append`,
+since it stores exactly the range `append` indexes and keeps `pty.rs` untouched
+beyond the nonce) → wire the producer into `run_in_shell_with` → mutation
+checks (task 7) → end-to-end capture (task 8).
+
+### Update — 2026-09-14 (escalation)
+
+**Chosen lever:** refined re-dispatch.
+**Rationale:** `budget_exceeded` at the 600-turn ceiling with **1875 passing
+and exactly 2 failing** — this phase's two host-driven tests. The run burned
+its budget against a mechanism **§ Pre-flight specified and that cannot
+work**: a resume would carry the same broken instruction forward, so the spec
+is what has to change.
+
+#### Notes for executor — 2026-09-14
+
+## STOP — the mechanism this doc gave you was wrong. That is on the architect, not you.
+
+**Most of this phase is already correct and on disk. Do not redo it.** The
+tree builds, clippy is clean, and **1875 tests pass**. Verified at review:
+
+- `MetaIndex::append` in `src/shell/log.rs` — landed.
+- `marked_inner_range` — landed, and its **four pure tests pass**.
+- `resolve_cast` lifted to `src/shell/launch.rs`, re-exported, and
+  `resolve_live_cast`'s private copy deleted from `knowledge/shell.rs` —
+  landed, with `knowledge::shell` still green.
+- `CommandOutcome.nonce` and the four construction sites — landed.
+
+**Exactly two tests fail**, both this phase's host-driven pair:
+`a_run_command_appends_a_meta_index_record` and
+`read_shell_returns_clean_output_after_a_real_command`. They fail for one
+reason, and the reason is a defect in this doc.
+
+## The defect: "read the length after `run_command` returns" is a race
+
+§ Pre-flight told you to read the cast's length before the command, run it,
+and read the length again. **The second read is not guaranteed to include the
+command's output.** Your own probe caught it exactly:
+
+```
+PROBE empty-window: before=1094 after=1094
+```
+
+Here is why, from `src/shell/backend.rs:79-92` — the host's pump thread:
+
+```rust
+        std::thread::spawn(move || {
+            loop {
+                match rx.blocking_recv() {
+                    Ok(chunk) => {
+                        let _ = pump_this.out_tx.send(chunk.clone());
+                        let log_res = pump_this
+                            .log
+                            .lock()
+                            .unwrap_or_log()
+                            .write_output(pump_this.started.elapsed(), &chunk);
+```
+
+**The chunk is broadcast to subscribers *first* and written to the cast log
+*second*.** `run_command` returns the moment it parses the END marker out of
+that broadcast, so it routinely returns before those same bytes reach the
+file. `before == after` is that race losing, and no amount of work on the
+test could have fixed it.
+
+## The corrected mechanism — wait for the marker, don't trust the clock
+
+Keep everything else. Replace only the "read length after" step:
+
+After `run_command` returns, **poll the cast until this command's END marker
+is actually in the file**, bounded, then take the range:
+
+```rust
+    // The host broadcasts a chunk before it writes that chunk to the cast
+    // (backend.rs pump thread), so `run_command` can return before the
+    // command's bytes are on disk. Wait for the END marker rather than
+    // assuming the file has caught up.
+    let deadline = std::time::Instant::now() + CAST_SETTLE_TIMEOUT;
+    let range = loop {
+        let len = std::fs::metadata(cast).map(|m| m.len()).unwrap_or(before);
+        if len > before
+            && let Ok(slice) = read_cast_slice(cast, before, len)
+            && let Some(inner) = marked_inner_range(&slice, &outcome.nonce)
+        {
+            break Some((before + inner.0, before + inner.1));
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(CAST_SETTLE_POLL);
+    };
+```
+
+with `CAST_SETTLE_TIMEOUT = Duration::from_secs(2)` and
+`CAST_SETTLE_POLL = Duration::from_millis(10)` as named constants carrying a
+doc comment that says why they exist. `range == None` → **no record**, which
+is what § Spec task 5 already required for a command whose markers never
+landed. The best-effort contract is unchanged: nothing here may alter what
+the caller returns.
+
+**This is a blocking `std::thread::sleep` inside an async fn — do not use
+it.** `run_in_shell_with` is `async`; use `tokio::time::sleep(...).await` in
+the loop. (`close_shell`'s `closed_by_observed_end` does use a blocking sleep
+and is *not* the example to follow — 04b's doc says so explicitly.)
+
+## Also required before this is done
+
+1. **Remove every `eprintln!("PROBE …")`.** There are several in
+   `src/daemon/executor/shell_exec.rs`. `grep -c 'PROBE' src/daemon/executor/shell_exec.rs`
+   must be **0** — the DoD forbids `println!`/`dbg!` debug calls and a
+   criterion now pins it.
+2. **`cargo fmt --all` — it currently fails.** The run never reached it.
+
+## Finish condition — check it yourself
+
+- `cargo test --lib` → **1877 or more**, `0 failed`. It is **1875 passed, 2
+  failed** right now; the two failures are the pair named above.
+- `grep -c 'PROBE' src/daemon/executor/shell_exec.rs` → **0**.
+- `cargo fmt --all --check` → exit 0.
+- The two host tests pass **without** being weakened: they must still assert
+  a real record with the command's text and its real **non-zero** exit code,
+  and that `read_shell`'s output contains the sentinel and **not** `DE_`.
+  Do not relax either assertion to make them pass.
