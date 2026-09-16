@@ -6,61 +6,51 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: M22 phase-07a — run-command-shell-target**
+**Active phase: none.** Phase-07a — run-command-shell-target closed
+**approved_first_try 2026-09-15**
 (`docs/dev/milestones/M22-tool-surface/phase-07a-run-command-shell-target.md`,
-status: todo, drafted 2026-09-15). Dispatch with
-`/rexymcp:dispatch phase-07a`.
+status: done). Next up is **07b — run-command-wait**, not yet drafted; run
+`/rexymcp:architect next` to draft it.
 
-Phase-06b — shell-history closed **approved_first_try 2026-09-15**
-(status: done) — the deferred `history` group at **48 tools: 34 core + 14
-deferred**, plus the sidecar-sweep retention fix.
+`run_terminal_command` now takes **`shell?`** (`"sN"` targets that shell,
+`"new"` opens one, omitted keeps the lowest-numbered reuse) and
+**`timeout_secs?`**. Additive: still **48 tools, 34 core + 14 deferred**,
+`doc_truth` 10, and `background`/`target_pane`/`retry_in_pane` all still
+present — their retirement is 09's, with the pane substrate. `src/ipc.rs` and
+`src/cli/` are untouched, pinned by a criterion.
 
-**Phase 07 is re-scoped into 07a/07b, measured rather than assumed.** The
-charter row bundles two additions, one rename and two retirements.
-`target_pane` turns out to have **170** references — including the **IPC
-wire** (`src/ipc.rs:197`, `:447`, the approval panel's pane hint), 23 in
-`src/cli/`, 55 in the executor, 33 in `src/ai/` and 9 in the prompt — and
-`retry_in_pane` 13. Those are the pane *substrate*, not tool parameters, and
-they die with the pane tools in **phase 09**. `host?` has nowhere to land for
-the **third** time this milestone (after `open_shell` in 04a and
-`list_shell_logs` in 06b) and waits for M21/M23.
+`open_shell`'s caveat from 04a is now **actionable** rather than a warning,
+and its description says so — with 04a's `lowest-numbered` test assertion
+intact.
 
-**Scope for 07a:** `run_terminal_command` gains `shell?` (`"sN"` targets that
-shell, `"new"` opens one) and `timeout_secs?`. **Additive — nothing is
-retired and no count moves**; still 48/34/14, `doc_truth` 10. This closes the
-gap `open_shell`'s own result sentence has advertised since 04a, so that
-sentence and its `ToolDef` description get updated in the same phase — while
-keeping the word `lowest-numbered`, which 04a made a test assertion.
+**Second clean phase running: `approved_first_try`, 572 turns, no bounce.**
 
-**The compile wall here is a positional tuple.** `AiEvent::ToolCall` is a
-six-field tuple variant, not a struct, so adding two fields breaks every
-construction and match at once — **four sites**, tabled in the doc, to be
-edited in one batch. The doc also says to append rather than insert, and
-explicitly forbids converting it to a struct variant as out of scope.
+**Three mutations re-run at review, each 6/6 red.** Including one the spec
+did not ask for — making `resolve_shell_target` ignore its argument reddens
+the targeting test, so the phase's actual point is pinned, not just its
+error paths.
 
-**Ownership is the security-relevant part:** a `shell` id the caller does not
-own is refused before the command is written anywhere, compared on
-`Owner::key()` and never the inner string — the rule `close_shell` and
-`send_input` already follow. An unknown or exited id is refused too, never
-silently fallen back to the reuse shell.
+**The executor made two good calls worth recording.** It found that the
+spec's sketched mutation for the ownership check **can never redden** (the
+caller's kind still differs, so the guard keeps refusing) and supplied the
+form that does — stripping the kind prefix from both sides. And it reported
+an unsatisfiable criterion with its measured values instead of contorting the
+code to satisfy a literal. That is the **third phase running** where a
+specified mutation was the proxy rather than the test.
 
-**Three of my own criteria were wrong and were corrected before dispatch**,
-all caught by running them:
-- a param count that forgot the `sed` range also prints the tool's own
-  `name:` line (5, not 4);
-- a `LOCAL_CMD_TIMEOUT` count pinned at the wrong now-value, and redundant
-  with the criterion that actually matters (the error message must stop
-  hard-coding the constant);
-- a `summary` criterion that was **already vacuously satisfied** — the word
-  `shell` appears 8 times in that function, and scoping to the
-  `PendingCall::Foreground {` range does not help because `sed` restarts a
-  range on each match and would also select the `to_tool_call` and `id()`
-  arms. Re-pinned on the fact that `summary` has **no** `Foreground` arm at
-  all today, so `run_terminal_command`'s `ToolStarted` line currently shows
-  no argument whatsoever.
+**Two more instrument errors of mine, in a single criterion** — ninth and
+tenth across M22. `grep -c 'fn resolve_shell_target' → 1` is unsatisfiable
+against this doc's own test-name criterion (it reads 4), and the purity `sed`
+range restarted on each test fn, swallowing `mod tests` and printing 31.
+The sharp part: the obvious repair, anchoring `^fn`, would have passed
+**vacuously** by selecting nothing, since the body is `pub(super) fn`. I also
+mis-applied one mutation myself (a regex assuming a positional format arg
+where the code uses an inline captured identifier) and only caught it because
+6-of-6 **green** on a mutation is implausible on its face.
 
-**Next step:** `/rexymcp:dispatch phase-07a`. Phases 07b–10 are not drafted;
-each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:architect next` drafts **phase-07b —
+run-command-wait**. Phases 07b–10 are not drafted; each is drafted after its
+predecessor is approved.
 
 **Owed at milestone close, now at three occurrences — fold it.** Six
 architect-side instrument errors across M22, and the deeper version has hit

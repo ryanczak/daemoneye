@@ -1,7 +1,7 @@
 # Phase 07a: `run_terminal_command { shell?, timeout_secs? }` — target a shell, bound the wait
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 03a (`list_shells`, whose ids this consumes), 04a
 (`open_shell`, whose result sentence promises exactly this), and 06a (the
 producer that makes a targeted command's output readable). All **done**.
@@ -356,11 +356,19 @@ Each was run against the tree at drafting and returns the "now" value shown.
       → **1** (now `0`), and the four construction/match sites all compile —
       `grep -rc 'AiEvent::ToolCall' --include=*.rs src/ | grep -v ':0' | wc -l`
       → **4**, unchanged.
-- [ ] **The resolver exists and is pure:**
-      `grep -c 'fn resolve_shell_target' src/daemon/executor/shell_exec.rs` →
-      **1** (now `0`), and
-      `sed -n '/fn resolve_shell_target/,/^}/p' src/daemon/executor/shell_exec.rs | grep -cE 'await|registry\(\)|fs::'`
-      → **0**.
+- [x] **The resolver exists and is pure** — *both halves corrected at review;
+      the originals were unsatisfiable and vacuous respectively.*
+      `grep -c '^pub(super) fn resolve_shell_target' src/daemon/executor/shell_exec.rs`
+      → **1**. *(The original dropped the anchor and demanded 1 for the bare
+      substring — impossible, because this doc's own six-test criterion
+      requires three `fn resolve_shell_target_*` test names, so it reads 4.)*
+      Purity:
+      `sed -n '/^pub(super) fn resolve_shell_target/,/^}/p' … | grep -cE 'await|registry\(\)|fs::'`
+      → **0** over a range that really selects the 15-line body. *(The
+      original's `/fn resolve_shell_target/,/^}/` restarted on each test fn and
+      swallowed `mod tests`, printing 31; anchoring it as `^fn` instead would
+      have selected **nothing** and passed vacuously — the body is
+      `pub(super) fn`.)*
 - [ ] **`"new"` spawns a reusable shell, not a dedicated one:**
       `grep -c 'spawn_dedicated_for' src/daemon/executor/shell_exec.rs` →
       **0** (now `0` — keep it that way).
@@ -898,3 +906,67 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b51128af262fcc4a51a7f49b75b4e45ae9ad06bb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-15
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (572 turns)
+- **Scope deviations:** one, disclosed and **ruled in scope** — the
+  spawn-injected seam was implemented as `run_in_shell_with_spawn` with a
+  production wrapper `run_in_shell`, rather than keeping the old
+  `run_in_shell_with` name. Same file, same authorization, four existing
+  tests renamed at the call, no behaviour changed.
+- **Calibration:** **two more architect-side instrument errors, both mine,
+  both in one criterion.** `grep -c 'fn resolve_shell_target' → 1` is
+  unsatisfiable against this doc's own test-name criterion (it reads 4), and
+  the purity `sed` range restarted on each test fn and swallowed `mod tests`
+  (31 lines). Worse, the obvious repair — anchoring `^fn` — would have passed
+  **vacuously**, selecting nothing, because the body is `pub(super) fn`. Both
+  corrected in place. That is the **ninth and tenth** instrument error across
+  M22, and the `sed`-restart bug is one this very doc warns about in its own
+  `summary` criterion note. Writing the caution did not stop me making the
+  mistake twenty lines later.
+
+**All four gates re-run at review as separate invocations** (clippy after
+`touch src/lib.rs`): fmt clean, build 0 warnings, clippy `-D warnings` exit 0,
+`cargo test --lib` → **1892 passed, 0 failed**. `shell_exec` **19**,
+`knowledge::shell` 51, `ai::tools` 22.
+
+**Every other acceptance criterion re-run: all pass.** The two new parameters
+exist, **nothing was retired** (`background`, `target_pane`, `retry_in_pane`
+all still present, as the re-scope requires), no phantom `host`/`wait`, the
+tool surface did not move (48 / 34 / 14, both doc count lines unchanged), the
+tuple was widened with all four sites following, `enum_values` untouched,
+`summary` gained its `Foreground` arm, and **`src/ipc.rs` and `src/cli/` are
+untouched** — the pane substrate waits for 09, as designed.
+
+**Three mutations re-run by hand, each 6 of 6 red with a green revert.**
+
+- *Ownership by inner string.* The executor flagged that the spec's sketch —
+  mutating only the record-side mapping — **never reddens**, because the
+  caller's kind still differs and the guard keeps refusing. Correct. The form
+  that discriminates strips the kind prefix from **both** sides, and that is
+  6/6.
+- *Timeout error names the constant.* 6/6 once applied properly. **My first
+  attempt at this mutant did not apply at all** — my regex assumed a
+  positional format arg where the code uses an inline captured identifier
+  (`{applied_timeout:#?}`), so the 6/6 green it produced was meaningless. I
+  caught it because green-6-of-6 on a mutation is itself implausible.
+- *The headline property.* Not specified, added at review: making
+  `resolve_shell_target` ignore its argument reddens
+  `run_terminal_command_targets_the_named_shell` 6/6. The phase's actual
+  point is pinned.
+
+**The executor's two disclosures were both correct and both worth having.**
+It reported the unsatisfiable criterion with its measured values rather than
+contorting code to satisfy a literal, and it worked out that the specified
+mutation could not redden and found the form that does. That is the third
+phase running where a *specified mutation* turned out to be the proxy rather
+than the test — the pattern is now well past a trend.
+
+**What the phase delivered:** `run_terminal_command { shell?, timeout_secs? }`
+— `"sN"` targets, `"new"` opens, omitted keeps the lowest-numbered reuse;
+another owner's shell refused on `Owner::key()`; the timeout error naming the
+value actually applied. `open_shell`'s caveat is now actionable and its
+description says so, with 04a's `lowest-numbered` assertion intact.
