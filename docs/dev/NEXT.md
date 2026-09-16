@@ -6,51 +6,49 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: none.** Phase-07a — run-command-shell-target closed
-**approved_first_try 2026-09-15**
-(`docs/dev/milestones/M22-tool-surface/phase-07a-run-command-shell-target.md`,
-status: done). Next up is **07b — run-command-wait**, not yet drafted; run
-`/rexymcp:architect next` to draft it.
+**Active phase: M22 phase-07b — run-command-wait**
+(`docs/dev/milestones/M22-tool-surface/phase-07b-run-command-wait.md`, status:
+todo, drafted 2026-09-15). Dispatch with `/rexymcp:dispatch phase-07b`.
 
-`run_terminal_command` now takes **`shell?`** (`"sN"` targets that shell,
-`"new"` opens one, omitted keeps the lowest-numbered reuse) and
-**`timeout_secs?`**. Additive: still **48 tools, 34 core + 14 deferred**,
-`doc_truth` 10, and `background`/`target_pane`/`retry_in_pane` all still
-present — their retirement is 09's, with the pane substrate. `src/ipc.rs` and
-`src/cli/` are untouched, pinned by a criterion.
+Phase-07a — run-command-shell-target closed **approved_first_try 2026-09-15**
+(status: done) — `shell?` + `timeout_secs?`, additive, 48 tools unchanged.
 
-`open_shell`'s caveat from 04a is now **actionable** rather than a warning,
-and its description says so — with 04a's `lowest-numbered` test assertion
-intact.
+**Scope for 07b:** `wait?` replaces `background` on `run_terminal_command`.
+`wait: false` is what `background: true` was; omitting it waits. **No count
+moves** — 48/34/14, `doc_truth` 10 — and `target_pane`/`retry_in_pane` still
+exist, pinned by a criterion; their retirement is 09's with the pane
+substrate. `host?` is measured absent for the **fourth** M22 phase running.
 
-**Second clean phase running: `approved_first_try`, 572 turns, no bounce.**
+**Two things measured rather than assumed.** `wait: false` **already returns
+the shell id** — the background arm interpolates `start.shell_id` — so the
+design's promise is met and this phase makes the *description* honest rather
+than changing behaviour. And the current description is wrong twice over on
+the PTY default: it says "daemon host tmux window" and "user's terminal
+pane", neither of which is what happens.
 
-**Three mutations re-run at review, each 6/6 red.** Including one the spec
-did not ask for — making `resolve_shell_target` ignore its argument reddens
-the targeting test, so the phase's actual point is pinned, not just its
-error paths.
+**The tuple field swaps in place.** 07a widened `AiEvent::ToolCall` to eight
+fields; 07b changes position 3 from `bool` to `Option<bool>` rather than
+removing and re-appending, so the arity holds and the same four sites are
+edited without anything shifting around them.
 
-**The executor made two good calls worth recording.** It found that the
-spec's sketched mutation for the ownership check **can never redden** (the
-caller's kind still differs, so the guard keeps refusing) and supplied the
-form that does — stripping the kind prefix from both sides. And it reported
-an unsatisfiable criterion with its measured values instead of contorting the
-code to satisfy a literal. That is the **third phase running** where a
-specified mutation was the proxy rather than the test.
+**The pre-injected trap is the ghost loop.** `src/daemon/ghost.rs` constructs
+this event directly, and inverting its value backwards would silently reverse
+every ghost command's execution mode with **no compiler error** — both
+spellings are `Option<bool>`. The doc requires reading what it passes before
+editing and recording the before/after in the Update Log, and test 4 asserts
+on the resulting **variant** rather than the field, because a field assertion
+would pass against a double inversion.
 
-**Two more instrument errors of mine, in a single criterion** — ninth and
-tenth across M22. `grep -c 'fn resolve_shell_target' → 1` is unsatisfiable
-against this doc's own test-name criterion (it reads 4), and the purity `sed`
-range restarted on each test fn, swallowing `mod tests` and printing 31.
-The sharp part: the obvious repair, anchoring `^fn`, would have passed
-**vacuously** by selecting nothing, since the body is `pub(super) fn`. I also
-mis-applied one mutation myself (a regex assuming a positional format arg
-where the code uses an inline captured identifier) and only caught it because
-6-of-6 **green** on a mutation is implausible on its face.
+**Three non-parameter `background`s are named as off-limits** so they are not
+chased: the IPC approval flag, the events-log verb (which `README.md:1397`
+documents), and `bg_shell`'s own names.
 
-**Next step:** `/rexymcp:architect next` drafts **phase-07b —
-run-command-wait**. Phases 07b–10 are not drafted; each is drafted after its
-predecessor is approved.
+One criterion of mine was measured wrong at drafting and corrected before
+dispatch — `grep -c 'background' src/ipc.rs` is **6**, not the 3 I first
+wrote.
+
+**Next step:** `/rexymcp:dispatch phase-07b`. Phases 08–10 are not drafted;
+each is drafted after its predecessor is approved.
 
 **Owed at milestone close, now at three occurrences — fold it.** Six
 architect-side instrument errors across M22, and the deeper version has hit
