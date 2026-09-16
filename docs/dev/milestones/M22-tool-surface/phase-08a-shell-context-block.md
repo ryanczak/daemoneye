@@ -1,7 +1,7 @@
 # Phase 08a: `[SHELLS]` / `[DEFAULT SHELL]` context blocks
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bug-08a-1 — two dead assertions + a false mechanism claim in the E2E note)
 **Depends on:** 04a (`open_shell`/`close_shell`), 07a/07b (`shell?`/`wait?` on
 `run_terminal_command`). Both **done**.
 **Estimated diff:** ~400 lines incl. tests
@@ -459,13 +459,22 @@ the measured current value.
 - [ ] `grep -c 'shell_context_block' src/daemon/prompt.rs` → **2** (now 0)
 - [ ] `grep -c 'shell_context_block' src/daemon/executor/mod.rs` → **1** (now 0)
 - [ ] `grep -c 'shell_context_block' src/daemon/executor/knowledge/mod.rs` → **1** (now 0)
-- [ ] `cargo test --lib 'daemon::executor::knowledge::shell'` reports **61 passed** (now 51 — the ten tests of the test plan)
-- [ ] `cargo test --lib` reports **1905 passed** (now 1895)
+- [ ] ~~`cargo test --lib 'daemon::executor::knowledge::shell'` reports **61 passed**~~ — superseded by the bug-08a-1 criterion below (62)
+- [ ] ~~`cargo test --lib` reports **1905 passed**~~ — superseded by the bug-08a-1 criterion below (1906)
 - [ ] `grep -c 'host_is_alive' src/daemon/executor/knowledge/shell.rs` → **unchanged at 9** (measured now: 9). A rising count means the prompt path grew a per-shell flock probe.
 - [ ] `grep -rc '\[HOSTS\]' src/` produces no non-zero line — `[HOSTS]` is **not** built by this phase.
 - [ ] `grep -c 'get_shell_context' src/ai/tools/defs.rs` → **0** — the tool rename is 08b, not this phase.
 - [ ] `grep -c 'mask_sensitive' src/daemon/prompt.rs` → **unchanged at 0** (measured now: 0)
 - [ ] `cargo test --test doc_truth` reports **10 passed** — the tool table is untouched.
+- [ ] **bug-08a-1, finding 1:** `grep -cF '!out.contains("[dedicated]") || out.contains("s4")' src/daemon/executor/knowledge/shell.rs` → **0** (now 1 — a tautology: the fixture always lists `s4`)
+- [ ] **bug-08a-1, finding 1:** `grep -cF 's0 age:4m — ' src/daemon/executor/knowledge/shell.rs` → **0** (now 1 — a dead disjunct; the `—` separator follows only the count)
+- [ ] **bug-08a-1, finding 1:** `grep -c 'format_shell_context_keeps_each_flag_on_its_own_row' src/daemon/executor/knowledge/shell.rs` → **1** (now 0). The new test splits the `[SHELLS]` line on `", "` and asserts per **segment**: the `s0` segment carries no flag, the `s4` segment carries `[dedicated]`.
+- [ ] **bug-08a-1, finding 1:** mutation C (a `patch`-tool task) — emit `[dedicated]` for **every** row rather than only `row.dedicated`; `cargo test --lib 'knowledge::shell'` must go red with `format_shell_context_keeps_each_flag_on_its_own_row` among the failures, then green on revert. Both `test result:` lines pasted in the Update Log.
+- [ ] `cargo test --lib 'daemon::executor::knowledge::shell'` reports **62 passed** (now 61)
+- [ ] `cargo test --lib` reports **1906 passed** (now 1905)
+- [ ] **bug-08a-1, finding 2:** `sed -n '/^### E2E capture (task 9)/,/^### Update — ts=/p' docs/dev/milestones/M22-tool-surface/phase-08a-shell-context-block.md | grep -c 'same second'` → **0** (now 1). Scoped to the Update Log section so this criterion line cannot satisfy its own needle.
+- [ ] **bug-08a-1, finding 2:** `sed -n '/^### E2E capture (task 9)/,/^### Update — ts=/p' docs/dev/milestones/M22-tool-surface/phase-08a-shell-context-block.md | grep -c 'in the future'` → **at least 1** (now 0) — the corrected note must name the injected clock and the future-start branch of the age guard. Same scoping reason.
+- [ ] **bug-08a-1:** the existing `### E2E capture (task 9)` block is unchanged — its `PASTE MATCH` transcript must not be re-run or re-pasted; only the prose note beneath it changes.
 - [ ] `cargo fmt --all` clean, `cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings` clean.
 - [ ] `src/tmux/cache.rs` is unmodified: `git diff --stat e593a499..HEAD -- src/tmux/cache.rs` is empty.
 

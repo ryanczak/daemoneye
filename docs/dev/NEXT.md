@@ -1,14 +1,17 @@
 # NEXT
 
 **Active phase:** `docs/dev/milestones/M22-tool-surface/phase-08a-shell-context-block.md`
-— 08a, shell-context-block. Drafted 2026-09-16, status `todo`, not yet
-dispatched.
+— 08a, shell-context-block. **Bounced 2026-09-16** (bug-08a-1), status
+`in-progress`.
 
-Charter row 08 was split at drafting: 08a adds the `[SHELLS]` /
-`[DEFAULT SHELL]` ambient context block (additive, no tool change); 08b renames
-`get_terminal_context` → `get_shell_context { scope }` and lands **after** 09
-removes the pane tools. `[HOSTS]` and the approval panel's shell/host naming are
-deferred — the fifth measurement that no host concept exists, and an IPC wire
-change respectively. Rationale in the milestone README's Notes.
+The shipped behaviour is correct: all twelve original acceptance criteria pass,
+four gates are green, and both mutation checks reproduce independently (3/3 red
+each, on exactly the named tests). The bounce is for test-quality and evidence
+defects — two assertions in
+`format_shell_context_lists_every_shell_with_its_flags` that cannot fail, and an
+E2E note that states a mechanism which is not the one at work.
 
-Dispatch with `/rexymcp:dispatch phase-08a`.
+The refreshed acceptance criteria at the bottom of the phase doc's criteria list
+express the outstanding work; each was run and fails against HEAD `6f876d0d`.
+
+Re-dispatch with `/rexymcp:dispatch phase-08a`.
