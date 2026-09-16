@@ -1,7 +1,7 @@
 # Bug 1 on phase-07b: the ghost test duplicates another test and its message says the opposite of its assertion
 
 **Severity:** minor
-**Status:** open
+**Status:** closed (fixed 2026-09-16, commit `ad16ff6b`)
 **Filed:** 2026-09-15
 
 ## What's wrong
@@ -97,3 +97,22 @@ pure routing function and an instruction to assert on routing, asserting on
       foreground-everything mutant reddens `wait_false_runs_in_the_background`.
 - [ ] All four gates pass; no `#[allow]` added:
       `git diff d3121674..HEAD -- 'src/*.rs' | grep -cE '^\+.*#\[allow'` → **0**.
+
+
+## Resolution — 2026-09-16
+
+The **removal** route, with the measurement that shows it was the only one
+available: ghost's push is unconditional, so no mutant changes its behaviour,
+and swapping `Background` for `Foreground` does not compile (the variants'
+fields differ). A mutant that does not compile is a broken build, not a
+mutation — so a discriminating test for that site cannot exist.
+
+Verified independently at review:
+
+- `ghost_tool_call_preserves_its_execution_mode` is gone;
+  `daemon::stream` → **11**, full lib → **1895**, both matching the route.
+- **The duplicate is provably gone:** the background-everything mutant now
+  reddens **exactly two** tests (`omitting_wait…`, `wait_true…`) where it
+  reddened three before; the foreground-everything mutant reddens **exactly
+  one**. Revert green at 11 both times.
+- All three surviving tests' messages agree with their assertions.

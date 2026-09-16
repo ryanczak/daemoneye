@@ -1,7 +1,7 @@
 # Phase 07b: `wait?` replaces `background` on `run_terminal_command`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 07a, which widened `AiEvent::ToolCall` and added
 `shell?`/`timeout_secs?`. **done**.
 **Estimated diff:** ~380 lines incl. tests
@@ -1155,3 +1155,60 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7d0cd17cc131af9a98a062bc0886a006350e7ec3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-16
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bug-07b-1`, `closed`)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (184 + 106 turns)
+- **Scope deviations:** none across both rounds. `src/ipc.rs` and `src/cli/`
+  untouched over the whole range, and the three non-parameter `background`s
+  survive as § Pre-flight required.
+- **Calibration:** none new. The bounce's lesson stands and is recorded in
+  `bug-07b-1`: **measure the thing you are asking to be pinned.** My Test plan
+  asked for a ghost-routing assertion without having measured that ghost's
+  routing is unconditional — and therefore unpinnable.
+
+**All four gates re-run at review as separate invocations:** fmt clean, build
+0 warnings, clippy `-D warnings` exit 0, `cargo test --lib` → **1895 passed,
+0 failed**. `daemon::stream` **11**, `shell_exec` 19, `knowledge::shell` 51,
+`ai::tools` 22, `config::` 92, `doc_truth` 10, `isolation` 9.
+
+**Every acceptance criterion re-run: all pass.** `wait` exists and
+`background` is gone from the tool; the pane parameters survive for 09; no
+`host`; the tuple kept its arity with `Option<bool>` at position 3 and a
+`// wait` comment; four sites; the routing reads `wait == Some(false)`; the
+args struct has no serde default; the description drops tmux and names the
+shell id; the surface is unmoved at 48/34/14; `ipc.rs` (6) and the events-log
+verb (3) untouched.
+
+**The removal route was the right call, and the argument for it is sound.**
+The bug offered two routes; the executor measured that only one exists.
+Ghost's push is unconditional — there is no second value the code can take —
+so no mutant changes ghost's behaviour, and the only candidate (swapping
+`Background` for `Foreground`) fails to **compile** because the variants'
+fields differ. A mutant that does not compile is a broken build, not a
+mutation. That matches what this review found independently before filing the
+bug.
+
+**Both mutations re-run by hand on the reduced suite, and the duplicate is
+provably gone:**
+
+- Background-everything reddens **exactly two** —
+  `omitting_wait_runs_in_the_foreground` and
+  `wait_true_runs_in_the_foreground`. **No third name**, which is the
+  bug's "no duplicate remains" condition met directly.
+- Foreground-everything reddens **exactly one**,
+  `wait_false_runs_in_the_background`.
+- Revert green at 11 both times.
+
+**All three survivors' messages now match their assertions** — checked at
+review, not read: each says what it asserts, and the one that claimed the
+opposite is gone.
+
+**What the phase delivered:** `wait?` replaces `background` on
+`run_terminal_command` — omitted or `true` waits, `wait: false` is the old
+`background: true` and returns the shell id immediately, with `watch_shell` /
+`read_shell` named as the follow-up. The tuple field swapped in place rather
+than changing arity twice. Nothing else moved: the pane parameters wait for
+09, and the approval flag, log verb and execution-path names are untouched.

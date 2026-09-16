@@ -6,49 +6,40 @@ here — lives in [NEXT-HISTORY.md](NEXT-HISTORY.md).
 
 ## M22 — Tool surface & context (active, scoped 2026-09-12)
 
-**Active phase: M22 phase-07b — run-command-wait**
+**Active phase: none.** Phase-07b — run-command-wait closed
+**approved_after_1 2026-09-16**
 (`docs/dev/milestones/M22-tool-surface/phase-07b-run-command-wait.md`, status:
-todo, drafted 2026-09-15). Dispatch with `/rexymcp:dispatch phase-07b`.
+done; `bugs/bug-07b-1.md` `closed`). Next up is **08 — shell-context**, not yet
+drafted; run `/rexymcp:architect next` to draft it.
 
-Phase-07a — run-command-shell-target closed **approved_first_try 2026-09-15**
-(status: done) — `shell?` + `timeout_secs?`, additive, 48 tools unchanged.
+`wait?` replaces `background` on `run_terminal_command` — omitted or `true`
+waits, `wait: false` is the old `background: true` and returns the shell id
+immediately, with `watch_shell` / `read_shell` named as the follow-up. The
+tuple field swapped in place rather than changing arity twice. **48 tools,
+34 core + 14 deferred**, unmoved. The pane parameters survive for 09, and the
+IPC approval flag, the events-log verb and `bg_shell`'s own names are
+untouched.
 
-**Scope for 07b:** `wait?` replaces `background` on `run_terminal_command`.
-`wait: false` is what `background: true` was; omitting it waits. **No count
-moves** — 48/34/14, `doc_truth` 10 — and `target_pane`/`retry_in_pane` still
-exist, pinned by a criterion; their retirement is 09's with the pane
-substrate. `host?` is measured absent for the **fourth** M22 phase running.
+**The bounce was a test that proved nothing, and the fix was to delete it.**
+`ghost_tool_call_preserves_its_execution_mode` asserted
+`!routes_to_background(None)` — byte-for-byte another test — while its message
+claimed the opposite. The executor measured that a *discriminating* version
+cannot exist: ghost's push is unconditional, so no mutant changes its
+behaviour, and the only candidate does not compile because
+`Background`/`Foreground` have different fields. **A mutant that does not
+compile is a broken build, not a mutation.**
 
-**Two things measured rather than assumed.** `wait: false` **already returns
-the shell id** — the background arm interpolates `start.shell_id` — so the
-design's promise is met and this phase makes the *description* honest rather
-than changing behaviour. And the current description is wrong twice over on
-the PTY default: it says "daemon host tmux window" and "user's terminal
-pane", neither of which is what happens.
+**The duplicate is provably gone**, verified at review by mutation: the
+background-everything mutant now reddens **exactly two** tests where it
+reddened three, and foreground-everything reddens exactly one.
 
-**The tuple field swaps in place.** 07a widened `AiEvent::ToolCall` to eight
-fields; 07b changes position 3 from `bool` to `Option<bool>` rather than
-removing and re-appending, so the arity holds and the same four sites are
-edited without anything shifting around them.
+**Calibration carried forward, mine:** the Test plan asked for a ghost-routing
+assertion without my having measured that ghost's routing is unconditional and
+therefore unpinnable. **Measure the thing you are asking to be pinned.**
 
-**The pre-injected trap is the ghost loop.** `src/daemon/ghost.rs` constructs
-this event directly, and inverting its value backwards would silently reverse
-every ghost command's execution mode with **no compiler error** — both
-spellings are `Option<bool>`. The doc requires reading what it passes before
-editing and recording the before/after in the Update Log, and test 4 asserts
-on the resulting **variant** rather than the field, because a field assertion
-would pass against a double inversion.
-
-**Three non-parameter `background`s are named as off-limits** so they are not
-chased: the IPC approval flag, the events-log verb (which `README.md:1397`
-documents), and `bg_shell`'s own names.
-
-One criterion of mine was measured wrong at drafting and corrected before
-dispatch — `grep -c 'background' src/ipc.rs` is **6**, not the 3 I first
-wrote.
-
-**Next step:** `/rexymcp:dispatch phase-07b`. Phases 08–10 are not drafted;
-each is drafted after its predecessor is approved.
+**Next step:** `/rexymcp:architect next` drafts **phase-08 — shell-context**.
+Phases 08–10 are not drafted; each is drafted after its predecessor is
+approved.
 
 **Owed at milestone close, now at three occurrences — fold it.** Six
 architect-side instrument errors across M22, and the deeper version has hit
