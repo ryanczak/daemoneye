@@ -329,7 +329,7 @@ impl AiClient for GeminiClient {
                                                     let _ = tx.send(AiEvent::ToolCall(
                                                         next_tool_id(),
                                                         cmd,
-                                                        bg,
+                                                        Some(!bg),
                                                         None,
                                                         None,
                                                         None,

@@ -160,7 +160,7 @@ mod tests {
             .expect("run_terminal_command must be present");
         let props = &rtc["parameters"]["properties"];
         assert_eq!(props["command"]["type"], "STRING");
-        assert_eq!(props["background"]["type"], "BOOLEAN");
+        assert_eq!(props["wait"]["type"], "BOOLEAN");
         // target_pane is STRING too
         assert_eq!(props["target_pane"]["type"], "STRING");
     }

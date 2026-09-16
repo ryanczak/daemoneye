@@ -15,8 +15,7 @@ pub(super) trait ToolArgs: Sized {
 #[derive(Deserialize)]
 pub(super) struct RunTerminalCommandArgs {
     command: String,
-    #[serde(default)]
-    background: bool,
+    wait: Option<bool>,
     target_pane: Option<String>,
     retry_in_pane: Option<String>,
     shell: Option<String>,
@@ -354,7 +353,7 @@ impl ToolArgs for RunTerminalCommandArgs {
         AiEvent::ToolCall(
             id.to_string(),
             self.command,
-            self.background,
+            self.wait,
             self.target_pane,
             self.retry_in_pane,
             ts,

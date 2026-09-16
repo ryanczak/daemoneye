@@ -829,7 +829,7 @@ async fn do_ghost_turn(
                     AiEvent::ToolCall(
                         id,
                         command,
-                        _background,
+                        _wait,
                         _target_pane,
                         retry_in_pane,
                         thought_signature,

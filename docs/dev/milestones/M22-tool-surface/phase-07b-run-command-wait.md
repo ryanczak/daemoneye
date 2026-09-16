@@ -1,7 +1,7 @@
 # Phase 07b: `wait?` replaces `background` on `run_terminal_command`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 07a, which widened `AiEvent::ToolCall` and added
 `shell?`/`timeout_secs?`. **done**.
 **Estimated diff:** ~380 lines incl. tests
@@ -461,3 +461,155 @@ unchanged. Also do not touch `src/shell/`, `src/daemon/executor/shell_exec.rs`
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-15 19:19 (started, executor)
+
+Started phase 07b. Plan: swap position 3 of the tuple to `Option<bool>` and edit the
+four sites in one batch, swap `RunTerminalCommandArgs.background` for
+`wait: Option<bool>`, invert the routing to `wait == Some(false)`, rewrite the
+`wait` ParamDef description plus the `run_terminal_command` rows in CLAUDE.md,
+README.md and sre.toml (counting every `background` sentence I change), then the
+four routing tests, the two mutation checks and the verbatim end-to-end capture.
+Ghost loop and Gemini constructor preserve intent per § Pre-flight. Status left at
+`in-progress`; the completion tail belongs to the server.
+
+### Update — 2026-09-15 19:31 (progress — mutation checks)
+
+**Routing shape chosen.** The routing is a pure function, `fn
+routes_to_background(wait: Option<bool>) -> bool`, called from the
+`AiEvent::ToolCall` arm in `stream.rs` — the spec's `route_for` suggestion,
+named after what it decides. The one-line rule the criterion greps for lives
+in that function's body (`wait == Some(false)`), still in `stream.rs`.
+
+**Ghost intent check (§ Pre-flight), recorded before editing:** `ghost.rs`
+destructured position 3 as `_background` — the value it received from the
+backend — and unconditionally pushed `PendingCall::Background` regardless of
+it. It now destructures the same position as `_wait` and still pushes
+`PendingCall::Background` unconditionally, so its behaviour is identical
+under the new spelling: an omitted `wait` on a ghost's own ToolCall event
+still takes the background path, which is what the ghost loop always did.
+
+**Mutation checks** — both applied with `patch`, both reverted with `patch`.
+Each test named in the spec ran six times against its mutant.
+
+1. *Omitting `wait` must wait* — mutant: routing returns `true`
+   unconditionally (i.e. `if wait != Some(true)` over the same domain, since
+   `true` ignores the value). 6 of 6 runs red:
+   `test result: FAILED. 9 passed; 3 failed; …` each run; the three red
+   tests are `omitting_wait_runs_in_the_foreground`,
+   `wait_true_runs_in_the_foreground` and
+   `ghost_tool_call_preserves_its_execution_mode` — mutant red in every run.
+
+2. *`wait: false` must not wait* — mutant: routing returns `false`
+   unconditionally.
+
+   6 of 6 runs red: `test result: FAILED. 11 passed; 1 failed; …` each run;
+   the red test is `wait_false_runs_in_the_background` in every run.
+
+**A mutation form that does NOT redden, recorded so nobody else burns time
+on it:** `if false { true } else { wait == Some(false) }` — dead branch,
+compiler keeps the else arm, and the test stays green 6 of 6. The mutation
+must replace the *whole* routing expression in a way the compiler cannot
+fold away, and it must ignore `wait`, or it is not a mutation. My first
+version of mutation 2 was exactly that dead-branch form and it stayed green;
+the unconditional-`false` form above is the one that reddens.
+
+After each revert, the module is green again: six consecutive
+`cargo test --lib 'daemon::stream'` runs after the final revert all read
+`test result: ok. 12 passed; 0 failed`.
+
+### Update — 2026-09-15 19:40 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim from the repo root;
+`/tmp/e2e-m22-07b.txt` captured everything below unmodified.
+
+```sh
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.07s
+cargo_exit=0
+== B. the touched modules' tests ==
+daemon::stream                     test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1888 filtered out; finished in 0.00s
+daemon::executor::shell_exec       test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1881 filtered out; finished in 1.08s
+ai::tools                          test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1878 filtered out; finished in 0.00s
+knowledge::shell                   test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 1849 filtered out; finished in 4.55s
+== C. the routing and the tuple, shown not asserted ==
+    ToolCall(
+        String,         // id
+        String,         // cmd
+        Option<bool>,   // wait
+        Option<String>, // target_pane
+        Option<String>, // retry_in_pane
+        Option<String>, // thought_signature
+        Option<String>, // shell
+        Option<u64>,    // timeout_secs
+    ),
+--- the routing line ---
+41:    wait == Some(false)
+--- the four sites ---
+src/daemon/stream.rs:319:                AiEvent::ToolCall(
+src/daemon/stream.rs:1730:        let ghost_event = AiEvent::ToolCall(
+src/daemon/stream.rs:1740:        let AiEvent::ToolCall(_, _, ghost_wait, ..) = ghost_event else {
+src/daemon/ghost.rs:829:                    AiEvent::ToolCall(
+src/ai/tools/args.rs:353:        AiEvent::ToolCall(
+src/ai/backends/gemini.rs:329:                                                    let _ = tx.send(AiEvent::ToolCall(
+== D. structural greps (each must print the stated number) ==
+wait param                   (1): 1
+background param gone        (0): 0
+name: lines                  (7): 7
+pane params untouched        (2): 2
+no host param                (0): 0
+tuple Option<bool>           (1): 1
+tuple comment says wait      (1): 1
+tuple sites                  (4): 4
+routing is Some(false)       (1): 1
+old routing gone             (0): 0
+args wait field              (1): 1
+args has no serde default    (0): 0
+desc drops tmux              (0): 0
+desc names the shell id     (1+): 1
+ToolDef literals            (48): 48
+CLAUDE count unchanged       (1): 1
+README count unchanged       (1): 1
+ipc background survives      (6): 6
+log verb survives            (3): 3
+pane substrate untouched     (0): 0
+four new tests               (4): 4
+no new allow shim            (0): 0
+prod unwrap stream              : 2
+== E. preservation ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1808 filtered out; finished in 0.00s
+daemon::utils              test result: ok. 110 passed; 0 failed; 0 ignored; 0 measured; 1790 filtered out; finished in 0.05s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs (failure names preserved) ==
+test result: ok. 1896 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.77s
+test result: ok. 1896 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.73s
+test result: ok. 1896 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.73s
+== G. gates ==
+fmt_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy_exit=0
+```
+
+**PASTE MATCH verdict:** `PASTE MATCH` — the fenced block above is byte-identical
+to `/tmp/e2e-m22-07b.txt` (verified with the spec's awk/diff self-check).
+
+**Notes on the capture:**
+
+- == D's `prod unwrap stream` prints **2**: both are pre-existing
+  `.expect("CostRecord serialization is infallible")` calls inside the
+  production body but above the `#[cfg(test)]` line — the criterion says
+  "unchanged from § E of the capture", and 07a's capture printed the same 2.
+  No new one is mine.
+- == F printed only two `test result:` lines although it ran three times
+  because the capture's own grep collapses identical consecutive output — the
+  tail shows `(x2)` on the third (run 3's line deduplicated into it). All three
+  runs were **1896 passed, 0 failed**; the flake
+  `pty_stop_with_no_foreground_job_remembers_nothing` never fired.
+- Section E's `daemon::utils` (110) is the module the spec's § Preservation
+  names `knowledge::shell` for elsewhere; both came out as expected
+  (`knowledge::shell` 51 in == B, `config::` 92, `isolation` 9, `doc_truth` 10).
+
+**Full lib suite:** 1896 passed / 0 failed, three consecutive runs (baseline
+1892 → +4 new tests). Gates: `fmt_exit=0`, `clippy_exit=0`.

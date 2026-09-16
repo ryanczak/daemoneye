@@ -70,15 +70,18 @@ Non-obvious annotations that require a behavioural response:
 
 ### `run_terminal_command` — two modes
 
-**`background=true`** (daemon host, non-blocking):
-- Runs in a `de-bg-*` tmux window on the daemon host; returns immediately.
+**`wait=false`** (daemon host, non-blocking):
+- Runs in a `de-bg-*` tmux window on the daemon host; returns immediately with \
+  the shell id the command runs in.
 - `[Background Task Completed]` arrives when done — wait for it before acting.
 - 5-window cap; close with `close_background_window` when done.
 - Reuse a finished window via `retry_in_pane=<id>` (scrollback preserved, no cap cost).
 - Full output archived to `~/.daemoneye/var/log/panes/<win>.log`.
+- Follow the run with `watch_shell` (wait for a line) or `read_shell` (read what \
+  it has recorded so far).
 - Runs locally even if the user is SSH'd elsewhere. Supports sudo (chat prompt).
 
-**`background=false`** (user's pane, synchronous):
+**`wait=true` (the default — omit `wait`)** (user's pane, synchronous):
 - Injects via `send-keys`, waits for completion, returns captured output.
 - If the pane is SSH'd, the command runs on the remote host.
 - Use `target_pane="%N"` from `[FOREGROUND TARGET]`; never target the chat pane.
@@ -178,7 +181,7 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   is paused, it has exited, or the timeout elapses — the result says which, \
   with the tail of what it saw when there was any. `timeout_secs` defaults \
   to 300 and is capped at 3600. The shell to watch is the dedicated one a \
-  background `run_terminal_command` leaves running; `list_shells` shows \
+  wait=false `run_terminal_command` leaves running; `list_shells` shows \
   which shells exist and which are dedicated.
 
 ### `send_input`

@@ -43,18 +43,19 @@ pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "run_terminal_command",
         description: "Execute a bash command in one of two modes:\n\
-             - background=true: Runs in a dedicated tmux window on the DAEMON HOST. Output is \
-             captured silently and returned to you. Use for system diagnostics (ls, ps, df, \
-             curl, systemctl, etc.) and commands that need shell features (pipes, loops, process \
-             control). For reading files, prefer read_file instead. If the user is SSH'd into a \
-             remote host, this still runs locally on the daemon machine. Supports sudo: the user \
-             will be prompted for their password in the chat interface.\n\
-             - background=false (default): Injects the command into the USER'S TERMINAL PANE via \
-             tmux send-keys. The command is visible and interactive. Use for state-changing \
-             commands, service restarts, or anything that must run on the user's active host. \
-             For file edits prefer edit_file; for file reads prefer read_file. \
-             If the user's pane is SSH'd to a remote machine, the command runs \
-             there. Supports sudo: the user types their password directly in the terminal pane.",
+             - wait=true (default): runs in a dedicated PTY shell on the daemon host and \
+             waits for the command to finish, returning its captured output, exit status \
+             and shell id. Use for system diagnostics (ls, ps, df, curl, systemctl, etc.) \
+             and commands that need shell features (pipes, loops, process control). For \
+             reading files, prefer read_file instead. Supports sudo: the user will be \
+             prompted for their password in the chat interface.\n\
+             - wait=false: starts the command in a dedicated shell and returns its shell \
+             id immediately, without waiting for the command to finish. Use for \
+             long-running commands you want to keep going while you do something else. \
+             Follow up with watch_shell to wait for a specific line of output or read_shell \
+             to read what it has recorded so far. The command keeps running in that shell \
+             after this call returns. For file edits prefer edit_file; for file reads \
+             prefer read_file.",
         params: &[
             ParamDef {
                 name: "command",
@@ -63,11 +64,15 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "The bash command to execute.",
             },
             ParamDef {
-                name: "background",
+                name: "wait",
                 ty: ParamTy::Bool,
                 required: false,
-                description: "true = daemon host tmux window (captured output); false = user's \
-                              terminal pane (visible, interactive, possibly remote). Defaults to false.",
+                description: "Whether to wait for the command to finish. Default true: the \
+                              call blocks until the command completes and returns the full \
+                              output. wait: false returns immediately with the shell id the \
+                              command runs in — the output keeps accumulating there; follow \
+                              it up with watch_shell (wait for a line) or read_shell (read \
+                              what it has recorded so far).",
             },
             ParamDef {
                 name: "target_pane",
@@ -77,17 +82,17 @@ pub static TOOLS: &[ToolDef] = &[
                               Use the pane ID from [FOREGROUND TARGET] when present — that is \
                               the user's designated work pane. Otherwise resolve from [PANE MAP] \
                               (format: idx:N=<id>). If still unsure, call list_panes or ask the \
-                              user. Do not set this for background=true commands.",
+                              user. Do not set this for commands that skip the wait.",
             },
             ParamDef {
                 name: "retry_in_pane",
                 ty: ParamTy::Str,
                 required: false,
-                description: "Optional: pane ID of a previous background window (from a \
+                description: "Optional: pane ID of a previous non-wait window (from a \
                               [Background Task Completed] message) to reuse for a retry. \
-                              Only valid with background=true. The command runs in the same \
+                              Only valid with wait=false. The command runs in the same \
                               tmux window, keeping the failure output visible in scrollback \
-                              above the new run. Omit to create a fresh background window.",
+                              above the new run. Omit to create a fresh window.",
             },
             ParamDef {
                 name: "shell",
@@ -97,7 +102,7 @@ pub static TOOLS: &[ToolDef] = &[
                               in (PTY backend only); or \"new\" to open a fresh shell for this \
                               command. Omitted: the command reuses this session's \
                               lowest-numbered open shell. A shell owned by another session \
-                              or a ghost job is refused, and a background run's dedicated \
+                              or a ghost job is refused, and a non-wait run's dedicated \
                               shell is not a target.",
             },
             ParamDef {
@@ -291,7 +296,7 @@ pub static TOOLS: &[ToolDef] = &[
                 name: "pane_id",
                 ty: ParamTy::Str,
                 required: true,
-                description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from context blocks ([VISIBLE PANE], [BACKGROUND PANE], [SESSION PANE]), background=true tool results, or list_panes.",
+                description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from context blocks ([VISIBLE PANE], [BACKGROUND PANE], [SESSION PANE]), wait=false tool results, or list_panes.",
             },
             ParamDef {
                 name: "timeout_secs",
@@ -924,7 +929,7 @@ pub static TOOLS: &[ToolDef] = &[
                       idle with nothing running, or it pauses, exits or dies. This \
                       tool sees only new output — it never searches what the shell \
                       already recorded; use read_shell for history. The shell to \
-                      watch is the dedicated one a background run_terminal_command \
+                      watch is the dedicated one a wait=false run_terminal_command \
                       creates; list_shells shows which shells exist and which are \
                       dedicated.",
         params: &[

@@ -501,7 +501,7 @@ Tools marked **⚠** require explicit user approval before they execute.
 
 | Tool | What it does |
 |---|---|
-| `run_terminal_command` **⚠** | Run a bash command — foreground in your pane, or background in a dedicated tmux window. `shell?` targets a PTY shell (`"s3"` from `list_shells`, or `"new"` for one fresh shell; omitted, the command reuses this session's lowest-numbered open shell and another session's shell is refused); `timeout_secs?` bounds the wait (default 45 s, capped 3600) |
+| `run_terminal_command` **⚠** | Run a bash command — foreground in your pane, or background in a dedicated tmux window. `wait?` picks the mode: omitted or `true` waits (the default, foreground); `wait: false` is what `background: true` was — it returns immediately with the shell id, which you then follow with `watch_shell` or `read_shell`. `shell?` targets a PTY shell (`"s3"` from `list_shells`, or `"new"` for one fresh shell; omitted, the command reuses this session's lowest-numbered open shell and another session's shell is refused); `timeout_secs?` bounds the wait (default 45 s, capped 3600) |
 | `edit_file` **⚠** | Create, edit, delete, or copy a file; shows a coloured unified diff before approval |
 | `write_script` **⚠** | Create or update a script in `~/.daemoneye/scripts/` (written `chmod 700`) |
 | `delete_script` **⚠** | Delete a script |
@@ -1078,7 +1078,7 @@ GhostManager::start_session()
         ▼
 Ghost AI turn loop (up to max_ghost_turns)
   • Reads runbook + alert context as system prompt
-  • Issues run_terminal_command (background mode only)
+  • Issues run_terminal_command (wait=false only)
   • Policy gate: non-sudo commands always allowed (OS permissions are the boundary);
     sudo commands must be in auto_approve_scripts + have a NOPASSWD sudoers rule;
     named agent tool policy enforced independently at IPC layer

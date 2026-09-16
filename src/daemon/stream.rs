@@ -36,6 +36,11 @@ fn cancel_stage(run_id: &crate::daemon::run::RunId) -> String {
         .to_string()
 }
 
+/// Only an explicit `wait: false` skips the wait; an omitted `wait` waits.
+fn routes_to_background(wait: Option<bool>) -> bool {
+    wait == Some(false)
+}
+
 /// Run the AI conversation loop: stream tokens, collect tool calls, execute,
 /// and repeat until the AI produces a final answer with no pending tool calls.
 ///
@@ -314,14 +319,14 @@ where
                 AiEvent::ToolCall(
                     id,
                     cmd,
-                    bg,
+                    wait,
                     target,
                     retry,
                     thought_signature,
                     shell,
                     timeout_secs,
                 ) => {
-                    if bg {
+                    if routes_to_background(wait) {
                         pending_calls.push(PendingCall::Background {
                             id,
                             cmd,
@@ -1693,6 +1698,51 @@ mod tests {
         assert!(
             APPROVAL_GATED.contains(&"delete_agent"),
             "delete_agent prompts the user, so the caps must not also apply"
+        );
+    }
+
+    #[test]
+    fn omitting_wait_runs_in_the_foreground() {
+        assert!(
+            !routes_to_background(None),
+            "an omitted `wait` waits — the PTY foreground path is the default"
+        );
+    }
+
+    #[test]
+    fn wait_false_runs_in_the_background() {
+        assert!(
+            routes_to_background(Some(false)),
+            "`wait: false` is the old `background: true`"
+        );
+    }
+
+    #[test]
+    fn wait_true_runs_in_the_foreground() {
+        assert!(
+            !routes_to_background(Some(true)),
+            "an explicit `wait: true` waits — a `wait.is_some()` routing would invert this"
+        );
+    }
+
+    #[test]
+    fn ghost_tool_call_preserves_its_execution_mode() {
+        let ghost_event = AiEvent::ToolCall(
+            "ghost-1".to_string(),
+            "ps aux".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let AiEvent::ToolCall(_, _, ghost_wait, ..) = ghost_event else {
+            panic!("test only constructs ToolCall")
+        };
+        assert!(
+            !routes_to_background(ghost_wait),
+            "the ghost loop's own ToolCall events must keep taking the background path"
         );
     }
 
