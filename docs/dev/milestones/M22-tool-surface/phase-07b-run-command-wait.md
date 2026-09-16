@@ -1,7 +1,7 @@
 # Phase 07b: `wait?` replaces `background` on `run_terminal_command`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-07b-1.md`)
 **Depends on:** 07a, which widened `AiEvent::ToolCall` and added
 `shell?`/`timeout_secs?`. **done**.
 **Estimated diff:** ~380 lines incl. tests
@@ -311,6 +311,29 @@ Each was run against the tree at drafting and returns the "now" value shown.
 - [ ] Full lib suite **1896 or more**, `0 failed`, three consecutive runs (now
       **1892**).
 - [ ] All four gates pass.
+
+### Added at review 2026-09-15 (bug-07b-1) — confirmed failing against the tree
+
+- [ ] **The ghost test's message matches its assertion.** Today it asserts
+      `!routes_to_background(...)` (foreground) while its message says
+      "must keep taking the **background** path".
+- [ ] **It is not a duplicate of test 1.** Mutating the routing to background
+      everything currently reddens `omitting_wait_runs_in_the_foreground`
+      **and** `ghost_tool_call_preserves_its_execution_mode` together, for the
+      identical reason — the ghost event's `wait` is `None`, so both resolve to
+      `routes_to_background(None)`.
+- [ ] **Whichever route is taken, the counts follow:**
+      `cargo test --lib 'daemon::stream'` → **11** if the redundant test is
+      removed, **12** if it is replaced by one that discriminates; full lib
+      **1895** or **1896** to match. Today: 12 and 1896, with the test
+      redundant.
+
+*(Measured at review: ghost routing never calls `routes_to_background` —
+`src/daemon/ghost.rs` binds position 3 as `_wait` and pushes
+`PendingCall::Background` unconditionally. Swapping that push to `Foreground`
+does not compile, the two variants having different fields, which is itself
+proof the paths are structurally separate. No production defect; ghost
+behaviour is unchanged.)*
 
 ## Test plan
 
@@ -762,3 +785,58 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** af8306c02491b115525ccb3e1bd01aa7887025c6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-15
+
+- **Verdict:** bounced (bug-07b-1)
+- **Bounces:** 1
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (184 turns — the
+  fastest run of the milestone)
+- **Scope deviations:** none. Every file touched was authorized, `src/ipc.rs`
+  and `src/cli/` are unchanged, and the three non-parameter `background`s
+  survive exactly as § Pre-flight required.
+- **Calibration:** the phase doc named the trap (the ghost inversion) but not
+  the fact that **ghost routing is unconditional and therefore unreachable
+  from the routing function**. I had not measured that when drafting — the
+  Pre-flight note only said to read ghost's value before editing. Given a pure
+  routing function and an instruction to "assert on the variant", asserting on
+  `routes_to_background` was the available move. **Measure the thing you are
+  asking to be pinned, or the test plan cannot be followed.**
+
+**All four gates re-run at review as separate invocations:** fmt clean, build
+0 warnings, clippy `-D warnings` exit 0, `cargo test --lib` → **1896 passed,
+0 failed**. `daemon::stream` 12, `shell_exec` 19, `knowledge::shell` 51,
+`ai::tools` 22, `doc_truth` 10, `isolation` 9.
+
+**Every acceptance criterion re-run: all pass.** `wait` exists and
+`background` is gone from the tool; the pane parameters survive for 09; no
+`host`; the tuple kept its arity with `Option<bool>` at position 3 and a
+`// wait` comment; all four sites followed; the routing reads
+`wait == Some(false)`; the args struct has no serde default; the description
+no longer mentions tmux and does name the shell id; the tool surface is
+unmoved at 48/34/14; `src/ipc.rs` (6) and the events-log verb (3) untouched.
+
+**The `Some(!bg)` adaptation in the Gemini backend is correct**, and the
+executor was right to flag it. That `bg` is parsed from the malformed
+Python-style `background = true|false` Gemini emits — the corrupted-API
+literal, not our parameter — so `background: true` maps to `Some(false)`
+(background) and `background: false` to `Some(true)` (foreground-wait),
+landing each on the same side of the routing as before.
+
+**The executor also recorded a mutation form that does NOT redden** — a
+dead-branch `if false { true } else { … }`, which the compiler folds away —
+and said so rather than filing the green run. That is the fourth phase running
+where a mutation turned out to be the proxy, and the first where the executor
+caught it unprompted and documented the non-working form for the next reader.
+
+**Bounced on the one test that was supposed to guard the phase's trap.**
+`ghost_tool_call_preserves_its_execution_mode` asserts
+`!routes_to_background(ghost_wait)` with `ghost_wait == None` — byte-for-byte
+`omitting_wait_runs_in_the_foreground` — while its message claims the
+opposite ("must keep taking the **background** path"). Demonstrated at review:
+the background-everything mutant reddens both together. And ghost routing
+never reaches that function at all — `ghost.rs` binds `_wait` unused and
+pushes `Background` unconditionally; swapping that push to `Foreground` does
+not even compile, the variants having different fields. **No production
+defect** — ghost behaviour is genuinely unchanged — but the test proves
+nothing and misdescribes itself.
