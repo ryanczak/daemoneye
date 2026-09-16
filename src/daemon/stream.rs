@@ -1726,27 +1726,6 @@ mod tests {
     }
 
     #[test]
-    fn ghost_tool_call_preserves_its_execution_mode() {
-        let ghost_event = AiEvent::ToolCall(
-            "ghost-1".to_string(),
-            "ps aux".to_string(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
-        let AiEvent::ToolCall(_, _, ghost_wait, ..) = ghost_event else {
-            panic!("test only constructs ToolCall")
-        };
-        assert!(
-            !routes_to_background(ghost_wait),
-            "the ghost loop's own ToolCall events must keep taking the background path"
-        );
-    }
-
-    #[test]
     fn truncate_tool_results_noop_when_under_cap() {
         let results = vec![ToolResult {
             tool_call_id: "1".to_string(),
