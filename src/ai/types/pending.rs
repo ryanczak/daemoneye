@@ -7,6 +7,8 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         cmd: String,
         target: Option<String>,
+        shell: Option<String>,
+        timeout_secs: Option<u64>,
     },
     Background {
         id: String,
@@ -376,6 +378,8 @@ impl PendingCall {
                 thought_signature,
                 cmd,
                 target,
+                shell,
+                timeout_secs,
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
@@ -383,7 +387,9 @@ impl PendingCall {
                 arguments: args_to_string(serde_json::json!({
                     "command": cmd,
                     "background": false,
-                    "target_pane": target
+                    "target_pane": target,
+                    "shell": shell,
+                    "timeout_secs": timeout_secs
                 })),
             },
             PendingCall::Background {
@@ -1171,6 +1177,19 @@ impl PendingCall {
                 };
                 format!("\"{q}\"")
             }
+            // A foreground run may now name the shell it targets; the shell
+            // is the part of the line the user watches needs to know.
+            PendingCall::Foreground { cmd, shell, .. } => {
+                let q = if cmd.len() > 40 {
+                    &cmd[..40]
+                } else {
+                    cmd.as_str()
+                };
+                match shell {
+                    Some(s) => format!("\"{q}\" in {s}"),
+                    None => format!("\"{q}\""),
+                }
+            }
             PendingCall::GetTerminalContext { scope, .. } => scope.clone().unwrap_or_default(),
             PendingCall::ListShells { scope, .. } => scope.clone().unwrap_or_default(),
             // A close has an argument worth showing (which shell); an open has
@@ -1354,6 +1373,8 @@ mod tests {
             thought_signature: None,
             cmd: cmd.to_string(),
             target: None,
+            shell: None,
+            timeout_secs: None,
         }
     }
 
@@ -1721,6 +1742,8 @@ mod tests {
                 thought_signature: None,
                 cmd: "ls".to_string(),
                 target: None,
+                shell: None,
+                timeout_secs: None,
             },
             PendingCall::Background {
                 id: x(),

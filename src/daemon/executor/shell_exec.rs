@@ -8,15 +8,16 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::foreground;
 use crate::ai::mask_sensitive;
 use crate::daemon::utils::normalize_output;
 use crate::shell::spawn_detached_host;
 use crate::shell::{
-    CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, login_shell, mark_interactive,
-    meta_path_for, run_command, shell_for_owner, with_shells,
+    CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, await_ready, login_shell,
+    mark_interactive, meta_path_for, run_command, shell_for_owner, socket_path, spawn_for,
+    with_shells,
 };
 use crate::shell::{CommandRecord, marked_inner_range};
 
@@ -44,10 +45,26 @@ pub(super) fn format_for_model(raw: &str) -> String {
 }
 
 /// What one command produced, already fit for a model.
+#[derive(Debug)]
 pub(super) struct ShellRunResult {
     /// Annotated, masked, normalized. Ready to send as the tool result.
     pub text: String,
     pub exit_code: i32,
+}
+
+/// The hard ceiling on `run_terminal_command`'s `timeout_secs`, the same cap
+/// `watch_shell` applies. 45 s is the default; the cap exists so a stuck
+/// command cannot pin a chat turn for an unbounded time.
+pub(super) const RUN_MAX_TIMEOUT_SECS: u64 = 3600;
+
+/// The wait one command is given: the caller's `timeout_secs` when given and
+/// non-zero, else `LOCAL_CMD_TIMEOUT`, always clamped to `RUN_MAX_TIMEOUT_SECS`.
+fn applied_timeout_secs(timeout_secs: Option<u64>) -> Duration {
+    let secs = timeout_secs
+        .filter(|s| *s > 0)
+        .unwrap_or(foreground::LOCAL_CMD_TIMEOUT.as_secs())
+        .min(RUN_MAX_TIMEOUT_SECS);
+    Duration::from_secs(secs)
 }
 
 /// Run `cmd` in `owner`'s PTY shell and format the result for the model.
@@ -62,29 +79,143 @@ pub(super) async fn run_in_shell(
     owner: Owner,
     cmd: &str,
     max_per_owner: u32,
+    shell: Option<&str>,
+    timeout_secs: Option<u64>,
 ) -> anyhow::Result<(ShellId, ShellRunResult)> {
-    run_in_shell_with(reg, owner, cmd, max_per_owner, |id| {
+    run_in_shell_with_spawn(reg, owner, cmd, max_per_owner, shell, timeout_secs, |id| {
         spawn_detached_host(id, ROWS, COLS)
     })
     .await
 }
 
-/// `run_in_shell` with the spawn step injected: tests pass an in-process host
-/// because `spawn_detached_host` re-invokes `current_exe()`, which under a
-/// test binary is not the daemon (07b F4).
-pub(super) async fn run_in_shell_with<F, Fut>(
+/// What `shell?` on `run_terminal_command` resolves to, before the registry
+/// is touched. Pure — no await, no lock, no filesystem — so a bad value is
+/// rejected before anything runs.
+#[derive(Debug)]
+pub(super) enum ShellTarget {
+    Reuse,
+    New,
+    Existing(ShellId),
+}
+
+/// Resolve the `shell` argument to a target. `None` is today's reuse rule;
+/// `"new"` opens a fresh shell for this command; anything matching the shell
+/// id grammar names a specific shell. Matching is exact-case. The error names
+/// the value and both accepted forms, so the model can correct in one step.
+pub(super) fn resolve_shell_target(arg: Option<&str>) -> Result<ShellTarget, String> {
+    match arg {
+        None => Ok(ShellTarget::Reuse),
+        Some("new") => Ok(ShellTarget::New),
+        Some(value) => match ShellId::parse(value) {
+            Ok(id) => Ok(ShellTarget::Existing(id)),
+            Err(_) => Err(format!(
+                "Error: unknown shell target {value:?}. Accepted forms: \
+                 omit `shell` to reuse this session's lowest-numbered open \
+                 shell (the default), \"new\" to open a fresh shell for this \
+                 command, or a shell id from list_shells such as \"s3\"."
+            )),
+        },
+    }
+}
+
+/// The ids the unknown-shell sentences name, kept here so the refusal wording
+/// cannot drift between the read tools and this module's target refusals.
+fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
+    with_shells(reg, |store| {
+        let mut ids: Vec<String> = store.values().map(|r| r.id.as_str().to_string()).collect();
+        ids.sort_by_key(|i| ShellId::parse(i).map(|s| s.index()).unwrap_or(u32::MAX));
+        ids
+    })
+}
+
+pub(super) async fn run_in_shell_with_spawn<F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
     cmd: &str,
     max_per_owner: u32,
+    shell: Option<&str>,
+    timeout_secs: Option<u64>,
     spawn: F,
 ) -> anyhow::Result<(ShellId, ShellRunResult)>
 where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let (id, socket) =
-        shell_for_owner(reg, owner, max_per_owner, SHELL_READY_TIMEOUT, spawn).await?;
+    let target = resolve_shell_target(shell).map_err(anyhow::Error::msg)?;
+    let applied_timeout = applied_timeout_secs(timeout_secs);
+    // Resolve the shell socket from the requested target before anything is
+    // written to a PTY: `Existing` must refuse an id the caller does not own
+    // or that has exited, rather than falling back to the reuse shell —
+    // falling back would run the command somewhere the model did not ask for.
+    let (id, socket) = match target {
+        ShellTarget::Reuse => {
+            shell_for_owner(reg, owner, max_per_owner, SHELL_READY_TIMEOUT, spawn).await?
+        }
+        ShellTarget::New => {
+            let id = spawn_for(reg, owner, max_per_owner, false, spawn).await?;
+            let socket = socket_path(id.as_str());
+            await_ready(&socket, Instant::now() + SHELL_READY_TIMEOUT).await?;
+            (id, socket)
+        }
+        ShellTarget::Existing(ref id) => {
+            // Compared on `Owner::key()`, never the inner string: a chat
+            // session and a ghost job can share an id string, and the kinds
+            // are what the cap groups, so they are what this check must use.
+            let record_owner = with_shells(reg, |store| {
+                store.get(id.as_str()).map(|record| record.owner.key())
+            });
+            let Some(record_owner) = record_owner else {
+                let live = live_shell_ids(reg);
+                anyhow::bail!(
+                    "Error: shell {} is not in the registry — it has exited or was \
+                     closed. Live shell ids: {}. Call list_shells to refresh.",
+                    id.as_str(),
+                    live.join(", ")
+                );
+            };
+            if record_owner != owner.key() {
+                anyhow::bail!(
+                    "Error: shell {} is not yours (it belongs to {record_owner}), so \
+                     this session cannot run a command in it. Run the command in one \
+                     of your own shells — omit `shell`, or pass \"new\" — and leave \
+                     {} to the session that owns it.",
+                    id.as_str(),
+                    id.as_str()
+                );
+            }
+            // A dedicated shell (a background run's own PTY) is deliberately
+            // unreachable: it exists for exactly one command, and reaching it
+            // from the foreground would interleave in its output and break
+            // `watch_shell`'s contract.
+            let dedicated = with_shells(reg, |store| {
+                store.get(id.as_str()).map(|record| record.dedicated)
+            });
+            if dedicated == Some(true) {
+                anyhow::bail!(
+                    "Error: shell {} is a dedicated background shell — it exists for \
+                     exactly one background command and is not a target for \
+                     run_terminal_command. Watch it with watch_shell, read it with \
+                     read_shell, or target a shell of your own.",
+                    id.as_str()
+                );
+            }
+            if with_shells(reg, |store| {
+                store
+                    .get(id.as_str())
+                    .and_then(|record| record.exited_unix)
+                    .is_some()
+            }) {
+                let live = live_shell_ids(reg);
+                anyhow::bail!(
+                    "Error: shell {} has exited. Live shell ids: {}. Call list_shells \
+                     to refresh.",
+                    id.as_str(),
+                    live.join(", ")
+                );
+            }
+            (id.clone(), socket_path(id.as_str()))
+        }
+    };
     if crate::daemon::utils::is_interactive_command(cmd) {
         // The command must never be written to the shell: an interactive
         // session owns the terminal and consumes every byte, so writing would
@@ -120,12 +251,11 @@ where
     let before = std::fs::metadata(crate::shell::resolve_cast(id.as_str(), started_unix))
         .map(|m| m.len())
         .ok();
-    let outcome = run_command(&socket, cmd, &login_shell(), foreground::LOCAL_CMD_TIMEOUT)
+    let outcome = run_command(&socket, cmd, &login_shell(), applied_timeout)
         .await
         .map_err(|e| {
             e.context(format!(
-                "command exceeded the {:#?} limit in shell {}",
-                foreground::LOCAL_CMD_TIMEOUT,
+                "command exceeded the {applied_timeout:#?} limit in shell {}",
                 id.as_str()
             ))
         })?;
@@ -319,15 +449,181 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn resolve_shell_target_accepts_none_new_and_an_id() {
+        assert!(matches!(resolve_shell_target(None), Ok(ShellTarget::Reuse)));
+        assert!(matches!(
+            resolve_shell_target(Some("new")),
+            Ok(ShellTarget::New)
+        ));
+        match resolve_shell_target(Some("s7")) {
+            Ok(ShellTarget::Existing(id)) => assert_eq!(id.as_str(), "s7"),
+            other => panic!("Some(\"s7\") must resolve to Existing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_shell_target_rejects_a_bad_value() {
+        let err = resolve_shell_target(Some("banana"))
+            .expect_err("a non-id, non-new value must be refused");
+        assert!(
+            err.contains("banana"),
+            "the error must name the offending value: {err}"
+        );
+        assert!(
+            err.contains("new") && err.contains("list_shells"),
+            "the error must name both accepted forms: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_shell_target_is_case_sensitive() {
+        for bad in ["New", "NEW", "New "] {
+            assert!(
+                resolve_shell_target(Some(bad)).is_err(),
+                "{bad} must not match \"new\" — the match is exact-case like \
+                 list_shells' scope"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn run_terminal_command_targets_the_named_shell() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("tip".into());
+        // The reuse rule's pick, opened first so it is the lowest-numbered one.
+        let (reused, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            5,
+            SHELL_READY_TIMEOUT,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the reuse shell comes up");
+        // A second shell the reuse rule would never hand out: opening it
+        // directly, exactly as `shelf: "new"` does, bypasses the reuse rule.
+        let second = spawn_for(&reg, owner.clone(), 5, false, spawn_in_process_host)
+            .await
+            .expect("the second shell comes up");
+        await_ready(
+            &socket_path(second.as_str()),
+            Instant::now() + SHELL_READY_TIMEOUT,
+        )
+        .await
+        .expect("the second shell becomes ready");
+        assert_ne!(reused.as_str(), second.as_str(), "fixture: two ids");
+
+        // The reuse rule would pick `skipped`; naming `second` must win.
+        let (id, result) = run_in_shell_with_spawn(
+            &reg,
+            owner,
+            "echo TARGET_HIT",
+            5,
+            Some(second.as_str()),
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the targeted command runs");
+        assert_eq!(
+            id.as_str(),
+            second.as_str(),
+            "shell: must win over the lowest-numbered reuse rule"
+        );
+        assert!(
+            result.text.contains("TARGET_HIT"),
+            "the command's output must come back: {:?}",
+            result.text
+        );
+    }
+
+    #[tokio::test]
+    async fn run_terminal_command_refuses_another_owners_shell() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        // Same inner string "a", different kind — the shape a comparison on
+        // the inner string instead of `Owner::key()` would accept.
+        let (other, _) = shell_for_owner(
+            &reg,
+            Owner::Ghost("a".into()),
+            5,
+            SHELL_READY_TIMEOUT,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the ghost's shell comes up");
+
+        let err = run_in_shell_with_spawn(
+            &reg,
+            Owner::Chat("a".into()),
+            "echo SENTINEL_NOT_FOR_GHOST",
+            5,
+            Some(other.as_str()),
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect_err("another owner's shell must be refused");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(other.as_str()),
+            "the refusal must name the shell id: {msg}"
+        );
+        let recorded = crate::shell::run_command(
+            &socket_path(other.as_str()),
+            "echo RECORDED_STILL_ON",
+            "bash",
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("the ghost's shell still answers after the refusal");
+        let text = String::from_utf8_lossy(&recorded.output);
+        assert!(
+            !text.contains("SENTINEL_NOT_FOR_GHOST"),
+            "no byte of the refused command may run in the other owner's shell: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_terminal_command_custom_timeout_names_the_applied_value() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("sleeper".into());
+        let err = run_in_shell_with_spawn(
+            &reg,
+            owner,
+            "sleep 4",
+            5,
+            None,
+            Some(1),
+            spawn_in_process_host,
+        )
+        .await
+        .expect_err("a command outliving its timeout must be an error");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains('1') && msg.contains("limit"),
+            "the error must name the applied timeout: {msg}"
+        );
+        assert!(
+            !msg.contains("45s"),
+            "the error must name the applied 1 s, not the 45 s default: {msg}"
+        );
+    }
+
     #[tokio::test]
     async fn shell_exec_returns_the_real_exit_code() {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
-        let (id, result) = run_in_shell_with(
+        let (id, result) = run_in_shell_with_spawn(
             &reg,
             Owner::Chat("exit-code".into()),
             "printf 'HELLO\\n'; sh -c 'exit 3'",
             5,
+            None,
+            None,
             spawn_in_process_host,
         )
         .await
@@ -356,11 +652,13 @@ mod tests {
         let cast_path: Arc<std::sync::Mutex<Option<std::path::PathBuf>>> =
             Arc::new(std::sync::Mutex::new(None));
         let spawn_cast_path = Arc::clone(&cast_path);
-        let (id, result) = run_in_shell_with(
+        let (id, result) = run_in_shell_with_spawn(
             &reg,
             Owner::Chat("masking".into()),
             "echo AKIAIOSFODNN7EXAMPLE",
             5,
+            None,
+            None,
             move |id: ShellId| {
                 let cells = Arc::clone(&spawn_cast_path);
                 async move {
@@ -403,11 +701,13 @@ mod tests {
     async fn shell_exec_annotates_colour_and_strips_control_bytes() {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
-        let (_, result) = run_in_shell_with(
+        let (_, result) = run_in_shell_with_spawn(
             &reg,
             Owner::Chat("colour".into()),
             "printf '\\033[31mred\\033[0m\\n\\033[2J\\033[Hclear\\n'",
             5,
+            None,
+            None,
             spawn_in_process_host,
         )
         .await
@@ -429,14 +729,29 @@ mod tests {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Chat("reuse".into());
-        let (id1, first) =
-            run_in_shell_with(&reg, owner.clone(), "cd /tmp", 5, spawn_in_process_host)
-                .await
-                .expect("the first call runs");
+        let (id1, first) = run_in_shell_with_spawn(
+            &reg,
+            owner.clone(),
+            "cd /tmp",
+            5,
+            None,
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the first call runs");
         assert_eq!(first.exit_code, 0, "cd /tmp is clean");
-        let (id2, second) = run_in_shell_with(&reg, owner.clone(), "pwd", 5, spawn_in_process_host)
-            .await
-            .expect("the second call runs");
+        let (id2, second) = run_in_shell_with_spawn(
+            &reg,
+            owner.clone(),
+            "pwd",
+            5,
+            None,
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the second call runs");
         assert_eq!(
             id1.as_str(),
             id2.as_str(),
@@ -459,11 +774,13 @@ mod tests {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let start = std::time::Instant::now();
-        let (id, result) = run_in_shell_with(
+        let (id, result) = run_in_shell_with_spawn(
             &reg,
             Owner::Chat("interactive".into()),
             "ssh nowhere.invalid",
             5,
+            None,
+            None,
             spawn_in_process_host,
         )
         .await
@@ -525,21 +842,30 @@ mod tests {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Chat("marked".into());
-        let (id1, first) = run_in_shell_with(
+        let (id1, first) = run_in_shell_with_spawn(
             &reg,
             owner.clone(),
             "ssh nowhere.invalid",
             5,
+            None,
+            None,
             spawn_in_process_host,
         )
         .await
         .expect("the interactive command resolves immediately");
         assert_eq!(first.exit_code, 0, "the session opened, nothing failed");
 
-        let (id2, second) =
-            run_in_shell_with(&reg, owner.clone(), "echo ALIVE", 5, spawn_in_process_host)
-                .await
-                .expect("the next command must not inherit the captured shell");
+        let (id2, second) = run_in_shell_with_spawn(
+            &reg,
+            owner.clone(),
+            "echo ALIVE",
+            5,
+            None,
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the next command must not inherit the captured shell");
         assert_ne!(
             id1.as_str(),
             id2.as_str(),
@@ -572,20 +898,34 @@ mod tests {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Chat("plain".into());
-        let (id1, one) =
-            run_in_shell_with(&reg, owner.clone(), "echo one", 5, spawn_in_process_host)
-                .await
-                .expect("the first command runs");
+        let (id1, one) = run_in_shell_with_spawn(
+            &reg,
+            owner.clone(),
+            "echo one",
+            5,
+            None,
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the first command runs");
         assert_eq!(one.exit_code, 0, "echo one is clean");
         assert!(
             one.text.contains("one"),
             "the output surfaced: {:?}",
             one.text
         );
-        let (id2, two) =
-            run_in_shell_with(&reg, owner.clone(), "echo two", 5, spawn_in_process_host)
-                .await
-                .expect("the second command runs");
+        let (id2, two) = run_in_shell_with_spawn(
+            &reg,
+            owner.clone(),
+            "echo two",
+            5,
+            None,
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the second command runs");
         assert_eq!(
             id1.as_str(),
             id2.as_str(),
@@ -655,11 +995,13 @@ mod tests {
     async fn a_run_command_appends_a_meta_index_record() {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
-        let (id, result) = run_in_shell_with(
+        let (id, result) = run_in_shell_with_spawn(
             &reg,
             Owner::Chat("index-producer".into()),
             "printf 'SENTINEL_ONE\\n'; sh -c 'exit 3'",
             5,
+            None,
+            None,
             spawn_in_logs_dir,
         )
         .await
@@ -718,11 +1060,13 @@ mod tests {
         )
         .await
         .expect("an ordinary shell spawns");
-        let result = run_in_shell_with(
+        let result = run_in_shell_with_spawn(
             reg,
             Owner::Chat("read-shell-e2e".into()),
             "printf 'SENTINEL_TWO\\n'",
             5,
+            None,
+            None,
             spawn_in_logs_dir,
         )
         .await
@@ -761,9 +1105,10 @@ mod tests {
             .await
             .expect("an ordinary shell spawns");
         for cmd in ["printf 'SENTINEL_ALPHA\\n'", "printf 'SENTINEL_BETA\\n'"] {
-            let (got, _) = run_in_shell_with(reg, owner.clone(), cmd, 5, spawn_in_logs_dir)
-                .await
-                .expect("the command resolves");
+            let (got, _) =
+                run_in_shell_with_spawn(reg, owner.clone(), cmd, 5, None, None, spawn_in_logs_dir)
+                    .await
+                    .expect("the command resolves");
             assert_eq!(
                 got.as_str(),
                 id.as_str(),

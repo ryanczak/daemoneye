@@ -833,6 +833,8 @@ async fn do_ghost_turn(
                         _target_pane,
                         retry_in_pane,
                         thought_signature,
+                        _shell,
+                        _timeout_secs,
                     ) => {
                         pending_calls.push(PendingCall::Background {
                             id,

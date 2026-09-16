@@ -1,7 +1,7 @@
 # Phase 07a: `run_terminal_command { shell?, timeout_secs? }` — target a shell, bound the wait
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03a (`list_shells`, whose ids this consumes), 04a
 (`open_shell`, whose result sentence promises exactly this), and 06a (the
 producer that makes a targeted command's output readable). All **done**.
@@ -581,3 +581,11 @@ unchanged. Also do not touch `src/shell/`, `src/daemon/executor/bg_shell.rs`
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-15 22:52 (started, executor)
+
+Started phase 07a. Plan: widen `AiEvent::ToolCall` across its four sites in one
+batch, add the resolver and timeout override in `shell_exec`, update the tool
+def + `open_shell`'s sentence, threads the docs, then mutation checks and the
+end-to-end capture. Status left at `in-progress`; the completion tail belongs
+to the server.

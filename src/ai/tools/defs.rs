@@ -89,6 +89,24 @@ pub static TOOLS: &[ToolDef] = &[
                               tmux window, keeping the failure output visible in scrollback \
                               above the new run. Omit to create a fresh background window.",
             },
+            ParamDef {
+                name: "shell",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional shell id (\"s3\") from list_shells to run the command \
+                              in (PTY backend only); or \"new\" to open a fresh shell for this \
+                              command. Omitted: the command reuses this session's \
+                              lowest-numbered open shell. A shell owned by another session \
+                              or a ghost job is refused, and a background run's dedicated \
+                              shell is not a target.",
+            },
+            ParamDef {
+                name: "timeout_secs",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Optional maximum seconds to wait for the command (PTY backend \
+                              only). Default 45, capped at 3600. 0 means the default.",
+            },
         ],
         deferred_group: None,
         category: Category::Run,
@@ -865,11 +883,10 @@ pub static TOOLS: &[ToolDef] = &[
         description: "Start a new PTY shell on the daemon host and return its id. A \
                       created shell is ordinary: list_shells lists it, read_shell and \
                       find_in_shells read its recorded output, and close_shell ends it. \
-                      **Important:** the session's next command does not necessarily run \
-                      in the shell this tool opened — commands reuse this session's \
-                      lowest-numbered open shell, so a newly opened shell is only used \
-                      when it is that lowest-numbered one. Call this when you need a \
-                      spare shell rather than when a command would do.",
+                      **Note:** commands keep running in this session's \
+                      lowest-numbered open shell unless you say otherwise — pass \
+                      `shell: \"<id>\"` to run_terminal_command to target a specific \
+                      shell, or `shell: \"new\"` to make one command use a fresh shell.",
         params: &[],
         deferred_group: None,
         category: Category::Run,

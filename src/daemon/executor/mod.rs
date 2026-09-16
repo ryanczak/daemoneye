@@ -299,7 +299,12 @@ where
 
     let outcome = match call {
         PendingCall::Foreground {
-            id, cmd, target, ..
+            id,
+            cmd,
+            target,
+            shell,
+            timeout_secs,
+            ..
         } => {
             // Ghost gate — a ghost has no unsandboxed door out (M19 phase-03).
             if !ghost_may_run_foreground(
@@ -356,6 +361,8 @@ where
                             owner.clone(),
                             cmd,
                             max_per_owner,
+                            shell.as_deref(),
+                            *timeout_secs,
                         )
                         .await
                         {

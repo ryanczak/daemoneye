@@ -83,6 +83,12 @@ Non-obvious annotations that require a behavioural response:
 - If the pane is SSH'd, the command runs on the remote host.
 - Use `target_pane="%N"` from `[FOREGROUND TARGET]`; never target the chat pane.
 - Supports sudo (chat prompt).
+- `shell` selects which PTY shell runs the command: a shell id from \
+  `list_shells` targets that shell, `new` opens one for this command, \
+  and omitting it reuses this session's lowest-numbered open shell \
+  (another session's shell is refused). `timeout_secs` bounds the wait — \
+  default 45 s, capped at 3600; the result names the applied timeout when a \
+  command outlives it.
 
 **Interactive commands** (`ssh`, `mosh`, `telnet`, `screen`): return on remote-prompt \
 appearance. After connection, send subsequent commands via `target_pane` to the \
@@ -143,11 +149,11 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 - `open_shell()` — start a new PTY shell on the daemon host; the result names \
   its id. An opened shell is ordinary: `list_shells` lists it, `read_shell` \
   and `find_in_shells` read its recorded output, and `close_shell` ends it. \
-  Mind the reuse rule: a command that needs a shell reuses this session's \
-  lowest-numbered open shell, so the shell you just opened is used by the \
-  session's next command only when it is that lowest-numbered one — if your \
-  session holds `s3`, commands keep going to `s3` even after opening `s7`. \
-  Use `open_shell` when you genuinely need a spare shell, not before every \
+  The reuse rule is the default, not a limit: a command runs in this \
+  session's lowest-numbered open shell unless `run_terminal_command` says \
+  otherwise — pass `shell: "<id>"` to target a specific shell, or \
+  `shell: "new"` for a command's exclusive shell. Use `open_shell` when you \
+  need a spare interactive shell you can address by id, not before every \
   command — commands create shells on demand already.
 
 ### `close_shell`

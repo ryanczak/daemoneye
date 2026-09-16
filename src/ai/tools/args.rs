@@ -19,6 +19,8 @@ pub(super) struct RunTerminalCommandArgs {
     background: bool,
     target_pane: Option<String>,
     retry_in_pane: Option<String>,
+    shell: Option<String>,
+    timeout_secs: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -356,6 +358,8 @@ impl ToolArgs for RunTerminalCommandArgs {
             self.target_pane,
             self.retry_in_pane,
             ts,
+            self.shell,
+            self.timeout_secs,
         )
     }
 }

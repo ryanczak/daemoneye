@@ -311,7 +311,16 @@ where
                     full_response.push_str(&t);
                     send_response_split(tx, Response::Token(t)).await?;
                 }
-                AiEvent::ToolCall(id, cmd, bg, target, retry, thought_signature) => {
+                AiEvent::ToolCall(
+                    id,
+                    cmd,
+                    bg,
+                    target,
+                    retry,
+                    thought_signature,
+                    shell,
+                    timeout_secs,
+                ) => {
                     if bg {
                         pending_calls.push(PendingCall::Background {
                             id,
@@ -325,6 +334,8 @@ where
                             id,
                             cmd,
                             target,
+                            shell,
+                            timeout_secs,
                             thought_signature: thought_signature.clone(),
                         });
                     }

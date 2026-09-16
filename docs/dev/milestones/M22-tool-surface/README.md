@@ -67,7 +67,7 @@ final surface, so they go last.
 | 05 | send-input ([phase-05-send-input.md](phase-05-send-input.md)) — `send_input { shell, text, enter? }`, **approval-gated**; the `"i"` log is real and no read tool can surface it | done                    |
 | 06a | meta-index-producer ([phase-06a-meta-index-producer.md](phase-06a-meta-index-producer.md)) — give the `.meta.json` index a **producer**; makes `read_shell`/`find_in_shells` work in production at last. No new tools | done                    |
 | 06b | shell-history ([phase-06b-shell-history.md](phase-06b-shell-history.md)) — `list_shell_logs` / `read_shell_log` as the deferred `history` group over the index 06a made real; also fixes the sidecar-sweep defect 06a made live | done                    |
-| 07a | run-command-shell-target ([phase-07a-run-command-shell-target.md](phase-07a-run-command-shell-target.md)) — `shell?` + `timeout_secs?` on `run_terminal_command`; additive, no count change | todo                    |
+| 07a | run-command-shell-target ([phase-07a-run-command-shell-target.md](phase-07a-run-command-shell-target.md)) — `shell?` + `timeout_secs?` on `run_terminal_command`; additive, no count change | in-progress             |
 | 07b | run-command-wait — `wait?` replacing `background` on the background path | todo (not drafted) |
 | 08 | shell-context — `get_terminal_context` → `get_shell_context { scope }`; `[HOSTS]`/`[SHELLS]`/`[DEFAULT SHELL]` blocks; approval panel names shell + host | todo (not drafted) |
 | 09 | pane-tool-removal — delete the six pane tools and their executor arms | todo (not drafted) |

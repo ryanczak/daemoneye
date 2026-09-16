@@ -1549,9 +1549,11 @@ where
     let s = format!(
         "Opened shell {}. It is now registered and readable — list_shells lists \
          it, read_shell and find_in_shells read its recorded output, close_shell \
-         ends it. Note: a command that needs a shell reuses this session's \
-         lowest-numbered open shell, which may not be the one just opened — if \
-         s3 is already open, commands keep going to s3.",
+         ends it. Note: a command still runs in this session's lowest-numbered \
+         open shell by default, so this shell sees work only when it is that \
+         one — pass shell: {:?} to run_terminal_command to target it directly, \
+         or shell: \"new\" for one command's exclusive shell.",
+        id.as_str(),
         id.as_str()
     );
     s
