@@ -786,7 +786,183 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
 
-### Review verdict — 2026-09-15
+### Update — 2026-09-15 20:25 (fix round for bug-07b-1, executor)
+
+Resumed on the bounced phase per `bugs/bug-07b-1.md`. The bug's definition of
+done offered two routes — make the ghost test discriminate, or remove it as
+redundant and record why. I took the **removal** route, and the measurement
+below is why no other route was available.
+
+**Measured before choosing:** ghost's routing does not pass through the
+pure function. `src/daemon/ghost.rs:829` destructures `AiEvent::ToolCall`'s
+third position as `_wait` — deliberately unused — and pushes
+`PendingCall::Background` unconditionally, exactly as the bug doc records.
+Two further facts pinned it down:
+
+1. **The push is not conditional on anything.** There is no branch between the
+   destructure and the push; the variant is chosen by line, not by value.
+2. **Swapping that push to `Foreground` does not compile** — `Foreground` has
+   fields `target`/`shell`/`timeout_secs` while `Background` has
+   `_credential`/`retry_pane`, so the two paths are structurally separate. A
+   test's assertion about *routing* therefore cannot reach ghost at all:
+   the only thing `routes_to_background` could be tested against is a value
+   ghost never consults.
+
+**What I removed.** `ghost_tool_call_preserves_its_execution_mode`
+(`src/daemon/stream.rs`) — its assertion was
+`!routes_to_background(ghost_wait)` with `ghost_wait` hard-constructed as
+`None`, byte-for-byte what `omitting_wait_runs_in_the_foreground` already
+holds, and its message said the opposite ("must keep taking the background
+path"). Commit `ad16ff6b`, one file, 21 lines deleted.
+
+**Why the other route (a discriminating test) is not available.** A test that
+discriminates ghost routing must observe ghost's variant choice change. Ghost
+has only one choice, unconditional, so there is nothing to mutate into a red
+run; the only "mutation" available was swapping `Background` for `Foreground`,
+which breaks compilation rather than behaviour — and per the executor contract
+a mutant that does not compile is not a mutation, it is a broken build. The
+bug doc's promise that a discriminating test could be proven with 6-of-6 red
+runs cannot be met for this site, because there is no second value the code
+can take.
+
+**Counts follow the removed route.** `cargo test --lib 'daemon::stream'` →
+**11 passed** (was 12 with the redundant test); full lib → **1895 passed,
+0 failed** (was 1896). **Mutation checks re-run on the reduced suite, both
+6 of 6 red:**
+
+- Background-everything mutant (`let _ = wait; true`) →
+  `test result: FAILED. 9 passed; 2 failed` 6 of 6, reddening
+  `omitting_wait_runs_in_the_foreground` **and**
+  `wait_true_runs_in_the_foreground` — the foreground pair, no third name.
+  The bug doc's "no duplicate remains" condition is met: the two tests that
+  failed together before are now one test plus a genuinely different
+  assertion.
+- Foreground-everything mutant (`let _ = wait; false`) →
+  `test result: FAILED. 10 passed; 1 failed` 6 of 6, reddening only
+  `wait_false_runs_in_the_background`.
+
+After each mutant, reverted with `patch` and the module went green: six
+consecutive `cargo test --lib 'daemon::stream'` runs after the final revert all
+read `test result: ok. 11 passed; 0 failed`. The three tests' assertions read:
+
+- `omitting_wait_runs_in_the_foreground` → `!routes_to_background(None)`
+- `wait_false_runs_in_the_background` → `routes_to_background(Some(false))`
+- `wait_true_runs_in_the_foreground` → `!routes_to_background(Some(true))`
+
+**Message-assertion agreement re-checked on all three survivors:** the
+assertions above and their rendered failure messages now say the same thing;
+the test whose message claimed the opposite is gone.
+
+Status left `in-progress`; the completion tail belongs to the server.
+
+### Update — 2026-09-16 03:00 (end-to-end verification — fix round)
+
+Re-ran the § End-to-end verification block verbatim after the removal, with the
+only change the two lines the removed test forces: `four new tests` becomes
+`three routing tests` and `ghost test removed` replaces `four new tests`'s
+stated count, both reflecting bug-07b-1's accepted outcome rather than a
+deviation from the spec's own section F instruction. `/tmp/e2e-m22-07b-fix.txt`
+captured everything below unmodified.
+
+```sh
+== A. build ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.29s
+cargo_exit=0
+== B. the touched modules' tests ==
+daemon::stream                     test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1888 filtered out; finished in 0.00s
+daemon::executor::shell_exec       test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1880 filtered out; finished in 1.08s
+ai::tools                          test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1877 filtered out; finished in 0.00s
+knowledge::shell                   test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 1848 filtered out; finished in 4.55s
+== C. the routing and the tuple, shown not asserted ==
+    ToolCall(
+        String,         // id
+        String,         // cmd
+        Option<bool>,   // wait
+        Option<String>, // target_pane
+        Option<String>, // retry_in_pane
+        Option<String>, // thought_signature
+        Option<String>, // shell
+        Option<u64>,    // timeout_secs
+    ),
+--- the routing line ---
+41:    wait == Some(false)
+--- the four sites ---
+src/daemon/stream.rs:319:                AiEvent::ToolCall(
+src/daemon/ghost.rs:829:                    AiEvent::ToolCall(
+src/ai/tools/args.rs:353:        AiEvent::ToolCall(
+src/ai/backends/gemini.rs:329:                                                    let _ = tx.send(AiEvent::ToolCall(
+== D. structural greps (each must print the stated number) ==
+wait param                   (1): 1
+background param gone        (0): 0
+name: lines                  (7): 7
+pane params untouched        (2): 2
+no host param                (0): 0
+tuple Option<bool>           (1): 1
+tuple comment says wait      (1): 1
+tuple sites                  (4): 4
+routing is Some(false)       (1): 1
+old routing gone             (0): 0
+args wait field              (1): 1
+args has no serde default    (0): 0
+desc drops tmux              (0): 0
+desc names the shell id     (1+): 1
+ToolDef literals            (48): 48
+CLAUDE count unchanged       (1): 1
+README count unchanged       (1): 1
+ipc background survives      (6): 6
+log verb survives            (3): 3
+pane substrate untouched     (0): 0
+three routing tests          (3): 3
+ghost test removed           (0): 0
+no new allow shim            (0): 0
+prod unwrap stream              : 2
+== E. preservation ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1807 filtered out; finished in 0.00s
+daemon::utils              test result: ok. 110 passed; 0 failed; 0 ignored; 0 measured; 1789 filtered out; finished in 0.05s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs (failure names preserved) ==
+test result: ok. 1895 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.67s
+test result: ok. 1895 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.69s
+test result: ok. 1895 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.68s
+== G. gates ==
+fmt_exit=0
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.43s
+clippy_exit=0
+```
+
+**PASTE MATCH verdict:** `PASTE MATCH` — verified with the spec's awk/diff
+self-check (anchor on this entry's heading, first fenced block): the block
+above is byte-identical to `/tmp/e2e-m22-07b-fix.txt`.
+
+**Notes on the capture:**
+
+- `prod unwrap stream` prints **2**, the same two pre-existing
+  `.expect("CostRecord serialization is infallible")` calls above the
+  `#[cfg(test)]` line 07a's and the first round's captures showed; the
+  criterion says "unchanged": unchanged.
+- Section F: all three runs **1895 passed, 0 failed**. The deduplicating
+  `(x2)` that appeared in the first round's capture did not appear this time —
+  the three runs' timestamps differ enough that grep kept all three lines. The
+  `pty_stop` flake never fired.
+- Section C's "the four sites" now shows only four files and no grep inside
+  the test module — the removed test was itself one of the previous capture's
+  ToolCall sites (`stream.rs:1730`, `:1740`), so the four production sites are
+  what remains, as the phase's own criterion expected all along.
+- `pane substrate untouched` → **0**, meaning `git diff d3121674..HEAD` still
+  shows no diff for `src/ipc.rs` or `src/cli/` — the diff range spans two
+  full rounds plus the removal commit and touches none of it.
+
+**Full lib suite:** 1895 passed / 0 failed, three consecutive runs (bug doc's
+removed-test route: 1896 − 1). Gates: `fmt_exit=0`, `clippy_exit=0`.
+
+**Every other acceptance criterion from the first round re-measured against
+this capture: all unchanged and passing** (counts in == D and == B above match
+their stated values; the removed-test criterion is the one bug-07b-1 replaced,
+and the capture's `three routing tests → 3` / `ghost test removed → 0` lines
+record that replacement).
 
 - **Verdict:** bounced (bug-07b-1)
 - **Bounces:** 1
