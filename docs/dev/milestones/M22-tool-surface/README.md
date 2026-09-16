@@ -69,7 +69,8 @@ final surface, so they go last.
 | 06b | shell-history ([phase-06b-shell-history.md](phase-06b-shell-history.md)) — `list_shell_logs` / `read_shell_log` as the deferred `history` group over the index 06a made real; also fixes the sidecar-sweep defect 06a made live | done                    |
 | 07a | run-command-shell-target ([phase-07a-run-command-shell-target.md](phase-07a-run-command-shell-target.md)) — `shell?` + `timeout_secs?` on `run_terminal_command`; additive, no count change | done                    |
 | 07b | run-command-wait ([phase-07b-run-command-wait.md](phase-07b-run-command-wait.md)) — `wait?` replaces `background` on the tool; the tuple field swaps in place, no count change | done                    |
-| 08 | shell-context — `get_terminal_context` → `get_shell_context { scope }`; `[HOSTS]`/`[SHELLS]`/`[DEFAULT SHELL]` blocks; approval panel names shell + host | todo (not drafted) |
+| 08a | shell-context-block ([phase-08a-shell-context-block.md](phase-08a-shell-context-block.md)) — `[SHELLS]` / `[DEFAULT SHELL]` in the ambient context; additive, no tool change | todo (drafted 2026-09-16) |
+| 08b | shell-context-tool — `get_terminal_context` → `get_shell_context { scope }`, new scope vocabulary; **after 09** | todo (not drafted) |
 | 09 | pane-tool-removal — delete the six pane tools and their executor arms | todo (not drafted) |
 | 10 | prompt-assets — rewrite `sre.toml` and the seeded memories; retire the two tmux knowledge memories; `doc_truth` updated | todo (not drafted) |
 
@@ -142,7 +143,7 @@ final surface, so they go last.
   session" name the same set, and shipping both would be two spellings of one
   behaviour. **03a ships `"mine" | "all"`**, rejecting `"run"` and `"session"`
   rather than aliasing them. A third value becomes meaningful only when runs
-  own shells. Phase 08's `get_shell_context { scope }` keeps § 2.5's own
+  own shells. Phase 08b's `get_shell_context { scope }` keeps § 2.5's own
   three-way vocabulary — it scopes *context*, not shell ownership, so it is a
   different question and is not affected.
 
@@ -264,6 +265,24 @@ final surface, so they go last.
   waits for M21/M23. So: **07a** adds `shell?` + `timeout_secs?` (additive,
   no count change), **07b** does `wait?` for `background`, and the two
   retirements fold into 09's row.
+
+- **Row 08 split into 08a/08b at drafting (2026-09-16), and one third of it
+  deferred.** The row bundled four changes of three different shapes. Measured:
+  (1) **`[HOSTS]` cannot be built** — `ShellRecord` has no host field and
+  nothing under `src/shell/` models a remote. This is the **fifth** phase to
+  measure that (04a, 06b, 07a, 07b were the first four); it waits for M21/M23
+  with the rest of `host?`. (2) **"approval panel names shell + host" is an IPC
+  wire change** — the panel's hint rides `Response::ToolCallPrompt`
+  (`src/ipc.rs:197`) and is rendered client-side, the same wire 07a deliberately
+  left alone; it gets its own phase after 09. (3) The **tool rename** is the
+  11-step checklist plus a `scope` vocabulary change, and renaming the context
+  tool while six pane tools still populate the context would leave the name
+  describing something it does not exclusively return — so it lands **after 09**
+  as 08b. What remains, **08a**, is purely additive: two lines in the ambient
+  context, three call sites (`prompt.rs:108`, `:251`,
+  `executor/mod.rs:859`), no tool-table movement. Note `src/daemon/prompt.rs`
+  has **no test module** — 08a's tests go in `knowledge/shell.rs` beside the
+  formatter, which is also where every `ShellRow` helper already lives.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24
