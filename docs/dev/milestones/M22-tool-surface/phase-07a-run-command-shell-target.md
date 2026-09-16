@@ -589,3 +589,162 @@ batch, add the resolver and timeout override in `shell_exec`, update the tool
 def + `open_shell`'s sentence, threads the docs, then mutation checks and the
 end-to-end capture. Status left at `in-progress`; the completion tail belongs
 to the server.
+
+### Update — 2026-09-15 23:10 (mutation checks)
+
+Both mutations, each applied with the `patch` tool and run 6x, then reverted
+and shown green. Measured on this phase's code (the spec said these are not
+pre-measured).
+
+**Mutation 1 — ownership stops comparing the kind.** The guard's two sides
+were rebuilt from the inner string alone (`Owner::Chat(s) | Owner::Ghost(s)
+=> s.clone()` for both the record's owner and the caller), dropping the
+`chat:`/`ghost:` prefix that makes a `Chat("a")` and a `Ghost("a")` distinct.
+
+```
+src/daemon/executor/shell_exec.rs   342 +++
+... (I ran exactly this test six times; every run red)
+
+test daemon::executor::shell_exec::tests::run_terminal_command_refuses_another_owners_shell ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.01s
+```
+
+The mutation's first form (mutating only the record side's mapping) did **not**
+redden — the kinds still differed (`record_owner="a"` vs caller `chat:a`), so
+the guard kept refusing. Per the spec's rule that a mutation which can never
+redden is wrong rather than the test, I replaced it with the both-sides form
+above, which mutates the comparison so an inner-string match alone passes.
+Reverted with `patch`; green again:
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+```
+
+**Mutation 2 — the timeout error names the constant again.** The error's
+format string was reverted to interpolate `LOCAL_CMD_TIMEOUT`
+(`"command exceeded the {:?} limit"` / `foreground::LOCAL_CMD_TIMEOUT,`).
+
+```
+test daemon::executor::shell_exec::tests::run_terminal_command_custom_timeout_names_the_applied_value ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.00s
+```
+
+(6/6 runs red; the assertion's negative half is what caught it — the message
+again said `45s`.) Reverted with `patch`; green again:
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.00s
+```
+
+**Notes for review.** One spec criterion cannot hold as written. It pins both
+(1) three pure tests named `fn resolve_shell_target_*` and (2) `grep -c 'fn
+resolve_shell_target' src/daemon/executor/shell_exec.rs` → 1, and the
+`sed -n '/fn resolve_shell_target/,/^}/p'` purity range → 0. With the pinned
+test names present, `grep -c` finds **4** (1 definition + 3 test fns), and the
+purity range, because a test fn closes at an indented `}` while `^}` only
+matches at column 0, restarts at each test fn and swallows the rest of
+`mod tests`, printing **31**. Both numbers were measured pre-phase at 0,
+before any test existed. The definition itself is pure — `sed -n '105,119p' |
+grep -cE 'await|registry\(\)|fs::'` → **0** — and the named tests exist (the
+six-names grep → **6**). Every other criterion printed its stated number; see
+the end-to-end entry next.
+
+### Update — 2026-09-15 23:12 (end-to-end verification)
+
+Captured mechanically from the repo root with the spec's block, redirected to
+`/tmp/e2e-m22-07a.txt` and pasted below **unmodified** (this is the first
+capture; no re-capture). The transcript is the first fenced block after this
+heading, so the paste self-check's `awk` extraction matches it.
+
+Paste self-check, run from the repo root — it printed `PASTE MATCH`:
+
+    D=docs/dev/milestones/M22-tool-surface/phase-07a-run-command-shell-target.md
+    L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+    tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m22-07a.txt
+    diff /tmp/pasted-m22-07a.txt /tmp/e2e-m22-07a.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+
+Two printed values differ from their stated expectations; both trace to
+`sed`-range restarts described in the mutation-check entry (the resolver's own
+body is pure: `sed -n '105,119p' ... | grep -cE 'await|registry\(\)|fs::'` → **0**):
+
+- `resolver exists` prints **4** (1 definition + the 3 pinned test fn names).
+- `resolver is pure` prints **31** (the range swallows the rest of `mod tests`
+  after the third pinned test fn, which contains unrelated `.await` lines).
+
+Everything else printed its stated number: both new params present, nothing
+retired, no host/wait, 48 `ToolDef`s, counts unchanged, the tuple widened at 4
+sites, no dedicated spawn, `key()` used, the constant gone from the timeout
+error, `lowest-numbered` kept, `enum_values` untouched, the pane substrate
+untouched, the `summary` Foreground arm present, all six named tests present,
+no production `unwrap`/`expect`/`panic!`, no `#[allow]` shim, and no HOME
+litter (3 shell logs before == after). The lib suite passed 1892/0 failed
+three consecutive runs — the pre-existing flake never appeared — and both
+gates passed (`fmt_exit=0`, `clippy_exit=0`).
+
+```sh
+== A. build ==
+real HOME shell logs BEFORE: 3
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.14s
+cargo_exit=0
+== B. the touched modules' tests ==
+daemon::executor::shell_exec       test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1877 filtered out; finished in 1.08s
+knowledge::shell                   test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 1845 filtered out; finished in 4.56s
+ai::tools                          test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1874 filtered out; finished in 0.00s
+daemon::stream                     test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1888 filtered out; finished in 0.00s
+== C. the four tuple sites, shown not asserted ==
+src/daemon/stream.rs:314:                AiEvent::ToolCall(
+src/daemon/ghost.rs:829:                    AiEvent::ToolCall(
+src/ai/tools/args.rs:354:        AiEvent::ToolCall(
+src/ai/backends/gemini.rs:329:                                                    let _ = tx.send(AiEvent::ToolCall(
+--- the widened variant ---
+    ToolCall(
+        String,         // id
+        String,         // cmd
+        bool,           // background
+        Option<String>, // target_pane
+        Option<String>, // retry_in_pane
+        Option<String>, // thought_signature
+        Option<String>, // shell
+        Option<u64>,    // timeout_secs
+    ),
+== D. structural greps (each must print the stated number) ==
+new params                   (2): 2
+name: lines (1 + params)     (7): 7
+nothing retired              (3): 3
+no host/wait param           (0): 0
+ToolDef literals            (48): 48
+CLAUDE count unchanged       (1): 1
+README count unchanged       (1): 1
+tuple widened                (1): 1
+tuple sites                  (4): 4
+resolver exists              (1): 4
+resolver is pure             (0): 31
+no dedicated spawn           (0): 0
+ownership on key()          (1+): 4
+timeout err drops the const  (0): 0
+lowest-numbered kept        (2+): 2
+enum_values untouched        (0): 0
+memory param set intact      (1): 1
+pane substrate untouched     (0): 0
+summary Foreground arm       (1): 1
+six new tests                (6): 6
+prod unwrap shell_exec       (0): 0
+no new allow shim            (0): 0
+== E. preservation ==
+config::                   test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 1804 filtered out; finished in 0.00s
+daemon::utils              test result: ok. 110 passed; 0 failed; 0 ignored; 0 measured; 1786 filtered out; finished in 0.05s
+test isolation             test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test doc_truth             test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== F. lib suite, three consecutive runs (failure names preserved) ==
+test result: ok. 1892 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.70s
+test result: ok. 1892 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.72s
+test result: ok. 1892 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.72s
+== G. gates ==
+fmt_exit=0
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.43s
+clippy_exit=0
+== H. no HOME litter from the suite ==
+real HOME shell logs AFTER (==BEFORE): 3
+```
