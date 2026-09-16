@@ -69,7 +69,7 @@ final surface, so they go last.
 | 06b | shell-history ([phase-06b-shell-history.md](phase-06b-shell-history.md)) — `list_shell_logs` / `read_shell_log` as the deferred `history` group over the index 06a made real; also fixes the sidecar-sweep defect 06a made live | done                    |
 | 07a | run-command-shell-target ([phase-07a-run-command-shell-target.md](phase-07a-run-command-shell-target.md)) — `shell?` + `timeout_secs?` on `run_terminal_command`; additive, no count change | done                    |
 | 07b | run-command-wait ([phase-07b-run-command-wait.md](phase-07b-run-command-wait.md)) — `wait?` replaces `background` on the tool; the tuple field swaps in place, no count change | done                    |
-| 08a | shell-context-block ([phase-08a-shell-context-block.md](phase-08a-shell-context-block.md)) — `[SHELLS]` / `[DEFAULT SHELL]` in the ambient context; additive, no tool change | todo (drafted 2026-09-16) |
+| 08a | shell-context-block ([phase-08a-shell-context-block.md](phase-08a-shell-context-block.md)) — `[SHELLS]` / `[DEFAULT SHELL]` in the ambient context; additive, no tool change | in-progress (drafted 2026-09-16) |
 | 08b | shell-context-tool — `get_terminal_context` → `get_shell_context { scope }`, new scope vocabulary; **after 09** | todo (not drafted) |
 | 09 | pane-tool-removal — delete the six pane tools and their executor arms | todo (not drafted) |
 | 10 | prompt-assets — rewrite `sre.toml` and the seeded memories; retire the two tmux knowledge memories; `doc_truth` updated | todo (not drafted) |

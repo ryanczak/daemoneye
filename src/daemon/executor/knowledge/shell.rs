@@ -178,6 +178,104 @@ fn format_age(age_secs: u64) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// shell_context_block (M22 phase-08a) — the ambient [SHELLS] / [DEFAULT SHELL]
+// ---------------------------------------------------------------------------
+
+/// The shell a bare `run_terminal_command` would reuse for `owner_key`, or
+/// `None` when the owner has no eligible shell.
+///
+/// Pure mirror of `shell_for_owner`'s step-(1) reuse predicate
+/// (`src/shell/session.rs:27`): lowest **numeric** index among the owner's
+/// shells that are neither `interactive` nor `dedicated`.
+///
+/// **Deliberate divergence:** `shell_for_owner` settles liveness with a
+/// per-shell flock probe — the registry's own liveness check — while this
+/// runs on every prompt assembly and must do no I/O. It reads the
+/// `exited_unix` stamp `reap_exited` writes instead: a host that died since
+/// the last reap is named one turn too long, a reaped record is never named.
+fn default_shell_for(rows: &[ShellRow], owner_key: &str) -> Option<String> {
+    rows.iter()
+        .filter(|row| {
+            !row.interactive
+                && !row.dedicated
+                && row.exited_unix.is_none()
+                && row.owner_key == owner_key
+        })
+        .min_by_key(|row| ShellIndex::new(&row.id).0)
+        .map(|row| row.id.clone())
+}
+
+/// Format the ambient shell block. Pure: takes `now_unix` rather than reading
+/// the clock and never sees the registry, so tests hand-build rows.
+///
+/// Returns the **empty string** when `rows` is empty — every session's first
+/// turn has no shells, and a "no shells" line on every one of those turns is
+/// pure token cost for no information.
+fn format_shell_context(rows: &[ShellRow], owner_key: &str, now_unix: u64) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut sorted: Vec<&ShellRow> = rows.iter().collect();
+    sorted.sort_by_key(|row| ShellIndex::new(&row.id).0);
+    let mut out = String::from("[SHELLS] ");
+    out.push_str(&sorted.len().to_string());
+    out.push_str(" — ");
+    let parts: Vec<String> = sorted
+        .iter()
+        .map(|row| {
+            let age_part = if row.started_unix > 0 && now_unix >= row.started_unix {
+                format!(" age:{}", format_age(now_unix - row.started_unix))
+            } else {
+                String::new()
+            };
+            let mut flags = String::new();
+            if row.interactive {
+                flags.push_str(" [interactive]");
+            }
+            if row.dedicated {
+                flags.push_str(" [dedicated]");
+            }
+            if row.exited_unix.is_some() {
+                flags.push_str(" [exited]");
+            }
+            format!("{}{age_part}{flags}", row.id)
+        })
+        .collect();
+    out.push_str(&parts.join(", "));
+    out.push('\n');
+    if let Some(default) = default_shell_for(rows, owner_key) {
+        out.push_str(&format!(
+            "[DEFAULT SHELL] {default} — run_terminal_command with no shell argument lands here\n"
+        ));
+    }
+    out
+}
+
+/// The block against an injected registry — the seam tests drive. `resolve_scope`
+/// with `None` collects exactly `caller`'s own rows, the same rows `list_shells`
+/// scope-"mine" shows, so the ambient block and the tool can never disagree on
+/// what the caller owns.
+fn shell_context_block_in(reg: &ShellRegistry, caller: &Owner, now_unix: u64) -> String {
+    let key = caller.key();
+    let rows = match resolve_scope(reg, None, caller, "shell_context") {
+        Ok(rows) => rows,
+        Err(_) => return String::new(),
+    };
+    format_shell_context(&rows, &key, now_unix)
+}
+
+/// The ambient `[SHELLS]` / `[DEFAULT SHELL]` block for `caller`, or the
+/// empty string when the caller owns no shells.
+///
+/// `pub` rather than `pub(super)`: `knowledge/mod.rs` re-exports it for
+/// `executor` and the prompt builders the way every sibling module's functions
+/// are re-exported, and a `pub(super)` item cannot be given wider visibility on
+/// re-export.
+pub fn shell_context_block(caller: &Owner) -> String {
+    shell_context_block_in(crate::shell::registry(), caller, now_unix())
+}
+
+// ---------------------------------------------------------------------------
 // read_shell (M22 phase-03b)
 // ---------------------------------------------------------------------------
 
@@ -1836,6 +1934,165 @@ mod tests {
         unsafe { std::env::set_var("HOME", dir.path()) }
         crate::config::Config::ensure_dirs().ok();
         (guard, dir)
+    }
+
+    // -- default_shell_for (phase-08a) --------------------------------------
+
+    #[test]
+    fn default_shell_for_picks_the_lowest_index_not_the_lowest_string() {
+        let rows = vec![
+            row("s10", "chat:a", NOW - 100, false, false, None),
+            row("s2", "chat:a", NOW - 100, false, false, None),
+        ];
+        let got = default_shell_for(&rows, "chat:a");
+        assert_eq!(
+            got,
+            Some("s2".to_string()),
+            "s2 must beat s10: a numeric index, not a string sort"
+        );
+    }
+
+    #[test]
+    fn default_shell_for_skips_an_interactive_shell() {
+        let rows = vec![
+            row("s0", "chat:a", NOW - 100, true, false, None),
+            row("s1", "chat:a", NOW - 100, false, false, None),
+        ];
+        assert_eq!(
+            default_shell_for(&rows, "chat:a"),
+            Some("s1".to_string()),
+            "an interactive shell must not be named as the default, s1 is"
+        );
+    }
+
+    #[test]
+    fn default_shell_for_skips_a_dedicated_shell() {
+        let rows = vec![
+            row("s0", "chat:a", NOW - 100, false, true, None),
+            row("s1", "chat:a", NOW - 100, false, false, None),
+        ];
+        assert_eq!(
+            default_shell_for(&rows, "chat:a"),
+            Some("s1".to_string()),
+            "a dedicated shell belongs to one command, s1 is the default"
+        );
+    }
+
+    #[test]
+    fn default_shell_for_skips_an_exited_shell() {
+        let rows = vec![
+            row("s0", "chat:a", NOW - 100, false, false, Some(NOW)),
+            row("s1", "chat:a", NOW - 100, false, false, None),
+        ];
+        assert_eq!(
+            default_shell_for(&rows, "chat:a"),
+            Some("s1".to_string()),
+            "a stamped-exited shell must not be named, s1 is"
+        );
+    }
+
+    #[test]
+    fn default_shell_for_ignores_another_owners_shell() {
+        let rows = vec![
+            row("s0", "chat:other", NOW - 100, false, false, None),
+            row("s1", "chat:a", NOW - 100, false, false, None),
+        ];
+        assert_eq!(
+            default_shell_for(&rows, "chat:a"),
+            Some("s1".to_string()),
+            "another owner's shell is invisible to the selector"
+        );
+    }
+
+    #[test]
+    fn default_shell_for_returns_none_when_every_shell_is_ineligible() {
+        let rows = vec![row("s0", "chat:a", NOW - 100, true, false, None)];
+        assert_eq!(
+            default_shell_for(&rows, "chat:a"),
+            None,
+            "an interactive-only shell set has no default"
+        );
+    }
+
+    // -- format_shell_context (phase-08a) -----------------------------------
+
+    #[test]
+    fn format_shell_context_is_empty_when_there_are_no_rows() {
+        let out = format_shell_context(&[], "chat:a", NOW);
+        assert_eq!(
+            out, "",
+            "no rows must give the empty string, no header line"
+        );
+    }
+
+    #[test]
+    fn format_shell_context_lists_every_shell_with_its_flags() {
+        let rows = vec![
+            row("s2", "chat:a", NOW - 12, true, false, None),
+            row("s0", "chat:a", NOW - 240, false, false, None),
+            row("s4", "chat:b", NOW - 240, false, true, Some(NOW - 5)),
+        ];
+        let out = format_shell_context(&rows, "chat:a", NOW);
+        assert!(
+            out.starts_with("[SHELLS] 3 — s0 age:4m, s2 age:12s [interactive], s4 age:"),
+            "numeric order (s0, s2, s4) with flags on the right rows: {out}"
+        );
+        assert!(
+            out.contains("s0 age:4m — ") || out.starts_with("[SHELLS] 3 — s0 age:4m,"),
+            "s0 has no flags: {out}"
+        );
+        assert!(
+            out.contains(
+                "[DEFAULT SHELL] s0 — run_terminal_command with no shell argument lands here"
+            ),
+            "the eligible lowest shell is named as the default: {out}"
+        );
+        assert!(
+            !out.contains("[dedicated]") || out.contains("s4"),
+            "the dedicated row's flag rides its own row: {out}"
+        );
+    }
+
+    #[test]
+    fn format_shell_context_omits_the_default_line_when_none_is_eligible() {
+        let rows = vec![row("s0", "chat:a", NOW - 100, true, false, None)];
+        let out = format_shell_context(&rows, "chat:a", NOW);
+        assert!(
+            out.contains("[SHELLS] 1"),
+            "the single interactive row is still counted: {out}"
+        );
+        assert!(
+            !out.contains("[DEFAULT SHELL]"),
+            "the default line must be omitted entirely, not named 'none': {out}"
+        );
+    }
+
+    // -- the injected-registry seam (phase-08a) -----------------------------
+
+    #[tokio::test]
+    async fn e2e_shell_context_block_names_a_real_hosts_shell() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("e2e".into());
+        let out = open_shell_with(
+            &reg,
+            &owner,
+            5,
+            Duration::from_millis(3000),
+            spawn_in_process_host,
+        )
+        .await;
+        assert!(out.contains("Opened shell"), "setup must succeed: {out}");
+        let block = shell_context_block_in(&reg, &owner, NOW);
+        println!("PASTE MATCH >>>\n{block}<<<");
+        assert!(
+            block.starts_with("[SHELLS] 1 — s"),
+            "the block must count and name the real shell: {block}"
+        );
+        assert!(
+            block.contains("[DEFAULT SHELL] s"),
+            "a freshly opened non-dedicated shell is the default: {block}"
+        );
     }
 
     #[test]

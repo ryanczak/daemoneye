@@ -2,7 +2,7 @@ mod bg_shell;
 pub(crate) mod container;
 mod file_ops;
 mod foreground;
-mod knowledge;
+pub(crate) mod knowledge;
 mod schedule;
 mod shell_exec;
 
@@ -867,8 +867,11 @@ where
                     )
                 })
                 .unwrap_or_default();
+            let shells_line = knowledge::shell_context_block(&Owner::Chat(
+                session_id.unwrap_or_default().to_string(),
+            ));
             Ok(ToolCallOutcome::Result(format!(
-                "{fg_line}{ctx}\n{pane_map}"
+                "{shells_line}{fg_line}{ctx}\n{pane_map}"
             )))
         }
 

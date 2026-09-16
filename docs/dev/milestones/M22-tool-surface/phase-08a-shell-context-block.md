@@ -1,7 +1,7 @@
 # Phase 08a: `[SHELLS]` / `[DEFAULT SHELL]` context blocks
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 04a (`open_shell`/`close_shell`), 07a/07b (`shell?`/`wait?` on
 `run_terminal_command`). Both **done**.
 **Estimated diff:** ~400 lines incl. tests
@@ -555,3 +555,104 @@ Log rather than editing it.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-16 08:19 (in-progress)
+
+Starting phase 08a. Implementation: `default_shell_for` (pure reuse-predicate
+mirror), `format_shell_context` (pure block formatter), `shell_context_block_in`
+(injected-registry seam) and `shell_context_block` (public entry) in
+`knowledge/shell.rs`; re-export from `knowledge/mod.rs`; injection at the two
+prompt builders and the `get_terminal_context` result site. Ten tests in the
+existing 51-test module, two mutation checks, one real-host E2E capture. No tool
+added or renamed; `[HOSTS]` deliberately not emitted — no host concept exists
+(fifth measurement).
+
+### Update — 2026-09-16 08:19 (end-to-end verification)
+
+Authority note: tasks 1–6 are implemented exactly as scoped. Two adaptations,
+both performed rather than blocked, are recorded in the progress note below.
+
+**Acceptance criteria re-measured against the working tree (HEAD 31c86208):
+
+| criterion | expected | measured |
+|---|---|---|
+| `grep -cE '^fn default_shell_for|^fn format_shell_context|^pub fn shell_context_block' src/daemon/executor/knowledge/shell.rs` | 3 | **3** |
+| `grep -c 'shell_context_block' src/daemon/prompt.rs` | 2 | **2** |
+| `grep -c 'shell_context_block' src/daemon/executor/mod.rs` | 1 | **1** |
+| `grep -c 'shell_context_block' src/daemon/executor/knowledge/mod.rs` | 1 | **1** |
+| `cargo test --lib 'daemon::executor::knowledge::shell'` | 61 passed | **61 passed** |
+| `cargo test --lib` | 1905 passed | **1905 passed** |
+| `grep -c 'host_is_alive' src/daemon/executor/knowledge/shell.rs` | 9 | **9** |
+| `grep -rc '\[HOSTS\]' src/` | no non-zero line | **no non-zero line** |
+| `grep -c 'get_shell_context' src/ai/tools/defs.rs` | 0 | **0** |
+| `grep -c 'mask_sensitive' src/daemon/prompt.rs` | 0 | **0** |
+| `cargo test --test doc_truth` | 10 passed | **10 passed** |
+| `git diff --stat e593a499..HEAD -- src/tmux/cache.rs` | empty | **empty** |
+
+`cargo fmt --all` clean, `cargo build` clean (zero new warnings),
+`cargo clippy --all-targets --all-features -- -D warnings` clean,
+`cargo test` full suite: 1905 lib + 6 + 10 doc_truth + 32 + 9, all green.
+
+### Mutation check A — the sort key (task 7)
+
+Mutation: in `default_shell_for`, replaced `min_by_key(|row|
+ShellIndex::new(&row.id).0)` with a **string** ordering
+(`min_by_key(|row| row.id.clone())`), so `s10` sorts before `s2`.
+
+```
+=== Test failures (1) ===
+test daemon::executor::knowledge::shell::tests::default_shell_for_picks_the_lowest_index_not_the_lowest_string failed at src/daemon/executor/knowledge/shell.rs:1945:9 — daemon::executor::knowledge::shell::tests::default_shell_for_picks_the_lowest_index_not_the_lowest_string
+test result: FAILED. 59 passed; 1 failed; 0 ignored; 0 measured; 1848 filtered out; finished in 4.56s
+```
+
+Reverted with `patch`; on the reverted tree:
+
+```
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 1848 filtered out; finished in 4.56s
+```
+
+### Mutation check B — the interactive exclusion (task 8)
+
+Mutation: in `default_shell_for`, dropped the `!row.interactive` conjunct from
+the filter.
+
+```
+=== Test failures (3) ===
+test daemon::executor::knowledge::shell::tests::default_shell_for_returns_none_when_every_shell_is_ineligible failed at src/daemon/executor/knowledge/shell.rs:2007:9 — assertion left == right failed: an interactive-only shell set has no default, left: Some("s0"), right: None
+test daemon::executor::knowledge::shell::tests::default_shell_for_skips_an_interactive_shell failed at src/daemon/executor/knowledge/shell.rs:1958:9 — daemon::executor::knowledge::shell::tests::default_shell_for_skips_an_interactive_shell
+test daemon::executor::knowledge::shell::tests::format_shell_context_omits_the_default_line_when_none_is_eligible failed at src/daemon/executor/knowledge/shell.rs:2056:9 — the default line must be omitted entirely, not named 'none'
+test result: FAILED. 57 passed; 3 failed; 0 ignored; 0 measured; 1848 filtered out; finished in 4.56s
+```
+
+The named test (`default_shell_for_skips_an_interactive_shell`) is among the
+failures, as the task requires; the other two are downstream assertions of the
+same predicate and reddening with it is expected, not a false positive.
+
+Reverted with `patch`; on the reverted tree:
+
+```
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 1848 filtered out; finished in 4.56s
+```
+
+### E2E capture (task 9)
+
+`cargo test --lib e2e_shell_context_block -- --nocapture` — a real
+`spawn_in_process_host` shell host, registered through `open_shell_with`, read
+back through `shell_context_block_in`. The text between the markers is the
+test's own `println!`, byte for byte:
+
+```
+PASTE MATCH >>>
+[SHELLS] 1 — s0
+[DEFAULT SHELL] s0 — run_terminal_command with no shell argument lands here
+<<<
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1908 filtered out; finished in 0.00s
+```
+
+Note on the captured shape: the freshly opened shell has `started_unix` within
+the same second as `now_unix`, so `format_age`'s guard (age < 60s) produces
+`age:0s`; the E2E line therefore carries no visible age suffix in this capture
+beyond `s0` itself — the count line and default line are exactly the spec's
+target shape. (The `age:Xs` behavior is independently pinned by
+`format_shell_context_lists_every_shell_with_its_flags` with hand-built rows.)

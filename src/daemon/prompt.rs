@@ -134,6 +134,9 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
         .unwrap_or_default();
     let current_time_line = format_current_time_line();
     let pane_map = ctx.cache.pane_map_summary(ctx.chat_pane);
+    let shell_block = crate::daemon::executor::knowledge::shell_context_block(
+        &crate::shell::Owner::Chat(ctx.session_id.unwrap_or_default().to_string()),
+    );
 
     format!(
         "## Host Context\n```\n{sys_ctx}\n```\n\n\
@@ -149,6 +152,7 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
          {memory_block}\
          {manifest_block}\
          {auto_search_block}\
+         {shell_block}\
          ## Terminal Session\n```\n{session_summary}\n```\n\n\
          {pane_map}{current_time_line}User: {}",
         ctx.safe_query
@@ -212,6 +216,9 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
 
     let current_time_line = format_current_time_line();
     let pane_map = ctx.cache.pane_map_summary(ctx.chat_pane);
+    let shell_block = crate::daemon::executor::knowledge::shell_context_block(
+        &crate::shell::Owner::Chat(ctx.session_id.unwrap_or_default().to_string()),
+    );
 
     // Build session tags for dynamic memory retrieval.
     let recent_keywords: Vec<String> = ctx
@@ -252,14 +259,14 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         let session_summary =
             prepend_foreground_target(&session_summary, ctx.default_target_pane, ctx.cache);
         format!(
-            "{budget_note}{fg_target_line}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}\
+            "{budget_note}{fg_target_line}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}\
              [Terminal snapshot — auto-refreshed (pane activity detected)]\n\
              ```\n{session_summary}\n```\n\nUser: {}",
             ctx.safe_query
         )
     } else {
         format!(
-            "{budget_note}{fg_target_line}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}User: {}",
+            "{budget_note}{fg_target_line}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}User: {}",
             ctx.safe_query
         )
     }
