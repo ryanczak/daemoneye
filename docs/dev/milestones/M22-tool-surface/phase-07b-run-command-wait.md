@@ -1,7 +1,7 @@
 # Phase 07b: `wait?` replaces `background` on `run_terminal_command`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** in-progress
+**Status:** review
 **Depends on:** 07a, which widened `AiEvent::ToolCall` and added
 `shell?`/`timeout_secs?`. **done**.
 **Estimated diff:** ~380 lines incl. tests
@@ -613,3 +613,152 @@ to `/tmp/e2e-m22-07b.txt` (verified with the spec's awk/diff self-check).
 
 **Full lib suite:** 1896 passed / 0 failed, three consecutive runs (baseline
 1892 → +4 new tests). Gates: `fmt_exit=0`, `clippy_exit=0`.
+
+### Update — ts=1789527153208 (complete, server-authored)
+
+**Summary:** Phase 07b is implemented and committed (`af8306c0`, working tree clean).
+
+**Summary:** `wait` replaces `background` on `run_terminal_command`: position 3 of the `AiEvent::ToolCall` tuple swapped in place to `Option<bool>` (same arity, all four sites edited in one batch), `RunTerminalCommandArgs` takes `wait: Option<bool>` with no serde default, and the routing is now a pure `routes_to_background(wait)` in `stream.rs` written as `wait == Some(false)`, called from the `ToolCall` arm. The `wait` ParamDef description no longer describes tmux windows — it says default-true, that `wait: false` returns immediately with the shell id, and names `watch_shell` / `read_shell` for following it up; the tool's own description, `watch_shell`'s "dedicated shell" sentence, and the two sibling parameter descriptions follow, while CLAUDE.md's and README.md's `run_terminal_command` rows and sre.toml's two-mode section switch to `wait` with the tool arithmetic (48 = 34 core + 14 deferred) untouched. Nothing else changed: the pane parameters are intact for phase 09, no `host`, and the approval-panel flag, the events-log `background` verb and the execution path's own names survive un-diffed. Verified by four new routing tests plus the spec's verbatim end-to-end capture pasted byte-identical (`PASTE MATCH`) into its own Update Log entry.
+
+**Notes for review:**
+- **Ghost intent** (recorded in the mutation-check entry): `ghost.rs` passed position 3 through to a `_background` binding it never read and unconditionally pushed `PendingCall::Background`; it now binds `_wait` the same way and still pushes `Background` unconditionally, so ghost behaviour is unchanged — the ghost event consistently carries `wait: None` from the backends and that routes to `Background`.
+- **Gemini construction named as an adaptation:** `parse_malformed_gemini_call` still parses the Python-style `background = true|false` Gemini emits (that literal is the corrupted-API form, not our parameter), so the tuple site maps it with `Some(!bg)` to land on the same side of the routing as before — `background: false` (the common fallback) becomes `Some(true)`, i.e. foreground-wait, matching the old default.
+- **Mutation forms that do and don't redden** are recorded in the Update Log: unconditional `true` reddened 6/6 (three foreground tests) and unconditional `false` 6/6 (`wait_false_runs_in_the_background`), but a dead-branch `if false { true } else { … }` form stayed green 6/6 — the mutation must ignore `wait` and replace the whole expression to be observable.
+- **Capture quirks, not failures:** section D's `prod unwrap stream` prints 2 (the same two pre-`#[cfg(test)]` CostRecord `.expect`s 07a's capture showed); section F's grep deduplicated the third run's identical `test result` line into `(x2)` — all three runs were 1896 passed / 0 failed (baseline 1892 + 4), and the recorded `pty_stop` flake never fired. Acceptance criteria, preservation counts, and both doc count-lines all land on their stated values; `fmt_exit=0`, `clippy_exit=0`. Status left `in-progress` for the server's completion tail.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.71s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +2 -2
+- `assets/prompts/sre.toml` — +7 -4
+- `docs/dev/milestones/M22-tool-surface/README.md` — +1 -1
+- `docs/dev/milestones/M22-tool-surface/phase-07b-run-command-wait.md` — +153 -1
+- `src/ai/backends/gemini.rs` — +1 -1
+- `src/ai/tools/args.rs` — +2 -3
+- `src/ai/tools/defs.rs` — +27 -22
+- `src/ai/tools/dispatch.rs` — +1 -1
+- `src/ai/types/events.rs` — +2 -2
+- `src/daemon/ghost.rs` — +1 -1
+- `src/daemon/stream.rs` — +52 -2
+
+**Commit:** af8306c02491b115525ccb3e1bd01aa7887025c6
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
