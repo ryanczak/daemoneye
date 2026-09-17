@@ -92,19 +92,6 @@ pub(super) struct ReadFileArgs {
 }
 
 #[derive(Deserialize)]
-pub(super) struct ReadPaneArgs {
-    pane_id: String,
-    lines: Option<u64>,
-    grep: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub(super) struct FindInPanesArgs {
-    pattern: String,
-    scope: Option<String>,
-}
-
-#[derive(Deserialize)]
 pub(super) struct ReadShellArgs {
     shell: String,
     #[serde(default)]
@@ -495,35 +482,6 @@ impl ToolArgs for ReadFileArgs {
             limit: self.limit,
             pattern: self.pattern,
             target_pane: self.target_pane,
-            thought_signature: ts,
-        }
-    }
-}
-
-impl ToolArgs for ReadPaneArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::ReadPane {
-            id: id.to_string(),
-            pane_id: self.pane_id,
-            lines: self.lines,
-            grep: self.grep,
-            thought_signature: ts,
-        }
-    }
-}
-
-impl ToolArgs for FindInPanesArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::FindInPanes {
-            id: id.to_string(),
-            pattern: self.pattern,
-            scope: self.scope,
             thought_signature: ts,
         }
     }

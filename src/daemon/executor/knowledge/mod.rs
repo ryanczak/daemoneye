@@ -17,9 +17,7 @@ pub(super) use memory::{
     UpdateMemoryRequest, add_memory, delete_memory, list_memories, read_memory, search_repository,
     update_memory,
 };
-pub(super) use pane::{
-    close_bg_window, find_in_panes, kill_window_refusal, list_panes, read_pane, watch_pane,
-};
+pub(super) use pane::{close_bg_window, kill_window_refusal, watch_pane};
 pub(super) use shell::{
     close_shell, find_in_shells, input_target_note, list_shell_logs, list_shells, open_shell,
     read_shell, read_shell_log, send_input, watch_shell,

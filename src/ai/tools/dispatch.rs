@@ -38,10 +38,6 @@ pub fn dispatch_tool_event(
         }),
         "get_terminal_context" => dispatch::<GetTerminalContextArgs>(id, args, ts),
         "list_shells" => dispatch::<ListShellsArgs>(id, args, ts),
-        "list_panes" => Some(AiEvent::ListPanes {
-            id: id.to_string(),
-            thought_signature: ts,
-        }),
         "cancel_schedule" => {
             schedule_id_event(args, ts.clone(), |jid, t| AiEvent::CancelSchedule {
                 id: id.to_string(),
@@ -59,8 +55,6 @@ pub fn dispatch_tool_event(
         "delete_script" => dispatch::<DeleteScriptArgs>(id, args, ts),
         "watch_pane" => dispatch::<WatchPaneArgs>(id, args, ts),
         "read_file" => dispatch::<ReadFileArgs>(id, args, ts),
-        "read_pane" => dispatch::<ReadPaneArgs>(id, args, ts),
-        "find_in_panes" => dispatch::<FindInPanesArgs>(id, args, ts),
         "read_shell" => dispatch::<ReadShellArgs>(id, args, ts),
         "find_in_shells" => dispatch::<FindInShellsArgs>(id, args, ts),
         "open_shell" => dispatch::<OpenShellArgs>(id, args, ts),
@@ -120,6 +114,48 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn tool_table_counts_are_45_31_14() {
+        assert_eq!(TOOLS.len(), 45, "total tools");
+        assert_eq!(
+            TOOLS.iter().filter(|t| t.deferred_group.is_none()).count(),
+            31,
+            "core tools"
+        );
+        assert_eq!(
+            TOOLS.iter().filter(|t| t.deferred_group.is_some()).count(),
+            14,
+            "deferred tools"
+        );
+    }
+
+    #[test]
+    fn e2e_removed_pane_read_tools_are_absent_from_every_render() {
+        let names: Vec<&str> = TOOLS.iter().map(|t| t.name).collect();
+        for gone in ["list_panes", "read_pane", "find_in_panes"] {
+            assert!(!names.contains(&gone), "{gone} must be gone from TOOLS");
+        }
+        for kept in ["list_shells", "read_shell", "find_in_shells"] {
+            assert!(
+                names.contains(&kept),
+                "{kept} is the replacement and must stay"
+            );
+        }
+        let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
+        let blob = serde_json::to_string(&rendered).expect("render must serialize");
+        for gone in ["list_panes", "read_pane", "find_in_panes"] {
+            assert!(
+                !blob.contains(gone),
+                "{gone} must not survive in the render: {blob:.400}"
+            );
+        }
+        println!(
+            "PASTE MATCH >>>\ntools={} core={}\n<<<",
+            TOOLS.len(),
+            TOOLS.iter().filter(|t| t.deferred_group.is_none()).count()
+        );
+    }
 
     /// Every tool in TOOLS must appear in the Gemini render, in order.
     /// This is the regression test that would have caught every previous
@@ -229,8 +265,6 @@ mod tests {
                 "delete_script" => json!({"script_name": "s.sh"}),
                 "watch_pane" => json!({"pane_id": "%1"}),
                 "read_file" => json!({"path": "/tmp/f"}),
-                "read_pane" => json!({"pane_id": "%3"}),
-                "find_in_panes" => json!({"pattern": "error"}),
                 "tmux_control" => json!({"action": "focus", "pane_id": "%3"}),
                 "edit_file" => json!({"path": "/tmp/f"}),
                 "write_runbook" => json!({"name": "rb", "content": "# RB"}),
@@ -252,7 +286,6 @@ mod tests {
                     json!({"shell": "s3", "lines": 10, "since_command": 0, "filter": "."})
                 }
                 "find_in_shells" => json!({"pattern": "error", "scope": "all"}),
-                "list_panes" => json!({}),
                 "close_background_window" => json!({"pane_id": "%1"}),
                 "spawn_ghost_shell" => json!({"runbook": "rb", "message": "investigate"}),
                 "create_agent" => {
@@ -673,8 +706,8 @@ mod tests {
     fn every_tool_has_a_category() {
         assert_eq!(
             TOOLS.len(),
-            48,
-            "tool count should match the 34 core + 14 deferred claim"
+            45,
+            "tool count should match the 31 core + 14 deferred claim"
         );
         for t in TOOLS {
             assert!(
@@ -691,9 +724,9 @@ mod tests {
         for t in TOOLS {
             *counts.entry(t.category).or_insert(0) += 1;
         }
-        assert_eq!(counts.get(&Category::Read), Some(&23), "Read count");
+        assert_eq!(counts.get(&Category::Read), Some(&21), "Read count");
         assert_eq!(counts.get(&Category::Write), Some(&13), "Write count");
-        assert_eq!(counts.get(&Category::Search), Some(&4), "Search count");
+        assert_eq!(counts.get(&Category::Search), Some(&3), "Search count");
         assert_eq!(counts.get(&Category::Run), Some(&7), "Run count");
         assert_eq!(counts.get(&Category::Meta), Some(&1), "Meta count");
         assert_eq!(counts.values().sum::<usize>(), TOOLS.len());

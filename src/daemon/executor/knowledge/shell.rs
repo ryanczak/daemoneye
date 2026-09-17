@@ -279,10 +279,12 @@ pub fn shell_context_block(caller: &Owner) -> String {
 // read_shell (M22 phase-03b)
 // ---------------------------------------------------------------------------
 
-/// Default tail depth when `lines` is omitted. Same values as `read_pane`'s,
-/// which is the analogue this tool's parameters were measured against.
+/// Default tail depth when `lines` is omitted. Same values as the retired
+/// `read_pane` had, which is the analogue this tool's parameters were
+/// measured against.
 const READ_SHELL_DEFAULT_LINES: usize = 200;
-/// Hard ceiling on a single `read_shell` capture. Same value as `read_pane`'s.
+/// Hard ceiling on a single `read_shell` capture. Same value as the retired
+/// `read_pane` had.
 const READ_SHELL_MAX_LINES: usize = 2000;
 
 /// Pure: the command indices a reader should read. `since_command` selects
@@ -424,9 +426,9 @@ fn build_body(
     Ok(Some(mask_sensitive(trimmed).to_string()))
 }
 
-/// Pure: the tail depth `lines` requests, with `read_pane`'s defaults (200,
-/// capped at 2000, `0` or absent → default). Split from `build_body` so the
-/// clamp arithmetic is assertable directly.
+/// Pure: the tail depth `lines` requests, with the retired `read_pane`'s
+/// defaults (200, capped at 2000, `0` or absent → default). Split from
+/// `build_body` so the clamp arithmetic is assertable directly.
 fn compile_depth(requested: Option<u64>) -> usize {
     match requested {
         Some(n) if n > 0 => (n as usize).min(READ_SHELL_MAX_LINES),
@@ -499,9 +501,8 @@ fn read_shell_in(
             if let Some(p) = filter {
                 format!(
                     "{header} no lines matched /{p}/ in the last {depth} lines. \
-                     Record the pattern without anchors, check the previous \
-                     commands' output with list_shells, or use read_pane for a \
-                     live pane."
+                     Record the pattern without anchors, or check the previous \
+                     commands' output with list_shells."
                 )
             } else {
                 format!(

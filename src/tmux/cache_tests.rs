@@ -684,8 +684,6 @@ fn evict_missing_ignores_empty_snapshot() {
     );
 }
 
-// ── list_panes foreign session exclusion is in pane.rs tests ──────────────
-
 // ── ContextScope + window_in_scope ────────────────────────────────────────
 
 #[test]

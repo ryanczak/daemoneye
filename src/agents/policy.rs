@@ -118,7 +118,7 @@ mod tests {
         assert!(allowed.explicitly_allows("tmux_control"));
 
         let other_allow = ToolPolicy {
-            allow: Some(vec!["read_pane".to_string()]),
+            allow: Some(vec!["read_shell".to_string()]),
             deny: None,
         };
         assert!(!other_allow.explicitly_allows("tmux_control"));
@@ -127,7 +127,7 @@ mod tests {
         // deny the tool is NOT an explicit allow.
         let deny_other = ToolPolicy {
             allow: None,
-            deny: Some(vec!["read_pane".to_string()]),
+            deny: Some(vec!["read_shell".to_string()]),
         };
         assert!(deny_other.permits("tmux_control"));
         assert!(!deny_other.explicitly_allows("tmux_control"));

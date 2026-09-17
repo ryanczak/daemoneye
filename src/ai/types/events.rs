@@ -173,23 +173,6 @@ pub enum AiEvent {
         thought_signature: Option<String>,
         scope: Option<String>,
     },
-    ListPanes {
-        id: String,
-        thought_signature: Option<String>,
-    },
-    ReadPane {
-        id: String,
-        pane_id: String,
-        lines: Option<u64>,
-        grep: Option<String>,
-        thought_signature: Option<String>,
-    },
-    FindInPanes {
-        id: String,
-        pattern: String,
-        scope: Option<String>,
-        thought_signature: Option<String>,
-    },
     /// Read a shell's recorded output (asciicast log slice).
     ReadShell {
         id: String,

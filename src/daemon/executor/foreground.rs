@@ -166,7 +166,8 @@ where
                 })
                 .unwrap_or_default();
             let suggestion = if correct.is_empty() {
-                "Check [PANE MAP] or call list_panes to find the correct pane ID.".to_string()
+                "Check [PANE MAP] to find the correct pane ID, or ask the user which pane to target."
+                    .to_string()
             } else {
                 format!(
                     "The foreground target for this session is {correct}. \
@@ -209,7 +210,7 @@ where
                 })
                 .unwrap_or_default();
             let suggestion = if correct.is_empty() {
-                "Call list_panes to discover current pane IDs, or use the [PANE MAP] below."
+                "Check the [PANE MAP] in the context block to discover current pane IDs."
                     .to_string()
             } else {
                 format!(

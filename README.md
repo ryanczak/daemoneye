@@ -288,7 +288,7 @@ The agent sees your whole tmux world, not just the pane you are typing in.
 
 - **Every session, not just yours.** The pane cache tracks windows and panes across *all* tmux sessions. Panes outside your own session appear labelled with their session name; their content is fetched on demand rather than polled, so watching a second session costs nothing until you ask.
 - **Live status per pane.** Each pane is classified every 2 s — `Running`, `Idle 4m`, `AwaitingInput`, `Bell`, `Dead(1)` — and that status shows up everywhere panes are listed. An idle shell is never mistaken for a prompt waiting on input.
-- **Any pane's contents, one call away.** `read_pane` returns a chosen depth of any pane's scrollback, ANSI-annotated and masked. `find_in_panes` regex-searches every pane at once, so "which pane has the error?" is one call instead of a hunt. The chat pane is always refused — its contents are this conversation.
+- **Any pane's contents, one call away.** `get_terminal_context` returns the current context block on demand — a live snapshot with panes and recent output — so "which pane has the error?" is one call instead of a hunt when the ambient block has gone stale.
 - **The agent can drive tmux, with the gate on.** `tmux_control` focuses, zooms, splits, renames and kills windows — every action behind the same approval prompt as a shell command, because navigation moves your attention too. It refuses to kill a daemon-managed window or the window holding your chat pane, and autonomous Ghost Shells are denied the tool outright unless an agent's `ToolPolicy` names it explicitly.
 - **`/panes` is worth reading.** A window-grouped inspector: cwd, status, activity age and a preview line per pane, with the pinned foreground target marked.
 
@@ -493,7 +493,7 @@ While the search prompt is open, typing edits the query, `Enter` commits it and 
 
 ## AI tools
 
-The model has **48 tools**. The 34 **core** tools are sent with every request; the 14 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
+The model has **45 tools**. The 31 **core** tools are sent with every request; the 14 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
 
 Tools marked **⚠** require explicit user approval before they execute.
 
@@ -518,9 +518,6 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `close_shell` | End this session's PTY shell by id — the id from `list_shells`. Sends a terminate signal and reports whether the shell's host actually went away; another session's or a ghost job's shell is refused |
 | `watch_shell` | Block on a live PTY shell's new output — the `.cast` recording, read as it is written. With `pattern` (regex) it waits until a line of output written *after the call* matches and returns that line with context; without one it waits until the shell's running command finishes, and reports nothing-running, paused, exited, gone or timeout distinctly. `timeout_secs` optional (default 300, capped 3600). For what a shell already recorded, use `read_shell` / `find_in_shells` |
 | `send_input` **⚠** | Type raw text into a live PTY shell by id — answer a program's stdin prompt or drive an interactive process. The approval panel names what the shell is doing, including the honest hazard that a shell at its prompt will run the text as a command. There is no exit code, no wait and no output: read the effect with `read_shell` / `watch_shell`. Every byte lands in the shell's cast log as an `"i"` event, which no read tool surfaces. A ghost shell may not use it unless its agent `ToolPolicy` explicitly allows it |
-| `list_panes` | Enumerate panes grouped by window, with ID, index, command, cwd, title and live status — plus a labelled section for panes in other tmux sessions |
-| `read_pane` | Read any pane's buffer on demand at a requested scrollback depth, including other sessions and daemon background windows; ANSI-annotated, optionally regex-filtered, masked |
-| `find_in_panes` | One regex search across every pane's buffer — answers "which pane has the error?" in a single call |
 | `watch_pane` | Block until a pane matches a regex, the command exits, or a timeout elapses |
 | `close_background_window` | Close a background tmux window that is no longer needed |
 | `add_memory` | Store a persistent memory entry |

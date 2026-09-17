@@ -885,16 +885,12 @@ where
             .await
             .unwrap_or_else(|| {
                 format!(
-                    "Timed out after 5s closing the background window for pane {}. The tmux server may be wedged. The window may or may not have been closed; use list_panes to check.",
+                    "Timed out after 5s closing the background window for pane {}. The tmux server may be wedged. The window may or may not have been closed; use list_shells to check.",
                     pane_id
                 )
             });
             Ok(ToolCallOutcome::Result(msg))
         }
-
-        PendingCall::ListPanes { .. } => Ok(ToolCallOutcome::Result(knowledge::list_panes(
-            cache, chat_pane,
-        ))),
 
         PendingCall::ListShells { scope, .. } => {
             Ok(ToolCallOutcome::Result(knowledge::list_shells(
@@ -902,15 +898,6 @@ where
                 &Owner::Chat(session_id.unwrap_or_default().to_string()),
             )))
         }
-
-        PendingCall::ReadPane {
-            pane_id,
-            lines,
-            grep,
-            ..
-        } => Ok(ToolCallOutcome::Result(
-            knowledge::read_pane(cache, chat_pane, pane_id, *lines, grep.as_deref()).await,
-        )),
 
         PendingCall::ReadShell {
             shell,
@@ -1052,10 +1039,6 @@ where
             filter.as_deref(),
         ))),
 
-        PendingCall::FindInPanes { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::find_in_panes(cache, chat_pane, pattern, scope.as_deref()).await,
-        )),
-
         PendingCall::TmuxControl {
             id,
             action,
@@ -1097,7 +1080,7 @@ where
             };
             if !known {
                 return Ok(ToolCallOutcome::Result(format!(
-                    "Error: pane {} not found. Call list_panes to see available panes.",
+                    "Error: pane {} not found. Check [PANE MAP] in the context block to see available panes.",
                     pane_id
                 )));
             }
@@ -1712,7 +1695,7 @@ mod tmux_control_gate_tests {
     fn ghost_may_use_tmux_control_denies_ghost_with_deny_list() {
         let policy = ToolPolicy {
             allow: None,
-            deny: Some(vec!["read_pane".to_string()]),
+            deny: Some(vec!["read_shell".to_string()]),
         };
         // The tool is permitted by the policy, but not *explicitly allowed*.
         assert!(policy.permits("tmux_control"));
@@ -1746,7 +1729,7 @@ mod send_input_gate_tests {
         );
         let deny_list = ToolPolicy {
             allow: None,
-            deny: Some(vec!["read_pane".to_string()]),
+            deny: Some(vec!["read_shell".to_string()]),
         };
         // The tool is permitted by the policy, but not *explicitly allowed* —
         // `permits` would get this case wrong.

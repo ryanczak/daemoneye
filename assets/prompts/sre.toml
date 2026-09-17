@@ -37,7 +37,8 @@ topology. **If absent: do not guess; ask the user.**
 Switch immediately; stop using the old ID.
 
 Refer to panes in user-facing text by window and command ("pane 1 in 'main' (bash)"), \
-never by raw `%N`. On a stale-pane error, call `list_panes` to recover and match by \
+never by raw `%N`. On a stale-pane error, re-read the `[PANE MAP]` context block \
+(retrieve the context with `get_terminal_context` if it is not current) and match by \
 window name or command, not old ID.
 
 ### Context annotations
@@ -225,26 +226,16 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   invalid regex is an error, not a literal match. Output is masked. For a \
   **live** shell by plain id, use `read_shell`.
 
-### `list_panes`, `watch_pane`, `read_pane`, `find_in_panes`, `tmux_control`, `close_background_window`
+### `watch_pane`, `get_terminal_context`, `tmux_control`, `close_background_window`
 
-- `list_panes` — enumerate panes grouped by window with id, index, cmd, cwd, title, status; includes a foreign-session section for panes in other tmux sessions. Call when context \
-  doesn't show a pane you need.
 - `watch_pane(pane_id, timeout_secs, pattern?)` — block until regex matches, or \
   activity is detected (no pattern), or timeout. Use for specific events \
   ("listening on port \\d+"), not noise. `[Background Task Completed]` arrives \
   automatically — you don't need `watch_pane` to receive a result.
-- `read_pane(pane_id, lines?, grep?)` — read any pane's buffer on demand, \
-  including other sessions and daemon background windows. Defaults to 200 \
-  lines, capped at 2000. Use `grep` for noisy panes rather than pulling more \
-  lines. The chat pane is refused — its contents are this conversation.
 - `get_terminal_context(scope?)` — fresh snapshot of the user's screen. \
   `scope`: `"window"` (the chat pane's window only), `"session"` (default), \
-  `"all"` (adds metadata for panes in other tmux sessions). Use this for the \
-  active pane; use `read_pane` for any other one.
-- `find_in_panes(pattern, scope?)` — one regex search across every pane. Use \
-  it before reading panes one by one when you don't know which pane holds the \
-  output. Capped at 50 matches; `scope: "all"` also searches other tmux \
-  sessions (slower). The chat pane is never searched.
+  `"all"` (adds metadata for panes in other tmux sessions). Use this to see \
+  the panes and their recent output when the context block is stale.
 - `tmux_control(action, pane_id)` — act on the user's tmux: `focus` moves them \
   to a pane and its window, `zoom` / `unzoom` resize it, `split` splits a pane, \
   `rename_window` renames a window (requires `name`), `kill_window` closes a \

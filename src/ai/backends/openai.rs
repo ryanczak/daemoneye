@@ -428,17 +428,17 @@ mod tests {
     fn parallel_tool_calls_accumulate_independently_by_index() {
         let calls = apply_all(&[
             json!({"index": 0, "id": "call_a",
-                   "function": {"name": "list_panes", "arguments": "{}"}}),
+                   "function": {"name": "list_shells", "arguments": "{}"}}),
             json!({"index": 1, "id": "call_b",
-                   "function": {"name": "read_pane", "arguments": "{\"pane"}}),
-            json!({"index": 1, "function": {"arguments": "_id\":\"%3\"}"}}),
+                   "function": {"name": "read_shell", "arguments": "{\"shell"}}),
+            json!({"index": 1, "function": {"arguments": "\":\"s3\"}"}}),
         ]);
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].id, "call_a");
-        assert_eq!(calls[0].name, "list_panes");
+        assert_eq!(calls[0].name, "list_shells");
         assert_eq!(calls[1].id, "call_b");
-        assert_eq!(calls[1].name, "read_pane");
-        assert_eq!(calls[1].args, "{\"pane_id\":\"%3\"}");
+        assert_eq!(calls[1].name, "read_shell");
+        assert_eq!(calls[1].args, "{\"shell\":\"s3\"}");
     }
 
     #[test]
@@ -446,7 +446,7 @@ mod tests {
         let mut calls = Vec::new();
         for tc in [
             json!({"index": 0, "id": "call_a",
-                   "function": {"name": "list_panes", "arguments": "{}"}}),
+                   "function": {"name": "list_shells", "arguments": "{}"}}),
             json!({"index": 1, "id": "call_b",
                    "function": {"name": "list_scripts", "arguments": "{}"}}),
         ] {

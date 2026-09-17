@@ -954,13 +954,15 @@ async fn do_ghost_turn(
                             scope,
                         });
                     }
-                    AiEvent::ListPanes {
+                    AiEvent::ListShells {
                         id,
                         thought_signature,
+                        scope,
                     } => {
-                        pending_calls.push(PendingCall::ListPanes {
+                        pending_calls.push(PendingCall::ListShells {
                             id,
                             thought_signature,
+                            scope,
                         });
                     }
                     AiEvent::WriteRunbook {

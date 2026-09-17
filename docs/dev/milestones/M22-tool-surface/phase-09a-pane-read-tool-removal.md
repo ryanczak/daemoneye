@@ -1,7 +1,7 @@
 # Phase 09a: remove the three pane *read* tools
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03a (`list_shells`), 03b (`read_shell`), 03c (`find_in_shells`)
 — the three replacements. All **done**.
 **Estimated diff:** ~750 lines, overwhelmingly deletion
@@ -436,3 +436,61 @@ Log rather than editing it.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-17 01:07 (started)
+
+**Executor:** headless executor, phase 09a run.
+
+Pre-flight re-verified against HEAD `feba4352` (tree clean), which carries the
+same source as `55fc1936`:
+
+- `cargo test --lib` → 1906 passed, 4 ignored ✅ (spec says 1906)
+- `cargo test --lib 'knowledge::pane'` → 27 passed ✅
+- `cargo test --test doc_truth` → 10 passed ✅
+- defs.rs: 48 `name:` entries, 34 `deferred_group: None` ✅
+- pending.rs/events.rs/stream.rs/sre.toml reference counts match the site map
+  (23 / 3 / 6 / 6); seeds.rs → 0 ✅
+- All nine must-survive greps hold ✅
+
+Starting with Task 1; enum-variant sites will be batched before any build.
+
+### Update — 2026-09-17 01:55 (blocker)
+
+**Blocked on:** the removal orphans `tmux::capture_pane_annotated`
+(`src/tmux/pane.rs:671`), which is the only consumer-left-dead function outside
+the authorized file set, so `cargo clippy … -D warnings` fails with one
+`dead_code` error — and spec/authorizations leave no legal fix.
+
+**What I tried:**
+
+1. Measured every caller of `capture_pane_annotated` at HEAD `feba4352`
+   (worktree `/tmp/dn-base-1789608862`): exactly two, both in
+   `src/daemon/executor/knowledge/pane.rs` (`:150` in `read_pane`,
+   `:374` in `find_in_panes`'s foreign-scope half) — both deleted by this
+   phase. No other caller exists anywhere in `src/`.
+2. Checked whether a *surviving* function needs it: `watch_pane` captures with
+   `tmux::capture_pane(...)` + `annotate_output` (mod-level wrapper) — it never
+   used the annotated capture. `shell.rs` and `foreground.rs` do not touch it.
+   So the function is genuinely orphaned by this phase, not temporarily unused.
+3. Considered the authorized-file escape hatches: `knowledge/pane.rs` cannot
+   hold a wrapper because there is no call site left to call it; `dispatch.rs` /
+   `mod.rs` have no business re-rooting a tmux substrate helper.
+4. Looked at whether `annotate_ansi` (the thing `capture_pane_annotated`
+   uniquely exposes across the `ansi` privacy boundary) has another inside-`tmux`
+   consumer that would keep the function alive if it were *not* dead — it does
+   not change the outcome: the function itself is dead.
+
+**What I need:** one of —
+
+- **(a)** authorization to edit `src/tmux/pane.rs` to delete
+  `capture_pane_annotated` (6 lines; `capture_pane_with_escapes` stays —
+  `src/tmux/cache.rs` uses it), plus the stale doc reference in
+  `src/tmux/mod.rs:14` if that is granted with it; **or**
+- **(b)** an exemption declaring the `dead_code` warning acceptable for this
+  phase (it is *added* by this phase's deletions, not pre-existing), so I may
+  ...— but note § Hard rules forbids adding `#[allow(...)]` to mask it, which is
+  why (b) needs the principal engineer's say-so rather than an executor choice.
+
+Everything else in the phase is complete and green (`cargo build` clean, all
+1886 + doc_truth + dispatch-count criteria met, mutation check red/green pair
+captured); only this last gate is blocked.

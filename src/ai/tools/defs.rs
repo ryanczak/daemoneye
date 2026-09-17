@@ -81,8 +81,8 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "Optional: tmux pane ID (e.g. \"%3\") for foreground commands. \
                               Use the pane ID from [FOREGROUND TARGET] when present — that is \
                               the user's designated work pane. Otherwise resolve from [PANE MAP] \
-                              (format: idx:N=<id>). If still unsure, call list_panes or ask the \
-                              user. Do not set this for commands that skip the wait.",
+                              (format: idx:N=<id>). If still unsure, ask the \
+                              user which pane to target. Do not set this for commands that skip the wait.",
             },
             ParamDef {
                 name: "retry_in_pane",
@@ -296,7 +296,7 @@ pub static TOOLS: &[ToolDef] = &[
                 name: "pane_id",
                 ty: ParamTy::Str,
                 required: true,
-                description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from context blocks ([VISIBLE PANE], [BACKGROUND PANE], [SESSION PANE]), wait=false tool results, or list_panes.",
+                description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from context blocks ([VISIBLE PANE], [BACKGROUND PANE], [SESSION PANE]) or wait=false tool results.",
             },
             ParamDef {
                 name: "timeout_secs",
@@ -1087,83 +1087,6 @@ pub static TOOLS: &[ToolDef] = &[
         category: Category::Meta,
     },
     ToolDef {
-        name: "list_panes",
-        description: "List all active panes in the current tmux session with their pane ID, \
-                      window name, foreground command, working directory, and terminal title. \
-                      Use this to discover which panes exist — especially to find panes running \
-                      SSH sessions, editors, REPLs, or other processes that can be targeted with \
-                      run_terminal_command. After identifying the right pane ID, pass it as the \
-                      target_pane argument to run_terminal_command to execute a command there. \
-                      This tool reads from an in-memory cache (refreshed every 2 s) and returns \
-                      immediately with no tmux subprocess overhead.",
-        params: &[],
-        deferred_group: None,
-        category: Category::Read,
-    },
-    ToolDef {
-        name: "read_pane",
-        description: "Read the visible content and scrollback of ANY tmux pane on \
-             demand — including panes in other tmux sessions, and daemon-owned \
-             background windows. This is how you inspect a pane the context block \
-             only summarises in one line. Output is ANSI-annotated ([ERROR:], \
-             [WARN:], [OK:]) and masked. The chat pane cannot be read: its content \
-             is this conversation. For the user's active pane, get_terminal_context \
-             already returns full content.",
-        params: &[
-            ParamDef {
-                name: "pane_id",
-                ty: ParamTy::Str,
-                required: true,
-                description: "tmux pane ID (e.g. \"%3\"). Resolve from [PANE MAP] \
-                              (format: idx:N=<id>) or from list_panes.",
-            },
-            ParamDef {
-                name: "lines",
-                ty: ParamTy::Int,
-                required: false,
-                description: "How many lines of scrollback to capture. Defaults to \
-                              200, capped at 2000 and at the pane's own history size.",
-            },
-            ParamDef {
-                name: "grep",
-                ty: ParamTy::Str,
-                required: false,
-                description: "Optional regex; only matching lines are returned. Use \
-                              when the pane holds far more output than you need.",
-            },
-        ],
-        deferred_group: None,
-        category: Category::Read,
-    },
-    ToolDef {
-        name: "find_in_panes",
-        description: "Search every tmux pane's buffer for a regex and return the \
-             matching lines with their pane id, window and status. Use this to \
-             answer \"which pane has the error?\" in one call instead of reading \
-             panes one by one. Output is masked and capped at 50 matches. The \
-             chat pane is never searched.",
-        params: &[
-            ParamDef {
-                name: "pattern",
-                ty: ParamTy::Str,
-                required: true,
-                description: "Regular expression matched against each line of \
-                              every pane's buffer.",
-            },
-            ParamDef {
-                name: "scope",
-                ty: ParamTy::Str,
-                required: false,
-                description: "\"session\" (default) searches the cached buffers \
-                              of the user's own session. \"all\" additionally \
-                              captures panes in other tmux sessions live, which \
-                              is slower.",
-            },
-        ],
-        deferred_group: None,
-        category: Category::Search,
-    },
-    ToolDef {
         name: "tmux_control",
         description: "Act on the user's tmux session: move their focus to a pane, \
              zoom/unzoom a window, split a pane, rename a window, or kill a window. \
@@ -1189,7 +1112,7 @@ pub static TOOLS: &[ToolDef] = &[
                 ty: ParamTy::Str,
                 required: true,
                 description: "tmux pane ID (e.g. \"%3\") to act on. Resolve from \
-                              [PANE MAP] (format: idx:N=<id>) or from list_panes.",
+                              [PANE MAP] (format: idx:N=<id>).",
             },
             ParamDef {
                 name: "name",

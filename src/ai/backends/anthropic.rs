@@ -534,10 +534,10 @@ mod tests {
     #[test]
     fn flush_malformed_args_sends_visible_error() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        super::flush_tool_call(&tx, "tc_1", "list_panes", "{\"broken\":", None);
+        super::flush_tool_call(&tx, "tc_1", "list_shells", "{\"broken\":", None);
         match rx.try_recv().expect("an event must be sent") {
             crate::ai::AiEvent::Error(msg) => {
-                assert!(msg.contains("list_panes"), "got: {msg}");
+                assert!(msg.contains("list_shells"), "got: {msg}");
             }
             other => panic!("expected Error event, got {other:?}"),
         }
@@ -556,10 +556,10 @@ mod tests {
     #[test]
     fn flush_empty_args_dispatches_as_empty_object() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        super::flush_tool_call(&tx, "tc_2", "list_panes", "", None);
+        super::flush_tool_call(&tx, "tc_2", "list_shells", "", None);
         match rx.try_recv().expect("an event must be sent") {
-            crate::ai::AiEvent::ListPanes { id, .. } => assert_eq!(id, "tc_2"),
-            other => panic!("expected ListPanes event, got {other:?}"),
+            crate::ai::AiEvent::ListShells { id, .. } => assert_eq!(id, "tc_2"),
+            other => panic!("expected ListShells event, got {other:?}"),
         }
     }
 

@@ -675,15 +675,6 @@ where
                         scope,
                     });
                 }
-                AiEvent::ListPanes {
-                    id,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::ListPanes {
-                        id,
-                        thought_signature,
-                    });
-                }
                 AiEvent::ListShells {
                     id,
                     thought_signature,
@@ -692,34 +683,6 @@ where
                     pending_calls.push(PendingCall::ListShells {
                         id,
                         thought_signature,
-                        scope,
-                    });
-                }
-                AiEvent::ReadPane {
-                    id,
-                    pane_id,
-                    lines,
-                    grep,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::ReadPane {
-                        id,
-                        thought_signature,
-                        pane_id,
-                        lines,
-                        grep,
-                    });
-                }
-                AiEvent::FindInPanes {
-                    id,
-                    pattern,
-                    scope,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::FindInPanes {
-                        id,
-                        thought_signature,
-                        pattern,
                         scope,
                     });
                 }

@@ -483,7 +483,7 @@ mod tests {
             "candidates": [{"content": {"parts": []}}]
         })));
         assert!(super::part_counts_as_token(&json!({
-            "candidates": [{"content": {"parts": [{"functionCall": {"name": "list_panes"}}]}}]
+            "candidates": [{"content": {"parts": [{"functionCall": {"name": "list_shells"}}]}}]
         })));
         assert!(!super::part_counts_as_token(&json!({
             "candidates": [{"content": {"parts": [{"functionCall": {"name": "not_a_tool"}}]}}]
@@ -514,8 +514,8 @@ mod tests {
 
         // Unconditional-Some tools never deserialize args, so both forms agree
         // — which is why a sample drawn only from these cannot detect the above.
-        assert!(dispatch_tool_event("id", "list_panes", &json!(null), None).is_some());
-        assert!(dispatch_tool_event("id", "list_panes", &json!({}), None).is_some());
+        assert!(dispatch_tool_event("id", "list_agents", &json!(null), None).is_some());
+        assert!(dispatch_tool_event("id", "list_agents", &json!({}), None).is_some());
     }
 
     #[test]

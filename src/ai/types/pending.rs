@@ -179,10 +179,6 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         scope: Option<String>,
     },
-    ListPanes {
-        id: String,
-        thought_signature: Option<String>,
-    },
     CloseBackgroundWindow {
         id: String,
         thought_signature: Option<String>,
@@ -258,19 +254,6 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         run_id: String,
         turn: u32,
-    },
-    ReadPane {
-        id: String,
-        thought_signature: Option<String>,
-        pane_id: String,
-        lines: Option<u64>,
-        grep: Option<String>,
-    },
-    FindInPanes {
-        id: String,
-        thought_signature: Option<String>,
-        pattern: String,
-        scope: Option<String>,
     },
     /// Read a shell's recorded command output from its asciicast log (M22
     /// phase-03b). Reads the **log**, not the live screen — there is no
@@ -813,15 +796,6 @@ impl PendingCall {
                 name: "list_shells".to_string(),
                 arguments: args_to_string(serde_json::json!({"scope": scope})),
             },
-            PendingCall::ListPanes {
-                id,
-                thought_signature,
-            } => ToolCall {
-                id: id.clone(),
-                thought_signature: thought_signature.clone(),
-                name: "list_panes".to_string(),
-                arguments: "{}".to_string(),
-            },
             PendingCall::CloseBackgroundWindow {
                 id,
                 thought_signature,
@@ -910,31 +884,6 @@ impl PendingCall {
                 arguments: args_to_string(
                     serde_json::json!({"job_id": job_id, "agent_name": agent_name, "timeout_secs": timeout_secs}),
                 ),
-            },
-            PendingCall::ReadPane {
-                id,
-                thought_signature,
-                pane_id,
-                lines,
-                grep,
-            } => ToolCall {
-                id: id.clone(),
-                thought_signature: thought_signature.clone(),
-                name: "read_pane".to_string(),
-                arguments: args_to_string(
-                    serde_json::json!({"pane_id": pane_id, "lines": lines, "grep": grep}),
-                ),
-            },
-            PendingCall::FindInPanes {
-                id,
-                thought_signature,
-                pattern,
-                scope,
-            } => ToolCall {
-                id: id.clone(),
-                thought_signature: thought_signature.clone(),
-                name: "find_in_panes".to_string(),
-                arguments: args_to_string(serde_json::json!({"pattern": pattern, "scope": scope})),
             },
             PendingCall::ReadShell {
                 id,
@@ -1045,7 +994,6 @@ impl PendingCall {
             PendingCall::ListShells { id, .. } => id,
             PendingCall::OpenShell { id, .. } => id,
             PendingCall::CloseShell { id, .. } => id,
-            PendingCall::ListPanes { id, .. } => id,
             PendingCall::CloseBackgroundWindow { id, .. } => id,
             PendingCall::SpawnGhost { id, .. } => id,
             PendingCall::CreateAgent { id, .. } => id,
@@ -1053,8 +1001,6 @@ impl PendingCall {
             PendingCall::ListAgents { id, .. } => id,
             PendingCall::DeleteAgent { id, .. } => id,
             PendingCall::AwaitAgentResult { id, .. } => id,
-            PendingCall::ReadPane { id, .. } => id,
-            PendingCall::FindInPanes { id, .. } => id,
             PendingCall::ReadShell { id, .. } => id,
             PendingCall::FindInShells { id, .. } => id,
             PendingCall::TmuxControl { id, .. } => id,
@@ -1085,14 +1031,11 @@ impl PendingCall {
                 | PendingCall::RecallContext { .. }
                 | PendingCall::GetTerminalContext { .. }
                 | PendingCall::ListShells { .. }
-                | PendingCall::ListPanes { .. }
                 | PendingCall::CloseBackgroundWindow { .. }
                 | PendingCall::SpawnGhost { .. }
                 | PendingCall::ReadAgent { .. }
                 | PendingCall::ListAgents { .. }
                 | PendingCall::AwaitAgentResult { .. }
-                | PendingCall::ReadPane { .. }
-                | PendingCall::FindInPanes { .. }
                 | PendingCall::ReadShell { .. }
                 | PendingCall::FindInShells { .. }
                 | PendingCall::OpenShell { .. }
@@ -1197,7 +1140,6 @@ impl PendingCall {
             PendingCall::OpenShell { .. } => String::new(),
             PendingCall::CloseShell { shell, .. } => shell.clone(),
             PendingCall::SendInput { shell, .. } => shell.clone(),
-            PendingCall::ListPanes { .. } => String::new(),
             PendingCall::CloseBackgroundWindow { pane_id, .. } => pane_id.clone(),
             PendingCall::SpawnGhost { runbook, .. } => runbook.clone(),
             PendingCall::CreateAgent { name, .. } => name.clone(),
@@ -1205,25 +1147,6 @@ impl PendingCall {
             PendingCall::ListAgents { .. } => String::new(),
             PendingCall::DeleteAgent { name, .. } => name.clone(),
             PendingCall::AwaitAgentResult { job_id, .. } => job_id.clone(),
-            PendingCall::ReadPane {
-                pane_id,
-                lines,
-                grep,
-                ..
-            } => {
-                let mut s = pane_id.clone();
-                if let Some(n) = lines {
-                    s.push_str(&format!(" lines={n}"));
-                }
-                if let Some(g) = grep {
-                    s.push_str(&format!(" grep=\"{g}\""));
-                }
-                s
-            }
-            PendingCall::FindInPanes { pattern, scope, .. } => match scope {
-                Some(s) => format!("/{pattern}/ scope={s}"),
-                None => format!("/{pattern}/"),
-            },
             PendingCall::ReadShell {
                 shell,
                 lines,
@@ -1331,7 +1254,6 @@ impl PendingCall {
             PendingCall::ListShells { .. } => "list_shells",
             PendingCall::OpenShell { .. } => "open_shell",
             PendingCall::CloseShell { .. } => "close_shell",
-            PendingCall::ListPanes { .. } => "list_panes",
             PendingCall::CloseBackgroundWindow { .. } => "close_background_window",
             PendingCall::SpawnGhost { .. } => "spawn_ghost_shell",
             PendingCall::CreateAgent { .. } => "create_agent",
@@ -1339,8 +1261,6 @@ impl PendingCall {
             PendingCall::ListAgents { .. } => "list_agents",
             PendingCall::DeleteAgent { .. } => "delete_agent",
             PendingCall::AwaitAgentResult { .. } => "await_agent_result",
-            PendingCall::ReadPane { .. } => "read_pane",
-            PendingCall::FindInPanes { .. } => "find_in_panes",
             PendingCall::ReadShell { .. } => "read_shell",
             PendingCall::FindInShells { .. } => "find_in_shells",
             PendingCall::TmuxControl { .. } => "tmux_control",
@@ -1457,10 +1377,6 @@ mod tests {
                 id: "x".to_string(),
                 thought_signature: None,
                 scope: None,
-            },
-            PendingCall::ListPanes {
-                id: "x".to_string(),
-                thought_signature: None,
             },
             PendingCall::CloseBackgroundWindow {
                 id: "x".to_string(),
@@ -1661,13 +1577,14 @@ mod tests {
         assert!(call.summary().is_empty());
     }
 
-    fn mk_read_pane(lines: Option<u64>, grep: Option<String>) -> PendingCall {
-        PendingCall::ReadPane {
+    fn mk_read_shell(filter: Option<String>, lines: Option<u64>) -> PendingCall {
+        PendingCall::ReadShell {
             id: "x".to_string(),
             thought_signature: None,
-            pane_id: "%3".to_string(),
+            shell: "s3".to_string(),
             lines,
-            grep,
+            since_command: None,
+            filter,
         }
     }
 
@@ -1676,21 +1593,21 @@ mod tests {
     }
 
     #[test]
-    fn to_tool_call_read_pane_omits_none_options() {
-        let args = parsed_args(&mk_read_pane(None, None));
+    fn to_tool_call_read_shell_omits_none_options() {
+        let args = parsed_args(&mk_read_shell(None, None));
         let obj = args.as_object().unwrap();
         assert_eq!(obj.len(), 1);
-        assert_eq!(obj["pane_id"], "%3");
-        assert!(!obj.contains_key("grep"));
+        assert_eq!(obj["shell"], "s3");
+        assert!(!obj.contains_key("filter"));
         assert!(!obj.contains_key("lines"));
     }
 
     #[test]
-    fn to_tool_call_read_pane_preserves_string_null_grep() {
-        // A user may legitimately grep for the word "null" — the helper
+    fn to_tool_call_read_shell_preserves_string_null_filter() {
+        // A user may legitimately filter for the word "null" — the helper
         // strips JSON nulls, never strings.
-        let args = parsed_args(&mk_read_pane(None, Some("null".to_string())));
-        assert_eq!(args["grep"], "null");
+        let args = parsed_args(&mk_read_shell(Some("null".to_string()), None));
+        assert_eq!(args["filter"], "null");
     }
 
     #[test]
@@ -1703,7 +1620,7 @@ mod tests {
 
     #[test]
     fn to_tool_call_preserves_present_options() {
-        let find = PendingCall::FindInPanes {
+        let find = PendingCall::FindInShells {
             id: "x".to_string(),
             thought_signature: None,
             pattern: "error".to_string(),
@@ -1711,7 +1628,7 @@ mod tests {
         };
         assert_eq!(parsed_args(&find)["scope"], "all");
 
-        let args = parsed_args(&mk_read_pane(Some(200), None));
+        let args = parsed_args(&mk_read_shell(None, Some(200)));
         assert_eq!(args["lines"], 200);
     }
 
@@ -1897,9 +1814,10 @@ mod tests {
                 thought_signature: None,
                 scope: None,
             },
-            PendingCall::ListPanes {
+            PendingCall::ListShells {
                 id: x(),
                 thought_signature: None,
+                scope: None,
             },
             PendingCall::CloseBackgroundWindow {
                 id: x(),
@@ -1946,8 +1864,8 @@ mod tests {
                 agent_name: "a".to_string(),
                 timeout_secs: 30,
             },
-            mk_read_pane(None, None),
-            PendingCall::FindInPanes {
+            mk_read_shell(None, None),
+            PendingCall::FindInShells {
                 id: x(),
                 thought_signature: None,
                 pattern: "p".to_string(),
