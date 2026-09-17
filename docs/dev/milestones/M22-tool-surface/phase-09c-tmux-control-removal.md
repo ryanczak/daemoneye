@@ -586,3 +586,127 @@ criterion.
 - authorize `#[allow(dead_code)]` on them (against the standards' default), or
 - descope the clippy-clean acceptance criterion until phase 09d/10, which the
   `target_pane` work may re-reach some of these functions.
+
+### Update — 2026-09-17 15:55 (blocker resolved — authorized substrate cleanup)
+
+Principal engineer resolved the blocker by authorization: the six orphaned
+`crate::tmux::pane::*` helpers were deleted from `src/tmux/pane.rs`
+(`select_window`, `pane_window_zoomed`, `toggle_zoom`, `split_pane`,
+`rename_window_for_pane`, `kill_window_for_pane`) — 99 lines, no test or
+caller existed for any of them, and none is one of the must-survive symbols
+(`crate::daemon::is_daemon_window` and `select_pane` are untouched; the
+pane-cache and foreground callers live on). `select_pane` itself keeps its
+callers in `daemon/executor/foreground.rs` and is renamed nowhere.
+
+Post-cleanup gates, all green:
+
+- `cargo build` — zero warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` — clean.
+- `cargo fmt --all -- --check` — clean.
+- `cargo test --lib` — **1877 passed**, 4 ignored (unchanged from the spec's
+  `1883 − 4 − 3 + 1`).
+- `cargo test --test doc_truth` — **10 passed**.
+- Full `cargo test` — all suites green (lib 1877, integration 6, doc_truth 10,
+  harness 32 (2 ignored), isolation 9 (1 ignored), unit doc-tests 0).
+- Task 9 capture re-run post-cleanup, byte-identical:
+
+```
+PASTE MATCH >>>
+tools=42 core=28 gated=10
+<<<
+```
+
+The blocker entry above is superseded but left in place (Update Log is
+append-only).
+
+### Update — 2026-09-17 15:57 (end-to-end verification)
+
+**Task 8 mutation pair.** `"tmux_control"` was restored to
+`APPROVAL_GATED_TOOLS` in `src/ai/tools/defs.rs` without restoring the tool or
+its README `⚠` marker, then `cargo test --test doc_truth` was run mechanically
+(`2>&1 | tail -5`), and the same command run again after reverting. Both raw
+`test result:` lines, pasted verbatim from each run's terminal output:
+
+```
+test result: FAILED. 8 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+```
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The failing run's failure list (same capture, `grep 'FAILED'` on the test
+lines):
+
+```
+test approval_gated_tools_all_exist ... FAILED
+test readme_approval_markers_match_the_gated_tools ... FAILED
+```
+
+`approval_gated_tools_all_exist` is among the failures, as the spec requires —
+the gate that catches an approval entry naming a tool that is not in `TOOLS`.
+This is the step-12 pairing 09a and 09b never exercised.
+
+**Task 9 PASTE MATCH capture.** Command run mechanically with output
+redirected to a file:
+
+`cargo test --lib e2e_tmux_control_is_absent -- --nocapture > /tmp/paste3.txt 2>&1`
+
+The block between the markers, copied byte for byte from that file:
+
+```
+PASTE MATCH >>>
+tools=42 core=28 gated=10
+<<<
+```
+
+It reads exactly `tools=42 core=28 gated=10` — the milestone's final
+surface — confirming the exit criterion "42 tools — 28 core + 14 deferred,
+`APPROVAL_GATED_TOOLS` at 10".
+
+**Acceptance-criteria greps** (all run against the committed tree, one shell
+block, output in `/tmp/09c_verify.txt`):
+
+```
+name-guards in defs.rs: 42          (spec: 42)
+deferred_group-none:    28          (spec: 28)
+gated entries:          10          (spec: 10)
+TmuxControl files:      0           (spec: 0)
+ghost gate refs:        0           (spec: 0)
+kill_window_refusal:    0           (spec: 0)
+pane.rs exists:         no          (spec: false)
+mod pane refs:          0           (spec: 0)
+src tmux_control (ex-dispatch test file): 0   (spec: 0)
+sre.toml tmux_control:  0           (spec: 0)
+count-guard new name:   1 / old name: 0
+```
+
+**Must-survive greps** (same block):
+
+```
+daemon is_daemon_window:  1
+cache is_daemon_window:   2
+explicitly_allows def:    1
+ghost_may_send_input:     8
+send_input def present:   1
+authorized-paths diff (src/tmux/, src/daemon/mod.rs, src/daemon/server/,
+src/daemon/background/, 16e4bcad..HEAD): empty
+```
+
+(The last line is now true including this update's own cleanup commit — the
+must-survive criterion `git diff --stat 16e4bcad..HEAD -- src/tmux/ …` is
+**empty** only because the phase-doc commit 9d83f154 predates the cleanup; the
+cleanup commit itself will show under that diff. See the completion entry the
+server authors for where it lands; the verify command was re-run against the
+final tree and the six deletions are the only change in that path, all inside
+`src/tmux/pane.rs`, which is precisely what the resolution authorized.)
+
+### Update — 2026-09-17 16:00 (correction to the must-survive note above)
+
+**Correction:** the must-survive criterion
+`git diff --stat 16e4bcad..HEAD -- src/tmux/ src/daemon/mod.rs src/daemon/server/ src/daemon/background/` is **empty** is now *superseded*, not satisfied: the authorized deletion of the six pane helpers in `74e3e454` makes that diff show exactly one file, `src/tmux/pane.rs`, 99 deletions. The removal is exactly the PE-authorized change
+recorded above — everything else in those paths remains untouched
+(`src/daemon/mod.rs`, `src/daemon/server/`, `src/daemon/background/` have no
+diff at all). The reviewer should read the must-survive criterion with this
+one authorized exception; all six of the other must-survive greps still hold
+at their pinned values.
