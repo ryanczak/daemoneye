@@ -73,7 +73,7 @@ final surface, so they go last.
 | 08b | shell-context-tool — `get_terminal_context` → `get_shell_context { scope }`, new scope vocabulary; **after 09** | todo (not drafted) |
 | 09a | pane-read-tool-removal ([phase-09a-pane-read-tool-removal.md](phase-09a-pane-read-tool-removal.md)) — delete `list_panes` / `read_pane` / `find_in_panes`; 48 → 45 tools | done                   |
 | 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | done                     |
-| 09c | tmux-control-removal — delete `tmux_control`; 43 → 42, hitting the exit criterion | todo (not drafted) |
+| 09c | tmux-control-removal ([phase-09c-tmux-control-removal.md](phase-09c-tmux-control-removal.md)) — delete `tmux_control`; 43 → 42, hitting the exit criterion | todo (drafted 2026-09-17) |
 | 09d | pane-param-retirement — retire `target_pane` / `retry_in_pane` (185 refs incl. the IPC wire); no count change | todo (not drafted) |
 | 10 | prompt-assets — rewrite `sre.toml`, `assets/prompts/ghost-shell.txt`, the seeded memories (retiring the two tmux knowledge ones) **and** the seeded agent configs; correct `docs/REQUIREMENTS.md`; `doc_truth` updated | todo (not drafted) |
 

@@ -1,34 +1,34 @@
 # NEXT
 
-**Active phase:** none.
+**Active phase:** `docs/dev/milestones/M22-tool-surface/phase-09c-tmux-control-removal.md`
+— 09c, tmux-control-removal. Drafted 2026-09-17, status `todo`, not yet
+dispatched.
 
-Phase-09b closed `approved_first_try` on 2026-09-16 — `watch_pane` and
-`close_background_window` are gone. **43 tools: 29 core + 14 deferred**;
-`doc_truth` 10; `cargo test --lib` 1883. `knowledge/pane.rs` is down to 72
-lines holding only the two `tmux_control` helpers.
+Deletes `tmux_control`, the last of the six pane tools and the only one with no
+shell counterpart — it *drives* tmux rather than reading it. This is the phase
+that reaches the milestone's headline exit criterion: **42 tools, 28 core + 14
+deferred**.
 
-Next up is **09c — tmux-control-removal**, **not yet drafted**. It deletes
-`tmux_control` and reaches the milestone's exit criterion of **42 tools:
-28 core + 14 deferred**. It is the largest single-tool footprint left: 38 refs,
-22 of them in `executor/mod.rs` and 8 in `agents/policy.rs`, and it is
-approval-gated — so `APPROVAL_GATED_TOOLS` shrinks and the README's `⚠`
-markers move with it, both guarded by `doc_truth`.
+Three things move that 09a and 09b never touched:
 
-**Carry into the 09c draft** — three things from 09a/09b's reviews, all in the
-milestone README's Notes:
+- **`APPROVAL_GATED_TOOLS` shrinks 11 → 10** and the README's `⚠` marker goes
+  with it — the add-a-tool checklist's step 12, guarded by
+  `readme_approval_markers_match_the_gated_tools`. Task 8's mutation exercises
+  exactly that pairing.
+- **`src/daemon/executor/knowledge/pane.rs` is deleted outright.** After 09a and
+  09b it holds only `is_daemon_window` and `kill_window_refusal`, and both exist
+  solely for `tmux_control`'s `kill_window` action.
+- **09b's own E2E test lists `tmux_control` as must-stay** and fails the moment
+  the tool leaves `TOOLS`. The spec calls that out with the line number.
 
-1. **Measure the orphan closure, including `use` statements.** 09b measured
-   callee functions and still missed a `pub(super) use` that existed only for
-   the removed caller and tripped `-D unused-imports`.
-2. **Write criteria against identifiers, not tool-name strings.** 09b's
-   `WatchPane` / `CloseBackgroundWindow` greps hit exactly; its `watch_pane` /
-   `close_background_window` string greps read 5 and 2, because the phase's own
-   E2E test must contain those literals. Third occurrence of that class.
-3. **`tmux_control` will join the seeded-asset backlog** already carrying
-   `watch_pane` / `close_background_window` in `ghost-shell.txt`, the tmux
-   knowledge memory, `agents/sysadmin/config.toml` and `REQUIREMENTS.md`.
-   Phase 10's row was widened at this review to cover all four.
+Both folds from 09a/09b were applied while drafting: the orphan closure was
+measured over functions, wrappers **and** `use` statements (it found that
+`explicitly_allows` *survives*, because `ghost_may_send_input` is a second
+caller — the doc comment calling it "the ghost `tmux_control` gate" is
+misleading), and the criteria are written against identifiers rather than
+tool-name strings, with the one string criterion anchored away from the test
+file.
 
 Remaining M22 order: **09c → 09d → 08b → 10**.
 
-Run `/rexymcp:architect next` to draft phase-09c.
+Dispatch with `/rexymcp:dispatch phase-09c`.
