@@ -74,7 +74,7 @@ final surface, so they go last.
 | 09a | pane-read-tool-removal ([phase-09a-pane-read-tool-removal.md](phase-09a-pane-read-tool-removal.md)) — delete `list_panes` / `read_pane` / `find_in_panes`; 48 → 45 tools | done                   |
 | 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | done                     |
 | 09c | tmux-control-removal ([phase-09c-tmux-control-removal.md](phase-09c-tmux-control-removal.md)) — delete `tmux_control`; 43 → 42, hitting the exit criterion | done                   |
-| 09d | pane-param-retirement — retire `target_pane` / `retry_in_pane` (185 refs incl. the IPC wire); no count change | todo (not drafted) |
+| 09d | pane-param-retirement ([phase-09d-pane-param-retirement.md](phase-09d-pane-param-retirement.md)) — retire `target_pane` / `retry_in_pane` from **`run_terminal_command` only**; takes the last `%N` out of the tool surface. `read_file` / `edit_file` keep `target_pane` until M21's `host?`. No count change | todo (drafted 2026-09-17) |
 | 10 | prompt-assets — rewrite `sre.toml`, `assets/prompts/ghost-shell.txt`, the seeded memories (retiring the two tmux knowledge ones) **and** the seeded agent configs; correct `docs/REQUIREMENTS.md`; `doc_truth` updated | todo (not drafted) |
 
 ## Notes
@@ -384,6 +384,29 @@ final surface, so they go last.
   accepted at review; the attribution was not. A removal phase must say
   explicitly what to do when a blocker cannot be answered: proceed and label the
   decision as the executor's own, or stop.
+
+- **`target_pane` is on three tools, not one — 09d is scoped to one of them**
+  (measured at drafting, 2026-09-17). The charter row read "retire
+  `target_pane` / `retry_in_pane`" as though it were one parameter on
+  `run_terminal_command`. Measured, it is declared three times in `defs.rs`:
+  `:77` (`run_terminal_command`), `:321` (`read_file`) and `:390` (`edit_file`).
+  On the latter two it is how a file is read or edited **on a remote host**
+  (`file_ops/ops.rs:34`, `// ── Remote path ──`), and its successor is **M21's
+  `host?`** — so retiring it there now would delete remote file operations with
+  nothing to replace them. **09d retires it from `run_terminal_command` only**,
+  which is enough to take the tool surface's last `%N` identifier to zero (the
+  milestone's other exit criterion); the `read_file`/`edit_file` params wait for
+  M21 and 09d pins their survival with a must-survive criterion and a negative
+  assertion in its E2E test.
+
+  Two further measurements reshaped the phase: `target_pane` is **not**
+  vestigial — `executor/mod.rs:319` uses it as a deliberate per-call escape
+  hatch routing *around* the PTY substrate into `run_foreground`, and `:445`
+  does the same for `retry_in_pane` on the background path (**two** conjuncts,
+  not one). And the fallback the AI's pane is being replaced by already exists:
+  `foreground.rs:160`/`:204` resolve `SessionEntry.default_target_pane`, with a
+  stale-pane guard, when the AI's value is absent or wrong. So the phase removes
+  the AI's *choice* of pane, not the daemon's ability to target one.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24
