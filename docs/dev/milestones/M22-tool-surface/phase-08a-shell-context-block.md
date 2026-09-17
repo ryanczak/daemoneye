@@ -659,11 +659,15 @@ PASTE MATCH >>>
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1908 filtered out; finished in 0.00s
 ```
 
-Note on the captured shape: the freshly opened shell has `started_unix` within
-the same second as `now_unix`, so `format_age`'s guard (age < 60s) produces
-`age:0s`; the E2E line therefore carries no visible age suffix in this capture
-beyond `s0` itself — the count line and default line are exactly the spec's
-target shape. (The `age:Xs` behavior is independently pinned by
+Note on the captured shape: the test passes the module's injected clock
+(`NOW = 200_000`) as `now_unix`, while the real host records `started_unix`
+from `SystemTime::now()` (`src/shell/registry.rs:195`) — roughly 1.79e9 — so
+the recorded start time lies **in the future** relative to `now_unix`. The age
+guard (`row.started_unix > 0 && now_unix >= row.started_unix`) therefore omits
+the `age:` part — the spec's own stated must-behaviour for a row whose
+`started_unix` is 0 or in the future, and the branch that actually produced
+this capture. The count line and default line are exactly the spec's target
+shape. (The `age:Xs` behavior is independently pinned by
 `format_shell_context_lists_every_shell_with_its_flags` with hand-built rows.)
 
 ### Update — ts=1789573260222 (complete, server-authored)

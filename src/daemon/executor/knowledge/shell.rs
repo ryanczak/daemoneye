@@ -2038,18 +2038,53 @@ mod tests {
             "numeric order (s0, s2, s4) with flags on the right rows: {out}"
         );
         assert!(
-            out.contains("s0 age:4m — ") || out.starts_with("[SHELLS] 3 — s0 age:4m,"),
-            "s0 has no flags: {out}"
-        );
-        assert!(
             out.contains(
                 "[DEFAULT SHELL] s0 — run_terminal_command with no shell argument lands here"
             ),
             "the eligible lowest shell is named as the default: {out}"
         );
+    }
+
+    #[test]
+    fn format_shell_context_keeps_each_flag_on_its_own_row() {
+        let rows = vec![
+            row("s0", "chat:a", NOW - 240, false, false, None),
+            row("s2", "chat:a", NOW - 12, true, false, None),
+            row("s4", "chat:b", NOW - 240, false, true, Some(NOW - 5)),
+        ];
+        let out = format_shell_context(&rows, "chat:a", NOW);
+        let count_line = out
+            .lines()
+            .find(|line| line.starts_with("[SHELLS] "))
+            .unwrap_or_else(|| panic!("no [SHELLS] line in output: {out}"));
+        let listing = count_line
+            .split_once(" — ")
+            .map(|(_, rest)| rest)
+            .expect("count line must contain the ' — ' separator");
+        let segments: Vec<&str> = listing.split(", ").collect();
+        assert_eq!(
+            segments.len(),
+            3,
+            "the count line carries one segment per shell: {out}"
+        );
         assert!(
-            !out.contains("[dedicated]") || out.contains("s4"),
-            "the dedicated row's flag rides its own row: {out}"
+            !segments[0].contains('['),
+            "s0's segment must carry no flag: segment {:?} in {out}",
+            segments[0]
+        );
+        assert!(
+            segments[1].contains("[interactive]"),
+            "s2's segment must carry [interactive]: segment {:?} in {out}",
+            segments[1]
+        );
+        assert!(
+            segments[2].contains("[dedicated]"),
+            "s4's segment must carry [dedicated]: segment {:?} in {out}",
+            segments[2]
+        );
+        assert!(
+            !segments[0].contains("[dedicated]") && !segments[1].contains("[dedicated]"),
+            "[dedicated] must ride only s4's segment: {out}"
         );
     }
 
