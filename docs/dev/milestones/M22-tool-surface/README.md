@@ -72,10 +72,10 @@ final surface, so they go last.
 | 08a | shell-context-block ([phase-08a-shell-context-block.md](phase-08a-shell-context-block.md)) — `[SHELLS]` / `[DEFAULT SHELL]` in the ambient context; additive, no tool change | done                    |
 | 08b | shell-context-tool — `get_terminal_context` → `get_shell_context { scope }`, new scope vocabulary; **after 09** | todo (not drafted) |
 | 09a | pane-read-tool-removal ([phase-09a-pane-read-tool-removal.md](phase-09a-pane-read-tool-removal.md)) — delete `list_panes` / `read_pane` / `find_in_panes`; 48 → 45 tools | done                   |
-| 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | review                   |
+| 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | done                     |
 | 09c | tmux-control-removal — delete `tmux_control`; 43 → 42, hitting the exit criterion | todo (not drafted) |
 | 09d | pane-param-retirement — retire `target_pane` / `retry_in_pane` (185 refs incl. the IPC wire); no count change | todo (not drafted) |
-| 10 | prompt-assets — rewrite `sre.toml` and the seeded memories; retire the two tmux knowledge memories; `doc_truth` updated | todo (not drafted) |
+| 10 | prompt-assets — rewrite `sre.toml`, `assets/prompts/ghost-shell.txt`, the seeded memories (retiring the two tmux knowledge ones) **and** the seeded agent configs; correct `docs/REQUIREMENTS.md`; `doc_truth` updated | todo (not drafted) |
 
 ## Notes
 
@@ -323,6 +323,33 @@ final surface, so they go last.
   helpers whose *last* caller the phase removes and either authorize their
   deletion or name them as expected orphans. `watch_pane` and `tmux_control`
   both reach into `crate::tmux`, so both are likely to orphan something.
+
+- **Seeded assets outlive the tools they name** (found at 09b review,
+  2026-09-16; widened phase-10's row). Removing a tool from `TOOLS` does not
+  reach the payloads `src/config/seeds.rs` ships by `include_str!`. After 09b,
+  `assets/prompts/ghost-shell.txt:26`,
+  `assets/memory/knowledge/tmux-pane-toolkit.md:60,85` and
+  `assets/agents/sysadmin/config.toml:14` still instruct the model to call
+  `watch_pane` / `close_background_window`, and `docs/REQUIREMENTS.md:33` still
+  states the AI **MUST** be able to call `close_background_window`. `doc_truth`
+  does not cover any of them — it guards only the `CLAUDE.md` / `README.md`
+  tool tables. The shipped `sre.toml` is clean, so the effect is stale advice
+  producing an unknown-tool error rather than a broken call path. **09c will
+  add `tmux_control` to this list**; phase 10's row now names all four asset
+  classes explicitly rather than "sre.toml and the seeded memories".
+
+- **Two folds for the rest of this row, from 09a and 09b's reviews:**
+  (1) *A criterion's needle must not appear in anything the phase itself
+  creates* — now at **three** occurrences (09a's two bounce criteria, 09b's two
+  tool-name greps, which read 5 and 2 because the phase's own E2E test contains
+  the literals). The working pattern, demonstrated in 09b: grep for
+  **identifiers** (`WatchPane`) rather than tool-name strings, since an enum
+  name never appears inside a tool-name string literal — those criteria hit
+  exactly while the string ones did not. (2) *An orphan closure includes
+  re-exports, not just functions* — 09b's Pre-flight measured callee functions
+  and found only `WatchHookGuard`, but missed a `pub(super) use` that existed
+  solely for the removed caller and tripped `-D unused-imports`. Measure `use`
+  statements too when drafting 09c.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24

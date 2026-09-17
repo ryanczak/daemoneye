@@ -1,7 +1,7 @@
 # Phase 09b: remove `watch_pane` and `close_background_window`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 04b (`watch_shell`), 04a (`close_shell`), 09a (the three pane
 read tools). All **done**.
 **Estimated diff:** ~450 lines, overwhelmingly deletion
@@ -305,9 +305,9 @@ current value.
 - [ ] `grep -c 'deferred_group: None' src/ai/tools/defs.rs` → **29** (now 31)
 - [ ] `grep -rc 'WatchPane' src/ --include=*.rs | grep -v ':0' | wc -l` → **0** (now 18 refs across files)
 - [ ] `grep -rc 'CloseBackgroundWindow' src/ --include=*.rs | grep -v ':0' | wc -l` → **0** (now 13 refs)
-- [ ] `grep -rn 'close_background_window' src/ --include=*.rs | wc -l` → **0** (now 12)
+- [x] `grep -rn 'close_background_window' src/ --include=*.rs | grep -v 'tools/dispatch.rs' | wc -l` → **0**. **Amended at review** for the same reason — the unanchored form read 2, both lines being Task 8's must-be-gone literals.
 - [ ] `grep -rn 'close_bg_window' src/ --include=*.rs | wc -l` → **0** (now 8)
-- [ ] `grep -rn 'watch_pane' src/ --include=*.rs | wc -l` → **3** (now 20) — exactly the `catchup.rs` test name and the two `shell.rs` provenance comments
+- [x] `grep -rn 'watch_pane' src/ --include=*.rs | grep -v 'tools/dispatch.rs' | wc -l` → **3** — the `catchup.rs` test name and the two `shell.rs` provenance comments. **Amended at review:** the unanchored form read 5, because Task 8's test necessarily contains the literal twice. Architect error, not an escape; see the verdict's calibration.
 - [ ] `grep -cE 'watch_pane|close_background_window' assets/prompts/sre.toml` → **0** (now 5)
 - [ ] `cargo test --lib 'knowledge::pane'` reports **3 passed** (now 5)
 - [ ] `cargo test --lib 'ai::tools::dispatch'` reports **25 passed** (now 24)
@@ -699,3 +699,69 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** fc0bfa709b8743809ae674f32bc088057bddef13
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-16
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (255 turns)
+- **Scope deviations:** one, inside an authorized file and **covered by this
+  doc's own escape-hatch rule.** § Authorizations scoped
+  `src/daemon/executor/foreground.rs` to "the `:95` comment only", but the run
+  also moved `pub(super) use crate::tmux::status::is_shell_prompt` into
+  `mod tests`. Verified at review that this was forced — restoring the
+  re-export gives:
+
+  ```
+  error: unused import: `crate::tmux::status::is_shell_prompt`
+     = note: `-D unused-imports` implied by `-D warnings`
+  ```
+
+  The re-export existed **only** so `knowledge::watch_pane` could reach the
+  symbol by the short path; with `watch_pane` gone it is an orphan. § Pre-flight
+  told the executor exactly what to do here — "delete it only if it is in an
+  authorized file" — and `foreground.rs` is authorized. The rule worked as
+  intended.
+- **Calibration:** two, both architect-side.
+  1. **A criterion's needle must not appear in anything the phase itself
+     creates — third occurrence.** Two acceptance criteria counted the strings
+     `watch_pane` / `close_background_window` across `src/`, while Task 8 of the
+     *same doc* mandated a test whose body contains both literals as
+     must-be-gone assertions. The criteria therefore read 5 and 2 instead of 3
+     and 0. The executor diagnosed this correctly and supplied the anchored
+     numbers; both criteria are amended above. Prior occurrences: 09a's two
+     bounce criteria referencing their own needles. **The fix is already
+     visible in this same phase** — the criteria written against *identifiers*
+     (`WatchPane`, `CloseBackgroundWindow`, `close_bg_window`) all hit their
+     numbers exactly, because an enum name does not appear in a tool-name
+     string literal. Prefer identifier greps, or anchor away from the test file.
+  2. **An orphan closure includes re-exports, not just functions.** § Pre-flight
+     measured every *callee function* and correctly found only
+     `WatchHookGuard`. It did not measure `use` statements, and missed a
+     `pub(super) use` that existed solely for the removed caller. For 09c
+     (`tmux_control`), measure re-exports alongside functions.
+- **Open, not a defect of this phase:** seeded assets still instruct the model
+  to call the removed tools — `assets/prompts/ghost-shell.txt:26`,
+  `assets/memory/knowledge/tmux-pane-toolkit.md:60,85`, and (not in the run's
+  report, found at review) `assets/agents/sysadmin/config.toml:14`. Plus
+  `docs/REQUIREMENTS.md:33`, which still states the AI **MUST** be able to call
+  `close_background_window`. All are outside this phase's authorizations and the
+  executor correctly flagged rather than edited them. The shipped `sre.toml` —
+  the prompt the chat loop actually sends — is clean, so the effect is stale
+  advice yielding an unknown-tool error, not a broken call path. Phase 10's
+  charter row has been widened at review to cover the prompt assets, the agent
+  configs and `REQUIREMENTS.md`, not just `sre.toml` and the memories.
+- **Independent verification:** all four gates re-run separately (fmt, build,
+  clippy, `cargo test` → 1883 + 6 + 10 + 32 + 9, zero failures).
+  `cargo test --lib` landed on exactly **1883** = `1886 − 4 + 1`. Every
+  acceptance criterion re-measured; all eight must-survive criteria hold,
+  including the `[Watch Pane` catch-up scanner (`catchup.rs` diff empty, 3
+  occurrences, its 20 tests green) — the deletion no gate would have caught.
+  Task 8's E2E re-run reproduces `tools=43 core=29` byte for byte. Task 9's
+  mutation reproduced 3/3 red on exactly `tool_table_counts_are_43_29_14`
+  (24 passed / 1 failed), matching the run's report. Both the new E2E test and
+  the renamed guard proven falsifiable: re-adding a `watch_pane` `ToolDef`
+  reddens five tests including both. `knowledge/pane.rs` is **415 → 72 lines**
+  holding only the two `tmux_control` helpers. The one added `expect` is the
+  E2E test's `render must serialize` — test code, exempt per STANDARDS §1.
+
