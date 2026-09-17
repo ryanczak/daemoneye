@@ -1,7 +1,7 @@
 # Phase 09c: remove `tmux_control` — the milestone's exit criterion
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 09a, 09b (the other five pane tools). Both **done**.
 **Estimated diff:** ~600 lines, overwhelmingly deletion
 **Tags:** language=rust, kind=removal, size=m
@@ -401,3 +401,83 @@ is not.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-09-17
+
+**READ THIS FIRST. The working tree is RED and dirty, and that is CORRECT.**
+
+A previous run completed **Task 1** and was terminated by the governor
+(`VerifierFailurePersistent`, 6 consecutive failures) **while the tree was
+legitimately mid-batch** — not because anything it did was wrong. Removing a
+`PendingCall` variant makes the crate uncompilable until the last arm is gone;
+the verifier sees that red tree after every edit and cannot tell "mid-batch"
+from "stuck".
+
+**Do NOT revert the working tree. Do NOT redo Task 1.** Verified at escalation,
+the following are already complete and correct:
+
+- `src/ai/types/pending.rs` — the `TmuxControl` variant and all five arm
+  families: **done** (0 references remain).
+- `src/ai/types/events.rs` — the variant: **done** (0 remain).
+- `src/daemon/stream.rs` — the `AiEvent` arms: **done** (0 remain).
+
+**Exactly two compile errors remain, and three edits close them:**
+
+```
+error[E0599] src/daemon/executor/mod.rs:1000  no variant named `TmuxControl` found for enum `PendingCall`
+error[E0277] src/ai/tools/dispatch.rs:65      the trait bound `args::TmuxControlArgs: args::ToolArgs` is not satisfied
+```
+
+1. `src/ai/tools/args.rs:100` — delete the `pub(super) struct TmuxControlArgs`
+   (its `ToolArgs` impl is already gone; the struct is the leftover).
+2. `src/ai/tools/dispatch.rs:65` — delete the
+   `"tmux_control" => dispatch::<TmuxControlArgs>(…)` arm.
+3. `src/daemon/executor/mod.rs:1000` — delete the `PendingCall::TmuxControl`
+   arm through its closing brace (it contains the `kill_window_refusal` call and
+   the invalid-action error).
+
+**Do those three first, then run `cargo build`.** It should go green. Getting
+out of the red window quickly is the single most important thing in this run —
+it is what the last one could not do.
+
+**Then finish the rest in this order,** each step keeping the build green:
+
+4. `src/ai/tools/defs.rs` — the `ToolDef` **and** the `"tmux_control"` entry in
+   `APPROVAL_GATED_TOOLS` (11 → 10).
+5. `src/daemon/executor/mod.rs` — `ghost_may_use_tmux_control`,
+   `mod tmux_control_gate_tests` (4 tests), the stale comments at `:916`/`:942`,
+   and the `ghost_may_send_input` doc comment rewrite (§ Pre-flight).
+6. Delete `src/daemon/executor/knowledge/pane.rs` and its two lines in
+   `knowledge/mod.rs`. **This is required for `clippy -D warnings`** —
+   `kill_window_refusal` is dead once edit 3 lands.
+7. `src/ai/tools/dispatch.rs:289` (sample-args arm) and `:164` — drop
+   `"tmux_control"` from the `kept` array of the existing
+   `e2e_removed_pane_watch_tools_…` test, which otherwise fails.
+8. `src/agents/policy.rs` — **retarget** the vehicle test to `"send_input"`,
+   do not delete it; `agents::policy` must stay at 15.
+9. `sre.toml`, `CLAUDE.md`, `README.md` (row **and** its `⚠`), and rename the
+   count guard to `tool_table_counts_are_42_28_14`.
+10. Tasks 8 and 9 — the mutation pair and the `PASTE MATCH` capture.
+
+Everything else in the phase doc stands unchanged. The finish line is
+`cargo test --lib` reporting **1877**, `ai::tools::dispatch` **26**,
+`agents::policy` **15**, `doc_truth` **10**, and the capture reading
+`tools=42 core=28 gated=10`.
+
+### Update — 2026-09-17 (escalation)
+
+**Chosen lever:** resume (re-dispatch in place, partial work preserved)
+**Rationale:** the spec was not the problem — the executor was terminated for a
+red tree that removing an enum variant *necessarily* produces, so a refined
+re-dispatch would reopen the identical window from scratch, whereas the
+remaining edits monotonically *close* the two errors and reach green fast.
+
+
+### Update — 2026-09-17 15:06 (started)
+
+**Executor:** headless (claude-sonnet-4.6). Status flipped `todo` → `in-progress`
+in the phase doc and the M22 README row updated to match. Pre-flight state
+confirmed against HEAD `16e4bcad`: 1883 lib tests passing, `doc_truth` 10
+passing, 43 tools / 29 core / 11 gated, and the measured greps matching the
+spec's numbers (36 `tmux_control` refs outside `dispatch.rs`, 12
+`ghost_may_use_tmux_control` refs, 11 `kill_window_refusal` refs).

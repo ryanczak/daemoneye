@@ -1,34 +1,31 @@
 # NEXT
 
 **Active phase:** `docs/dev/milestones/M22-tool-surface/phase-09c-tmux-control-removal.md`
-— 09c, tmux-control-removal. Drafted 2026-09-17, status `todo`, not yet
-dispatched.
+— 09c, tmux-control-removal. **Escalated 2026-09-17**, status `in-progress`.
 
-Deletes `tmux_control`, the last of the six pane tools and the only one with no
-shell counterpart — it *drives* tmux rather than reading it. This is the phase
-that reaches the milestone's headline exit criterion: **42 tools, 28 core + 14
-deferred**.
+The first run `hard_fail`ed with `VerifierFailurePersistent` (6 consecutive
+failures, 41 turns) **while legitimately mid-batch**: removing the
+`PendingCall::TmuxControl` variant makes the crate uncompilable until the last
+arm is gone, and the verifier cannot tell "mid-batch" from "stuck".
 
-Three things move that 09a and 09b never touched:
+**Lever chosen: resume in place.** The partial work is correct and is
+**deliberately left uncommitted in the working tree** — it is the resume
+substrate. Do not `git checkout`, `stash` or `reset` those four files:
 
-- **`APPROVAL_GATED_TOOLS` shrinks 11 → 10** and the README's `⚠` marker goes
-  with it — the add-a-tool checklist's step 12, guarded by
-  `readme_approval_markers_match_the_gated_tools`. Task 8's mutation exercises
-  exactly that pairing.
-- **`src/daemon/executor/knowledge/pane.rs` is deleted outright.** After 09a and
-  09b it holds only `is_daemon_window` and `kill_window_refusal`, and both exist
-  solely for `tmux_control`'s `kill_window` action.
-- **09b's own E2E test lists `tmux_control` as must-stay** and fails the moment
-  the tool leaves `TOOLS`. The spec calls that out with the line number.
+```
+ M src/ai/tools/args.rs      M src/ai/types/events.rs
+ M src/ai/types/pending.rs   M src/daemon/stream.rs
+```
 
-Both folds from 09a/09b were applied while drafting: the orphan closure was
-measured over functions, wrappers **and** `use` statements (it found that
-`explicitly_allows` *survives*, because `ghost_may_send_input` is a second
-caller — the doc comment calling it "the ghost `tmux_control` gate" is
-misleading), and the criteria are written against identifiers rather than
-tool-name strings, with the one string criterion anchored away from the test
-file.
+Task 1 is complete (the variant, the event and the streaming arms are gone).
+**Two compile errors remain and three edits close them** — `args.rs:100`,
+`dispatch.rs:65`, `executor/mod.rs:1000`. The guidance is seeded as a
+`Notes for executor` block at the top of the phase doc's Update Log, with the
+ordering that reaches a green build fastest, which is exactly what the last run
+could not do.
 
-Remaining M22 order: **09c → 09d → 08b → 10**.
+Resuming via `execute_phase` on the `in-progress` doc rather than
+`continue_phase`: the latter is a blocking call with no `run_id` and no way to
+stop it short of killing `rexymcp serve`.
 
-Dispatch with `/rexymcp:dispatch phase-09c`.
+Re-dispatch with `/rexymcp:dispatch phase-09c`.
