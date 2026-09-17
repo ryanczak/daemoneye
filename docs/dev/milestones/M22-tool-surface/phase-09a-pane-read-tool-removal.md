@@ -516,3 +516,134 @@ but the authority to make that call is the architect's, not mine.
 `src/tmux/cache_tests.rs:687` (2 lines, no code) is an accepted deviation of
 09a, or an instruction to restore it. Everything else in 09a's acceptance
 battery is green.
+
+### Update — 2026-09-17 02:15 (end-to-end verification)
+
+Evidence below is captured mechanically from single runs of each command and
+pasted byte for byte (redirected to a file, then quoted; nothing retyped).
+
+**Task 11 PASTE MATCH** — `cargo test --lib e2e_removed_pane_read_tools -- --nocapture`:
+
+```
+PASTE MATCH >>>
+tools=45 core=31
+<<<
+```
+
+**Task 10 mutation pair** — `patch` re-adds a `list_panes` `ToolDef` without its
+`CLAUDE.md` / `README.md` rows:
+
+```
+$ cargo test --test doc_truth        # with the mutation present
+test result: FAILED. 6 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+error: test failed, to rerun pass `--test doc_truth`
+```
+
+The four failing tests, from the same run:
+
+```
+test claude_md_tools_table_counts_are_accurate ... FAILED
+test readme_tools_counts_are_accurate ... FAILED
+test claude_md_tools_table_matches_the_code ... FAILED
+test readme_tools_tables_match_the_code ... FAILED
+```
+
+`readme_tools_tables_match_the_code` names the missing row:
+
+```
+README.md § "AI tools" no longer mirrors `TOOLS`:
+list_panes: in TOOLS but missing from the README tables (belongs in core)
+```
+
+Reverted with the `patch` tool; the gate is green again:
+
+```
+$ cargo test --test doc_truth        # after the revert
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+**Acceptance-criteria grep battery** (script redirected to
+`/tmp/ac-battery.txt`, one run):
+
+```
+$ grep -c "^        name:" src/ai/tools/defs.rs
+45
+$ grep -c "deferred_group: None" src/ai/tools/defs.rs
+31
+$ grep -cE "ListPanes|ReadPane|FindInPanes" src/ai/types/pending.rs
+0
+$ grep -cE "ListPanes|ReadPane|FindInPanes" src/ai/types/events.rs
+0
+$ grep -cE "ListPanes|ReadPane|FindInPanes" src/daemon/stream.rs
+0
+$ grep -cE "^pub fn list_panes|^pub async fn read_pane|^pub async fn find_in_panes" src/daemon/executor/knowledge/pane.rs
+0
+$ grep -cE "list_panes|read_pane|find_in_panes" assets/prompts/sre.toml
+0
+```
+
+**Must-survive battery** (same run):
+
+```
+$ grep -c "pub fn list_panes_detailed" src/tmux/pane.rs
+1
+$ grep -c "pub fn list_panes_in_window" src/tmux/pane.rs
+1
+$ grep -c "pub fn read_pane_exit_status" src/tmux/pane.rs
+1
+$ grep -c "pub(super) async fn handle_list_panes" src/daemon/server/handlers.rs
+1
+$ grep -c "ListPanesForSession" src/ipc.rs
+2
+$ grep -cE "^pub fn close_bg_window|^pub fn watch_pane|^pub\(crate\) fn kill_window_refusal" src/daemon/executor/knowledge/pane.rs
+3
+$ grep -c "name: \"watch_pane\"" src/ai/tools/defs.rs
+1
+$ grep -c "name: \"tmux_control\"" src/ai/tools/defs.rs
+1
+```
+
+**Per-test-source-line counts vs HEAD 55fc1936** (a worktree at the base commit,
+`-- --list`, mechanically diffed — the retarget rule's proof):
+
+```
+$ diff <(worktree base list) <(now list)   # tool-name-normalised
+<      27 daemon::executor::knowledge::pane
+---
+>       5 daemon::executor::knowledge::pane
+```
+
+Every other module's count is unchanged; the `git --list`-level diff shows
+exactly the 22 names below gone and **zero** names added outside `pane.rs`
+(vehicle tests retargeted, never deleted):
+
+gone: the 7 `find_in_panes_*`, 7 `list_panes_*` (incl. base's 7th —
+`list_panes_lists_foreign_session_panes_in_their_own_section` — and
+`list_panes_tags_daemon_windows`), 5 `read_pane_*`, 2 `search_buffer_*`,
+plus `close_bg_window_no_session` / `close_bg_window_unknown_session` which
+were **re-added** after deletion (they are survivors, listed again in the now
+table at their original names).
+
+**Gate capture** (scripted, one run, `/tmp/gates.txt`):
+
+```
+### gate: cargo fmt --all -- --check
+(fmt exit 0)
+### gate: cargo build
+warning: `daemoneye` (lib) generated 1 warning      # capture_pane_annotated, see the blocker entry
+### gate: cargo clippy --all-targets --all-features -- -D warnings
+error: function `capture_pane_annotated` is never used
+error: could not compile `daemoneye` (lib) due to 1 previous error
+### gate: cargo test --lib
+test result: ok. 1886 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.74s
+### gate: cargo test --test doc_truth
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+### criteria: cargo test --lib 'knowledge::pane'
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1885 filtered out; finished in 0.00s
+### criteria: cargo test --lib 'ai::tools::dispatch'
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 1866 filtered out; finished in 0.00s
+```
+
+`cargo build` emits one warning and clippy fails on it: the orphaned
+`tmux::capture_pane_annotated` detailed in the 02:05/01:55 updates — the phase's
+single open item, needing the authorization decision already asked for.
