@@ -71,7 +71,10 @@ final surface, so they go last.
 | 07b | run-command-wait ([phase-07b-run-command-wait.md](phase-07b-run-command-wait.md)) — `wait?` replaces `background` on the tool; the tuple field swaps in place, no count change | done                    |
 | 08a | shell-context-block ([phase-08a-shell-context-block.md](phase-08a-shell-context-block.md)) — `[SHELLS]` / `[DEFAULT SHELL]` in the ambient context; additive, no tool change | done                    |
 | 08b | shell-context-tool — `get_terminal_context` → `get_shell_context { scope }`, new scope vocabulary; **after 09** | todo (not drafted) |
-| 09 | pane-tool-removal — delete the six pane tools and their executor arms | todo (not drafted) |
+| 09a | pane-read-tool-removal ([phase-09a-pane-read-tool-removal.md](phase-09a-pane-read-tool-removal.md)) — delete `list_panes` / `read_pane` / `find_in_panes`; 48 → 45 tools | todo (drafted 2026-09-16) |
+| 09b | pane-watch-removal — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | todo (not drafted) |
+| 09c | tmux-control-removal — delete `tmux_control`; 43 → 42, hitting the exit criterion | todo (not drafted) |
+| 09d | pane-param-retirement — retire `target_pane` / `retry_in_pane` (185 refs incl. the IPC wire); no count change | todo (not drafted) |
 | 10 | prompt-assets — rewrite `sre.toml` and the seeded memories; retire the two tmux knowledge memories; `doc_truth` updated | todo (not drafted) |
 
 ## Notes
@@ -283,6 +286,27 @@ final surface, so they go last.
   `executor/mod.rs:859`), no tool-table movement. Note `src/daemon/prompt.rs`
   has **no test module** — 08a's tests go in `knowledge/shell.rs` beside the
   formatter, which is also where every `ShellRow` helper already lives.
+
+- **Row 09 split into 09a/09b/09c/09d at drafting (2026-09-16).** The row read
+  "delete the six pane tools and their executor arms" and also carried the
+  `target_pane`/`retry_in_pane` retirements folded in at 07. Measured, that is
+  **194** references for the six tools plus **171** for `target_pane` and **14**
+  for `retry_in_pane` — several sessions' work. The seam chosen is **whether a
+  replacement already exists**: 09a takes the three *read* tools, whose
+  replacements shipped in 03a/03b/03c, so the removal is a straight deletion
+  with nothing to design. 09b takes `watch_pane` (`watch_shell` replaces it) and
+  `close_background_window` (which needs a decision about what `wait: false`
+  closes under the PTY backend). 09c takes `tmux_control` — not a read tool at
+  all, it *drives* tmux and has no shell analogue, so removing it is a
+  capability decision. 09d retires the two params.
+  **The trap this row carries, found while drafting 09a:** `crate::tmux` has
+  `list_panes_detailed`, `list_panes_in_window` and `read_pane_exit_status`, and
+  `server/handlers.rs` has `handle_list_panes` serving the **user's** `/panes`
+  inspector (`Request::ListPanesForSession`) — four substrate symbols whose
+  names contain the tool names and which have nothing to do with the AI tool
+  surface. A name-based removal deletes a user-facing feature while the
+  tool-count gate stays green. Each phase in this row needs its must-survive
+  list stated explicitly.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24
