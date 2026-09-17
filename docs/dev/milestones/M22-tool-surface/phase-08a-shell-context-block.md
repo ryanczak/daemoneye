@@ -1,7 +1,7 @@
 # Phase 08a: `[SHELLS]` / `[DEFAULT SHELL]` context blocks
 
 **Milestone:** M22 — Tool surface & context
-**Status:** in-progress (bug-08a-1 — two dead assertions + a false mechanism claim in the E2E note)
+**Status:** review
 **Depends on:** 04a (`open_shell`/`close_shell`), 07a/07b (`shell?`/`wait?` on
 `run_terminal_command`). Both **done**.
 **Estimated diff:** ~400 lines incl. tests
@@ -814,5 +814,203 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - `src/daemon/prompt.rs` — +9 -2
 
 **Commit:** 64e08e7dbfd6cd2161a48e7ee67b43d121f340c3
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — ts=1789605268702 (complete, server-authored)
+
+**Summary:** </think>Status is already `in-progress` (from the bounce), README row also says in-progress. Good — that part was set when the phase was bounced and remains correct. No status flip needed.
+
+Now compose the final Summary + Notes for review. Let me double check everything once more:
+
+- All acceptance criteria from the bug-08a-1 block:
+  - grep -cF '!out.contains("[dedicated]") || out.contains("s4")' → 0 ✓
+  - grep -cF 's0 age:4m — ' → 0 ✓
+  - grep -c 'format_shell_context_keeps_each_flag_on_its_own_row' → 1 ✓
+  - Mutation C red with the named test among failures, green on revert ✓
+  - cargo test --lib 'daemon::executor::knowledge::shell' → 62 passed ✓
+  - cargo test --lib → 1906 passed ✓
+  - grep -c 'age:0s' phase doc → 0 ✓
+  - grep -c 'NOW = 200_000' phase doc → 1 ✓
+  - E2E capture block unchanged ✓ (only prose note rewritten)
+  - fmt/build/clippy clean ✓
+  - tmux/cache.rs untouched ✓
+
+Also the spec-scoped note criteria:
+- 'same second' → 0 ✓
+- 'in the future' → at least 1 (measured 2) ✓
+
+Also the original phase criteria remain satisfied (62/1906 matches bug's superseding numbers). Everything committed; working tree clean.
+
+Wait — one detail: commit f83bb7d8 message says "Mutation C ... reddens the new test; A and B re-confirmed red-on-mutant, green-on-revert." I did re-run mutation A and B? Let me check: I ran mutation A (sort key) — red, green on revert ✓. Mutation B (interactive) — red (3 failures incl. named test), green on revert ✓. Mutation C — red (2 failures incl. the new test), green on revert ✓. Yes, all three ran this session.
+
+The mutation C test result lines to report:
+- Mutant: FAILED. 60 passed; 2 failed; 0 ignored; 0 measured; 1848 filtered out; finished in 4.57s
+- Reverted: ok. 62 passed; 0 failed... finished in 4.56s
+
+Mutation A: FAILED. 61 passed; 1 failed ... and revert: ok. 62 passed.
+Mutation B: FAILED. 59 passed; 3 failed; ... revert ok. 62 passed.
+
+Final message must be Summary + Notes for review, 2-6 sentences ideally but substantive. Include mutation result lines and greps as evidence.</think>
+All work is committed and the tree is clean. Final report:
+
+**Summary:**
+
+Fixed bug-08a-1 on phase 08a (`f83bbd8`). **Finding 1:** the two dead
+disjunctions in `format_shell_context_lists_every_shell_with_its_flags` are gone
+— replaced by a new test, `format_shell_context_keeps_each_flag_on_its_own_row`,
+which splits the `[SHELLS]` count line on `", "` and asserts per **segment**
+(`s0` segment flag-free, `s2` carries `[interactive]`, `s4` carries
+`[dedicated]`, and `[dedicated]` lands on no other segment). **Finding 2:** the
+prose note beneath the E2E capture now states the real mechanism — the module's
+injected clock `NOW = 200_000` is earlier than the real host's
+`SystemTime::now()`-stamped `started_unix` (~1.79e9), so the row starts *in the
+future* relative to `now_unix` and the age guard omits the `age:` part per the
+spec's own future-start rule; the `PASTE MATCH` transcript itself was not
+re-run or re-pasted (4 `PASTE MATCH`-line occurrences in the doc before and
+after, all for the task-9 test code prose, transcript text untouched). All bug
+acceptance criteria re-measured and landing on target: the two dead-assertion
+greps → **0** (were 1), the new test name → **1**, phase-doc `age:0s` → **0**
+(were 1), `NOW = 200_000` → **1** (were 0), scoped-`sed` `same second` → 0 /
+`in the future` → 2, shell module **62 passed** (were 61), lib **1906 passed**
+(were 1905), `doc_truth` **10 passed**, `host_is_alive` count still 9,
+`tmux/cache.rs` diff vs `e593a499` empty; fmt/build/clippy clean, working tree
+clean at `f83bbd8`.
+
+**Notes for review:**
+
+- Mutation counts per the plan (all via the `patch` tool, revert confirmed green each time):
+  - **A** (sort key → string): `FAILED. 61 passed; 1 failed` — `default_shell_for_picks_the_lowest_index_not_the_lowest_string`; revert `ok. 62 passed; 0 failed`.
+  - **B** (drop `!row.interactive`): `FAILED. 59 passed; 3 failed` — `default_shell_for_skips_an_interactive_shell` plus two downstream assertions of the same predicate (same shape as the prior run's report, so not a false positive); revert `ok. 62 passed; 0 failed`.
+  - **C** (emit `[dedicated]` for every row, task list item 7): `FAILED. 60 passed; 2 failed` at `shell.rs:2072` / `shell.rs:2038`, `format_shell_context_keeps_each_flag_on_its_own_row` among them — exactly the mutation the old assertion could not catch and the new one must; revert `ok. 62 passed; 0 failed`.
+- Sections/tasks 1–6, 8, 9 of the phase spec were already landed by the prior run (commit `64e08e7d`) and are untouched here beyond the debug-artifact revert; this run did not modify `prompt.rs`, `executor/mod.rs`, or `knowledge/mod.rs`.
+- The corrected E2E note also cites `src/shell/registry.rs:195` (where the host stamps `started_unix`), matching the root-cause evidence in the bug report; the phrase "age:0s" was removed from the whole phase doc, not just the scoped Update Log section, beyond the stray "age<60s" wording the bug's first grep needle (`s0 age:4m — `) had already covered in code.
+
+The run is complete; the phase doc's Update Log, bug tracker, and test coverage all reflect the shipped state.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+ 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.76s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M22-tool-surface/phase-08a-shell-context-block.md` — +9 -5
+- `src/daemon/executor/knowledge/shell.rs` — +41 -6
+
+**Commit:** f83bb7d8dd33d781127523d741895bf82a28eb27
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
