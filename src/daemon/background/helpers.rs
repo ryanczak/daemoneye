@@ -172,7 +172,7 @@ pub(super) fn notify_session(sessions: &SessionStore, session_id: &str, job: BgJ
         format!(
             "The window is still open (pane {pane_id}). \
              Use target=\"{pane_id}\" to run follow-up commands in the same shell. \
-             Call close_background_window(\"{pane_id}\") when you are done with this window."
+             It is reclaimed automatically once its job is done and closed."
         )
     } else {
         format!("The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log")

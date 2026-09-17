@@ -72,13 +72,6 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         script_name: String,
     },
-    WatchPane {
-        id: String,
-        thought_signature: Option<String>,
-        pane_id: String,
-        timeout_secs: u64,
-        pattern: Option<String>,
-    },
     ReadFile {
         id: String,
         thought_signature: Option<String>,
@@ -178,11 +171,6 @@ pub enum PendingCall {
         id: String,
         thought_signature: Option<String>,
         scope: Option<String>,
-    },
-    CloseBackgroundWindow {
-        id: String,
-        thought_signature: Option<String>,
-        pane_id: String,
     },
     /// Spawn an autonomous Ghost Shell session in the background.
     SpawnGhost {
@@ -497,20 +485,6 @@ impl PendingCall {
                 name: "delete_script".to_string(),
                 arguments: args_to_string(serde_json::json!({"script_name": script_name})),
             },
-            PendingCall::WatchPane {
-                id,
-                thought_signature,
-                pane_id,
-                timeout_secs,
-                pattern,
-            } => ToolCall {
-                id: id.clone(),
-                thought_signature: thought_signature.clone(),
-                name: "watch_pane".to_string(),
-                arguments: args_to_string(
-                    serde_json::json!({"pane_id": pane_id, "timeout_secs": timeout_secs, "pattern": pattern}),
-                ),
-            },
             PendingCall::WatchShell {
                 id,
                 thought_signature,
@@ -796,16 +770,6 @@ impl PendingCall {
                 name: "list_shells".to_string(),
                 arguments: args_to_string(serde_json::json!({"scope": scope})),
             },
-            PendingCall::CloseBackgroundWindow {
-                id,
-                thought_signature,
-                pane_id,
-            } => ToolCall {
-                id: id.clone(),
-                thought_signature: thought_signature.clone(),
-                name: "close_background_window".to_string(),
-                arguments: args_to_string(serde_json::json!({"pane_id": pane_id})),
-            },
             PendingCall::SpawnGhost {
                 id,
                 thought_signature,
@@ -972,7 +936,6 @@ impl PendingCall {
             PendingCall::ListScripts { id, .. } => id,
             PendingCall::ReadScript { id, .. } => id,
             PendingCall::DeleteScript { id, .. } => id,
-            PendingCall::WatchPane { id, .. } => id,
             PendingCall::WatchShell { id, .. } => id,
             PendingCall::SendInput { id, .. } => id,
             PendingCall::ListShellLogs { id, .. } => id,
@@ -994,7 +957,6 @@ impl PendingCall {
             PendingCall::ListShells { id, .. } => id,
             PendingCall::OpenShell { id, .. } => id,
             PendingCall::CloseShell { id, .. } => id,
-            PendingCall::CloseBackgroundWindow { id, .. } => id,
             PendingCall::SpawnGhost { id, .. } => id,
             PendingCall::CreateAgent { id, .. } => id,
             PendingCall::ReadAgent { id, .. } => id,
@@ -1018,7 +980,6 @@ impl PendingCall {
             PendingCall::CancelSchedule { .. }
                 | PendingCall::DeleteSchedule { .. }
                 | PendingCall::ReadScript { .. }
-                | PendingCall::WatchPane { .. }
                 | PendingCall::WatchShell { .. }
                 | PendingCall::ReadFile { .. }
                 | PendingCall::ReadRunbook { .. }
@@ -1031,7 +992,6 @@ impl PendingCall {
                 | PendingCall::RecallContext { .. }
                 | PendingCall::GetTerminalContext { .. }
                 | PendingCall::ListShells { .. }
-                | PendingCall::CloseBackgroundWindow { .. }
                 | PendingCall::SpawnGhost { .. }
                 | PendingCall::ReadAgent { .. }
                 | PendingCall::ListAgents { .. }
@@ -1056,18 +1016,6 @@ impl PendingCall {
             | PendingCall::DeleteSchedule { job_id, .. } => job_id.clone(),
             PendingCall::ReadScript { script_name, .. }
             | PendingCall::DeleteScript { script_name, .. } => script_name.clone(),
-            PendingCall::WatchPane {
-                pane_id,
-                timeout_secs,
-                pattern,
-                ..
-            } => {
-                if let Some(pat) = pattern {
-                    format!("{pane_id} pattern=\"{pat}\"")
-                } else {
-                    format!("{pane_id} {timeout_secs}s")
-                }
-            }
             PendingCall::WatchShell {
                 shell,
                 timeout_secs,
@@ -1140,7 +1088,6 @@ impl PendingCall {
             PendingCall::OpenShell { .. } => String::new(),
             PendingCall::CloseShell { shell, .. } => shell.clone(),
             PendingCall::SendInput { shell, .. } => shell.clone(),
-            PendingCall::CloseBackgroundWindow { pane_id, .. } => pane_id.clone(),
             PendingCall::SpawnGhost { runbook, .. } => runbook.clone(),
             PendingCall::CreateAgent { name, .. } => name.clone(),
             PendingCall::ReadAgent { name, .. } => name.clone(),
@@ -1232,7 +1179,6 @@ impl PendingCall {
             PendingCall::ListScripts { .. } => "list_scripts",
             PendingCall::ReadScript { .. } => "read_script",
             PendingCall::DeleteScript { .. } => "delete_script",
-            PendingCall::WatchPane { .. } => "watch_pane",
             PendingCall::WatchShell { .. } => "watch_shell",
             PendingCall::SendInput { .. } => "send_input",
             PendingCall::ListShellLogs { .. } => "list_shell_logs",
@@ -1254,7 +1200,6 @@ impl PendingCall {
             PendingCall::ListShells { .. } => "list_shells",
             PendingCall::OpenShell { .. } => "open_shell",
             PendingCall::CloseShell { .. } => "close_shell",
-            PendingCall::CloseBackgroundWindow { .. } => "close_background_window",
             PendingCall::SpawnGhost { .. } => "spawn_ghost_shell",
             PendingCall::CreateAgent { .. } => "create_agent",
             PendingCall::ReadAgent { .. } => "read_agent",
@@ -1317,13 +1262,6 @@ mod tests {
                 thought_signature: None,
                 script_name: "s.sh".to_string(),
             },
-            PendingCall::WatchPane {
-                id: "x".to_string(),
-                thought_signature: None,
-                pane_id: "%1".to_string(),
-                timeout_secs: 30,
-                pattern: None,
-            },
             mk_read_file("/etc/hosts"),
             PendingCall::ReadRunbook {
                 id: "x".to_string(),
@@ -1377,11 +1315,6 @@ mod tests {
                 id: "x".to_string(),
                 thought_signature: None,
                 scope: None,
-            },
-            PendingCall::CloseBackgroundWindow {
-                id: "x".to_string(),
-                thought_signature: None,
-                pane_id: "%5".to_string(),
             },
             PendingCall::OpenShell {
                 id: "x".to_string(),
@@ -1482,30 +1415,6 @@ mod tests {
             target_pane: None,
         };
         assert_eq!(call.summary(), "/etc/hosts grep=\"nameserver\"");
-    }
-
-    #[test]
-    fn summary_watch_pane_with_pattern() {
-        let call = PendingCall::WatchPane {
-            id: "x".to_string(),
-            thought_signature: None,
-            pane_id: "%3".to_string(),
-            timeout_secs: 60,
-            pattern: Some("DONE".to_string()),
-        };
-        assert_eq!(call.summary(), "%3 pattern=\"DONE\"");
-    }
-
-    #[test]
-    fn summary_watch_pane_no_pattern() {
-        let call = PendingCall::WatchPane {
-            id: "x".to_string(),
-            thought_signature: None,
-            pane_id: "%3".to_string(),
-            timeout_secs: 30,
-            pattern: None,
-        };
-        assert_eq!(call.summary(), "%3 30s");
     }
 
     #[test]
@@ -1720,13 +1629,6 @@ mod tests {
                 thought_signature: None,
                 script_name: "s.sh".to_string(),
             },
-            PendingCall::WatchPane {
-                id: x(),
-                thought_signature: None,
-                pane_id: "%1".to_string(),
-                timeout_secs: 30,
-                pattern: None,
-            },
             mk_read_file("/etc/hosts"),
             PendingCall::EditFile {
                 id: x(),
@@ -1818,11 +1720,6 @@ mod tests {
                 id: x(),
                 thought_signature: None,
                 scope: None,
-            },
-            PendingCall::CloseBackgroundWindow {
-                id: x(),
-                thought_signature: None,
-                pane_id: "%1".to_string(),
             },
             PendingCall::SpawnGhost {
                 id: x(),

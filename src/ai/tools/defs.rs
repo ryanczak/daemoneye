@@ -285,39 +285,6 @@ pub static TOOLS: &[ToolDef] = &[
         category: Category::Write,
     },
     ToolDef {
-        name: "watch_pane",
-        description: "Passively monitor a background tmux pane. Blocks until the pane's \
-                      command completes (returns to shell prompt), or until a specific string \
-                      or regex pattern appears in the pane output (if `pattern` is set), or \
-                      until `timeout_secs` elapses. Use for build completion, service startup \
-                      events, or any output-triggered condition.",
-        params: &[
-            ParamDef {
-                name: "pane_id",
-                ty: ParamTy::Str,
-                required: true,
-                description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from context blocks ([VISIBLE PANE], [BACKGROUND PANE], [SESSION PANE]) or wait=false tool results.",
-            },
-            ParamDef {
-                name: "timeout_secs",
-                ty: ParamTy::Int,
-                required: false,
-                description: "Maximum seconds to wait. Defaults to 300 (5 minutes).",
-            },
-            ParamDef {
-                name: "pattern",
-                ty: ParamTy::Str,
-                required: false,
-                description: "Optional regex pattern. When set, returns as soon as the \
-                                     pattern matches any line in the pane output — does not wait \
-                                     for the command to exit. Example: 'listening on port \\d+' \
-                                     or 'build (succeeded|failed)'.",
-            },
-        ],
-        deferred_group: None,
-        category: Category::Read,
-    },
-    ToolDef {
         name: "read_file",
         description: "Preferred over cat/head/tail/grep for reading files. \
                       Read a file with line-range pagination and optional grep filtering. \
@@ -1129,25 +1096,6 @@ pub static TOOLS: &[ToolDef] = &[
                               \"horizontal\" (side by side) — `split` only.",
             },
         ],
-        deferred_group: None,
-        category: Category::Run,
-    },
-    ToolDef {
-        name: "close_background_window",
-        description: "Close a background tmux window that is no longer needed. \
-                      Call this after you have finished with a background window — \
-                      once you have read its output and will not be issuing any more \
-                      commands there. Frees the slot immediately rather than waiting \
-                      for the cap eviction. Up to 5 background windows exist per session; \
-                      closing idle ones proactively prevents cap exhaustion.",
-        params: &[ParamDef {
-            name: "pane_id",
-            ty: ParamTy::Str,
-            required: true,
-            description: "Pane ID of the background window to close (e.g. \"%3\"). \
-                              Obtained from a [Background Task Completed] message or \
-                              a [BACKGROUND PANE] context block.",
-        }],
         deferred_group: None,
         category: Category::Run,
     },

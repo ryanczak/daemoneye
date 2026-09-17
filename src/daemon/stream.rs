@@ -456,21 +456,6 @@ where
                         thought_signature,
                     });
                 }
-                AiEvent::WatchPane {
-                    id,
-                    pane_id,
-                    timeout_secs,
-                    pattern,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::WatchPane {
-                        id,
-                        pane_id,
-                        timeout_secs,
-                        pattern,
-                        thought_signature,
-                    });
-                }
                 AiEvent::ReadFile {
                     id,
                     path,
@@ -811,17 +796,6 @@ where
                         pane_id,
                         name,
                         direction,
-                    });
-                }
-                AiEvent::CloseBackgroundWindow {
-                    id,
-                    pane_id,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::CloseBackgroundWindow {
-                        id,
-                        thought_signature,
-                        pane_id,
                     });
                 }
                 AiEvent::SpawnGhost {

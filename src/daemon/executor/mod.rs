@@ -182,7 +182,7 @@ where
 {
     let SessionCtx {
         session_id,
-        session_name,
+        session_name: _,
         chat_pane,
         sessions,
     } = ctx;
@@ -677,31 +677,6 @@ where
             id, script_name, ..
         } => knowledge::delete_script(id, script_name, is_ghost, session_id, tx, rx).await,
 
-        PendingCall::WatchPane {
-            pane_id,
-            timeout_secs,
-            pattern,
-            ..
-        } => {
-            let p = pane_id.clone();
-            let secs = *timeout_secs;
-            let pat = pattern.clone();
-            let sid = session_id.map(str::to_string);
-            let sname = session_name.to_string();
-            let s = sessions.clone();
-            let msg = crate::tmux::off_runtime("watch-pane", move || {
-                knowledge::watch_pane(&p, secs, pat.as_deref(), sid.as_deref(), &sname, &s)
-            })
-            .await
-            .unwrap_or_else(|| {
-                format!(
-                    "Timed out after 5s starting the watch on pane {}. The tmux server may be wedged. The watch may still have started, so a [Watch Pane ...] message may still arrive.",
-                    pane_id
-                )
-            });
-            Ok(ToolCallOutcome::Result(msg))
-        }
-
         PendingCall::ReadFile {
             path,
             offset,
@@ -873,23 +848,6 @@ where
             Ok(ToolCallOutcome::Result(format!(
                 "{shells_line}{fg_line}{ctx}\n{pane_map}"
             )))
-        }
-
-        PendingCall::CloseBackgroundWindow { pane_id, .. } => {
-            let p = pane_id.clone();
-            let sid = session_id.map(str::to_string);
-            let s = sessions.clone();
-            let msg = crate::tmux::off_runtime("close-bg-window", move || {
-                knowledge::close_bg_window(&p, sid.as_deref(), &s)
-            })
-            .await
-            .unwrap_or_else(|| {
-                format!(
-                    "Timed out after 5s closing the background window for pane {}. The tmux server may be wedged. The window may or may not have been closed; use list_shells to check.",
-                    pane_id
-                )
-            });
-            Ok(ToolCallOutcome::Result(msg))
         }
 
         PendingCall::ListShells { scope, .. } => {

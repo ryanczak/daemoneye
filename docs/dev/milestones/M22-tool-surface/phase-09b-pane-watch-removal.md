@@ -1,7 +1,7 @@
 # Phase 09b: remove `watch_pane` and `close_background_window`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 04b (`watch_shell`), 04a (`close_shell`), 09a (the three pane
 read tools). All **done**.
 **Estimated diff:** ~450 lines, overwhelmingly deletion
@@ -392,3 +392,156 @@ otherwise file a blocker.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-16 19:58 (started)
+
+Executor: Claude (headless run, 09b). Baseline per Pre-flight: HEAD `d7b17254`
+(now `060bd52b` = docs commit on top), 45 tools = 31 core + 14 deferred,
+1886 lib tests. Process set to `in-progress` in this doc and in the milestone
+README's phase table. Working down the Spec task list 1–9; no state flips and
+no completion entry from me — the server owns those.
+
+### Update — 2026-09-16 20:18 (progress)
+
+Tasks 1–7 done, builders task 8 done, task 9 (mutation check) done.
+
+- `pending.rs` / `events.rs`: `PendingCall::WatchPane` and
+  `PendingCall::CloseBackgroundWindow` (and the `AiEvent` twins) deleted with
+  every arm: `to_tool_call()`, `id()`, `should_emit_tool_feedback()`,
+  `summary()`, `tool_name()`, plus the two entries in the
+  `should_emit_tool_feedback` silent-tools vec and the two entries in
+  `to_tool_call_never_serializes_null`'s call list (17 refs gone from
+  pending.rs, down from 18).
+- `args.rs`: `CloseBgWindowArgs` (`pane_id`) and `WatchPaneArgs` (`pane_id`,
+  `timeout_secs` default-300, `pattern`) deleted. `default_300` had two
+  remaining users → kept.
+- `defs.rs` / `dispatch.rs`: both `ToolDef` entries and both dispatch arms +
+  both sample-args cases deleted. **`tool_table_counts_are_45_31_14` renamed →
+  `tool_table_counts_are_43_29_14`** with assertions 43/29/14; the
+  `Category` counts in `category_counts_match_the_assignment` moved
+  Read 21→20, Run 7→6 (`every_tool_has_a_category`'s 45 → 43 claim).
+- `executor/mod.rs`: the `watch_pane` arm (with the `:698` timeout prose) and
+  the `close_bg_window` arm both gone. The `ReadFile` arm that followed the
+  watch arm keeps its four bindings; the `ListShells` arm that followed the
+  close arm is unchanged.
+- `stream.rs`: both `AiEvent` arms gone.
+- `knowledge/pane.rs` gutted to the two `tmux_control` helpers
+  (`is_daemon_window`, `kill_window_refusal`) + their 3 tests, 415 → 72 lines;
+  module doc rewritten to say what the file is now. `knowledge/mod.rs`
+  re-export shrunk to those two.
+- Live prose: `helpers.rs:175` → "It is reclaimed automatically once its job is
+  done and closed." (auto-reclaim, editor-directed at a PTY-side tool that
+  cannot close a tmux window); `session.rs:10` BgWindowInfo doc → "the
+  background window's foreground target"; `foreground.rs:95` header → the
+  `knowledge::` half of the "also used by" sentence, and its
+  `pub(super) use crate::tmux::status::is_shell_prompt` re-export became a
+  plain `use` inside `mod tests` (the whole file now passes
+  `unknown_shell_error`-free, and clippy has no unused import).
+- `shell.rs:1099`/`:1103` provenance comments reworded past tense: "The removed
+  `watch_pane` …", "the removed `watch_pane`'s start grace" — 3 `watch_pane`
+  survivors = these two lines + the `catchup.rs` test name, exactly as
+  Pre-flight predicted.
+- Assets/docs: `sre.toml` — `watch_pane` bullet gone, its heading is now
+  `### get_terminal_context, tmux_control`, `close_background_window` bullet
+  gone, and the `wait=false` cap line became "a finished window is reclaimed
+  automatically on the daemon's own sweep, so there is nothing to close."
+  `CLAUDE.md` — both rows gone, `45 tools: 31 core` → `43 tools: 29 core`,
+  the `BG_DONE_TX` static line no longer names the removed watcher.
+  `README.md` — both Core-table rows gone, **43 / 29 / 14** counts, and the
+  ghost-shell flow chart's `watch_pane blocks until command exits before next
+  turn` line became `wait=false leaves a dedicated PTY shell — the run is
+  followed with watch_shell`.
+- `assets/prompts/ghost-shell.txt:26` and
+  `assets/memory/knowledge/tmux-pane-toolkit.md` still mention the removed
+  tools. `ghost-shell.txt:26` is inside a seeded text asset,
+  `tmux-pane-toolkit.md:60`/`:85` is inside seeded knowledge memory —
+  both are `src/config/seeds.rs`'s `include_str!` payload set, which the
+  phase's Authorization list excludes (`src/config/seeds.rs` is Not
+  authorized). **Flagging for the architect**: the seeds' prompt payload and
+  the pane-toolkit memory now instruct the model to call tools that do not
+  exist; the natural fix is a later phase or a small authorization widening.
+  `docs/REQUIREMENTS.md:33` also still names close_background_window in a
+  background-mode paragraph — informational prose in an untouched-elsewhere
+  doc, left alone per the same authorization boundary.
+
+Gates run this far: build clean, fmt clean,
+clippy -D warnings clean, `cargo test --lib` 1883 passed / 4 ignored,
+`--test doc_truth` 10 passed, `knowledge::pane` 3 passed,
+`ai::tools::dispatch` 25 passed.
+
+### Update — 2026-09-16 20:26 (end-to-end verification)
+
+Per STANDARDS §1: real artifacts, not just unit-test fakes. The two greps below
+ran against the checked-in `src/ai/tools/defs.rs` (the real TOOLS table the
+binary ships) and the Task 8 test re-ran against it live; output captured by
+`tee`, not retyped.
+
+Task 8 `PASTE MATCH` block (byte-for-byte from
+`cargo test --lib e2e_removed_pane_watch_tools -- --nocapture`):
+
+```
+PASTE MATCH >>>
+tools=43 core=29
+<<<
+```
+
+Task 9 mutation pair, both `test result:` lines as captured:
+
+Mutated (`assert_eq!(TOOLS.len(), 44, …)` — one tool too many expected),
+`cargo test --lib 'ai::tools::dispatch'`:
+
+```
+test ai::tools::dispatch::tests::tool_table_counts_are_43_29_14 ... FAILED
+test result: FAILED. 24 passed; 1 failed; 0 ignored; 0 measured; 1862 filtered out; finished in 0.00s
+```
+
+(The failure names the renamed guard — the breakpoint the mutation check exists
+to prove.)
+
+Reverted, same command:
+
+```
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 1862 filtered out; finished in 0.00s
+```
+
+Acceptance-criterion greps against the working tree at this point (defs.rs is
+the table the daemon actually renders from — Task 8 already exercised it; these
+are the same numbers the AC list asks for, recorded from one run):
+
+```
+grep -c '^        name: "' src/ai/tools/defs.rs                  → 43
+grep -c 'deferred_group: None' src/ai/tools/defs.rs              → 29
+grep -rl 'WatchPane' src/ --include=*.rs | wc -l                 → 0
+grep -rl 'CloseBackgroundWindow' src/ --include=*.rs | wc -l     → 0
+grep -rn 'close_bg_window' src/ --include=*.rs | wc -l           → 0
+grep -rn 'watch_pane' src/ --include=*.rs | wc -l                → 5
+grep -cE 'watch_pane|close_background_window' assets/prompts/sre.toml → 0
+grep -c 'tool_table_counts_are_43_29_14' src/ai/tools/dispatch.rs     → 1
+grep -c 'name: "tmux_control"' src/ai/tools/defs.rs              → 1
+grep -c 'fn gc_bg_windows' src/daemon/background/gc.rs           → 1
+grep -c '\[Watch Pane' src/daemon/server/catchup.rs              → 3
+grep -c 'FG_HOOK_COUNTER' src/daemon/executor/foreground.rs      → 2
+grep -c 'bg_done_subscribe' src/daemon/executor/foreground.rs    → 2
+grep -cE '^pub\(crate\) fn is_daemon_window|^pub\(crate\) fn kill_window_refusal' src/daemon/executor/knowledge/pane.rs → 2
+git diff --stat d7b17254..HEAD -- src/daemon/server/catchup.rs              → empty
+git diff --stat d7b17254..HEAD -- src/tmux/ src/daemon/background/run.rs src/daemon/background/gc.rs → empty
+```
+
+**Two AC-line discrepancies, explained (neither hides a failure):**
+
+1. `grep -rn 'watch_pane' … | wc -l` = **5**, not the AC's 3. Two of the 5 are
+   the Task 8 test's own `for gone in ["watch_pane", "close_background_window"]`
+   negative-assertion strings — which the AC list did not count and Task 8
+   requires. The other 3 are exactly the predicted survivors (catchup test
+   name, two `shell.rs` provenance lines). File-anchoring the same grep to the
+   4 files the AC named gives 0 + 0 + 0 + 3 as predicted:
+   `grep -rn 'watch_pane' src/ --include=*.rs | grep -v dispatch.rs | wc -l` → 3.
+2. `grep -rn 'close_background_window' … | wc -l` = **2**, not 0. Both lines
+   are the Task 8 test's must-be-gone strings (are-you-gone assertions, not
+   call sites or prose). Excluding the test block:
+   `grep -rn 'close_background_window' src/ --include=*.rs | grep -v dispatch.rs | wc -l` → 0.
+
+Both are the intended shape (String literals inside the removal-pinning test),
+not escapes. The `WatchPane` / `CloseBackgroundWindow` / `close_bg_window`
+identifier greps, sre.toml, and the renamed-guard counts hit their numbers
+exactly.

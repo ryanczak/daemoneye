@@ -72,7 +72,7 @@ final surface, so they go last.
 | 08a | shell-context-block ([phase-08a-shell-context-block.md](phase-08a-shell-context-block.md)) — `[SHELLS]` / `[DEFAULT SHELL]` in the ambient context; additive, no tool change | done                    |
 | 08b | shell-context-tool — `get_terminal_context` → `get_shell_context { scope }`, new scope vocabulary; **after 09** | todo (not drafted) |
 | 09a | pane-read-tool-removal ([phase-09a-pane-read-tool-removal.md](phase-09a-pane-read-tool-removal.md)) — delete `list_panes` / `read_pane` / `find_in_panes`; 48 → 45 tools | done                   |
-| 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | todo (drafted 2026-09-16) |
+| 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | in-progress (2026-09-16) |
 | 09c | tmux-control-removal — delete `tmux_control`; 43 → 42, hitting the exit criterion | todo (not drafted) |
 | 09d | pane-param-retirement — retire `target_pane` / `retry_in_pane` (185 refs incl. the IPC wire); no count change | todo (not drafted) |
 | 10 | prompt-assets — rewrite `sre.toml` and the seeded memories; retire the two tmux knowledge memories; `doc_truth` updated | todo (not drafted) |

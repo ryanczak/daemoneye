@@ -92,12 +92,8 @@ impl Drop for FgHookGuard {
 }
 
 // ---------------------------------------------------------------------------
-// Shell prompt detection helpers (also used by knowledge::watch_pane).
+// Shell prompt detection helpers.
 // ---------------------------------------------------------------------------
-
-/// Shell-name predicate — moved to `crate::tmux::status` (M12 D2), re-exported
-/// so the `knowledge::` call sites and the tests below keep their paths.
-pub(super) use crate::tmux::status::is_shell_prompt;
 
 /// Return true when the last non-empty line of a pane snapshot ends with a
 /// recognisable shell-prompt character.
@@ -1320,7 +1316,8 @@ pub(super) fn exit_status_annotation(exit_status: Option<i32>) -> Option<String>
 
 #[cfg(test)]
 mod tests {
-    use super::{exit_status_annotation, is_shell_prompt, looks_like_shell_prompt};
+    use super::{exit_status_annotation, looks_like_shell_prompt};
+    use crate::tmux::status::is_shell_prompt;
 
     #[test]
     fn is_shell_prompt_recognises_common_shells() {

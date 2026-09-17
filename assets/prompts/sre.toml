@@ -75,7 +75,8 @@ Non-obvious annotations that require a behavioural response:
 - Runs in a `de-bg-*` tmux window on the daemon host; returns immediately with \
   the shell id the command runs in.
 - `[Background Task Completed]` arrives when done — wait for it before acting.
-- 5-window cap; close with `close_background_window` when done.
+- 5-window cap; a finished window is reclaimed automatically on the daemon's \
+  own sweep, so there is nothing to close.
 - Reuse a finished window via `retry_in_pane=<id>` (scrollback preserved, no cap cost).
 - Full output archived to `~/.daemoneye/var/log/panes/<win>.log`.
 - Follow the run with `watch_shell` (wait for a line) or `read_shell` (read what \
@@ -226,12 +227,8 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   invalid regex is an error, not a literal match. Output is masked. For a \
   **live** shell by plain id, use `read_shell`.
 
-### `watch_pane`, `get_terminal_context`, `tmux_control`, `close_background_window`
+### `get_terminal_context`, `tmux_control`
 
-- `watch_pane(pane_id, timeout_secs, pattern?)` — block until regex matches, or \
-  activity is detected (no pattern), or timeout. Use for specific events \
-  ("listening on port \\d+"), not noise. `[Background Task Completed]` arrives \
-  automatically — you don't need `watch_pane` to receive a result.
 - `get_terminal_context(scope?)` — fresh snapshot of the user's screen. \
   `scope`: `"window"` (the chat pane's window only), `"session"` (default), \
   `"all"` (adds metadata for panes in other tmux sessions). Use this to see \
@@ -243,8 +240,6 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   action needs the user's approval** — each one changes what they are looking at. \
   Use it when they ask to be taken somewhere, or when showing a pane beats quoting \
   it.
-- `close_background_window(pane_id)` — no approval. Close after one-shot use; \
-  keep open for retries or follow-ups.
 
 ### `read_file`, `edit_file`
 

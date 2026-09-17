@@ -53,7 +53,6 @@ pub fn dispatch_tool_event(
         "write_script" => dispatch::<WriteScriptArgs>(id, args, ts),
         "read_script" => dispatch::<ReadScriptArgs>(id, args, ts),
         "delete_script" => dispatch::<DeleteScriptArgs>(id, args, ts),
-        "watch_pane" => dispatch::<WatchPaneArgs>(id, args, ts),
         "read_file" => dispatch::<ReadFileArgs>(id, args, ts),
         "read_shell" => dispatch::<ReadShellArgs>(id, args, ts),
         "find_in_shells" => dispatch::<FindInShellsArgs>(id, args, ts),
@@ -82,7 +81,6 @@ pub fn dispatch_tool_event(
         "list_memories" => dispatch::<ListMemoriesArgs>(id, args, ts),
         "search_repository" => dispatch::<SearchRepositoryArgs>(id, args, ts),
         "recall_context" => dispatch::<RecallContextArgs>(id, args, ts),
-        "close_background_window" => dispatch::<CloseBgWindowArgs>(id, args, ts),
         "spawn_ghost_shell" => dispatch::<SpawnGhostArgs>(id, args, ts),
         "create_agent" => dispatch::<CreateAgentArgs>(id, args, ts),
         "read_agent" => dispatch::<ReadAgentArgs>(id, args, ts),
@@ -116,11 +114,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn tool_table_counts_are_45_31_14() {
-        assert_eq!(TOOLS.len(), 45, "total tools");
+    fn tool_table_counts_are_43_29_14() {
+        assert_eq!(TOOLS.len(), 43, "total tools");
         assert_eq!(
             TOOLS.iter().filter(|t| t.deferred_group.is_none()).count(),
-            31,
+            29,
             "core tools"
         );
         assert_eq!(
@@ -148,6 +146,30 @@ mod tests {
             assert!(
                 !blob.contains(gone),
                 "{gone} must not survive in the render: {blob:.400}"
+            );
+        }
+        println!(
+            "PASTE MATCH >>>\ntools={} core={}\n<<<",
+            TOOLS.len(),
+            TOOLS.iter().filter(|t| t.deferred_group.is_none()).count()
+        );
+    }
+
+    #[test]
+    fn e2e_removed_pane_watch_tools_are_absent_from_every_render() {
+        let names: Vec<&str> = TOOLS.iter().map(|t| t.name).collect();
+        for gone in ["watch_pane", "close_background_window"] {
+            assert!(!names.contains(&gone), "{gone} must be gone from TOOLS");
+        }
+        for kept in ["watch_shell", "close_shell", "tmux_control"] {
+            assert!(names.contains(&kept), "{kept} must stay");
+        }
+        let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
+        let blob = serde_json::to_string(&rendered).expect("render must serialize");
+        for gone in ["watch_pane", "close_background_window"] {
+            assert!(
+                !blob.contains(gone),
+                "{gone} must not survive the render: {blob:.400}"
             );
         }
         println!(
@@ -263,7 +285,6 @@ mod tests {
                 "list_scripts" => json!({}),
                 "read_script" => json!({"script_name": "s.sh"}),
                 "delete_script" => json!({"script_name": "s.sh"}),
-                "watch_pane" => json!({"pane_id": "%1"}),
                 "read_file" => json!({"path": "/tmp/f"}),
                 "tmux_control" => json!({"action": "focus", "pane_id": "%3"}),
                 "edit_file" => json!({"path": "/tmp/f"}),
@@ -286,7 +307,6 @@ mod tests {
                     json!({"shell": "s3", "lines": 10, "since_command": 0, "filter": "."})
                 }
                 "find_in_shells" => json!({"pattern": "error", "scope": "all"}),
-                "close_background_window" => json!({"pane_id": "%1"}),
                 "spawn_ghost_shell" => json!({"runbook": "rb", "message": "investigate"}),
                 "create_agent" => {
                     json!({"name": "analyst", "description": "test", "prompt": "You are a test."})
@@ -706,8 +726,8 @@ mod tests {
     fn every_tool_has_a_category() {
         assert_eq!(
             TOOLS.len(),
-            45,
-            "tool count should match the 31 core + 14 deferred claim"
+            43,
+            "tool count should match the 29 core + 14 deferred claim"
         );
         for t in TOOLS {
             assert!(
@@ -724,10 +744,10 @@ mod tests {
         for t in TOOLS {
             *counts.entry(t.category).or_insert(0) += 1;
         }
-        assert_eq!(counts.get(&Category::Read), Some(&21), "Read count");
+        assert_eq!(counts.get(&Category::Read), Some(&20), "Read count");
         assert_eq!(counts.get(&Category::Write), Some(&13), "Write count");
         assert_eq!(counts.get(&Category::Search), Some(&3), "Search count");
-        assert_eq!(counts.get(&Category::Run), Some(&7), "Run count");
+        assert_eq!(counts.get(&Category::Run), Some(&6), "Run count");
         assert_eq!(counts.get(&Category::Meta), Some(&1), "Meta count");
         assert_eq!(counts.values().sum::<usize>(), TOOLS.len());
     }

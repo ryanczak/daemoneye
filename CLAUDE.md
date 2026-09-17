@@ -94,7 +94,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Global statics in daemon
 
-- `BG_DONE_TX`: `OnceLock<broadcast::Sender<String>>` — sends pane_id on activity; shared by foreground completion and `watch_pane`.
+- `BG_DONE_TX`: `OnceLock<broadcast::Sender<String>>` — sends pane_id on activity; shared by foreground completion watchers.
 - `FG_HOOK_COUNTER`: `AtomicUsize` — unique `alert-activity[N]` hook slot per concurrent watcher.
 - `DAEMON_START`: `OnceLock<Instant>` — recorded at daemon startup; used by `daemon_uptime_secs()` for `daemoneye status`.
 - `BUFFER_COUNTER`: `AtomicUsize` — unique tmux buffer names (`de-rb-N`) for N12 local-pane file reads via `load-buffer`/`save-buffer`.
@@ -136,7 +136,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Current AI tools
 
-**45 tools: 31 core + 14 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
+**43 tools: 29 core + 14 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
 `src/ai/tools/defs.rs` — `core` means `None` (rendered on every request); a group
 name means the tool is omitted until `load_tools` pulls the group in. **Note the
 asymmetry**: for scripts, runbooks and memory the *write* side is core while the
@@ -152,9 +152,7 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `list_shells` | core | List the PTY shells the daemon is running: id (`s3`), owner, age, and `interactive` / `dedicated` / `exited` flags; optional `scope`: `"mine"` (default, this session's shells) or `"all"` (every live shell). The id is what the shell tools take as their target |
 | `read_shell` | core | Read a shell's recorded output — its per-command log, not the live screen. `shell` is the id from `list_shells`; optional `since_command` (command index to start from; an index past the recorded commands is an error), `filter` (regex, invalid = error), `lines` (tail clamp, default 200, max 2000). Output is masked |
 | `find_in_shells` | core | One regex search across every in-scope shell's recorded output — answers "which shell printed the error?" in a single call. Returns shell id, 1-indexed line number and the matching line with ±1 line of context; masked, capped at 50 matches across all shells, searches the last 2000 lines of each recording; unreadable shells are skipped and named. `scope: "mine"` (default) or `"all"` |
-| `watch_pane` | core | Block until regex `pattern` matches pane output, or command exits, or timeout |
 | `tmux_control` | core | Approval-gated tmux actions on a pane: `focus` (switch the user to it), `zoom`, `unzoom`, `split` (split the pane), `rename_window` (rename the pane's window), `kill_window` (close the pane's window — refused for daemon-managed windows and the chat pane's window). Every action round-trips the `ToolCallPrompt` approval flow. Ghost shells are denied unless the agent `ToolPolicy` **explicitly** allows the tool — a deny-list that merely omits it does not count |
-| `close_background_window` | core | Close a finished background window, freeing its slot rather than waiting for cap eviction (up to 5 exist per session) |
 | `open_shell` | core | Start a new PTY shell and return its id. The result names the reuse caveat: commands reuse this session's lowest-numbered open shell, so the new shell may not be the one the next command lands in |
 | `close_shell` | core | End one of this session's PTY shells by id: sends a terminate signal and reports whether the host actually went away, refusing another session's or a ghost job's shell |
 | `watch_shell` | core | Block on a live PTY shell's new output: with a pattern, until it matches (returns the matching line with context); without one, until the shell's running command finishes — or report nothing-running / paused / exited / gone / timeout |

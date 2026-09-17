@@ -493,7 +493,7 @@ While the search prompt is open, typing edits the query, `Enter` commits it and 
 
 ## AI tools
 
-The model has **45 tools**. The 31 **core** tools are sent with every request; the 14 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
+The model has **43 tools**. The 29 **core** tools are sent with every request; the 14 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
 
 Tools marked **⚠** require explicit user approval before they execute.
 
@@ -518,8 +518,6 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `close_shell` | End this session's PTY shell by id — the id from `list_shells`. Sends a terminate signal and reports whether the shell's host actually went away; another session's or a ghost job's shell is refused |
 | `watch_shell` | Block on a live PTY shell's new output — the `.cast` recording, read as it is written. With `pattern` (regex) it waits until a line of output written *after the call* matches and returns that line with context; without one it waits until the shell's running command finishes, and reports nothing-running, paused, exited, gone or timeout distinctly. `timeout_secs` optional (default 300, capped 3600). For what a shell already recorded, use `read_shell` / `find_in_shells` |
 | `send_input` **⚠** | Type raw text into a live PTY shell by id — answer a program's stdin prompt or drive an interactive process. The approval panel names what the shell is doing, including the honest hazard that a shell at its prompt will run the text as a command. There is no exit code, no wait and no output: read the effect with `read_shell` / `watch_shell`. Every byte lands in the shell's cast log as an `"i"` event, which no read tool surfaces. A ghost shell may not use it unless its agent `ToolPolicy` explicitly allows it |
-| `watch_pane` | Block until a pane matches a regex, the command exits, or a timeout elapses |
-| `close_background_window` | Close a background tmux window that is no longer needed |
 | `add_memory` | Store a persistent memory entry |
 | `read_memory` | Read a memory entry by key and category |
 | `update_memory` | Update individual fields of a memory entry in place |
@@ -1084,7 +1082,7 @@ Ghost AI turn loop (up to max_ghost_turns)
     with ssh_target, scripts are hex-streamed to the remote interpreter's
     stdin by default (no remote disk write) — sudo cases only materialize
     the script to the sudoers-authorized path on the remote host
-  • watch_pane blocks until command exits before next turn
+  • wait=false leaves a dedicated PTY shell — the run is followed with watch_shell
         │
         ▼
 On clean exit: generate_and_save_briefing() writes masked summary to

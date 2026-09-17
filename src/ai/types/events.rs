@@ -66,13 +66,6 @@ pub enum AiEvent {
         script_name: String,
         thought_signature: Option<String>,
     },
-    WatchPane {
-        id: String,
-        pane_id: String,
-        timeout_secs: u64,
-        pattern: Option<String>,
-        thought_signature: Option<String>,
-    },
     ReadFile {
         id: String,
         path: String,
@@ -246,11 +239,6 @@ pub enum AiEvent {
         pane_id: String,
         name: Option<String>,
         direction: Option<String>,
-        thought_signature: Option<String>,
-    },
-    CloseBackgroundWindow {
-        id: String,
-        pane_id: String,
         thought_signature: Option<String>,
     },
     /// Spawn an autonomous Ghost Shell session in the background.

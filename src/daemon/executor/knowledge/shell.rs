@@ -1095,13 +1095,13 @@ fn tail_lines(text: &str, max: usize) -> String {
 // watch_shell — the blocking observer (M22 phase-04b)
 // ---------------------------------------------------------------------------
 
-/// How often `watch_shell` polls the cast file and the shell's state.
-/// `watch_pane`'s poll interval — its shape proved it out.
+/// How often `watch_shell` polls the cast file and the shell's state. The
+/// removed `watch_pane` used the same interval — its shape proved it out.
 pub(super) const WATCH_POLL: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// How long `watch_shell` tolerates an `Idle` shell it has never seen
-/// `Running`: a command sent to the PTY has not taken it yet. `watch_pane`'s
-/// start grace.
+/// `Running`: a command sent to the PTY has not taken it yet — the removed
+/// `watch_pane`'s start grace.
 pub(super) const WATCH_START_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// `watch_shell`'s hard ceiling on `timeout_secs` — `await_agent_result`'s cap.

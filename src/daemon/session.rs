@@ -7,7 +7,7 @@ use crate::util::UnpoisonExt;
 
 /// Metadata for a background tmux window spawned during a chat session.
 pub struct BgWindowInfo {
-    /// tmux pane ID (e.g. `%7`) — can be passed to `watch_pane` or used as foreground target.
+    /// tmux pane ID (e.g. `%7`) — the background window's foreground target.
     pub pane_id: String,
     /// Full tmux window name (e.g. `de-bg-42-1712937600-cargo-build`).
     pub window_name: String,

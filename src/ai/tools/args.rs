@@ -54,11 +54,6 @@ pub(super) struct CancelDeleteScheduleArgs {
 }
 
 #[derive(Deserialize)]
-pub(super) struct CloseBgWindowArgs {
-    pane_id: String,
-}
-
-#[derive(Deserialize)]
 pub(super) struct WriteScriptArgs {
     script_name: String,
     content: String,
@@ -72,14 +67,6 @@ pub(super) struct ReadScriptArgs {
 #[derive(Deserialize)]
 pub(super) struct DeleteScriptArgs {
     script_name: String,
-}
-
-#[derive(Deserialize)]
-pub(super) struct WatchPaneArgs {
-    pane_id: String,
-    #[serde(default = "default_300")]
-    timeout_secs: u64,
-    pattern: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -394,19 +381,6 @@ impl ToolArgs for CancelDeleteScheduleArgs {
     }
 }
 
-impl ToolArgs for CloseBgWindowArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::CloseBackgroundWindow {
-            id: id.to_string(),
-            pane_id: self.pane_id,
-            thought_signature: ts,
-        }
-    }
-}
-
 /// Build CancelSchedule or DeleteSchedule from the shared arg shape.
 pub(super) fn schedule_id_event<T>(args: Value, ts: Option<String>, mk: T) -> Option<AiEvent>
 where
@@ -450,21 +424,6 @@ impl ToolArgs for DeleteScriptArgs {
         AiEvent::DeleteScript {
             id: id.to_string(),
             script_name: self.script_name,
-            thought_signature: ts,
-        }
-    }
-}
-
-impl ToolArgs for WatchPaneArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::WatchPane {
-            id: id.to_string(),
-            pane_id: self.pane_id,
-            timeout_secs: self.timeout_secs,
-            pattern: self.pattern,
             thought_signature: ts,
         }
     }
