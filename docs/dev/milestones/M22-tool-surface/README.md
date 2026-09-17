@@ -71,7 +71,7 @@ final surface, so they go last.
 | 07b | run-command-wait ([phase-07b-run-command-wait.md](phase-07b-run-command-wait.md)) — `wait?` replaces `background` on the tool; the tuple field swaps in place, no count change | done                    |
 | 08a | shell-context-block ([phase-08a-shell-context-block.md](phase-08a-shell-context-block.md)) — `[SHELLS]` / `[DEFAULT SHELL]` in the ambient context; additive, no tool change | done                    |
 | 08b | shell-context-tool — `get_terminal_context` → `get_shell_context { scope }`, new scope vocabulary; **after 09** | todo (not drafted) |
-| 09a | pane-read-tool-removal ([phase-09a-pane-read-tool-removal.md](phase-09a-pane-read-tool-removal.md)) — delete `list_panes` / `read_pane` / `find_in_panes`; 48 → 45 tools | review                 |
+| 09a | pane-read-tool-removal ([phase-09a-pane-read-tool-removal.md](phase-09a-pane-read-tool-removal.md)) — delete `list_panes` / `read_pane` / `find_in_panes`; 48 → 45 tools | done                   |
 | 09b | pane-watch-removal — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | todo (not drafted) |
 | 09c | tmux-control-removal — delete `tmux_control`; 43 → 42, hitting the exit criterion | todo (not drafted) |
 | 09d | pane-param-retirement — retire `target_pane` / `retry_in_pane` (185 refs incl. the IPC wire); no count change | todo (not drafted) |
@@ -307,6 +307,22 @@ final surface, so they go last.
   surface. A name-based removal deletes a user-facing feature while the
   tool-count gate stays green. Each phase in this row needs its must-survive
   list stated explicitly.
+
+- **A removal phase must authorize the orphan closure, not just the call sites**
+  (09a, 2026-09-16 — architect-side, and open against 09b/09c). 09a's
+  authorization list named every file holding a *call site* of the three removed
+  tools and forbade `src/tmux/`. But deleting `read_pane` and `find_in_panes`
+  removed the only two callers of `tmux::capture_pane_annotated`, and a `pub fn`
+  with no callers fails `cargo clippy -D warnings` with `dead_code` — verified at
+  review by restoring it. The phase therefore **could not** satisfy both its
+  authorization list and its lint gate, and masking it with `#[allow]` is
+  forbidden. The executor diagnosed this correctly, filed a blocker entry naming
+  the authorization it needed, then proceeded and documented it; the deviation
+  was accepted and the criterion waived.
+  **For 09b and 09c:** before writing the authorization list, grep for the
+  helpers whose *last* caller the phase removes and either authorize their
+  deletion or name them as expected orphans. `watch_pane` and `tmux_control`
+  both reach into `crate::tmux`, so both are likely to orphan something.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24

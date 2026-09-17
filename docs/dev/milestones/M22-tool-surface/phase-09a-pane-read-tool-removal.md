@@ -1,7 +1,7 @@
 # Phase 09a: remove the three pane *read* tools
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 03a (`list_shells`), 03b (`read_shell`), 03c (`find_in_shells`)
 — the three replacements. All **done**.
 **Estimated diff:** ~750 lines, overwhelmingly deletion
@@ -367,7 +367,7 @@ current value.
 - [ ] `grep -c 'ListPanesForSession' src/ipc.rs` → **2**
 - [ ] `grep -cE '^pub fn close_bg_window|^pub fn watch_pane|^pub\(crate\) fn kill_window_refusal' src/daemon/executor/knowledge/pane.rs` → **3**
 - [ ] `grep -c 'name: "watch_pane"' src/ai/tools/defs.rs` → **1** and `grep -c 'name: "tmux_control"' src/ai/tools/defs.rs` → **1** — 09b and 09c, not this phase
-- [ ] `git diff --stat 55fc1936..HEAD -- src/tmux/` is **empty** — the tmux substrate is not this phase's business
+- [x] ~~`git diff --stat 55fc1936..HEAD -- src/tmux/` is **empty**~~ — **waived at review.** This criterion was unsatisfiable as written: see the Review verdict's scope-deviation note. The five *substrate symbols* it existed to protect (`list_panes_detailed`, `list_panes_in_window`, `read_pane_exit_status`, `handle_list_panes`, `ListPanesForSession`) are all intact and separately pinned above; what changed in `src/tmux/` is one function this phase orphaned plus two comments pointing at deleted code.
 
 ## Test plan
 
@@ -887,3 +887,65 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 367b169ec6294191d96f0842e787695db047560e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-16
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (519 turns)
+- **Scope deviations:** one, **caused by an architect error and accepted.** The
+  run edited three files under `src/tmux/`, which § Authorizations forbade and a
+  criterion pinned to an empty diff:
+  - `src/tmux/pane.rs` — deleted `capture_pane_annotated` (6 lines)
+  - `src/tmux/mod.rs` — dropped a doc sentence naming it
+  - `src/tmux/cache_tests.rs` — dropped a comment pointing at deleted `list_panes` tests
+
+  **The criterion was unsatisfiable.** `capture_pane_annotated`'s only two
+  callers were `read_pane` (`pane.rs:150`) and `find_in_panes` (`pane.rs:374`),
+  both deleted by this phase. Verified at review by restoring the function and
+  re-running the lint gate:
+
+  ```
+  error: function `capture_pane_annotated` is never used
+      = help: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+  error: could not compile `daemoneye` (lib) due to 1 previous error
+  ```
+
+  So the phase could not both honour the authorization list and pass
+  `cargo clippy -D warnings`, and § Hard rules correctly forbids masking it with
+  `#[allow]`. The executor measured the full caller set in a throwaway worktree,
+  confirmed no surviving function needs it, considered the in-authorization
+  escape hatches, and filed a **blocker** Update Log entry naming exactly the
+  authorization it needed and two options — then proceeded and recorded the
+  rationale in its own commit (`f32a316d`, `367b169e`). The spec said *stop and
+  say so* rather than *edit and say so*, so this is a real deviation; it is
+  accepted because the diagnosis was correct, the change is minimal and provably
+  dead, and the alternative was a full escalate cycle to authorize six lines.
+- **Calibration:** **architect-side, and directly actionable for the rest of
+  this row.** An authorization list for a *removal* phase must include the
+  **orphan closure** of what it deletes — the helpers whose last caller the
+  phase removes — or the phase cannot pass its own lint gate. I authorized the
+  call sites and forgot the callees. 09b (`watch_pane`,
+  `close_background_window`) and 09c (`tmux_control`) will orphan more
+  `crate::tmux` helpers the same way; each must either authorize the closure or
+  name the orphans it expects and pre-authorize their deletion. Recorded in the
+  milestone README's Notes so the next three drafts carry it.
+- **Independent verification:** all four gates re-run separately (fmt, build,
+  clippy, `cargo test` → 1886 + 6 + 10 + 32 + 9, zero failures). Every
+  acceptance criterion re-measured by the reviewer: 45 tools / 31 core,
+  `pending.rs` / `events.rs` / `stream.rs` at 0, `sre.toml` at 0,
+  `knowledge::pane` 5, `ai::tools::dispatch` 24, `doc_truth` 10. **All five
+  must-survive substrate symbols intact.** `cargo test --lib` landed on exactly
+  **1886** — the number that enforces the retarget rule, so the vehicle tests in
+  `pending.rs`, the three backends and `policy.rs` were retargeted rather than
+  deleted and their coverage is intact. Task 10's mutation reproduced
+  independently: re-adding a `list_panes` `ToolDef` without its doc rows turns
+  `doc_truth` red with the same **4** failures the run reported. Both new tests
+  proven falsifiable — the same mutation reddens
+  `e2e_removed_pane_read_tools_are_absent_from_every_render` and
+  `tool_table_counts_are_45_31_14`. `pane.rs` is **1417 → 415 lines (−1005)**
+  with exactly the four specified survivors.
+  *(The `files_changed` stat reporting `pane.rs` as `+306 -5` is a run-relative
+  artifact of the multi-commit run, not the pre-phase delta; measured against
+  `55fc1936` it is `3 insertions, 1005 deletions`.)*
+
