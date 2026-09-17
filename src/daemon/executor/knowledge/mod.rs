@@ -2,7 +2,6 @@ mod agents;
 mod artifacts;
 mod ghost;
 mod memory;
-mod pane;
 mod shell;
 
 pub(super) use agents::{
@@ -17,7 +16,6 @@ pub(super) use memory::{
     UpdateMemoryRequest, add_memory, delete_memory, list_memories, read_memory, search_repository,
     update_memory,
 };
-pub(super) use pane::kill_window_refusal;
 pub(super) use shell::{
     close_shell, find_in_shells, input_target_note, list_shell_logs, list_shells, open_shell,
     read_shell, read_shell_log, send_input, watch_shell,

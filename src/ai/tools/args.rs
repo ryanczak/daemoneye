@@ -97,16 +97,6 @@ pub(super) struct FindInShellsArgs {
 }
 
 #[derive(Deserialize)]
-pub(super) struct TmuxControlArgs {
-    action: String,
-    pane_id: String,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    direction: Option<String>,
-}
-
-#[derive(Deserialize)]
 pub(super) struct GetTerminalContextArgs {
     #[serde(default)]
     scope: Option<String>,
@@ -457,22 +447,6 @@ impl ToolArgs for ReadShellArgs {
             lines: self.lines,
             since_command: self.since_command,
             filter: self.filter,
-            thought_signature: ts,
-        }
-    }
-}
-
-impl ToolArgs for TmuxControlArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::TmuxControl {
-            id: id.to_string(),
-            action: self.action,
-            pane_id: self.pane_id,
-            name: self.name,
-            direction: self.direction,
             thought_signature: ts,
         }
     }

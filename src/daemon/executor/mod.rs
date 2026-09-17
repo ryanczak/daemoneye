@@ -124,32 +124,15 @@ struct DispatchSnapshot {
     turn_count: usize,
 }
 
-/// Whether a ghost shell may use `tmux_control`.
-///
-/// D5: navigation displaces the user's attention and no `GhostPolicy`
-/// auto-approve category covers it, so the default is deny — a ghost needs an
-/// explicit agent `ToolPolicy` allow. Deliberately **not** routed through
-/// `prompt_and_await_approval`, whose ghost branch auto-approves any non-sudo
-/// string via `GhostPolicy::is_safe`.
-pub(crate) fn ghost_may_use_tmux_control(
-    is_ghost: bool,
-    policy: Option<&crate::agents::policy::ToolPolicy>,
-) -> bool {
-    !is_ghost || policy.is_some_and(|p| p.explicitly_allows("tmux_control")) // ghost needs an explicit allow
-}
-
 /// Whether a ghost shell may use `send_input`.
 ///
-/// Typing into a PTY displaces whatever the shell is doing and covers the same
-/// no-auto-approve ground as `tmux_control`, so the default is deny — a ghost
-/// needs an explicit agent `ToolPolicy` allow. Deliberately **not** routed
-/// through `prompt_and_await_approval`, whose ghost branch auto-approves any
-/// non-sudo string via `GhostPolicy::is_safe`.
-///
-/// This is a deliberate second copy of `ghost_may_use_tmux_control`, not an
-/// oversight: two gates are under the three-caller abstraction point in
-/// `STANDARDS.md` § 2.2, and a third collapses them into one
-/// `ghost_may_use(tool, is_ghost, policy)`.
+/// Typing into a PTY displaces whatever the shell is doing, and no
+/// `GhostPolicy` auto-approve category covers it, so the default is deny — a
+/// ghost needs an explicit agent `ToolPolicy` allow. Deliberately **not**
+/// routed through `prompt_and_await_approval`, whose ghost branch
+/// auto-approves any non-sudo string via `GhostPolicy::is_safe`: a ghost
+/// typing into the user's panes is exactly the displacement that gate exists
+/// to prevent.
 pub(crate) fn ghost_may_send_input(
     is_ghost: bool,
     policy: Option<&crate::agents::policy::ToolPolicy>,
@@ -912,8 +895,7 @@ where
         } => {
             // 1. Ghost gate — before any approval prompt, so a ghost is never
             //    shown a panel it cannot use. Default-deny: the agent
-            //    `ToolPolicy` must *explicitly* allow `send_input`, the same
-            //    rule `tmux_control` applies.
+            //    `ToolPolicy` must *explicitly* allow `send_input`.
             if !ghost_may_send_input(is_ghost, tool_policy.as_ref()) {
                 return Ok(ToolCallOutcome::Result(
                     "send_input is denied for ghost shells unless the agent's tool \
@@ -938,11 +920,11 @@ where
                 _ => knowledge::input_target_note(None),
             };
 
-            // 3. Approval. `ghost_policy` is `None` on purpose, the reason
-            //    `tmux_control`'s arm gives: step 1 already made the ghost
-            //    decision, and passing the live policy here would re-enter the
-            //    helper's auto-approve branch. `target_pane_hint` is `None`
-            //    because this is a PTY shell, not a tmux pane.
+            // 3. Approval. `ghost_policy` is `None` on purpose: step 1 already
+            //    made the ghost decision, and passing the live policy here
+            //    would re-enter the helper's auto-approve branch.
+            //    `target_pane_hint` is `None` because this is a PTY shell, not
+            //    a tmux pane.
             let approval_cmd = format!(
                 "send_input into shell {}: {:?}{} — {}",
                 shell,
@@ -996,159 +978,6 @@ where
             *lines,
             filter.as_deref(),
         ))),
-
-        PendingCall::TmuxControl {
-            id,
-            action,
-            pane_id,
-            name,
-            direction,
-            ..
-        } => {
-            // 1. Ghost gate — before any approval prompt (D5).
-            if !ghost_may_use_tmux_control(is_ghost, tool_policy.as_ref()) {
-                return Ok(ToolCallOutcome::Result(
-                    "tmux_control is denied for ghost shells unless the agent's tool \
-                     policy explicitly allows it."
-                        .to_string(),
-                ));
-            }
-
-            // 2. Validate the action.
-            if !matches!(
-                action.as_str(),
-                "focus" | "zoom" | "unzoom" | "split" | "rename_window" | "kill_window"
-            ) {
-                return Ok(ToolCallOutcome::Result(format!(
-                    "Error: invalid tmux_control action '{}'. Valid actions: focus, zoom, \
-                     unzoom, split, rename_window, kill_window.",
-                    action
-                )));
-            }
-
-            // 3. Validate the pane and collect window info under one guard.
-            let (known, window_name, chat_window) = {
-                let panes = cache.panes.read().unwrap_or_log();
-                let known = panes.contains_key(pane_id.as_str());
-                let window_name = panes.get(pane_id.as_str()).map(|p| p.window_name.clone());
-                let chat_window = chat_pane
-                    .and_then(|cp| panes.get(cp))
-                    .map(|p| p.window_name.clone());
-                (known, window_name, chat_window)
-            };
-            if !known {
-                return Ok(ToolCallOutcome::Result(format!(
-                    "Error: pane {} not found. Check [PANE MAP] in the context block to see available panes.",
-                    pane_id
-                )));
-            }
-
-            // Pre-approval refusals — before the prompt so the user is not
-            // trained to approve things that will not happen.
-            if action == "kill_window"
-                && let Some(refusal) = knowledge::kill_window_refusal(
-                    window_name.as_deref().unwrap_or(""),
-                    chat_window.as_deref(),
-                )
-            {
-                return Ok(ToolCallOutcome::Result(refusal));
-            }
-            if action == "rename_window" && name.is_none() {
-                return Ok(ToolCallOutcome::Result(
-                    "Error: rename_window action requires the `name` parameter.".to_string(),
-                ));
-            }
-
-            // 4. Approval. `ghost_policy` is `None` on purpose: step 1 already
-            //    made the ghost decision, and passing the real policy here
-            //    re-enters the auto-approve branch described in § Current state.
-            let approval_cmd = if action == "rename_window" {
-                format!(
-                    "tmux rename-window pane {} to '{}'",
-                    pane_id,
-                    name.as_deref().unwrap_or("")
-                )
-            } else if action == "split" {
-                format!(
-                    "tmux split-window pane {} ({})",
-                    pane_id,
-                    direction.as_deref().unwrap_or("vertical")
-                )
-            } else {
-                format!("tmux {} pane {}", action, pane_id)
-            };
-            match prompt_and_await_approval(
-                ApprovalRequest {
-                    id: id.as_str(),
-                    cmd: &approval_cmd,
-                    background: false,
-                    target_pane_hint: Some(pane_id.as_str()),
-                },
-                session_id,
-                None,
-                tx,
-                rx,
-            )
-            .await?
-            {
-                Ok(_cmd_id) => {}
-                Err(outcome) => return Ok(outcome),
-            }
-
-            // 5. Execute off the runtime.
-            let act = action.clone();
-            let pid = pane_id.clone();
-            let dir = direction.clone();
-            let nm = name.clone();
-            let msg = crate::tmux::off_runtime("tmux-control", move || match act.as_str() {
-                "focus" => crate::tmux::select_window(&pid)
-                    .and_then(|()| crate::tmux::select_pane(&pid))
-                    .map(|()| format!("Focused pane {}.", pid)),
-                "zoom" => crate::tmux::pane_window_zoomed(&pid).and_then(|z| {
-                    if z {
-                        Ok(format!("Pane {} is already zoomed.", pid))
-                    } else {
-                        crate::tmux::toggle_zoom(&pid).map(|()| format!("Zoomed pane {}.", pid))
-                    }
-                }),
-                "unzoom" => crate::tmux::pane_window_zoomed(&pid).and_then(|z| {
-                    if z {
-                        crate::tmux::toggle_zoom(&pid).map(|()| format!("Unzoomed pane {}.", pid))
-                    } else {
-                        Ok(format!("Pane {} is not zoomed.", pid))
-                    }
-                }),
-                "split" => {
-                    let horizontal = dir.as_deref() == Some("horizontal");
-                    crate::tmux::split_pane(&pid, horizontal)
-                        .map(|new_id| format!("Split pane {}; new pane is {}.", pid, new_id))
-                }
-                "rename_window" => {
-                    crate::tmux::rename_window_for_pane(&pid, nm.as_deref().unwrap_or("")).map(
-                        |()| {
-                            format!(
-                                "Renamed window for pane {} to '{}'.",
-                                pid,
-                                nm.as_deref().unwrap_or("")
-                            )
-                        },
-                    )
-                }
-                "kill_window" => crate::tmux::kill_window_for_pane(&pid)
-                    .map(|()| format!("Killed window for pane {}.", pid)),
-                _ => Err(anyhow::anyhow!(
-                    "unreachable: action '{}' validated above",
-                    act
-                )),
-            })
-            .await;
-
-            Ok(ToolCallOutcome::Result(match msg {
-                Some(Ok(m)) => m,
-                Some(Err(e)) => format!("Error running tmux {}: {}", action, e),
-                None => format!("Error: timed out running tmux {} on {}.", action, pane_id),
-            }))
-        }
 
         PendingCall::SpawnGhost {
             runbook,
@@ -1631,42 +1460,6 @@ where
             .await?;
             Err(anyhow::anyhow!("User aborted or invalid response"))
         }
-    }
-}
-
-#[cfg(test)]
-mod tmux_control_gate_tests {
-    use super::ghost_may_use_tmux_control;
-    use crate::agents::policy::ToolPolicy;
-
-    #[test]
-    fn ghost_may_use_tmux_control_allows_non_ghosts() {
-        assert!(ghost_may_use_tmux_control(false, None));
-    }
-
-    #[test]
-    fn ghost_may_use_tmux_control_denies_ghost_without_policy() {
-        assert!(!ghost_may_use_tmux_control(true, None));
-    }
-
-    #[test]
-    fn ghost_may_use_tmux_control_denies_ghost_with_deny_list() {
-        let policy = ToolPolicy {
-            allow: None,
-            deny: Some(vec!["read_shell".to_string()]),
-        };
-        // The tool is permitted by the policy, but not *explicitly allowed*.
-        assert!(policy.permits("tmux_control"));
-        assert!(!ghost_may_use_tmux_control(true, Some(&policy)));
-    }
-
-    #[test]
-    fn ghost_may_use_tmux_control_allows_explicit_allow() {
-        let policy = ToolPolicy {
-            allow: Some(vec!["tmux_control".to_string()]),
-            deny: None,
-        };
-        assert!(ghost_may_use_tmux_control(true, Some(&policy)));
     }
 }
 

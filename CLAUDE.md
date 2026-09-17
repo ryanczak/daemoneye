@@ -136,7 +136,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Current AI tools
 
-**43 tools: 29 core + 14 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
+**42 tools: 28 core + 14 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
 `src/ai/tools/defs.rs` — `core` means `None` (rendered on every request); a group
 name means the tool is omitted until `load_tools` pulls the group in. **Note the
 asymmetry**: for scripts, runbooks and memory the *write* side is core while the
@@ -152,7 +152,6 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `list_shells` | core | List the PTY shells the daemon is running: id (`s3`), owner, age, and `interactive` / `dedicated` / `exited` flags; optional `scope`: `"mine"` (default, this session's shells) or `"all"` (every live shell). The id is what the shell tools take as their target |
 | `read_shell` | core | Read a shell's recorded output — its per-command log, not the live screen. `shell` is the id from `list_shells`; optional `since_command` (command index to start from; an index past the recorded commands is an error), `filter` (regex, invalid = error), `lines` (tail clamp, default 200, max 2000). Output is masked |
 | `find_in_shells` | core | One regex search across every in-scope shell's recorded output — answers "which shell printed the error?" in a single call. Returns shell id, 1-indexed line number and the matching line with ±1 line of context; masked, capped at 50 matches across all shells, searches the last 2000 lines of each recording; unreadable shells are skipped and named. `scope: "mine"` (default) or `"all"` |
-| `tmux_control` | core | Approval-gated tmux actions on a pane: `focus` (switch the user to it), `zoom`, `unzoom`, `split` (split the pane), `rename_window` (rename the pane's window), `kill_window` (close the pane's window — refused for daemon-managed windows and the chat pane's window). Every action round-trips the `ToolCallPrompt` approval flow. Ghost shells are denied unless the agent `ToolPolicy` **explicitly** allows the tool — a deny-list that merely omits it does not count |
 | `open_shell` | core | Start a new PTY shell and return its id. The result names the reuse caveat: commands reuse this session's lowest-numbered open shell, so the new shell may not be the one the next command lands in |
 | `close_shell` | core | End one of this session's PTY shells by id: sends a terminate signal and reports whether the host actually went away, refusing another session's or a ghost job's shell |
 | `watch_shell` | core | Block on a live PTY shell's new output: with a pattern, until it matches (returns the matching line with context); without one, until the shell's running command finishes — or report nothing-running / paused / exited / gone / timeout |

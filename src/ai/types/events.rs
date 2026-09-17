@@ -233,14 +233,6 @@ pub enum AiEvent {
         filter: Option<String>,
         thought_signature: Option<String>,
     },
-    TmuxControl {
-        id: String,
-        action: String,
-        pane_id: String,
-        name: Option<String>,
-        direction: Option<String>,
-        thought_signature: Option<String>,
-    },
     /// Spawn an autonomous Ghost Shell session in the background.
     SpawnGhost {
         id: String,

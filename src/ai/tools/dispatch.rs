@@ -62,7 +62,6 @@ pub fn dispatch_tool_event(
         "send_input" => dispatch::<SendInputArgs>(id, args, ts),
         "list_shell_logs" => dispatch::<ListShellLogsArgs>(id, args, ts),
         "read_shell_log" => dispatch::<ReadShellLogArgs>(id, args, ts),
-        "tmux_control" => dispatch::<TmuxControlArgs>(id, args, ts),
         "edit_file" => dispatch::<EditFileArgs>(id, args, ts),
         "write_runbook" => dispatch::<WriteRunbookArgs>(id, args, ts),
         "delete_runbook" => runbook_name_event(args, ts, |nm, t| AiEvent::DeleteRunbook {
@@ -114,11 +113,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn tool_table_counts_are_43_29_14() {
-        assert_eq!(TOOLS.len(), 43, "total tools");
+    fn tool_table_counts_are_42_28_14() {
+        assert_eq!(TOOLS.len(), 42, "total tools");
         assert_eq!(
             TOOLS.iter().filter(|t| t.deferred_group.is_none()).count(),
-            29,
+            28,
             "core tools"
         );
         assert_eq!(
@@ -161,7 +160,7 @@ mod tests {
         for gone in ["watch_pane", "close_background_window"] {
             assert!(!names.contains(&gone), "{gone} must be gone from TOOLS");
         }
-        for kept in ["watch_shell", "close_shell", "tmux_control"] {
+        for kept in ["watch_shell", "close_shell"] {
             assert!(names.contains(&kept), "{kept} must stay");
         }
         let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
@@ -176,6 +175,34 @@ mod tests {
             "PASTE MATCH >>>\ntools={} core={}\n<<<",
             TOOLS.len(),
             TOOLS.iter().filter(|t| t.deferred_group.is_none()).count()
+        );
+    }
+
+    #[test]
+    fn e2e_tmux_control_is_absent_and_the_surface_is_final() {
+        let names: Vec<&str> = TOOLS.iter().map(|t| t.name).collect();
+        assert!(
+            !names.contains(&"tmux_control"),
+            "tmux_control must be gone"
+        );
+        assert!(
+            !APPROVAL_GATED_TOOLS.contains(&"tmux_control"),
+            "and gone from the approval list"
+        );
+        for kept in ["run_terminal_command", "send_input", "get_terminal_context"] {
+            assert!(names.contains(&kept), "{kept} must stay");
+        }
+        let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
+        let blob = serde_json::to_string(&rendered).expect("render must serialize");
+        assert!(
+            !blob.contains("tmux_control"),
+            "tmux_control must not survive the render: {blob:.400}"
+        );
+        println!(
+            "PASTE MATCH >>>\ntools={} core={} gated={}\n<<<",
+            TOOLS.len(),
+            TOOLS.iter().filter(|t| t.deferred_group.is_none()).count(),
+            APPROVAL_GATED_TOOLS.len()
         );
     }
 
@@ -286,7 +313,6 @@ mod tests {
                 "read_script" => json!({"script_name": "s.sh"}),
                 "delete_script" => json!({"script_name": "s.sh"}),
                 "read_file" => json!({"path": "/tmp/f"}),
-                "tmux_control" => json!({"action": "focus", "pane_id": "%3"}),
                 "edit_file" => json!({"path": "/tmp/f"}),
                 "write_runbook" => json!({"name": "rb", "content": "# RB"}),
                 "delete_runbook" => json!({"name": "rb"}),
@@ -726,8 +752,8 @@ mod tests {
     fn every_tool_has_a_category() {
         assert_eq!(
             TOOLS.len(),
-            43,
-            "tool count should match the 29 core + 14 deferred claim"
+            42,
+            "tool count should match the 28 core + 14 deferred claim"
         );
         for t in TOOLS {
             assert!(
@@ -747,7 +773,7 @@ mod tests {
         assert_eq!(counts.get(&Category::Read), Some(&20), "Read count");
         assert_eq!(counts.get(&Category::Write), Some(&13), "Write count");
         assert_eq!(counts.get(&Category::Search), Some(&3), "Search count");
-        assert_eq!(counts.get(&Category::Run), Some(&6), "Run count");
+        assert_eq!(counts.get(&Category::Run), Some(&5), "Run count");
         assert_eq!(counts.get(&Category::Meta), Some(&1), "Meta count");
         assert_eq!(counts.values().sum::<usize>(), TOOLS.len());
     }

@@ -227,19 +227,12 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   invalid regex is an error, not a literal match. Output is masked. For a \
   **live** shell by plain id, use `read_shell`.
 
-### `get_terminal_context`, `tmux_control`
+### `get_terminal_context`
 
 - `get_terminal_context(scope?)` — fresh snapshot of the user's screen. \
   `scope`: `"window"` (the chat pane's window only), `"session"` (default), \
   `"all"` (adds metadata for panes in other tmux sessions). Use this to see \
   the panes and their recent output when the context block is stale.
-- `tmux_control(action, pane_id)` — act on the user's tmux: `focus` moves them \
-  to a pane and its window, `zoom` / `unzoom` resize it, `split` splits a pane, \
-  `rename_window` renames a window (requires `name`), `kill_window` closes a \
-  window (refused for daemon-managed windows and the chat pane's window). **Every \
-  action needs the user's approval** — each one changes what they are looking at. \
-  Use it when they ask to be taken somewhere, or when showing a pane beats quoting \
-  it.
 
 ### `read_file`, `edit_file`
 

@@ -289,7 +289,7 @@ The agent sees your whole tmux world, not just the pane you are typing in.
 - **Every session, not just yours.** The pane cache tracks windows and panes across *all* tmux sessions. Panes outside your own session appear labelled with their session name; their content is fetched on demand rather than polled, so watching a second session costs nothing until you ask.
 - **Live status per pane.** Each pane is classified every 2 s — `Running`, `Idle 4m`, `AwaitingInput`, `Bell`, `Dead(1)` — and that status shows up everywhere panes are listed. An idle shell is never mistaken for a prompt waiting on input.
 - **Any pane's contents, one call away.** `get_terminal_context` returns the current context block on demand — a live snapshot with panes and recent output — so "which pane has the error?" is one call instead of a hunt when the ambient block has gone stale.
-- **The agent can drive tmux, with the gate on.** `tmux_control` focuses, zooms, splits, renames and kills windows — every action behind the same approval prompt as a shell command, because navigation moves your attention too. It refuses to kill a daemon-managed window or the window holding your chat pane, and autonomous Ghost Shells are denied the tool outright unless an agent's `ToolPolicy` names it explicitly.
+- **Navigation is read-only by design.** The agent sees every pane but no longer steers your tmux: the pane-manipulation tools were removed in favor of a see-everything / act-on-nothing boundary, so what you are looking at stays yours.
 - **`/panes` is worth reading.** A window-grouped inspector: cwd, status, activity age and a preview line per pane, with the pinned foreground target marked.
 
 ---
@@ -493,7 +493,7 @@ While the search prompt is open, typing edits the query, `Enter` commits it and 
 
 ## AI tools
 
-The model has **43 tools**. The 29 **core** tools are sent with every request; the 14 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
+The model has **42 tools**. The 28 **core** tools are sent with every request; the 14 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
 
 Tools marked **⚠** require explicit user approval before they execute.
 
@@ -507,7 +507,6 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `delete_script` **⚠** | Delete a script |
 | `write_runbook` **⚠** | Create or update a runbook in `~/.daemoneye/runbooks/` |
 | `delete_runbook` **⚠** | Delete a runbook |
-| `tmux_control` **⚠** | Act on your tmux: `focus` a pane, `zoom`/`unzoom`, `split`, `rename_window`, `kill_window`. Refuses to kill daemon-managed windows or the chat pane's window |
 | `read_file` | Paginated file read with optional grep filter; masks sensitive data |
 | `search_repository` | Search runbooks, scripts, memory, or the event log |
 | `get_terminal_context` | Capture a fresh tmux snapshot on demand; `scope` selects the window, the session (default), or all sessions |

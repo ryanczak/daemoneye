@@ -319,14 +319,6 @@ pub enum PendingCall {
         lines: Option<u64>,
         filter: Option<String>,
     },
-    TmuxControl {
-        id: String,
-        thought_signature: Option<String>,
-        action: String,
-        pane_id: String,
-        name: Option<String>,
-        direction: Option<String>,
-    },
 }
 
 /// Serialize a tool-call argument object, omitting entries whose value is
@@ -902,24 +894,6 @@ impl PendingCall {
                     "shell": shell,
                 })),
             },
-            PendingCall::TmuxControl {
-                id,
-                thought_signature,
-                action,
-                pane_id,
-                name,
-                direction,
-            } => ToolCall {
-                id: id.clone(),
-                thought_signature: thought_signature.clone(),
-                name: "tmux_control".to_string(),
-                arguments: args_to_string(serde_json::json!({
-                    "action": action,
-                    "pane_id": pane_id,
-                    "name": name,
-                    "direction": direction,
-                })),
-            },
         }
     }
 
@@ -965,7 +939,6 @@ impl PendingCall {
             PendingCall::AwaitAgentResult { id, .. } => id,
             PendingCall::ReadShell { id, .. } => id,
             PendingCall::FindInShells { id, .. } => id,
-            PendingCall::TmuxControl { id, .. } => id,
             PendingCall::RunLogTail { id, .. } => id,
             PendingCall::RunLogSearch { id, .. } => id,
             PendingCall::GetTurn { id, .. } => id,
@@ -1117,11 +1090,6 @@ impl PendingCall {
                 Some(s) => format!("/{pattern}/ scope={s}"),
                 None => format!("/{pattern}/"),
             },
-            PendingCall::TmuxControl {
-                action, pane_id, ..
-            } => {
-                format!("{action} {pane_id}")
-            }
             PendingCall::ListShellLogs { since, limit, .. } => match (since, limit) {
                 (Some(s), Some(l)) => format!("since {s} limit={l}"),
                 (Some(s), None) => format!("since {s}"),
@@ -1208,7 +1176,6 @@ impl PendingCall {
             PendingCall::AwaitAgentResult { .. } => "await_agent_result",
             PendingCall::ReadShell { .. } => "read_shell",
             PendingCall::FindInShells { .. } => "find_in_shells",
-            PendingCall::TmuxControl { .. } => "tmux_control",
             PendingCall::RunLogTail { .. } => "run_log_tail",
             PendingCall::RunLogSearch { .. } => "run_log_search",
             PendingCall::GetTurn { .. } => "get_turn",
@@ -1767,14 +1734,6 @@ mod tests {
                 thought_signature: None,
                 pattern: "p".to_string(),
                 scope: None,
-            },
-            PendingCall::TmuxControl {
-                id: x(),
-                thought_signature: None,
-                action: "focus".to_string(),
-                pane_id: "%1".to_string(),
-                name: None,
-                direction: None,
             },
         ];
         for call in &all {

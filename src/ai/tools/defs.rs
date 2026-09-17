@@ -34,7 +34,6 @@ pub static APPROVAL_GATED_TOOLS: &[&str] = &[
     "run_terminal_command",
     "schedule_command",
     "send_input",
-    "tmux_control",
     "write_runbook",
     "write_script",
 ];
@@ -1052,52 +1051,6 @@ pub static TOOLS: &[ToolDef] = &[
         }],
         deferred_group: None,
         category: Category::Meta,
-    },
-    ToolDef {
-        name: "tmux_control",
-        description: "Act on the user's tmux session: move their focus to a pane, \
-             zoom/unzoom a window, split a pane, rename a window, or kill a window. \
-             Every action requires the user's approval before it runs, because each \
-             one changes what they are looking at. Use it when the user asks to be \
-             taken somewhere, or when showing them a pane is more useful than quoting \
-             it back.",
-        params: &[
-            ParamDef {
-                name: "action",
-                ty: ParamTy::Str,
-                required: true,
-                description: "One of: \"focus\" (switch the user to this pane and \
-                              its window), \"zoom\" (make this pane fill its \
-                              window), \"unzoom\" (undo a zoom), \"split\" (split \
-                              the pane into two), \"rename_window\" (rename the \
-                              pane's window), \"kill_window\" (close the pane's \
-                              window — refused for daemon-managed windows and for \
-                              the window holding the chat pane).",
-            },
-            ParamDef {
-                name: "pane_id",
-                ty: ParamTy::Str,
-                required: true,
-                description: "tmux pane ID (e.g. \"%3\") to act on. Resolve from \
-                              [PANE MAP] (format: idx:N=<id>).",
-            },
-            ParamDef {
-                name: "name",
-                ty: ParamTy::Str,
-                required: false,
-                description: "New window name — required for `rename_window`, \
-                              ignored otherwise.",
-            },
-            ParamDef {
-                name: "direction",
-                ty: ParamTy::Str,
-                required: false,
-                description: "\"vertical\" (default, new pane below) or \
-                              \"horizontal\" (side by side) — `split` only.",
-            },
-        ],
-        deferred_group: None,
-        category: Category::Run,
     },
     ToolDef {
         name: "spawn_ghost_shell",

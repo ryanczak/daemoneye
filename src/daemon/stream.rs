@@ -781,23 +781,6 @@ where
                         filter,
                     });
                 }
-                AiEvent::TmuxControl {
-                    id,
-                    action,
-                    pane_id,
-                    name,
-                    direction,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::TmuxControl {
-                        id,
-                        thought_signature,
-                        action,
-                        pane_id,
-                        name,
-                        direction,
-                    });
-                }
                 AiEvent::SpawnGhost {
                     id,
                     runbook,
@@ -1610,7 +1593,6 @@ mod tests {
         assert!(APPROVAL_GATED.contains(&"run_terminal_command"));
         assert!(APPROVAL_GATED.contains(&"edit_file"));
         assert!(APPROVAL_GATED.contains(&"write_script"));
-        assert!(APPROVAL_GATED.contains(&"tmux_control"));
         assert!(!APPROVAL_GATED.contains(&"read_file"));
         assert!(!APPROVAL_GATED.contains(&"get_terminal_context"));
 
