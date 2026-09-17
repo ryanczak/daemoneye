@@ -1,7 +1,7 @@
 # Phase 08a: `[SHELLS]` / `[DEFAULT SHELL]` context blocks
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 04a (`open_shell`/`close_shell`), 07a/07b (`shell?`/`wait?` on
 `run_terminal_command`). Both **done**.
 **Estimated diff:** ~400 lines incl. tests
@@ -1014,3 +1014,57 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f83bb7d8dd33d781127523d741895bf82a28eb27
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-16
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-08a-1 — two dead assertions + a false mechanism claim in the E2E note; now closed)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** one, flagged by the executor and accepted — `mod knowledge`
+  widened to `pub(crate)` in `src/daemon/executor/mod.rs` so the prompt builders
+  (outside `super` of `knowledge`) can reach `shell_context_block`. The file is
+  authorized for Task 6, the change has no behavioural surface, and it matches the
+  existing `pub(crate) mod container` sibling. A narrower alternative existed
+  (re-export at the `executor` level, keeping `mod knowledge` private); not worth a
+  bounce.
+- **Calibration:**
+  1. **The vacuous-assertion class reaches five occurrences** (`bug-04b-2`,
+     `bug-05-1`, `bug-06a-1` finding 2, `bug-07b-1`, `bug-08a-1`). The shape is
+     always `!A || B` where `B` is a property of the *fixture* rather than of the
+     code — here `out.contains("s4")` against a fixture that always lists `s4`.
+     **Fold candidate at milestone close:** a guard written as a disjunction must
+     name, in its message, the input that makes the weak side false — and the
+     phase's mutation list must contain a mutant that only that assertion catches.
+     The fix here did exactly that (mutation C), which is why it is now pinned.
+  2. **Architect-side, two spec defects of my own**, both caught in-flight and
+     both worth remembering. First, the `host_is_alive`-count criterion
+     contradicted my own Task-1 doc comment, which quoted the symbol — writing the
+     comment verbatim would have failed the criterion. The executor spotted the
+     conflict, reworded around it and flagged it; that was the right call.
+     Second, two of my bounce criteria referenced their own needles
+     (`age:0s`, `NOW = 200_000`) and so were unsatisfiable or vacuously true from
+     the moment I wrote them; I rescoped both with a `sed` range anchored on the
+     Update Log heading. **Generalisation: a criterion's needle must not appear in
+     the criterion's own text, or in any file the criterion greps.**
+  3. **Evidence hygiene, not bounced:** the server-authored completion entry for
+     the second run carries raw chain-of-thought, including a leaked `</think>`
+     marker and the executor's self-interrogation. The mutation-C `test result:`
+     lines *are* present and correct there (lines 848, 885, matching my
+     independent re-run byte for byte), so the criterion is met — but the
+     bookkeeping tail is server-owned (M27 phase-03) and is noise in a permanent
+     artifact. Worth raising against rexyMCP, not against this phase.
+- **Independent verification:** all four gates re-run separately (fmt, build,
+  clippy, `cargo test` → 1906 + 6 + 10 + 32 + 9, zero failures). All twelve
+  original acceptance criteria and all nine bug-08a-1 criteria re-measured by the
+  reviewer, not read from the executor's report. All three mutations reproduced
+  independently: **A** (string sort key) 3/3 red on exactly
+  `default_shell_for_picks_the_lowest_index_not_the_lowest_string`; **B** (dropped
+  `!row.interactive`) 3/3 red with the named test among three genuine downstream
+  failures; **C** (emit `[dedicated]` for every row) 3/3 red at
+  `60 passed; 2 failed` with `format_shell_context_keeps_each_flag_on_its_own_row`
+  among them, `62 passed` on revert. `default_shell_for` is untouched by the
+  second run, so A and B carry forward. The task-9 `PASTE MATCH` transcript is
+  **byte-identical** across the bounce (`diff` clean against `6f876d0d`), as the
+  bug DoD required. The corrected E2E note now states the real mechanism and
+  matches the reviewer's own derivation.
+

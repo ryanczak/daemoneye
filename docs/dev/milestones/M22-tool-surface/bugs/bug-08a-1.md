@@ -1,8 +1,9 @@
 # Bug 1 on phase-08a: two dead assertions and a false mechanism claim in the E2E note
 
 **Severity:** minor
-**Status:** open
+**Status:** closed
 **Filed:** 2026-09-16
+**Closed:** 2026-09-16 — fixed in `f83bb7d8`; every DoD item re-verified independently at review.
 
 The phase's shipped behaviour is correct and all twelve acceptance criteria
 pass; both mutation checks reproduce independently (3/3 red each, on exactly
