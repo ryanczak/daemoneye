@@ -481,3 +481,108 @@ confirmed against HEAD `16e4bcad`: 1883 lib tests passing, `doc_truth` 10
 passing, 43 tools / 29 core / 11 gated, and the measured greps matching the
 spec's numbers (36 `tmux_control` refs outside `dispatch.rs`, 12
 `ghost_may_use_tmux_control` refs, 11 `kill_window_refusal` refs).
+
+
+### Update — 2026-09-17 15:32 (resumed run)
+
+**Executor:** headless (claude-sonnet-4.6), resuming per the escalation entry.
+The prior run's Task 1 partial edits were left in place as instructed. The two
+compile errors were closed first (args struct, dispatch arm, executor arm),
+then the rest of the spec in the prescribed order. The build went green after
+the third edit.
+
+Progress, in spec terms:
+
+- Task 1 complete (verified: 0 `TmuxControl` references remain in `src/`,
+  0 files match).
+- Task 2: `ToolDef` and the `APPROVAL_GATED_TOOLS` entry removed (11 → 10);
+  dispatch arm and sample-args arm removed.
+- Task 3: executor arm, `ghost_may_use_tmux_control` and its 4-test module
+  deleted; `ghost_may_send_input`'s doc comment rewritten to name nothing but
+  `send_input` (the "deliberate second copy" paragraph and the
+  "covers the same no-auto-approve ground as `tmux_control`" sentence are gone);
+  the two stale comments at the old `:916`/`:942` rewritten.
+- Task 4: `knowledge/pane.rs` deleted; `mod pane;` and the
+  `pub(super) use pane::kill_window_refusal;` line removed from
+  `knowledge/mod.rs`. `crate::daemon::is_daemon_window` untouched (must-survive
+  verified below).
+- Task 5: `explicitly_allows_matches_only_the_allow_list` retargeted to
+  `"send_input"` (test kept, not deleted); the `explicitly_allows` doc comment
+  now names the ghost `send_input` gate. `agents::policy` stays at 15.
+- Task 6: 09b's kept-list in
+  `e2e_removed_pane_watch_tools_are_absent_from_every_render` drops
+  `"tmux_control"`; the test survives and passes.
+- Task 7: `sre.toml` (`tmux_control` mentions removed; `get_terminal_context`
+  keeps its own heading), `CLAUDE.md` row deleted and count line now
+  **42 tools: 28 core + 14 deferred**, `README.md` row + `⚠` marker removed and
+  the prose bullet replaced with a §-statement of the milestone's read-only
+  boundary; count line updated. Count guard renamed to
+  `tool_table_counts_are_42_28_14`. Two neighbours updated in the same
+  edit-spirit as the spec's deltas (both counts the phase changes directly):
+  `every_tool_has_a_category`'s "29 core + 14 deferred" claim now reads 28, and
+  `category_counts_match_the_assignment`'s `Run` count drops 6 → 5
+  (`tmux_control` was the sixth `Category::Run` tool). No new tests added for
+  this; it is arithmetic on an existing guard.
+- Task 9: `e2e_tmux_control_is_absent_and_the_surface_is_final` added verbatim
+  from the spec. `ai::tools::dispatch` goes 25 → 26.
+
+**Deviation to review:** the spec's orphan closure covered the deleted arm's
+Rust-side callees but not a class of them: six `crate::tmux::pane::*` helpers
+(`select_window`, `pane_window_zoomed`, `toggle_zoom`, `split_pane`,
+`rename_window_for_pane`, `kill_window_for_pane`) had **no caller other than
+the `tmux_control` arm**, and now trip `dead_code` — which `-D warnings` turns
+into an error, so `cargo clippy --all-targets --all-features -- -D warnings`
+currently fails on all six. They live in `src/tmux/pane.rs`, which the
+Authorizations list under **Not authorized**, and the Out-of-scope section says
+explicitly "the tmux substrate itself: `crate::tmux::*` keeps every function".
+
+Conflict as written: the acceptance criterion "clippy clean" cannot be met
+without touching a not-authorized file, and the Authorizations section's own
+closing rule says orphans must be deleted if they are in an authorized file and
+filed as a blocker if they are not. These are not, so per that rule I am
+**filing a blocker rather than deleting them**, and leaving the six functions
+in place (the substrate-preservation instruction outranks my cleanup
+instinct).
+
+Everything else is verified green: `cargo test --lib` → **1877 passed**
+(`1883 − 4 − 3 + 1`, exact), `cargo test --test doc_truth` → **10 passed**,
+`ai::tools::dispatch` 26, `agents::policy` 15, `tmux_control_gate` 0,
+`knowledge::pane` 0, all counters matching the acceptance-criteria numbers, all
+six must-survive criteria unchanged, and the authorized-path diff
+(`src/tmux/`, `src/daemon/mod.rs`, `src/daemon/server/`, `src/daemon/background/`)
+empty. `cargo fmt --all` clean. Working tree committed as `e0411e7e`
+(`feat: remove the tmux_control tool surface (M22 09c)`); the only outstanding
+item is the clippy orphan decision above. Status left at `in-progress` per the
+lifecycle contract.
+
+Code commit: `e0411e7e` — 13 files changed, 60 insertions(+), 462 deletions(-).
+
+### Blocker — six `crate::tmux::pane::*` functions orphaned by the arm removal
+
+**Blocked on:** `src/tmux/pane.rs` is in the Not-authorized list, but its six
+focus/zoom/split/rename/kill helpers have no caller left after Task 2/3 and
+`-D warnings` fails on them, conflicting with the "clippy clean" acceptance
+criterion.
+
+**What I tried:**
+1. Verified each is genuinely orphaned, not conditionally reachable:
+   `grep -rn 'select_window|pane_window_zoomed|toggle_zoom|split_pane|
+   rename_window_for_pane|kill_window_for_pane'` over `src/` + `tests/`
+   returns only their own definitions and doc comments.
+2. Verified the warnings are new, not pre-existing: built a pristine archive
+   of HEAD `16e4bcad` in `/tmp/de_base` after `cargo clean` — zero
+   dead-code warnings, because the `tmux_control` arm still referenced the six.
+3. Confirmed the must-survive table's premise is unaffected: the pane.rs
+   functions below `:363` are distinct from `crate::daemon::is_daemon_window`
+   and from `select_pane` (which keeps its callers in
+   `daemon/executor/foreground.rs`).
+4. Read the Authorizations block: `src/tmux/` is Not authorized, and the same
+   block instructs blockers for orphans outside authorized files.
+
+**What I need:** principal-engineer decision, one of:
+- authorize deleting the six functions + their doc comments from
+  `src/tmux/pane.rs` (the same call 09a/09b's orphan closure implicitly made
+  for Rust-side callees), or
+- authorize `#[allow(dead_code)]` on them (against the standards' default), or
+- descope the clippy-clean acceptance criterion until phase 09d/10, which the
+  `target_pane` work may re-reach some of these functions.
