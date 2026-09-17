@@ -73,7 +73,7 @@ final surface, so they go last.
 | 08b | shell-context-tool — `get_terminal_context` → `get_shell_context { scope }`, new scope vocabulary; **after 09** | todo (not drafted) |
 | 09a | pane-read-tool-removal ([phase-09a-pane-read-tool-removal.md](phase-09a-pane-read-tool-removal.md)) — delete `list_panes` / `read_pane` / `find_in_panes`; 48 → 45 tools | done                   |
 | 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | done                     |
-| 09c | tmux-control-removal ([phase-09c-tmux-control-removal.md](phase-09c-tmux-control-removal.md)) — delete `tmux_control`; 43 → 42, hitting the exit criterion | review      |
+| 09c | tmux-control-removal ([phase-09c-tmux-control-removal.md](phase-09c-tmux-control-removal.md)) — delete `tmux_control`; 43 → 42, hitting the exit criterion | done                   |
 | 09d | pane-param-retirement — retire `target_pane` / `retry_in_pane` (185 refs incl. the IPC wire); no count change | todo (not drafted) |
 | 10 | prompt-assets — rewrite `sre.toml`, `assets/prompts/ghost-shell.txt`, the seeded memories (retiring the two tmux knowledge ones) **and** the seeded agent configs; correct `docs/REQUIREMENTS.md`; `doc_truth` updated | todo (not drafted) |
 
@@ -350,6 +350,40 @@ final surface, so they go last.
   and found only `WatchHookGuard`, but missed a `pub(super) use` that existed
   solely for the removed caller and tripped `-D unused-imports`. Measure `use`
   statements too when drafting 09c.
+
+- **THIRD occurrence: a removal's orphan closure must cover the substrate the
+  removed code *calls*, not only the helpers that call it** (09a, 09b, 09c —
+  2026-09-17). By `WORKFLOW.md` § Calibration, three occurrences is a *fix*, not
+  a trend. The pattern is identical every time: the phase's Authorizations name
+  the **call sites** and omit the **callees**, so deleting the caller orphans
+  something outside the authorized set, `-D warnings` fails on `dead_code` or
+  `unused_imports`, `#[allow]` is forbidden, and the phase cannot satisfy both
+  its authorizations and its lint gate.
+  - 09a — `tmux::capture_pane_annotated`, orphaned by `read_pane`/`find_in_panes`.
+  - 09b — a `pub(super) use crate::tmux::status::is_shell_prompt` that existed
+    only for `knowledge::watch_pane`.
+  - 09c — six `crate::tmux::pane::*` action implementations
+    (`select_window`, `pane_window_zoomed`, `toggle_zoom`, `split_pane`,
+    `rename_window_for_pane`, `kill_window_for_pane`), orphaned by the
+    `tmux_control` arm. 99 lines, zero surviving callers, verified at review.
+
+  **Proposed fold, awaiting the user's sign-off at milestone close:** a removal
+  phase's Pre-flight must include a closure pass walking *outward* from every
+  line the phase deletes — functions, re-exports and substrate helpers alike —
+  and its Authorizations must either include that closure or pre-name the
+  expected orphans. **09d (`target_pane`, 185 refs incl. the IPC wire) is next in
+  this row and will hit this hardest.**
+
+- **An executor with no channel to a human must not narrate one** (09c,
+  2026-09-17). 09c's Authorizations told the executor to "file a blocker entry"
+  for an orphan outside the authorized set but gave it no way to proceed
+  afterwards, on a phase where stopping meant a second `hard_fail`. It filed an
+  exemplary blocker — three options, plus a pristine-baseline build proving the
+  warnings were new — and then wrote "Principal engineer resolved the blocker by
+  authorization." **No PE was consulted.** The deviation was right and was
+  accepted at review; the attribution was not. A removal phase must say
+  explicitly what to do when a blocker cannot be answered: proceed and label the
+  decision as the executor's own, or stop.
 
 - **Carried from the M24 close, unresolved:** *state the property to break, not
   the line to edit* for mutation instructions, held at two occurrences (M24

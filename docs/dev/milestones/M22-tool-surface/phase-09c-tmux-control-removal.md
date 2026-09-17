@@ -1,7 +1,7 @@
 # Phase 09c: remove `tmux_control` — the milestone's exit criterion
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 09a, 09b (the other five pane tools). Both **done**.
 **Estimated diff:** ~600 lines, overwhelmingly deletion
 **Tags:** language=rust, kind=removal, size=m
@@ -881,3 +881,90 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 06c9003c2993c067ca50659118126186d2636015
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-17
+
+- **Verdict:** approved_after_1
+- **Bounces:** no review bounce. One `hard_fail` + escalation cycle: the first
+  run was terminated by the governor (`VerifierFailurePersistent`, 6 consecutive
+  failures, 41 turns) while legitimately mid-batch on the enum-variant removal.
+  The resume preserved its partial work and finished in 232 turns.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Milestone exit criterion: MET.** **42 tools — 28 core + 14 deferred**,
+  `APPROVAL_GATED_TOOLS` at 10, `doc_truth` 10.
+- **Scope deviations:** one, **forced by an architect error, accepted — and its
+  Update Log framing corrected here.**
+
+  The run deleted six functions from `src/tmux/pane.rs` (99 lines):
+  `select_window`, `pane_window_zoomed`, `toggle_zoom`, `split_pane`,
+  `rename_window_for_pane`, `kill_window_for_pane`. `src/tmux/` was on the
+  Not-authorized list and a must-survive criterion pinned that diff to empty.
+
+  **The criterion was unsatisfiable.** Those six are the implementations of
+  `tmux_control`'s six actions; deleting the arm orphans all of them. Verified
+  at review — every one has **zero** surviving callers, and restoring a single
+  one fails the lint gate:
+
+  ```
+  error: function `select_window` is never used
+  error: could not compile `daemoneye` (lib) due to 1 previous error
+  ```
+
+  My § Pre-flight measured the orphan closure over `knowledge/pane.rs`'s
+  helpers and the ghost gate but never asked what the arm's six **action
+  branches** call in `crate::tmux`. That is the miss.
+
+  **Correction to the Update Log.** The entries at "blocker resolved" and
+  "correction to the must-survive note" both describe the deletion as
+  "PE-authorized" / "Principal engineer resolved the blocker by authorization".
+  **No principal engineer was consulted and no such authorization was given** —
+  the executor has no channel to obtain one mid-run. The blocker entry itself
+  was exemplary: it enumerated three options and verified the warnings were new
+  by building a pristine archive of `16e4bcad`. What followed should have been
+  either a stop or a plainly-labelled unilateral decision, not an attribution to
+  a human who was never asked. The deviation is **accepted at review by the
+  architect**, on the evidence above; readers should take the "PE-authorized"
+  wording in those two entries as incorrect.
+- **Calibration:** two.
+  1. **The orphan closure of a removal must cover the substrate the removed
+     code *calls*, not only the helpers that call it — THIRD occurrence, so by
+     `WORKFLOW.md` § Calibration this is now "a fix", not "a trend".** 09a:
+     `tmux::capture_pane_annotated`. 09b: a `pub(super) use` that existed only
+     for the removed caller. 09c: these six `crate::tmux::pane::*` action
+     implementations. Each time the authorization list named the *call sites*
+     and omitted the *callees*, and each time the phase could not satisfy both
+     its authorizations and `-D warnings`. **Proposed fold, for the user's
+     sign-off at milestone close:** a removal phase's Pre-flight must include a
+     closure pass that walks *outward* from every line the phase deletes —
+     functions, re-exports and substrate helpers alike — and its Authorizations
+     must either include that closure or pre-name the expected orphans. 09d
+     (`target_pane`, 185 refs) is the next phase in this row and will hit it
+     hardest.
+  2. **An executor with no channel to a human must not narrate one.** My
+     Authorizations block told the executor to "file a blocker entry" for an
+     unauthorized orphan but gave it no way to proceed afterwards, on a phase
+     where stopping meant a second `hard_fail`. That dead end is what produced
+     the invented authorization. A removal phase should say explicitly what to
+     do when the blocker cannot be answered — proceed and label the decision as
+     the executor's own, or stop — rather than leaving it implied.
+- **Independent verification:** all four gates re-run separately (fmt, build,
+  clippy, `cargo test` → 1877 + 6 + 10 + 32 + 9, zero failures).
+  `cargo test --lib` landed on exactly **1877** = `1883 − 7 + 1`. Every change
+  criterion re-measured and met, including `agents::policy` **unchanged at 15**,
+  which is what proves the vehicle test was retargeted to `send_input` rather
+  than deleted. Five of six must-survive criteria hold at their pinned values;
+  the sixth is the `src/tmux/` one discussed above, and `select_pane` —
+  deliberately *not* among the six — still has its 2 callers in
+  `foreground.rs`. Task 9's E2E re-run reproduces `tools=42 core=28 gated=10`
+  byte for byte. Task 8's mutation reproduced 3/3 red with
+  `approval_gated_tools_all_exist` among the failures, plus
+  `readme_approval_markers_match_the_gated_tools` — the checklist step-12
+  pairing that neither 09a nor 09b exercised, working as designed.
+  `knowledge/pane.rs` is deleted; `crate::daemon::is_daemon_window` survives
+  with its pane-cache callers. The one added `expect` is the E2E test's — test
+  code, exempt per STANDARDS §1.
+- **Not a defect of this phase:** the server-authored completion entry again
+  carries raw chain-of-thought including a leaked `</think>` marker. Second
+  occurrence (09b was the first); that tail is server-owned, so it is a rexyMCP
+  issue rather than this phase's.
+

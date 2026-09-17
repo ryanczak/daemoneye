@@ -1,31 +1,34 @@
 # NEXT
 
-**Active phase:** `docs/dev/milestones/M22-tool-surface/phase-09c-tmux-control-removal.md`
-— 09c, tmux-control-removal. **Escalated 2026-09-17**, status `in-progress`.
+**Active phase:** none.
 
-The first run `hard_fail`ed with `VerifierFailurePersistent` (6 consecutive
-failures, 41 turns) **while legitimately mid-batch**: removing the
-`PendingCall::TmuxControl` variant makes the crate uncompilable until the last
-arm is gone, and the verifier cannot tell "mid-batch" from "stuck".
+Phase-09c closed `approved_after_1` on 2026-09-17. **The milestone's headline
+exit criterion is met: 42 tools — 28 core + 14 deferred**, `APPROVAL_GATED_TOOLS`
+at 10, `doc_truth` 10, `cargo test --lib` 1877. All six pane tools are gone and
+`src/daemon/executor/knowledge/pane.rs` no longer exists.
 
-**Lever chosen: resume in place.** The partial work is correct and is
-**deliberately left uncommitted in the working tree** — it is the resume
-substrate. Do not `git checkout`, `stash` or `reset` those four files:
+Next up is **09d — pane-param-retirement** (`target_pane` / `retry_in_pane`),
+**not yet drafted**. No tool-count change. It is the largest remaining surface
+in the milestone: **185 references**, including the **IPC wire**
+(`src/ipc.rs:197`, `:447`), ~23 in `src/cli/`, and the whole foreground
+execution path — 07a deliberately left that wire alone for this reason, so 09d
+should expect to split.
 
-```
- M src/ai/tools/args.rs      M src/ai/types/events.rs
- M src/ai/types/pending.rs   M src/daemon/stream.rs
-```
+**Carry into the 09d draft — a fold now at three occurrences and awaiting your
+sign-off** (both recorded in the milestone README's Notes):
 
-Task 1 is complete (the variant, the event and the streaming arms are gone).
-**Two compile errors remain and three edits close them** — `args.rs:100`,
-`dispatch.rs:65`, `executor/mod.rs:1000`. The guidance is seeded as a
-`Notes for executor` block at the top of the phase doc's Update Log, with the
-ordering that reaches a green build fastest, which is exactly what the last run
-could not do.
+1. **A removal's orphan closure must cover the substrate the removed code
+   *calls*, not only the helpers that call it.** 09a, 09b and 09c each hit this;
+   each time the Authorizations named the call sites and omitted the callees,
+   and the phase could not satisfy both its authorizations and `-D warnings`.
+   09c's instance was six `crate::tmux::pane::*` action implementations, 99
+   lines. Per `WORKFLOW.md` § Calibration three occurrences is a *fix* — the
+   proposed fold is in the README and needs your approval before it lands.
+2. **An executor with no channel to a human must not narrate one.** 09c filed an
+   excellent blocker, then recorded "Principal engineer resolved the blocker by
+   authorization" when no PE was consulted. The deviation itself was correct and
+   was accepted at review; the attribution was corrected in the verdict.
 
-Resuming via `execute_phase` on the `in-progress` doc rather than
-`continue_phase`: the latter is a blocking call with no `run_id` and no way to
-stop it short of killing `rexymcp serve`.
+Remaining M22 order: **09d → 08b → 10**.
 
-Re-dispatch with `/rexymcp:dispatch phase-09c`.
+Run `/rexymcp:architect next` to draft phase-09d.
