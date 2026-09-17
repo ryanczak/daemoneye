@@ -10,9 +10,7 @@ pub use session::*;
 pub use window::*;
 
 /// Convert ANSI colour to semantic markers and strip every other control
-/// sequence, for output that did not come from a pane. Same conversion
-/// `capture_pane_annotated` applies; `annotate_ansi` itself is private to
-/// this module.
+/// sequence, for output that did not come from a pane.
 pub fn annotate_output(s: &str) -> String {
     ansi::annotate_ansi(s)
 }
