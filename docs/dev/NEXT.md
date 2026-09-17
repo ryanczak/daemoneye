@@ -1,26 +1,29 @@
 # NEXT
 
-**Active phase:** none.
+**Active phase:** `docs/dev/milestones/M22-tool-surface/phase-09b-pane-watch-removal.md`
+— 09b, pane-watch-removal. Drafted 2026-09-16, status `todo`, not yet
+dispatched.
 
-Phase-09a closed `approved_first_try` on 2026-09-16 — `list_panes`, `read_pane`
-and `find_in_panes` are gone. **45 tools: 31 core + 14 deferred** (from 48 =
-34 + 14); `doc_truth` 10; `cargo test --lib` 1886. `pane.rs` went 1417 → 415
-lines, keeping exactly `close_bg_window`, `is_daemon_window`,
-`kill_window_refusal` and `watch_pane`.
+Deletes `watch_pane` (replaced by `watch_shell`, 04b) and
+`close_background_window` (`close_shell`, 04a). **45 → 43 tools: 31 → 29 core,
+14 deferred unchanged.** `doc_truth` stays at 10.
 
-Next up is **09b — pane-watch-removal** (`watch_pane`, replaced by `watch_shell`
-from 04b, plus `close_background_window`), **not yet drafted**. 45 → 43.
+09a's calibration was applied up front: the **orphan closure** was measured
+before the authorization list was written, and it is empty outside the
+authorized files — only `WatchHookGuard` is orphaned and it lives in
+`knowledge/pane.rs`. Every shared helper (`FG_HOOK_COUNTER`,
+`bg_done_subscribe`, `capture_pane`, `off_runtime`, …) keeps live callers in
+`foreground.rs`. The doc also tells the executor what to do if the lint gate
+still finds an orphan the measurement missed.
 
-**Carry into the 09b draft** (calibration from 09a, in the milestone README's
-Notes): a removal phase must authorize the **orphan closure** of what it
-deletes, not just the call sites. 09a's authorization list forbade `src/tmux/`,
-but removing `read_pane`/`find_in_panes` orphaned
-`tmux::capture_pane_annotated`, and a `pub fn` with no callers fails
-`cargo clippy -D warnings` — so the phase could not satisfy both its
-authorizations and its lint gate. `watch_pane` and `close_background_window`
-both reach into `crate::tmux`, so grep for their last-caller helpers before
-writing 09b's authorization list.
+The sharpest must-survive item: `src/daemon/server/catchup.rs` scans for
+`[Watch Pane` in session messages and must be left **completely** alone.
+`knowledge/pane.rs` is its only producer, but session JSONL files already on
+disk carry those lines and catch-up briefs still have to surface them. Deleting
+the now-producer-less scanner would silently drop events from resumed old
+sessions with no gate to catch it.
 
-Remaining M22 order: **09b → 09c → 09d → 08b → 10**.
+Remaining M22 order: **09b → 09c → 09d → 08b → 10**. 09c (`tmux_control`) is
+what reaches the milestone's exit criterion of 42 tools.
 
-Run `/rexymcp:architect next` to draft phase-09b.
+Dispatch with `/rexymcp:dispatch phase-09b`.
