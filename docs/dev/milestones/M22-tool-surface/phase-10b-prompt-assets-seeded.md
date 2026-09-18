@@ -1,7 +1,7 @@
 # Phase 10b: retire the pane-toolkit memory and widen the prompt gate to every asset
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 10a (the `prompt_assets_name_no_retired_tools` gate this phase
 widens), 09a–09c (the six deleted tools), 08b (`get_shell_context`). All
 **done**. **This is M22's last row.**
@@ -636,3 +636,66 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 454fef005e176891d6fa9a9bcdd1ad38acc0627c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (135 turns, one
+  run); review by Claude (direct).
+- **Review re-runs:** `cargo fmt --all --check`, `cargo build`, `cargo clippy
+  --all-targets --all-features -- -D warnings` all exit 0; `cargo test` → lib
+  **1885 passed / 4 ignored** (the pinned value — see the forced edit below),
+  doc_truth **14**, bug_tracker 6, integration 32 / 2 ignored, isolation 9 / 1
+  ignored. Every acceptance and must-survive criterion re-run by hand at HEAD
+  `1d88f8c7` and on target, including all five "leave it alone" pins on the
+  accurate pane prose.
+- **Mutations re-run by the reviewer, and the pair proves what it was designed
+  to prove.** Adding `watch_pane` to the sysadmin agent reddens
+  `seeded_assets_name_no_retired_tools` with the message naming both file and
+  token, **while 10a's prompt-only gate stays green** — the widening reads a
+  surface the narrower gate never saw. Making the walk skip `.toml` reddens
+  `e2e_seeded_asset_tool_hygiene` at 10 against the pinned 15, so the count
+  pins the walk rather than decorating it. Both green on revert.
+- **Capture:** re-run and diffed against the pasted block — **byte-exact**, and
+  it matches the line the Spec pinned.
+- **Negative pin honoured:** the gate asserts on tool names only
+  (`grep -cE '"pane"|"tmux"' tests/doc_truth.rs` → 0), and the requirements
+  exemption is a named two-element constant, `REQUIREMENTS_SUPERSEDED_EXEMPT`,
+  not a blanket allowlist. That is the narrow, visible shape the Spec asked for.
+- **Forced unauthorized edit — accepted, and disclosed exactly as the contract
+  asks.** `memory::index::tests::fresh_index_is_reconciled_on_first_search`
+  hard-codes the seeded-memory row count, whose referent is the asset Task 1
+  deletes. The executor edited that one constant from 10 to 9 in
+  `src/memory/index/mod.rs`, a file the Authorizations do not list, and wrote a
+  dedicated "surprise in flight" entry naming the decision as **its own**, with
+  the causality evidence, no `#[allow]`, no invented human approval. Verified
+  independently: `seeds.rs` now seeds 7 knowledge + 2 session = **9**, so the
+  new constant is right and the test still runs and still asserts. The Spec's
+  own must-survive row ("`cargo test --lib` stays at 1885") is met *after* the
+  fix, because no test was added or removed.
+- **Scope deviations:** none beyond the forced edit above.
+- **Calibration:** two items.
+  1. **A criterion this Spec made unreachable — second occurrence of the class.**
+     `grep -c 'get_shell_context' docs/REQUIREMENTS.md → 3` cannot hold, because
+     Task 4 of the same Spec mandates a superseded note whose verbatim text
+     contains `get_shell_context`, making the true value **4**. The property
+     (no stale `get_terminal_context`, replacement named) is met: the retired
+     name is at 0 and both notes are present. Phase 08b's review recorded the
+     identical shape — a count pinned without accounting for the artifact the
+     phase itself requires. **Two occurrences now. If a third appears, fold a
+     rule that every pinned count is re-derived after the Spec's own artifacts
+     are written, not before.**
+  2. **The self-check verdict line is absent from the end-to-end entry — third
+     occurrence of a class `WORKFLOW.md` already folded.** The entry carries the
+     capture as its first fence and all four mutation `test result:` lines, but
+     never records that the `diff … && echo "PASTE MATCH"` self-check was run.
+     The only `PASTE MATCH` claim sits in the server-authored `(complete)`
+     summary, which the Spec says explicitly does not satisfy the obligation.
+     The reviewer ran the check instead — byte-exact — which is precisely the
+     silent hand-off the fold exists to stop (M13 phases 05 and 06 were the
+     first two). **Not bounced**, because the Spec's own End-to-end section
+     enumerates only the capture block and the mutation pairs, both present, so
+     the requirement lived in Task 6 prose alone. **The fix is structural: make
+     the self-check verdict a numbered acceptance criterion, not prose.**
+     Raise at milestone close.

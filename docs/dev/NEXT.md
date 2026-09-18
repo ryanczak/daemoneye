@@ -1,27 +1,24 @@
 # NEXT
 
-**Active phase:** `docs/dev/milestones/M22-tool-surface/phase-10b-prompt-assets-seeded.md`
-— 10b, prompt-assets-seeded. **Drafted 2026-09-18**, status `todo`.
-**This is M22's last row.**
+**Active phase:** none in progress — `phase-10b-prompt-assets-seeded` was
+approved 2026-09-18 (`approved_first_try`).
 
-Widens 10a's retired-tool gate from the two prompt assets to every file under
-`assets/` plus `docs/REQUIREMENTS.md`, then fixes the four files the census
-found:
+**Every M22 row is now `done`** (01, 02, 03a–c, 04a–b, 05, 06a–b, 07a–b,
+08a–b, 09a–d, 10a–b). The milestone is **not yet closed**: the retrospective,
+the calibration folds and the final `NEXT.md` state belong to milestone close.
 
-1. `assets/memory/knowledge/tmux-pane-toolkit.md` — all seven retired names,
-   19 occurrences. Deleted, with its `seeds.rs` constant and all three other
-   code sites.
-2. `assets/memory/session/pane-referencing-convention.md` — two bullets about
-   deleted tools removed; the rest is still true and stays.
-3. `assets/agents/sysadmin/config.toml` — the seeded agent tells its ghosts to
-   call `watch_pane`, deleted in 09b. Same live defect 10a fixed in the ghost
-   prompt, in a file 10a could not touch.
-4. `docs/REQUIREMENTS.md` — three stale tool names renamed, two capabilities
-   marked superseded. No requirement is deleted; that is a PE decision.
+Run `/rexymcp:architect` to close M22 — write the retrospective in the
+milestone README, decide the calibration folds, and set the active phase.
 
-Every acceptance criterion was run against HEAD `effd4e69` and fails there.
+**Two calibration items are queued for that decision**, both recorded in the
+10b review verdict:
 
-Dispatch with `/rexymcp:dispatch phase-10b`.
-
-When 10b is approved, every M22 row is `done` and the milestone is ready to
-close via `/rexymcp:architect`.
+1. **Pinned counts that the phase's own artifacts make unreachable** — 08b and
+   10b both shipped a criterion that could not hold because the Spec required
+   an artifact containing the very string being counted. Two occurrences; a
+   third makes it a fold.
+2. **The PASTE MATCH self-check verdict line went missing from 10b's
+   end-to-end entry** — third occurrence of a class `WORKFLOW.md` already
+   folded, which means the fold is not self-enforcing. Proposed structural
+   fix: make the self-check verdict a numbered acceptance criterion rather
+   than Task prose.
