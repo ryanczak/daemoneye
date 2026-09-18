@@ -70,7 +70,7 @@ final surface, so they go last.
 | 07a | run-command-shell-target ([phase-07a-run-command-shell-target.md](phase-07a-run-command-shell-target.md)) — `shell?` + `timeout_secs?` on `run_terminal_command`; additive, no count change | done                    |
 | 07b | run-command-wait ([phase-07b-run-command-wait.md](phase-07b-run-command-wait.md)) — `wait?` replaces `background` on the tool; the tuple field swaps in place, no count change | done                    |
 | 08a | shell-context-block ([phase-08a-shell-context-block.md](phase-08a-shell-context-block.md)) — `[SHELLS]` / `[DEFAULT SHELL]` in the ambient context; additive, no tool change | done                    |
-| 08b | shell-context-tool — `get_terminal_context` → `get_shell_context { scope }`, new scope vocabulary; **after 09** | todo (not drafted) |
+| 08b | shell-context-tool ([phase-08b-shell-context-tool.md](phase-08b-shell-context-tool.md)) — `get_terminal_context` → `get_shell_context { scope }`; scope becomes `"shells"` / `"session"` / `"all"`, and `"window"` / `"run"` are refused. No count change | todo |
 | 09a | pane-read-tool-removal ([phase-09a-pane-read-tool-removal.md](phase-09a-pane-read-tool-removal.md)) — delete `list_panes` / `read_pane` / `find_in_panes`; 48 → 45 tools | done                   |
 | 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | done                     |
 | 09c | tmux-control-removal ([phase-09c-tmux-control-removal.md](phase-09c-tmux-control-removal.md)) — delete `tmux_control`; 43 → 42, hitting the exit criterion | done                   |
@@ -149,6 +149,15 @@ final surface, so they go last.
   own shells. Phase 08b's `get_shell_context { scope }` keeps § 2.5's own
   three-way vocabulary — it scopes *context*, not shell ownership, so it is a
   different question and is not affected.
+
+  **Superseded at 08b drafting (2026-09-18), on the PE's decision.** The arity
+  survives; the *names* did not. `ShellRecord` still has no run id and `Owner`
+  is still session-keyed, so mapping `"run"` onto the tool's tmux-window filter
+  would have shipped a parameter whose name says "run" and whose behaviour
+  filters windows — the same false-prose class as 03a's. 08b ships
+  **`"shells" | "session" | "all"`**: the narrow value returns 08a's `[SHELLS]`
+  block alone with no tmux call, and `"window"` and `"run"` are both refused
+  with a message naming the replacement.
 
 - **`send_input` is the one genuinely dangerous addition.** It drives an
   interactive program keystroke by keystroke, so it belongs in
