@@ -1,7 +1,7 @@
 # Phase 10a: the seeded prompts stop describing a substrate they no longer run on
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 01 (`backend = "pty"` default), 07b (`wait?`), 09b
 (`watch_pane` deleted), 09d (`target_pane` retired from the run tool), 08b
 (`get_shell_context`). All **done**.
@@ -668,3 +668,44 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 74ad5001fdf1f00c778a68dee8d9ece63c72d476
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (278 turns, one
+  run); review by Claude (direct).
+- **Review re-runs:** `cargo fmt --all --check`, `cargo build`, `cargo clippy
+  --all-targets --all-features -- -D warnings` all exit 0; `cargo test` → lib
+  1885 passed / 4 ignored (unchanged, as pinned), doc_truth **12**, bug_tracker
+  6, integration 32 / 2 ignored, isolation 9 / 1 ignored. Every acceptance and
+  must-survive criterion re-run by hand at HEAD `333cbfd3` and on target. The
+  rewritten two-mode section was read in full and matches the Spec's verbatim
+  text; `FOREGROUND TARGET` is down to the one accurate occurrence while
+  `PANE MAP` (2) and `target_pane` (4) are untouched, which is exactly the
+  accurate-prose-survives property this phase had to get right.
+- **Mutations re-run by the reviewer:** restoring `watch_pane` in the ghost
+  asset reddens `prompt_assets_name_no_retired_tools`, and its message names
+  both the token and `assets/prompts/ghost-shell.txt`, as the Spec required;
+  restoring the `Use target=` sentence reddens `e2e_prompt_asset_tool_hygiene`.
+  Both green on revert. The Task 5 capture was re-run and diffed against the
+  pasted block — **byte-exact**, and it matches the line the Spec pinned.
+- **Negative pin honoured:** the gate does not ban the bare word `pane`
+  (`grep -c '"pane"' tests/doc_truth.rs` → 0). It asserts on tool names, which
+  is the property that can actually be wrong, so the correct pane prose in both
+  assets keeps passing.
+- **Scope deviations:** none. The executor left the further pane phrasing in
+  `sre.toml` (the `var/log/panes/` filesystem line) untouched and named it for
+  10b, which is what Out of scope directs.
+- **Calibration:** the 08b review's second item is **resolved by spec, not by
+  fold**. That review recorded that the `PASTE MATCH` self-check assumes the
+  capture is the entry's first fenced block, which mutation-led entries break.
+  This Spec told the executor to put the capture first and said why; the
+  executor did, and the recipe's own `awk` extraction reproduced `PASTE MATCH`
+  at review without the workaround 08b needed. Second occurrence of the
+  hazard, first with a working mitigation — still short of a fold, and the
+  mitigation is now a known one.
+- **Noted, not a finding:** the executor's completion summary contains one
+  garbled sentence (a half-written claim about `STATUS_PROMPT_TOML` drift that
+  then says none occurred). It is noise in the summary only; the Update Log
+  entries and every artifact it describes check out.

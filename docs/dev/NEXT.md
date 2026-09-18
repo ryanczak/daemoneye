@@ -1,24 +1,17 @@
 # NEXT
 
-**Active phase:** `docs/dev/milestones/M22-tool-surface/phase-10a-prompt-execution-prose.md`
-— 10a, prompt-execution-prose. **Drafted 2026-09-18**, status `todo`.
+**Active phase:** none — `phase-10a-prompt-execution-prose` was approved
+2026-09-18 (`approved_first_try`). The seeded prompts no longer carry the three
+false instructions, and `tests/doc_truth.rs` now gates prompt-asset tool names:
+no retired tool name may appear in either prompt, and every tool heading in
+`sre.toml` must name a live tool.
 
-Row 10 split into 10a/10b at drafting. Measuring found the seeded prompts carry
-three **false** instructions rather than merely tmux-flavoured prose:
+**One M22 row remains: 10b** (prompt-assets-seeded, undrafted) — retire
+`assets/memory/knowledge/tmux-pane-toolkit.md` and
+`assets/memory/session/pane-referencing-convention.md` with their `seeds.rs`
+constants and seeding calls, clean the four other memories that mention panes
+and the one agent config, correct `docs/REQUIREMENTS.md` (3 stale
+`get_terminal_context` references and a pane-heavy FR-1.2.2), and widen 10a's
+gate to every asset.
 
-1. `sre.toml`'s two-mode section describes the tmux path as the only path,
-   though both run modes route to the PTY substrate by default since phase 01.
-2. `ghost-shell.txt` rule 7 tells every ghost to call `watch_pane`, deleted in
-   phase 09b. `watch_shell` is not the fix — a ghost's background command has
-   no shell id.
-3. `background/run.rs` tells the model at two sites to use a `target=`
-   parameter that no tool has ever had.
-
-10a fixes those and adds a `doc_truth` gate pinning prompt-asset tool names.
-Every acceptance criterion was run against HEAD `35fe59cc` and fails there.
-
-Dispatch with `/rexymcp:dispatch phase-10a`.
-
-**10b** (undrafted) then retires the two tmux memories and their `seeds.rs`
-constants, cleans the four other memories and the one agent config, corrects
-`docs/REQUIREMENTS.md`, and widens the gate to every asset. It is M22's last row.
+Run `/rexymcp:architect next` to draft it. It is M22's last row.
