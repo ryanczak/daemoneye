@@ -8,7 +8,7 @@
 //! - **Structural** — `CLAUDE.md`'s AI-tools table is cross-referenced against
 //!   the real `TOOLS` table, so it cannot silently fall behind the code.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// (doc path relative to the repo root, forbidden substring, why it is wrong)
 const RETIRED_CLAIMS: &[(&str, &str, &str)] = &[
@@ -723,6 +723,143 @@ fn seeded_config_template_has_no_phantom_keys() {
 /// values, so the tail of a `--nocapture` run is itself the evidence.
 const PASTE_MATCH_SENTINEL: &str =
     "tool=watch_shell retired_in_prompts=0 headings_live=11 phantom_target_param=0";
+
+/// The repo root the tests walk, so the same tree is gated on any host.
+const REPO_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
+const ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
+
+/// Retired names `docs/REQUIREMENTS.md` is allowed to keep mentioning, because
+/// Task 4's superseded notes name them deliberately — they say the tool was
+/// removed and what replaced it. Every other retired name still counts there,
+/// and every file under `assets/` is checked against the full list.
+const REQUIREMENTS_SUPERSEDED_EXEMPT: &[&str] = &["list_panes", "close_background_window"];
+
+/// Walk `dir` recursively, returning every regular file's absolute path.
+fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            walk_files(&path, out)?;
+        } else if path.is_file() {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn seeded_assets_name_no_retired_tools() {
+    let mut files = Vec::new();
+    walk_files(ASSETS_DIR.as_ref(), &mut files).expect("walk assets/");
+    assert!(
+        !files.is_empty(),
+        "the asset walk found nothing — `{ASSETS_DIR}` is missing or empty"
+    );
+    files.sort();
+
+    let mut violations: Vec<String> = Vec::new();
+    let mut hits: std::collections::BTreeMap<&str, usize> = Default::default();
+    for path in &files {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
+            panic!("read asset {}: {e}", path.display());
+        });
+        let rel = path
+            .strip_prefix(ASSETS_DIR)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| path.display().to_string());
+        for name in RETIRED_TOOL_NAMES {
+            let n = text.matches(name).count();
+            if n > 0 {
+                hits.entry(name).and_modify(|c| *c += n).or_insert(n);
+                violations.push(format!("assets/{rel}: {n} occurrence of `{name}`"));
+            }
+        }
+    }
+
+    // The requirements doc is not an asset, but it is the requirements the
+    // seeded assets implement, so it belongs to the same gate — with the two
+    // retirement notes this phase added exempted above.
+    let req = std::fs::read_to_string(format!("{REPO_ROOT}docs/REQUIREMENTS.md"))
+        .expect("read docs/REQUIREMENTS.md");
+    for name in RETIRED_TOOL_NAMES {
+        if REQUIREMENTS_SUPERSEDED_EXEMPT.contains(name) {
+            continue;
+        }
+        let n = req.matches(name).count();
+        if n > 0 {
+            violations.push(format!("docs/REQUIREMENTS.md: {n} occurrence of `{name}`"));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "retired tool names appear in seeded assets / requirements: {violations:#?}\n\
+         A seeded asset naming a tool that dispatches to nothing teaches the model \
+         to make dead calls. Reword to the surviving surface (e.g. the PTY shells) \
+         instead of restoring the name."
+    );
+    assert!(hits.is_empty(), "unexpected count bookkeeping: {hits:#?}");
+}
+
+#[test]
+fn e2e_seeded_asset_tool_hygiene() {
+    let mut files = Vec::new();
+    walk_files(ASSETS_DIR.as_ref(), &mut files).expect("walk assets/");
+    files.sort();
+    let scanned = files.len();
+
+    let mut retired_in_assets = 0_usize;
+    for path in &files {
+        let text = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("read asset {}: {e}", path.display()));
+        for name in RETIRED_TOOL_NAMES {
+            retired_in_assets += text.matches(name).count();
+        }
+    }
+    let toolkit_memory_gone = !Path::new(&format!(
+        "{ASSETS_DIR}/memory/knowledge/tmux-pane-toolkit.md"
+    ))
+    .exists();
+    let sysadmin_config =
+        std::fs::read_to_string(format!("{ASSETS_DIR}/agents/sysadmin/config.toml"))
+            .expect("read sysadmin agent config");
+    let sysadmin_watch_pane = sysadmin_config.matches("watch_pane").count();
+
+    println!(
+        "PASTE MATCH >>>\nretired_in_assets={retired_in_assets} asset_files_scanned={scanned} \
+         toolkit_memory_gone={toolkit_memory_gone} sysadmin_watch_pane={sysadmin_watch_pane}\n<<<"
+    );
+
+    assert_eq!(
+        retired_in_assets, 0,
+        "retired tool names still occur under assets/ — see \
+         seeded_assets_name_no_retired_tools for the file-by-file list"
+    );
+    assert_eq!(
+        scanned, 15,
+        "the asset walk saw a different file count than pinned; if this is a new \
+         asset, update the assertion deliberately — do not let a silently-skipped \
+         directory change it"
+    );
+    assert!(
+        toolkit_memory_gone,
+        "the pane-toolkit memory was retired and must not come back as an asset"
+    );
+    assert_eq!(
+        sysadmin_watch_pane, 0,
+        "sysadmin config still tells its agent to call watch_pane"
+    );
+
+    let printed = format!(
+        "retired_in_assets={retired_in_assets} asset_files_scanned={scanned} \
+         toolkit_memory_gone={toolkit_memory_gone} sysadmin_watch_pane={sysadmin_watch_pane}"
+    );
+    assert_eq!(
+        printed,
+        "retired_in_assets=0 asset_files_scanned=15 toolkit_memory_gone=true sysadmin_watch_pane=0",
+        "capture drifted from the pinned line"
+    );
+}
 
 #[test]
 fn e2e_prompt_asset_tool_hygiene() {

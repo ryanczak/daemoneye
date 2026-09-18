@@ -1,7 +1,7 @@
 # Phase 10b: retire the pane-toolkit memory and widen the prompt gate to every asset
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 10a (the `prompt_assets_name_no_retired_tools` gate this phase
 widens), 09a–09c (the six deleted tools), 08b (`get_shell_context`). All
 **done**. **This is M22's last row.**
@@ -401,3 +401,93 @@ mid-run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-18 21:40 (executor started)
+
+**By:** executor (phase 10b, headless run).
+Flipped Status `todo → in-progress` here and in the milestone README phase
+table. Pre-flight confirmed at HEAD `435f6e39`: HEAD is `435f6e39` (one docs
+commit past the `effd4e69` the spec pinned, code unchanged); the four
+retiring-affected files all read as the spec measured (`watch_pane` ×1 in the
+sysadmin config, `get_terminal_context` ×3 in REQUIREMENTS.md, the toolkit
+memory present); `cargo test --test doc_truth` reports **12 passed**;
+`cargo test --lib` reports **1885 passed, 4 ignored**.
+Proceeding in spec order: Tasks 1–4 (asset/requirement edits), Task 5 (widen
+the gate in `tests/doc_truth.rs`), Task 6 (e2e capture), Task 7 (mutation
+pair).
+
+### Update — 2026-09-18 21:55 (surprise in flight)
+
+Tasks 1–4 are done. Task 5's gate is written and green (doc_truth 14 passed).
+Then `cargo test --lib` no longer reports the pinned **1885 passed**; it
+reports **1884 passed, 1 failed**, the failure being
+`memory::index::tests::fresh_index_is_reconciled_on_first_search`, which
+hard-codes "10 rows (8 knowledge + 2 session)" — the seeded counts the phase
+spec pinned as **unchanged**. Deleting the seventh knowledge memory
+(`tmux-pane-toolkit.md`) makes the reconcile-on-empty count 7 + 2 = 9. The
+test is a direct function of the asset I was authorized to delete, and the
+spec's locally-authored expectation (1885 unchanged) is false once Task 1
+lands. Not masked, not attributed. **Decision (mine, unauthorized-in-letter):
+edit that assertion's single count to 9** rather than stop, per the
+Authorizations clause's own escape hatch ("make the deletion and label it
+plainly as your own unauthorized-but-forced decision with the evidence").
+The edit is `10 rows (8 knowledge + 2 session)` →
+`9 rows (7 knowledge + 2 session)`, in one unit test, in a file this phase's
+Authorizations do not list. Evidence of the causality: the same test passes
+at HEAD `435f6e39` before Task 1 (it did — it is inside the 1885) and fails
+in isolation only after `rm
+assets/memory/knowledge/tmux-pane-toolkit.md`, with no other lib change.
+Risk of it being a real product bug rather than a spec-pinned baseline drift:
+none — the test's own comment ties the number to the seed list, and nothing
+else in the lib suite reads the seeded-knowledge count. Test-plan row
+"`cargo test --lib` does not move — it stays at 1885" is thereby **not met
+literally**: after the fix the lib suite is **1884 passed, 1 failed →
+1884 passed, 0 failed** with the assertion corrected to the new baseline
+(1885 − 1 unit test whose constant the phase deleted the referent of; the
+deletion of a unit test is *not* what happened, and I want to be precise
+that the test keeps running and keeps asserting — only its seed-count
+constant changed with the seed list). Everything else in the pinned
+must-survive list is re-measured below before commit.
+
+### Update — 2026-09-18 22:10 (end-to-end verification)
+
+**Task 6 PASTE MATCH capture (redirected from the command, pasted verbatim):**
+
+```
+PASTE MATCH >>>
+retired_in_assets=0 asset_files_scanned=15 toolkit_memory_gone=true sysadmin_watch_pane=0
+<<<
+```
+
+**Task 7 mutation pair (each `test result:` line pasted verbatim, after the capture block).**
+
+Mutation A — `watch_pane` restored in `assets/agents/sysadmin/config.toml`
+line 4 (M22 phase 10b Task 7A temporary mutation, reverted immediately after
+capture):
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s
+```
+
+`seeded_assets_name_no_retired_tools` went red and named both the file and
+the token (`assets/agents/sysadmin/config.toml: 1 occurrence of \"watch_pane\"),
+as Task 7 requires. The 10a prompt-only gate `prompt_assets_name_no_retired_tools`
+stayed **green** under the same mutation — proving the widening reads a
+surface 10a's narrower gate did not, which is the whole point of the pair.
+
+Mutation B — `continue` added to the walk skipping every `*.toml` under
+`assets/`, the file count dropping to 10:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s
+```
+
+`e2e_seeded_asset_tool_hygiene` went red on `asset_files_scanned` (the panic
+line printed `asset_files_scanned=10` against the pinned 15), proving the
+count pins the walk rather than being decorative. `seeded_assets_name_no_retired_tools`
+stayed **green** under the same mutation (the `.toml` files contain no retired
+names), confirming the two tests are independent probes.
+
+Both mutations reverted; `cargo test --test doc_truth` green again at
+14 passed, and `diff` of the restored `assets/agents/sysadmin/config.toml`
+against its pre-mutation copy was empty.
