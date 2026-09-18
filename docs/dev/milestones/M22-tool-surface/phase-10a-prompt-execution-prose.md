@@ -1,7 +1,7 @@
 # Phase 10a: the seeded prompts stop describing a substrate they no longer run on
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 01 (`backend = "pty"` default), 07b (`wait?`), 09b
 (`watch_pane` deleted), 09d (`target_pane` retired from the run tool), 08b
 (`get_shell_context`). All **done**.
@@ -453,3 +453,60 @@ that it was your decision.** There is no human in the loop mid-run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-18 18:03 (started)
+
+**Executor:** the dispatched executor session (headless run).
+
+Status flipped `todo → in-progress` here and in the M22 README phase table.
+Pre-flight against this phase doc's own table, re-measured at HEAD `f7c00ac0`
+(the only commit since `35fe59cc` is the drafting docs commit):
+
+- `git rev-parse --short HEAD` → `f7c00ac0`
+- `grep -c 'watch_pane' assets/prompts/ghost-shell.txt` → **1**
+- `grep -c 'watch_pane' src/ai/tools/defs.rs` → **0** (tool gone)
+- `grep -c 'var/log/panes' assets/prompts/sre.toml` → **2**
+- `cargo test --lib | tail -3` → `1885 passed; 0 failed; 4 ignored`
+- `cargo test --test doc_truth | tail -3` → `10 passed; 0 failed`
+
+Every row matches the pre-flight table (the HEAD sha differs only because the
+phase doc was committed after it was measured). Baselines established; starting
+Task 1.
+
+### Update — 2026-09-18 (end-to-end verification)
+
+**Task 5 PASTE MATCH capture (redirected from the command, pasted verbatim):**
+
+```
+PASTE MATCH >>>
+tool=watch_shell retired_in_prompts=0 headings_live=11 phantom_target_param=0
+<<<
+```
+
+Self-check output (`PASTE MATCH` line pasted verbatim):
+
+```
+PASTE MATCH
+```
+
+**Task 6 mutation pair (both `test result:` lines pasted verbatim, after the capture block):**
+
+Mutation A — `watch_pane` restored in `ghost-shell.txt` rule 7:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+```
+
+Panic message named the asset and token:
+`assets/prompts/ghost-shell.txt names retired tool \`watch_pane\` — it was removed
+from \`TOOLS\` …`. Revert → green: `test result: ok. 1 passed; 0 failed`.
+
+Mutation B — `Use target=\\"{pane_id}\\" …` restored in `run.rs`'s dispatch string:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+```
+
+Panic: `run.rs still tells the model to pass \`target=\`, which no tool accepts — left: 1`.
+Revert → green: `test result: ok. 1 passed; 0 failed`. Both mutations red, both
+reverts green — the gate is pinning the property.

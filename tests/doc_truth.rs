@@ -44,7 +44,75 @@ const RETIRED_CLAIMS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// (doc path, required substring, why it must be documented)
+/// Tools removed from the tool surface in earlier M22 phases whose names must
+/// not reappear in the seeded prompt assets — a prompt that names a tool that
+/// dispatches to nothing teaches the model to make dead calls.
+const RETIRED_TOOL_NAMES: &[&str] = &[
+    "list_panes",
+    "read_pane",
+    "find_in_panes",
+    "watch_pane",
+    "tmux_control",
+    "close_background_window",
+    "get_terminal_context",
+];
+
+/// The prompt assets, read with `include_str!` so the gate sees the same bytes
+/// that get seeded, not a file located at runtime.
+const SRE_PROMPT_ASSET: &str = include_str!("../assets/prompts/sre.toml");
+const GHOST_SHELL_ASSET: &str = include_str!("../assets/prompts/ghost-shell.txt");
+
+/// The background-run result text, which must never name a follow-up parameter
+/// that no tool accepts.
+const BACKGROUND_RUN_SRC: &str = include_str!("../src/daemon/background/run.rs");
+
+#[test]
+fn prompt_assets_name_no_retired_tools() {
+    use daemoneye::ai::tools::TOOLS;
+
+    for asset in [SRE_PROMPT_ASSET, GHOST_SHELL_ASSET] {
+        for name in RETIRED_TOOL_NAMES {
+            if asset.contains(name) {
+                let asset_name = if std::ptr::eq(asset, SRE_PROMPT_ASSET) {
+                    "assets/prompts/sre.toml"
+                } else {
+                    "assets/prompts/ghost-shell.txt"
+                };
+                panic!(
+                    "{asset_name} names retired tool `{name}` — it was removed \
+                     from `TOOLS`, so a model following that instruction makes a \
+                     call that dispatches to nothing. Reword the prose to the \
+                     surviving surface instead of restoring the name."
+                );
+            }
+        }
+    }
+
+    // `### \`<name>\`` headings in sre.toml may name two tools separated by
+    // ` / `; every named tool must still be live.
+    let mut problems = Vec::new();
+    for heading in SRE_PROMPT_ASSET
+        .lines()
+        .filter_map(|l| l.strip_prefix("### `"))
+    {
+        let Some(end) = heading.find('`') else {
+            continue;
+        };
+        for name in heading[..end].split(" / ") {
+            let name = name.trim();
+            if !TOOLS.iter().any(|t| t.name == name) {
+                problems.push(format!("`{name}` (heading {heading:?})"));
+            }
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "sre.toml documents tools that are not in TOOLS: {}",
+        problems.join(", ")
+    );
+}
+
+/// (doc path relative to the repo root, required substring, why it must be documented)
 ///
 /// Checked against the **durable** part of each doc: for `docs/architecture.md`
 /// everything before the milestone roadmap, because that section is rewritten
@@ -648,5 +716,75 @@ fn seeded_config_template_has_no_phantom_keys() {
         "{CONFIG_TEMPLATE} documents keys that do not exist in Config: {phantom:#?}\n\
          Config has no deny_unknown_fields, so a user who copies these gets silence, \
          not an error. Remove them or add the field."
+    );
+}
+
+/// One line naming each gate this phase adds, asserted to match the pinned
+/// values, so the tail of a `--nocapture` run is itself the evidence.
+const PASTE_MATCH_SENTINEL: &str =
+    "tool=watch_shell retired_in_prompts=0 headings_live=11 phantom_target_param=0";
+
+#[test]
+fn e2e_prompt_asset_tool_hygiene() {
+    use daemoneye::ai::tools::TOOLS;
+
+    let retired_hits = RETIRED_TOOL_NAMES
+        .iter()
+        .map(|name| {
+            let in_sre = SRE_PROMPT_ASSET.matches(name).count();
+            let in_ghost = GHOST_SHELL_ASSET.matches(name).count();
+            (name, in_sre + in_ghost)
+        })
+        .collect::<Vec<_>>();
+    let retired_in_prompts: usize = retired_hits.iter().map(|(_, n)| n).sum();
+
+    let headings: Vec<&str> = SRE_PROMPT_ASSET
+        .lines()
+        .filter_map(|l| l.strip_prefix("### `"))
+        .collect();
+    let dead_heads: Vec<String> = headings
+        .iter()
+        .filter_map(|h| {
+            let end = h.find('`')?;
+            let alive = h[..end]
+                .split(" / ")
+                .all(|n| TOOLS.iter().any(|t| t.name == n.trim()));
+            if alive { None } else { Some((*h).to_string()) }
+        })
+        .collect();
+    let headings_live = headings.len() - dead_heads.len();
+
+    let phantom_target_param = BACKGROUND_RUN_SRC.matches("Use target=").count();
+
+    println!(
+        "PASTE MATCH >>>\ntool=watch_shell retired_in_prompts={retired_in_prompts} \
+         headings_live={headings_live} phantom_target_param={phantom_target_param}\n<<<"
+    );
+
+    assert!(
+        retired_in_prompts == 0,
+        "retired tool names still appear in the prompt assets: {retired_hits:#?}"
+    );
+    assert!(
+        dead_heads.is_empty(),
+        "sre.toml headings naming tools that are not in TOOLS: {dead_heads:#?}"
+    );
+    assert_eq!(
+        headings.len(),
+        11,
+        "expected 11 `###` tool headings in sre.toml"
+    );
+    assert_eq!(
+        phantom_target_param, 0,
+        "run.rs still tells the model to pass `target=`, which no tool accepts"
+    );
+
+    let printed = format!(
+        "tool=watch_shell retired_in_prompts={retired_in_prompts} \
+         headings_live={headings_live} phantom_target_param={phantom_target_param}"
+    );
+    assert_eq!(
+        printed, PASTE_MATCH_SENTINEL,
+        "capture drifted from the pinned line"
     );
 }

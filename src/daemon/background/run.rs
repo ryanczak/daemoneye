@@ -556,10 +556,7 @@ pub async fn run_background_in_window(
             }
 
             let persist_note = if pane_persists {
-                format!(
-                    "The window is still open (pane {pane_id}). \
-                     Use target=\"{pane_id}\" to run follow-up commands in the same shell."
-                )
+                format!("The window is still open (pane {pane_id}).")
             } else {
                 format!(
                     "The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log"
@@ -720,8 +717,7 @@ pub async fn run_background_in_window(
 
             format!(
                 "Background command sent to pane {pane_id} (window {win_name}). \
-                 You will receive a [Background Task Completed] context message when it finishes. \
-                 Use target=\"{pane_id}\" to run follow-up commands in the same shell."
+                 You will receive a [Background Task Completed] context message when it finishes."
             )
         }
     }
