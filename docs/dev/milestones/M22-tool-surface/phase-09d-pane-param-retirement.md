@@ -1,7 +1,7 @@
 # Phase 09d: retire `target_pane` and `retry_in_pane` from `run_terminal_command`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 07a (`shell?`), 01 (`backend = "pty"` default), 09a–09c (the six
 pane tools). All **done**.
 **Estimated diff:** ~450 lines
@@ -432,3 +432,80 @@ decision to anyone. Name it in the Update Log, then —
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-09-17
+
+**READ THIS FIRST. The tree is RED and dirty, and that is CORRECT.**
+
+A previous run was terminated by the governor (`VerifierFailurePersistent`, 6
+consecutive failures, 76 turns) **while legitimately mid-refactor**. Removing a
+struct field and a function parameter breaks every constructor and call site at
+once; the verifier sees that red tree after every edit and cannot tell
+"mid-batch" from "stuck".
+
+**Do NOT revert the working tree. Do NOT redo what is already done.** Verified
+at escalation, these are complete and correct:
+
+- `FgArgs.target` removed from the struct (`foreground.rs:18`).
+- `run_background`'s `retry_pane` parameter removed (`foreground.rs:1010`).
+- `defs.rs`, `args.rs`, `pending.rs`, `events.rs`, `stream.rs`, `ghost.rs` and
+  `gemini.rs` all already edited.
+
+### `cargo build` reports 12 errors. There are only FIVE edit sites.
+
+**Six of the twelve are cascade noise.** Every `E0277
+"the trait bound W: AsyncBufReadExt is not satisfied"` is emitted at the *same*
+two call sites as the `E0061` arity errors — `foreground.rs:275` and
+`mod.rs:527`. When a generic call has the wrong number of arguments, rustc also
+fails to verify its bounds and reports both. **Fix the arity and all six vanish.**
+
+⚠ **rustc offers a machine-applicable suggestion here that is WRONG:**
+"consider further restricting type parameter `W` with trait `AsyncBufRead`" /
+"replace at line 129:40 with ` + tokio::io::AsyncBufRead`". **Do not apply it.**
+`W` is the write half and must stay `AsyncWriteExt + Unpin`; `R` is the read
+half and already has `AsyncBufReadExt`. Adding a bound to `W` would be an
+invasive, incorrect change that makes the real error harder to see.
+
+**The five sites, all named by the compiler:**
+
+1. `foreground.rs:132` — `let FgArgs { id, cmd, target } = args;` still binds the
+   removed field. Drop `target` from the destructure. (`E0026`)
+2. `foreground.rs:275` — `find_best_target_pane(target, chat_pane, cache,
+   sessions, session_id, tx, rx)` passes the now-undefined `target` as its first
+   argument, 7 args to a 6-arg function. **Keep the call** — this is the fallback
+   resolver the phase deliberately preserves — and drop only the first argument.
+   (`E0061` + 3 × `E0277`)
+3. `mod.rs:527` — `foreground::run_background(id, cmd, retry_pane.as_deref(),
+   ctx, …)` still passes the removed parameter. Drop that one argument.
+   (`E0061` + 3 × `E0277`)
+4. `foreground.rs:1034` — dangling `retry_pane`. (`E0425`)
+5. `mod.rs:530` — dangling `retry_pane`. (`E0425`)
+
+**Do those five first, then run `cargo build`.** It should go green, or leave
+only a short tail the compiler names. Getting out of the red window quickly is
+the single most important thing in this run — it is what the last one could not
+do. Only then move on to the rest of the Spec (Tasks 4's prose rewrites, 6, 7
+and 8), each step keeping the build green.
+
+Everything else in the phase doc stands unchanged, including the § Authorizations
+rule for a forced orphan outside the authorized set: name it, and either stop
+with a blocker **or** make the change and label it plainly as **your own**
+decision. There is no human in the loop mid-run — do not write one.
+
+### Update — 2026-09-17 (escalation)
+
+**Chosen lever:** resume (re-dispatch in place, partial work preserved)
+**Rationale:** the spec was not the problem — the run was terminated for a red
+tree that removing a struct field *necessarily* produces, and the remaining work
+is five compiler-named sites that *close* the errors rather than opening more.
+
+
+### Update — 2026-09-17 21:19 (started)
+
+**Executor:** headless Lace run.
+**Status flipped:** `todo` → `in-progress` (this doc + milestone README row).
+**Read:** phase doc, STANDARDS.md, milestone README, current state at HEAD
+`eb37607e`. Pre-flight tallies confirmed: `defs.rs` `%N` → 1, `target_pane`
+ParamDefs → 3, `retry_in_pane` → 14 across `src/`, tests green.
+**Plan:** Tasks 1–5 in order, batch all enum/struct field removals before the
+first gate; then Task 6 (prompt/docs), Task 7 mutation check, Task 8 capture.

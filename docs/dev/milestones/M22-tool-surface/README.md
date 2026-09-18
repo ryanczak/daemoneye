@@ -74,7 +74,7 @@ final surface, so they go last.
 | 09a | pane-read-tool-removal ([phase-09a-pane-read-tool-removal.md](phase-09a-pane-read-tool-removal.md)) — delete `list_panes` / `read_pane` / `find_in_panes`; 48 → 45 tools | done                   |
 | 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | done                     |
 | 09c | tmux-control-removal ([phase-09c-tmux-control-removal.md](phase-09c-tmux-control-removal.md)) — delete `tmux_control`; 43 → 42, hitting the exit criterion | done                   |
-| 09d | pane-param-retirement ([phase-09d-pane-param-retirement.md](phase-09d-pane-param-retirement.md)) — retire `target_pane` / `retry_in_pane` from **`run_terminal_command` only**; takes the last `%N` out of the tool surface. `read_file` / `edit_file` keep `target_pane` until M21's `host?`. No count change | todo (drafted 2026-09-17) |
+| 09d | pane-param-retirement ([phase-09d-pane-param-retirement.md](phase-09d-pane-param-retirement.md)) — retire `target_pane` / `retry_in_pane` from **`run_terminal_command` only**; takes the last `%N` out of the tool surface. `read_file` / `edit_file` keep `target_pane` until M21's `host?`. No count change | in-progress |
 | 10 | prompt-assets — rewrite `sre.toml`, `assets/prompts/ghost-shell.txt`, the seeded memories (retiring the two tmux knowledge ones) **and** the seeded agent configs; correct `docs/REQUIREMENTS.md`; `doc_truth` updated | todo (not drafted) |
 
 ## Notes
