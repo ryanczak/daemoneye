@@ -88,3 +88,13 @@ Each was run against the current tree (HEAD `1ecb2f46`) and **fails** there.
 - [ ] Mutation check: delete the restored `resolve_command` call again and confirm `run_background_resolves_ghost_script_paths` goes **red**; revert and confirm green. Paste both `test result:` lines. This is the whole point — the deletion must stop being invisible.
 - [ ] `cargo test --lib` reports **1879 passed** (now 1878) — exactly one new test.
 - [ ] All four gates stay green, and every phase-09d acceptance criterion still passes — in particular `grep -o '%[0-9]' src/ai/tools/defs.rs | wc -l` → **0** and the tool counts stay **42 / 28**.
+
+**Update — 2026-09-17 21:20 (fixed by re-dispatch):** the main-path
+`resolve_command` block is restored in `run_background`
+(`src/daemon/executor/foreground.rs:952`), the retry-path call remains
+deleted, and the call site is pinned by
+`run_background_resolves_ghost_script_paths` (real private-tmux invocation;
+asserts the audit record carries the resolved absolute path and the script's
+side effect landed; mutation-checked red→green with both `test result:` lines
+in the phase's Update Log). `cargo test --lib` → 1879 passed / 4 ignored.
+Commit `51710d99`.

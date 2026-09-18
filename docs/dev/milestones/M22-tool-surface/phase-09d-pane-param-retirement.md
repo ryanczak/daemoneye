@@ -836,3 +836,123 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** c754803c22a85fb01432f78eda743742fc1a9ac2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-17 21:05 (started, bug-09d-1 fix)
+
+**Executor:** headless Lace run (re-dispatch for bug-09d-1; the tree is clean at
+`a2b25161` — the phase's own work was already committed by the prior runs).
+**Read:** phase doc, STANDARDS.md, milestone README, `bugs/bug-09d-1.md`, HEAD
+state. Confirmed the two work items: the ghost main-path `resolve_command`
+block was deleted with the retry block (zero production callers), and there is
+no test covering that call site.
+**Plan:** restore only the main-path block inside `run_background` (retry-path
+stays deleted), pin the call site with the mandated regression test, mutation
+check both directions, then re-verify every phase-09d acceptance criterion and
+run the four gates.
+
+### Update — 2026-09-17 21:15 (bug-09d-1 fixed)
+
+**Executor:** headless Lace run. All bug-09d-1 DoD items complete:
+
+- **Restored block** — `src/daemon/executor/foreground.rs:952-959`, the exact
+  pre-phase shape (`resolved_cmd = policy.resolve_command(cmd)` ghost-filtered
+  on `is_ghost`), positioned where it was: after the remote-script detection,
+  before `prompt_and_await_approval`, so approval and the audit record see the
+  resolved command. The retry-path call stays deleted.
+- **Regression test** — `run_background_resolves_ghost_script_paths`
+  (`foreground.rs:1235`), pinned at `run_background` itself: ghost policy with
+  the script whitelisted, duplex IO, a **real private tmux server** pointed at
+  the test's `TMUX_TMPDIR` under `test_home_guard`, a marker-producing script
+  in the test `$HOME/.daemoneye/scripts/`. Asserts the marker file exists
+  (execution reached), the `command` audit record carries the **resolved
+  absolute path**, and the `is_safe` path auto-approves without touching the
+  approval wire. A second leg inside the same test pins `run_with_sudo`: an
+  explicit `sudo <bare-name> extra-arg` invocation must yield a `sudo
+  <absolute path> extra-arg` audit record. tmux-absent hosts skip via the
+  isolation-harness pattern (early return, no assertion). No sleep: the call
+  is awaited; the script completes inside `run_background_in_window`'s
+  3 s inline window.
+- **Mutation (both directions captured mechanically):**
+
+```
+$ cargo test --lib run_background_resolves   # main-path block deleted
+thread 'daemon::executor::foreground::run_background_resolves_ghost_script_paths' panicked:
+the whitelisted script must have executed via the resolved absolute path
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1882 filtered out; finished in 3.10s
+
+$ cargo test --lib run_background_resolves   # block restored
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1882 filtered out; finished in 6.17s
+```
+
+  The red panic names the marker assertion; deletion is no longer invisible.
+- **`cargo test --lib` → 1879 passed, 4 ignored** (baseline 1878 + exactly one
+  new test, as pinned). No test name disappeared.
+- Acceptance greps for the phase's other criteria re-verified unchanged
+  (captured into `.rexymcp/output/acceptance-greps-09d1.txt`): `%N` = 0,
+  `target_pane` ParamDefs = 2, tool counts 42/28, `is_none_or` = 0,
+  `retry_in_pane` in `src` = 1 (Task 8's own assertion), file_ops/ipc/cli zero
+  diff against `2b94ed63`, fallback resolution intact
+  (`default_target_pane` 1, `find_best_target_pane` 2, `uses_pty` 6).
+
+### Update — 2026-09-17 21:20 (end-to-end verification, bug-09d-1)
+
+All commands captured mechanically into `.rexymcp/output/gates-09d1.txt` /
+`acceptance-greps-09d1.txt` / `e2e-rerun.txt` / `test-lib-09d1.txt`.
+
+```
+=== bug-09d-1 criterion: production resolve_command callers (want 1) ===
+src/daemon/executor/foreground.rs:956:        resolved_cmd = policy.resolve_command(cmd);
+count: 1
+=== bug-09d-1 criterion: regression test fn (want 1) ===
+1238:fn run_background_resolves_ghost_script_paths {
+=== live E2E (green run, --nocapture redirected) ===
+### what the test proved, as executed ###
+$ cargo test --lib run_background_resolves -- --nocapture
+    the audit segment contains: {"event":"command",...,"cmd":"/tmp/.tmpXXXX/.daemoneye/scripts/de-ghost-resolve-check.sh"...}
+    the audit segment contains: {"event":"command",...,"cmd":"sudo /tmp/.tmpXXXX/.daemoneye/scripts/de-ghost-resolve-check.sh extra-arg"...}
+    the marker file tmp/resolved-marker.txt exists post-call
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1882 filtered out; finished in 6.17s
+=== phase-09d re-checks after the fix (all unchanged) ===
+%N in defs.rs: 0
+target_pane ParamDefs: 2
+retry_in_pane ParamDefs: 0
+retry_in_pane in src: 1   (Task 8's own assertion)
+RetryInPane files: 0
+sre.toml retry_in_pane: 0
+is_none_or in executor/mod.rs: 0
+def name count: 42 ; deferred_group: None: 28
+file_ops/ops.rs target_pane: 9
+file_ops diff vs 2b94ed63: 0 lines ; ipc.rs/ipc_tests.rs/src/cli diff: 0 lines
+default_target_pane in foreground.rs: 1 ; find_best_target_pane: 2
+prepend_foreground_target in prompt.rs: 1 ; uses_pty in executor/mod.rs: 6
+```
+
+**Gates:**
+
+```
+$ cargo fmt --all                      (clean, exit 0)
+$ cargo build                          Finished `dev` profile ... in 2.4s, zero warnings
+$ cargo clippy --all-targets --all-features -- -D warnings
+    Finished `dev` profile ... in 5.1s, exit 0
+$ cargo test
+  lib:        test result: ok. 1879 passed; 0 failed; 4 ignored
+  main:       test result: ok. 0 passed
+  bug_tracker:test result: ok. 6 passed
+  doc_truth:  test result: ok. 10 passed
+  integration:test result: ok. 32 passed; 2 ignored
+  isolation:  test result: ok. 9 passed; 1 ignored
+  doctests:   test result: ok. 0 passed
+```
+
+**Task 8 PASTE MATCH re-captured after the fix:**
+
+```
+PASTE MATCH >>>
+pane_ids=0 run_params=4
+<<<
+```
+
+`ai::tools::dispatch` → 27 passed; `doc_truth` → 10 passed. Working tree
+committed as `51710d99` (`fix: restore ghost script-path resolution in
+run_background's main path`); status left `in-progress` for the server's
+completion tail.
