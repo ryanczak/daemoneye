@@ -182,6 +182,34 @@ Verifiable conditions — each one checkable by running a command or reading a f
 - [ ] `<command>` produces `<expected output>`.
 - [ ] Test `<test_name>` passes.
 
+**Pre-dispatch check — two rules this document already carries, re-read here
+because they keep being missed at drafting time, not because they are new.**
+Before dispatch, with the finished Spec in front of you:
+
+1. **Re-derive every pinned count *after* accounting for the artifacts this
+   Spec's own tasks create** — the test that must spell the retired name it
+   asserts absent, the note that must contain the tool name being counted, the
+   fixture that adds a row. A count measured against the tree before those
+   artifacts exist is a criterion the executor cannot satisfy. Full rule:
+   § "Every acceptance criterion must be satisfiable, and its mechanics pinned".
+2. **`PASTE MATCH` is a numbered acceptance criterion, not Task prose.** If the
+   self-check verdict lives only in a Spec task or in § End-to-end verification,
+   the executor can complete every enumerated item and still leave the verdict
+   line out, and the check silently moves to the reviewer. Full rule: § "Give
+   the executor a paste-fidelity check it can run itself".
+
+*(Folded 2026-09-18 at M22 close, on PE sign-off. Neither rule is new; this is
+a trigger for two that already existed. Rule 1 was folded 2026-07-27 and
+reinforced 2026-08-08 after M12 broke it twice; M22 phases 08b and 10b broke it
+again — occurrences three and four — each pinning a count without accounting
+for an artifact the same Spec required. Rule 2 was already stated in as many
+words; M22 phase 10b put the verdict in Task 6 prose, the executor omitted the
+line, and the reviewer ran the check instead — the third occurrence of that
+class after M13 phases 05 and 06. The meta-pattern is the reason this lands
+here rather than as new content: at both the M24 and M22 closes, the
+"new" folds turned out to already exist and not be followed. The content was
+right; the trigger at drafting time was missing.)*
+
 ## Test plan
 
 Concrete tests to write — names + what they assert. Typically unit tests against

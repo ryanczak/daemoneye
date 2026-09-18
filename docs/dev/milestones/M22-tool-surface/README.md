@@ -6,7 +6,7 @@ around shells and hosts, add `Category`/`mutates_state()` to `TOOLS` (which
 M25's governor needs), swap the pane context blocks for `[HOSTS]`/`[SHELLS]`,
 and rewrite every prompt asset and seeded memory that still speaks tmux.
 
-**Status:** **closed 2026-09-18** — all 20 phases `done`; retrospective below. Awaiting PE sign-off on the close and on the one proposed calibration trigger. Scoped 2026-09-12, **PE sign-off on the breakdown 2026-09-12**.
+**Status:** **closed 2026-09-18** — all 20 phases `done`; retrospective below. **PE signed off 2026-09-18**; the one calibration trigger landed in `WORKFLOW.md`. Scoped 2026-09-12, **PE sign-off on the breakdown 2026-09-12**.
 Ordering chosen by the PE at the M24 close: M22 ahead of M21 and M23, because
 `Category` is M25's stated dependency and because M21's `host?` params and
 M23's `[HOSTS]/[SHELLS]` blocks both land on a cleaner surface once this is
@@ -144,10 +144,10 @@ and the worst of them were folds that already existed and were not applied.**
    "tmux" — nine asset files legitimately use them. A blanket ban would have
    failed on correct prose and been weakened within a milestone.
 
-### Calibration — proposed for PE sign-off, none landed
+### Calibration — one trigger landed on PE sign-off 2026-09-18
 
-**No fold is proposed, because both candidates already exist.** What is proposed
-instead is a *trigger* for rules that keep getting missed:
+**No new fold, because both candidates already exist.** What landed instead is a
+*trigger* for rules that keep getting missed:
 
 1. **Add a pre-dispatch checklist item to `WORKFLOW.md` § Acceptance criteria:**
    before dispatch, re-read § "Every acceptance criterion must be satisfiable"
@@ -156,7 +156,8 @@ instead is a *trigger* for rules that keep getting missed:
    artifacts this spec's own tasks create, and (b) `PASTE MATCH` appears as a
    numbered acceptance criterion, not as Task prose. This is the third
    reinforcement of (a) and the fourth occurrence of the class overall — the
-   content is right, the trigger is missing.
+   content is right, the trigger is missing. **Landed in `WORKFLOW.md`
+   § Acceptance criteria, PE sign-off 2026-09-18.**
 2. **Held, not proposed:** nothing else reached two occurrences.
 
 Cross-milestone note for the next scoping: **M23 inherits the four `%N` in
