@@ -1,43 +1,36 @@
 # NEXT
 
-**Active phase:** none. **No milestone is in progress** — the next step is to
-scope one.
+**Active phase:** none — **M21 (Host model & SSH) is scoped and awaiting PE
+sign-off on the breakdown.** No phase is drafted until that sign-off; then
+`/rexymcp:architect next` drafts 01a.
 
-**M22 (Tool surface & context) closed 2026-09-18, PE signed off.** The one
-calibration trigger landed in `WORKFLOW.md` § Acceptance criteria.
+Scoping README: `docs/dev/milestones/M21-host-model/README.md` — nine rows
+(01a, 01b, 02–09), ordered credential mechanism → config → argv spawn → SSH
+shell → prompts → approval classes → remote file ops → ghost mapping → live
+close. Each row is tied to a fact measured from the tree on 2026-09-18, listed
+under "Measured before scoping".
 
-**M20 (Shell engine) closed 2026-09-18, PE signed off** — the record was the
-last stale one in the tree. It was code complete 2026-09-09 with every exit
-criterion met and its retrospective written; only the `Status:` line and the
-sign-off were outstanding. Re-verified at the close: all headline deliverables
-present, `cargo test --lib 'shell::'` → 254 passed.
+**Two things the PE decides at sign-off:**
 
-20 phases, 12 bugs all closed, one executor
-(`local-inference-lab/GLM-5.3-Flash-NVFP4-Spark`). Nine phases approved
-first-try, eight after one bounce, two after two, one by architect takeover.
-The retrospective and the exit-criteria table are in
-`docs/dev/milestones/M22-tool-surface/README.md`.
+1. **The live-verification host.** Rows 04, 05 and 09 need a reachable,
+   configured SSH host; the daemon host's `~/.ssh/config` has one stanza.
+   Name it (or a throwaway) before row 04 is drafted.
+2. **`host?` on `spawn_ghost_shell`** — in M21 as its own row after 08, or
+   left for M23. The README lists it under "Not in this milestone" pending
+   this call.
 
-**Headline:** the AI no longer names a tmux pane to run a command. Six pane
-tools out, nine shell tools in, 39 → 42 tools with `Category` on every one, and
-zero `%`-pane identifiers left in any tool description.
+**The finding worth reading before signing off:** the PTY path has **no
+credential-prompt handling** — `shell_exec.rs`, `bg_shell.rs` and
+`shell/client.rs` contain no sudo, password or `CredentialPrompt` code, while
+the tmux path has a complete sentinel mechanism. The design assumes remote
+prompts surface "the same way sudo prompts are today"; on the shipped default
+backend they do not surface at all. Read from code, not yet run: 01a's drafting
+probes it live first. If confirmed, a chat `sudo` on the default backend hangs
+to its 45 s timeout **today**, independent of M21 — which is why 01a is row one.
 
-**Inherited by later milestones, deliberately:** M21 takes `target_pane` on
-`read_file` / `edit_file` and the approval panel's shell/host naming; M23 takes
-the pane context blocks, the `[HOSTS]` block and the remaining `sre.toml` pane
-prose; M25 is now unblocked by `Category` / `mutates_state()`.
+**Closed this session:** M22 (2026-09-18, PE signed off, one calibration
+trigger folded) and M20 (2026-09-18, PE signed off; its record had sat at
+`in-progress` for nine days after completion).
 
-**Upstream push backlog:** the new `WORKFLOW.md` § Acceptance criteria
-pre-dispatch check is local-only — `plugin/templates/WORKFLOW.md` in rexyMCP
-does not carry it yet.
-
-**Next step: scope a milestone.** `/rexymcp:architect next` has nothing to
-draft until one is active. Three candidates, none scoped, all PE-ordered:
-
-| Candidate | Why now | Note |
-|---|---|---|
-| **M23** — Client decoupling & shell UX | Chat outside tmux; `/shells`, `/tail`, the `/agents` picker. The design says **M20–M23 alone satisfy the stated 2.0 requirement** | Inherits M22's pane context blocks, `[HOSTS]`, and the four `%N` in `sre.toml` |
-| **M21** — Host model & SSH | `[hosts]`, `Host::Ssh` shells, ControlMaster, prompt detection | **M23's `[HOSTS]` block cannot exist until a host concept does**, so M21 arguably precedes it |
-| **M25** — Governor & guards | Ten detectors, advisory novelty, `daemoneye calibrate-governor` | Dependency satisfied: M22 put `Category` + `mutates_state()` on all 42 tools |
-
-Run `/rexymcp:architect` (no args) to scope the chosen one.
+**Upstream push backlog:** the `WORKFLOW.md` § Acceptance criteria pre-dispatch
+check is local-only — rexyMCP's `plugin/templates/WORKFLOW.md` lacks it.
