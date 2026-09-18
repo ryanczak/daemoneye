@@ -7,8 +7,10 @@ using the user's own keys and agent, with every credential prompt (host key,
 password, passphrase, **remote sudo**) surfacing through the approval client
 and never reaching the shell log.
 
-**Status:** planning — scoped 2026-09-18, **awaiting PE sign-off on the
-breakdown** before any phase is drafted.
+**Status:** in-progress — scoped 2026-09-18, **PE sign-off on the breakdown
+2026-09-18** with two decisions: the live-verification host is **`pinky`**, and
+`host?` on `spawn_ghost_shell` is in scope as row 08b. No phase drafted yet;
+`/rexymcp:architect next` drafts 01a.
 
 **Depends on:** M20 (the PTY shell substrate every remote shell is), M22
 (`open_shell` / `list_shells` / the `[SHELLS]` block, and the two `host?`
@@ -17,7 +19,7 @@ deferrals this milestone closes). Not on M23 or M25.
 **Exit criteria:**
 
 - **The design's stated exit, live:** a remote `sudo` edit via `edit_file
-  { host }` on a configured host, from a `daemoneye chat` turn, evidenced by
+  { host }` on **`pinky`** (the PE-named host), from a `daemoneye chat` turn, evidenced by
   the host shell's cast log carrying the marker-delimited edit **with the
   password absent from every `"i"` event**. Architect-run per the M14
   convention; the evidence anchor is the cast log plus the session JSONL.
@@ -62,7 +64,7 @@ deferrals this milestone closes). Not on M23 or M25.
 ## Phases
 
 Proposed, pre-measurement — **each will be re-derived and may split at
-drafting on a measured seam**, as every M20 and M22 row did. Ordering: the
+drafting on a measured seam**, as every M20 and M22 row did. **Ten rows** (01a, 01b, 02–08, 08b, 09). Ordering: the
 credential mechanism the PTY path lacks comes first because remote sudo, host
 keys and passphrases all ride on it; config and the argv-carrying spawn path
 are pure and unblock the SSH shell; the SSH shell unblocks everything remote;
@@ -79,6 +81,7 @@ the live close is last.
 | 06 | new-host-approval — `Response::ToolCallPrompt` gains a `classification` (`command` / `remote_shell` / `new_host` / `escape_hatch`); an unconfigured destination is allowed but gated as `new_host` with an offer to persist to `[hosts]`; the client renders the class and names the host; session-scope `A` is per class per host. Ghost `hosts:` enforced — an unlisted host is refused and recorded (the M18 D6 "parked escape-hatch" pattern). The re-homed M19 phase-09 lands here as a classification | todo (not drafted) |
 | 07 | remote-file-ops-over-pty — `read_file` / `edit_file` gain `host?`; the four `target_pane` sites in `file_ops/ops.rs` route the existing hex-encoded python/perl one-liners through an idle shell on the host (or a new one — never into an `interactive` shell) with **marker-delimited** results instead of pane scraping; `target_pane` retired from both tools. Closes M22's deferral. `CLAUDE.md` / `README.md` rows | todo (not drafted) |
 | 08 | ghost-host-mapping — `GhostPolicy.ssh_target` maps onto `HostId` unchanged in meaning: `wrap_remote`'s `ssh <target> '<cmd>'` string-wrap becomes "run in a shell on that host"; `resolve_command`, `remote_stream_cmd` and `remote_materialize_cmd` keep their semantics; `HostSpec.sudo_scripts` is the 1.x remote-sudoers model. The re-homed M19 phase-12 (`sandbox_profile` on a host) is parsed here, not enforced | todo (not drafted) |
+| 08b | spawn-ghost-host — `spawn_ghost_shell { host? }` (§ 2.5): a coordinator names the host a specialist's shells open on; the value must be in the runbook's `hosts:` list (row 06's enforcement) or it is refused as an unlisted host. Rides 08's mapping; **PE added at sign-off** | todo (not drafted) |
 | 09 | live-close — the exit criterion end to end: a remote sudo edit from chat on the configured host; cast log shows the edit, no `"i"` event carries the password; ControlMaster reuse timed. Architect-run; the phase exists so the obligation is a tracked `## Spec` task, not a close-out promise | todo (not drafted) |
 
 ## Notes
@@ -180,10 +183,13 @@ Every row above was shaped by one of these. Each was read from the tree on
   ops"). Row 06 lands the classification; row 08 parses `sandbox_profile`
   without enforcing it.
 
-- **Live environment:** OpenSSH 10.5 on the daemon host; the user's
-  `~/.ssh/config` carries one `Host` stanza. **The PE names the
-  live-verification host** before row 04 is drafted; rows 04, 05 and 09 all
-  need it.
+- **Live environment:** OpenSSH 10.5 on the daemon host. **The
+  live-verification host is `pinky`** (PE decision 2026-09-18). Resolved with
+  `ssh -G pinky`, without connecting: `hostname pinky.home.planetfoo.org`,
+  `port 22`, `user matt`, six `identityfile` entries, and **`controlmaster
+  false`** — so the ControlMaster behaviour rows 04 and 09 measure comes
+  entirely from the flags the daemon passes, not from the user's config.
+  Rows 04, 05, 08b and 09 all target it.
 
 - **User-facing docs that go stale:** `README.md` documents `ssh_target` twice
   (the runbook field table and the script-dispatch note) and "Remote script
@@ -201,9 +207,6 @@ Every row above was shaped by one of these. Each was read from the tree on
 - **The `backend = "tmux"` opt-out path** gets no host features. It remains
   byte-for-byte the 1.x behaviour, including `ssh_target` string-wrapping,
   until it is deleted.
-- **A `HostId` on `spawn_ghost_shell`** (`host?` per § 2.5) — after row 08
-  proves ghost-on-host through the runbook path; its own row if the PE wants
-  it in M21, else M23.
 
 ### Risks, and where each is retired
 
