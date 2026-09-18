@@ -16,8 +16,6 @@ pub(super) trait ToolArgs: Sized {
 pub(super) struct RunTerminalCommandArgs {
     command: String,
     wait: Option<bool>,
-    target_pane: Option<String>,
-    retry_in_pane: Option<String>,
     shell: Option<String>,
     timeout_secs: Option<u64>,
 }
@@ -318,8 +316,6 @@ impl ToolArgs for RunTerminalCommandArgs {
             id.to_string(),
             self.command,
             self.wait,
-            self.target_pane,
-            self.retry_in_pane,
             ts,
             self.shell,
             self.timeout_secs,

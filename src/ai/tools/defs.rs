@@ -74,26 +74,6 @@ pub static TOOLS: &[ToolDef] = &[
                               what it has recorded so far).",
             },
             ParamDef {
-                name: "target_pane",
-                ty: ParamTy::Str,
-                required: false,
-                description: "Optional: tmux pane ID (e.g. \"%3\") for foreground commands. \
-                              Use the pane ID from [FOREGROUND TARGET] when present — that is \
-                              the user's designated work pane. Otherwise resolve from [PANE MAP] \
-                              (format: idx:N=<id>). If still unsure, ask the \
-                              user which pane to target. Do not set this for commands that skip the wait.",
-            },
-            ParamDef {
-                name: "retry_in_pane",
-                ty: ParamTy::Str,
-                required: false,
-                description: "Optional: pane ID of a previous non-wait window (from a \
-                              [Background Task Completed] message) to reuse for a retry. \
-                              Only valid with wait=false. The command runs in the same \
-                              tmux window, keeping the failure output visible in scrollback \
-                              above the new run. Omit to create a fresh window.",
-            },
-            ParamDef {
                 name: "shell",
                 ty: ParamTy::Str,
                 required: false,

@@ -49,7 +49,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/stream.rs` | AI event streaming loop (`run_conversation_loop`); tool execution; response persistence |
 | `src/daemon/executor/` | Tool call dispatch; approval gate (`ToolCallOutcome`); background/foreground execution coordination; `ArtifactCtx` for session-origin stamping |
 | `src/daemon/executor/container.rs` | Container sandbox: runtime probe + D1 uid gate, `evaluate_preflight`, the `docker` argv builders (`run_args`/`stage_args`), `sandbox_window_command`, the image lockfile, and the startup sweep. All decision logic is pure; one spawn site per operation. Gated by `[sandbox] enabled` (default off). |
-| `src/daemon/background/` | Background execution: `run.rs` `run_background_in_window()`, `respawn.rs` `respawn_background_in_pane()`, `gc.rs` `notify_job_completion()` + `gc_bg_windows()` + `OwnedJobInfo`, `helpers.rs` output capture/archive and session notification |
+| `src/daemon/background/` | Background execution: `run.rs` `run_background_in_window()`, `gc.rs` `notify_job_completion()` + `gc_bg_windows()` + `OwnedJobInfo`, `helpers.rs` output capture/archive and session notification |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
 | `src/daemon/digest.rs` | Session digest: structured compaction of conversation history at 30 messages; scans events.jsonl + filesystem for artifacts |
 | `src/daemon/ghost.rs` | `GhostManager::start_session()` — allocates `de-gs-bg-*` / `de-gs-sj-*` / `de-gs-ir-*` windows for autonomous remediation; briefing generation on clean exit |

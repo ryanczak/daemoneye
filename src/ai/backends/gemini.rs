@@ -333,8 +333,6 @@ impl AiClient for GeminiClient {
                                                         None,
                                                         None,
                                                         None,
-                                                        None,
-                                                        None,
                                                     ));
                                                 } else {
                                                     let _ = tx.send(AiEvent::Error(format!(

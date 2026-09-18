@@ -155,6 +155,51 @@ mod tests {
     }
 
     #[test]
+    fn e2e_no_pane_identifiers_in_tool_descriptions() {
+        // The milestone's exit criterion: no %-pane identifier anywhere in the
+        // tool surface the model is shown.
+        let mut offenders: Vec<String> = Vec::new();
+        for t in TOOLS {
+            if t.description.contains('%') {
+                offenders.push(format!("{} (description)", t.name));
+            }
+            for p in t.params {
+                if p.description.contains('%') {
+                    offenders.push(format!("{}.{}", t.name, p.name));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "%-pane identifiers remain: {offenders:?}"
+        );
+
+        let run = TOOLS
+            .iter()
+            .find(|t| t.name == "run_terminal_command")
+            .expect("run_terminal_command must exist");
+        let names: Vec<&str> = run.params.iter().map(|p| p.name).collect();
+        assert!(!names.contains(&"target_pane"), "retired: {names:?}");
+        assert!(!names.contains(&"retry_in_pane"), "retired: {names:?}");
+        for kept in ["command", "wait", "shell", "timeout_secs"] {
+            assert!(names.contains(&kept), "{kept} must stay: {names:?}");
+        }
+        // read_file / edit_file keep theirs until M21's host? lands.
+        for still in ["read_file", "edit_file"] {
+            let t = TOOLS.iter().find(|t| t.name == still).expect("must exist");
+            assert!(
+                t.params.iter().any(|p| p.name == "target_pane"),
+                "{still} keeps target_pane until M21"
+            );
+        }
+        println!(
+            "PASTE MATCH >>>\npane_ids={} run_params={}\n<<<",
+            offenders.len(),
+            run.params.len()
+        );
+    }
+
+    #[test]
     fn e2e_removed_pane_watch_tools_are_absent_from_every_render() {
         let names: Vec<&str> = TOOLS.iter().map(|t| t.name).collect();
         for gone in ["watch_pane", "close_background_window"] {
@@ -246,8 +291,7 @@ mod tests {
         let props = &rtc["parameters"]["properties"];
         assert_eq!(props["command"]["type"], "STRING");
         assert_eq!(props["wait"]["type"], "BOOLEAN");
-        // target_pane is STRING too
-        assert_eq!(props["target_pane"]["type"], "STRING");
+        assert_eq!(props["shell"]["type"], "STRING");
     }
 
     /// Required fields must match the ParamDef required flags.

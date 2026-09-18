@@ -316,29 +316,18 @@ where
                     full_response.push_str(&t);
                     send_response_split(tx, Response::Token(t)).await?;
                 }
-                AiEvent::ToolCall(
-                    id,
-                    cmd,
-                    wait,
-                    target,
-                    retry,
-                    thought_signature,
-                    shell,
-                    timeout_secs,
-                ) => {
+                AiEvent::ToolCall(id, cmd, wait, thought_signature, shell, timeout_secs) => {
                     if routes_to_background(wait) {
                         pending_calls.push(PendingCall::Background {
                             id,
                             cmd,
                             _credential: None,
-                            retry_pane: retry,
                             thought_signature: thought_signature.clone(),
                         });
                     } else {
                         pending_calls.push(PendingCall::Foreground {
                             id,
                             cmd,
-                            target,
                             shell,
                             timeout_secs,
                             thought_signature: thought_signature.clone(),

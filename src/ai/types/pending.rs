@@ -6,7 +6,6 @@ pub enum PendingCall {
         id: String,
         thought_signature: Option<String>,
         cmd: String,
-        target: Option<String>,
         shell: Option<String>,
         timeout_secs: Option<u64>,
     },
@@ -15,7 +14,6 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         cmd: String,
         _credential: Option<String>,
-        retry_pane: Option<String>,
     },
     ScheduleCommand {
         id: String,
@@ -340,7 +338,6 @@ impl PendingCall {
                 id,
                 thought_signature,
                 cmd,
-                target,
                 shell,
                 timeout_secs,
             } => ToolCall {
@@ -350,7 +347,6 @@ impl PendingCall {
                 arguments: args_to_string(serde_json::json!({
                     "command": cmd,
                     "background": false,
-                    "target_pane": target,
                     "shell": shell,
                     "timeout_secs": timeout_secs
                 })),
@@ -359,19 +355,14 @@ impl PendingCall {
                 id,
                 thought_signature,
                 cmd,
-                retry_pane,
                 ..
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "run_terminal_command".to_string(),
-                arguments: {
-                    let mut a = serde_json::json!({"command": cmd, "background": true});
-                    if let Some(rp) = retry_pane {
-                        a["retry_in_pane"] = serde_json::json!(rp);
-                    }
-                    args_to_string(a)
-                },
+                arguments: args_to_string(
+                    serde_json::json!({ "command": cmd, "background": true }),
+                ),
             },
             PendingCall::ScheduleCommand {
                 id,
@@ -1204,7 +1195,6 @@ mod tests {
             id: "x".to_string(),
             thought_signature: None,
             cmd: cmd.to_string(),
-            target: None,
             shell: None,
             timeout_secs: None,
         }
@@ -1320,7 +1310,6 @@ mod tests {
                 thought_signature: None,
                 cmd: "cargo build".to_string(),
                 _credential: None,
-                retry_pane: None,
             },
             PendingCall::WriteScript {
                 id: "x".to_string(),
@@ -1509,18 +1498,15 @@ mod tests {
     }
 
     #[test]
-    fn to_tool_call_background_retry_pane_roundtrip() {
-        let mk = |retry_pane: Option<String>| PendingCall::Background {
+    fn to_tool_call_background_omits_credential_when_absent() {
+        let mk = || PendingCall::Background {
             id: "x".to_string(),
             thought_signature: None,
             cmd: "ls".to_string(),
             _credential: None,
-            retry_pane,
         };
-        let with = parsed_args(&mk(Some("%5".to_string())));
-        assert_eq!(with["retry_in_pane"], "%5");
-        let without = parsed_args(&mk(None));
-        assert!(!without.as_object().unwrap().contains_key("retry_in_pane"));
+        let args = parsed_args(&mk());
+        assert!(!args.as_object().unwrap().contains_key("credential"));
     }
 
     #[test]
@@ -1534,7 +1520,6 @@ mod tests {
                 id: x(),
                 thought_signature: None,
                 cmd: "ls".to_string(),
-                target: None,
                 shell: None,
                 timeout_secs: None,
             },
@@ -1543,7 +1528,6 @@ mod tests {
                 thought_signature: None,
                 cmd: "ls".to_string(),
                 _credential: None,
-                retry_pane: None,
             },
             PendingCall::ScheduleCommand {
                 id: x(),

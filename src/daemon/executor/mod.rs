@@ -284,7 +284,6 @@ where
         PendingCall::Foreground {
             id,
             cmd,
-            target,
             shell,
             timeout_secs,
             ..
@@ -305,19 +304,15 @@ where
                 ));
             }
 
-            // The PTY shell substrate, the default. A ghost session, an
-            // explicit `target_pane`, or `backend = "tmux"` (the opt-out)
-            // falls through to `run_foreground` unchanged, so the opt-out
-            // behaviour is byte-for-byte today's.
+            // The PTY shell substrate, the default. A ghost session or
+            // `backend = "tmux"` (the opt-out) falls through to
+            // `run_foreground` unchanged, so the opt-out behaviour is
+            // byte-for-byte today's.
             let uses_pty = crate::config::Config::load()
                 .unwrap_or_default()
                 .execution
                 .uses_pty();
-            if uses_pty
-                && !is_ghost
-                && session_id.is_some()
-                && target.as_deref().is_none_or(|t| t.is_empty())
-            {
+            if uses_pty && !is_ghost && session_id.is_some() {
                 match prompt_and_await_approval(
                     ApprovalRequest {
                         id,
@@ -405,11 +400,7 @@ where
             }
 
             foreground::run_foreground(
-                foreground::FgArgs {
-                    id,
-                    cmd,
-                    target: target.as_deref(),
-                },
+                foreground::FgArgs { id, cmd },
                 ctx,
                 cache,
                 GhostCtx {
@@ -422,28 +413,18 @@ where
             .await
         }
 
-        PendingCall::Background {
-            id,
-            cmd,
-            retry_pane,
-            ..
-        } => {
+        PendingCall::Background { id, cmd, .. } => {
             // The PTY shell substrate, the default, for a **chat**
             // session's plain background command. A ghost session (no
-            // substrate shell of its own and sandboxed away from the host),
-            // an explicit `retry_in_pane` (it names a tmux pane, which the
-            // substrate has none of), or `backend = "tmux"` (the opt-out)
-            // falls through to `run_background` unchanged, so the opt-out
-            // behaviour is byte-for-byte today's.
+            // substrate shell of its own and sandboxed away from the host)
+            // or `backend = "tmux"` (the opt-out) falls through to
+            // `run_background` unchanged, so the opt-out behaviour is
+            // byte-for-byte today's.
             let uses_pty = crate::config::Config::load()
                 .unwrap_or_default()
                 .execution
                 .uses_pty();
-            if uses_pty
-                && !is_ghost
-                && session_id.is_some()
-                && retry_pane.as_deref().is_none_or(|p| p.is_empty())
-            {
+            if uses_pty && !is_ghost && session_id.is_some() {
                 match prompt_and_await_approval(
                     ApprovalRequest {
                         id,
@@ -546,7 +527,6 @@ where
             foreground::run_background(
                 id,
                 cmd,
-                retry_pane.as_deref(),
                 ctx,
                 GhostCtx {
                     policy: ghost_policy.as_ref(),
@@ -820,8 +800,8 @@ where
                 .as_deref()
                 .map(|tp| {
                     format!(
-                        "[FOREGROUND TARGET] {} — target_pane=\"{}\" for run_terminal_command(background=false)\n",
-                        tp, tp
+                        "[FOREGROUND TARGET] {tp} — the pane daemon-resolved foreground \
+                         commands run in\n",
                     )
                 })
                 .unwrap_or_default();
@@ -1346,7 +1326,6 @@ fn exclude_chat_pane(mut panes: Vec<PaneInfo>, chat_pane: Option<&str>) -> Vec<P
 }
 
 async fn find_best_target_pane<W, R>(
-    specified_pane: Option<&str>,
     chat_pane: Option<&str>,
     cache: &Arc<SessionCache>,
     sessions: &SessionStore,
@@ -1358,21 +1337,6 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    let ai_target = specified_pane.and_then(|tp| {
-        if chat_pane == Some(tp) {
-            return None;
-        }
-        if cache.is_home_pane(tp) {
-            Some(tp.to_string())
-        } else {
-            None
-        }
-    });
-
-    if let Some(tp) = ai_target {
-        return Ok(tp);
-    }
-
     // Check for a user-selected default target pane in the session.
     let default_target: Option<String> = session_id.and_then(|sid| {
         with_sessions(sessions, |store| {

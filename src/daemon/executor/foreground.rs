@@ -3,7 +3,7 @@ use super::prompt_and_await_approval;
 use super::send_response_split;
 use super::{ApprovalRequest, GhostCtx, SessionCtx, ToolCallOutcome};
 use crate::ai::mask_sensitive;
-use crate::daemon::background::{respawn_background_in_pane, run_background_in_window};
+use crate::daemon::background::run_background_in_window;
 use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe, with_sessions};
 use crate::daemon::utils::{
     command_has_sudo, extract_command_output, fingerprint_pam_configured, interactive_destination,
@@ -18,7 +18,6 @@ use crate::util::UnpoisonExt;
 pub(super) struct FgArgs<'a> {
     pub id: &'a str,
     pub cmd: &'a str,
-    pub target: Option<&'a str>,
 }
 use crate::tmux::cache::SessionCache;
 use std::sync::Arc;
@@ -130,7 +129,7 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    let FgArgs { id, cmd, target } = args;
+    let FgArgs { id, cmd } = args;
     let SessionCtx {
         session_id,
         session_name,
@@ -143,94 +142,6 @@ where
         ..
     } = ghost_ctx;
 
-    // C3a: pane ID format guard — reject anything that doesn't look like %N.
-    // Models occasionally pass window-relative indices ("0", "1") instead of
-    // the actual tmux pane ID ("%7").  Catch this early and return a corrective
-    // error so the model can self-fix without a silent wrong-pane execution.
-    if let Some(tp) = target
-        && !tp.is_empty()
-        && chat_pane != Some(tp)
-    {
-        let valid_format =
-            tp.starts_with('%') && tp.len() > 1 && tp[1..].bytes().all(|b| b.is_ascii_digit());
-        if !valid_format {
-            let correct = session_id
-                .and_then(|sid| {
-                    with_sessions(sessions, |store| {
-                        store.get(sid)?.default_target_pane.clone()
-                    })
-                })
-                .unwrap_or_default();
-            let suggestion = if correct.is_empty() {
-                "Check [PANE MAP] to find the correct pane ID, or ask the user which pane to target."
-                    .to_string()
-            } else {
-                format!(
-                    "The foreground target for this session is {correct}. \
-                     Pass target_pane=\"{correct}\" or omit it to use the default."
-                )
-            };
-            let msg = format!(
-                "Error: '{tp}' is not a valid tmux pane ID. \
-                 Pane IDs start with '%' followed by digits (e.g. \"%3\"). \
-                 {suggestion}"
-            );
-            send_response_split(
-                tx,
-                Response::ToolResult {
-                    tool_call_id: id.to_string(),
-                    output: msg.clone(),
-                },
-            )
-            .await?;
-            return Ok(ToolCallOutcome::Result(msg));
-        }
-    }
-
-    // C3b: stale-pane guard — if the AI specified a target_pane that is no longer
-    // in the cache (pane was closed or session changed), return an error with the
-    // current pane map so the AI can re-discover panes before retrying.
-    if let Some(tp) = target
-        && chat_pane != Some(tp)
-    {
-        let tp_owned = tp.to_string();
-        let pane_exists = tmux::off_runtime("pane-exists", move || tmux::pane_exists(&tp_owned))
-            .await
-            .unwrap_or(false);
-        if !pane_exists {
-            let correct = session_id
-                .and_then(|sid| {
-                    with_sessions(sessions, |store| {
-                        store.get(sid)?.default_target_pane.clone()
-                    })
-                })
-                .unwrap_or_default();
-            let suggestion = if correct.is_empty() {
-                "Check the [PANE MAP] in the context block to discover current pane IDs."
-                    .to_string()
-            } else {
-                format!(
-                    "The foreground target for this session is {correct}. \
-                     Pass target_pane=\"{correct}\" or omit it to use the default."
-                )
-            };
-            let pane_map = cache.pane_map_summary(chat_pane);
-            let msg = format!(
-                "Error: target_pane '{tp}' no longer exists in the current session. \
-                 {suggestion}\n{pane_map}"
-            );
-            send_response_split(
-                tx,
-                Response::ToolResult {
-                    tool_call_id: id.to_string(),
-                    output: msg.clone(),
-                },
-            )
-            .await?;
-            return Ok(ToolCallOutcome::Result(msg));
-        }
-    }
-
     // Compute a best-guess target pane hint synchronously so the approval
     // prompt can show which pane will be used.
     let default_target: Option<String> = session_id.and_then(|sid| {
@@ -238,21 +149,16 @@ where
             store.get(sid)?.default_target_pane.clone()
         })
     });
-    let target_hint: Option<String> = (|| {
-        if let Some(tp) = target
-            && chat_pane != Some(tp)
-            && cache.is_home_pane(tp)
-        {
-            return Some(tp.to_string());
-        }
+    let target_hint: Option<String> = {
         if let Some(ref dtp) = default_target
             && chat_pane != Some(dtp.as_str())
             && cache.is_home_pane(dtp)
         {
-            return Some(dtp.clone());
+            Some(dtp.clone())
+        } else {
+            None
         }
-        None
-    })();
+    };
 
     let cmd_id = match prompt_and_await_approval(
         ApprovalRequest {
@@ -273,7 +179,7 @@ where
     };
 
     let target_owned =
-        match find_best_target_pane(target, chat_pane, cache, sessions, session_id, tx, rx).await {
+        match find_best_target_pane(chat_pane, cache, sessions, session_id, tx, rx).await {
             Ok(tp) => tp,
             Err(_) => return Err(anyhow::anyhow!("EOF")),
         };
@@ -917,10 +823,9 @@ where
                          {target_str} — now connected to {destination}.\n\
                          The command did not exit; the pane is running an \
                          interactive shell on the remote host.\n\
-                         To run commands there, use \
-                         `run_terminal_command(target_pane=\"{target_str}\", \
-                         background=false)` — each call is injected into \
-                         the open remote shell.\n\
+                         The daemon keeps targeting this pane — run plain \
+                         `run_terminal_command(background=false)` calls and \
+                         each is injected into the open remote shell.\n\
                          Do NOT call `{cmd}` again — the session is already \
                          established.\n\
                          <pane_snapshot>\n{pane_snap}\n</pane_snapshot>"
@@ -1011,7 +916,6 @@ where
 pub(super) async fn run_background<W, R>(
     id: &str,
     cmd: &str,
-    retry_pane: Option<&str>,
     ctx: SessionCtx<'_>,
     ghost_ctx: GhostCtx<'_>,
     tx: &mut W,
@@ -1032,88 +936,6 @@ where
         is_ghost,
         ..
     } = ghost_ctx;
-    // N11: retry path — reuse an existing background pane via respawn-pane.
-    if let Some(pane_id) = retry_pane {
-        let pid = pane_id.to_string();
-        let pane_alive = tmux::off_runtime("pane-exists", move || crate::tmux::pane_exists(&pid))
-            .await
-            .unwrap_or(false);
-        if !pane_alive {
-            let msg = format!(
-                "Error: retry_in_pane '{}' does not exist. Use background=true without \
-                 retry_in_pane to start a fresh background window.",
-                pane_id
-            );
-            send_response_split(
-                tx,
-                Response::ToolResult {
-                    tool_call_id: id.to_string(),
-                    output: msg.clone(),
-                },
-            )
-            .await?;
-            return Ok(ToolCallOutcome::Result(msg));
-        }
-        let win_name: String = session_id
-            .and_then(|sid| {
-                with_sessions(sessions, |store| {
-                    store
-                        .get(sid)?
-                        .bg_windows
-                        .iter()
-                        .find(|w| w.pane_id == pane_id)
-                        .map(|w| w.window_name.clone())
-                })
-            })
-            .unwrap_or_else(|| pane_id.to_string());
-        let resolved_retry_cmd;
-        let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
-            resolved_retry_cmd = policy.resolve_command(cmd);
-            resolved_retry_cmd.as_str()
-        } else {
-            cmd
-        };
-
-        let cmd_id = match prompt_and_await_approval(
-            ApprovalRequest {
-                id,
-                cmd,
-                background: true,
-                target_pane_hint: None,
-            },
-            session_id,
-            ghost_policy,
-            tx,
-            rx,
-        )
-        .await?
-        {
-            Ok(id) => id,
-            Err(outcome) => return Ok(outcome),
-        };
-        let session_id_owned = session_id.map(|s| s.to_string());
-        let output = respawn_background_in_pane(
-            pane_id,
-            &win_name,
-            cmd_id,
-            cmd,
-            session_name,
-            session_id_owned,
-            sessions.clone(),
-        )
-        .await;
-        send_response_split(
-            tx,
-            Response::ToolResult {
-                tool_call_id: id.to_string(),
-                output: output.clone(),
-            },
-        )
-        .await?;
-        log_command(session_id, "background_retry", "", cmd, "approved", &output);
-        return Ok(ToolCallOutcome::Result(output));
-    }
-
     // § 2.4 remote execution: a ghost ssh_target whitelisted-script invocation ships to
     // the remote either by streaming (default, no remote disk) or — under sudo — by a
     // persistent materialize to the sudoers-authorized path.
@@ -1127,16 +949,6 @@ where
                 .as_ref()
                 .map(|p| p.run_with_sudo)
                 .unwrap_or(false));
-
-    // Ghost shells: resolve bare/relative script names to absolute path.
-    let resolved_cmd;
-    let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
-        resolved_cmd = policy.resolve_command(cmd);
-        resolved_cmd.as_str()
-    } else {
-        cmd
-    };
-
     let cmd_id = match prompt_and_await_approval(
         ApprovalRequest {
             id,

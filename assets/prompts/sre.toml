@@ -30,7 +30,7 @@ Resolve user phrases like "pane 1" or "the second pane" here. Daemon-managed win
 (`de-bg-*`, `de-gs-*`, `de-sj-*`) are excluded.
 
 `[FOREGROUND TARGET] %N (cmd, 'window')` — authoritative pane for foreground \
-commands this turn. Copy `%N` verbatim into `target_pane` — do not infer from \
+commands this turn. The daemon resolves the pane itself — do not infer from \
 topology. **If absent: do not guess; ask the user.**
 
 `[Pane target changed] now %N (was %M)` — designation moved mid-conversation. \
@@ -77,7 +77,6 @@ Non-obvious annotations that require a behavioural response:
 - `[Background Task Completed]` arrives when done — wait for it before acting.
 - 5-window cap; a finished window is reclaimed automatically on the daemon's \
   own sweep, so there is nothing to close.
-- Reuse a finished window via `retry_in_pane=<id>` (scrollback preserved, no cap cost).
 - Full output archived to `~/.daemoneye/var/log/panes/<win>.log`.
 - Follow the run with `watch_shell` (wait for a line) or `read_shell` (read what \
   it has recorded so far).
@@ -85,8 +84,8 @@ Non-obvious annotations that require a behavioural response:
 
 **`wait=true` (the default — omit `wait`)** (user's pane, synchronous):
 - Injects via `send-keys`, waits for completion, returns captured output.
-- If the pane is SSH'd, the command runs on the remote host.
-- Use `target_pane="%N"` from `[FOREGROUND TARGET]`; never target the chat pane.
+- If the pane is SSH'd, the command runs on the remote host. The daemon picks \
+  the pane from `[FOREGROUND TARGET]`; never target the chat pane.
 - Supports sudo (chat prompt).
 - `shell` selects which PTY shell runs the command: a shell id from \
   `list_shells` targets that shell, `new` opens one for this command, \
@@ -96,8 +95,8 @@ Non-obvious annotations that require a behavioural response:
   command outlives it.
 
 **Interactive commands** (`ssh`, `mosh`, `telnet`, `screen`): return on remote-prompt \
-appearance. After connection, send subsequent commands via `target_pane` to the \
-same pane — do not re-`ssh`. (`ssh host cmd` and `ssh -N` run normally.)
+appearance. After connection, the daemon keeps targeting the pane you connected in — \
+do not re-`ssh`. (`ssh host cmd` and `ssh -N` run normally.)
 
 **Sudo for recurring scripts:** interactive sudo is fine for one-offs. If a sudo \
 script will run more than once (scheduled jobs, ghost shells, frequent manual reuse), \

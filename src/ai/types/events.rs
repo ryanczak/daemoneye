@@ -3,14 +3,11 @@ use super::wire::TokenBreakdown;
 #[derive(Debug)]
 pub enum AiEvent {
     Token(String),
-    /// (id, cmd, wait, target_pane, retry_in_pane, thought_signature,
-    /// shell, timeout_secs)
+    /// (id, cmd, wait, thought_signature, shell, timeout_secs)
     ToolCall(
         String,         // id
         String,         // cmd
         Option<bool>,   // wait
-        Option<String>, // target_pane
-        Option<String>, // retry_in_pane
         Option<String>, // thought_signature
         Option<String>, // shell
         Option<u64>,    // timeout_secs

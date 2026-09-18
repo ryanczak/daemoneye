@@ -830,8 +830,6 @@ async fn do_ghost_turn(
                         id,
                         command,
                         _wait,
-                        _target_pane,
-                        retry_in_pane,
                         thought_signature,
                         _shell,
                         _timeout_secs,
@@ -841,7 +839,6 @@ async fn do_ghost_turn(
                             cmd: command,
                             thought_signature,
                             _credential: None,
-                            retry_pane: retry_in_pane,
                         });
                     }
                     AiEvent::ListRunbooks {
