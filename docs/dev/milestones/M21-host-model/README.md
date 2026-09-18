@@ -72,7 +72,7 @@ the live close is last.
 
 | # | Phase | Status |
 |----|-------|--------|
-| 01a | credential-prompt-on-pty — detect a `sudo` password prompt on a **local** PTY shell and round-trip it through `Response::CredentialPrompt` / `CredentialResponse`, the mechanism the tmux path has (`SUDO_PROMPT` sentinel, `wait_for_sudo_prompt_and_inject`) and the PTY path has **none** of. Fixes local sudo on the shipped default; every remote prompt reuses it | todo (not drafted) |
+| 01a | credential-prompt-on-pty ([phase-01a-credential-prompt-on-pty.md](phase-01a-credential-prompt-on-pty.md)) — detect a `sudo` password prompt on a **local** PTY shell and round-trip it through `Response::CredentialPrompt` / `CredentialResponse`, the mechanism the tmux path has and the PTY path has **none** of. **Drafting probe confirmed the defect live:** real `sudo` on a PTY shell emits `[sudo] password for matt: ` and **no end marker ever arrives** | todo |
 | 01b | input-scrub-on-prompt — the shell host stops writing `"i"` events while the screen shows a password/passphrase prompt (writes a redaction marker instead). Host-process side (`backend.rs` / `log.rs`), separate from 01a's daemon side. Mutation: a typed secret must be absent from the cast | todo (not drafted) |
 | 02 | host-config — `src/host.rs`: `HostId`, `HostSpec { ssh, tags, sudo_scripts, sandbox_profile }`, `[hosts.<name>]` as a free-form map on `Config` (the `[models.<name>]` subtable mechanism `doc_truth` already handles), template docs, validation. Runbook `hosts: [...]` frontmatter → `GhostConfig.hosts`. Pure, additive | todo (not drafted) |
 | 03 | shell-spawn-argv — the spawn path carries a program **and its arguments** end to end (`shell-host` clap → `launch::spawn_detached` → `PtyShell::spawn`), and `ShellRecord` gains `host: HostId` (the 9-site struct change 04a measured). `list_shells` and `[SHELLS]` show the host. Local behaviour byte-identical | todo (not drafted) |
@@ -121,9 +121,14 @@ Every row above was shaped by one of these. Each was read from the tree on
   remote prompts surface "the same way sudo prompts are today" — **on the PTY
   path they do not surface today**. Two consequences: row 01a is a
   pre-requisite, not a nicety; and **a chat-session `sudo` on the shipped
-  default backend almost certainly hangs to its 45 s timeout right now**. That
-  is read from code, not run — 01a's drafting probes it live before writing a
-  word of spec.
+  default backend almost certainly hangs to its 45 s timeout right now**. **Confirmed live at 01a drafting
+  (2026-09-18)**, driving a real `daemoneye shell-host` over its socket: `sudo
+  -k; sudo true` emits `[sudo] password for matt: ` and the end marker **never
+  arrives** — the command runs to its deadline and the user is never asked.
+  A second finding from the same probe: a shell parked at a prompt **eats the
+  next command's bytes**, the same poisoning `shell_exec.rs:219` already guards
+  for interactive sessions, which is why 01a's give-up path must un-park the
+  shell rather than just return.
 
 - **No ssh prompt pattern exists.** `continue connecting`, `passphrase`,
   `Permission denied`, `Host key` — zero hits in `src/` outside the two
