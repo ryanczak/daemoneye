@@ -1,7 +1,7 @@
 # Phase 08b: `get_terminal_context` → `get_shell_context { scope }`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 08a (the `[SHELLS]` / `[DEFAULT SHELL]` block this tool's
 narrow scope returns), 03a (the scope-refusal shape), and the whole 09 row
 (`%N` is out of the tool surface). All **done**.
@@ -752,3 +752,53 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 64c2aadcea5f893435e3e5100c016c424711d072
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (145 turns, one
+  run); review by Claude (direct).
+- **Review re-runs:** `cargo fmt --all --check`, `cargo build`, `cargo clippy
+  --all-targets --all-features -- -D warnings` all exit 0; `cargo test` → lib
+  1885 passed / 4 ignored, bug_tracker 6, doc_truth 10, integration 32 / 2
+  ignored, isolation 9 / 1 ignored. Every acceptance and must-survive criterion
+  re-run by hand at HEAD `b39b52df` and on target: the retired identifier is
+  gone from `src/` (see Calibration), `GetTerminalContext` 0, `sre.toml` 0,
+  `ContextScope::Window` gone from the executor arm, tools 42 / 28 unchanged,
+  `ai::tools::dispatch` 28, `knowledge::shell` 67. Both mutations were
+  re-applied by the reviewer: aliasing `"window"` to `Ok(Session)` reddens
+  `context_scope_rejects_retired_window_and_run`, and returning the block
+  unconditionally reddens `shells_only_context_without_shells_is_not_empty`;
+  both green on revert. The Task 8 capture was re-run and diffed against the
+  pasted block — **byte-exact**, and it matches the line the Spec pinned.
+- **Scope deviations:** none. `docs/REQUIREMENTS.md` and the tmux-pane-toolkit
+  memory were left naming the retired tool, which the phase doc directs and the
+  Update Log records; phase 10 owns both.
+- **Calibration:** two items, both **architect-side**, both held at one
+  occurrence — no fold proposed.
+  1. **A criterion pinned a tool-name string the phase's own test must
+     contain.** `grep -rn 'get_terminal_context' src/ --include=*.rs | wc -l →
+     0` cannot reach 0: Task 8's test asserts the retired name's *absence* and
+     so must spell it. The measured value is 3, all three inside
+     `e2e_shell_context_tool_surface`; excluding that file gives **0**, which is
+     the real property. Phase 09d had already written this rule down —
+     *"Criteria prefer identifiers over tool-name strings because Task 8's test
+     necessarily contains the literal"* — and this drafting did not carry it
+     forward. Second occurrence of the class.
+  2. **The PASTE MATCH self-check recipe assumes the capture is the entry's
+     first fenced block.** This phase's Spec ordered mutations (Task 7) before
+     the capture (Task 8), so the end-to-end entry opens with mutation
+     `test result:` fences and the recipe's `awk` extracts the wrong one. The
+     executor hit this, **disclosed it in its Notes for review**, and ran a
+     correct comparison whose command it recorded verbatim. A third distinct
+     failure mode for that extraction, after the whole-doc grep and the
+     first-match anchor the recipe already documents.
+- **Artifact wart, recorded not bounced:** the end-to-end entry carries a
+  duplicated self-check stanza whose fence holds the *command* rather than its
+  output, and an earlier stanza claims a `PASTE MATCH` verdict that the command
+  it names could not have produced given item 2 above. The correction lives in
+  the following entry rather than replacing the stale stanza. The underlying
+  property is sound — the reviewer verified byte-exactness independently — and
+  the executor surfaced the problem rather than letting it pass silently, which
+  is the behaviour the fold exists to produce.

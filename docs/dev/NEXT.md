@@ -1,18 +1,16 @@
 # NEXT
 
-**Active phase:** `docs/dev/milestones/M22-tool-surface/phase-08b-shell-context-tool.md`
-— 08b, shell-context-tool. **Drafted 2026-09-18**, status `todo`.
+**Active phase:** none — `phase-08b-shell-context-tool` was approved 2026-09-18
+(`approved_first_try`). `get_terminal_context` is now `get_shell_context` with
+the `"shells"` / `"session"` / `"all"` vocabulary, and the retired `"window"`
+and the design's `"run"` are refused rather than aliased. Tool counts unchanged
+at 42 / 28.
 
-Renames `get_terminal_context` to `get_shell_context` and replaces its scope
-vocabulary with `"shells"` / `"session"` / `"all"`, refusing the retired
-`"window"` and the design's `"run"` rather than aliasing either. The `"shells"`
-breadth returns 08a's `[SHELLS]` / `[DEFAULT SHELL]` block alone and makes no
-tmux call. No tool count change: 42 tools, 28 core + 14 deferred.
+**One M22 row remains: 10** (prompt-assets) — rewrite `sre.toml`,
+`assets/prompts/ghost-shell.txt`, the seeded memories (retiring the two tmux
+knowledge ones) and the seeded agent configs, and correct
+`docs/REQUIREMENTS.md`. It also owns the four stale `get_terminal_context`
+references 08b deliberately left in `docs/REQUIREMENTS.md` (3) and
+`assets/memory/knowledge/tmux-pane-toolkit.md` (1).
 
-Every acceptance criterion was run against HEAD `26804ecf` and fails there.
-
-Dispatch with `/rexymcp:dispatch phase-08b`.
-
-After 08b, one M22 row remains: **10** (prompt-assets), which also owns the
-stale `get_terminal_context` references 08b deliberately leaves in
-`docs/REQUIREMENTS.md` and `assets/memory/knowledge/tmux-pane-toolkit.md`.
+Run `/rexymcp:architect next` to draft it.
