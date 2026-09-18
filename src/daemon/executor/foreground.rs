@@ -949,6 +949,16 @@ where
                 .as_ref()
                 .map(|p| p.run_with_sudo)
                 .unwrap_or(false));
+
+    // Ghost shells: resolve bare/relative script names to absolute path.
+    let resolved_cmd;
+    let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
+        resolved_cmd = policy.resolve_command(cmd);
+        resolved_cmd.as_str()
+    } else {
+        cmd
+    };
+
     let cmd_id = match prompt_and_await_approval(
         ApprovalRequest {
             id,
@@ -1206,4 +1216,231 @@ mod tests {
         assert!(s.is_some());
         assert!(s.as_ref().unwrap().contains("2"));
     }
+}
+
+/// Regression pin for bug-09d-1: `run_background`'s **main** path must still
+/// resolve a ghost-whitelisted bare script name to its absolute path (and
+/// apply `run_with_sudo`) before execution. Phase-09d deleted the retry
+/// block's resolver and took the main-path block with it; the deletion was
+/// invisible to every gate because no test exercised this call site.
+///
+/// Driven at `run_background` itself with ghost auto-approval (no `tx`/`rx`
+/// traffic), a real private tmux server pointed at the test's `TMUX_TMPDIR`,
+/// and a marker-producing script in the test `$HOME/.daemoneye/scripts/`. The
+/// script's bytes land in the pane the moment `send-keys` fires, so the call —
+/// which takes the 3 s inline-completion window — is awaited, not polled. The
+/// assertions read the audit event and the marker file: both must carry the
+/// **absolute** resolved path, and the marker must exist, i.e. the rewritten
+/// command reached execution. Scoped to a private tmux server under
+/// [`crate::test_home_guard`]; when no tmux binary exists it returns without
+/// asserting, exactly like the isolation harness.
+#[test]
+fn run_background_resolves_ghost_script_paths() {
+    if std::process::Command::new("tmux")
+        .arg("-V")
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
+        eprintln!("SKIP: tmux not available");
+        return;
+    }
+    let _lock = crate::test_home_guard();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let saved: Vec<(&str, Option<String>)> = ["HOME", "TMUX_TMPDIR", "TMUX", "TMUX_PANE"]
+        .into_iter()
+        .map(|k| (k, std::env::var(k).ok()))
+        .collect();
+    struct Restore(Vec<(&'static str, Option<String>)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            for (k, v) in &self.0 {
+                unsafe {
+                    match v {
+                        Some(val) => std::env::set_var(k, val),
+                        None => std::env::remove_var(k),
+                    }
+                }
+            }
+        }
+    }
+    let _restore = Restore(saved);
+    unsafe {
+        std::env::set_var("HOME", tmp.path());
+        std::env::set_var("TMUX_TMPDIR", tmp.path());
+        std::env::remove_var("TMUX");
+        std::env::remove_var("TMUX_PANE");
+    }
+    crate::config::Config::ensure_dirs().expect("ensure dirs");
+
+    let marker = tmp.path().join("resolved-marker.txt");
+    let script_name = "de-ghost-resolve-check.sh";
+    let script_body = format!(
+        "#!/bin/sh\nprintf 'RESOLVED-EXEC-CHECK\\n'\ntouch '{}'\n",
+        marker.display()
+    );
+    let script_path = crate::scripts::scripts_dir().join(script_name);
+    std::fs::write(&script_path, script_body).expect("write ghost script");
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+        .expect("make script executable");
+
+    let sessions = crate::daemon::session::SessionStore::new();
+    let session_id = "ghost-resolve-check";
+
+    // The job window needs a session to live in, on the private server.
+    let session_name = "de-rb-resolve-check";
+    let out = std::process::Command::new("tmux")
+        .args(["new-session", "-d", "-s", session_name])
+        .output()
+        .expect("spawn tmux new-session");
+    assert!(
+        out.status.success(),
+        "creating the private tmux session failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let policy = crate::daemon::policy::GhostPolicy {
+        auto_approve_scripts: vec![script_name.to_string()],
+        run_with_sudo: false,
+        ssh_target: None,
+        auto_approve_commands: true,
+    };
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build runtime");
+    let (text, got_prompt) = rt.block_on(async {
+        // The ghost is_safe path reads neither stream, but both ends must
+        // exist so no write ever blocks: the client halves are held for the
+        // whole call (the final ToolResult write needs the read half live),
+        // the read side is a BufReader, and nothing is ever written to it.
+        let (_client_tx, daemon_rx) = tokio::io::duplex(64 * 1024);
+        let (mut daemon_tx, _client_rx) = tokio::io::duplex(64 * 1024);
+        let mut daemon_rx = tokio::io::BufReader::new(daemon_rx);
+        let ctx = SessionCtx {
+            session_id: Some(session_id),
+            session_name,
+            chat_pane: None,
+            sessions: &sessions,
+        };
+        let ghost_ctx = GhostCtx {
+            policy: Some(&policy),
+            is_ghost: true,
+        };
+        let outcome = run_background(
+            "rb_resolve_check",
+            script_name,
+            ctx,
+            ghost_ctx,
+            &mut daemon_tx,
+            &mut daemon_rx,
+        )
+        .await
+        .expect("run_background must not error on the ghost path");
+        match outcome {
+            ToolCallOutcome::Result(t) => (t, false),
+            ToolCallOutcome::UserMessage(t) => (format!("[redirected] {t}"), true),
+            ToolCallOutcome::SpawnGhostSession { .. } => (String::new(), true),
+        }
+    });
+    assert!(
+        !got_prompt,
+        "the ghost is_safe path must auto-approve without touching the approval wire"
+    );
+    assert!(
+        !text.contains("Error"),
+        "the background dispatch must not fail: {text}"
+    );
+    // The script completes the moment send-keys lands, even though completion
+    // signalling needs the real daemon's notify listener — so on the test
+    // binary the call takes the 3 s slow path while the invocation is already
+    // on disk.
+    assert!(
+        marker.exists(),
+        "the whitelisted script must have executed via the resolved absolute path"
+    );
+
+    // The audit trail must carry the resolved command.
+    let resolved = script_path.display().to_string();
+    let seg = crate::config::current_event_segment_path();
+    let content = std::fs::read_to_string(&seg).expect("read the event segment");
+    let has_resolved_record = content.lines().any(|line| {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            return false;
+        };
+        v.get("event").and_then(|e| e.as_str()) == Some("command")
+            && v.get("cmd").and_then(|c| c.as_str()) == Some(resolved.as_str())
+    });
+    assert!(
+        has_resolved_record,
+        "the audit log must record the resolved absolute path `{resolved}`, not the \
+         bare `{script_name}` — event segment:\n{content}"
+    );
+
+    // run_with_sudo leg: the same whitelisted script invoked with an explicit
+    // `sudo` prefix is resolved identically — the leading sudo is stripped for
+    // whitelist matching and re-applied, so the audit record carries
+    // `sudo <absolute path> args`.
+    let sudo_policy = crate::daemon::policy::GhostPolicy {
+        run_with_sudo: true,
+        ..policy.clone()
+    };
+    let (sudo_text, sudo_got_prompt) = rt.block_on(async {
+        let (_client_tx, daemon_rx) = tokio::io::duplex(64 * 1024);
+        let (mut daemon_tx, _client_rx) = tokio::io::duplex(64 * 1024);
+        let mut daemon_rx = tokio::io::BufReader::new(daemon_rx);
+        let ctx = SessionCtx {
+            session_id: Some(session_id),
+            session_name,
+            chat_pane: None,
+            sessions: &sessions,
+        };
+        let ghost_ctx = GhostCtx {
+            policy: Some(&sudo_policy),
+            is_ghost: true,
+        };
+        let outcome = run_background(
+            "rb_resolve_check_sudo",
+            &format!("sudo {script_name} extra-arg"),
+            ctx,
+            ghost_ctx,
+            &mut daemon_tx,
+            &mut daemon_rx,
+        )
+        .await
+        .expect("run_background must not error on the ghost sudo path");
+        match outcome {
+            ToolCallOutcome::Result(t) => (t, false),
+            ToolCallOutcome::UserMessage(t) => (format!("[redirected] {t}"), true),
+            ToolCallOutcome::SpawnGhostSession { .. } => (String::new(), true),
+        }
+    });
+    assert!(
+        !sudo_got_prompt,
+        "a whitelisted sudo-prefixed script must still auto-approve"
+    );
+    let sudo_resolved = format!("sudo {} extra-arg", script_path.display());
+    let content2 = std::fs::read_to_string(&seg).expect("read the event segment");
+    let has_sudo_record = content2.lines().any(|line| {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            return false;
+        };
+        v.get("event").and_then(|e| e.as_str()) == Some("command")
+            && v.get("cmd").and_then(|c| c.as_str()) == Some(sudo_resolved.as_str())
+    });
+    assert!(
+        has_sudo_record,
+        "the audit log must record the sudo-prefixed resolved path `{sudo_resolved}` — \
+         event segment:\n{content2}"
+    );
+    assert!(
+        !sudo_text.contains("Error"),
+        "the sudo leg's background dispatch must not fail: {sudo_text}"
+    );
+
+    let _ = std::process::Command::new("tmux")
+        .args(["kill-server"])
+        .output();
 }
