@@ -75,9 +75,27 @@ final surface, so they go last.
 | 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | done                     |
 | 09c | tmux-control-removal ([phase-09c-tmux-control-removal.md](phase-09c-tmux-control-removal.md)) — delete `tmux_control`; 43 → 42, hitting the exit criterion | done                   |
 | 09d | pane-param-retirement ([phase-09d-pane-param-retirement.md](phase-09d-pane-param-retirement.md)) — retire `target_pane` / `retry_in_pane` from **`run_terminal_command` only**; takes the last `%N` out of the tool surface. `read_file` / `edit_file` keep `target_pane` until M21's `host?`. No count change | done                              |
-| 10 | prompt-assets — rewrite `sre.toml`, `assets/prompts/ghost-shell.txt`, the seeded memories (retiring the two tmux knowledge ones) **and** the seeded agent configs; correct `docs/REQUIREMENTS.md`; `doc_truth` updated | todo (not drafted) |
+| 10a | prompt-execution-prose ([phase-10a-prompt-execution-prose.md](phase-10a-prompt-execution-prose.md)) — the two seeded prompts stop describing the tmux substrate as the only one, ghost rule 7 stops naming the deleted `watch_pane`, the background result text drops its phantom `target=` parameter, and a `doc_truth` gate pins prompt-asset tool names | todo |
+| 10b | prompt-assets-seeded — retire the two tmux memories and their `seeds.rs` constants, clean the four other memories and the one agent config, correct `docs/REQUIREMENTS.md`, widen the 10a gate to every asset | todo (not drafted) |
 
 ## Notes
+
+- **Row 10 split into 10a/10b at drafting (2026-09-18), on a measured seam —
+  and the seeded prompts turned out to carry three *false* instructions, not
+  merely tmux-flavoured ones.** The row was scoped as a vocabulary rewrite. What
+  measuring found instead: (1) `sre.toml`'s two-mode section still describes the
+  tmux path as the only path, though phase 01 made `backend = "pty"` the default
+  and `executor/mod.rs` routes **both** run modes to the PTY substrate for any
+  non-ghost chat session; (2) `ghost-shell.txt` rule 7 tells every ghost to call
+  **`watch_pane`**, which phase 09b deleted — and `watch_shell` is *not* the
+  substitution, because a ghost's background command runs in a tmux window with
+  no shell id; (3) `background/run.rs` tells the model at two sites to
+  `Use target="%N"`, a parameter no tool has ever had. **10a fixes the false
+  instructions and adds the gate that would have caught them**; 10b does the
+  seeded memories, the agent config and `REQUIREMENTS.md`. The pane prose that
+  is still accurate — the `[PANE MAP]` / `[FOREGROUND TARGET]` blocks, and
+  `target_pane` on `read_file` / `edit_file` — stays, pinned by must-survive
+  criteria in 10a.
 
 - **The design's tool arithmetic is stale, and the target is still right.**
   § 2.5 says "36 → 42" and lists twelve additions including `run_log_tail`,
