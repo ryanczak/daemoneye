@@ -75,7 +75,7 @@ final surface, so they go last.
 | 09b | pane-watch-removal ([phase-09b-pane-watch-removal.md](phase-09b-pane-watch-removal.md)) — delete `watch_pane` (replaced by `watch_shell`) and `close_background_window`; 45 → 43 | done                     |
 | 09c | tmux-control-removal ([phase-09c-tmux-control-removal.md](phase-09c-tmux-control-removal.md)) — delete `tmux_control`; 43 → 42, hitting the exit criterion | done                   |
 | 09d | pane-param-retirement ([phase-09d-pane-param-retirement.md](phase-09d-pane-param-retirement.md)) — retire `target_pane` / `retry_in_pane` from **`run_terminal_command` only**; takes the last `%N` out of the tool surface. `read_file` / `edit_file` keep `target_pane` until M21's `host?`. No count change | done                              |
-| 10a | prompt-execution-prose ([phase-10a-prompt-execution-prose.md](phase-10a-prompt-execution-prose.md)) — the two seeded prompts stop describing the tmux substrate as the only one, ghost rule 7 stops naming the deleted `watch_pane`, the background result text drops its phantom `target=` parameter, and a `doc_truth` gate pins prompt-asset tool names | in-progress |
+| 10a | prompt-execution-prose ([phase-10a-prompt-execution-prose.md](phase-10a-prompt-execution-prose.md)) — the two seeded prompts stop describing the tmux substrate as the only one, ghost rule 7 stops naming the deleted `watch_pane`, the background result text drops its phantom `target=` parameter, and a `doc_truth` gate pins prompt-asset tool names | review      |
 | 10b | prompt-assets-seeded — retire the two tmux memories and their `seeds.rs` constants, clean the four other memories and the one agent config, correct `docs/REQUIREMENTS.md`, widen the 10a gate to every asset | todo (not drafted) |
 
 ## Notes
