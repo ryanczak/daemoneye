@@ -8,7 +8,11 @@ deterministic marker protocol with real exit codes — behind an
 from a real `daemoneye chat` turn runs on the new substrate with tmux
 untouched.
 
-**Status:** in-progress — scoped 2026-09-03; **PE sign-off 2026-09-06**.
+**Status:** **closed 2026-09-18, PE signed off.** Code complete 2026-09-09 with
+all exit criteria met (live sweep re-run green after phase-10); the record sat
+at `in-progress` until the close was taken at the M22 boundary. Scoped
+2026-09-03; **PE sign-off on the breakdown 2026-09-06**, **on the close
+2026-09-18**.
 
 **Sign-off record (2026-09-06).** Reviewed against the tree after six phases:
 the goal, non-goals and exit criteria are unchanged and hold. Two structural
@@ -197,7 +201,7 @@ line-number facts go stale and each landing shifts the next Current state).
 | 09 | shell-gc ([phase-09-shell-gc.md](phase-09-shell-gc.md)) | **done** (approved_first_try, 2026-09-08) | **The last executor phase.** Exited-shell GC under `shells.exited_retention_secs` (moved from 08b at drafting, 2026-09-08 — it needs a second `ShellRecord` timestamp field and `src/config/lifecycle.rs:110` already places the shell-log sweep here). Plus the `.cast` log sweep under `log_retention_days` (the last `Pending` lifecycle row) and the closing docs — `CLAUDE.md` § Key files, `README.md` § Configuration, `architecture.md` § 5. **Restart survival, the live exit-criteria sweep and the retrospective are NOT in it**: the README's own exit criteria mark live checks architect-run, and milestone close is human-gated (see § Notes). |
 | 10 | adoption-socket-fix ([phase-10-adoption-socket-fix.md](phase-10-adoption-socket-fix.md)) | **done** (approved_first_try, 2026-09-09 — [bug-10-1](bugs/bug-10-1.md) fixed; **live restart sweep re-run green**) | `scan_shell_ids` filters on `is_file()`, false for a real AF_UNIX socket, so the daemon never re-adopts a surviving shell and `sweep_stale` never sweeps a dead one — both inert in production, green in tests (fixtures are regular files). The one filter that fails restart survival. |
 
-## Retrospective — M20 (16 phases done; all exit criteria met 2026-09-09)
+## Retrospective — M20 (16 phases done; all exit criteria met 2026-09-09; closed 2026-09-18)
 
 **16 phases, all `done`. 5 approved_first_try, 7 approved_after_1, 3
 approved_after_2, 1 approved_after_4; 3 `hard_fail` escalations; 18 bugs
@@ -319,6 +323,15 @@ fixed. Re-run 2026-09-09, all three live criteria now pass.**
 
 Every other exit criterion is met by the unit suite and the four gates. **M20
 is code complete with all exit criteria satisfied.**
+
+**Close verification, 2026-09-18.** Re-checked at the M22 boundary before the
+status flip, nine days and two milestones of downstream work later: every
+headline deliverable is still in the tree (`PtyShell`, `CastWriter`,
+`ShellRegistry`, `ShellScreen`, the `daemoneye shell-host` subcommand), and
+`cargo test --lib 'shell::'` reports **254 passed**. M22 built nine AI tools
+directly on this substrate and shipped them, which is the strongest evidence
+the engine works that a suite cannot give: the thing was used, not just
+tested.
 
 ## Notes
 
