@@ -76,9 +76,25 @@ final surface, so they go last.
 | 09c | tmux-control-removal ([phase-09c-tmux-control-removal.md](phase-09c-tmux-control-removal.md)) — delete `tmux_control`; 43 → 42, hitting the exit criterion | done                   |
 | 09d | pane-param-retirement ([phase-09d-pane-param-retirement.md](phase-09d-pane-param-retirement.md)) — retire `target_pane` / `retry_in_pane` from **`run_terminal_command` only**; takes the last `%N` out of the tool surface. `read_file` / `edit_file` keep `target_pane` until M21's `host?`. No count change | done                              |
 | 10a | prompt-execution-prose ([phase-10a-prompt-execution-prose.md](phase-10a-prompt-execution-prose.md)) — the two seeded prompts stop describing the tmux substrate as the only one, ghost rule 7 stops naming the deleted `watch_pane`, the background result text drops its phantom `target=` parameter, and a `doc_truth` gate pins prompt-asset tool names | done        |
-| 10b | prompt-assets-seeded — retire the two tmux memories and their `seeds.rs` constants, clean the four other memories and the one agent config, correct `docs/REQUIREMENTS.md`, widen the 10a gate to every asset | todo (not drafted) |
+| 10b | prompt-assets-seeded ([phase-10b-prompt-assets-seeded.md](phase-10b-prompt-assets-seeded.md)) — widen 10a's retired-tool gate to every asset and `docs/REQUIREMENTS.md`, then fix the four files it catches: delete the pane-toolkit memory, trim two bullets from the pane-referencing convention, fix the sysadmin agent's `watch_pane` line, correct the requirements doc | todo |
 
 ## Notes
+
+- **"Clean the seeded memories" was the wrong frame — measured at 10b drafting,
+  most of their pane words are true.** The row assumed four memories needed
+  cleaning and two needed retiring. The retired-tool census found the seven
+  deleted names in only **four** files across `assets/**` and
+  `docs/REQUIREMENTS.md`, and it found the **seeded `sysadmin` agent telling its
+  ghosts to call `watch_pane`** — the same live defect 10a fixed in the ghost
+  prompt, in a file 10a could not touch. Everything else — `de-gs-bg-*` windows,
+  `var/log/panes/`, `var/log/pipe/`, the `backend = "tmux"` opt-out,
+  `read_file`'s surviving `target_pane` — describes something that still exists.
+  So 10b applies **three different remedies by measurement**: delete the
+  pane-toolkit memory (its stated purpose is choosing among deleted tools), edit
+  two bullets out of the pane-referencing convention (the rest is still
+  load-bearing), and mark two requirements superseded rather than deleting them.
+  Its gate asserts on **tool names, never the words "pane" or "tmux"** — a
+  blanket ban would fail on correct prose in nine files.
 
 - **Row 10 split into 10a/10b at drafting (2026-09-18), on a measured seam —
   and the seeded prompts turned out to carry three *false* instructions, not

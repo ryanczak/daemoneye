@@ -1,17 +1,27 @@
 # NEXT
 
-**Active phase:** none — `phase-10a-prompt-execution-prose` was approved
-2026-09-18 (`approved_first_try`). The seeded prompts no longer carry the three
-false instructions, and `tests/doc_truth.rs` now gates prompt-asset tool names:
-no retired tool name may appear in either prompt, and every tool heading in
-`sre.toml` must name a live tool.
+**Active phase:** `docs/dev/milestones/M22-tool-surface/phase-10b-prompt-assets-seeded.md`
+— 10b, prompt-assets-seeded. **Drafted 2026-09-18**, status `todo`.
+**This is M22's last row.**
 
-**One M22 row remains: 10b** (prompt-assets-seeded, undrafted) — retire
-`assets/memory/knowledge/tmux-pane-toolkit.md` and
-`assets/memory/session/pane-referencing-convention.md` with their `seeds.rs`
-constants and seeding calls, clean the four other memories that mention panes
-and the one agent config, correct `docs/REQUIREMENTS.md` (3 stale
-`get_terminal_context` references and a pane-heavy FR-1.2.2), and widen 10a's
-gate to every asset.
+Widens 10a's retired-tool gate from the two prompt assets to every file under
+`assets/` plus `docs/REQUIREMENTS.md`, then fixes the four files the census
+found:
 
-Run `/rexymcp:architect next` to draft it. It is M22's last row.
+1. `assets/memory/knowledge/tmux-pane-toolkit.md` — all seven retired names,
+   19 occurrences. Deleted, with its `seeds.rs` constant and all three other
+   code sites.
+2. `assets/memory/session/pane-referencing-convention.md` — two bullets about
+   deleted tools removed; the rest is still true and stays.
+3. `assets/agents/sysadmin/config.toml` — the seeded agent tells its ghosts to
+   call `watch_pane`, deleted in 09b. Same live defect 10a fixed in the ghost
+   prompt, in a file 10a could not touch.
+4. `docs/REQUIREMENTS.md` — three stale tool names renamed, two capabilities
+   marked superseded. No requirement is deleted; that is a PE decision.
+
+Every acceptance criterion was run against HEAD `effd4e69` and fails there.
+
+Dispatch with `/rexymcp:dispatch phase-10b`.
+
+When 10b is approved, every M22 row is `done` and the milestone is ready to
+close via `/rexymcp:architect`.
