@@ -76,7 +76,7 @@ final surface, so they go last.
 | 09c | tmux-control-removal ([phase-09c-tmux-control-removal.md](phase-09c-tmux-control-removal.md)) — delete `tmux_control`; 43 → 42, hitting the exit criterion | done                   |
 | 09d | pane-param-retirement ([phase-09d-pane-param-retirement.md](phase-09d-pane-param-retirement.md)) — retire `target_pane` / `retry_in_pane` from **`run_terminal_command` only**; takes the last `%N` out of the tool surface. `read_file` / `edit_file` keep `target_pane` until M21's `host?`. No count change | done                              |
 | 10a | prompt-execution-prose ([phase-10a-prompt-execution-prose.md](phase-10a-prompt-execution-prose.md)) — the two seeded prompts stop describing the tmux substrate as the only one, ghost rule 7 stops naming the deleted `watch_pane`, the background result text drops its phantom `target=` parameter, and a `doc_truth` gate pins prompt-asset tool names | done        |
-| 10b | prompt-assets-seeded ([phase-10b-prompt-assets-seeded.md](phase-10b-prompt-assets-seeded.md)) — widen 10a's retired-tool gate to every asset and `docs/REQUIREMENTS.md`, then fix the four files it catches: delete the pane-toolkit memory, trim two bullets from the pane-referencing convention, fix the sysadmin agent's `watch_pane` line, correct the requirements doc | in-progress |
+| 10b | prompt-assets-seeded ([phase-10b-prompt-assets-seeded.md](phase-10b-prompt-assets-seeded.md)) — widen 10a's retired-tool gate to every asset and `docs/REQUIREMENTS.md`, then fix the four files it catches: delete the pane-toolkit memory, trim two bullets from the pane-referencing convention, fix the sysadmin agent's `watch_pane` line, correct the requirements doc | review      |
 
 ## Notes
 
