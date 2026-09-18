@@ -6,7 +6,7 @@ around shells and hosts, add `Category`/`mutates_state()` to `TOOLS` (which
 M25's governor needs), swap the pane context blocks for `[HOSTS]`/`[SHELLS]`,
 and rewrite every prompt asset and seeded memory that still speaks tmux.
 
-**Status:** in-progress — scoped 2026-09-12, **PE sign-off on the breakdown 2026-09-12**.
+**Status:** **closed 2026-09-18** — all 20 phases `done`; retrospective below. Awaiting PE sign-off on the close and on the one proposed calibration trigger. Scoped 2026-09-12, **PE sign-off on the breakdown 2026-09-12**.
 Ordering chosen by the PE at the M24 close: M22 ahead of M21 and M23, because
 `Category` is M25's stated dependency and because M21's `host?` params and
 M23's `[HOSTS]/[SHELLS]` blocks both land on a cleaner surface once this is
@@ -77,6 +77,93 @@ final surface, so they go last.
 | 09d | pane-param-retirement ([phase-09d-pane-param-retirement.md](phase-09d-pane-param-retirement.md)) — retire `target_pane` / `retry_in_pane` from **`run_terminal_command` only**; takes the last `%N` out of the tool surface. `read_file` / `edit_file` keep `target_pane` until M21's `host?`. No count change | done                              |
 | 10a | prompt-execution-prose ([phase-10a-prompt-execution-prose.md](phase-10a-prompt-execution-prose.md)) — the two seeded prompts stop describing the tmux substrate as the only one, ghost rule 7 stops naming the deleted `watch_pane`, the background result text drops its phantom `target=` parameter, and a `doc_truth` gate pins prompt-asset tool names | done        |
 | 10b | prompt-assets-seeded ([phase-10b-prompt-assets-seeded.md](phase-10b-prompt-assets-seeded.md)) — widen 10a's retired-tool gate to every asset and `docs/REQUIREMENTS.md`, then fix the four files it catches: delete the pane-toolkit memory, trim two bullets from the pane-referencing convention, fix the sysadmin agent's `watch_pane` line, correct the requirements doc | done      |
+
+## Retrospective — closed 2026-09-18
+
+**20 phases, one executor** (`local-inference-lab/GLM-5.3-Flash-NVFP4-Spark`
+throughout), **12 bugs, all closed.**
+
+| Verdict | Phases |
+|---|---|
+| `approved_first_try` (9) | 03b, 04a, 06b, 07a, 08b, 09a, 09b, 10a, 10b |
+| `approved_after_1` (8) | 01, 02, 03a, 03c, 07b, 08a, 09c, 09d |
+| `approved_after_2` (2) | 04b, 05 |
+| `escalated`, session takeover (1) | 06a |
+
+Bugs split 6 major / 6 minor. The last five phases went first-try, which is the
+shape to notice: the spec quality improved across the milestone, not the model.
+
+### Exit criteria — three met, three partially met
+
+| Criterion | Outcome |
+|---|---|
+| Zero `%`-pane identifiers in tool descriptions **and prompt assets** | **Partial.** Tool descriptions: **0**, the headline result. `sre.toml` keeps **4**, all in `### Pane targeting`, describing `[PANE MAP]` / `[FOREGROUND TARGET]` blocks the daemon still emits. Removing the prose while the blocks ship would leave the model unable to read context it receives. **M23 owns the blocks; the prose goes with them.** |
+| 42 tools, 28 core + 14 deferred, docs in sync | **Met.** Enforced by `tests/doc_truth.rs`, now 14 tests. |
+| `Category` + `mutates_state()` on every `ToolDef` | **Met.** All 42 carry a category; M25 is unblocked. |
+| `[HOSTS]` / `[SHELLS]` / `[DEFAULT SHELL]` replace the pane blocks; approval panel names shell and host | **Partial.** `[SHELLS]` / `[DEFAULT SHELL]` ship (08a). **`[HOSTS]` does not exist** — 08a measured that no host concept exists on this tree; deferred with `host?` to M21/M23. The pane blocks were **not** replaced, and the approval panel still names neither. Both deferred deliberately, recorded at 08a. |
+| `backend = "pty"` default; four run kinds live-verified | **Met for the default** (01). Live verification landed per-phase (01, 07a, 07b) rather than as one four-kind sweep. |
+| All four gates green | **Met**, re-run independently at every review. |
+
+Net tool surface: **39 → 42** (six pane tools out, nine shell tools in), and the
+AI no longer names a tmux pane to run a command.
+
+### What this milestone actually taught
+
+**The executor's code was overwhelmingly right; the defects were in the specs,
+and the worst of them were folds that already existed and were not applied.**
+
+1. **Two residual defects at close, both mine, both violations of a rule already
+   in `WORKFLOW.md`.** § "Every acceptance criterion must be satisfiable, and its
+   mechanics pinned" was folded 2026-07-27 and *reinforced* 2026-08-08 after M12
+   broke it twice more; its reinforcement note says the criterion "was checked
+   against the tree and never against **the rest of its own spec**". Phases 08b
+   and 10b each shipped exactly that: a count pinned without accounting for an
+   artifact the same spec required (08b's test must spell the retired tool name
+   it asserts absent; 10b's superseded note must contain the tool name it
+   counts). **Occurrences three and four of a twice-folded rule.**
+2. **The `PASTE MATCH` verdict line is already required to be an acceptance
+   criterion** — § "Give the executor a paste-fidelity check it can run itself"
+   says so in as many words. Phase 10b's spec put it in Task prose and the
+   End-to-end section instead, the executor omitted the verdict line, and the
+   check silently moved to the reviewer. Third occurrence of that class after
+   M13 phases 05 and 06.
+3. **The meta-pattern, and the second time it has closed a milestone:** at M24
+   close, two of three "new" folds already existed and were not followed. Here,
+   **both** do. The problem is not missing rules. It is that nothing makes the
+   architect re-read the relevant fold at drafting time.
+4. **Measuring before speccing changed the work three times, not just its
+   wording.** 08b found the design's `run` scope unrepresentable and shipped
+   `shells` instead of aliasing a lie. 10a found the seeded prompts carried three
+   *false* instructions rather than stale vocabulary — a deleted tool the ghost
+   prompt still names, a substrate the main prompt misdescribes since 01, and a
+   parameter no tool ever had. 10b found "clean the seeded memories" was the
+   wrong frame: most of their pane words are true, and the real defect was a
+   seeded agent naming a deleted tool.
+5. **A gate that pins tool *names* beats one that bans vocabulary.** The 10a/10b
+   gates assert on the retired-tool list and never on the words "pane" or
+   "tmux" — nine asset files legitimately use them. A blanket ban would have
+   failed on correct prose and been weakened within a milestone.
+
+### Calibration — proposed for PE sign-off, none landed
+
+**No fold is proposed, because both candidates already exist.** What is proposed
+instead is a *trigger* for rules that keep getting missed:
+
+1. **Add a pre-dispatch checklist item to `WORKFLOW.md` § Acceptance criteria:**
+   before dispatch, re-read § "Every acceptance criterion must be satisfiable"
+   and § "Give the executor a paste-fidelity check it can run itself", and
+   confirm (a) every pinned count was re-derived *after* accounting for the
+   artifacts this spec's own tasks create, and (b) `PASTE MATCH` appears as a
+   numbered acceptance criterion, not as Task prose. This is the third
+   reinforcement of (a) and the fourth occurrence of the class overall — the
+   content is right, the trigger is missing.
+2. **Held, not proposed:** nothing else reached two occurrences.
+
+Cross-milestone note for the next scoping: **M23 inherits the four `%N` in
+`sre.toml`, the pane context blocks and the `[HOSTS]` block; M21 inherits
+`target_pane` on `read_file` / `edit_file` and the approval panel's shell/host
+naming.** Both were deferred by measurement, not oversight, and each deferral is
+recorded in the phase that found it.
 
 ## Notes
 

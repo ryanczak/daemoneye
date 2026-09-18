@@ -1,24 +1,34 @@
 # NEXT
 
-**Active phase:** none in progress — `phase-10b-prompt-assets-seeded` was
-approved 2026-09-18 (`approved_first_try`).
+**Active phase:** none — **M22 (Tool surface & context) closed 2026-09-18**,
+awaiting PE sign-off.
 
-**Every M22 row is now `done`** (01, 02, 03a–c, 04a–b, 05, 06a–b, 07a–b,
-08a–b, 09a–d, 10a–b). The milestone is **not yet closed**: the retrospective,
-the calibration folds and the final `NEXT.md` state belong to milestone close.
+20 phases, 12 bugs all closed, one executor
+(`local-inference-lab/GLM-5.3-Flash-NVFP4-Spark`). Nine phases approved
+first-try, eight after one bounce, two after two, one by architect takeover.
+The retrospective and the exit-criteria table are in
+`docs/dev/milestones/M22-tool-surface/README.md`.
 
-Run `/rexymcp:architect` to close M22 — write the retrospective in the
-milestone README, decide the calibration folds, and set the active phase.
+**Headline:** the AI no longer names a tmux pane to run a command. Six pane
+tools out, nine shell tools in, 39 → 42 tools with `Category` on every one, and
+zero `%`-pane identifiers left in any tool description.
 
-**Two calibration items are queued for that decision**, both recorded in the
-10b review verdict:
+**Awaiting PE decision, two items:**
 
-1. **Pinned counts that the phase's own artifacts make unreachable** — 08b and
-   10b both shipped a criterion that could not hold because the Spec required
-   an artifact containing the very string being counted. Two occurrences; a
-   third makes it a fold.
-2. **The PASTE MATCH self-check verdict line went missing from 10b's
-   end-to-end entry** — third occurrence of a class `WORKFLOW.md` already
-   folded, which means the fold is not self-enforcing. Proposed structural
-   fix: make the self-check verdict a numbered acceptance criterion rather
-   than Task prose.
+1. **Sign off on the close.** Three exit criteria are met and three are
+   partially met, every shortfall deferred by measurement and recorded in the
+   phase that found it. `[HOSTS]` does not exist because no host concept does;
+   the pane context blocks and the four `%N` in `sre.toml` go with M23.
+2. **Sign off on one calibration trigger** — not a new fold. Both fold
+   candidates from this milestone already exist in `WORKFLOW.md` and were not
+   applied at drafting. The proposal adds a pre-dispatch checklist item to
+   § Acceptance criteria pointing at the two existing sections. Details in the
+   retrospective's Calibration section.
+
+**Inherited by later milestones, deliberately:** M21 takes `target_pane` on
+`read_file` / `edit_file` and the approval panel's shell/host naming; M23 takes
+the pane context blocks, the `[HOSTS]` block and the remaining `sre.toml` pane
+prose; M25 is now unblocked by `Category` / `mutates_state()`.
+
+**Next step is yours:** sign off, then run `/rexymcp:architect` to scope the
+next milestone.
