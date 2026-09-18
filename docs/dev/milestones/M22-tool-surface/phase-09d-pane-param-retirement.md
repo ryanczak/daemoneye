@@ -509,3 +509,178 @@ is five compiler-named sites that *close* the errors rather than opening more.
 ParamDefs → 3, `retry_in_pane` → 14 across `src/`, tests green.
 **Plan:** Tasks 1–5 in order, batch all enum/struct field removals before the
 first gate; then Task 6 (prompt/docs), Task 7 mutation check, Task 8 capture.
+
+### Update — 2026-09-17 19:25 (progress)
+
+**Executor:** headless Lace run (resumed after the escalation).
+
+The five latency-critical edit sites named in the escalation note were closed in
+one pass: the `target` binding torn out of `FgArgs`'s destructure, the
+`find_best_target_pane` call reduced to the six fallback-only arguments (the
+`specified_pane` parameter itself is gone from the resolver, as its only caller
+was the retired loop it ran first), `run_background` stripped of its
+`retry_pane` parameter at both the definition and the `mod.rs:527` call, and the
+two dangling `retry_pane` bodies removed. **Build went green inside the red
+window** — the E0277 cascade noise vanished with the arity fix exactly as the
+note predicted; the wrong `W: AsyncBufRead` suggestion was not applied.
+
+**End of the red tree took 3 verifier round-trips; everything after that was
+additive.** Tasks 1–5 completed:
+
+- `defs.rs` lost its `target_pane` / `retry_in_pane` `ParamDef`s (`read_file` /
+  `edit_file` untouched); `args.rs` / `pending.rs` / `events.rs` lost the
+  run/background fields only.
+- `stream.rs`'s `ToolCall` arm threads six values, not eight; ghost.rs's
+  dispatcher matches the same shape.
+- **The two routing conjuncts are gone, the conditions are not.** `uses_pty &&
+  !is_ghost && session_id.is_some()` still decides both modes; only the
+  `is_none_or` conjuncts were deleted and the comments no longer claim an
+  explicit pane falls through. `is_none_or` in `executor/mod.rs` → 0.
+- **`foreground.rs` keeps resolving, stops being told.** It now computes the
+  approval-panel `target_pane_hint` from `SessionEntry.default_target_pane`
+  alone (the AI's-value branch of the hint cannot exist without the parameter)
+  and lets `find_best_target_pane` do the fallback. The C3a/C3b stale-pane
+  guards died with their input — they validated *what the AI supplied*, and
+  nothing supplies it now; `file_ops/ops.rs` is untouched (9 `target_pane`).
+- **`retry_in_pane` → 0 across `src/`,** including a rewritten
+  `dispatch.rs::render_gemini_types_are_uppercase` that had pinned
+  `target_pane`'s Gemini type (now pins `shell`'s) and a field-edited
+  `pending.rs` test that checked the retry-pane round-trip (now checks the
+  background args never serialize a `credential` key). **No test name
+  disappeared without a replacement** — `to_tool_call_background_retry_pane_roundtrip`
+  became `to_tool_call_background_omits_credential_when_absent`.
+
+**Orphan check on `respawn_background_in_pane` (Task 5's stop-and-check):**
+after the call-site removals it had **zero callers** — `retry_in_pane` was its
+only path — and `-W unused` named the re-export (`background/mod.rs`) and the
+import (`foreground.rs:6`) as orphans. Both files are in § Authorizations
+(`background/respawn.rs` "only if no surviving caller" — there was none), so I
+**deleted `src/daemon/background/respawn.rs` (474 lines) and its re-export /
+import**, my own decision under the § Authorizations orphan rule, on the
+evidence above. `CLAUDE.md`'s module map named that file; that one line was
+updated with it.
+
+Task 4's two model-facing strings are rewritten the way the spec pins; so is
+`foreground.rs:827`'s "[Interactive session started]" block, which the
+escalation inventory had listed as a live `target_pane` call-site and which
+still told the model to pass the retired param, and `executor/mod.rs`'s
+`[FOREGROUND TARGET]` one-liner, which carried the same instruction inside
+`fun_context`. Task 6's prose edits in `sre.toml` / `README.md` are done; the
+milestone README's phase-table row already reads `in-progress` from the start
+flip.
+
+**Two adjacent spots left alone on purpose** (they are in files § Authorizations
+places outside this phase): `src/daemon/server/ask.rs:182`'s `[Pane target
+changed]` drift message and `src/daemon/prompt.rs:85`'s doccomment-text still
+say "pass target_pane=…". They are daemon-to-model prose, not tool descriptions,
+and phase 10 owns the wider prose sweep — noting them here rather than editing
+unauthorized files.
+
+### Update — 2026-09-17 19:30 (end-to-end verification)
+
+**Task 7 mutation check (re-add a `target_pane` ParamDef carrying `%3` to
+`run_terminal_command`, run the Task 8 test, revert):**
+
+```
+$ cargo test --lib e2e_no_pane_identifiers            # with the mutation in place
+test ai::tools::dispatch::tests::e2e_no_pane_identifiers_in_tool_descriptions ... FAILED
+failures:
+    ai::tools::dispatch::tests::e2e_no_pane_identifiers_in_tool_descriptions
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1881 filtered out; finished in 0.00s
+   … panicked: %-pane identifiers remain: ["run_terminal_command.target_pane"]
+$ git checkout -- <mutation reverted>
+$ cargo test --lib e2e_no_pane_identifiers -- --nocapture   # reverted, green
+…
+PASTE MATCH >>>
+pane_ids=0 run_params=4
+<<<
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1881 filtered out; finished in 0.00s
+```
+
+The test is bound to the real table: reintroducing the param fails it, naming
+the reintroduced `%3`, and the revert restores green.
+
+**Task 8 PASTE MATCH capture (redirected from the command, pasted verbatim):**
+
+```
+PASTE MATCH >>>
+pane_ids=0 run_params=4
+<<<
+```
+
+**Acceptance-criterion greps (captured mechanically into
+`.rexymcp/output/acceptance-greps.txt`, pasted verbatim):**
+
+```
+=== defs.rs tool counts ===
+42
+28
+=== %N in defs.rs (exit criterion) ===
+0
+=== target_pane ParamDefs in defs.rs ===
+2
+=== retry_in_pane ParamDefs in defs.rs ===
+0
+=== retry_in_pane in src/ minus the mandated e2e assertion ===
+rc=1
+raw count incl. mandated test:
+1
+=== retry_in_pane in src/ — the one occurrence is Task 8's own assertion ===
+src/ai/tools/dispatch.rs:183:        assert!(!names.contains(&"retry_in_pane"), "retired: {names:?}");
+=== RetryInPane files ===
+0
+=== sre.toml retry_in_pane ===
+0
+=== is_none_or in executor/mod.rs ===
+0
+=== must-survive: file_ops/ops.rs target_pane ===
+9
+=== must-survive: unchanged trees ===
+file_ops diff lines: 0
+ipc/cli diff lines: 0
+=== must-survive: fallback resolution ===
+1
+2
+1
+6
+```
+
+Reading of the two non-obvious lines: `retry_in_pane in src/` is **1** — the one
+occurrence is Task 8's own mandated `assert!(!names.contains(&"retry_in_pane"))`
+in the criterion's `target_pane`-exception rule; the filtered grep (rc=1, no
+lines) is the zero this criterion targets, alongside `RetryInPane` = 0 files.
+`default_target_pane` = 1 and `find_best_target_pane` = 2 in `foreground.rs`
+meet their "at least 1" criteria — deliberately ranges, not exact counts.
+
+**Gate commands (captured mechanically into `.rexymcp/output/gates.txt`,
+pasted verbatim):**
+
+```
+== cargo fmt --all (exit 0) ==
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.93s
+== build exit above ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+== clippy exit above ==
+     Running unittests src/lib.rs …
+test result: ok. 1878 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 13.86s
+     Running unittests src/main.rs …
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/bug_tracker.rs …
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/doc_truth.rs …
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration.rs …
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/isolation.rs …
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+**Pinned test counts, per the spec's Test plan:** `ai::tools::dispatch` →
+**27 passed** (`cargo test --lib 'ai::tools::dispatch'`, captured separately).
+`cargo test --lib` lands at **1878 passed, 4 ignored** (baseline 1877 + the one
+new test, with the round-trip test field-edited into a same-count equivalent);
+**no test name disappeared** outside that documented field edit.
+`cargo test --test doc_truth` → **10 passed** (unchanged: phase 10 owns
+`doc_truth`).
