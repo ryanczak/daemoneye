@@ -1,7 +1,7 @@
 # Phase 09d: retire `target_pane` and `retry_in_pane` from `run_terminal_command`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** in-progress (bug-09d-1 — ghost background script-path resolution deleted with the retry block)
 **Depends on:** 07a (`shell?`), 01 (`backend = "pty"` default), 09a–09c (the six
 pane tools). All **done**.
 **Estimated diff:** ~450 lines
@@ -346,6 +346,10 @@ Task 8's test necessarily contains the literal `target_pane`.
 - [ ] `grep -c 'is_none_or' src/daemon/executor/mod.rs` → **0** (now 2) — both escape-hatch conjuncts gone; they are its only two uses
 - [ ] Task 8's `PASTE MATCH` block reads exactly `pane_ids=0 run_params=4`
 - [ ] Task 7's mutation pair, both `test result:` lines, in the Update Log
+- [ ] **bug-09d-1:** `grep -rn 'resolve_command' src/ --include=*.rs | grep -v 'policy.rs\|policy_tests.rs' | wc -l` → **1** (now 0). `run_background`'s **main-path** call restored; the retry-path one stays deleted. It resolves ghost bare/relative script names to absolute paths and applies `run_with_sudo`.
+- [ ] **bug-09d-1:** `grep -rc 'fn run_background_resolves_ghost_script_paths' src/ --include=*.rs | grep -v ':0' | wc -l` → **1** (now 0) — a regression test pinning the **call site**, not `resolve_command` itself.
+- [ ] **bug-09d-1:** mutation — delete the restored call again; `run_background_resolves_ghost_script_paths` must go **red**, then green on revert. Both `test result:` lines in the Update Log. The deletion must stop being invisible.
+- [ ] **bug-09d-1:** `cargo test --lib` reports **1879 passed** (now 1878) — exactly one new test.
 - [ ] `cargo fmt --all` clean, `cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings` clean
 
 **Must-survive criteria** — these pass now and must still pass after:
