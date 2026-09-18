@@ -287,7 +287,7 @@ The agent sees your whole tmux world, not just the pane you are typing in.
 
 - **Every session, not just yours.** The pane cache tracks windows and panes across *all* tmux sessions. Panes outside your own session appear labelled with their session name; their content is fetched on demand rather than polled, so watching a second session costs nothing until you ask.
 - **Live status per pane.** Each pane is classified every 2 s — `Running`, `Idle 4m`, `AwaitingInput`, `Bell`, `Dead(1)` — and that status shows up everywhere panes are listed. An idle shell is never mistaken for a prompt waiting on input.
-- **Any pane's contents, one call away.** `get_terminal_context` returns the current context block on demand — a live snapshot with panes and recent output — so "which pane has the error?" is one call instead of a hunt when the ambient block has gone stale.
+- **Any pane's contents, one call away.** `get_shell_context` returns the current context block on demand — a live snapshot with panes and recent output — so "which pane has the error?" is one call instead of a hunt when the ambient block has gone stale.
 - **Navigation is read-only by design.** The agent sees every pane but no longer steers your tmux: the pane-manipulation tools were removed in favor of a see-everything / act-on-nothing boundary, so what you are looking at stays yours.
 - **`/panes` is worth reading.** A window-grouped inspector: cwd, status, activity age and a preview line per pane, with the pinned foreground target marked.
 
@@ -508,7 +508,7 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `delete_runbook` **⚠** | Delete a runbook |
 | `read_file` | Paginated file read with optional grep filter; masks sensitive data |
 | `search_repository` | Search runbooks, scripts, memory, or the event log |
-| `get_terminal_context` | Capture a fresh tmux snapshot on demand; `scope` selects the window, the session (default), or all sessions |
+| `get_shell_context` | Capture a fresh terminal snapshot on demand; `scope` selects the shells only, the session (default), or all sessions |
 | `list_shells` | List the PTY shells the daemon is running — id (`s3`), owner, age, and interactive / dedicated / exited flags; `scope` selects this session's shells (default) or all |
 | `read_shell` | Read a PTY shell's recorded output — the per-command log behind its asciicast recording, not the live screen. `since_command` starts at a command index, `filter` regex-selects lines, `lines` clamps the tail (default 200, max 2000); output is masked |
 | `find_in_shells` | One regex search across every in-scope shell's recorded output — answers "which shell has the error?" in a single call. Reports shell id, 1-indexed line number and the ±1 context; capped at 50 matches across all shells, last 2000 lines per shell; unreadable shells are skipped and named. `scope` selects this session's shells (default) or all |

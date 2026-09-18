@@ -95,7 +95,7 @@ pub(super) struct FindInShellsArgs {
 }
 
 #[derive(Deserialize)]
-pub(super) struct GetTerminalContextArgs {
+pub(super) struct GetShellContextArgs {
     #[serde(default)]
     scope: Option<String>,
 }
@@ -448,12 +448,12 @@ impl ToolArgs for ReadShellArgs {
     }
 }
 
-impl ToolArgs for GetTerminalContextArgs {
+impl ToolArgs for GetShellContextArgs {
     fn from_value(value: Value) -> Option<Self> {
         serde_json::from_value(value).ok()
     }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::GetTerminalContext {
+        AiEvent::GetShellContext {
             id: id.to_string(),
             thought_signature: ts,
             scope: self.scope,

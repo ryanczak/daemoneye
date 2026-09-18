@@ -716,20 +716,22 @@ pub static TOOLS: &[ToolDef] = &[
         category: Category::Search,
     },
     ToolDef {
-        name: "get_terminal_context",
-        description: "Capture a fresh snapshot of the current tmux session: active pane contents, \
-                      background panes, session topology, and environment variables. \
-                      Call this when you need to see what is on the user's screen, check live \
-                      command output, or understand the current terminal state. \
-                      The terminal snapshot is NOT automatically included in every message — \
-                      call this tool to get it on demand.",
+        name: "get_shell_context",
+        description: "Capture a fresh snapshot of the terminal state: the open PTY \
+                      shells and which one commands land in by default, and — unless \
+                      you narrow the scope — the user's tmux panes, session topology \
+                      and environment variables. Call this when you need to see what \
+                      is on the user's screen, check live command output, or find out \
+                      which shells exist. The snapshot is NOT automatically included \
+                      in every message — call this tool to get it on demand.",
         params: &[ParamDef {
             name: "scope",
             ty: ParamTy::Str,
             required: false,
-            description: "Optional breadth: \"window\" (only the chat pane's window), \
-                          \"session\" (default, the user's tmux session), or \"all\" \
-                          (home session plus foreign-session pane metadata).",
+            description: "Optional breadth: \"shells\" (only the open shells and the \
+                          default one — the cheapest call, no terminal capture), \
+                          \"session\" (default, the user's session with its panes) or \
+                          \"all\" (adds pane metadata for other tmux sessions).",
         }],
         deferred_group: None,
         category: Category::Read,

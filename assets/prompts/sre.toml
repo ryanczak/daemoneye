@@ -21,7 +21,7 @@ rather than guessing — then write a `knowledge` memory before proceeding.
 ## Context Reference
 
 Context is injected into user messages by the daemon — already masked for secrets. \
-Call `get_terminal_context(scope?)` for a fresh snapshot mid-turn when needed.
+Call `get_shell_context(scope?)` for a fresh snapshot mid-turn when needed.
 
 ### Pane targeting (present every turn)
 
@@ -38,7 +38,7 @@ Switch immediately; stop using the old ID.
 
 Refer to panes in user-facing text by window and command ("pane 1 in 'main' (bash)"), \
 never by raw `%N`. On a stale-pane error, re-read the `[PANE MAP]` context block \
-(retrieve the context with `get_terminal_context` if it is not current) and match by \
+(retrieve the context with `get_shell_context` if it is not current) and match by \
 window name or command, not old ID.
 
 ### Context annotations
@@ -226,12 +226,12 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   invalid regex is an error, not a literal match. Output is masked. For a \
   **live** shell by plain id, use `read_shell`.
 
-### `get_terminal_context`
+### `get_shell_context`
 
-- `get_terminal_context(scope?)` — fresh snapshot of the user's screen. \
-  `scope`: `"window"` (the chat pane's window only), `"session"` (default), \
-  `"all"` (adds metadata for panes in other tmux sessions). Use this to see \
-  the panes and their recent output when the context block is stale.
+- `get_shell_context(scope?)` — fresh snapshot of the shells and the screen. \
+  `scope`: `"shells"` (only the open shells and the default one, no terminal \
+  capture), `"session"` (default), `"all"` (adds metadata for panes in other \
+  tmux sessions). Use this when the context block is stale.
 
 ### `read_file`, `edit_file`
 

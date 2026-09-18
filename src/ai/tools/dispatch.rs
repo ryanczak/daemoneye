@@ -36,7 +36,7 @@ pub fn dispatch_tool_event(
             id: id.to_string(),
             thought_signature: ts,
         }),
-        "get_terminal_context" => dispatch::<GetTerminalContextArgs>(id, args, ts),
+        "get_shell_context" => dispatch::<GetShellContextArgs>(id, args, ts),
         "list_shells" => dispatch::<ListShellsArgs>(id, args, ts),
         "cancel_schedule" => {
             schedule_id_event(args, ts.clone(), |jid, t| AiEvent::CancelSchedule {
@@ -234,7 +234,7 @@ mod tests {
             !APPROVAL_GATED_TOOLS.contains(&"tmux_control"),
             "and gone from the approval list"
         );
-        for kept in ["run_terminal_command", "send_input", "get_terminal_context"] {
+        for kept in ["run_terminal_command", "send_input", "get_shell_context"] {
             assert!(names.contains(&kept), "{kept} must stay");
         }
         let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
@@ -248,6 +248,55 @@ mod tests {
             TOOLS.len(),
             TOOLS.iter().filter(|t| t.deferred_group.is_none()).count(),
             APPROVAL_GATED_TOOLS.len()
+        );
+    }
+
+    /// Phase-08b's end-to-end capture: the renamed tool's surface, written to
+    /// stdout for the Update Log and asserted so the printer cannot drift.
+    #[test]
+    fn e2e_shell_context_tool_surface() {
+        let names: Vec<&str> = TOOLS.iter().map(|t| t.name).collect();
+        let def = TOOLS
+            .iter()
+            .find(|t| t.name == "get_shell_context")
+            .expect("get_shell_context must exist in TOOLS");
+        let scope_desc = def
+            .params
+            .iter()
+            .find(|p| p.name == "scope")
+            .map(|p| p.description)
+            .unwrap_or_default();
+        let scopes = ["shells", "session", "all"]
+            .iter()
+            .filter(|v| scope_desc.contains(&format!("\"{v}\"")))
+            .copied()
+            .collect::<Vec<_>>()
+            .join("|");
+        let retired_absent = !names.contains(&"get_terminal_context");
+        assert_eq!(
+            scopes, "shells|session|all",
+            "scope description: {scope_desc}"
+        );
+        assert!(
+            retired_absent,
+            "get_terminal_context must be absent from TOOLS"
+        );
+        assert_eq!(TOOLS.len(), 42, "the rename must not change the tool count");
+        let core = TOOLS.iter().filter(|t| t.deferred_group.is_none()).count();
+        assert_eq!(core, 28, "the rename must not change the core count");
+        let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
+        let blob = serde_json::to_string(&rendered).expect("render must serialize");
+        assert!(
+            !blob.contains("get_terminal_context"),
+            "the retired name must be absent from the Gemini render: {blob:.400}"
+        );
+        assert!(
+            blob.contains("get_shell_context"),
+            "the new name must be present in the Gemini render: {blob:.400}"
+        );
+        println!(
+            "PASTE MATCH >>>\ntool=get_shell_context scopes={scopes} retired_absent={retired_absent} tools={} core={core}\n<<<",
+            TOOLS.len(),
         );
     }
 
@@ -371,7 +420,7 @@ mod tests {
                 "read_memory" => json!({"key": "k", "category": "knowledge"}),
                 "list_memories" => json!({}),
                 "search_repository" => json!({"query": "x", "kind": "all"}),
-                "get_terminal_context" => json!({"scope": "session"}),
+                "get_shell_context" => json!({"scope": "session"}),
                 "list_shells" => json!({"scope": "mine"}),
                 "read_shell" => {
                     json!({"shell": "s3", "lines": 10, "since_command": 0, "filter": "."})

@@ -153,7 +153,7 @@ pub enum AiEvent {
         scope: Option<String>,
         thought_signature: Option<String>,
     },
-    GetTerminalContext {
+    GetShellContext {
         id: String,
         thought_signature: Option<String>,
         scope: Option<String>,

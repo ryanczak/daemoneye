@@ -275,6 +275,50 @@ pub fn shell_context_block(caller: &Owner) -> String {
     shell_context_block_in(crate::shell::registry(), caller, now_unix())
 }
 
+/// The breadth a `get_shell_context` call asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextBreadth {
+    /// The `[SHELLS]` / `[DEFAULT SHELL]` block only — no tmux call.
+    ShellsOnly,
+    /// The user's session: today's default snapshot.
+    Session,
+    /// The session plus foreign-session pane metadata.
+    All,
+}
+
+/// Pure: the breadth a `scope` argument names, or the operator-facing error
+/// for one it does not. `"window"` and `"run"` are named explicitly because
+/// both were real vocabulary — `"window"` on this tool until M22 phase-08b,
+/// `"run"` in the 2.0 design — and a model that learned either deserves to be
+/// told what replaced it rather than silently getting a session snapshot.
+pub fn resolve_context_scope(scope: Option<&str>) -> Result<ContextBreadth, String> {
+    match scope {
+        None | Some("session") => Ok(ContextBreadth::Session),
+        Some("shells") => Ok(ContextBreadth::ShellsOnly),
+        Some("all") => Ok(ContextBreadth::All),
+        Some(other) => Err(format!(
+            "Error: unknown get_shell_context scope {other:?}. Accepted values: \
+             \"shells\" (the open shells and the default one, no terminal \
+             capture), \"session\" (the default, this session's terminal \
+             context) or \"all\" (adds pane metadata for other tmux sessions)."
+        )),
+    }
+}
+
+/// The `scope: "shells"` result: 08a's ambient block, or a sentence saying
+/// there is nothing, because a tool result of `""` reads to the model as a
+/// failed call.
+pub fn shells_only_context(caller: &Owner) -> String {
+    let block = shell_context_block(caller);
+    if block.is_empty() {
+        "[SHELLS] none — this session has no open shells. \
+         run_terminal_command or open_shell starts one.\n"
+            .to_string()
+    } else {
+        block
+    }
+}
+
 // ---------------------------------------------------------------------------
 // read_shell (M22 phase-03b)
 // ---------------------------------------------------------------------------
@@ -2128,6 +2172,80 @@ mod tests {
         assert!(
             block.contains("[DEFAULT SHELL] s"),
             "a freshly opened non-dedicated shell is the default: {block}"
+        );
+    }
+
+    // -- resolve_context_scope / shells_only_context (phase-08b) ------------
+
+    #[test]
+    fn context_scope_defaults_to_session() {
+        assert_eq!(
+            resolve_context_scope(None),
+            Ok(ContextBreadth::Session),
+            "an absent scope is the default breadth, session"
+        );
+    }
+
+    #[test]
+    fn context_scope_accepts_the_three_values() {
+        assert_eq!(
+            resolve_context_scope(Some("shells")),
+            Ok(ContextBreadth::ShellsOnly)
+        );
+        assert_eq!(
+            resolve_context_scope(Some("session")),
+            Ok(ContextBreadth::Session)
+        );
+        assert_eq!(resolve_context_scope(Some("all")), Ok(ContextBreadth::All));
+    }
+
+    #[test]
+    fn context_scope_rejects_retired_window_and_run() {
+        for retired in ["window", "run"] {
+            let err = resolve_context_scope(Some(retired))
+                .expect_err("a retired vocabulary must not resolve to a breadth");
+            assert!(
+                err.starts_with("Error:"),
+                "the refusal must read as a tool-result error: {err}"
+            );
+            assert!(
+                err.contains(retired),
+                "the refusal must name the rejected value: {err}"
+            );
+            for accepted in ["shells", "session", "all"] {
+                assert!(
+                    err.contains(accepted),
+                    "the refusal must name the accepted value {accepted:?}: {err}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn context_scope_rejects_unknown_value() {
+        let err = resolve_context_scope(Some("banana"))
+            .expect_err("an arbitrary string is not a breadth");
+        assert!(
+            err.contains("banana"),
+            "the error must echo the input: {err}"
+        );
+    }
+
+    #[test]
+    fn shells_only_context_without_shells_is_not_empty() {
+        let (_home, _dir) = lifecycle_home();
+        let out = shells_only_context(&Owner::Chat("empty".into()));
+        assert!(
+            !out.is_empty(),
+            "an empty tool result reads as a failed call; got: {out:?}"
+        );
+        assert!(
+            out.contains("open_shell"),
+            "the nothing-here sentence must point at how to get one: {out}"
+        );
+        assert!(
+            out.ends_with('\n'),
+            "the non-empty branch ends in a newline; this one must too: {out:?}"
         );
     }
 

@@ -940,12 +940,12 @@ async fn do_ghost_turn(
                             expires,
                         });
                     }
-                    AiEvent::GetTerminalContext {
+                    AiEvent::GetShellContext {
                         id,
                         thought_signature,
                         scope,
                     } => {
-                        pending_calls.push(PendingCall::GetTerminalContext {
+                        pending_calls.push(PendingCall::GetShellContext {
                             id,
                             thought_signature,
                             scope,

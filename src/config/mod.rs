@@ -386,7 +386,7 @@ mod tests {
             ..LimitsConfig::default()
         };
         assert_eq!(limits.per_tool_cap("read_file"), None);
-        assert_eq!(limits.per_tool_cap("get_terminal_context"), None);
+        assert_eq!(limits.per_tool_cap("get_shell_context"), None);
     }
 
     #[test]

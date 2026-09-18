@@ -77,7 +77,7 @@ pub struct SessionEntry {
     /// snapshot was last injected into the prompt (first turn or auto-refresh).
     /// On the next turn, if the foreground pane's `last_activity` has advanced past
     /// this value the daemon automatically injects a fresh snapshot without requiring
-    /// a `get_terminal_context` tool call.
+    /// a `get_shell_context` tool call.
     pub last_snapshot_activity: u64,
     /// Name of the saved session this entry is associated with.
     /// `None` for ephemeral sessions that have not been saved.

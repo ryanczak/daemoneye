@@ -853,7 +853,7 @@ fn response_tool_started_roundtrip() {
 fn response_tool_started_empty_summary_roundtrip() {
     let resp = Response::ToolStarted {
         id: "ts_2".to_string(),
-        tool: "get_terminal_context".to_string(),
+        tool: "get_shell_context".to_string(),
         summary: String::new(),
     };
     match roundtrip_resp(&resp) {

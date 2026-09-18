@@ -160,7 +160,7 @@ pub enum PendingCall {
         turn_end: Option<u32>,
         scope: Option<String>,
     },
-    GetTerminalContext {
+    GetShellContext {
         id: String,
         thought_signature: Option<String>,
         scope: Option<String>,
@@ -733,14 +733,14 @@ impl PendingCall {
                     serde_json::json!({"query": query, "turn_start": turn_start, "turn_end": turn_end, "scope": scope}),
                 ),
             },
-            PendingCall::GetTerminalContext {
+            PendingCall::GetShellContext {
                 id,
                 thought_signature,
                 scope,
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
-                name: "get_terminal_context".to_string(),
+                name: "get_shell_context".to_string(),
                 arguments: args_to_string(serde_json::json!({"scope": scope})),
             },
             PendingCall::ListShells {
@@ -918,7 +918,7 @@ impl PendingCall {
             PendingCall::ListMemories { id, .. } => id,
             PendingCall::SearchRepository { id, .. } => id,
             PendingCall::RecallContext { id, .. } => id,
-            PendingCall::GetTerminalContext { id, .. } => id,
+            PendingCall::GetShellContext { id, .. } => id,
             PendingCall::ListShells { id, .. } => id,
             PendingCall::OpenShell { id, .. } => id,
             PendingCall::CloseShell { id, .. } => id,
@@ -954,7 +954,7 @@ impl PendingCall {
                 | PendingCall::ListMemories { .. }
                 | PendingCall::SearchRepository { .. }
                 | PendingCall::RecallContext { .. }
-                | PendingCall::GetTerminalContext { .. }
+                | PendingCall::GetShellContext { .. }
                 | PendingCall::ListShells { .. }
                 | PendingCall::SpawnGhost { .. }
                 | PendingCall::ReadAgent { .. }
@@ -1045,7 +1045,7 @@ impl PendingCall {
                     None => format!("\"{q}\""),
                 }
             }
-            PendingCall::GetTerminalContext { scope, .. } => scope.clone().unwrap_or_default(),
+            PendingCall::GetShellContext { scope, .. } => scope.clone().unwrap_or_default(),
             PendingCall::ListShells { scope, .. } => scope.clone().unwrap_or_default(),
             // A close has an argument worth showing (which shell); an open has
             // none, and an empty summary here is the decided value for it.
@@ -1155,7 +1155,7 @@ impl PendingCall {
             PendingCall::ListMemories { .. } => "list_memories",
             PendingCall::SearchRepository { .. } => "search_repository",
             PendingCall::RecallContext { .. } => "recall_context",
-            PendingCall::GetTerminalContext { .. } => "get_terminal_context",
+            PendingCall::GetShellContext { .. } => "get_shell_context",
             PendingCall::ListShells { .. } => "list_shells",
             PendingCall::OpenShell { .. } => "open_shell",
             PendingCall::CloseShell { .. } => "close_shell",
@@ -1263,7 +1263,7 @@ mod tests {
                 turn_end: None,
                 scope: None,
             },
-            PendingCall::GetTerminalContext {
+            PendingCall::GetShellContext {
                 id: "x".to_string(),
                 thought_signature: None,
                 scope: None,
@@ -1433,8 +1433,8 @@ mod tests {
     }
 
     #[test]
-    fn summary_get_terminal_context_empty() {
-        let call = PendingCall::GetTerminalContext {
+    fn summary_get_shell_context_empty() {
+        let call = PendingCall::GetShellContext {
             id: "x".to_string(),
             thought_signature: None,
             scope: None,
@@ -1662,7 +1662,7 @@ mod tests {
                 turn_end: None,
                 scope: None,
             },
-            PendingCall::GetTerminalContext {
+            PendingCall::GetShellContext {
                 id: x(),
                 thought_signature: None,
                 scope: None,

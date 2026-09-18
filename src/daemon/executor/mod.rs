@@ -783,15 +783,23 @@ where
             Ok(ToolCallOutcome::Result(result))
         }
 
-        PendingCall::GetTerminalContext { scope, .. } => {
+        PendingCall::GetShellContext { scope, .. } => {
+            let breadth = match knowledge::resolve_context_scope(scope.as_deref()) {
+                Ok(b) => b,
+                Err(msg) => return Ok(ToolCallOutcome::Result(msg)),
+            };
+            if breadth == knowledge::ContextBreadth::ShellsOnly {
+                return Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
+                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
+                )));
+            }
             let target_pane: Option<String> = session_id.and_then(|sid| {
                 with_sessions(sessions, |store| {
                     store.get(sid)?.default_target_pane.clone()
                 })
             });
-            let ctx_scope = match scope.as_deref() {
-                Some("window") => crate::tmux::cache::ContextScope::Window,
-                Some("all") => crate::tmux::cache::ContextScope::All,
+            let ctx_scope = match breadth {
+                knowledge::ContextBreadth::All => crate::tmux::cache::ContextScope::All,
                 _ => crate::tmux::cache::ContextScope::Session,
             };
             let ctx = cache.get_labeled_context_scoped(chat_pane, chat_pane, ctx_scope);

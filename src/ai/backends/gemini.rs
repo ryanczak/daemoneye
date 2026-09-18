@@ -492,7 +492,7 @@ mod tests {
         // `null` here answers `false` while the drain loop emits the call.
         assert!(super::part_counts_as_token(&json!({
             "candidates": [{"content": {"parts": [
-                {"functionCall": {"name": "get_terminal_context"}}
+                {"functionCall": {"name": "get_shell_context"}}
             ]}}]
         })));
     }
@@ -505,10 +505,10 @@ mod tests {
     fn dispatch_treats_null_args_and_empty_object_differently() {
         use crate::ai::tools::dispatch_tool_event;
 
-        // All-optional args (`dispatch::<GetTerminalContextArgs>`): serde
+        // All-optional args (`dispatch::<GetShellContextArgs>`): serde
         // rejects `null` for the struct but accepts `{}`.
-        assert!(dispatch_tool_event("id", "get_terminal_context", &json!(null), None).is_none());
-        assert!(dispatch_tool_event("id", "get_terminal_context", &json!({}), None).is_some());
+        assert!(dispatch_tool_event("id", "get_shell_context", &json!(null), None).is_none());
+        assert!(dispatch_tool_event("id", "get_shell_context", &json!({}), None).is_some());
 
         // Unconditional-Some tools never deserialize args, so both forms agree
         // — which is why a sample drawn only from these cannot detect the above.

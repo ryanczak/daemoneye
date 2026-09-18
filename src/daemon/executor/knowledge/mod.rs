@@ -22,7 +22,7 @@ pub(super) use shell::{
 };
 // Wider than the group above on purpose: the prompt builders reach it from
 // `daemon`, and a `pub(super)` binding cannot be widened on re-export.
-pub use shell::shell_context_block;
+pub use shell::{ContextBreadth, resolve_context_scope, shell_context_block, shells_only_context};
 
 use crate::daemon::session::{SessionStore, with_sessions};
 

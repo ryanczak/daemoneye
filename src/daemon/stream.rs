@@ -638,12 +638,12 @@ where
                         scope,
                     });
                 }
-                AiEvent::GetTerminalContext {
+                AiEvent::GetShellContext {
                     id,
                     thought_signature,
                     scope,
                 } => {
-                    pending_calls.push(PendingCall::GetTerminalContext {
+                    pending_calls.push(PendingCall::GetShellContext {
                         id,
                         thought_signature,
                         scope,
@@ -1583,7 +1583,7 @@ mod tests {
         assert!(APPROVAL_GATED.contains(&"edit_file"));
         assert!(APPROVAL_GATED.contains(&"write_script"));
         assert!(!APPROVAL_GATED.contains(&"read_file"));
-        assert!(!APPROVAL_GATED.contains(&"get_terminal_context"));
+        assert!(!APPROVAL_GATED.contains(&"get_shell_context"));
 
         // The 2026-08-08 reconciliation, pinned in both directions. These four
         // are the tools whose budget treatment changed when the exemption
