@@ -510,3 +510,23 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out;
 Panic: `run.rs still tells the model to pass \`target=\`, which no tool accepts — left: 1`.
 Revert → green: `test result: ok. 1 passed; 0 failed`. Both mutations red, both
 reverts green — the gate is pinning the property.
+
+### Update — 2026-09-18 18:25 (all tasks complete, awaiting server-authored completion)
+
+All six spec tasks are implemented and committed (`915fa7c3`). Acceptance grep
+counts, re-measured at the commit: `watch_pane` in ghost-shell.txt 0 (was 1);
+`Use target=` in run.rs 0 (was 2); `tmux window on the daemon host` in sre.toml
+0 (was 1); `user's pane, synchronous` 0 (was 1); `Injects via \`send-keys\`` 0
+(was 1); `backend = "pty"` 1 (was 0); `do not poll for it` 1 (was 0);
+`wait: false` in ghost-shell.txt 1 (was 0); `background mode` 0 (was 1);
+both new test fns present once each in tests/doc_truth.rs. Must-survive, all
+unchanged: `PANE MAP` 2, `target_pane` 4, ghost `de-gs-bg-*` 1, defs.rs
+`^        name: "` 42 and `deferred_group: None` 28, run.rs
+`Background Task Completed` 3, `git diff --stat 35fe59cc..HEAD -- src/ai/
+src/ipc.rs src/cli/` empty, `cargo test --lib` 1885 passed / 4 ignored.
+Gates: `cargo fmt --all` clean, `cargo build` clean (no new warnings),
+`cargo clippy --all-targets --all-features -- -D warnings` clean,
+`cargo test` green across all targets (lib 1885, doc_truth 12 of 12).
+Status left `in-progress` per the executor contract;
+`FOREGROUND TARGET` in sre.toml is 1 as the acceptance table requires, and the
+`[PANE MAP]` / pane-vocabulary prose was left untouched as mandated.
