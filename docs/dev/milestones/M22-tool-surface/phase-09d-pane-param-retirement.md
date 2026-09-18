@@ -1,7 +1,7 @@
 # Phase 09d: retire `target_pane` and `retry_in_pane` from `run_terminal_command`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** in-progress (bug-09d-1 — ghost background script-path resolution deleted with the retry block)
+**Status:** review
 **Depends on:** 07a (`shell?`), 01 (`backend = "pty"` default), 09a–09c (the six
 pane tools). All **done**.
 **Estimated diff:** ~450 lines
@@ -956,3 +956,147 @@ pane_ids=0 run_params=4
 committed as `51710d99` (`fix: restore ghost script-path resolution in
 run_background's main path`); status left `in-progress` for the server's
 completion tail.
+
+### Update — ts=1789706736364 (complete, server-authored)
+
+**Summary:** </think>All tasks complete. The status remains in-progress (correct per contract — server flips to review). Working tree is clean. Both commits in place. Final message: Summary + Notes for review.</think>
+**Summary**
+
+Bug-09d-1 is fixed on top of the already-complete phase-09d work. The ghost **main-path** `resolve_command` block — deleted alongside the retry block by the prior run — is restored verbatim in `run_background` (`foreground.rs:952`), re-positioned exactly where it was (after remote-script detection, before approval, so the audit record and approval see the rewritten command); the retry-path call remains deleted. The call site is now pinned by `run_background_resolves_ghost_script_paths`: it drives `run_background` directly with an injected `GhostPolicy` over duplex IO, a real **private tmux server** pointed at the test's `TMUX_TMPDIR` under `test_home_guard`, and a marker-producing script in the test `$HOME/.daemoneye/scripts/` — asserting the marker exists (execution reached), the `command` audit record carries the resolved **absolute** path, the `is_safe` path auto-approves without touching the wire, and a second leg inside the same test pins the `run_with_sudo` half (`sudo <abs path> extra-arg`). tmux-absent hosts skip early-return, per the isolation-harness pattern. No sleeps: the call is awaited and the script completes inside the 3 s inline window.
+
+**End-to-end verification** — mutation both directions, captured mechanically: with the block deleted the test fails ("the whitelisted script must have executed via the resolved absolute path", `FAILED. 0 passed; … finished in 3.10s`); restored, `ok. 1 passed … 6.17s`. All bug-09d-1 greps pass (`resolve_command` production callers = 1, test fn = 1). All phase-09d acceptance criteria re-verified unchanged after the fix: `%N` in `defs.rs` = 0, `target_pane` ParamDefs = 2, tool counts 42/28, `is_none_or` = 0, `file_ops`/`ipc.rs`/`src/cli/` zerodiff vs `2b94ed63`, fallback resolution intact, Task 8 PASTE MATCH still `pane_ids=0 run_params=4`, `dispatch` 27 passed, `doc_truth` 10 passed. Gates: fmt/build/clippy clean; `cargo test` → lib **1879 passed, 4 ignored** (exactly the pinned count, +1 test), integration 32/doc_truth 10/bug_tracker 6/isolation 9. Two commits: `51710d99` (code+test), `764ee586` (phase + bug doc logs). Status left `in-progress` for the server's completion tail.
+
+**Notes for review**
+- **Seam choice:** `run_background` has no existing test seam, so per the bug's DoD fallback rule I pinned behaviour at the function itself (in-process, `pub(super)`, called from its own test module) rather than through `execute_tool_call` — the pending-call translation layer contributes nothing to a Background call and this keeps the pin on the exact restored block.
+- **Deviation by necessity:** completion *signalling* (the notify broadcast) requires the real daemon binary; on a libtest host the call takes the 3 s slow path. The test asserts the script's effect and the audit record instead of the "[Background Task Completed]" message — the regression (resolution) is fully observable synchronously. The test is in the **default** suite (not `#[ignore]`d), because leaving it ignored would make the mutation escape invisible by default — the bug's whole point.
+- `Cargo.toml`, `tests/`, config files untouched; the fix is 1 file + 2 doc files.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+d in 19.86s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/daemon/executor/foreground.rs` — +237 -0
+
+**Commit:** 764ee5865ad4b617d4d3e6ce7f18d7f334a1741a
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
