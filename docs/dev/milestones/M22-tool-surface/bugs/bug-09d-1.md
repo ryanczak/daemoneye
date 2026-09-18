@@ -1,7 +1,7 @@
 # Bug 1 on phase-09d: ghost background script-path resolution was deleted with the retry block
 
 **Severity:** major
-**Status:** open
+**Status:** closed (fixed 2026-09-17, commit `51710d99`; re-verified at review 2026-09-18 — mutation red/green reproduced)
 **Filed:** 2026-09-17
 
 Every acceptance criterion of phase-09d is met, all four gates are green, and

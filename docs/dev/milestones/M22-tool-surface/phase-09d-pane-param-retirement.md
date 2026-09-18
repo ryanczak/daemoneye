@@ -1,7 +1,7 @@
 # Phase 09d: retire `target_pane` and `retry_in_pane` from `run_terminal_command`
 
 **Milestone:** M22 — Tool surface & context
-**Status:** review
+**Status:** done
 **Depends on:** 07a (`shell?`), 01 (`backend = "pty"` default), 09a–09c (the six
 pane tools). All **done**.
 **Estimated diff:** ~450 lines
@@ -1100,3 +1100,31 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 764ee5865ad4b617d4d3e6ce7f18d7f334a1741a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-18
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bugs: bug-09d-1 — major, `closed`), plus one `hard_fail` +
+  escalation cycle before it (governor `VerifierFailurePersistent` mid-batch on
+  the struct-field removal; resumed in place, partial work preserved).
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (three runs);
+  review by Claude (direct).
+- **Review re-runs:** `cargo fmt --all --check`, `cargo build`, `cargo clippy
+  --all-targets --all-features -- -D warnings` all exit 0; `cargo test` → lib
+  1879 passed / 4 ignored, bug_tracker 6, doc_truth 10, integration 32 / 2
+  ignored, isolation 9 / 1 ignored. Every acceptance criterion and must-survive
+  grep re-run by hand at HEAD `5d745082` and matches the pinned value (`%N` = 0,
+  `target_pane` ParamDefs 2, tools 42 / 28, `is_none_or` 0, production
+  `resolve_command` callers 1, `ai::tools::dispatch` 27). The bug-09d-1
+  mutation was re-applied by the reviewer (main-path `resolve_command` replaced
+  with the bare command): `run_background_resolves_ghost_script_paths` panics at
+  the marker assertion (`FAILED. 0 passed; 1 failed`), and passes again on
+  revert (`ok. 1 passed`). The deletion is no longer silent.
+- **Scope deviations:** none surviving. The bounce was the one deviation — the
+  retry-block removal took the main-path resolver with it; restored and pinned.
+- **Calibration:** the regression test tears its private tmux server down with
+  a bare `tmux kill-server`, trusting the process-wide `TMUX_TMPDIR` it set,
+  where `tests/harness` pins `-S <socket>`. The reviewer could not make it reach
+  the default server (canary server survived the single test, the full suite,
+  and a run launched from inside the canary itself), so it is noted, not
+  bounced. A future test-hygiene phase should pin the socket. No fold filed.
