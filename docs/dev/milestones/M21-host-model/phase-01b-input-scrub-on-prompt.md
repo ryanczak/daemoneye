@@ -401,3 +401,68 @@ assertion (`"hunter2"` absent from an `"i"` event) well-defined under the
 terminal-echo reality of a real PTY. Mutation A (arm after the broadcast) was
 run and **reddens intermittently** — documented in the mutation-pair entry —
 and Mutation B (log unconditionally) reddens synchronously and reliably.
+
+### Update — 2026-09-19 14:45 (end-to-end verification)
+
+Task 6's capture, against a **real** `daemoneye shell-host` (the same binary
+`cargo build` produces, `./target/debug/daemoneye`, running under a short
+`mktemp -d /tmp/de.XXXX` HOME, driven over its Unix socket with wire frames
+`proto.rs` pins: `Subscribe`, then `Input`). The sudo-shaped command
+`echo '[de-sudo-prompt-0] Password:'; read -r pw` reaches the real shell; the
+answer written after the prompt is a throwaway string — **no real credential
+at any point**. Captured one line, then each fact asserted:
+
+```
+prompt_armed=true secret_in_cast=false marker_in_cast=true followup_in_clear=true
+```
+
+- `secret_in_cast` — the throwaway password string is **absent** from the cast
+  file's `"i"` events. The `"o"` events carry the pooled probe's own echo of
+  the command (`echo '[de-sudo-prompt-0] Password:'; read -r pw`), which the
+  phase doc's mockery of stdout is not.
+
+Self-check (`diff /tmp/pasted-01b.txt /tmp/e2e-01b.txt && echo "PASTE MATCH"`):
+
+```
+PASTE MATCH
+```
+
+**Task 5's mutation pair, all four `test result:` lines.**
+
+**Mutation A — lose the race.** The `awaiting_secret.store(true, …)` in the
+pump moved to **after** `out_tx.send(chunk.clone())`:
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1901 filtered out; finished in 0.04s
+```
+
+Re-run recomputed 15× under CI load (the test polls the pump thread; the host
+must arrive before the answer). One pass is enough: the same test after
+restoring the ordering is below.
+
+Reverted (arm **before** `send`, the specced order):
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1901 filtered out; finished in 0.04s
+```
+
+**Mutation B — leak the bytes.** In `input`, the redaction branch deleted, so
+`bytes` are logged unconditionally:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1901 filtered out; finished in 10.05s
+```
+
+Reverted:
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1901 filtered out; finished in 0.04s
+```
+
+**Exception to record, loudly:** Mutation A described above did **not** go red
+in 15 consecutive local runs; the broadcast and the pump's next iteration sit
+in the same thread pool, and by the time the daemon's write round-trips the
+agent, the pump has already armed the flag (the ordered `store` in the pump
+itself). 01a's escalation entry describes precisely this ordering trap. For
+that reason the mutation pair is re-run here under a **--test-threads=1**
+single-threaded binary, isolating the pump thread from the poller's noise.
