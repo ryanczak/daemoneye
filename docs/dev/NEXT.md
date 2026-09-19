@@ -1,33 +1,42 @@
 # NEXT
 
-**Active phase:** none — **M21 phase-01a is `done`** (2026-09-19, `escalated`
-via session takeover after three `budget_exceeded` runs).
+**Active phase:** `docs/dev/milestones/M21-host-model/phase-01b-input-scrub-on-prompt.md`
+— 01b, input-scrub-on-prompt. **Drafted 2026-09-19**, status `todo`.
 
-**The defect it existed to fix is fixed.** A `sudo` password prompt on the
-default PTY backend now reaches the user through `Response::CredentialPrompt`,
-the answer is written into the shell mid-command, and the command completes.
-The end-to-end capture is the exact inverse of the drafting probe.
+01a made the credential reach the shell. It also reaches
+`var/log/shells/*.cast` in clear, as a plaintext `"i"` event. 01b stops that:
+while the screen shows a secret prompt, the host writes `[redacted]` instead of
+the bytes. The M21 exit criterion — the password absent from the shell log —
+cannot be met without it.
 
-All four gates green: lib **1893 passed / 4 ignored**, doc_truth 14,
-integration 32, isolation 9, bug_tracker 6.
+**Small and single-file:** every edit is in `src/shell/backend.rs`, because the
+leak has exactly one choke point. `PtyBackend::input` is the only place a byte
+written toward the shell becomes a log event.
 
-**Division of labour, for the record:** the executor wrote every production
-line and all seven tests across three runs; the architect finished only the
-evidence — the two mutation checks, the real-host capture, and cleanup.
+**Drafting measured the race I flagged at scoping, and it is real.** The output
+pump broadcasts each chunk to the daemon *before* it feeds the screen. So a
+daemon that answers the instant it sees a prompt can have the host write the
+credential before the screen shows the prompt at all — a screen-based check
+would log it in clear. The flag is therefore armed from the chunk itself,
+ahead of the broadcast, and one of the two mutations moves that line to prove
+the ordering is what holds the property.
 
-**Config change during the takeover:** `max_turns` raised to **1000** (PE,
-2026-09-19). Three 600-turn exhaustions on one phase was the signal.
+**A polarity note the spec makes explicit,** because getting it backwards is a
+leak: 01a's detector matches only its own sentinel, since a false positive
+there injects a credential into an ordinary command. The scrub is the
+opposite — a false positive costs one line of log fidelity, a false negative
+writes a password to disk. So the host-side matcher is deliberately broad, and
+a must-survive criterion keeps 01a's narrow detector from being widened.
 
-**Next row: 01b — input-scrub-on-prompt.** The credential must stop reaching
-the cast log. It is host-process work (`shell/backend.rs`, `shell/log.rs`),
-deliberately kept out of 01a and pinned there by must-survive criteria:
-`grep -rc 'scrub\|redact' src/shell/log.rs` is still **0** and the `"i"` event
-writer is untouched, so 01b's mutation is satisfiable.
+Every acceptance criterion was run against HEAD `52a59c4e` and fails there.
+Baselines measured: `shell::backend` 10 → 15, `shell::log` 21 unchanged,
+`daemon::utils::sudo` 14 unchanged, lib 1893 → 1898.
 
-Run `/rexymcp:architect next` to draft it. Ten rows in M21; live host `pinky`.
+**Criteria are anchored this time** (`^fn name(` rather than `fn name`). That
+is the 01a calibration item: three of its criteria over-counted by
+prefix-matching the test names the phase itself created.
 
-**Carried to M21 close:** three calibration items in 01a's review verdict —
-most importantly that the M22 pre-dispatch trigger failed on its first outing,
-in the first phase drafted after it landed. Recommendation on the table: make
-acceptance criteria anchored by default so they cannot prefix-match the test
-names the phase itself creates.
+Dispatch with `/rexymcp:dispatch phase-01b`.
+
+**After 01b:** 02 host-config. Ten rows in M21; live host `pinky`;
+`max_turns` now 1000.
