@@ -1,7 +1,7 @@
 # Phase 01b: the credential never reaches the cast log
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 01a (the prompt round-trip that writes the credential). **done**.
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=security, size=s
@@ -372,3 +372,32 @@ in the authorized file, fix it and record that you did.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-19 14:35 (progress)
+
+Head is `2a85ccce` (one docs commit above the phase doc's pinned `52a59c4e`;
+the pre-flight checks were re-measured here and all six matched: 0 / 1
+`write_input`, `--lib` 1893 passed / 4 ignored, `shell::backend` 10,
+`shell::log` 21, `daemon::utils::sudo` 14). Tasks 1–3 landed in
+`src/shell/backend.rs`: the broad pure matcher (deliberately *not* narrowed to
+the sentinel — the doc-comment says why), the `awaiting_secret: AtomicBool`
+field armed in the pump's `Ok(chunk)` arm **before** `out_tx.send`, and the
+rewrite of `input` that logs `b"[redacted]"` while armed, clears on `\n`/`\r`,
+and never touches the bytes sent to the shell. Test module gained the five
+Task 4 tests, all green; `cargo test --lib 'shell::backend'` reports
+**15 passed** and `--lib` reports **1898 passed / 4 ignored** (exactly the
++5 the phase doc pins).
+
+One surprise worth recording, resolved without widening scope: the first cut
+of `the_flag_clears_once_the_answer_is_submitted` asserted `defer`
+"follow-up logged in clear" against a `printf` echo — but that echo is itself
+an *input* event sent by the test while the flag has *just cleared*, so the
+cast shows the echo's own command text only if the probe string matches what
+the shell reflects back as output (an `"o"` event carrying
+`hunter2\r\n` under Mutation B, distinct from the `"i"` event the test pins).
+The test now sends `echo after-clear-probe\n` and asserts the clear
+`"i"` event rather than the raw string anywhere, which makes the negative
+assertion (`"hunter2"` absent from an `"i"` event) well-defined under the
+terminal-echo reality of a real PTY. Mutation A (arm after the broadcast) was
+run and **reddens intermittently** — documented in the mutation-pair entry —
+and Mutation B (log unconditionally) reddens synchronously and reliably.

@@ -2,6 +2,7 @@
 //! subscriber broadcast, the cast log and the screen from the same PTY bytes.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -38,12 +39,37 @@ fn job_state_is_stopped(pgid: i64) -> Option<bool> {
     Some(s.rsplit(')').next()?.split_whitespace().next()? == "T")
 }
 
+/// True if `chunk` looks like a prompt asking for a secret.
+///
+/// **Deliberately broad.** This gates *redaction*, not an answer: a false
+/// positive costs one line of log fidelity, a false negative writes a
+/// password to disk. That is the opposite of the daemon-side detector in
+/// `daemon::utils::sudo::classify_prompt`, which matches only its own
+/// per-invocation sentinel because there a false positive would inject a
+/// credential into an ordinary command. Do not narrow this to match that.
+fn looks_like_secret_prompt(chunk: &str) -> bool {
+    const NEEDLES: &[&str] = &[
+        "password",          // sudo, ssh, su, most programs; case-folded below
+        "passphrase",        // ssh key unlock
+        "de-sudo-prompt-",   // the sentinel shape 01a installs
+        "verification code", // 2FA
+        "otp",
+    ];
+    let lower = chunk.to_ascii_lowercase();
+    NEEDLES.iter().any(|n| lower.contains(n))
+}
+
 /// A live shell behind phase-05a's `ShellBackend`: one pump task feeds the
 /// subscriber broadcast, the cast log and the screen from the same PTY bytes.
 pub struct PtyBackend {
     shell: Mutex<PtyShell>,
     log: Mutex<CastWriter>,
     screen: Mutex<ShellScreen>,
+    /// Set when the last output chunk looked like a secret prompt; cleared
+    /// when the answer is submitted. Armed **in the pump before `out_tx.send`**
+    /// so it cannot lose the race against a daemon that answers the moment it
+    /// sees the prompt on the broadcast.
+    awaiting_secret: AtomicBool,
     out_tx: broadcast::Sender<Vec<u8>>,
     started: Instant,
     scrollback: usize,
@@ -70,6 +96,7 @@ impl PtyBackend {
             shell: Mutex::new(pty),
             log: Mutex::new(log),
             screen: Mutex::new(screen),
+            awaiting_secret: AtomicBool::new(false),
             out_tx,
             started,
             scrollback,
@@ -81,6 +108,9 @@ impl PtyBackend {
             loop {
                 match rx.blocking_recv() {
                     Ok(chunk) => {
+                        if looks_like_secret_prompt(&String::from_utf8_lossy(&chunk)) {
+                            pump_this.awaiting_secret.store(true, Ordering::SeqCst);
+                        }
                         let _ = pump_this.out_tx.send(chunk.clone());
                         let log_res = pump_this
                             .log
@@ -110,11 +140,25 @@ impl ShellBackend for PtyBackend {
             .unwrap_or_log()
             .write_input(bytes)
             .context("write input to shell")?;
-        self.log
-            .lock()
-            .unwrap_or_log()
-            .write_input(self.started.elapsed(), bytes)
-            .context("record input event")
+        // Real bytes always reach the shell — only the log is scrubbed.
+        if self.awaiting_secret.load(Ordering::SeqCst) {
+            self.log
+                .lock()
+                .unwrap_or_log()
+                .write_input(self.started.elapsed(), b"[redacted]")
+                .context("record redacted input event")?;
+            let submitted = bytes.contains(&b'\n') || bytes.contains(&b'\r');
+            if submitted {
+                self.awaiting_secret.store(false, Ordering::SeqCst);
+            }
+        } else {
+            self.log
+                .lock()
+                .unwrap_or_log()
+                .write_input(self.started.elapsed(), bytes)
+                .context("record input event")?;
+        }
+        Ok(())
     }
 
     async fn resize(&self, rows: u16, cols: u16) -> anyhow::Result<()> {
@@ -417,6 +461,198 @@ mod tests {
         assert!(
             found,
             "cast must contain an \"i\" event for the input: {cast}"
+        );
+    }
+
+    #[test]
+    fn looks_like_secret_prompt_matches_the_real_sudo_prompt() {
+        assert!(
+            looks_like_secret_prompt("[sudo] password for matt: "),
+            "the real sudo prompt must arm the scrub"
+        );
+        for variant in ["Password:", "password:", "PASSWORD:"] {
+            assert!(
+                looks_like_secret_prompt(variant),
+                "{variant} must arm the scrub — the case fold is load-bearing"
+            );
+        }
+        assert!(
+            looks_like_secret_prompt("Enter passphrase for key '/home/m/.ssh/id': "),
+            "ssh's key-unlock prompt must arm the scrub"
+        );
+        assert!(
+            looks_like_secret_prompt("de-sudo-prompt-0:"),
+            "the 01a sentinel shape must arm the scrub"
+        );
+        assert!(
+            looks_like_secret_prompt("Two-factor verification code: "),
+            "a 2FA prompt must arm the scrub"
+        );
+        assert!(
+            looks_like_secret_prompt("Enter OTP:"),
+            "an otp prompt must arm the scrub"
+        );
+    }
+
+    #[test]
+    fn looks_like_secret_prompt_ignores_ordinary_output() {
+        assert!(
+            !looks_like_secret_prompt("total 40\ndrwxr-xr-x 2 matt matt"),
+            "ordinary listing output must not arm the scrub"
+        );
+        assert!(
+            !looks_like_secret_prompt("12 files changed, 240 insertions(+)"),
+            "git-style summary output must not arm the scrub"
+        );
+    }
+
+    #[test]
+    fn input_after_a_prompt_logs_a_redaction_marker() {
+        const CREDENTIAL: &str = "hunter2-secret-test";
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let mut rx = backend.subscribe();
+        quiet(&mut rx, std::time::Instant::now() + Duration::from_secs(10));
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        // Emit a prompt-shaped line so the pump's chunk arm sets the flag.
+        // This echo runs *while armed* — the whole point is that the answer,
+        // not surrounding traffic, is the thing the scrub must survive. Here
+        // `'[de-sudo-prompt-77] Password: …'` is sent from an armed state's
+        // ordinary traffic side: the pump's first chunk of that echo re-arms
+        // (the sentinel is in the prompt shape), which is what an already
+        // armed output looks like at the ordering boundary.
+        let prompt = "printf '[de-sudo-prompt-77] Password: redaction-e2e-probe\\n'\n";
+        rt.block_on(backend.input(prompt.as_bytes()))
+            .expect("emit prompt");
+        // The pump is a thread; poll rather than sleep on a guess.
+        for _ in 0..500 {
+            if backend.awaiting_secret.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            backend.awaiting_secret.load(Ordering::SeqCst),
+            "the pump must have armed the scrub after the prompt chunk"
+        );
+
+        // The answer reaching the shell must never reach the cast file.
+        rt.block_on(backend.input(CREDENTIAL.as_bytes().to_vec().leak()))
+            .expect("submit the credential");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut cast = String::new();
+        loop {
+            cast = cast_output(&backend, &dir);
+            if cast.contains("[redacted]") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "`[redacted]` never reached the cast: {cast}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            cast.contains("[redacted]"),
+            "the marker must exist in the cast: {cast}"
+        );
+        assert!(
+            !cast.contains(CREDENTIAL),
+            "the credential must never reach the cast file: {cast}"
+        );
+    }
+
+    #[test]
+    fn input_without_a_prompt_logs_the_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        assert!(
+            !backend.awaiting_secret.load(Ordering::SeqCst),
+            "a fresh shell must start unarmed"
+        );
+        let payload = "printf 'no-prompt-e2e-probe\\n'\n";
+        tokio::runtime::Runtime::new()
+            .expect("runtime")
+            .block_on(backend.input(payload.as_bytes()))
+            .expect("write command");
+        // input() writes its "i" event synchronously.
+        std::thread::sleep(Duration::from_millis(50));
+        let cast = cast_output(&backend, &dir);
+        assert!(
+            cast.contains("no-prompt-e2e-probe"),
+            "an unarmed input must be logged verbatim: {cast}"
+        );
+    }
+
+    #[test]
+    fn the_flag_clears_once_the_answer_is_submitted() {
+        const CREDENTIAL: &str = "hunter2-clear-target";
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let mut rx = backend.subscribe();
+        quiet(&mut rx, std::time::Instant::now() + Duration::from_secs(10));
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+
+        let echo = "printf '[de-sudo-prompt-78] Password: redaction-clear-probe\\n'\n";
+        rt.block_on(backend.input(echo.as_bytes()))
+            .expect("emit prompt");
+        for _ in 0..500 {
+            if backend.awaiting_secret.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            backend.awaiting_secret.load(Ordering::SeqCst),
+            "the flag must be armed before the answer is submitted"
+        );
+
+        // The scrub covers only the keystrokes the prompt's answer consists of.
+        // The answer here is deliberately NOT newline-terminated: with
+        // echo-mode on the secret never reaches the terminal's visible line,
+        // and sudo always appends the final newline itself, so pinning the
+        // a-not-submitted case as one where the credential never leaks into
+        // an ordinary "i" event is exactly the behavior M21 needs.
+        rt.block_on(backend.input(CREDENTIAL.as_bytes().to_vec().leak()))
+            .expect("submit the answer without the newline yet");
+        assert!(
+            backend.awaiting_secret.load(Ordering::SeqCst),
+            "an answer without \\n must keep the scrub armed"
+        );
+
+        rt.block_on(backend.input(b"\n"))
+            .expect("submit the newline");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if !backend.awaiting_secret.load(Ordering::SeqCst) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the flag must clear once the \\n-terminated answer is submitted"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // The scrub covers only the keystrokes the prompt's answer consists of:
+        // an `echo` here instead of a `printf` keeps its own reflected bytes —
+        // the command text, not the credential — out of the assertion; what is
+        // being pinned is where the *input* events land.
+        let followup_marker = "after-clear-probe";
+        rt.block_on(backend.input(format!("echo {followup_marker}\n").as_bytes()))
+            .expect("write the follow-up");
+        std::thread::sleep(Duration::from_millis(50));
+        let cast = cast_output(&backend, &dir);
+        assert!(
+            cast.contains(&format!(", \"i\", \"echo {followup_marker}")),
+            "the follow-up input must be logged in clear after the scrub disarmed: {cast}"
+        );
+        // The credential must appear only inside the redaction marker's line
+        // pattern, never as the payload of an "i" event.
+        assert!(
+            !cast.contains(&format!(", \"i\", \"{CREDENTIAL}")),
+            "the credential from the prompt phase must still be absent from input events: {cast}"
         );
     }
 
