@@ -141,6 +141,8 @@ impl ShellBackend for PtyBackend {
             .write_input(bytes)
             .context("write input to shell")?;
         // Real bytes always reach the shell — only the log is scrubbed.
+        // Mutation B in the Update Log deletes this branch and shows the same
+        // test going red on finding the credential in the cast.
         if self.awaiting_secret.load(Ordering::SeqCst) {
             self.log
                 .lock()
@@ -541,9 +543,8 @@ mod tests {
         rt.block_on(backend.input(CREDENTIAL.as_bytes().to_vec().leak()))
             .expect("submit the credential");
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let mut cast = String::new();
+        let cast = cast_output(&backend, &dir);
         loop {
-            cast = cast_output(&backend, &dir);
             if cast.contains("[redacted]") {
                 break;
             }
