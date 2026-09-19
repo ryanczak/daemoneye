@@ -1,7 +1,7 @@
 # Phase 01b: the credential never reaches the cast log
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** in-progress — bounced 2026-09-19, see `bugs/bug-01b-1.md`
 **Depends on:** 01a (the prompt round-trip that writes the credential). **done**.
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=security, size=s
@@ -244,11 +244,22 @@ most of its budget:
 Run both, paste all four `test result:` lines into the Update Log **after** the
 capture block.
 
-**Mutation A — lose the race.** Move the `awaiting_secret.store(true, …)` line
-in the pump to **after** `out_tx.send(chunk.clone())`.
-`input_after_a_prompt_logs_a_redaction_marker` must go **red** — if it stays
-green, the test is not exercising the ordering and you must say so in the
-Update Log rather than proceeding.
+**Mutation A — withdrawn 2026-09-19; do not attempt it as a red.** The first
+run moved the arm after `out_tx.send` and the test stayed **green in 15
+consecutive runs**. That is the correct result, not a failure to reproduce:
+the window between the broadcast and the pump's own store is too small for an
+in-process test to land inside, so the ordering is **not observable
+behaviourally**. The spec should not have pinned it without applying it first.
+
+**Pin the ordering structurally instead**, and say in the Update Log that this
+is why:
+
+```sh
+awk '/Ok\(chunk\)/,/out_tx.send/' src/shell/backend.rs | grep -n 'awaiting_secret.store'
+```
+
+must return a line, i.e. the store appears between the `Ok(chunk)` arm and the
+`out_tx.send` call. Record the command and its output.
 
 **Mutation B — leak the bytes.** In `input`, log `bytes` unconditionally
 (delete the redaction branch). The same test must go **red** on finding
@@ -264,8 +275,14 @@ recipe, which is known to work:
 - Start `./target/debug/daemoneye shell-host --id s0 --shell /bin/bash
   --rows 24 --cols 80` under it, drive the socket with `Subscribe` then
   `Input`, reading `Chunk` frames.
-- Send a sudo-*shaped* command — `echo '[de-sudo-prompt-0]'; read -r pw; …` —
-  then write the answer as an `Input` frame. **No real credential.**
+- **Drive real `sudo`, not a sudo-shaped command.** Send `sudo -k; sudo true`
+  and answer with a throwaway wrong password. **Corrected 2026-09-19:** the
+  original instruction said to use `read -r pw` to avoid a real credential,
+  but a shell `read` leaves terminal echo **on**, so the answer lands in the
+  cast as an `"o"` event and the whole-file grep can never be clean. Real
+  `sudo` disables echo for its own prompt; measured by the reviewer, the
+  whole-file grep is then **0**. A wrong password is refused harmlessly and
+  is not a real credential.
 - Then read the cast file under `var/log/shells/` and grep it.
 - Clean up: match the host by executable name (`ps -eo comm`), **not**
   `pgrep -f`, which matches the probe's own command line.
@@ -309,12 +326,15 @@ current value.
 - [ ] `grep -c 'awaiting_secret' src/shell/backend.rs` → **at least 4** (now 0) — the field, the pump arm, the `input` check, the clear
 - [ ] `grep -c '\[redacted\]' src/shell/backend.rs` → **at least 1** (now 0)
 - [ ] `grep -cE '^\s+awaiting_secret: AtomicBool,' src/shell/backend.rs` → **1** (now 0) — the field is on `PtyBackend`
-- [ ] `cargo test --lib 'shell::backend'` reports **15 passed** (now 10) — the five Task 4 tests
-- [ ] `cargo test --lib` reports **1898** (now 1893) — exactly five new tests
+- [ ] `cargo test --lib 'shell::backend'` reports **15 passed** — on the bounce this is **unchanged**, not a rise; a rising count means scope creep
+- [ ] `cargo test --lib` reports **1898, unchanged** on the bounce — the five Task 4 tests already landed; a rise means scope creep
 - [ ] `cargo test --test doc_truth` reports **14 passed, unchanged**
-- [ ] Task 6's `PASTE MATCH` block reads exactly `prompt_armed=true secret_in_cast=false marker_in_cast=true followup_in_clear=true`
+- [ ] Task 6's `PASTE MATCH` block reads exactly `prompt_armed=true secret_in_cast=false marker_in_cast=true followup_in_clear=true`, **produced by a real-`sudo` probe**, and `secret_in_cast` is the **whole-file** grep. The entry must **not** redefine the term beneath the block (bug-01b-1)
+- [ ] `awk '/Ok\(chunk\)/,/out_tx.send/' src/shell/backend.rs | grep -c 'awaiting_secret.store'` → **1** — the arm precedes the broadcast, pinned structurally because it is not observable behaviourally (bug-01b-1)
+- [ ] The credential negative assertion in both Task 4 tests is over the **whole cast text**. Check with `grep -n '{CREDENTIAL}' src/shell/backend.rs`: no surviving assertion may scope it to `", \"i\", \"` (now one does, at the `the_flag_clears_once_the_answer_is_submitted` test) — bug-01b-1
+- [ ] `ls docs/dev/milestones/M21-host-model/bugs/01b-terminal-echo-writes-the-secret-back.md` → **does not exist**; its premise is a probe artifact, disproved by the real-sudo measurement in bug-01b-1
 - [ ] The literal `PASTE MATCH` line appears in the end-to-end entry
-- [ ] Task 5's mutation pair, all four `test result:` lines, in the Update Log
+- [ ] Task 5: **Mutation B's** two `test result:` lines (red, then green on revert) in the Update Log, plus a plain statement that **Mutation A is withdrawn as unobservable** and the ordering is pinned structurally. Two lines, not four
 - [ ] `cargo fmt --all` clean, `cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings` clean
 
 **Must-survive criteria** — these pass now and must still pass after:
@@ -604,3 +624,46 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** bb340771d0277f53d455d36009a10ef562b76ab8
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-09-19 (BOUNCE — read this first)
+
+**Your implementation is correct and is not what bounced.** `cargo build`,
+`clippy -D warnings` and `cargo test` are all green, `shell::backend` is at the
+pinned 15, and the redaction works — the reviewer confirmed it against a real
+host. **Do not re-derive Tasks 1–3.** Four gates green here is expected and is
+not evidence the phase is done; `bugs/bug-01b-1.md` names what is.
+
+**Two of the three findings are architect defects in the spec you followed, and
+they are corrected in place above.** You do not need to defend them.
+
+1. **Task 6's probe shape was wrong.** The spec told you to use a sudo-*shaped*
+   `read -r pw`. That leaves terminal echo **on**, so the answer lands in the
+   cast as an `"o"` event and the whole-file grep can never be clean. **Real
+   `sudo` disables echo for its own prompt.** The reviewer measured it: with
+   `sudo -k; sudo true` and a throwaway wrong password, the whole-file grep for
+   that password is **0**. Task 6 now says to drive real sudo. A wrong password
+   is refused harmlessly — it is not a real credential.
+
+2. **Mutation A was pinned without ever being applied.** You ran it 15 times
+   and it stayed green; that is the *correct* result and you were right to say
+   so. The window is not observable from an in-process test. Mutation A is
+   **withdrawn**; the ordering is now pinned structurally by an `awk` over the
+   pump. Record the command and its output. **Do not manufacture a red.**
+
+3. **This one is yours.** The end-to-end entry pastes `secret_in_cast=false`
+   and then redefines the term directly beneath it as "absent from the cast
+   file's `\"i\"` events", while your Notes-for-review say the entry reads
+   `true`. The specced predicate was the whole file. A criterion that is
+   narrowed in the prose under its own green line is the failure mode the
+   end-to-end rules exist to prevent — the spec's escape hatch was to **report
+   the fact as unmet**, which costs nothing and is always available. Re-run the
+   capture with real sudo, where the specced predicate genuinely holds.
+
+**Also delete `bugs/01b-terminal-echo-writes-the-secret-back.md`.** Its premise
+is the probe artifact above, disproved by the real-sudo measurement. Filing it
+was good instinct on evidence you had; the evidence was the spec's fault. If
+you think a genuine residual remains for *non-sudo* prompts that echo, write
+that in the Update Log instead — it is out of this phase's scope either way.
+
+**Finish condition:** `shell::backend` stays at **15**, not 16. This is a
+correctness fix; a rising count means scope creep.
