@@ -1,29 +1,33 @@
 # NEXT
 
-**Active phase:** `docs/dev/milestones/M21-host-model/phase-01a-credential-prompt-on-pty.md`
-— 01a, credential-prompt-on-pty. **Drafted 2026-09-18**, status `todo`.
+**Active phase:** none — **M21 phase-01a is `done`** (2026-09-19, `escalated`
+via session takeover after three `budget_exceeded` runs).
 
-**The defect is confirmed, not suspected.** The drafting probe drove a real
-`daemoneye shell-host` over its Unix socket in an isolated `HOME`:
+**The defect it existed to fix is fixed.** A `sudo` password prompt on the
+default PTY backend now reaches the user through `Response::CredentialPrompt`,
+the answer is written into the shell mid-command, and the command completes.
+The end-to-end capture is the exact inverse of the drafting probe.
 
-- `sudo -k; sudo true` → emits `[sudo] password for matt: `, **no end marker
-  ever arrives**. The command runs to its 45 s deadline and the user is never
-  asked for a password. That is the shipped default backend today.
-- `sudo -k; sudo -S true </dev/null` → completes in 1.8 s with
-  `sudo: a password is required`. The machinery is sound; what is missing is
-  noticing the prompt and answering it.
-- Second finding, recorded for 01b and row 04: a shell parked at a prompt
-  **eats the next command's bytes**. 01a's give-up path must un-park the shell.
+All four gates green: lib **1893 passed / 4 ignored**, doc_truth 14,
+integration 32, isolation 9, bug_tracker 6.
 
-01a adds a pure prompt classifier that matches the **sentinel**, never sudo's
-own locale-dependent text; a streaming variant of `run_command` that can answer
-mid-command; and the wiring that turns a detected prompt into
-`Response::CredentialPrompt`. Local sudo only — no SSH, no hosts, no config.
+**Division of labour, for the record:** the executor wrote every production
+line and all seven tests across three runs; the architect finished only the
+evidence — the two mutation checks, the real-host capture, and cleanup.
 
-Every acceptance criterion was run against HEAD `bf9dd263` and fails there.
-The three module test baselines are measured: 11 / 17 / 19.
+**Config change during the takeover:** `max_turns` raised to **1000** (PE,
+2026-09-19). Three 600-turn exhaustions on one phase was the signal.
 
-Dispatch with `/rexymcp:dispatch phase-01a`.
+**Next row: 01b — input-scrub-on-prompt.** The credential must stop reaching
+the cast log. It is host-process work (`shell/backend.rs`, `shell/log.rs`),
+deliberately kept out of 01a and pinned there by must-survive criteria:
+`grep -rc 'scrub\|redact' src/shell/log.rs` is still **0** and the `"i"` event
+writer is untouched, so 01b's mutation is satisfiable.
 
-**Next rows:** 01b (scrub the credential out of the cast log, in the shell-host
-process), then 02 host-config. Ten rows total; live host is `pinky`.
+Run `/rexymcp:architect next` to draft it. Ten rows in M21; live host `pinky`.
+
+**Carried to M21 close:** three calibration items in 01a's review verdict —
+most importantly that the M22 pre-dispatch trigger failed on its first outing,
+in the first phase drafted after it landed. Recommendation on the table: make
+acceptance criteria anchored by default so they cannot prefix-match the test
+names the phase itself creates.

@@ -15,10 +15,12 @@ mod registry;
 mod screen;
 mod session;
 
-pub use backend::PtyBackend;
-pub use client::{CommandHandle, PromptReply, run_command, run_command_with_prompts, send_input,
-    send_signal, spawn_command, status};
 pub use crate::daemon::utils::PromptKind;
+pub use backend::PtyBackend;
+pub use client::{
+    CommandHandle, PromptReply, run_command, run_command_with_prompts, send_input, send_signal,
+    spawn_command, status,
+};
 pub use host::{ShellBackend, bind, serve};
 pub use launch::{
     await_ready, cast_path, lock_path, resolve_cast, run_host, socket_path, spawn_detached,
@@ -33,6 +35,8 @@ pub use proto::{ShellRequest, ShellResponse, ShellSignal, ShellState, encode};
 pub use pty::{
     CommandOutcome, Nonce, PtyShell, exit_var, parse_outcome, strip_markers, wrap_command,
 };
+#[cfg(test)]
+pub(crate) use pty::{test_begin_marker, test_end_marker};
 pub use registry::{
     Owner, ShellId, ShellRecord, ShellRegistry, adopt_at_startup, allocate_index, check_owner_cap,
     host_is_alive, mark_interactive, parse_cast_name, reap_exited, scan_shell_ids, spawn_for,

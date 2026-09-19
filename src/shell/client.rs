@@ -11,6 +11,10 @@ use tokio::net::UnixStream;
 
 use crate::shell::proto::{ShellRequest, ShellResponse, ShellSignal, encode};
 use crate::shell::pty::{CommandOutcome, Nonce, parse_outcome, wrap_command};
+#[cfg(test)]
+use crate::shell::test_begin_marker;
+#[cfg(test)]
+use crate::shell::test_end_marker;
 
 /// How long one prompt answer may take to reach the shell. Bounded well below
 /// any plausible command timeout so a wedged host cannot wedge the caller.
@@ -155,13 +159,9 @@ pub async fn run_command(
     shell_name: &str,
     timeout: Duration,
 ) -> anyhow::Result<CommandOutcome> {
-    run_command_with_prompts(
-        sock,
-        cmd,
-        shell_name,
-        timeout,
-        |_: &str| async { PromptReply::Wait },
-    )
+    run_command_with_prompts(sock, cmd, shell_name, timeout, |_: &str| async {
+        PromptReply::Wait
+    })
     .await
 }
 
@@ -966,35 +966,43 @@ mod tests {
         }
     }
 
-    /// A scripted host: a real `UnixListener` that speaks the frames a
-    /// scripted sequence dictates (`launch.rs`'s status-responder test is the
-    /// pattern). A command's response to the marker-wrapped `Input` is a
-    /// scripted list of `Frame`s the director emits in order; what the client
-    /// sends back is recorded byte-exact by the backend.
+    /// A streaming fake host: a real socket (the `oneshot` module's pattern)
+    /// whose backend plays a scripted sequence of chunks onto its broadcast
+    /// channel while the client's read loop runs, and records every byte the
+    /// client writes on the same connection. This is what lets a test put a
+    /// sudo-shaped prompt in front of `run_command_with_prompts` and watch
+    /// the answer arrive as an `Input` frame.
     mod scripted {
         use super::*;
-
-        /// What a scripted director writes before the next step.
-        enum Step {
-            /// Emit a chunk of command output through the subscriber.
-            Chunk(&'static str),
-            /// Record what arrived on the write half and stop.
-            Expect(&'static str),
-        }
+        use crate::shell::host::{ShellBackend, bind, serve};
+        use std::sync::Mutex;
 
         struct ScriptedBackend {
-            steps: Vec<Step>,
-            shell: Arc<std::sync::Mutex<String>>,
-            subscriber: tokio::sync::mpsc::Sender<Vec<u8>>,
+            /// Every write the client made, byte-exact, in order.
+            writes: Mutex<Vec<Vec<u8>>>,
+            /// The broadcast every connection's subscriber reads from.
+            tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+        }
+
+        impl ScriptedBackend {
+            fn new() -> (Arc<Self>, tokio::sync::broadcast::Sender<Vec<u8>>) {
+                let (tx, _) = tokio::sync::broadcast::channel(64);
+                let backend = Arc::new(Self {
+                    writes: Mutex::new(Vec::new()),
+                    tx: tx.clone(),
+                });
+                (backend, tx)
+            }
+
+            fn writes(&self) -> Vec<Vec<u8>> {
+                self.writes.lock().unwrap().clone()
+            }
         }
 
         #[async_trait::async_trait]
-        impl crate::shell::host::ShellBackend for ScriptedBackend {
+        impl ShellBackend for ScriptedBackend {
             async fn input(&self, bytes: &[u8]) -> anyhow::Result<()> {
-                self.shell
-                    .lock()
-                    .unwrap()
-                    .push_str(&String::from_utf8_lossy(bytes));
+                self.writes.lock().unwrap().push(bytes.to_vec());
                 Ok(())
             }
             async fn resize(&self, _rows: u16, _cols: u16) -> anyhow::Result<()> {
@@ -1007,8 +1015,266 @@ mod tests {
                 ShellResponse::Ok
             }
             fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
-                tokio::sync::broadcast::channel(1).0.subscribe()
+                self.tx.subscribe()
             }
+        }
+
+        struct ScriptedHost {
+            backend: Arc<ScriptedBackend>,
+            path: PathBuf,
+            _dir: tempfile::TempDir,
+        }
+
+        /// Wait until the client's wrapped command arrives in the recorded
+        /// writes, so the scripted chunks are published strictly after the
+        /// client subscribed to the broadcast.
+        async fn await_input(server: &ScriptedHost) -> Vec<u8> {
+            for _ in 0..500 {
+                {
+                    let writes = server.backend.writes();
+                    if let Some(bytes) = writes.first() {
+                        return bytes.clone();
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!("the client never wrote its command to the fake host");
+        }
+
+        async fn spawn_scripted() -> ScriptedHost {
+            let (backend, _) = ScriptedBackend::new();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("scripted.sock");
+            let listener = bind(&path).await.unwrap();
+            let serve_backend = Arc::clone(&backend);
+            tokio::spawn(async move { serve(listener, serve_backend).await });
+            ScriptedHost {
+                backend,
+                path,
+                _dir: dir,
+            }
+        }
+
+        /// The marker pair the client's own wrapped command will resolve to,
+        /// as a real bash session emits them: the shell executes the wrapped
+        /// text's `printf`s, so the raw `\x1f`-framed markers reach the
+        /// stream. The nonce is recovered from the recorded command text (the
+        /// quoted `DE_''BEG` spelling), keeping it test-private.
+        fn markers_for_sent_command(wrapped: &[u8]) -> (Vec<u8>, Vec<u8>) {
+            let text = String::from_utf8_lossy(wrapped);
+            let nonce = text
+                .split("DE_''BEG ")
+                .nth(1)
+                .and_then(|rest| rest.split('\\').next())
+                .expect("the wrapped command carries its begin marker");
+            let nonce = Nonce(nonce.to_string());
+            (test_begin_marker(&nonce), test_end_marker(&nonce, 0))
+        }
+
+        #[tokio::test]
+        async fn run_command_with_prompts_answers_a_prompt() {
+            let host = spawn_scripted().await;
+            let tx = host.backend.tx.clone();
+            let path = host.path.clone();
+            let client = tokio::spawn(async move {
+                run_command_with_prompts(
+                    &path,
+                    "sudo true",
+                    "bash",
+                    Duration::from_secs(10),
+                    |output: &str| {
+                        if output.contains("[de-sudo-prompt-0]") {
+                            std::future::ready(PromptReply::Send(b"let-me-through\n".to_vec()))
+                        } else {
+                            std::future::ready(PromptReply::Wait)
+                        }
+                    },
+                )
+                .await
+            });
+            let sent = await_input(&host).await;
+            let (begin, end) = markers_for_sent_command(&sent);
+            let publisher = tokio::spawn(async move {
+                tx.send(begin).unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                tx.send(b"\r\n[de-sudo-prompt-0] ".to_vec()).unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                tx.send(end).unwrap();
+            });
+            let outcome = client
+                .await
+                .expect("the client task joins")
+                .expect("the answered prompt completes the command");
+            publisher.await.expect("the script task finishes");
+
+            assert_eq!(outcome.exit_code, 0, "the scripted exit code surfaces");
+            let writes = host.backend.writes();
+            assert_eq!(
+                writes.len(),
+                2,
+                "exactly the command plus the answer crosses the socket: {writes:?}"
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&writes[1]),
+                "let-me-through\n",
+                "the answer reaches the shell byte-exact: {:?}",
+                writes[1]
+            );
+        }
+
+        #[tokio::test]
+        async fn run_command_with_prompts_gives_up_without_an_answer() {
+            let host = spawn_scripted().await;
+            let tx = host.backend.tx.clone();
+            let path = host.path.clone();
+            let client = tokio::spawn(async move {
+                run_command_with_prompts(
+                    &path,
+                    "sudo true",
+                    "bash",
+                    Duration::from_secs(10),
+                    |output: &str| {
+                        if output.contains("[de-sudo-prompt-1]") {
+                            std::future::ready(PromptReply::GiveUp(
+                                "cannot answer here".to_string(),
+                            ))
+                        } else {
+                            std::future::ready(PromptReply::Wait)
+                        }
+                    },
+                )
+                .await
+            });
+            let sent = await_input(&host).await;
+            let (begin, _end) = markers_for_sent_command(&sent);
+            tx.send(begin).unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx.send(b"\r\n[de-sudo-prompt-1] ".to_vec()).unwrap();
+            let err = client
+                .await
+                .expect("the client task joins")
+                .expect_err("a give-up abandons the command with its reason");
+
+            assert!(
+                err.to_string().contains("cannot answer here"),
+                "the give-up reason is the error: {err:#}"
+            );
+            // The write races the host's recording task: poll until the
+            // un-parking newline lands (bounded, like `await_input`). Mutation
+            // B removes that write, so this test must then fail on the
+            // missing byte rather than pass with one write fewer.
+            let mut writes = Vec::new();
+            for _ in 0..500 {
+                writes = host.backend.writes();
+                if writes.len() >= 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert_ne!(
+                writes.len(),
+                1,
+                "mutation B guard: the give-up path must still un-park the shell \
+                 with its own write — exactly one write here means the newline \
+                 was dropped"
+            );
+            assert_eq!(
+                writes.len(),
+                2,
+                "the command plus exactly one un-parking write: {writes:?}"
+            );
+            assert_eq!(
+                writes[1],
+                b"\n".to_vec(),
+                "the un-parking write is a single newline, never the credential"
+            );
+        }
+
+        #[tokio::test]
+        async fn run_command_is_unchanged_without_prompts() {
+            let host = spawn_scripted().await;
+            let tx = host.backend.tx.clone();
+            let path = host.path.clone();
+            let client = tokio::spawn(async move {
+                run_command(&path, "echo plain", "bash", Duration::from_secs(10)).await
+            });
+            let sent = await_input(&host).await;
+            let (begin, end) = markers_for_sent_command(&sent);
+            tx.send(begin).unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx.send(b"plain output\r\n".to_vec()).unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx.send(end).unwrap();
+
+            let awaited = client
+                .await
+                .expect("the client task joins")
+                .expect("the plain path completes");
+
+            let writes = host.backend.writes();
+            assert_eq!(
+                writes.len(),
+                1,
+                "the always-Wait path never writes beyond the command: {writes:?}"
+            );
+            assert_eq!(
+                awaited.exit_code, 0,
+                "the scripted exit code surfaces through the plain path"
+            );
+            let out = String::from_utf8_lossy(&awaited.output);
+            assert!(
+                out.contains("plain output") && !out.contains("DE_"),
+                "the output is the command's own bytes without marker framing: {out:?}"
+            );
+        }
+
+        /// Task 5's "identically through both entry points" half: the same
+        /// plain command through `run_command_with_prompts` with an always-
+        /// `Wait` callback produces the same outcome shape — the exit code,
+        /// the exact output, and no write beyond the command itself.
+        #[tokio::test]
+        async fn run_command_with_prompts_without_a_prompt_matches_run_command() {
+            let host = spawn_scripted().await;
+            let tx = host.backend.tx.clone();
+            let path = host.path.clone();
+            let client = tokio::spawn(async move {
+                run_command_with_prompts(
+                    &path,
+                    "echo plain",
+                    "bash",
+                    Duration::from_secs(10),
+                    |_: &str| async { PromptReply::Wait },
+                )
+                .await
+            });
+            let sent = await_input(&host).await;
+            let (begin, end) = markers_for_sent_command(&sent);
+            tx.send(begin).unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx.send(b"plain output\r\n".to_vec()).unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx.send(end).unwrap();
+
+            let awaited = client
+                .await
+                .expect("the client task joins")
+                .expect("the always-Wait path completes like run_command");
+
+            let writes = host.backend.writes();
+            assert_eq!(
+                writes.len(),
+                1,
+                "the always-Wait callback never writes beyond the command: {writes:?}"
+            );
+            assert_eq!(
+                awaited.exit_code, 0,
+                "the scripted exit code surfaces through the always-Wait path"
+            );
+            let out = String::from_utf8_lossy(&awaited.output);
+            assert_eq!(
+                out, "plain output",
+                "the output is the command's own bytes, identical to run_command's shape"
+            );
         }
     }
 }

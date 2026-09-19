@@ -157,6 +157,22 @@ pub(crate) fn end_marker(nonce: &Nonce) -> Vec<u8> {
     format!("\u{1f}DE_END {} ", nonce.as_str()).into_bytes()
 }
 
+/// A well-formed end marker for `nonce` carrying `exit_code`, the bytes a bash
+/// session emits when the command finishes. Test-only: the client's fake-host
+/// tests must be able to terminate a command without a real shell, and the
+/// marker is the protocol's private framing, spelt out nowhere else.
+#[cfg(test)]
+pub(crate) fn test_end_marker(nonce: &Nonce, exit_code: i32) -> Vec<u8> {
+    format!("\u{1f}DE_END {} {exit_code}\u{1f}\r\n", nonce.as_str()).into_bytes()
+}
+
+/// The begin marker's raw bytes, as a shell executing `wrap_command`'s printf
+/// emits them. Test-only companion to [`test_end_marker`].
+#[cfg(test)]
+pub(crate) fn test_begin_marker(nonce: &Nonce) -> Vec<u8> {
+    format!("\u{1f}DE_BEG {}\u{1f}\r\n", nonce.as_str()).into_bytes()
+}
+
 pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);

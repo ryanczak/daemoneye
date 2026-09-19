@@ -14,12 +14,11 @@ use super::foreground;
 use super::send_response_split;
 use crate::ai::mask_sensitive;
 use crate::daemon::utils::{
-    classify_prompt, command_has_sudo, normalize_output, sudo_password_prompt, sudo_sentinel,
-    with_sudo_sentinel, PromptKind,
+    PromptKind, classify_prompt, command_has_sudo, normalize_output, sudo_password_prompt,
+    sudo_sentinel, with_sudo_sentinel,
 };
 use crate::ipc::{Request, Response};
 use crate::shell::PromptReply;
-use crate::shell::spawn_detached_host;
 use crate::shell::{
     CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, await_ready, login_shell,
     mark_interactive, meta_path_for, run_command, run_command_with_prompts, shell_for_owner,
@@ -43,11 +42,6 @@ pub(super) const SHELL_READY_TIMEOUT: Duration = Duration::from_secs(15);
 const CAST_SETTLE_TIMEOUT: Duration = Duration::from_secs(2);
 /// How often the settle loop re-reads the cast file length between polls.
 const CAST_SETTLE_POLL: Duration = Duration::from_millis(10);
-
-/// The PTY geometry every shell host is spawned with.
-const ROWS: u16 = 24;
-/// The PTY geometry every shell host is spawned with.
-const COLS: u16 = 80;
 
 /// Annotate, mask, then normalize. The order matters (F3): the annotation step
 /// must strip control bytes before masking, or an escape embedded mid-token
@@ -79,59 +73,16 @@ fn applied_timeout_secs(timeout_secs: Option<u64>) -> Duration {
     Duration::from_secs(secs)
 }
 
-/// Run `cmd` in `owner`'s PTY shell and format the result for the model.
-/// Returns the shell's id and the text to send as the tool result.
-///
-/// On any failure the error names the shell id and the command's own timeout,
-/// and the caller must surface "the command may still be running" — a shell
-/// the command killed keeps producing output the marker protocol never
-/// answers.
-pub(super) async fn run_in_shell(
-    reg: &ShellRegistry,
-    owner: Owner,
-    cmd: &str,
-    max_per_owner: u32,
-    shell: Option<&str>,
-    timeout_secs: Option<u64>,
-) -> anyhow::Result<(ShellId, ShellRunResult)> {
-    run_in_shell_with_spawn(reg, owner, cmd, max_per_owner, shell, timeout_secs, |id| {
-        Box::pin(spawn_detached_host(id, ROWS, COLS))
-            as std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>
-    })
-    .await
-}
 /// The non-chat entry point: no transport, so a sudo command that needs a
-/// password fails the way it always did.
-pub(super) async fn run_in_shell_with_spawn<F, Fut>(
-    reg: &ShellRegistry,
-    owner: Owner,
-    cmd: &str,
-    max_per_owner: u32,
-    shell: Option<&str>,
-    timeout_secs: Option<u64>,
-    spawn: F,
-) -> anyhow::Result<(ShellId, ShellRunResult)>
-where
-    F: FnOnce(ShellId) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<()>>,
-{
-    run_in_shell_core::<tokio::io::Stdout, tokio::io::Empty, F, Fut>(
-        reg,
-        owner,
-        cmd,
-        max_per_owner,
-        shell,
-        timeout_secs,
-        None,
-        spawn,
-    )
-    .await
-}
-
-/// A sudo-aware run: when `command_has_sudo(cmd)` the command is run wrapped
-/// in a per-invocation sentinel and a detected prompt round-trips
-/// `Response::CredentialPrompt` → `Request::CredentialResponse` over the
-/// caller's transport, exactly as the tmux path does.
+/// The entry point `executor/mod.rs` calls with a pub/sub transport. `cmd` is
+/// the plain command: whether it needs a sudo prompt and which sentinel it gets
+/// is decided here, and the non-sudo result is byte-identical to the
+/// historical no-transport run (`prompts: None`).
+///
+/// The prompt round-trips `Response::CredentialPrompt` →
+/// `Request::CredentialResponse` over the caller's transport, exactly as the
+/// tmux path does.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_in_shell_with_prompts<'p, W, R, F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
@@ -196,10 +147,6 @@ where
     rx: &'p mut R,
 }
 
-/// Resolve the `shell` argument to a target. `None` is today's reuse rule;
-/// `"new"` opens a fresh shell for this command; anything matching the shell
-/// id grammar names a specific shell. Matching is exact-case. The error names
-/// the value and both accepted forms, so the model can correct in one step.
 /// What `shell?` on `run_terminal_command` resolves to, before the registry
 /// is touched. Pure — no await, no lock, no filesystem — so a bad value is
 /// rejected before anything runs.
@@ -238,6 +185,7 @@ fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
 
 /// The single body of the run path. `prompts: None` is the historical
 /// behaviour; a transport turns the sudo branch on.
+#[allow(clippy::too_many_arguments)]
 async fn run_in_shell_core<'p, W, R, F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
@@ -380,7 +328,8 @@ where
     };
 
     let wrapped = prompts.wrapped.clone();
-    let outcome = run_sudo_command(&socket, &wrapped, &login_shell(), applied_timeout, prompts).await;
+    let outcome =
+        run_sudo_command(&socket, &wrapped, &login_shell(), applied_timeout, prompts).await;
     match outcome {
         Ok(outcome) => finish_run(reg, cmd, &id, &outcome, before).await,
         Err(e) => {
@@ -467,87 +416,93 @@ where
     let rx: std::sync::Arc<tokio::sync::Mutex<&mut R>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(rx));
     let sentinel = std::sync::Arc::new(sentinel);
-    run_command_with_prompts(socket, &wrapped_cmd, shell_name, timeout, move |output: &str| {
-        let out = output.to_string();
-        let id = std::sync::Arc::clone(&id);
-        let tx = std::sync::Arc::clone(&tx);
-        let rx = std::sync::Arc::clone(&rx);
-        let state = std::sync::Arc::clone(&attempts);
-        let sentinel = std::sync::Arc::clone(&sentinel);
-        async move {
-            let attempts_used = {
-                let s = state.lock().expect("sudo attempt state");
-                s.attempts
-            };
-            match classify_prompt(&out, &sentinel) {
-                Some(PromptKind::SudoPassword) if attempts_used < MAX_SUDO_RETRIES => {
-                    let prompt = sudo_password_prompt(attempts_used, MAX_SUDO_RETRIES);
-                    {
-                        let mut guard = tx.lock().await;
-                        let write = send_response_split(
-                            &mut **guard,
-                            Response::CredentialPrompt {
-                                id: (*id).clone(),
-                                prompt,
-                            },
-                        )
-                        .await;
-                        if let Err(e) = write {
-                            return PromptReply::GiveUp(format!(
-                                "credential prompt could not be sent: {e}"
-                            ));
-                        }
-                    }
-                    let mut cred_line = String::new();
-                    let read = {
-                        let mut guard = rx.lock().await;
-                        tokio::time::timeout(
-                            super::USER_PROMPT_TIMEOUT,
-                            guard.read_line(&mut cred_line),
-                        )
-                        .await
-                    };
-                    let alive_line = cred_line.as_bytes().to_vec();
-                    let answer = match read {
-                        Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
-                            Ok(Request::CredentialResponse { credential, .. }) => {
-                                let credential = zeroize::Zeroizing::new(credential);
-                                let mut bytes = credential.as_bytes().to_vec();
-                                bytes.push(b'\n');
-                                PromptReply::Send(bytes)
+    run_command_with_prompts(
+        socket,
+        &wrapped_cmd,
+        shell_name,
+        timeout,
+        move |output: &str| {
+            let out = output.to_string();
+            let id = std::sync::Arc::clone(&id);
+            let tx = std::sync::Arc::clone(&tx);
+            let rx = std::sync::Arc::clone(&rx);
+            let state = std::sync::Arc::clone(&attempts);
+            let sentinel = std::sync::Arc::clone(&sentinel);
+            async move {
+                let attempts_used = {
+                    let s = state.lock().expect("sudo attempt state");
+                    s.attempts
+                };
+                match classify_prompt(&out, &sentinel) {
+                    Some(PromptKind::SudoPassword) if attempts_used < MAX_SUDO_RETRIES => {
+                        let prompt = sudo_password_prompt(attempts_used, MAX_SUDO_RETRIES);
+                        {
+                            let mut guard = tx.lock().await;
+                            let write = send_response_split(
+                                &mut **guard,
+                                Response::CredentialPrompt {
+                                    id: (*id).clone(),
+                                    prompt,
+                                },
+                            )
+                            .await;
+                            if let Err(e) = write {
+                                return PromptReply::GiveUp(format!(
+                                    "credential prompt could not be sent: {e}"
+                                ));
                             }
+                        }
+                        let mut cred_line = String::new();
+                        let read = {
+                            let mut guard = rx.lock().await;
+                            tokio::time::timeout(
+                                super::USER_PROMPT_TIMEOUT,
+                                guard.read_line(&mut cred_line),
+                            )
+                            .await
+                        };
+                        let alive_line = cred_line.as_bytes().to_vec();
+                        let answer = match read {
+                            Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
+                                Ok(Request::CredentialResponse { credential, .. }) => {
+                                    let credential = zeroize::Zeroizing::new(credential);
+                                    let mut bytes = credential.as_bytes().to_vec();
+                                    bytes.push(b'\n');
+                                    PromptReply::Send(bytes)
+                                }
+                                _ => PromptReply::GiveUp(
+                                    "sudo credentials could not be read".to_string(),
+                                ),
+                            },
                             _ => PromptReply::GiveUp(
-                                "sudo credentials could not be read".to_string(),
+                                "sudo credentials were not supplied in time".to_string(),
                             ),
-                        },
-                        _ => PromptReply::GiveUp(
-                            "sudo credentials were not supplied in time".to_string(),
-                        ),
-                    };
-                    drop(alive_line);
-                    zeroize::Zeroize::zeroize(&mut cred_line);
-                    if matches!(answer, PromptReply::Send(_)) {
-                        state.lock().expect("sudo attempt state").attempts += 1;
+                        };
+                        drop(alive_line);
+                        zeroize::Zeroize::zeroize(&mut cred_line);
+                        if matches!(answer, PromptReply::Send(_)) {
+                            state.lock().expect("sudo attempt state").attempts += 1;
+                        }
+                        answer
                     }
-                    answer
-                }
-                Some(PromptKind::SudoPassword) => PromptReply::GiveUp(format!(
-                    "sudo authentication failed after {MAX_SUDO_RETRIES} incorrect password \
+                    Some(PromptKind::SudoPassword) => PromptReply::GiveUp(format!(
+                        "sudo authentication failed after {MAX_SUDO_RETRIES} incorrect password \
                      attempts — `{}` was not executed. To avoid password prompts for repeated \
                      operations, install a NOPASSWD sudoers rule with: \
                      `daemoneye install-sudoers <script-name>`",
-                    cmd
-                )),
-                Some(PromptKind::Fingerprint) => PromptReply::GiveUp(
-                    "sudo is waiting for fingerprint authentication which cannot be satisfied \
+                        cmd
+                    )),
+                    Some(PromptKind::Fingerprint) => PromptReply::GiveUp(
+                        "sudo is waiting for fingerprint authentication which cannot be satisfied \
                      here — touch the fingerprint reader in a foreground terminal, or install \
                      a NOPASSWD sudoers rule with `daemoneye install-sudoers <script-name>`"
-                        .to_string(),
-                ),
-                _ => PromptReply::Wait,
+                            .to_string(),
+                    ),
+                    _ => PromptReply::Wait,
+                }
             }
-        }
-    })
+        },
+    )
     .await
 }
 
@@ -660,6 +615,12 @@ mod tests {
     use anyhow::Context;
     use std::sync::Arc;
 
+    /// The PTY geometry every shell host is spawned with, matching the
+    /// detached `spawn_detached_host` production spawn (24×80).
+    const ROWS: u16 = 24;
+    /// The PTY geometry every shell host is spawned with.
+    const COLS: u16 = 80;
+
     /// Point `HOME` at a fresh temp dir for the duration of the test and
     /// serialise against other HOME-mutating tests (bug-05c-1).
     fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
@@ -698,6 +659,40 @@ mod tests {
         let cast = spawn_with_cast(id.clone()).await?;
         std::mem::forget(cast);
         Ok(())
+    }
+
+    /// The historical no-transport run, the shape every pre-existing test in
+    /// this module exercises: `run_in_shell_with_prompts` with a sink write
+    /// half and an EOF read half, so the sudo branch is off and the answer
+    /// path can never be entered.
+    async fn run_in_shell_for_test<S, Fut>(
+        reg: &ShellRegistry,
+        owner: Owner,
+        cmd: &str,
+        max_per_owner: u32,
+        shell: Option<&str>,
+        timeout_secs: Option<u64>,
+        spawn: S,
+    ) -> anyhow::Result<(ShellId, ShellRunResult)>
+    where
+        S: FnOnce(ShellId) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>>,
+    {
+        let mut sink = tokio::io::sink();
+        let mut eof = tokio::io::empty();
+        run_in_shell_with_prompts(
+            reg,
+            owner,
+            cmd,
+            max_per_owner,
+            shell,
+            timeout_secs,
+            "",
+            &mut sink,
+            &mut eof,
+            spawn,
+        )
+        .await
     }
 
     /// A spawn substitute whose cast the producer can resolve through the
@@ -793,7 +788,7 @@ mod tests {
         assert_ne!(reused.as_str(), second.as_str(), "fixture: two ids");
 
         // The reuse rule would pick `skipped`; naming `second` must win.
-        let (id, result) = run_in_shell_with_spawn(
+        let (id, result) = run_in_shell_for_test(
             &reg,
             owner,
             "echo TARGET_HIT",
@@ -832,7 +827,7 @@ mod tests {
         .await
         .expect("the ghost's shell comes up");
 
-        let err = run_in_shell_with_spawn(
+        let err = run_in_shell_for_test(
             &reg,
             Owner::Chat("a".into()),
             "echo SENTINEL_NOT_FOR_GHOST",
@@ -868,7 +863,7 @@ mod tests {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Chat("sleeper".into());
-        let err = run_in_shell_with_spawn(
+        let err = run_in_shell_for_test(
             &reg,
             owner,
             "sleep 4",
@@ -894,7 +889,7 @@ mod tests {
     async fn shell_exec_returns_the_real_exit_code() {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
-        let (id, result) = run_in_shell_with_spawn(
+        let (id, result) = run_in_shell_for_test(
             &reg,
             Owner::Chat("exit-code".into()),
             "printf 'HELLO\\n'; sh -c 'exit 3'",
@@ -929,7 +924,7 @@ mod tests {
         let cast_path: Arc<std::sync::Mutex<Option<std::path::PathBuf>>> =
             Arc::new(std::sync::Mutex::new(None));
         let spawn_cast_path = Arc::clone(&cast_path);
-        let (id, result) = run_in_shell_with_spawn(
+        let (id, result) = run_in_shell_for_test(
             &reg,
             Owner::Chat("masking".into()),
             "echo AKIAIOSFODNN7EXAMPLE",
@@ -978,7 +973,7 @@ mod tests {
     async fn shell_exec_annotates_colour_and_strips_control_bytes() {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
-        let (_, result) = run_in_shell_with_spawn(
+        let (_, result) = run_in_shell_for_test(
             &reg,
             Owner::Chat("colour".into()),
             "printf '\\033[31mred\\033[0m\\n\\033[2J\\033[Hclear\\n'",
@@ -1006,7 +1001,7 @@ mod tests {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Chat("reuse".into());
-        let (id1, first) = run_in_shell_with_spawn(
+        let (id1, first) = run_in_shell_for_test(
             &reg,
             owner.clone(),
             "cd /tmp",
@@ -1018,7 +1013,7 @@ mod tests {
         .await
         .expect("the first call runs");
         assert_eq!(first.exit_code, 0, "cd /tmp is clean");
-        let (id2, second) = run_in_shell_with_spawn(
+        let (id2, second) = run_in_shell_for_test(
             &reg,
             owner.clone(),
             "pwd",
@@ -1051,7 +1046,7 @@ mod tests {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let start = std::time::Instant::now();
-        let (id, result) = run_in_shell_with_spawn(
+        let (id, result) = run_in_shell_for_test(
             &reg,
             Owner::Chat("interactive".into()),
             "ssh nowhere.invalid",
@@ -1119,7 +1114,7 @@ mod tests {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Chat("marked".into());
-        let (id1, first) = run_in_shell_with_spawn(
+        let (id1, first) = run_in_shell_for_test(
             &reg,
             owner.clone(),
             "ssh nowhere.invalid",
@@ -1132,7 +1127,7 @@ mod tests {
         .expect("the interactive command resolves immediately");
         assert_eq!(first.exit_code, 0, "the session opened, nothing failed");
 
-        let (id2, second) = run_in_shell_with_spawn(
+        let (id2, second) = run_in_shell_for_test(
             &reg,
             owner.clone(),
             "echo ALIVE",
@@ -1144,7 +1139,6 @@ mod tests {
         .await
         .expect("the next command must not inherit the captured shell");
         assert_ne!(
-            id1.as_str(),
             id2.as_str(),
             "the owner must get a fresh shell after the interactive capture"
         );
@@ -1167,15 +1161,13 @@ mod tests {
             "the record stays marked interactive"
         );
     }
-
-    /// The negative case: without an interactive command the owner keeps its
     /// shell, both commands run on it, and the reuse filter is untouched.
     #[tokio::test]
     async fn shell_exec_non_interactive_still_runs_on_the_same_shell() {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Chat("plain".into());
-        let (id1, one) = run_in_shell_with_spawn(
+        let (id1, one) = run_in_shell_for_test(
             &reg,
             owner.clone(),
             "echo one",
@@ -1192,7 +1184,7 @@ mod tests {
             "the output surfaced: {:?}",
             one.text
         );
-        let (id2, two) = run_in_shell_with_spawn(
+        let (id2, two) = run_in_shell_for_test(
             &reg,
             owner.clone(),
             "echo two",
@@ -1264,6 +1256,52 @@ mod tests {
         );
     }
 
+    /// Task 5's call-site guard: the meta record's `command` field holds the
+    /// string the run path sent to the shell. A command without `sudo` must
+    /// arrive byte-for-byte as written — no `[de-sudo-prompt-N]` prefix may
+    /// appear — proving the plain path never allocates a sentinel or wraps.
+    #[tokio::test]
+    async fn non_sudo_command_takes_the_plain_path() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let (id, result) = run_in_shell_for_test(
+            &reg,
+            Owner::Chat("plain-path".into()),
+            "echo PLAIN_ECHO_UNCHANGED",
+            5,
+            None,
+            None,
+            spawn_in_logs_dir,
+        )
+        .await
+        .expect("the plain command resolves");
+        let record_started_unix = with_shells(&reg, |store| {
+            store.get(id.as_str()).map(|r| r.started_unix).unwrap_or(0)
+        });
+        let cast = crate::shell::resolve_cast(id.as_str(), record_started_unix);
+        let meta =
+            MetaIndex::load(&meta_path_for(&cast)).expect("the one plain command was indexed");
+        let record = meta
+            .commands
+            .iter()
+            .find(|r| r.command == "echo PLAIN_ECHO_UNCHANGED")
+            .unwrap_or_else(|| {
+                panic!(
+                    "the plain command must be indexed exactly as written, indexed: {:?}",
+                    meta.commands
+                        .iter()
+                        .map(|r| r.command.as_str())
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(record.exit_code, 0, "the plain command really ran");
+        assert!(
+            result.text.contains("PLAIN_ECHO_UNCHANGED"),
+            "the plain path's output reaches the model: {:?}",
+            result.text
+        );
+    }
+
     /// The full producer path: one command through `run_in_shell_with` ends up
     /// as a `CommandRecord` in the shell's `.meta.json`, with the command's
     /// text and its **real** exit code (3 here, so the assertion cannot pass on
@@ -1272,7 +1310,7 @@ mod tests {
     async fn a_run_command_appends_a_meta_index_record() {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
-        let (id, result) = run_in_shell_with_spawn(
+        let (id, result) = run_in_shell_for_test(
             &reg,
             Owner::Chat("index-producer".into()),
             "printf 'SENTINEL_ONE\\n'; sh -c 'exit 3'",
@@ -1337,7 +1375,7 @@ mod tests {
         )
         .await
         .expect("an ordinary shell spawns");
-        let result = run_in_shell_with_spawn(
+        let result = run_in_shell_for_test(
             reg,
             Owner::Chat("read-shell-e2e".into()),
             "printf 'SENTINEL_TWO\\n'",
@@ -1383,7 +1421,7 @@ mod tests {
             .expect("an ordinary shell spawns");
         for cmd in ["printf 'SENTINEL_ALPHA\\n'", "printf 'SENTINEL_BETA\\n'"] {
             let (got, _) =
-                run_in_shell_with_spawn(reg, owner.clone(), cmd, 5, None, None, spawn_in_logs_dir)
+                run_in_shell_for_test(reg, owner.clone(), cmd, 5, None, None, spawn_in_logs_dir)
                     .await
                     .expect("the command resolves");
             assert_eq!(

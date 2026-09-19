@@ -1,7 +1,7 @@
 # Phase 01a: a sudo password prompt on a PTY shell reaches the user
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress — executor started 2026-09-18
+**Status:** done
 **Depends on:** M20 (the PTY substrate), M22 (`run_terminal_command` on that
 substrate). Both **closed**.
 **Estimated diff:** ~420 lines
@@ -757,3 +757,174 @@ another analysis note. Run the decisive experiment immediately: add a
 nine notes reasoning about a write that "must have happened", and the answer
 was a timing race that one `--nocapture` run would have shown. Notes are not
 evidence; a command's output is.
+
+### Update — 2026-09-19 12:50 (started, executor, third resume)
+
+Resumed per the second escalation's Notes. Status stays `in-progress`. The two
+prior WIP commits hold Tasks 1–4; the uncommitted tree carries the six passing
+tests. Lint gate first: the one error (`unused variable: end` at
+client.rs:1153) is fixed by binding `_end`; `cargo clippy
+--all-targets --all-features -- -D warnings` is now clean.
+
+Task 5's last test (`non_sudo_command_takes_the_plain_path`) is being added
+now, then Task 6's mutation pair, then Task 7's real-host capture, then the
+`.scratch-m21/` cleanup the escalation pins.
+
+### Update — 2026-09-19 (escalation, third — takeover)
+
+**Chosen lever:** session takeover
+**Rationale:** three runs, 1800 turns, three `budget_exceeded`; the refined
+re-dispatch was applied and the same class recurred, which is the decision
+table's takeover condition. All *code* is done and every gate is green — what
+remains is evidence-gathering the architect can perform and verify directly.
+
+**Architect gate run against the partial tree, 2026-09-19:**
+
+| Gate | Result |
+|---|---|
+| `cargo build` | **clean** |
+| `cargo clippy --all-targets --all-features -- -D warnings` | **clean** |
+| `cargo test --lib` | **1893 passed, 0 failed, 4 ignored** |
+
+The third run cleared items 1 and 2 of the five: the `unused variable: end`
+lint error is fixed, and `non_sudo_command_takes_the_plain_path` now exists.
+Lib tests are +8 over the 1885 baseline, so all seven specced tests are in and
+passing.
+
+**Outstanding at takeover — evidence only, no production code:** Task 6's
+mutation pair, Task 7's end-to-end capture, and the two untracked scratch
+directories (`.scratch-m21/`, `.scratch-t7/`).
+
+**Telemetry note:** this records `escalated` rather than an `approved_*`, so
+the scorecard gets no model-vs-spec data point for the finish. The three
+`budget_exceeded` records stand as the real signal, and the calibration entry
+in the Review verdict says what they mean.
+
+**Credit where due:** the executor's `.scratch-t7/probe.py` is a correct
+solution to Task 7's hardest constraint — capturing the four facts without
+typing a real credential, by driving a sudo-*shaped* command that prints the
+sentinel and reads one line, exactly the shape `with_sudo_sentinel` produces.
+The takeover uses that design rather than replacing it.
+
+### Update — 2026-09-19 (end-to-end verification)
+
+Task 7's capture, from a **real** `daemoneye shell-host` under a short
+`mktemp -d /tmp/de.XXXX` HOME, driven over its Unix socket with the wire
+frames `client.rs` sends:
+
+```
+PASTE MATCH >>>
+sudo_prompt_detected=true credential_written=true end_marker=true parked=false
+<<<
+```
+
+Self-check (`diff /tmp/pasted-01a.txt /tmp/e2e-01a.txt && echo "PASTE MATCH"`):
+
+```
+PASTE MATCH
+```
+
+**This is the exact inverse of the drafting probe, against the same
+mechanism.** At drafting, a command that reached a password prompt emitted the
+prompt and **no end marker ever arrived** — the command ran to its deadline and
+the user was never asked. Now the prompt is seen, the answer is written
+mid-stream, the command completes with its end marker, and a following command
+in the same shell returns `ALIVE`, so the shell is not left parked.
+
+**Task 6's mutation pair, both re-run by the architect:**
+
+Mutation A — `classify_prompt` also matches sudo's own `[sudo] password` text:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1896 filtered out; finished in 0.00s
+```
+
+Reverted:
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1896 filtered out; finished in 0.00s
+```
+
+Mutation B — the give-up path's un-parking `write_answer(writer, b"\n")` removed:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1896 filtered out; finished in 5.64s
+```
+
+Reverted:
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1896 filtered out; finished in 0.07s
+```
+
+**One correction to the third run's own probe, worth recording.**
+`.scratch-t7/probe.py` reported `end_marker=False`, which reads as the original
+defect persisting. It is a probe artifact, not a product defect: an independent
+minimal probe written for this takeover saw `prompt_seen=True answered=True
+end_marker=True` in **0.2 s**, with `\x1fDE_END v1 0\x1f` in the transcript.
+The scratch probe's own polarity differs too — its `parked=True` means the
+follow-up command succeeded, the opposite of this phase's `parked=false`
+convention. Both scratch directories are deleted; the capture above comes from
+the independent probe.
+
+**What this capture covers, precisely.** It exercises the real shell host, the
+real wire protocol, the real marker protocol and the real sentinel shape, and
+proves the prompt/answer/complete cycle end to end. It does **not** call
+`run_command_with_prompts` itself — `tests/` is outside this phase's
+Authorizations, so the daemon-side function is covered by the scripted-host
+unit tests (`run_command_with_prompts_answers_a_prompt`,
+`…_gives_up_without_an_answer`, `run_command_is_unchanged_without_prompts`),
+both mutation-verified above. **No real credential was typed** at any point;
+the command is the sudo *shape* `with_sudo_sentinel` produces.
+
+### Review verdict — 2026-09-19
+
+- **Verdict:** escalated (session takeover)
+- **Bounces:** none at review. **Three `budget_exceeded` runs**, 600 turns
+  each: (1) implementation, died mid-tests; (2) tests, died after solving the
+  give-up race; (3) the finish, died after clearing the lint error and adding
+  the last test. Levers applied in order: resume, refined re-dispatch,
+  takeover — the decision table's sequence.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark for all
+  production code and all seven tests. Claude (direct) for the evidence only:
+  Task 6's mutations, Task 7's capture, and the scratch cleanup. **No
+  production line in this phase was written by the architect.**
+- **Gates, architect-run:** `cargo fmt --all --check`, `cargo build`,
+  `cargo clippy --all-targets --all-features -- -D warnings` all exit 0;
+  `cargo test` → lib **1893 passed / 4 ignored**, bug_tracker 6, doc_truth 14,
+  integration 32 / 2 ignored, isolation 9 / 1 ignored. All seven specced tests
+  present and passing (`daemon::utils::sudo` 14, `shell::client` 21).
+- **Mutations:** both re-run by the architect, both red then green on revert.
+  A reddens `classify_prompt_matches_only_the_sentinel`; B reddens
+  `run_command_with_prompts_gives_up_without_an_answer`.
+- **End-to-end:** captured against a real shell host, byte-exact against the
+  pasted block, and the **exact inverse of the drafting probe** — the defect
+  this phase existed to fix is fixed.
+- **Scope deviations:** none. `tests/` stayed outside the authorizations, so
+  the real-host capture drives the host directly and the entry says plainly
+  what that does and does not cover.
+- **Calibration — three items, all architect-side.**
+  1. **The M22 pre-dispatch trigger failed on its first outing, and this phase
+     is where.** Three criteria over-count because they prefix-match the test
+     names the phase's own Task 5 creates: `fn classify_prompt` matches three
+     test fns, `fn run_command_with_prompts` matches three, and
+     `pub async fn run_command` matches `run_command_with_prompts`. Anchored,
+     every real property holds at exactly **1**. This is **occurrence five** of
+     the unsatisfiable-criterion class — and it landed in the *first phase
+     drafted after* the trigger was folded (`9f9df8cd`), by the architect who
+     folded it. A checklist item pointing at a rule is not the same as
+     applying it. **Recommend at M21 close:** make the criteria themselves
+     anchored by default (`^pub fn name(`, not `fn name`), so the shape cannot
+     prefix-match.
+  2. **The phase was oversized and the budget was the real wall.** Estimated
+     ~420 lines; actual is ~600 of production code plus seven tests, three
+     mutations and a real-host capture. Three runs × 600 turns is the clearest
+     possible signal. **The PE raised `max_turns` to 1000 during this
+     takeover**, which addresses the proximate cause; the drafting lesson
+     stands independently — a phase carrying both a new protocol path and its
+     full evidence burden should split.
+  3. **A scratch probe's verdict is not evidence.** The third run's
+     `.scratch-t7/probe.py` reported `end_marker=False`, which reads exactly
+     like the original defect surviving. An independent probe showed
+     `end_marker=True` in 0.2 s. Had the takeover trusted the scratch output,
+     this phase would have been bounced for a defect that does not exist.
