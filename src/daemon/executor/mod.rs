@@ -334,13 +334,17 @@ where
                             .unwrap_or_default()
                             .shells
                             .max_per_owner;
-                        let outcome = match shell_exec::run_in_shell(
+                        let outcome = match shell_exec::run_in_shell_with_prompts(
                             crate::shell::registry(),
                             owner.clone(),
                             cmd,
                             max_per_owner,
                             shell.as_deref(),
                             *timeout_secs,
+                            id.as_str(),
+                            tx,
+                            rx,
+                            |id| crate::shell::spawn_detached_host(id, 24, 80),
                         )
                         .await
                         {

@@ -11,15 +11,27 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use super::foreground;
+use super::send_response_split;
 use crate::ai::mask_sensitive;
-use crate::daemon::utils::normalize_output;
+use crate::daemon::utils::{
+    classify_prompt, command_has_sudo, normalize_output, sudo_password_prompt, sudo_sentinel,
+    with_sudo_sentinel, PromptKind,
+};
+use crate::ipc::{Request, Response};
+use crate::shell::PromptReply;
 use crate::shell::spawn_detached_host;
 use crate::shell::{
     CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, await_ready, login_shell,
-    mark_interactive, meta_path_for, run_command, shell_for_owner, socket_path, spawn_for,
-    with_shells,
+    mark_interactive, meta_path_for, run_command, run_command_with_prompts, shell_for_owner,
+    socket_path, spawn_for, with_shells,
 };
 use crate::shell::{CommandRecord, marked_inner_range};
+use std::sync::atomic::AtomicUsize;
+
+/// Per-invocation sudo sentinel source for the PTY path, the analogue of the
+/// tmux path's `FG_HOOK_COUNTER`: a fresh index per command is what makes the
+/// exact-match property meaningful.
+static PTY_SENTINEL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// How long a fresh host may take to come up and answer `Status`.
 pub(super) const SHELL_READY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -83,11 +95,111 @@ pub(super) async fn run_in_shell(
     timeout_secs: Option<u64>,
 ) -> anyhow::Result<(ShellId, ShellRunResult)> {
     run_in_shell_with_spawn(reg, owner, cmd, max_per_owner, shell, timeout_secs, |id| {
-        spawn_detached_host(id, ROWS, COLS)
+        Box::pin(spawn_detached_host(id, ROWS, COLS))
+            as std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>
     })
     .await
 }
+/// The non-chat entry point: no transport, so a sudo command that needs a
+/// password fails the way it always did.
+pub(super) async fn run_in_shell_with_spawn<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    cmd: &str,
+    max_per_owner: u32,
+    shell: Option<&str>,
+    timeout_secs: Option<u64>,
+    spawn: F,
+) -> anyhow::Result<(ShellId, ShellRunResult)>
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    run_in_shell_core::<tokio::io::Stdout, tokio::io::Empty, F, Fut>(
+        reg,
+        owner,
+        cmd,
+        max_per_owner,
+        shell,
+        timeout_secs,
+        None,
+        spawn,
+    )
+    .await
+}
 
+/// A sudo-aware run: when `command_has_sudo(cmd)` the command is run wrapped
+/// in a per-invocation sentinel and a detected prompt round-trips
+/// `Response::CredentialPrompt` → `Request::CredentialResponse` over the
+/// caller's transport, exactly as the tmux path does.
+pub(super) async fn run_in_shell_with_prompts<'p, W, R, F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    cmd: &str,
+    max_per_owner: u32,
+    shell: Option<&str>,
+    timeout_secs: Option<u64>,
+    prompt_id: &str,
+    tx: &'p mut W,
+    rx: &'p mut R,
+    spawn: F,
+) -> anyhow::Result<(ShellId, ShellRunResult)>
+where
+    W: tokio::io::AsyncWriteExt + Unpin + 'p,
+    R: tokio::io::AsyncBufReadExt + Unpin + 'p,
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let (has_sudo, sentinel_value, wrapped) = if command_has_sudo(cmd) {
+        let idx = PTY_SENTINEL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let sentinel = sudo_sentinel(idx);
+        (true, sentinel.clone(), with_sudo_sentinel(cmd, &sentinel))
+    } else {
+        (false, String::new(), cmd.to_string())
+    };
+    let prompts = if has_sudo {
+        Some(SudoPromptArgs {
+            sentinel: sentinel_value,
+            wrapped: wrapped.clone(),
+            id: prompt_id.to_string(),
+            plain_cmd: cmd.to_string(),
+            tx,
+            rx,
+        })
+    } else {
+        None
+    };
+    run_in_shell_core::<W, R, F, Fut>(
+        reg,
+        owner,
+        &wrapped,
+        max_per_owner,
+        shell,
+        timeout_secs,
+        prompts,
+        spawn,
+    )
+    .await
+}
+
+/// A sudo command's prompt plumbing.
+pub(super) struct SudoPromptArgs<'p, W, R>
+where
+    W: tokio::io::AsyncWriteExt + Unpin + 'p,
+    R: tokio::io::AsyncBufReadExt + Unpin + 'p,
+{
+    sentinel: String,
+    wrapped: String,
+    id: String,
+    plain_cmd: String,
+    tx: &'p mut W,
+    rx: &'p mut R,
+}
+
+/// Resolve the `shell` argument to a target. `None` is today's reuse rule;
+/// `"new"` opens a fresh shell for this command; anything matching the shell
+/// id grammar names a specific shell. Matching is exact-case. The error names
+/// the value and both accepted forms, so the model can correct in one step.
 /// What `shell?` on `run_terminal_command` resolves to, before the registry
 /// is touched. Pure — no await, no lock, no filesystem — so a bad value is
 /// rejected before anything runs.
@@ -98,10 +210,6 @@ pub(super) enum ShellTarget {
     Existing(ShellId),
 }
 
-/// Resolve the `shell` argument to a target. `None` is today's reuse rule;
-/// `"new"` opens a fresh shell for this command; anything matching the shell
-/// id grammar names a specific shell. Matching is exact-case. The error names
-/// the value and both accepted forms, so the model can correct in one step.
 pub(super) fn resolve_shell_target(arg: Option<&str>) -> Result<ShellTarget, String> {
     match arg {
         None => Ok(ShellTarget::Reuse),
@@ -128,31 +236,21 @@ fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
     })
 }
 
-/// The transport a credential round-trip flows over, when the caller has one.
-/// `None` means the caller cannot ask the user anything (schedule catch-up, a
-/// ghost arm) and the run must make no prompt.
-pub(crate) struct PromptTransport<'a, W, R>
-where
-    W: tokio::io::AsyncWriteExt + Unpin,
-    R: tokio::io::AsyncBufReadExt + Unpin,
-{
-    id: String,
-    tx: &'a mut W,
-    rx: &'a mut R,
-}
-
-enum NeverTransport {}
-
-pub(super) async fn run_in_shell_with_spawn<F, Fut>(
+/// The single body of the run path. `prompts: None` is the historical
+/// behaviour; a transport turns the sudo branch on.
+async fn run_in_shell_core<'p, W, R, F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
     cmd: &str,
     max_per_owner: u32,
     shell: Option<&str>,
     timeout_secs: Option<u64>,
+    prompts: Option<SudoPromptArgs<'p, W, R>>,
     spawn: F,
 ) -> anyhow::Result<(ShellId, ShellRunResult)>
 where
+    W: tokio::io::AsyncWriteExt + Unpin + 'p,
+    R: tokio::io::AsyncBufReadExt + Unpin + 'p,
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
@@ -266,27 +364,191 @@ where
     let before = std::fs::metadata(crate::shell::resolve_cast(id.as_str(), started_unix))
         .map(|m| m.len())
         .ok();
-    let outcome = run_command(&socket, cmd, &login_shell(), applied_timeout)
-        .await
-        .map_err(|e| {
-            e.context(format!(
-                "command exceeded the {applied_timeout:#?} limit in shell {}",
+
+    // Task 3, step 1: a command without sudo takes the plain path. Everything
+    // about the call is identical to what shipped before this phase.
+    let Some(prompts) = prompts else {
+        let outcome = run_command(&socket, cmd, &login_shell(), applied_timeout)
+            .await
+            .map_err(|e| {
+                e.context(format!(
+                    "command exceeded the {applied_timeout:#?} limit in shell {}",
+                    id.as_str()
+                ))
+            })?;
+        return finish_run(reg, cmd, &id, &outcome, before).await;
+    };
+
+    let wrapped = prompts.wrapped.clone();
+    let outcome = run_sudo_command(&socket, &wrapped, &login_shell(), applied_timeout, prompts).await;
+    match outcome {
+        Ok(outcome) => finish_run(reg, cmd, &id, &outcome, before).await,
+        Err(e) => {
+            // The give-up reason must reach the AI: surface it through the same
+            // structured error the command's own timeout takes.
+            Err(e.context(format!(
+                "sudo in shell {} did not complete within the {applied_timeout:#?} limit",
                 id.as_str()
-            ))
-        })?;
-    index_command_output(reg, cmd, &id, &outcome, before).await;
+            )))
+        }
+    }
+}
+
+/// The non-sudo epilogue: index, format, annotate. Shared by the plain and the
+/// sudo-aware path so the two can never diverge on what the model sees.
+async fn finish_run(
+    reg: &ShellRegistry,
+    cmd: &str,
+    id: &ShellId,
+    outcome: &CommandOutcome,
+    before: Option<u64>,
+) -> anyhow::Result<(ShellId, ShellRunResult)> {
+    index_command_output(reg, cmd, id, outcome, before).await;
     let raw = String::from_utf8_lossy(&outcome.output);
     let mut text = format_for_model(&raw);
     if let Some(note) = foreground::exit_status_annotation(Some(outcome.exit_code)) {
         text.push_str(&note);
     }
     Ok((
-        id,
+        id.clone(),
         ShellRunResult {
             text,
             exit_code: outcome.exit_code,
         },
     ))
+}
+
+/// Prompt round-trip bookkeeping for one sudo run: how many credentials have
+/// been sent. sudo re-prompts with the same sentinel on a wrong password, so
+/// the count is what turns the retry wording on and the give-up check on.
+#[derive(Default)]
+struct SudoAttempts {
+    attempts: usize,
+}
+
+/// Maximum sudo password attempts before aborting (matches sudo's own
+/// default, and the wording `sudo_password_prompt(attempt, MAX)` emits).
+const MAX_SUDO_RETRIES: usize = 3;
+
+/// Run one sudo command under [`run_command_with_prompts`], classified by
+/// [`classify_prompt`], with the retry/give-up semantics.
+///
+/// The prompt round-trips over the same `tx`/`rx` the tmux path uses. On the
+/// third failed password the credential is never sent again; the give-up write
+/// of a single `\n` is what un-parks the shell without leaking the credential.
+async fn run_sudo_command<'p, W, R>(
+    socket: &Path,
+    cmd: &str,
+    shell_name: &str,
+    timeout: Duration,
+    prompts: SudoPromptArgs<'p, W, R>,
+) -> anyhow::Result<CommandOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin + 'p,
+    R: tokio::io::AsyncBufReadExt + Unpin + 'p,
+{
+    let idx = PTY_SENTINEL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let sentinel = sudo_sentinel(idx);
+    let wrapped_cmd = with_sudo_sentinel(cmd, &sentinel);
+    let SudoPromptArgs {
+        id,
+        plain_cmd,
+        sentinel,
+        tx,
+        rx,
+        wrapped: _,
+    } = prompts;
+    let _ = sentinel;
+    let attempts = std::sync::Arc::new(std::sync::Mutex::new(SudoAttempts::default()));
+    let id = std::sync::Arc::new(id);
+    let _plain_cmd = std::sync::Arc::new(plain_cmd);
+    let tx: std::sync::Arc<tokio::sync::Mutex<&mut W>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(tx));
+    let rx: std::sync::Arc<tokio::sync::Mutex<&mut R>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(rx));
+    let sentinel = std::sync::Arc::new(sentinel);
+    run_command_with_prompts(socket, &wrapped_cmd, shell_name, timeout, move |output: &str| {
+        let out = output.to_string();
+        let id = std::sync::Arc::clone(&id);
+        let tx = std::sync::Arc::clone(&tx);
+        let rx = std::sync::Arc::clone(&rx);
+        let state = std::sync::Arc::clone(&attempts);
+        let sentinel = std::sync::Arc::clone(&sentinel);
+        async move {
+            let attempts_used = {
+                let s = state.lock().expect("sudo attempt state");
+                s.attempts
+            };
+            match classify_prompt(&out, &sentinel) {
+                Some(PromptKind::SudoPassword) if attempts_used < MAX_SUDO_RETRIES => {
+                    let prompt = sudo_password_prompt(attempts_used, MAX_SUDO_RETRIES);
+                    {
+                        let mut guard = tx.lock().await;
+                        let write = send_response_split(
+                            &mut **guard,
+                            Response::CredentialPrompt {
+                                id: (*id).clone(),
+                                prompt,
+                            },
+                        )
+                        .await;
+                        if let Err(e) = write {
+                            return PromptReply::GiveUp(format!(
+                                "credential prompt could not be sent: {e}"
+                            ));
+                        }
+                    }
+                    let mut cred_line = String::new();
+                    let read = {
+                        let mut guard = rx.lock().await;
+                        tokio::time::timeout(
+                            super::USER_PROMPT_TIMEOUT,
+                            guard.read_line(&mut cred_line),
+                        )
+                        .await
+                    };
+                    let alive_line = cred_line.as_bytes().to_vec();
+                    let answer = match read {
+                        Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
+                            Ok(Request::CredentialResponse { credential, .. }) => {
+                                let credential = zeroize::Zeroizing::new(credential);
+                                let mut bytes = credential.as_bytes().to_vec();
+                                bytes.push(b'\n');
+                                PromptReply::Send(bytes)
+                            }
+                            _ => PromptReply::GiveUp(
+                                "sudo credentials could not be read".to_string(),
+                            ),
+                        },
+                        _ => PromptReply::GiveUp(
+                            "sudo credentials were not supplied in time".to_string(),
+                        ),
+                    };
+                    drop(alive_line);
+                    zeroize::Zeroize::zeroize(&mut cred_line);
+                    if matches!(answer, PromptReply::Send(_)) {
+                        state.lock().expect("sudo attempt state").attempts += 1;
+                    }
+                    answer
+                }
+                Some(PromptKind::SudoPassword) => PromptReply::GiveUp(format!(
+                    "sudo authentication failed after {MAX_SUDO_RETRIES} incorrect password \
+                     attempts — `{}` was not executed. To avoid password prompts for repeated \
+                     operations, install a NOPASSWD sudoers rule with: \
+                     `daemoneye install-sudoers <script-name>`",
+                    cmd
+                )),
+                Some(PromptKind::Fingerprint) => PromptReply::GiveUp(
+                    "sudo is waiting for fingerprint authentication which cannot be satisfied \
+                     here — touch the fingerprint reader in a foreground terminal, or install \
+                     a NOPASSWD sudoers rule with `daemoneye install-sudoers <script-name>`"
+                        .to_string(),
+                ),
+                _ => PromptReply::Wait,
+            }
+        }
+    })
+    .await
 }
 
 /// Record one completed command in the shell's `.meta.json` index, so

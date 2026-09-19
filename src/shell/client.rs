@@ -965,4 +965,50 @@ mod tests {
             );
         }
     }
+
+    /// A scripted host: a real `UnixListener` that speaks the frames a
+    /// scripted sequence dictates (`launch.rs`'s status-responder test is the
+    /// pattern). A command's response to the marker-wrapped `Input` is a
+    /// scripted list of `Frame`s the director emits in order; what the client
+    /// sends back is recorded byte-exact by the backend.
+    mod scripted {
+        use super::*;
+
+        /// What a scripted director writes before the next step.
+        enum Step {
+            /// Emit a chunk of command output through the subscriber.
+            Chunk(&'static str),
+            /// Record what arrived on the write half and stop.
+            Expect(&'static str),
+        }
+
+        struct ScriptedBackend {
+            steps: Vec<Step>,
+            shell: Arc<std::sync::Mutex<String>>,
+            subscriber: tokio::sync::mpsc::Sender<Vec<u8>>,
+        }
+
+        #[async_trait::async_trait]
+        impl crate::shell::host::ShellBackend for ScriptedBackend {
+            async fn input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+                self.shell
+                    .lock()
+                    .unwrap()
+                    .push_str(&String::from_utf8_lossy(bytes));
+                Ok(())
+            }
+            async fn resize(&self, _rows: u16, _cols: u16) -> anyhow::Result<()> {
+                Ok(())
+            }
+            async fn signal(&self, _sig: ShellSignal) -> anyhow::Result<()> {
+                Ok(())
+            }
+            async fn status(&self) -> ShellResponse {
+                ShellResponse::Ok
+            }
+            fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+                tokio::sync::broadcast::channel(1).0.subscribe()
+            }
+        }
+    }
 }
