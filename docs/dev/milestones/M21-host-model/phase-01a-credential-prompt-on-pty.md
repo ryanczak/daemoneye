@@ -584,3 +584,80 @@ retry wording Task 4 needs.
 **Test totals:** `cargo test --lib` now **1888 passed** (a +3 that is only the
 three `classify_prompt` detector tests; the client tests are at their baseline
 17), `doc_truth` 14 unchanged.
+
+### Update — 2026-09-19 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** the spec was not the problem — Tasks 1–4 are implemented in the
+shape specced and committed in two WIP commits; the run hit `budget_exceeded`
+at 600 turns while authoring Task 5's tests, so the remaining work is
+enumerable and the 560 landed lines are worth preserving. A re-dispatch would
+discard them; a takeover would skip the telemetry on a phase the executor is
+demonstrably able to reach.
+
+**Architect gate run against the partial tree** (required before choosing a
+lever), 2026-09-19:
+
+- `cargo build` on the tree as the run left it → **fails**, one error:
+  `src/shell/client.rs:1005: this file contains an unclosed delimiter`,
+  `mod oneshot {` at :772 inside `mod tests {` at :448. This is the edit the
+  run was mid-way through when the budget expired (uncommitted, +13 −22).
+- `cargo build` on the **committed** base `e57a001c` (fragment stashed) →
+  **succeeds**, 4 warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` on that base →
+  **fails**, and the 4 warnings are the same 4 errors: `ROWS`, `COLS`,
+  `run_in_shell` and `run_in_shell_with_spawn` are never used. The rewiring in
+  `executor/mod.rs` now calls `run_in_shell_with_prompts` and orphaned the two
+  older entry points and the two constants.
+
+The stash was popped and the tree restored to exactly the state the run left
+it in; nothing of the executor's work was discarded.
+
+### Notes for executor — 2026-09-19 (RESUME, read this first)
+
+**This is a resume, not a fresh start. Tasks 1–4 are already implemented and
+committed. Do not redo them.** The prior run hit the 600-turn budget while
+authoring Task 5's tests. Roughly 560 lines of correct work are on disk.
+
+**What is already done** (two WIP commits on `master`):
+
+- `99291ec0` — Task 1 (`PromptKind` + `classify_prompt`, 68 lines in
+  `utils/sudo.rs`) and Task 2 (`PromptReply` + `run_command_with_prompts`,
+  166 lines in `shell/client.rs`).
+- `e57a001c` — Tasks 3 and 4 (328 lines in `executor/shell_exec.rs`): the
+  sentinel branch in the run path, the prompt round-trip, retries and the
+  give-up path. `executor/mod.rs` now calls
+  `shell_exec::run_in_shell_with_prompts`.
+
+**Green gates are NOT the finish line here, and the tree is currently red.**
+Three things must be fixed before Task 5 continues, in this order:
+
+1. **One unclosed delimiter.** `cargo build` fails with
+   `src/shell/client.rs:1005: this file contains an unclosed delimiter`;
+   `mod oneshot {` at :772 sits inside `mod tests {` at :448. This is your own
+   uncommitted, half-finished edit (+13 −22). Close it or revert that file to
+   `e57a001c` and redo the test module — **the committed base at `e57a001c`
+   builds clean**, verified by the architect.
+
+2. **Four orphans your rewiring created.** `cargo clippy --all-targets
+   --all-features -- -D warnings` fails on the committed base with exactly
+   four `never used` errors: `ROWS` (`shell_exec.rs:48`), `COLS` (`:50`),
+   `run_in_shell` (`:89`) and `run_in_shell_with_spawn` (`:105`). They lost
+   their callers when `executor/mod.rs` moved to `run_in_shell_with_prompts`.
+   Per this phase's Authorizations they live in an **authorized** file, so
+   delete them and record that you did so — **unless** the test module still
+   needs them, in which case route the tests through the surviving entry point
+   instead. Do **not** add `#[allow(dead_code)]`.
+
+3. **Then finish Tasks 5, 6 and 7** — the seven tests, the two mutations, the
+   real-host end-to-end capture. These are the whole remaining scope.
+
+**What burned the last budget, so you avoid it:** the final ~40 turns were a
+`read_file` → `patch` → `patch_lines` retry loop on `src/shell/client.rs`, a
+1000-line file. When a `patch` fails twice on the same file, stop retrying:
+read a **narrow** line range, make one precise edit with `patch_lines`, and
+verify with `sed -n` on that range rather than re-reading the whole file.
+
+**Budget discipline:** you have a fresh 600 turns and roughly half the phase
+left. Fix the delimiter and the four orphans first — that is perhaps ten turns
+— so the gates are green and you can tell real failures from leftover breakage.
