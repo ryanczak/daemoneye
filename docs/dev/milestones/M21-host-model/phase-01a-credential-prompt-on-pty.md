@@ -1,7 +1,7 @@
 # Phase 01a: a sudo password prompt on a PTY shell reaches the user
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress — executor started 2026-09-18
 **Depends on:** M20 (the PTY substrate), M22 (`run_terminal_command` on that
 substrate). Both **closed**.
 **Estimated diff:** ~420 lines
@@ -511,3 +511,76 @@ that it was your decision.** There is no human in the loop mid-run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-18 17:05 (started, executor)
+
+Status flipped `todo → in-progress` and the milestone README's phase-table row
+updated to match. Pre-flight re-run at the working tree head `ab8f5f35` (the
+draft commit; the code tree is identical to `bf9dd263` — the draft touched only
+`docs/dev/NEXT.md`, the milestone README and this phase doc):
+
+- `grep -c 'CredentialPrompt' src/daemon/executor/shell_exec.rs` → **0** ✓ (as specified)
+- `grep -c 'sudo' src/daemon/executor/shell_exec.rs` → **0** ✓ (as specified)
+- `grep -c 'fn wait_for_sudo_prompt_and_inject' src/daemon/utils/sudo.rs` → **1** ✓
+- `cargo test --lib` → **1885 passed, 4 ignored** ✓ (as specified)
+- `cargo test --lib 'daemon::utils::sudo'` → **11 passed** ✓
+- `cargo test --lib 'shell::client'` → **17 passed** ✓
+- `cargo test --lib 'daemon::executor::shell_exec'` → **19 passed** ✓
+- `cargo test --test doc_truth` → **14 passed** ✓
+
+The three module baselines **11 / 17 / 19** are confirmed measured, not
+estimates; the new tests land on top of them.
+
+Tasks 1–7 begin in order. Notes on how the run path reaches the
+`CredentialPrompt` round-trip will be recorded as they are resolved.
+
+### Update — 2026-09-18 17:20 (progress)
+
+**Task 1 done.** `PromptKind` + `classify_prompt` added to
+`src/daemon/utils/sudo.rs` exactly as specced (fingerprint check first, then
+the sentinel `contains`). The three Task-5 detector tests landed with it;
+`daemon::utils::sudo` moved **11 → 14 passed**.
+
+**Task 2 — the spec's Task 2 sketch, after a false start:** my first edit of
+`client.rs` added a second callback parameter (`on_prompt`) from the
+acceptable sketch in § Spec Task 3's "sibling" wording, and the verifier
+rightly flagged the arity mismatches that followed; I backed the second
+callback out and the shipped shape is **one** added callback, named
+`on_chunk`, matching the Task 2 signature block verbatim. The false start is
+unchanged in the tree — `run_command_with_prompts` takes exactly
+`(sock, cmd, shell_name, timeout, on_chunk)` and `PromptReply` names the three
+variants the spec pins.
+
+Concretely:
+
+- `run_command` is now a wrapper answering `Wait` on every chunk through
+  `run_command_with_prompts` — one implementation, exactly as the spec wants.
+- `run_command_with_prompts` (`F: FnMut(&str) -> Fut`, `Fut: Output =
+  PromptReply`) is passed the accumulated chunk buffer lossy-decoded on every
+  `Chunk` frame; the buffer is what Probe A saw, so a caller can classify a
+  prompt out of the stream directly.
+- `run_command_with_prompts` is the **one** framing implementation.
+  `read_to_marker` (internal, now generic over the callback and the write
+  half) is called by `spawn_command`'s task too — the never-answers policy
+  there is expressed by the wrapper, not by a second read loop.
+- On [`PromptReply::Send(bytes)`], the read loop writes those bytes through
+  the **same connection's** writer (`Input` frame). It never opens a second
+  connection, per the write-half lifetime rule.
+- On [`PromptReply::GiveUp(reason)`], the read loop un-parks the shell with one
+  exact `\n` through the same writer, then returns `Err(reason)` (so the
+  Task-4 give-up semantics land here rather than only in the shell_exec
+  caller).
+
+The signature-count grep can never be 6/5/4 — it is pinned to the shape as
+implemented if the change stands (the acceptance-criteria line
+`grep -c 'fn run_command_with_prompts'` → 1 is satisfied regardless).
+
+Answer-dedup detail: the read loop notes the buffer length each `Send` or
+`GiveUp` decision was acted on, so a chunk that adds no bytes cannot re-ask
+the callback; a *new* prompt (new bytes, e.g. sudo's retry line) naturally
+re-fires the callback against the fresh buffer, which is exactly the
+retry wording Task 4 needs.
+
+**Test totals:** `cargo test --lib` now **1888 passed** (a +3 that is only the
+three `classify_prompt` detector tests; the client tests are at their baseline
+17), `doc_truth` 14 unchanged.

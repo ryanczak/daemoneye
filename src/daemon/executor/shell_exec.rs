@@ -128,6 +128,21 @@ fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
     })
 }
 
+/// The transport a credential round-trip flows over, when the caller has one.
+/// `None` means the caller cannot ask the user anything (schedule catch-up, a
+/// ghost arm) and the run must make no prompt.
+pub(crate) struct PromptTransport<'a, W, R>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    id: String,
+    tx: &'a mut W,
+    rx: &'a mut R,
+}
+
+enum NeverTransport {}
+
 pub(super) async fn run_in_shell_with_spawn<F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,

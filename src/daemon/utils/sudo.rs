@@ -71,6 +71,33 @@ pub async fn sudo_credentials_cached() -> bool {
         .unwrap_or(false)
 }
 
+/// What a chunk of shell output is asking for, if anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptKind {
+    /// A sudo password prompt carrying our sentinel.
+    SudoPassword,
+    /// A fingerprint prompt — it cannot be satisfied by typing, so the
+    /// caller must give up rather than wait.
+    Fingerprint,
+}
+
+/// Pure: what `output` is prompting for, given the sentinel this invocation
+/// installed. `None` when it is not a prompt we can answer.
+///
+/// Matches the **sentinel**, never sudo's own `[sudo] password for …` text:
+/// that text is locale- and `sudo.conf`-dependent, and stale output from an
+/// earlier command in the same shell must not trigger a prompt. The sentinel
+/// is per-invocation, so it cannot collide across commands.
+pub fn classify_prompt(output: &str, sentinel: &str) -> Option<PromptKind> {
+    if is_fingerprint_prompt(output) {
+        return Some(PromptKind::Fingerprint);
+    }
+    if output.contains(sentinel) {
+        return Some(PromptKind::SudoPassword);
+    }
+    None
+}
+
 /// Per-invocation sudo prompt sentinel. The closing bracket makes the match
 /// exact: `[de-sudo-prompt-3]` is not a substring of `[de-sudo-prompt-33]`.
 pub fn sudo_sentinel(idx: usize) -> String {
@@ -231,5 +258,46 @@ mod tests {
     fn command_echo_password_word_does_not_match_sentinel() {
         let snap = "$ sudo grep password /etc/shadow\n";
         assert!(!snap.contains(&sudo_sentinel(7)));
+    }
+
+    #[test]
+    fn classify_prompt_matches_only_the_sentinel() {
+        // Sudo's own text is locale- and sudo.conf-dependent: it must never
+        // trigger, because stale output from an earlier command in the same
+        // shell would otherwise re-arm the prompt.
+        assert_eq!(
+            classify_prompt("[sudo] password for matt: ", "[de-sudo-prompt-1]"),
+            None,
+            "sudo's own prompt text must not match"
+        );
+        assert_eq!(
+            classify_prompt(
+                "some preamble\r\n[de-sudo-prompt-1] \r\n",
+                "[de-sudo-prompt-1]"
+            ),
+            Some(PromptKind::SudoPassword),
+            "the sentinel this invocation installed must match"
+        );
+    }
+
+    #[test]
+    fn classify_prompt_rejects_a_longer_sentinel() {
+        // The closing bracket is what makes the match exact: the shorter
+        // sentinel must not match inside a longer one.
+        assert_eq!(
+            classify_prompt("[de-sudo-prompt-11]", "[de-sudo-prompt-1]"),
+            None,
+            "[de-sudo-prompt-1] is not a substring of [de-sudo-prompt-11]"
+        );
+    }
+
+    #[test]
+    fn classify_prompt_prefers_fingerprint() {
+        let snap = "Place your finger on the fingerprint reader [de-sudo-prompt-1]";
+        assert_eq!(
+            classify_prompt(snap, "[de-sudo-prompt-1]"),
+            Some(PromptKind::Fingerprint),
+            "a fingerprint prompt cannot be typed at, even with the sentinel visible"
+        );
     }
 }

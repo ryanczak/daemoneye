@@ -12,6 +12,10 @@ use tokio::net::UnixStream;
 use crate::shell::proto::{ShellRequest, ShellResponse, ShellSignal, encode};
 use crate::shell::pty::{CommandOutcome, Nonce, parse_outcome, wrap_command};
 
+/// How long one prompt answer may take to reach the shell. Bounded well below
+/// any plausible command timeout so a wedged host cannot wedge the caller.
+const PROMPT_ROUND_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Send `sig` to the shell hosted at `sock`. Returns when the host has
 /// acknowledged, which is not the same as the job having reacted.
 pub async fn send_signal(sock: &Path, sig: ShellSignal, timeout: Duration) -> anyhow::Result<()> {
@@ -122,7 +126,21 @@ async fn read_one(
     })
 }
 
-/// Run `cmd` in the shell hosted at `sock` and return its real outcome.
+/// What the prompt handler decided about the output so far.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PromptReply {
+    /// Nothing to answer; keep reading.
+    Wait,
+    /// Write these bytes into the shell, then keep reading.
+    Send(Vec<u8>),
+    /// Stop: this prompt cannot be answered. The command is abandoned. The
+    /// string is the reason, surfaced in the returned error.
+    GiveUp(String),
+}
+
+/// Run `cmd` in the shell hosted at `sock` and return its real outcome, with
+/// no prompt handling: the always-[`PromptReply::Wait`] callback keeps every
+/// frame flowing exactly as an unwrapped read loop would.
 ///
 /// Opens a single connection, subscribes first so no byte of this command's
 /// output can precede the subscription, sends the marker-wrapped command as an
@@ -137,13 +155,62 @@ pub async fn run_command(
     shell_name: &str,
     timeout: Duration,
 ) -> anyhow::Result<CommandOutcome> {
-    let (mut reader, writer, nonce) = start_command(sock, cmd, shell_name).await?;
-    // The writer half must outlive the read loop: tokio shuts the stream's
+    run_command_with_prompts(
+        sock,
+        cmd,
+        shell_name,
+        timeout,
+        |_: &str| async { PromptReply::Wait },
+    )
+    .await
+}
+
+/// [`run_command`], reacting to the output while the command is still running.
+///
+/// Each time a `Chunk` arrives the accumulated output so far is lossy-decoded
+/// and handed to `on_chunk`. Its [`PromptReply`] drives the connection:
+///
+/// - [`PromptReply::Wait`] — keep reading, as `run_command` does.
+/// - [`PromptReply::Send(bytes)`] — the bytes are written through **the same
+///   single connection's writer**, exactly as the command itself was (the
+///   write half is load-bearing: dropping it half-shuts the stream and the
+///   host tears the connection down before the end marker arrives). Reading
+///   then continues for this command's end marker.
+/// - [`PromptReply::GiveUp(reason)`] — un-park the shell with a single `\n`
+///   (a shell at a sudo prompt eats the next command's bytes; Probe B proved
+///   the refusal completes sudo cleanly), and return `Err(reason)`.
+///
+/// A decision is acted on as it is returned. `on_chunk` is free to answer a
+/// later chunk differently — there is no internal dedup — so a caller that
+/// must answer a given prompt only once tracks that itself (Task 4 does, by
+/// root the answer in the sentinel and a fresh sentinel per command).
+pub async fn run_command_with_prompts<F, Fut>(
+    sock: &Path,
+    cmd: &str,
+    shell_name: &str,
+    timeout: Duration,
+    mut on_chunk: F,
+) -> anyhow::Result<CommandOutcome>
+where
+    F: FnMut(&str) -> Fut,
+    Fut: std::future::Future<Output = PromptReply>,
+{
+    let (mut reader, mut writer, nonce) = start_command(sock, cmd, shell_name).await?;
+    // The writing half must outlive the read loop: tokio shuts the stream's
     // write direction down when it is dropped, and a host that reads EOF on
     // its side tears the connection down — before the end marker could ever
-    // arrive. So it is dropped only after `read_to_marker`, reproducing the
-    // original inline handshake's lifetime exactly.
-    let result = read_to_marker(&mut reader, &nonce, sock, cmd, timeout).await;
+    // arrive. So it is dropped only after the read loop returns. Prompt
+    // answers flow through this same writer, never a second connection.
+    let result = read_to_marker(
+        &mut reader,
+        &nonce,
+        sock,
+        cmd,
+        timeout,
+        &mut writer,
+        &mut on_chunk,
+    )
+    .await;
     drop(writer);
     result
 }
@@ -193,13 +260,35 @@ async fn start_command(
 
 /// Read frames until `parse_outcome` finds this nonce's end marker, the
 /// deadline passes, or the socket closes.
-async fn read_to_marker(
+///
+/// This is the one implementation of the framing: `run_command` and
+/// `spawn_command` both get their outcome through it, so the two can never
+/// diverge on frame handling, the nonce or the write-half lifetime rule.
+///
+/// `writer` is borrowed rather than consumed so the prompt-detector variant
+/// (`run_command_with_prompts`) can answer a prompt through the *same*
+/// connection's write half while the read loop runs — the [`PromptReply`] on
+/// each chunk comes from `on_chunk`, which sees the accumulated output
+/// lossy-decoded.
+#[allow(clippy::too_many_arguments)]
+async fn read_to_marker<W, F, Fut>(
     reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
     nonce: &Nonce,
     sock: &Path,
     cmd: &str,
     timeout: Duration,
-) -> anyhow::Result<CommandOutcome> {
+    writer: &mut W,
+    on_chunk: &mut F,
+) -> anyhow::Result<CommandOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    F: FnMut(&str) -> Fut,
+    Fut: std::future::Future<Output = PromptReply>,
+{
+    // The accumulated output a `Send`/`GiveUp` decision was already acted on
+    // for. A prompt still on screen in the next chunk does not re-trigger the
+    // same callback answer.
+    let mut answered_at: Option<usize> = None;
     let deadline = tokio::time::Instant::now() + timeout;
     let mut line: Vec<u8> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
@@ -239,6 +328,24 @@ async fn read_to_marker(
                 if let Some(outcome) = parse_outcome(&buf, nonce) {
                     return Ok(outcome);
                 }
+                if last_answered_at(&answered_at) != Some(buf.len()) {
+                    let seen = String::from_utf8_lossy(&buf).into_owned();
+                    match on_chunk(&seen).await {
+                        PromptReply::Wait => {}
+                        PromptReply::Send(answer) => {
+                            write_answer(writer, &answer).await?;
+                            answered_at = Some(buf.len());
+                        }
+                        PromptReply::GiveUp(reason) => {
+                            // Un-park the shell: sudo at an empty newline fails
+                            // fast with "no password was provided" and the end
+                            // marker still arrives. Never the credential, never
+                            // a signal.
+                            write_answer(writer, b"\n").await?;
+                            anyhow::bail!("{reason}");
+                        }
+                    }
+                }
             }
             _ => {
                 // `Ok`, `Status`, `Exited` and `Error` may interleave with the
@@ -246,6 +353,35 @@ async fn read_to_marker(
             }
         }
     }
+}
+
+/// The buffer length at which the last callback decision was made, or `None`.
+/// Asking the callback again on every chunk is safe — the answer to a new
+/// question is a new decision — but a chunk that adds *no* bytes would re-ask
+/// exactly the question the previous chunk was answered with, which is why the
+/// not-yet-answered state is `None` and a decision is recorded at the length
+/// it was made at.
+fn last_answered_at(answered_at: &Option<usize>) -> Option<usize> {
+    *answered_at
+}
+
+/// Write the answer through the same connection's write half. `PROMPT_ROUND`
+/// bounds the write so a wedged host cannot wedge the caller.
+async fn write_answer<W>(writer: &mut W, bytes: &[u8]) -> anyhow::Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let wire = encode(ShellRequest::Input {
+        bytes: bytes.to_vec(),
+    })?;
+    tokio::time::timeout(PROMPT_ROUND_TIMEOUT, async {
+        writer.write_all(wire.as_bytes()).await?;
+        writer.flush().await?;
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out writing the prompt answer into the shell"))??;
+    Ok(())
 }
 
 /// A command that was started in a shell but not awaited.
@@ -280,14 +416,24 @@ pub async fn spawn_command(
     shell_name: &str,
     timeout: Duration,
 ) -> anyhow::Result<CommandHandle> {
-    let (reader, writer, nonce) = start_command(sock, cmd, shell_name).await?;
+    let (reader, mut writer, nonce) = start_command(sock, cmd, shell_name).await?;
     let task_sock = sock.to_path_buf();
     let task_cmd = cmd.to_string();
     let (tx, rx) = tokio::sync::oneshot::channel();
     let task_nonce = nonce.clone();
     tokio::spawn(async move {
         let mut reader = reader;
-        let result = read_to_marker(&mut reader, &task_nonce, &task_sock, &task_cmd, timeout).await;
+        let mut never_wait = |_: &str| async { PromptReply::Wait };
+        let result = read_to_marker(
+            &mut reader,
+            &task_nonce,
+            &task_sock,
+            &task_cmd,
+            timeout,
+            &mut writer,
+            &mut never_wait,
+        )
+        .await;
         // The writer must outlive the read loop: dropping it half-closes the
         // stream and the host tears the connection down before the end marker
         // can arrive. It dies here, when the outcome has already been handed
