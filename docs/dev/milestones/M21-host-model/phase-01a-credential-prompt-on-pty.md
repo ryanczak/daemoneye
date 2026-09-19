@@ -661,3 +661,99 @@ verify with `sed -n` on that range rather than re-reading the whole file.
 **Budget discipline:** you have a fresh 600 turns and roughly half the phase
 left. Fix the delimiter and the four orphans first — that is perhaps ten turns
 — so the gates are green and you can tell real failures from leftover breakage.
+
+### Update — 2026-09-19 (escalation, second)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the second `budget_exceeded` is not a repeat of the first — the
+run **solved** the hard problem it got stuck on and died on the finish line, so
+what remains is five enumerable items, not a class of work the executor cannot
+reach. Takeover is the lever if this one fails.
+
+**Architect gate run against the partial tree, 2026-09-19:**
+
+- `cargo build` → **clean**.
+- `cargo test --lib` → **1891 passed, 0 failed, 4 ignored**. That is +6 over
+  the 1885 baseline: six of the seven specced tests exist and **pass**.
+- `cargo clippy --all-targets --all-features -- -D warnings` → **fails on
+  exactly one error**: `unused variable: end` at `src/shell/client.rs:1153`,
+  `let (begin, end) = markers_for_sent_command(&sent);`. Confirmed unused in
+  the rest of that test.
+
+**What the 600 turns actually went on, and why it is not a recurrence.** The
+run left its reasoning in `.scratch-m21/` — nine analysis notes converging on a
+test-double mystery: a `GiveUp` was provably taken, the un-parking `\n` was
+provably written, yet the fake backend recorded only one write. The notes
+theorise at length and end with *"Let me actually add a print/run the test with
+RUST_LOG"*. **It then found it**: the write races the host's recording task,
+and the committed test now polls for the second write on a bounded loop
+(`client.rs`, the give-up test) instead of reading `writes()` once. That test
+passes. The executor reached the answer; it simply had no budget left to finish
+the remaining mechanical work.
+
+**Still outstanding — all five, and nothing else:**
+
+1. `unused variable: end` — the one clippy error above.
+2. `non_sudo_command_takes_the_plain_path` (Task 5's `shell_exec.rs` test) —
+   the only specced test with **0** occurrences in the tree.
+3. Task 6's mutation pair, both directions, all four `test result:` lines.
+4. Task 7's real-host end-to-end capture and `PASTE MATCH` self-check.
+5. `.scratch-m21/` — 13 untracked scratch files, **not** gitignored, which a
+   `git add -A` would sweep into the commit. Delete the directory.
+
+Everything else is uncommitted but correct: `shell_exec.rs`, `client.rs`,
+`shell/mod.rs` and `shell/pty.rs` carry the working implementation on top of
+the two WIP commits.
+
+### Notes for executor — 2026-09-19 (SECOND RESUME — read this first)
+
+**Two runs have hit the 600-turn budget on this phase. The implementation is
+DONE and the tests PASS. Do not re-derive, re-read or re-verify the
+implementation.** `cargo test --lib` already reports **1891 passed, 0 failed**
+and `cargo build` is clean. Green tests here are **expected** and are not
+evidence the phase is finished — five specific items remain, listed below.
+
+**Start by making the lint gate green. It is one variable.**
+
+```rust
+// src/shell/client.rs:1153 — in run_command_with_prompts_gives_up_without_an_answer
+let (begin, end) = markers_for_sent_command(&sent);   // `end` is never used
+let (begin, _end) = markers_for_sent_command(&sent);  // ← the whole fix
+```
+
+That is the only `clippy -D warnings` error in the tree. Verify with
+`cargo clippy --all-targets --all-features -- -D warnings` and move on. **Do
+not** refactor `markers_for_sent_command`, and do not touch any other test.
+
+**Then, in this order:**
+
+2. **Add the one missing test**, `non_sudo_command_takes_the_plain_path`, in
+   `src/daemon/executor/shell_exec.rs`. It is the only specced test absent from
+   the tree (the other six exist and pass). Per Task 5 it asserts on **the
+   command string that reaches the client** — a command without `sudo` must not
+   be wrapped with a sentinel. Assert on the string, not on a call count.
+   Finish condition: `cargo test --lib` reports **1892**, not 1891.
+
+3. **Task 6's mutation pair.** Both mutations, both reverts, all four
+   `test result:` lines pasted into the Update Log **after** the capture block.
+
+4. **Task 7's end-to-end capture.** Re-read Task 7 before starting: it names
+   the short-`HOME` requirement (`mktemp -d /tmp/de.XXXX`, because a long path
+   exceeds `SUN_LEN`) and the cleanup rule (match the host process by
+   executable name via `ps -eo comm`, **not** `pgrep -f`, which matches your own
+   command line). If you cannot capture a fact without a real password, say so
+   plainly in the Update Log and capture the ones you can — a fabricated
+   success is far worse than a partial one.
+
+5. **Delete `.scratch-m21/` before committing.** It holds 13 scratch files from
+   the previous run's debugging and is **not** gitignored, so `git add -A` would
+   commit it. Use `find .scratch-m21 -depth -delete` (the executor contract
+   refuses `rm -rf`).
+
+**Budget discipline — this is the specific trap that cost the last run.** When
+a test's assertion fails in a way that seems impossible, do **not** write
+another analysis note. Run the decisive experiment immediately: add a
+`eprintln!`, or run the single test with `--nocapture`. The previous run wrote
+nine notes reasoning about a write that "must have happened", and the answer
+was a timing race that one `--nocapture` run would have shown. Notes are not
+evidence; a command's output is.
