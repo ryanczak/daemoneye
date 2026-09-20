@@ -853,8 +853,12 @@ where
             )))
         }
 
-        PendingCall::OpenShell { .. } => Ok(ToolCallOutcome::Result(
-            knowledge::open_shell(&Owner::Chat(session_id.unwrap_or_default().to_string())).await,
+        PendingCall::OpenShell { host, .. } => Ok(ToolCallOutcome::Result(
+            knowledge::open_shell(
+                &Owner::Chat(session_id.unwrap_or_default().to_string()),
+                host.as_deref(),
+            )
+            .await,
         )),
 
         PendingCall::CloseShell { shell, .. } => Ok(ToolCallOutcome::Result(

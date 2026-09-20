@@ -101,7 +101,10 @@ the user's pane via `send-keys` and background commands in a `de-bg-*` / \
 **Interactive commands** (`ssh`, `mosh`, `telnet`, `screen`): return on \
 remote-prompt appearance, with the shell left connected. Send follow-up work to \
 that same shell by passing its `shell` id — do not re-`ssh`. (`ssh host cmd` \
-and `ssh -N` run normally.)
+and `ssh -N` run normally.) A **configured host** is reached with \
+`open_shell { host: "<name>" }`, not by running `ssh` by hand: that opens a \
+managed PTY shell on the host whose commands run there, with the exit code \
+and recorded output the ordinary tools report.
 
 **Sudo for recurring scripts:** interactive sudo is fine for one-offs. If a sudo \
 script will run more than once (scheduled jobs, ghost shells, frequent manual reuse), \
@@ -155,9 +158,16 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 
 ### `open_shell`
 
-- `open_shell()` — start a new PTY shell on the daemon host; the result names \
-  its id. An opened shell is ordinary: `list_shells` lists it, `read_shell` \
-  and `find_in_shells` read its recorded output, and `close_shell` ends it. \
+- `open_shell(host?)` — start a new PTY shell; the result names its id. \
+  Without `host` the shell opens on the daemon host. With \
+  `host: "<name>"` it opens on a **configured host** — the `name` must be a \
+  `[hosts.<name>]` key from the config (the same names `list_hosts` /
+  `read_host_file` use); an unknown one is refused, and the refusal names the \
+  hosts that are configured. Commands run in it **there**, and the result \
+  reports the real remote exit code. \
+  An opened shell is ordinary: `list_shells` lists it (with its host), \
+  `read_shell` and `find_in_shells` read its recorded output, and \
+  `close_shell` ends it. \
   The reuse rule is the default, not a limit: a command runs in this \
   session's lowest-numbered open shell unless `run_terminal_command` says \
   otherwise — pass `shell: "<id>"` to target a specific shell, or \

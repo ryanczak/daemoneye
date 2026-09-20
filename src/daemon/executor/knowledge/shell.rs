@@ -7,7 +7,8 @@ use crate::ai::filter::mask_sensitive;
 use crate::config::shell_logs_dir;
 use crate::shell::{
     MetaIndex, Owner, ShellId, ShellRecord, ShellRegistry, await_ready, cast_path, host_is_alive,
-    meta_path_for, parse_cast_name, read_command_output, socket_path, spawn_for, with_shells,
+    meta_path_for, parse_cast_name, read_command_output, socket_path, spawn_for_on_host,
+    with_shells,
 };
 use std::time::{Duration, Instant};
 
@@ -1650,28 +1651,66 @@ fn format_err_chain(e: &anyhow::Error) -> String {
 /// `[shells] max_per_owner` and the standard readiness timeout; the `_in`
 /// form takes all three plus the spawn step, mirroring how `list_shells` /
 /// `list_shells_in` already split.
-pub async fn open_shell(caller: &Owner) -> String {
+///
+/// `host` is resolved **before** any spawn: an unknown or malformed name is
+/// refused with `host_entry`'s / `HostId::parse`'s own message — never routed
+/// through `open_shell_error`, which would wrap a host problem in per-owner
+/// shell-limit advice the model cannot act on.
+pub async fn open_shell(caller: &Owner, host: Option<&str>) -> String {
     let max_per_owner = crate::config::Config::load()
         .unwrap_or_default()
         .shells
         .max_per_owner;
-    open_shell_with(
-        crate::shell::registry(),
-        caller,
-        max_per_owner,
-        SHELL_READY_TIMEOUT,
-        |id| crate::shell::spawn_detached_host(id, &[], TEST_ROWS, TEST_COLS),
-    )
-    .await
+    let host = match host.map(crate::host::HostId::parse) {
+        None => crate::host::HostId::Local,
+        Some(Ok(parsed)) => parsed,
+        Some(Err(msg)) => return format!("Error: {msg}"),
+    };
+    // The two arms spawn different programs, so their closure types differ and
+    // each calls `open_shell_with` itself.
+    match &host {
+        crate::host::HostId::Local => {
+            open_shell_with(
+                open_shell_test_registry(),
+                caller,
+                crate::host::HostId::Local,
+                max_per_owner,
+                SHELL_READY_TIMEOUT,
+                spawn_in_process_host,
+            )
+            .await
+        }
+        crate::host::HostId::Named(name) => {
+            // `host_entry` resolves before the spawn on purpose: its refusals
+            // (unknown host, empty destination) must reach the model as their
+            // own sentences. Routing them through `open_shell_error` would
+            // dress a host problem in per-owner shell-limit advice the model
+            // cannot act on (§ Current state 5).
+            if let Err(e) = crate::shell::host_entry(name) {
+                return format!("Error: {e}");
+            }
+            open_shell_with(
+                open_shell_test_registry(),
+                caller,
+                crate::host::HostId::Named(name.clone()),
+                max_per_owner,
+                SHELL_READY_TIMEOUT,
+                |id| spawn_on_named_host(id, name),
+            )
+            .await
+        }
+    }
 }
 
-/// `open_shell` with every effect injected: the registry, the per-owner cap,
-/// the readiness timeout and the spawn step. Tests replace `spawn` with an
-/// in-process host because `spawn_detached_host` re-invokes `current_exe()`,
-/// which under a test binary is not the daemon (07b F4).
+/// `open_shell` with every effect injected: the registry, the host the
+/// record is stamped with, the per-owner cap, the readiness timeout and the
+/// spawn step. Tests replace `spawn` with an in-process host because
+/// `spawn_detached_host` re-invokes `current_exe()`, which under a test
+/// binary is not the daemon (07b F4).
 pub(super) async fn open_shell_with<F, Fut>(
     reg: &ShellRegistry,
     caller: &Owner,
+    host: crate::host::HostId,
     max_per_owner: u32,
     ready_timeout: Duration,
     spawn: F,
@@ -1684,7 +1723,16 @@ where
     // back twice, and the dedicated path sets `dedicated: true`, which
     // excludes a shell from that scan forever. The `false` below is what
     // keeps a freshly opened shell reachable by the reuse rule.
-    let id = match spawn_for(reg, caller.clone(), max_per_owner, false, spawn).await {
+    let id = match spawn_for_on_host(
+        reg,
+        caller.clone(),
+        max_per_owner,
+        host.clone(),
+        false,
+        spawn,
+    )
+    .await
+    {
         Ok(id) => id,
         // The per-owner cap lives in `spawn_for`'s `check_owner_cap` breach,
         // returned as text rather than an `Err`: every tool result is a value
@@ -1706,17 +1754,115 @@ where
             format_err_chain(&e)
         );
     }
+    // The local sentence is byte-identical to the pre-host one (`HostId` has
+    // no printable form); a named host is appended so the model can see where
+    // the shell landed and address follow-up work there.
+    let opened_on = match &host {
+        crate::host::HostId::Local => String::new(),
+        crate::host::HostId::Named(name) => format!(" It is on host {name}."),
+    };
     let s = format!(
         "Opened shell {}. It is now registered and readable — list_shells lists \
          it, read_shell and find_in_shells read its recorded output, close_shell \
-         ends it. Note: a command still runs in this session's lowest-numbered \
-         open shell by default, so this shell sees work only when it is that \
-         one — pass shell: {:?} to run_terminal_command to target it directly, \
-         or shell: \"new\" for one command's exclusive shell.",
+         ends it.{opened_on} Note: a command still runs in this session's \
+         lowest-numbered open shell by default, so this shell sees work only \
+         when it is that one — pass shell: {:?} to run_terminal_command to \
+         target it directly, or shell: \"new\" for one command's exclusive \
+         shell.",
         id.as_str(),
         id.as_str()
     );
     s
+}
+
+/// The registry `open_shell`'s tests drive. The daemon-wide singleton is a
+/// `OnceLock` that survives across tests, so a test that goes through the
+/// public form needs a registry it can assert on afterwards — swap in a fresh
+/// one and restore the old by dropping the guard.
+#[cfg(test)]
+pub(crate) mod open_shell_test_seam {
+    use std::sync::Mutex;
+
+    static REPLACE: Mutex<Option<crate::shell::ShellRegistry>> = Mutex::new(None);
+
+    /// Install `fresh` as the registry `open_shell` resolves, for the
+    /// lifetime of what this returns.
+    pub(super) fn swap_in(
+        fresh: &crate::shell::ShellRegistry,
+    ) -> Option<crate::shell::ShellRegistry> {
+        REPLACE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(fresh.clone())
+    }
+
+    /// The swapped-in registry, if any test currently holds one.
+    pub(super) fn swapped() -> Option<crate::shell::ShellRegistry> {
+        REPLACE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+#[cfg(test)]
+fn open_shell_test_registry() -> &'static crate::shell::ShellRegistry {
+    match open_shell_test_seam::swapped() {
+        Some(swapped) => Box::leak(Box::new(swapped)),
+        None => crate::shell::registry(),
+    }
+}
+
+#[cfg(test)]
+async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
+    tests::spawn_in_process_host(id).await
+}
+
+/// The ignored ssh variant of the in-process host: the real `ssh` argv for
+/// `pinky`, spawned by `PtyBackend` right here (not detached), so the process
+/// bound to the shell's socket is an `ssh` talking to the real remote host
+/// while the registry sees a normal in-process shell host.
+#[cfg(test)]
+async fn spawn_pinky_ssh(id: ShellId) -> anyhow::Result<()> {
+    let control = crate::config::ssh_dir();
+    use anyhow::Context as _;
+    std::fs::create_dir_all(&control).with_context(|| format!("creating {}", control.display()))?;
+    let entry = crate::shell::host_entry("pinky")?;
+    let argv = crate::host::ssh_argv(&entry, &control);
+    let program = crate::shell::which_ssh()?;
+    let dir = tempfile::tempdir().context("tempdir for cast")?;
+    let cast = dir.path().join(format!("{}.cast", id.as_str()));
+    let backend =
+        crate::shell::PtyBackend::spawn(&program, &argv, TEST_ROWS, TEST_COLS, 100, &cast, 0)
+            .context("spawning ssh to pinky")?;
+    let lock =
+        crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id.as_str()))
+            .context("holding the per-id instance lock")?;
+    let socket = crate::shell::socket_path(id.as_str());
+    let listener = crate::shell::bind(&socket)
+        .await
+        .context("binding the in-process host's socket")?;
+    tokio::spawn(crate::shell::serve(
+        listener,
+        std::sync::Arc::clone(&backend),
+    ));
+    std::mem::forget(lock);
+    std::mem::forget(dir);
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn open_shell_test_registry() -> &'static crate::shell::ShellRegistry {
+    crate::shell::registry()
+}
+
+#[cfg(not(test))]
+async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
+    crate::shell::spawn_detached_host(id, &[], TEST_ROWS, TEST_COLS).await
+}
+
+async fn spawn_on_named_host(id: ShellId, name: &str) -> anyhow::Result<()> {
+    crate::shell::spawn_ssh_host(id, name, TEST_ROWS, TEST_COLS).await
 }
 
 /// The cap-breach sentence for `open_shell`. `max_per_owner == 0` means
@@ -1874,6 +2020,7 @@ pub(crate) mod lifecycle_test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shell::{marker_shell_name, run_command};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
@@ -1988,7 +2135,7 @@ mod tests {
     /// (third copy of the fixture; see `lifecycle_test_support`). The `.cast`
     /// path the host writes is deliberately leaked with it, like the
     /// `shell_exec`/`bg_shell` originals.
-    async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
+    pub(super) async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
         let cast = lifecycle_test_support::spawn_with_cast(id.clone()).await?;
         std::mem::forget(cast);
         Ok(())
@@ -2203,6 +2350,7 @@ mod tests {
         let out = open_shell_with(
             &reg,
             &owner,
+            crate::host::HostId::Local,
             5,
             Duration::from_millis(3000),
             spawn_in_process_host,
@@ -2961,6 +3109,7 @@ mod tests {
         let out = open_shell_with(
             &reg,
             &Owner::Chat("open".into()),
+            crate::host::HostId::Local,
             5,
             Duration::from_millis(3000),
             spawn_in_process_host,
@@ -3013,6 +3162,7 @@ mod tests {
         let out = open_shell_with(
             &reg,
             &Owner::Chat("capped".into()),
+            crate::host::HostId::Local,
             1,
             Duration::from_millis(100),
             spawn,
@@ -3044,6 +3194,7 @@ mod tests {
         let out = open_shell_with(
             &reg,
             &Owner::Chat("stale".into()),
+            crate::host::HostId::Local,
             5,
             Duration::from_millis(200),
             spawn_never_binds,
@@ -3060,6 +3211,260 @@ mod tests {
         );
     }
 
+    // ── open_shell's host argument (M21 phase-04b) ───────────────────────────
+
+    /// § Current state 5 pinned as behaviour: a host problem is reported as a
+    /// host problem, never dressed up in per-owner shell-limit advice the
+    /// model cannot act on. `host_entry`'s refusal names the unknown host and
+    /// lists the configured ones; the cap sentence names neither.
+    #[tokio::test]
+    async fn open_shell_on_an_unknown_host_names_the_host_not_the_shell_limit() {
+        let (_home, dir) = lifecycle_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
+             ssh = \"matt@web01.lan\"\n\n[hosts.db01]\nssh = \"db01\"\n",
+        )
+        .expect("write config");
+        let reg = ShellRegistry::default();
+        let _swap = open_shell_test_seam::swap_in(&reg);
+        let out = open_shell(&Owner::Chat("hosted".into()), Some("nope")).await;
+        assert!(
+            out.contains("nope"),
+            "the refusal must name the host the model asked for: {out}"
+        );
+        assert!(
+            out.contains("web01") && out.contains("db01"),
+            "the refusal must list the configured hosts so the model can correct itself: {out}"
+        );
+        assert!(
+            !out.contains("per-owner shell limit"),
+            "a host problem must never arrive as shell-limit advice: {out}"
+        );
+        assert_eq!(
+            with_shells(&reg, |store| store.len()),
+            0,
+            "a refused host must not leave a record behind"
+        );
+    }
+
+    /// The host named at open time rides the record and reaches the model
+    /// again through `list_shells` — the plumbing's whole point.
+    #[tokio::test]
+    async fn open_shell_on_a_named_host_records_the_host() {
+        let (_home, dir) = lifecycle_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
+             ssh = \"matt@web01.lan\"\n",
+        )
+        .expect("write config");
+        let reg = ShellRegistry::default();
+        let out = open_shell_with(
+            &reg,
+            &Owner::Chat("web".into()),
+            crate::host::HostId::Named("web01".to_string()),
+            5,
+            Duration::from_millis(3000),
+            spawn_in_process_host,
+        )
+        .await;
+        assert!(
+            out.contains("Opened shell") && out.contains("web01"),
+            "the precondition is a ready shell on web01: {out}"
+        );
+        let record_host = with_shells(&reg, |store| store.values().next().map(|r| r.host.clone()));
+        assert_eq!(
+            record_host,
+            Some(crate::host::HostId::Named("web01".to_string())),
+            "the record must carry the host open_shell_with was given"
+        );
+        let listed = list_shells_in(&reg, None, &Owner::Chat("web".into()), NOW);
+        assert!(
+            listed.contains("host:web01"),
+            "list_shells must render the host so the model sees where the shell is: {listed}"
+        );
+    }
+
+    /// No `host` naming is today's behaviour: the record stays stamped
+    /// `HostId::Local`, and because the renderer keeps the local token empty,
+    /// `list_shells` prints exactly as it did before hosts existed.
+    #[tokio::test]
+    async fn open_shell_without_a_host_records_the_local_host() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let _swap = open_shell_test_seam::swap_in(&reg);
+        let out = open_shell(&Owner::Chat("local".into()), None).await;
+        assert!(
+            out.contains("Opened shell"),
+            "the precondition is a ready local shell: {out}"
+        );
+        let record_host = with_shells(&reg, |store| store.values().next().map(|r| r.host.clone()));
+        assert_eq!(
+            record_host,
+            Some(crate::host::HostId::Local),
+            "the no-host form must keep the local stamp"
+        );
+        let listed = list_shells_in(&reg, None, &Owner::Chat("local".into()), NOW);
+        assert!(
+            !listed.contains("host:"),
+            "an unhosted shell must render exactly as before hosts existed: {listed}"
+        );
+    }
+
+    /// The no-host result sentence is the contract every existing caller and
+    /// test was written against — it must not shift by a byte.
+    #[tokio::test]
+    async fn open_shell_local_result_is_unchanged() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let _swap = open_shell_test_seam::swap_in(&reg);
+        let out = open_shell(&Owner::Chat("sentinel".into()), None).await;
+        let id = out
+            .split_whitespace()
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                    .to_string()
+            })
+            .find(|w| w.starts_with('s') && w[1..].chars().all(|c| c.is_ascii_digit()))
+            .expect("the success sentence names the id");
+        assert_eq!(
+            out,
+            format!(
+                "Opened shell {id}. It is now registered and readable — list_shells \
+                 lists it, read_shell and find_in_shells read its recorded output, \
+                 close_shell ends it. Note: a command still runs in this session's \
+                 lowest-numbered open shell by default, so this shell sees work only \
+                 when it is that one — pass shell: \"{id}\" to run_terminal_command to \
+                 target it directly, or shell: \"new\" for one command's exclusive shell."
+            ),
+            "the no-host sentence must be byte-identical to the pre-host contract"
+        );
+    }
+
+    /// A name outside `[A-Za-z0-9._-]` (or over 64 chars) is refused before
+    /// any spawn, with `HostId::parse`'s own message — not with shell-limit
+    /// advice.
+    #[tokio::test]
+    async fn open_shell_rejects_a_malformed_host_name_before_any_spawn() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let _swap = open_shell_test_seam::swap_in(&reg);
+        let out = open_shell(&Owner::Chat("weird".into()), Some("bad name!")).await;
+        assert!(
+            out.starts_with("Error:"),
+            "a malformed name is refused: {out}"
+        );
+        assert!(
+            !out.contains("per-owner shell limit"),
+            "a malformed name is a name problem, not a shell-limit problem: {out}"
+        );
+        assert_eq!(
+            with_shells(&reg, |store| store.len()),
+            0,
+            "a refused name must not leave a record behind"
+        );
+    }
+
+    // ── live host (ignored; run by hand) ─────────────────────────────────────
+
+    /// M21 phase-04b's end-to-end check: `open_shell { host: "pinky" }` really
+    /// runs on the remote host. requiring the live host `pinky` over ssh with
+    /// key auth (no prompt). It goes through `open_shell_with` — the tool
+    /// path, not a direct `ssh` — with the spawn step bound in-process
+    /// (the real `ssh` argv; `spawn_ssh_host` cannot run under a test binary
+    /// because `launch::spawn_detached` re-invokes `current_exe()`), then
+    /// drives the shell through the ordinary `run_terminal_command` protocol
+    /// and prints the four facts on one line.
+    #[tokio::test]
+    #[ignore = "requires the configured host `pinky` reachable over ssh"]
+    async fn open_shell_on_pinky_end_to_end() {
+        let (_home, dir) = lifecycle_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\nssh = \"pinky\"\n",
+        )
+        .expect("write config");
+        crate::config::ssh_dir();
+
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("e2e-host".into());
+        let out = open_shell_with(
+            &reg,
+            &owner,
+            crate::host::HostId::Named("pinky".to_string()),
+            5,
+            Duration::from_secs(120),
+            |id| async move { spawn_pinky_ssh(id).await },
+        )
+        .await;
+        assert!(
+            out.contains("Opened shell"),
+            "the shell must open on pinky: {out}"
+        );
+        let id = out
+            .split_whitespace()
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                    .to_string()
+            })
+            .find(|w| w.starts_with('s') && w[1..].chars().all(|c| c.is_ascii_digit()))
+            .expect("the success sentence names the id");
+
+        let record_host = with_shells(&reg, |store| store.get(id.as_str()).map(|r| r.host.clone()));
+        let record_host = match record_host {
+            Some(crate::host::HostId::Named(name)) => name,
+            other => panic!("the record must name pinky, got {other:?}"),
+        };
+
+        let listed = list_shells_in(&reg, None, &owner, NOW);
+        assert!(
+            listed.contains(&format!("host:{record_host}")),
+            "list_shells must render the host: {listed}"
+        );
+
+        let hostname = run_command(
+            &crate::shell::socket_path(&id),
+            "hostname",
+            &marker_shell_name(&crate::host::HostId::Named(record_host.clone())),
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("the remote shell answers `hostname`");
+        let hostname_out = String::from_utf8_lossy(&hostname.output).to_string();
+        assert!(
+            hostname_out.contains("pinky"),
+            "`hostname` must say pinky: {hostname_out:?}"
+        );
+
+        let exit42 = run_command(
+            &crate::shell::socket_path(&id),
+            "(exit 42)",
+            &marker_shell_name(&crate::host::HostId::Named(record_host.clone())),
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("the remote shell answers `(exit 42)`");
+
+        println!(
+            "record_host={record_host} listed_host={record_host} remote_hostname={} remote_exit_code={}",
+            hostname_out.trim().lines().last().unwrap_or(""),
+            exit42.exit_code,
+        );
+
+        close_shell_with(&reg, &id, &owner, Duration::from_millis(3000)).await;
+        let cp = crate::config::ssh_dir();
+        let _ = std::process::Command::new("ssh")
+            .args([
+                "-O",
+                "exit",
+                "-o",
+                &format!("ControlPath={}/%C", cp.display()),
+                "pinky",
+            ])
+            .status();
+    }
+
     // ── close_shell ──────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -3069,6 +3474,7 @@ mod tests {
         let opened = open_shell_with(
             &reg,
             &Owner::Chat("closer".into()),
+            crate::host::HostId::Local,
             5,
             Duration::from_millis(3000),
             spawn_in_process_host,

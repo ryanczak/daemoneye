@@ -106,10 +106,11 @@ pub(super) struct ListShellsArgs {
     scope: Option<String>,
 }
 
-/// `open_shell` takes no arguments on this tree — the registry has no
-/// `host` / `label` fields yet.
 #[derive(Deserialize)]
-pub(super) struct OpenShellArgs {}
+pub(super) struct OpenShellArgs {
+    #[serde(default)]
+    host: Option<String>,
+}
 
 #[derive(Deserialize)]
 pub(super) struct CloseShellArgs {
@@ -495,6 +496,7 @@ impl ToolArgs for OpenShellArgs {
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
         AiEvent::OpenShell {
             id: id.to_string(),
+            host: self.host,
             thought_signature: ts,
         }
     }

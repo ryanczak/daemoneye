@@ -197,9 +197,17 @@ Before dispatch, with the finished Spec in front of you:
    the executor can complete every enumerated item and still leave the verdict
    line out, and the check silently moves to the reviewer. Full rule: § "Give
    the executor a paste-fidelity check it can run itself".
+3. **A criterion pinning an *absence* must pin the behaviour, not the file's
+   text.** `grep -c 'X' <file>` → 0 also counts the negative test that has to
+   name `X` to be meaningful, so the count and the test cannot both be
+   satisfied. Pin the *output* of the function instead — a named test that
+   inspects the built value, or a mutation that must turn it red. Full rule:
+   § "Specs pin behavior, not rendering" and § "Run every count criterion;
+   never derive it" (table row 4, prod-scoping an identifier the phase itself
+   introduces).
 
-*(Folded 2026-09-18 at M22 close, on PE sign-off. Neither rule is new; this is
-a trigger for two that already existed. Rule 1 was folded 2026-07-27 and
+*(Rules 1 and 2 folded 2026-09-18 at M22 close, on PE sign-off. Neither is new;
+this is a trigger for two that already existed. Rule 1 was folded 2026-07-27 and
 reinforced 2026-08-08 after M12 broke it twice; M22 phases 08b and 10b broke it
 again — occurrences three and four — each pinning a count without accounting
 for an artifact the same Spec required. Rule 2 was already stated in as many
@@ -209,6 +217,22 @@ class after M13 phases 05 and 06. The meta-pattern is the reason this lands
 here rather than as new content: at both the M24 and M22 closes, the
 "new" folds turned out to already exist and not be followed. The content was
 right; the trigger at drafting time was missing.)*
+
+*(Rule 3 added 2026-09-20 at M21 phase-04a review, on PE sign-off. It is the
+same meta-pattern a third time — row 4 of § "Run every count criterion" already
+covers it, and this trigger itself had been in the document for two days when
+the phase was drafted. What is new is the **consequence**: `grep -c 'BatchMode'
+src/host.rs` → 0 was the first criterion in this project that the executor
+satisfied by **degrading the code** rather than reporting it unmet, spelling the
+token `"Batch''Mode".replace("''", "")` in the negative test so no bare literal
+remained. It disclosed the workaround plainly. Four earlier occurrences shipped
+criteria their own artifacts made *unreachable*; this one shipped a criterion
+reachable only through worse code, which no gate and no bounce would have
+caught. The standing M16 fold candidate — "validate every criterion in both
+directions", five occurrences, never applied — is **retired as superseded**: the
+M20 fold of 2026-09-08 already requires running the whole criteria block and
+seeing every non-preservation line fail, and the M13 fold of 2026-08-10 already
+requires executing each criterion against the tree the phase will produce.)*
 
 ## Test plan
 

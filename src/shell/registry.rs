@@ -191,6 +191,34 @@ where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
+    spawn_for_on_host(
+        reg,
+        owner,
+        max_per_owner,
+        crate::host::HostId::Local,
+        dedicated,
+        spawn,
+    )
+    .await
+}
+
+/// `spawn_for` on a named host: the record it stamps carries `host`, so every
+/// reader of `record.host` (`marker_shell_name`, the `[SHELLS]` block) treats
+/// the shell as remote. Additive over `spawn_for` on purpose — the local form
+/// stays a one-line delegation, keeping its twelve call sites compiling
+/// untouched.
+pub async fn spawn_for_on_host<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    max_per_owner: u32,
+    host: crate::host::HostId,
+    dedicated: bool,
+    spawn: F,
+) -> anyhow::Result<ShellId>
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
     let id = with_shells(reg, |store| -> anyhow::Result<ShellId> {
         check_owner_cap(store, &owner, max_per_owner)?;
         let occupied = store.values().map(|record| record.id.index()).collect();
@@ -204,7 +232,7 @@ where
             ShellRecord {
                 id: id.clone(),
                 owner: owner.clone(),
-                host: crate::host::HostId::Local,
+                host,
                 started_unix,
                 interactive: false,
                 dedicated,
@@ -944,6 +972,52 @@ mod tests {
             .expect("spawn_for task must complete")
             .expect("the stub spawn must succeed");
         assert_eq!(id.as_str(), "s0");
+    }
+
+    /// The named-host form stamps the record with the host it was given, so
+    /// every reader of `record.host` (`marker_shell_name`, the `[SHELLS]`
+    /// block) can tell a remote shell from a local one.
+    #[tokio::test]
+    async fn spawn_for_on_host_records_the_named_host() {
+        let reg = ShellRegistry::default();
+        let id = spawn_for_on_host(
+            &reg,
+            Owner::Chat("a".into()),
+            5,
+            crate::host::HostId::Named("pinky".to_string()),
+            false,
+            |_id| async { Ok(()) },
+        )
+        .await
+        .expect("the stub spawn must succeed");
+
+        let guard = reg.try_lock().unwrap();
+        let saved = guard.get(id.as_str()).expect("the record is registered");
+        assert_eq!(
+            saved.host,
+            crate::host::HostId::Named("pinky".to_string()),
+            "the record must carry the host the spawn named"
+        );
+    }
+
+    /// The one-line delegation is what every existing caller still goes
+    /// through, so it must keep stamping `Local` exactly as before.
+    #[tokio::test]
+    async fn spawn_for_still_records_the_local_host() {
+        let reg = ShellRegistry::default();
+        let id = spawn_for(&reg, Owner::Chat("a".into()), 5, false, |_id| async {
+            Ok(())
+        })
+        .await
+        .expect("the stub spawn must succeed");
+
+        let guard = reg.try_lock().unwrap();
+        let saved = guard.get(id.as_str()).expect("the record is registered");
+        assert_eq!(
+            saved.host,
+            crate::host::HostId::Local,
+            "the delegating form must leave the local stamp unchanged"
+        );
     }
 
     #[tokio::test]

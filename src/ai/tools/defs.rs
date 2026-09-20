@@ -833,14 +833,24 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "open_shell",
-        description: "Start a new PTY shell on the daemon host and return its id. A \
+        description: "Start a new PTY shell and return its id. Opens it on the daemon \
+                      host by default, or on a configured host when you name one \
+                      with `host`. A \
                       created shell is ordinary: list_shells lists it, read_shell and \
                       find_in_shells read its recorded output, and close_shell ends it. \
                       **Note:** commands keep running in this session's \
                       lowest-numbered open shell unless you say otherwise — pass \
                       `shell: \"<id>\"` to run_terminal_command to target a specific \
                       shell, or `shell: \"new\"` to make one command use a fresh shell.",
-        params: &[],
+        params: &[ParamDef {
+            name: "host",
+            ty: ParamTy::Str,
+            required: false,
+            description: "Optional configured host name to open the shell on (a \
+                          [hosts.<name>] key, e.g. \"pinky\"). Omitted: the daemon \
+                          host. The shell is ordinary once open — run commands in it \
+                          by passing its id as run_terminal_command's `shell`.",
+        }],
         deferred_group: None,
         category: Category::Run,
     },

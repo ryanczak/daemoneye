@@ -222,7 +222,15 @@ changes (the M11 `event_log` fixture in phase-04) declared rather than buried.
   delegation cost a round trip and bought nothing. A rexyMCP-side note, not a
   project issue.
 
-### Fold candidate — for PE decision, NOT applied
+### Fold candidate — RETIRED as superseded 2026-09-20 (PE sign-off)
+
+**Do not re-propose this.** The two folds that landed after it already carry
+its content: § "Run every count criterion" (2026-09-08) requires running the
+whole § Acceptance criteria block before dispatch and seeing every
+non-preservation line *fail*, and § "Every acceptance criterion must be
+satisfiable" (2026-08-10) requires executing each criterion against the tree the
+phase will *produce*. Between them both directions are covered. The original
+proposal is kept below as history.
 
 **Five occurrences of one shape** (WORKFLOW § Calibration: three is a fix).
 Proposed addition to `docs/dev/WORKFLOW.md`:
@@ -309,8 +317,9 @@ operator's session and which found two real defects. Any future attempt at these
 five should use it.
 
 **The calibration fold that was awaiting a decision** (a criterion validated in
-only one direction, five occurrences) is **carried, not applied** — it was not
-part of the M17 close decision and remains available for a future fold.
+only one direction, five occurrences) was carried through M17 and M21 and is now
+**retired as superseded** (2026-09-20, PE sign-off) — see the retirement note
+above.
 
 **Carried into future work:** the five live criteria above, and the minor
 `CLAUDE.md` gap noted at the time — the `src/daemon/utils/` row now does list

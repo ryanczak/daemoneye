@@ -40,7 +40,7 @@ pub(crate) use pty::{test_begin_marker, test_end_marker};
 pub use registry::{
     Owner, ShellId, ShellRecord, ShellRegistry, adopt_at_startup, allocate_index, check_owner_cap,
     host_is_alive, mark_interactive, parse_cast_name, reap_exited, scan_shell_ids, spawn_for,
-    sweep_stale, with_shells,
+    spawn_for_on_host, sweep_stale, with_shells,
 };
 pub use screen::ShellScreen;
 pub use session::{

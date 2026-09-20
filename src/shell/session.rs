@@ -42,8 +42,15 @@ where
                 // stays and the host stays alive: later work addresses the
                 // session by id. A dedicated shell is excluded for the same
                 // reason in the other direction: it belongs to exactly one
-                // command, so it is never offered to anything else.
-                !record.interactive && !record.dedicated && record.owner.key() == owner_key
+                // command, so it is never offered to anything else. A shell
+                // on a named host runs commands *there*, so handing it to a
+                // caller that asked for no host would silently relocate the
+                // command; host-keyed reuse needs a caller that can ask
+                // (row 04c).
+                !record.interactive
+                    && !record.dedicated
+                    && record.host == crate::host::HostId::Local
+                    && record.owner.key() == owner_key
             })
             .map(|record| record.id.clone())
             .collect();
@@ -114,7 +121,6 @@ pub fn marker_shell_name(host: &crate::host::HostId) -> String {
 /// `daemoneye shell-host` for `id`. Separate from `shell_for_owner` because
 /// `spawn_detached` resolves `current_exe()` and so cannot run under a test
 /// (F4).
-/// spawning an SSH shell for `owner` on `host`.
 pub async fn spawn_detached_host(
     id: ShellId,
     args: &[String],
@@ -391,6 +397,56 @@ mod tests {
         );
         let guard = reg.try_lock().unwrap();
         assert_eq!(guard.len(), 2, "the registry holds both records");
+    }
+
+    /// A shell on a named host runs commands *there*; handing it to a caller
+    /// that asked for no host would silently relocate the command, so the
+    /// reuse filter excludes it even for its own owner.
+    #[tokio::test]
+    async fn a_remote_shell_is_never_reused_for_a_local_command() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("a".into());
+
+        with_shells(&reg, |store| {
+            store.insert(
+                "s2".to_string(),
+                ShellRecord {
+                    id: ShellId::from_index(2),
+                    owner: owner.clone(),
+                    host: crate::host::HostId::Named("pinky".to_string()),
+                    started_unix: 0,
+                    interactive: false,
+                    dedicated: false,
+                    exited_unix: None,
+                },
+            );
+        });
+        let (id, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the local request must create a fresh shell");
+
+        assert_ne!(
+            id.as_str(),
+            "s2",
+            "the remote shell must not be handed to a caller that named no host"
+        );
+        let still_there = with_shells(&reg, |store| {
+            store
+                .get("s2")
+                .map(|r| matches!(r.host, crate::host::HostId::Named(ref n) if n == "pinky"))
+        });
+        assert_eq!(
+            still_there,
+            Some(true),
+            "the remote shell must stay registered and untouched"
+        );
     }
 
     #[tokio::test]

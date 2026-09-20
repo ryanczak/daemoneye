@@ -692,10 +692,12 @@ where
                 }
                 AiEvent::OpenShell {
                     id,
+                    host,
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::OpenShell {
                         id,
+                        host,
                         thought_signature,
                     });
                 }

@@ -179,10 +179,12 @@ pub enum AiEvent {
         scope: Option<String>,
         thought_signature: Option<String>,
     },
-    /// Open a new PTY shell for this session (M22 phase-04a). Takes no
-    /// parameters on this tree — the registry has no `host`/`label` yet.
+    /// Open a new PTY shell for this session (M22 phase-04a), optionally on a
+    /// configured `[hosts.<name>]` host (M21 phase-04b). `host` names the
+    /// shell's destination; `None` is the daemon host.
     OpenShell {
         id: String,
+        host: Option<String>,
         thought_signature: Option<String>,
     },
     /// Close one of this session's PTY shells (M22 phase-04a).

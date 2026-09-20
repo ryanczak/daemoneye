@@ -1,0 +1,675 @@
+# Phase 04b: ssh-tool-surface — `open_shell { host? }`
+
+**Milestone:** M21 — Host model & SSH
+**Status:** in-progress
+**Depends on:** phase-04a (the `ssh_argv` builder and `spawn_ssh_host` this
+phase gives its first caller)
+**Estimated diff:** ~330 lines
+**Tags:** language=rust, kind=feature, size=m
+
+## Goal
+
+Give the AI a way to ask for a shell on a configured host. `open_shell` gains
+an optional `host`, and the shell registry stops hard-coding every record's
+host as local, so the machinery 04a built becomes reachable.
+
+After this phase the model can run remote work with tools that already exist:
+`open_shell { host: "pinky" }` returns `s3`, and
+`run_terminal_command { command: "…", shell: "s3" }` runs it on `pinky` with a
+real remote exit code. `run_terminal_command { host? }` — the one-shot
+convenience form — is **row 04c**, not this phase.
+
+## Architecture references
+
+Read before starting:
+
+- `docs/design/daemoneye-2.0.md` § 2.2 "Host model" — a configured host is an
+  execution target the AI can name; the local host is implicit.
+- `CLAUDE.md` § "Adding a new AI tool (checklist)" — eleven steps. This phase
+  adds a **parameter to an existing tool**, so steps 1, 3, 4, 5, 7, 8, 9, 10
+  and 11 apply and the tool **counts do not change**.
+- `docs/architecture.md` § 2.4 — the daemon host stores every managed
+  artifact; remotes are execution targets only. Nothing here moves storage.
+
+## Pre-flight
+
+1. Read `docs/dev/STANDARDS.md` top to bottom.
+2. Read the architecture references above.
+3. Read this entire phase doc before touching any code.
+4. Confirm the repo is on a clean branch with no uncommitted changes.
+
+## Current state
+
+Every fact below was read or run against the tree on **2026-09-20**, at the
+commit that approved phase-04a. Line numbers are current as of drafting;
+re-derive with the greps shown rather than trusting them.
+
+### 1. `spawn_ssh_host` has no callers. That is the gap this phase closes.
+
+```
+$ grep -rn 'spawn_ssh_host' src/ --include=*.rs | grep -v 'session.rs\|mod.rs'
+(no output)
+```
+
+04a built the SSH spawn and its argv; only the re-export in `src/shell/mod.rs`
+mentions it. Nothing in the tool surface can reach a remote shell today.
+
+### 2. Every shell record is hard-coded local
+
+`ShellRecord.host` exists (04a/03) and three sites construct a record. Only one
+is a production spawn:
+
+```rust
+// src/shell/registry.rs:207, inside spawn_for
+store.insert(
+    id.as_str().to_string(),
+    ShellRecord {
+        id: id.clone(),
+        owner: owner.clone(),
+        host: crate::host::HostId::Local,   // <- always Local
+        started_unix,
+        interactive: false,
+        dedicated,
+        exited_unix: None,
+    },
+);
+```
+
+The other two are `adopt_at_startup` (`registry.rs:331` — an adopted shell's
+origin is unknown and `Local` stays correct) and a test helper
+(`registry.rs:414`). **Leave both alone.**
+
+### 3. Everything downstream of the record is already host-aware
+
+This is why the phase is small. These already read `record.host` and need no
+change:
+
+```rust
+// src/daemon/executor/shell_exec.rs:301,322 — the marker shell is chosen
+// from the record's host, so a remote shell already gets `sh`/`$?`.
+let (started_unix, record_host) = with_shells(reg, |store| { … });
+…
+&marker_shell_name(&record_host),
+```
+
+`list_shells` and the `[SHELLS]` context block already render a host token and
+already print nothing for the local host
+(`knowledge/shell.rs:174` `host_part`, `knowledge/shell.rs:254`). They have
+simply never had a named host to print.
+
+### 4. The reuse scan is host-blind — a defect this phase would otherwise ship
+
+```rust
+// src/shell/session.rs:38-46, inside shell_for_owner
+!record.interactive && !record.dedicated && record.owner.key() == owner_key
+```
+
+`open_shell` deliberately creates a **reusable** record (`dedicated: false`,
+`knowledge/shell.rs:1687` and the comment above it). So the moment
+`open_shell { host: "pinky" }` works, the *next* plain `run_terminal_command`
+with no `shell` argument would reuse the remote shell and silently run on
+`pinky`. Task 2 closes this, and the mutation in Task 7 is what proves the
+guard is not vacuous.
+
+### 5. The trap: an unknown host would be reported as a shell-limit error
+
+`open_shell_with` funnels **every** `spawn_for` failure into one message:
+
+```rust
+// src/daemon/executor/knowledge/shell.rs:1687-1692
+let id = match spawn_for(reg, caller.clone(), max_per_owner, false, spawn).await {
+    Ok(id) => id,
+    Err(e) => return open_shell_error(max_per_owner, &e),
+};
+```
+
+```rust
+// src/daemon/executor/knowledge/shell.rs:1731-1736
+"Error: could not open a shell: {} — the per-owner shell limit is \
+ {limit}. Close one of your shells with close_shell, or stop asking for \
+ new shells this turn."
+```
+
+`spawn_ssh_host` calls `host_entry(name)` **inside** the spawn closure, so an
+unknown host, an unconfigured `[hosts]`, or a missing `ssh` binary would all
+reach the model wrapped in *"the per-owner shell limit is 5. Close one of your
+shells"* — advice that cannot fix the problem and that the model would act on.
+
+**Resolve the host before spawning.** Task 3 pins this.
+
+### 6. `host_entry` already writes the three refusals you need
+
+Do not write new error text for unknown / empty / local hosts —
+`src/shell/session.rs:147` returns all three, each naming the remedy:
+
+```rust
+Err(anyhow::anyhow!("unknown host {name:?}; {listed}"))   // lists configured hosts
+"host {name} is configured but its ssh destination is empty — set ssh = …"
+"the local host is implicit — it has no [hosts] entry and needs no ssh spawn"
+```
+
+Return `host_entry`'s message to the model unchanged.
+
+### 7. A known, pre-existing test flake — do not chase it
+
+`shell::backend::tests::the_flag_clears_once_the_answer_is_submitted` is
+intermittent. Measured at drafting on 2026-09-20:
+
+- Full `cargo test --lib`: **failed once in four runs**, passed 1927/0/4 on the
+  other three.
+- Alone (`cargo test --lib the_flag_clears_once_the_answer_is_submitted`):
+  **6 of 6 passed.**
+
+It is a timing race from phase-01b — a fixed `sleep(50ms)` at
+`src/shell/backend.rs:623` standing in for "bash has set echo-off", which a
+loaded machine loses. **It is not yours. Do not fix it, do not work around it,
+do not delete it.** If it fails in your run, re-run the suite and say so in the
+Update Log.
+
+### 8. Measured baselines
+
+| Ran at drafting | Value |
+|---|---|
+| `cargo test --lib` | 1927 passed / 0 failed / 4 ignored |
+| `cargo test --test doc_truth` | 14 passed |
+| `grep -c '^    ToolDef {' src/ai/tools/defs.rs` | 42 |
+| `grep -c 'deferred_group: None,' src/ai/tools/defs.rs` | 28 |
+| `grep -c 'name: "host"' src/ai/tools/defs.rs` | 0 |
+
+`pinky` is reachable from this daemon host with key auth and **no prompt**;
+its remote login shell is `bash`, so 04a's `sh` marker name is correct:
+
+```
+$ ssh -o BatchMode=yes pinky 'hostname; echo shell=$0'
+pinky
+shell=bash
+```
+
+The live config has **no `[hosts]` section** — every test and the end-to-end
+check must write its own config into a temp `HOME`.
+
+## Spec
+
+### Task 1 — `spawn_for_on_host`, additively
+
+In `src/shell/registry.rs`, add:
+
+```rust
+pub async fn spawn_for_on_host<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    max_per_owner: u32,
+    host: crate::host::HostId,
+    dedicated: bool,
+    spawn: F,
+) -> anyhow::Result<ShellId>
+```
+
+Move today's `spawn_for` body into it, replacing the hard-coded
+`host: crate::host::HostId::Local` at line 207 with the `host` parameter. Then
+make `spawn_for` a one-line delegation:
+
+```rust
+pub async fn spawn_for<F, Fut>(…same signature as today…) -> anyhow::Result<ShellId>
+where … {
+    spawn_for_on_host(reg, owner, max_per_owner, crate::host::HostId::Local, dedicated, spawn).await
+}
+```
+
+**Additive on purpose.** `spawn_for` has twelve call sites
+(`grep -rn 'spawn_for(' src/ --include=*.rs`) and `shell_for_owner` seventeen.
+Changing their signatures is a wide-blast-radius edit this phase does not need;
+the delegation keeps every one of them compiling untouched. Export
+`spawn_for_on_host` from `src/shell/mod.rs` beside `spawn_for`.
+
+Leave `adopt_at_startup` (`registry.rs:331`) and the `record` test helper
+(`registry.rs:414`) on `HostId::Local`.
+
+### Task 2 — a local command never reuses a remote shell
+
+In `src/shell/session.rs`, add a host term to the reuse filter inside
+`shell_for_owner` (the closure at line ~38):
+
+```rust
+!record.interactive
+    && !record.dedicated
+    && record.host == crate::host::HostId::Local
+    && record.owner.key() == owner_key
+```
+
+Extend the comment block directly above it with one sentence saying why: a
+shell on a named host runs commands *there*, so handing it to a caller that
+asked for no host would silently relocate the command. `HostId` already derives
+`PartialEq` (`src/host.rs:14`), so no new derive is needed.
+
+**Scope note.** `shell_for_owner` gains no `host` parameter in this phase —
+nothing can yet ask it for a remote shell. Host-keyed reuse arrives with
+`run_terminal_command { host? }` in row 04c.
+
+### Task 3 — `open_shell` takes a host, and resolves it before spawning
+
+In `src/daemon/executor/knowledge/shell.rs`:
+
+**3a.** Give `open_shell_with` a `host: crate::host::HostId` parameter (after
+`caller`) and pass it to `spawn_for_on_host` in place of today's `spawn_for`
+call at line 1687. There are six call sites, all in this file
+(`grep -n 'open_shell_with(' src/daemon/executor/knowledge/shell.rs`); pass
+`HostId::Local` at the five existing test sites.
+
+**3b.** Change `open_shell` to `pub async fn open_shell(caller: &Owner, host: Option<&str>) -> String`.
+Its body branches once:
+
+- `None`, or a value that `HostId::parse` returns `HostId::Local` for: today's
+  behaviour exactly — `spawn_detached_host(id, &[], TEST_ROWS, TEST_COLS)` and
+  `HostId::Local`.
+- `Some(name)` that parses to `HostId::Named`: **first** call
+  `crate::shell::host_entry(name)`. On `Err`, return
+  `format!("Error: {}", err)` — do **not** route it through
+  `open_shell_error`, which would tell the model to close shells (§ Current
+  state 5). On `Ok`, call `open_shell_with` with
+  `HostId::Named(name.to_string())` and the spawn closure
+  `|id| crate::shell::spawn_ssh_host(id, name, TEST_ROWS, TEST_COLS)`.
+
+A `HostId::parse` error (a name outside `[A-Za-z0-9._-]`, or over 64 chars)
+returns `format!("Error: {}", msg)` the same way, before any spawn.
+
+The two branches have different closure types, so call `open_shell_with`
+separately in each arm rather than trying to unify them.
+
+**3c.** Add `host` to the tool's result sentence when it is named, so the model
+can see where the shell landed. Keep the local sentence byte-identical to
+today's — `open_shell_local_result_is_unchanged` in Task 6 pins that.
+
+### Task 4 — the tool surface, one checklist pass
+
+Four files, in `CLAUDE.md` § "Adding a new AI tool" order. **No tool is added:
+the counts stay at 42 and 28.**
+
+**Edit every site below in one contiguous batch, and run the build only after
+the batch — not after each file.** `PendingCall::OpenShell` is constructed and
+matched in several places, so the tree **will not compile** from the first edit
+until the last one lands. That is a property of the change shape, not a
+mistake, and a per-edit verifier reading those failures as "stuck" is what
+ended this phase's first run. Start with `src/ai/types/pending.rs`: the variant
+itself is what every other site refers to.
+
+- **`src/ai/tools/defs.rs`** — add to `open_shell`'s `params` (today `&[]`):
+
+  ```rust
+  params: &[ParamDef {
+      name: "host",
+      ty: ParamTy::Str,
+      required: false,
+      description: "Optional configured host name to open the shell on (a \
+                    [hosts.<name>] key, e.g. \"pinky\"). Omitted: the daemon \
+                    host. The shell is ordinary once open — run commands in it \
+                    by passing its id as run_terminal_command's `shell`.",
+  }],
+  ```
+
+  Also update the tool's `description` to say the shell can be opened on a
+  configured host. Leave `deferred_group: None` and `category: Category::Run`.
+- **`src/ai/tools/args.rs`** — `OpenShellArgs` is `struct OpenShellArgs {}`
+  today (line 112). Give it `host: Option<String>` and pass it through
+  `to_event` (line 495).
+- **`src/ai/types/events.rs`** — `AiEvent::OpenShell` (line 184) gains
+  `host: Option<String>`. Replace the stale doc comment ("Takes no parameters
+  on this tree — the registry has no `host`/`label` yet").
+- **`src/ai/types/pending.rs`** — `PendingCall::OpenShell` (line 267) gains
+  `host: Option<String>`; update its `to_tool_call` arm (line 867) to emit
+  `{"host": host}`, and its doc comment. The `id()`, `tool_name()`,
+  `summary()` and `should_emit_tool_feedback()` arms match on `..` and need no
+  change; the exhaustive constructor list at line 1276 does.
+- **`src/daemon/stream.rs`** — the `AiEvent::OpenShell` arm (line 693) carries
+  `host` into the `PendingCall`.
+- **`src/daemon/executor/mod.rs`** — the `PendingCall::OpenShell` arm (line
+  856) passes `host.as_deref()` to `knowledge::open_shell`.
+
+`src/ai/tools/dispatch.rs` needs no change — `open_shell` already dispatches
+through the generic `dispatch::<OpenShellArgs>`.
+
+### Task 5 — documentation, three files
+
+- **`assets/prompts/sre.toml`** § `open_shell` (line 156): document the `host`
+  argument. Say that the host must be a configured `[hosts.<name>]` key, that
+  an unknown one is refused and names the configured hosts, and that follow-up
+  work goes to the returned id via `run_terminal_command`'s `shell`. Also amend
+  the **Interactive commands** paragraph (line ~100) to say that a configured
+  host is reached with `open_shell { host }` rather than by running `ssh`
+  by hand.
+- **`CLAUDE.md`** — update the `open_shell` row (line 155) to mention `host?`.
+  **Do not touch the `42 tools: 28 core + 14 deferred` line** — it is correct
+  and `tests/doc_truth.rs` checks it.
+- **`README.md`** § "AI tools" — update the `open_shell` row (line 515) the
+  same way. The three prose numbers above the tables stay as they are.
+
+### Task 6 — tests
+
+Named tests, each asserting the behaviour in its name. Placement is yours;
+the parenthetical is the file the fixtures already live in.
+
+1. `spawn_for_on_host_records_the_named_host` (`registry.rs`) — spawn with
+   `HostId::Named("pinky")`, read the record back, assert its `host`.
+2. `spawn_for_still_records_the_local_host` (`registry.rs`) — the delegation
+   still stamps `Local`.
+3. `a_remote_shell_is_never_reused_for_a_local_command`
+   (`shell/session.rs`) — put a reusable remote record in the registry, call
+   `shell_for_owner` for the same owner, assert it returns a **different** id
+   and that the remote record is still present. Task 7's mutation A targets
+   this test.
+4. `open_shell_on_an_unknown_host_names_the_host_not_the_shell_limit`
+   (`knowledge/shell.rs`) — seed a config with `[hosts.web01]`, call
+   `open_shell(&owner, Some("nope"))`, assert the result contains `nope` and
+   `web01`, and assert it does **not** contain `per-owner shell limit`. This is
+   § Current state 5 pinned as behaviour.
+5. `open_shell_on_a_named_host_records_the_host` (`knowledge/shell.rs`) — seed
+   `[hosts.web01]`, inject the in-process spawn, assert the record's host is
+   `HostId::Named("web01")` and that `list_shells` renders `host:web01`.
+6. `open_shell_without_a_host_records_the_local_host` (`knowledge/shell.rs`).
+7. `open_shell_local_result_is_unchanged` (`knowledge/shell.rs`) — the
+   no-host result sentence is byte-identical to today's.
+
+The config fixture is already written; copy its shape from
+`src/shell/session.rs:784-800`:
+
+```rust
+let (_home, dir) = test_home();
+std::fs::write(
+    dir.path().join(".daemoneye/etc/config.toml"),
+    "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
+     ssh = \"matt@web01.lan\"\n\n[hosts.db01]\nssh = \"db01\"\n",
+)
+.expect("write config");
+```
+
+Any test that touches `HOME` or the environment must hold
+`crate::test_home_guard()` for its whole body — never the raw lock.
+
+### Task 7 — mutation pair
+
+Both target code this phase creates, so neither could be applied at drafting.
+**They are predictions.** Apply each with the `patch` tool (the executor
+contract forbids `sed -i` / `perl -i` / `> file`), run the named test, restore,
+and report what you observed. A mutation that stays green is a finding to write
+down, not something to work around. Do not manufacture a red.
+
+**Mutation A — drop the host term from the reuse filter.** Remove
+`&& record.host == crate::host::HostId::Local` from Task 2's closure.
+`a_remote_shell_is_never_reused_for_a_local_command` must go **red**.
+
+**Mutation B — resolve the host after spawning.** In `open_shell`, delete the
+up-front `host_entry(name)` call and let the failure arrive through
+`open_shell_error`.
+`open_shell_on_an_unknown_host_names_the_host_not_the_shell_limit` must go
+**red** on the `per-owner shell limit` assertion.
+
+### Task 8 — capture the end-to-end evidence
+
+Run the block in § End-to-end verification verbatim and paste its output into a
+new Update Log entry.
+
+## Acceptance criteria
+
+**Run this whole block against the tree before reporting done.** Every line
+below except the two marked **preservation criterion** returned a different
+value at drafting, and the drafting value is shown.
+
+- [ ] `cargo fmt --all` clean; `cargo build` clean;
+      `cargo clippy --all-targets --all-features -- -D warnings` exits 0.
+- [ ] `cargo test --lib spawn_for_on_host` → **1 passed** (drafting: 0 passed).
+- [ ] `cargo test --lib spawn_for_still_records` → **1 passed** (drafting: 0).
+- [ ] `cargo test --lib a_remote_shell_is_never_reused` → **1 passed**
+      (drafting: 0).
+- [ ] `cargo test --lib open_shell_on_` → **2 passed, 1 ignored**
+      (drafting: 0 passed, 0 ignored). The filter also matches the ignored
+      end-to-end test, which is why the ignored count is named here.
+- [ ] `cargo test --lib open_shell_without_a_host` → **1 passed** (drafting: 0).
+- [ ] `cargo test --lib open_shell_local_result_is_unchanged` → **1 passed**
+      (drafting: 0).
+- [ ] `cargo test --lib` → **1934 passed / 0 failed / 5 ignored**. The passed
+      count is derived from the seven tests in Task 6 added to the measured
+      1927; if your total differs, **state the actual number and why** rather
+      than adding or removing a test to hit it. The ignored count rises by
+      exactly one, the end-to-end test. Re-run once on a failure of
+      `the_flag_clears_once_the_answer_is_submitted` (§ Current state 7).
+- [ ] `cargo test --test doc_truth` → **14 passed**. *(preservation
+      criterion — already 14 today; it must stay 14.)*
+- [ ] `grep -c '^    ToolDef {' src/ai/tools/defs.rs` → **42** and
+      `grep -c 'deferred_group: None,' src/ai/tools/defs.rs` → **28**.
+      *(preservation criterion — no tool is added or moved.)*
+- [ ] `grep -c 'name: "host"' src/ai/tools/defs.rs` → **1** (drafting: 0) —
+      a scope guard, not a behaviour claim: exactly one tool gains the
+      parameter in this phase, and `run_terminal_command` is row 04c's.
+- [ ] Both mutations in Task 7 were applied, run, and their observed results
+      recorded in the Update Log.
+- [ ] The end-to-end block ran against `pinky` and its captured line is pasted
+      into an Update Log entry, followed by the literal `PASTE MATCH` verdict.
+
+## Test plan
+
+Eight tests in total. **Seven** are listed by name and assertion in Task 6 and
+run in the ordinary suite against hermetic fixtures (temp `HOME`, seeded
+config, injected spawn). The **eighth** is the `#[ignore]`d end-to-end test in
+§ End-to-end verification, which needs the live host and never runs in CI.
+
+## End-to-end verification
+
+The phase's point is that a shell opened on a configured host really runs
+there. Prove it with the real `ssh` against **`pinky`**, the PE-named
+live-verification host. Key auth works, so nothing is typed.
+
+Write it as an ignored test — the codebase idiom for a check that needs
+external infrastructure is already established by the four Docker tests
+(`grep -rn '#\[ignore' src/`):
+
+```rust
+#[tokio::test]
+#[ignore = "requires the configured host `pinky` reachable over ssh"]
+async fn open_shell_on_pinky_end_to_end() { … }
+```
+
+It must go through **`open_shell_with`**, not around it — the point is the tool
+path, not `ssh`. `spawn_ssh_host` cannot run under a test binary because
+`launch::spawn_detached` re-invokes `current_exe()` (`launch.rs:165`), so
+inject a spawn closure that binds the socket in-process while running the
+**real `ssh` argv**. `PtyBackend::spawn` already takes a program and its argv;
+copy the shape from `lifecycle_test_support::spawn_with_cast`
+(`knowledge/shell.rs:1855-1871`) and replace its `"bash", &[]` with
+`which_ssh()?` and `ssh_argv(&host_entry("pinky")?, &ssh_dir())`.
+
+Seed a temp `HOME` whose config carries `[hosts.pinky]\nssh = "pinky"`, and
+create `$HOME/.daemoneye/var/run/ssh` before connecting.
+
+Assert four facts and print them as **one line**:
+
+```
+record_host=pinky listed_host=pinky remote_hostname=pinky remote_exit_code=42
+```
+
+- `record_host` — the registry record `open_shell_with` created carries
+  `HostId::Named("pinky")`. This is the plumbing.
+- `listed_host` — `list_shells` renders `host:pinky` for it. This is what the
+  model actually sees.
+- `remote_hostname` — a command run in that shell through the ordinary
+  `run_terminal_command` path returns `pinky`, proving it executed *there*.
+- `remote_exit_code` — `(exit 42)` comes back as **42**. Use a subshell: a bare
+  `exit 42` kills the session, as phase-04a found.
+
+Clean up: `ssh -O exit -o ControlPath=<ssh_dir>/%C pinky`, then remove the temp
+`HOME`. In any shell block, delete a tree with `find "$T" -depth -delete`, not
+`rm -rf` — the executor contract refuses `rm -rf`.
+
+Capture the line to `/tmp/e2e-04b.txt`, paste it into an Update Log entry
+titled `### Update — <date> (end-to-end verification)` **as that entry's first
+fenced block**, then run:
+
+```sh
+D=docs/dev/milestones/M21-host-model/phase-04b-ssh-tool-surface.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-04b.txt
+diff /tmp/pasted-04b.txt /tmp/e2e-04b.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+The literal `PASTE MATCH` line goes **into** the entry. **If a fact cannot be
+captured, report it unmet** — do not redefine a term beneath its own line.
+
+## Authorizations
+
+You may edit, and nothing else:
+
+- `src/shell/registry.rs` — `spawn_for_on_host` + the `spawn_for` delegation.
+- `src/shell/mod.rs` — export `spawn_for_on_host`.
+- `src/shell/session.rs` — the reuse filter and its comment; the stray orphan
+  doc-comment line above `spawn_detached_host` (line ~116, `/// spawning an SSH
+  shell for `owner` on `host`.`) is a leftover from 04a — delete it.
+- `src/daemon/executor/knowledge/shell.rs` — `open_shell`, `open_shell_with`,
+  their call sites and the new tests.
+- `src/ai/tools/defs.rs`, `src/ai/tools/args.rs`, `src/ai/types/events.rs`,
+  `src/ai/types/pending.rs`, `src/daemon/stream.rs`,
+  `src/daemon/executor/mod.rs` — the parameter's plumbing.
+- `assets/prompts/sre.toml`, `CLAUDE.md`, `README.md` — the documentation rows.
+- This phase doc's Update Log.
+
+## Out of scope
+
+- **`run_terminal_command { host? }`** — row 04c. Do not add the parameter to a
+  second tool.
+- **Host-keyed reuse** (`shell_for_owner` choosing among several hosts' shells)
+  — 04c, when something can ask for it.
+- **`read_file` / `edit_file { host? }`** and retiring `target_pane` — row 07.
+- **Credential and host-key prompts** — rows 05 and 01a/01b. `pinky` uses key
+  auth; if a prompt appears, report it and stop rather than building a
+  mechanism here.
+- **The `the_flag_clears_once_the_answer_is_submitted` flake** — § Current
+  state 7. Not yours.
+- **The `Batch''Mode` spelling in `src/host.rs`** — an artifact of a phase-04a
+  criterion, scheduled for cleanup in row 05. Leave it.
+- Any change to `adopt_at_startup`'s `HostId::Local`.
+
+## Update Log
+
+### Notes for executor — 2026-09-20 (resume, not a restart)
+
+**Read this before anything else. The tree does not compile right now, and
+that is expected.** This is a resume of your own run, which `hard_fail`ed on
+`VerifierFailurePersistent { consecutive_failures: 6 }`. The verifier was
+correct that the build was red and wrong about what it meant: you were making
+steady forward progress and stopped two lines short of green. **Do not revert
+anything. Do not start over.**
+
+**Already done and approved — do NOT redo, re-derive, or "improve" these:**
+
+- **Task 1** — `spawn_for_on_host` in `src/shell/registry.rs`, with `spawn_for`
+  reduced to a delegation. Correct, including the doc comment.
+- **Task 2** — the host term in `shell_for_owner`'s reuse filter in
+  `src/shell/session.rs`, and the orphan doc-comment line above
+  `spawn_detached_host`. Correct.
+- **Task 3** — `open_shell` / `open_shell_with` in
+  `src/daemon/executor/knowledge/shell.rs`.
+- **Task 4, four of its six files** — `src/ai/tools/args.rs`,
+  `src/ai/types/events.rs`, `src/daemon/stream.rs`,
+  `src/daemon/executor/mod.rs`.
+
+**Exactly four edits remain before the tree is green.** Do all four, then
+build once. Do **not** build between them: `PendingCall::OpenShell` is matched
+and constructed in several places, so the tree stays red until the last one
+lands. That is a property of the change shape, not a mistake.
+
+1. **`src/ai/types/pending.rs` — the missing field. This is the whole build
+   failure.** `PendingCall::OpenShell` (around line 267) still has only `id`
+   and `thought_signature`. Add `host: Option<String>`. The two errors on the
+   current tree are both this one omission:
+
+   ```
+   error[E0559] src/daemon/stream.rs:700   variant `PendingCall::OpenShell` has no field named `host`
+   error[E0026] src/daemon/executor/mod.rs:856  variant `PendingCall::OpenShell` does not have a field named `host`
+   ```
+
+2. **`src/ai/types/pending.rs` — three more sites in the same file**, none of
+   which the compiler will point at until step 1 lands:
+   - the `to_tool_call()` arm (around line 867) must emit `"host": host`;
+   - the doc comment above the variant still says *"Takes no arguments this
+     tree: `host` and `label` are registry fields that do not exist yet"* —
+     it is now false, so rewrite it;
+   - the exhaustive constructor list (around line 1276) needs `host: None`.
+
+3. **`src/ai/types/pending.rs` — `summary()`, which no gate will catch.**
+   The arm at around line 1052 reads:
+
+   ```rust
+   // A close has an argument worth showing (which shell); an open has
+   // none, and an empty summary here is the decided value for it.
+   PendingCall::OpenShell { .. } => String::new(),
+   ```
+
+   That comment was true before this phase and is false now: an open **does**
+   have an argument worth showing. Return the host when one is named and an
+   empty string otherwise, and update the comment. `should_emit_tool_feedback`
+   needs no change — it matches `{ .. }` and already lists `OpenShell`.
+
+4. **`src/ai/tools/defs.rs` — the tool parameter itself, still untouched.**
+   `open_shell`'s `params` is still `&[]`. Task 4's first bullet has the exact
+   `ParamDef` to paste, and the tool's `description` needs the sentence about
+   opening on a configured host. **This is what makes the whole phase
+   reachable by the model** — without it nothing can pass `host` at all.
+
+**Then finish the phase as specified:** Task 5 (documentation — `sre.toml`,
+`CLAUDE.md`, `README.md`, all three still untouched), Task 6 (the seven
+tests), Task 7 (the mutation pair), Task 8 (the end-to-end capture).
+
+**One warning is already on the tree and will fail the lint gate**
+(`-D warnings`): `unused import: spawn_for` at
+`src/daemon/executor/knowledge/shell.rs:10`. You replaced its only use with
+`spawn_for_on_host`. Drop `spawn_for` from that `use` list.
+
+**Finish conditions you can check yourself, in order:**
+
+- `cargo build` → **0 errors** (now: 2).
+- `cargo clippy --all-targets --all-features -- -D warnings` → exits **0**
+  (now: fails on the unused import).
+- `grep -c 'name: "host"' src/ai/tools/defs.rs` → **1** (now: 0).
+- `grep -c 'deferred_group: None,' src/ai/tools/defs.rs` → **28**, unchanged —
+  a *rising* count means you added a tool, which this phase must not do.
+- Then the full § Acceptance criteria block.
+
+
+### Update — 2026-09-20 18:20 (progress)
+
+Started 04b at HEAD `8d0ddad7` (executor run). Pre-flight confirmed at this
+HEAD, matching the spec's drafting numbers: `spawn_ssh_host` production callers
+0, `spawn_for(` 12 sites, every `ShellRecord` construction in `spawn_for`
+stamped `HostId::Local`, the reuse filter host-blind, `open_shell(caller)`
+single-parameter with the one `spawn_detached_host` closure, `name: "host"` in
+`defs.rs` 0, tools 42 / deferred 28, `doc_truth` 14. `pinky` reachable with key
+auth (04a's live capture already used it).
+Next: Task 1 (`spawn_for_on_host`, additively), then the rest in order.
+
+### Update — 2026-09-20 18:47 (escalation)
+
+**Chosen lever:** resume, delivered as `execute_phase` on the `in-progress`
+doc plus the Notes-for-executor block above.
+
+**Rationale:** the spec was not the problem — `src/ai/types/pending.rs` is
+named explicitly in Task 4 and was simply never reached, so a refined
+re-dispatch would carry a correct spec forward and re-do 216 lines of already
+correct work. The architect ran the gates against the partial tree: exactly
+two errors, both the same missing field, on a run whose `what_was_tried` shows
+steady forward progress (roughly 80 successful calls, three failures). This is
+the "most of the phase done, hit one wall" row of the decision table.
+`continue_phase` is not used because it is a blocking call with no `run_id`
+and no stop path; `execute_phase` on the `in-progress` doc has the same resume
+semantics and stays controllable.
+
+**Architect-side finding, recorded not folded — second occurrence.** A phase
+that changes an exhaustively-matched enum cannot compile between the first
+edit and the last, so a per-edit verifier reports consecutive failures for a
+structural reason and the governor hard_fails correct work. The first
+occurrence added a *variant* (M22 phase-03a, 296 turns, same
+`VerifierFailurePersistent { consecutive_failures: 6 }`, also exactly two
+diagnostics); this one adds a *field* to an existing variant, which is the
+same mechanism through struct-variant literals. **The known remedy was not
+applied to this spec**: Task 4 should have said the tree will not compile
+mid-task, ordered the enum sites into one contiguous batch, and told the
+executor to build only after the batch. That is an architect omission, not an
+executor failure. Two occurrences is a trend, not a fold — hold for a third,
+and check `WORKFLOW.md` for an existing rule before proposing one.
