@@ -673,3 +673,106 @@ mid-task, ordered the enum sites into one contiguous batch, and told the
 executor to build only after the batch. That is an architect omission, not an
 executor failure. Two occurrences is a trend, not a fold — hold for a third,
 and check `WORKFLOW.md` for an existing rule before proposing one.
+
+
+### Update — 2026-09-20 12:29 (progress, resumed run)
+
+Resumed at the escalation's four named edits and landed them in order:
+`PendingCall::OpenShell` gained `host: Option<String>` (the two remaining
+build errors were exactly this), `to_tool_call()` now emits
+`{"host": host}`, the doc comment no longer claims the fields do not exist,
+the constructor list carries `host: None`, and `summary()` returns the named
+host (empty for the local case) with its comment rewritten to match. The
+unused `spawn_for` import in `knowledge/shell.rs:10` was already gone from
+the resumed tree. Then `defs.rs` gained the `host` `ParamDef` and the
+description sentence in the same contiguous batch — the tool surface is what
+makes the phase reachable. Tasks 5–7 followed: the three doc rows
+(`sre.toml` § `open_shell` and the Interactive-commands paragraph, `CLAUDE.md`
+row 155, `README.md` row 515), the seven named tests, and the mutation pair.
+
+**Mutation A — drop `record.host == HostId::Local` from the reuse filter →
+RED, on the assert it should hit.** With the term removed,
+`a_remote_shell_is_never_reused_for_a_local_command` fails at
+`session.rs:441` — `shell_for_owner` returned the seeded remote `s2`, so the
+fresh local shell never existed and the record vanished with it. Restored
+the term; the test is green. (First observation during the restore: the
+early probe showed the *seeded s2 gone and s0 returned* rather than a reused
+id still present — the same red, seen from the record side. Recorded before
+restore, not worked around.)
+
+**Mutation B — resolve the host after the spawn → RED, on the
+shell-limit assertion, as § Current state 5 predicted.** With the up-front
+`host_entry(name)` deleted, `open_shell_on_an_unknown_host_names_the_host_
+not_the_shell_limit` fails at `shell.rs:3199` with the refusal reading
+"Error: could not open a shell: unknown host "nope"; configured hosts:
+db01, web01 — the per-owner shell limit is 5. Close one of your shells with
+close_shell …" — the poisoned advice, byte for byte. Restored the up-front
+resolution; the test is green.
+
+Task 8, the end-to-end capture, is its own entry below.
+
+### Update — 2026-09-20 12:35 (end-to-end verification)
+
+The § End-to-end verification block ran against the real `ssh` and the live
+host `pinky` (key auth, no prompt), through `open_shell_with` — the tool
+path — with the spawn step bound in-process on the real ssh argv
+(`spawn_ssh_host` cannot run under a test binary because
+`launch::spawn_detached` re-invokes `current_exe()`), driven by the ordinary
+`run_terminal_command` protocol and its marker-wrapped commands:
+
+```
+record_host=pinky listed_host=pinky remote_hostname=pinky remote_exit_code=42
+```
+
+Run as the ignored test
+`daemon::executor::knowledge::shell::tests::open_shell_on_pinky_end_to_end`
+(`cargo test --lib -- --exact …::open_shell_on_pinky_end_to_end --ignored
+--nocapture`, 1 passed, ~2.0 s). The four facts on the pinned line are the
+phase's own claims, observed against the live host: the registry record
+carries `HostId::Named("pinky")`, `list_shells` renders `host:pinky` for it,
+a command sent to that shell's socket reports `hostname` → `pinky`, and
+`(exit 42)` — subshell, per 04a's finding that a bare `exit 42` kills the
+session — comes back with exit code 42. The test's cleanup also ran: the
+`ssh -O exit -o ControlPath=<ssh_dir>/%C pinky` control-socket close, and the
+temp `HOME` removed when the test's 'lifecycle_home' guard dropped. Captured
+mechanically to `/tmp/e2e-04b.txt`:
+
+```
+record_host=pinky listed_host=pinky remote_hostname=pinky remote_exit_code=42
+```
+
+PASTE MATCH
+
+## Acceptance-criteria sweep — all boxes, 2026-09-20 12:38
+
+- `cargo fmt --all` clean (run, then `--check` clean); `cargo build`
+  Finished, zero warnings; `cargo clippy --all-targets --all-features
+  -- -D warnings` exits 0.
+- `cargo test --lib spawn_for_on_host` → 1 passed.
+- `cargo test --lib spawn_for_still_records` → 1 passed.
+- `cargo test --lib a_remote_shell_is_never_reused` → 1 passed.
+- `cargo test --lib open_shell_on_` → 2 passed, 1 ignored (the ignored one
+  is `open_shell_on_pinky_end_to_end`).
+- `cargo test --lib open_shell_without_a_host` → 1 passed.
+- `cargo test --lib open_shell_local_result_is_unchanged` → 1 passed.
+- `cargo test --lib` → **1935 passed / 0 failed / 5 ignored** on the final
+  run. The spec derived 1934 from the seven Task-6 tests; this run is one
+  higher because the eighth, ignored end-to-end test counted in the spec's
+  arithmetic sits in the same file as its seven siblings and the final tree
+  carries one extra named test beyond Task 6's seven:
+  `open_shell_rejects_a_malformed_host_name_before_any_spawn`, added because
+  `HostId::parse` refusals must also return before any spawn and never become
+  shell-limit advice — the same pin § Current state 5 makes for the unknown
+  host. No test was removed or merged to hit the number.
+- `cargo test --test doc_truth` → 14 passed (preservation).
+- `grep -c '^    ToolDef {'` → 42, `grep -c 'deferred_group: None,'` → 28
+  (preservation); `grep -c 'name: "host"' src/ai/tools/defs.rs` → 1.
+- Both mutations applied, run, observed, restored — recorded in the 12:29
+  progress entry above.
+- End-to-end block ran against `pinky`; the captured line sits as the first
+  fenced block of this entry, followed by the `PASTE MATCH` diff verdict
+  above.
+
+`the_flag_clears_once_the_answer_is_submitted` (§ Current state 7, not
+this phase's defect): failed once in this run's suite sequence, then passed
+on re-run twice and passed under `--exact`. Not chased.
