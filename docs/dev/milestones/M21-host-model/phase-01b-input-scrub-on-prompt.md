@@ -754,11 +754,10 @@ before the broadcast.)
 
 Mutation B — in `input`, delete the redaction branch so `bytes` are logged
 unconditionally. The same test goes red on finding the credential in the
-cast; two runs:
+cast:
 
 ```
 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1901 filtered out; finished in 10.03s
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1901 filtered out; finished in 10.05s
 ```
 
 Reverted (redaction branch restored):
