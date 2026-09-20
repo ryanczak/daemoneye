@@ -1,7 +1,7 @@
 # Phase 03: the spawn path carries a program *and its arguments*
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** 02 (`HostId`). **done**.
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -807,3 +807,61 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0123c6eeca86629525824c1a423f1448c324d351
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-20
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one run, 479
+  turns)
+- **Gates, architect-run:** `cargo fmt --all --check`, `cargo build`,
+  `cargo clippy --all-targets --all-features -- -D warnings` all exit 0;
+  `cargo test` → lib **1917 passed / 4 ignored**, doc_truth 14, integration
+  32 / 2 ignored, isolation 9 / 1 ignored, bug_tracker 6. `host::` 32
+  unchanged, as the must-survive criterion requires.
+- **Every acceptance and must-survive criterion re-run by hand** and on target.
+  `run_host`'s signature carries `args` immediately after `shell`, as specced;
+  `HostId::Local` appears across the three files holding the nine record sites.
+- **Both mutations re-run by the reviewer**, red then green on revert:
+  commenting out `cmd.args(args)` reddens `spawn_passes_argv_to_the_program`;
+  making the `Local` arm render a host token reddens
+  `local_shells_render_without_a_host`. The second was applied at **both**
+  render sites, confirming the guard is duplicated in `host_part` and in the
+  row formatter and that the test pins both.
+- **Independent live check of the phase's whole point.** Started a real
+  `daemoneye shell-host` with argv and read the process table:
+
+  ```
+  ./target/debug/daemoneye shell-host --id s0 --shell /bin/bash --rows 24 --cols 80 -- --norc --noprofile
+  ```
+
+  The separator and flags cross the process boundary intact. The empty-argv
+  half is pinned by `spawn_detached_omits_the_separator_when_argv_is_empty`,
+  which asserts the constructed argv contains no `--` at all — read and
+  confirmed real, not a trivial assertion.
+- **Scope deviations: three, all disclosed by the executor before review, and
+  all acceptable.**
+  1. **Test counts landed at 1917 / 272, not the pinned 1915 / 270.** Two extra
+     tests, both itemized: one covers a named-host row through the formatter
+     (without it a helper would be dead code), one exercises a real ssh-shaped
+     argv end to end. **This is exactly what the spec asked for** — "say so in
+     the Update Log and state why; do not pad or delete tests to hit it." Both
+     extras are genuine and neither is padding.
+  2. **Mutation B was implemented as an unconditional `host:local` render
+     rather than by deleting the guard**, because deleting it leaves nothing to
+     render. Same observable, same red, same string. The reviewer's independent
+     re-run used the same substitution and agrees.
+  3. **The Task 8 block carries evidence lines above the pinned four-fact
+     line.** The pinned line appears verbatim, and the extra lines are `ps`
+     output showing the child's real argv — **stronger** evidence than the
+     criterion asked for, not weaker.
+- **One honest negative worth recording:** the run flagged that its
+  `$-`-contains-`r` probe for `--norc` had the wrong polarity, and labelled it
+  in the entry rather than quietly dropping it. The four-fact line does not
+  rest on that probe; `ps` output does.
+- **Calibration: none.** This is the first M21 phase where the spec's
+  mutations and probes were either measured at drafting or **explicitly
+  labelled as predictions**, and it is the first to land first-try. The
+  standing fold proposal — extend the pre-dispatch check to every mutation and
+  prescribed probe — now has a positive data point as well as four negative
+  ones. Carry it to M21 close.

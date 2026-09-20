@@ -1,37 +1,38 @@
 # NEXT
 
-**Active phase:** `docs/dev/milestones/M21-host-model/phase-03-shell-spawn-argv.md`
-— 03, shell-spawn-argv. **Drafted 2026-09-19**, status `todo`.
+**Active phase:** none — **M21 phase-03 is `done`** (2026-09-20,
+`approved_first_try`, the milestone's first).
 
-Threads argv through the whole spawn chain — the `shell-host` CLI, `run_host`,
-`PtyBackend::spawn`, `PtyShell::spawn`, and out to `CommandBuilder` — and gives
-`ShellRecord` a `host: HostId` across its nine construction sites. **Nothing
-connects to anything:** no SSH, no ControlMaster. This is the carrier row 04
-needs, not the payload.
+The spawn path now carries a program **and its argv** end to end, and every
+shell records the host it runs on. Verified live at review: a real
+`daemoneye shell-host` started with `-- --norc --noprofile` shows those flags
+in the process table, and the empty case leaves no stray separator.
 
-**Local behaviour must stay byte-identical**, and that is the phase's sharpest
-negative: the host renders only when it is *not* local, so a user with no hosts
-configured sees exactly today's output. One mutation is built on that rule.
+**Local behaviour is unchanged**, which was the phase's sharpest constraint.
+The host token renders only for a named host, pinned by a test and by a
+mutation the reviewer re-ran at both render sites.
 
-**The clap shape was probed, not assumed.** The real uncertainty was whether
-clap's derive API can carry hyphenated argv across a process boundary. Probed
-against this repo's clap 4.5 with a genuine ssh command line: the flags
-round-trip intact, and `shell-host --id s0` with no `--` still parses to an
-empty vec. The exact attribute shape is in the doc.
+All gates green: lib **1917 passed / 4 ignored**, doc_truth 14, integration 32,
+isolation 9, bug_tracker 6.
 
-**One thing stated honestly rather than claimed.** Both mutations target code
-this phase creates, so neither could be applied at drafting. The doc says so
-plainly and tells the executor to run each and report what it observes,
-including "stayed green" as a finding. That is the fourth-occurrence lesson
-applied to my own drafting: after three phases damaged by mutations pinned
-without being run, the fix is not to assert harder but to say which claims are
-observations and which are predictions.
+**Three disclosed deviations, all acceptable.** Two extra tests beyond the
+pinned count, itemized with reasons rather than padded or hidden; a mutation
+implemented as a substitution because deleting the guard leaves nothing to
+render; and an end-to-end block carrying `ps` evidence above the pinned line,
+which is stronger than what was asked for. The run also flagged one of its own
+probes as wrong-polarity rather than quietly dropping it.
 
-Every acceptance criterion was run against HEAD `f82402c7` and fails there.
-Baselines measured and corrected during drafting: `shell::` 263, the knowledge
-shell module 67, lib 1908 → 1915.
+**Next row: 04 — ssh-shell.** This is the one that finally connects: `Host::Ssh`
+spawn with ControlMaster flags, the `var/run/ssh/` path, readiness against a
+remote prompt, and the marker protocol over ssh. **Row 04 must measure the
+remote exit variable rather than assume it** — `wrap_command` closes with the
+*daemon's* login shell, but over ssh the *remote* shell interprets it.
 
-Dispatch with `/rexymcp:dispatch phase-03`.
+Run `/rexymcp:architect next` to draft it. Ten rows in M21; live host `pinky`;
+`max_turns` 1000.
 
-**After 03:** 04 ssh-shell, which finally connects. Ten rows in M21; live host
-`pinky`; `max_turns` 1000.
+**Carried to M21 close, now with a positive data point.** 03 is the first M21
+phase whose mutations and probes were either measured at drafting or labelled
+plainly as predictions, and the first to land first-try. The standing proposal
+— extend the pre-dispatch check to every mutation and prescribed probe — has
+four failures and one success behind it.
