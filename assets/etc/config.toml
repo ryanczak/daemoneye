@@ -396,8 +396,9 @@ prompt = "sre"
 #                                    # parsed, not yet enforced)
 # sandbox_profile = "none"           # M18 container profile for this host's
 #                                    # commands (parsed, not yet enforced)
+# totally_made_up_key = "x"          # strays like this are what the phantom-key
+#                                    # gate catches under [hosts.*]
 
-# totally_made_up_key = "x"
 # [hosts.db01]
 # ssh            = "db01"
 # sudo_scripts   = ["pg-failover"]

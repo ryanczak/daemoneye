@@ -704,7 +704,9 @@ fn seeded_config_template_has_no_phantom_keys() {
         // `[models.<name>]` and `[hosts.<name>]` fields belong to their entry
         // struct; other `[x.y]` free-form maps (e.g. `[limits.per_tool]` or
         // the template's commented models blocks) have entry- or user-chosen
-        // keys and are skipped.
+        // keys and are skipped.  Mutation B (phase 02): when the `hosts`
+        // branch disappears a stray key under [hosts.<name>] must still be
+        // reported as a phantom of [hosts.*], not skipped by the '.' rule.
         let base = section.split('.').next().unwrap_or("").to_string();
         let lookup = if section.starts_with("models") {
             "models"
