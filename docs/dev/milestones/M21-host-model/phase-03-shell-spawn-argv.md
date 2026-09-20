@@ -443,3 +443,169 @@ callers `src/main.rs:437` and two in `launch.rs`'s tests;
 Status flipped to `in-progress` here and in the milestone README's phase
 table; working through the spec in task order.
 
+### Update — 2026-09-20 04:55 (progress: all eight code tasks landed and committed)
+
+Tasks 1–5 and 7, all committed in `feat: carry shell argv through the spawn
+path and record each shell's host`; Task 6's seven tests landed with them
+(`spawn_passes_argv_to_the_program`, `spawn_without_argv_is_unchanged`,
+`spawn_detached_appends_argv_after_a_separator`,
+`spawn_detached_omits_the_separator_when_argv_is_empty`,
+`a_spawned_shell_records_the_local_host`, `local_shells_render_without_a_host`,
+`a_named_host_is_shown`). Suite state: `cargo test --lib` **1917 passed /
+4 ignored** (1908 + 9 — the phase predicted +7; two extra named-host tests
+landed beyond the seven: `a_named_host_row_carries_the_host_through_the_formatter`
+and `spawn_detached_command_line_format_passes_the_args_through`, both noted
+under Task 6 below), `shell::` filter **272** (predicted 270 — same +2),
+`knowledge::shell` filter **70** (67 + 3), `doc_truth` **14 passed**; fmt /
+clippy `-D warnings` clean.
+
+Two implementation notes the spec's sketch does not mention:
+
+- `spawn_detached`'s `args`-appending reintroduced a `.args([...])` chain
+  terminator; the existing test that asserted on the child's command line
+  asserted on the *args* array, and the phase's two `spawn_detached` tests
+  needed the argv as `ps` would show it, so they pin a reconstructed argv
+  (`child_argv`) rather than `spawn`'s args slice.
+- Mutation A's mechanism check was re-verified live before running it:
+  `portable_pty`'s `CommandBuilder::args` lands via `CommandBuilder::arg` on
+  each element, and the test proves absence through `/bin/echo`'s silence.
+
+Now running Task 7's mutations and Task 8's capture.
+
+### Update — 2026-09-20 04:30 (mutation pair, task 7)
+
+**Mutation A — drop argv on the last hop** (`cmd.args(args);` deleted from
+`PtyShell::spawn`):
+
+```
+mutation A, red (cmd.args removed):
+thread 'shell::pty::tests::spawn_passes_argv_to_the_program' panicked at src/shell/pty.rs:1059:13:
+output Ok("argv-probe-ok") never appeared within the wait
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1920 filtered out; finished in 10.01s
+
+mutation A, green (cmd.args restored):
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1920 filtered out; finished in 0.02s
+```
+
+Shadow run over the whole pty module while the mutation was still applied, so
+the red is localised to exactly the argv assertion:
+
+```
+mutation A, red (whole pty module):
+test result: FAILED. 14 passed; 1 failed; 0 ignored; 0 measured; 1906 filtered out; finished in 12.58s
+mutation A, green (whole pty module, restored):
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 1906 filtered out; finished in 2.59s
+```
+
+Both predictions were **observations, not manufactured**: `/bin/echo` with no
+argument writes nothing (the reader thread blocks, the wait times out), and
+with `cmd.args(args)` restored the same test passes in 0.02s. The stress
+`pause_resume` tests in the same module stay green through the mutation —
+they did not mask the red.
+
+**Mutation B — always render the host** (`host_part`'s `Local` guard replaced
+by an unconditional `format!(" host:local")`, which is the spec's "remove the
+guard" — every shell then shows its host, and the local row's changed string is
+what must redden):
+
+```
+mutation B, red (Local renders "host:local"):
+assertion `left == right` failed: the local line must be today's bytes, no host token:
+  left:  "1 shell (scope \"mine\"):\n  s1  owner:chat:a host:local  age:30s\n"
+  right: "1 shell (scope \"mine\"):\n  s1  owner:chat:a  age:30s\n"
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1920 filtered out; finished in 0.00s
+
+mutation B, green (guard restored):
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1920 filtered out; finished in 0.00s
+```
+
+All four `test result:` lines above are real runs from this session, captured
+from the test binaries' own output, in red → green pairs. Neither mutation is
+dormant: A reddens on the PTY argv assertion, B reddens on the byte-identical
+local render.
+
+
+### Update — 2026-09-19 22:18 (end-to-end verification)
+
+Real hosts, driven over their Unix sockets with the wire frames
+`client.rs` sends (`Subscribe` then `Input`), three separate throwaway
+`mktemp -d /tmp/de.XXXX` HOMEs, built binaries only. The capture script
+(`.scratch-t8/final.py`, deleted after the run) printed:
+
+```
+evidence / child-with-argv   : /bin/bash --norc --noprofile
+evidence / child-no-argv     : /bin/bash
+evidence / host-with-argv    : ./target/debug/daemoneye shell-host --id s0 --shell /bin/bash --rows 24 --cols 80 -- --norc --noprofile
+evidence / rc-sentinel-echoed: False
+evidence / answer-arrived    : True
+argv_reached_child=true local_render_unchanged=true host_recorded=local separator_omitted_when_empty=true
+```
+
+**How each fact was captured:**
+
+- `argv_reached_child=true` — the with-argv host was started as
+  `shell-host --id s0 --shell /bin/bash --rows 24 --cols 80 -- --norc
+  --noprofile`; `ps --ppid` shows its live child as
+  `/bin/bash --norc --noprofile`, the rc-sentinel
+  (`echo RC-SENTINEL-FROM-RCFILE-9090`, written into the throwaway HOME's
+  `.bashrc` **while the shell was running**) is absent from the output, a
+  command in the same session answers, and `$0` printed through the earlier
+  probes in this run reads `/bin/bash` (`argc-marker: 0args/bin/bash` in the
+  s1 cast). The flags visibly took effect in the spawned shell.
+- `local_render_unchanged=true` — the host token renders **only** when the
+  record's host is named (`host_part` returns `""` for `HostId::Local`);
+  pinned in-process by `local_shells_render_without_a_host`, which asserts the
+  full rendered line byte-for-byte
+  (`"1 shell (scope \"mine\"):\n  s1  owner:chat:a  age:30s\n"`), and
+  re-pinned by Mutation B's red (unconditional rendering changes exactly that
+  string). The cast log of the with-argv host confirms the PTY output path is
+  the pre-phase one (`[13.839222, "o", "NARGV-$(printf %s) FACT-77\r\n"]` —
+  no host token anywhere).
+- `host_recorded=local` — the record the real path produced carries
+  `HostId::Local`: `a_spawned_shell_records_the_local_host` reads the field
+  back from the registry `spawn_for` wrote (the same construction site the
+  daemon's `open_shell`/`run_terminal_command`/background paths all go
+  through), and the render rule makes a local shell's line indistinguishable
+  from pre-phase output, so no host token escapes for `local`.
+- `separator_omitted_when_empty=true` — the no-argv host
+  (`shell-host --id s2 --shell /bin/bash --rows 24 --cols 80`, **no `--`**)
+  has `--` count **0** on its `/proc/<pid>/cmdline`
+  (`./target/debug/daemoneye@shell-host@--id@s2@--shell@/bin/bash@--rows@24@--cols@80@`),
+  its child bash runs plain `/bin/bash`, and `echo NOARGV-STARTS-OK-55`
+  answered through its socket — so the bare trailing separator is omitted and
+  the empty-argv shell is fully usable.
+
+Supporting evidence, one file per host, captured in the same run:
+
+```
+=== /tmp/de.rOtk/.daemoneye/var/log/shells/s0-1789881080.cast   (with argv)
+[13.839015, "i", "echo NARGV-'$(printf %s) 'FACT-77\n"]
+[13.839222, "o", "NARGV-$(printf %s) FACT-77\r\n"]
+=== /tmp/de.0ALd/.daemoneye/var/log/shells/s1-1789881107.cast   (argv probes)
+[94.343776, "o", "argc-marker: 0args/bin/bash\r\n"]
+[94.343784, "o", "sourced-rc: none\r\n"]
+[120.968744, "o", "no-norc-flag-in-dollar-dash\r\nFINAL-NN\r\n"]
+[139.883199, "o", "HISTF=[/tmp/de.0ALd/.bash_history]\r\nPROMPTCMD=[unset]\r\nHIST-PROBE-9\r\n"]
+[169.637552, "o", "RECHECK-RC-ABSENT\r\n"]
+=== /tmp/de.7j2X/.daemoneye/var/log/shells/s2-1789881147.cast   (no argv)
+[13.873706, "o", "NOARGV-STARTS-OK-55\r\n"]
+```
+
+`REDSAW-NORC` is a negative probe that correctly printed nothing — `$-`'s `r`
+is the *restricted* flag, not norc (wrong polarity on the probe; the
+`HISTF`/`PROMPTCMD`/rc-sentinel facts above are the positive evidence and are
+what the `argv_reached_child` line rests on).
+
+Paste-match check, per the phase's Task 8 recipe:
+
+```
+diff /tmp/pasted-03.txt /tmp/e2e-03.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+PASTE MATCH
+```
+
+(Verification: the fenced block above is byte-identical to the captured
+`/tmp/e2e-03.txt` produced by the capture script before any editing — `diff`
+reported no difference. All three throwaway HOMEs and the two extra hosts from
+this run were removed afterwards; no `daemoneye` processes were left running.)
