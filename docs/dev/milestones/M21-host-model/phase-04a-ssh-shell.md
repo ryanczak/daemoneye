@@ -1,7 +1,6 @@
 # Phase 04a: a shell on a configured host, over SSH
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
 **Depends on:** 02 (`HostId`, `HostEntry`), 03 (argv through the spawn path,
 `ShellRecord.host`). Both **done**.
 **Estimated diff:** ~420 lines
