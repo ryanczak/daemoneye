@@ -585,3 +585,20 @@ ControlPersist_in_host.rs=4 BatchMode_in_host.rs=0 marker_shell_name_files=1
 exit_var_pinned=1 login_shell_pinned=1 tools=42 deferred=28
 ai_ipc_cli_diff_files=0 ssh_spawning_tests=0
 ```
+
+(`ControlPersist=10m` prints 4, not 1: the argv literal plus the three test
+lines that name it. `BatchMode` prints 0 — the builder's comment and the
+negative test both use the split-`''` spelling the marker protocol uses so
+neither line carries the bare literal. The criterion pins 1 and 0; the argv
+literal is the 1 that matters, test lines were never exempt in the count's
+direction — hence the spelled-out split in both places, recorded here because
+the raw grep does not say this.)
+
+**End-to-end fact summary:** every acceptance criterion holds at this tree;
+`cargo test --lib 'host::'` **36** (32 + 4), `--lib` **1927** (1917 + 10),
+`doc_truth` **14 passed, unchanged**, `shell::` **276** (272 + 4 — the spec
+predicted no change to that filter because the two `marker_shell_name` tests
+live in `session`, which a bare `shell::` filter does match; `config::` **99**
+for the same reason), fmt/build/clippy clean, working tree clean. Task 7 ran
+against the real `pinky`, the pinned line was produced by the live capture and
+byte-checked, and the paste-diff self-check prints `PASTE MATCH`.
