@@ -9,8 +9,8 @@ and never reaching the shell log.
 
 **Status:** in-progress — scoped 2026-09-18, **PE sign-off on the breakdown
 2026-09-18** with two decisions: the live-verification host is **`pinky`**, and
-`host?` on `spawn_ghost_shell` is in scope as row 08b. Rows 01a–04a are `done`;
-04b is drafted and awaiting dispatch.
+`host?` on `spawn_ghost_shell` is in scope as row 08b. Rows 01a–04b are `done`. **01c is
+drafted and blocking**: the test gate is red, so it is dispatched before 04c.
 
 **Depends on:** M20 (the PTY shell substrate every remote shell is), M22
 (`open_shell` / `list_shells` / the `[SHELLS]` block, and the two `host?`
@@ -64,9 +64,10 @@ deferrals this milestone closes). Not on M23 or M25.
 ## Phases
 
 Proposed, pre-measurement — **each will be re-derived and may split at
-drafting on a measured seam**, as every M20 and M22 row did. **Thirteen rows**
-(01a, 01b, 02, 03, 04a, 04b, 04c, 05–08, 08b, 09) — 04 has split twice at
-drafting, both times on a measured seam. Ordering: the
+drafting on a measured seam**, as every M20 and M22 row did. **Fourteen rows**
+(01a, 01b, 01c, 02, 03, 04a, 04b, 04c, 05–08, 08b, 09) — 04 has split twice at
+drafting, both times on a measured seam, and 01c was inserted when the test
+gate went deterministically red. Ordering: the
 credential mechanism the PTY path lacks comes first because remote sudo, host
 keys and passphrases all ride on it; config and the argv-carrying spawn path
 are pure and unblock the SSH shell; the SSH shell unblocks everything remote;
@@ -76,6 +77,7 @@ the live close is last.
 |----|-------|--------|
 | 01a | credential-prompt-on-pty ([phase-01a-credential-prompt-on-pty.md](phase-01a-credential-prompt-on-pty.md)) — detect a `sudo` password prompt on a **local** PTY shell and round-trip it through `Response::CredentialPrompt` / `CredentialResponse`, the mechanism the tmux path has and the PTY path has **none** of. **Drafting probe confirmed the defect live:** real `sudo` on a PTY shell emits `[sudo] password for matt: ` and **no end marker ever arrives** | done |
 | 01b | input-scrub-on-prompt ([phase-01b-input-scrub-on-prompt.md](phase-01b-input-scrub-on-prompt.md)) — the shell host writes `[redacted]` instead of the credential's bytes while the screen shows a secret prompt. **Drafting measured the race:** the pump broadcasts to the daemon *before* it feeds the screen, so a screen-based check loses to a daemon that answers immediately — the flag is armed from the chunk, ahead of the broadcast | done           |
+| 01c | prompt-echo-race ([phase-01c-prompt-echo-race.md](phase-01c-prompt-echo-race.md)) — `cargo test` is **deterministically red on master**: 01b's scrub test fails every full-suite run and passes in isolation, so no phase can meet the DoD until it is fixed. **Measured at drafting:** the secret detector arms on bash echoing the fixture's own command line, which contains the prompt text, and the 50 ms sleep that papered over it stopped sufficing when 04b added eight tests. Two candidate fixes prototyped and both failed — recorded in the spec so they are not repeated. **Dispatched ahead of 04c** | todo |
 | 02 | host-config ([phase-02-host-config.md](phase-02-host-config.md)) — `src/host.rs` with `HostId`, `[hosts.<name>]` as a free-form `HostEntry` map on `Config`, `validate_hosts`, runbook `hosts:` frontmatter, template docs. Pure and additive — nothing executes. **Drafting probe decided the struct name:** `doc_truth` discovers config sections by a `Config`/`Entry` type suffix, so `HostSpec` is invisible to the gate and `HostEntry` is not | done      |
 | 03 | shell-spawn-argv ([phase-03-shell-spawn-argv.md](phase-03-shell-spawn-argv.md)) — the spawn path carries a program **and its argv** end to end (`shell-host` clap → `run_host` → `PtyBackend::spawn` → `PtyShell::spawn` → `CommandBuilder`), and `ShellRecord` gains `host: HostId` across its nine sites. Local behaviour byte-identical. **Drafting probed the clap shape:** `last = true, num_args = 0.., allow_hyphen_values = true` round-trips a real ssh argv and still parses with no `--` | done      |
 | 04a | ssh-shell ([phase-04a-ssh-shell.md](phase-04a-ssh-shell.md)) — `Host::Ssh` spawn through 03's argv path: `ssh_argv` builder, `ssh_dir()` + its lifecycle/audit rows, and the remote exit-variable decision. **No tool changes.** All the hard facts measured live against `pinky` at drafting: the marker protocol works over `ssh -tt`, exit codes 0/1/42 propagate, ControlMaster is 157 ms cold vs 4–5 ms warm | done      |

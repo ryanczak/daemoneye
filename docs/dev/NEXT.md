@@ -1,47 +1,63 @@
 # NEXT
 
-**Active phase:** none — **M21 phase-04b is `done`** (2026-09-20,
-`approved_after_1`).
+**Active phase:** **M21 phase-01c — prompt-echo-race**, drafted 2026-09-20,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-01c`.
 
-**DaemonEye's AI can now ask for a shell on a configured host.**
-`open_shell { host: "pinky" }` returns an id, and the existing
-`run_terminal_command { shell: "<id>" }` runs there with a real remote exit
-code. Re-verified at review against the live host through the tool path:
-`record_host=pinky listed_host=pinky remote_hostname=pinky
-remote_exit_code=42`, in 1.98 s, leaving no control socket behind.
+**This is not the row that was queued, and the reason matters.** Drafting 04c
+began with measuring the tree, and the measurement found that **`cargo test` is
+deterministically red on master**. One test fails every full-suite run and
+passes every run in isolation:
 
-All gates green on an independent re-run: lib **1935 passed / 0 failed / 5
-ignored**, doc_truth 14, integration 32, isolation 9, bug_tracker 6. Tool
-counts held at 42 / 28. Both mutations re-applied by the reviewer and both
-went red, including the one that proves an unknown host never reaches the
-model dressed as shell-limit advice.
+```
+$ for i in 1 2 3 4 5; do cargo test --lib | tail -1; done
+FAILED. 1934 passed; 1 failed; 5 ignored      (five for five)
 
-**The executor was right and my arithmetic was wrong.** I pinned 1934 tests;
-it delivered 1935, adding `open_shell_rejects_a_malformed_host_name_before_any_spawn`
-because Task 3b arms the `HostId::parse` path and none of my seven named
-tests touched it. It stated the number and the reason instead of trimming a
-test to hit the pin — which is what the criterion asked for.
+$ cargo test --lib -- --test-threads=1
+ok. 1935 passed; 0 failed; 5 ignored
+```
 
-**The hard_fail was my spec's fault.** The first dispatch died on
-`VerifierFailurePersistent` partway through the enum wiring; resume, not
-re-dispatch, finished it. Second occurrence of a shape whose remedy I already
-had in hand and did not write into Task 4. Filed upstream as
-`ryanczak/rexyMCP#10` with a replay of all 435 session logs: seven of that
-detector's eight fires were wiring sweeps that completed on the next
-dispatch, and raising the threshold to 10 would fire on nothing. Threshold
-held at 6 by PE decision.
+No phase can meet the Definition of Done while that is true, because
+STANDARDS §1 requires the suite to pass. So 01c is dispatched first and
+**04c is unchanged, just queued behind it.**
 
-**Row 04c must fix one thing before it adds tests.** The accepted `cfg(test)`
-`open_shell_test_seam` never restores the registry it swaps — `swap_in`
-returns the previous value, not a guard, and the doc comment above it says
-otherwise. Harmless today because all four consumers swap and serialize. It
-becomes an order-dependent flake the moment a test calls `open_shell` without
-swapping, which 04c will do.
+**It was a flake this morning and is a blocker now.** At 04b's drafting it
+failed roughly one run in four; 04b then added eight tests, and the extra
+parallel load turned it deterministic. The review that approved 04b saw it
+fail once and pass on re-run, which is exactly what the spec told the
+executor to expect. That tolerance is what expired.
 
-**Next row: 04c — run-command-host.** `run_terminal_command { host? }`, the
-one-shot remote form, plus host-keyed reuse in `shell_for_owner` (04b left it
-local-only because nothing could ask for a remote shell yet). It has to decide
-what `shell` and `host` together mean. Counts stay at 42 / 28.
+**Root cause, measured not guessed.** The secret detector arms on bash
+echoing the fixture's own command line, because that line contains the literal
+prompt text. The flag is therefore armed roughly 60 ms before `read -rs` ever
+turns echo off, and a fixed 50 ms sleep was the only thing holding the answer
+inside the real echo-off window. The scrub itself is working correctly — the
+credential's input event is `[redacted]`, and it reaches the cast as an
+**output** event, the shell echoing it back. This is the same bug
+`wrap_command` already solved for the marker protocol by splitting the
+`DE_''BEG` literal.
 
-Run `/rexymcp:architect next` to draft it. Thirteen rows in M21; live host
-`pinky`; `max_turns` 1000.
+**Two candidate fixes were prototyped at drafting and both failed**, and the
+spec records them so the executor does not repeat them. Reordering the fixture
+to disable echo before printing the prompt made it fail in isolation too;
+splitting the prompt literal while deleting the sleep also failed in
+isolation. The conclusion handed to the executor is that the split literal and
+the wait condition have to be fixed together, with the wait on a real
+condition rather than a duration. The spec states the symptom, the root cause
+and the finish condition, and deliberately does not prescribe the edit.
+
+**The security property is protected by a mutation.** A "fix" that relaxes the
+assertion, drops the whole-file negative or adds `#[ignore]` is a regression,
+so the phase pins a mutation that defeats the scrub and must turn the test
+red, plus a criterion that the `#[ignore]` count in that file stays zero.
+
+**Next after 01c: 04c — run-command-host.** `run_terminal_command { host? }`,
+the one-shot remote form, plus host-keyed reuse in `shell_for_owner` (04b left
+it local-only because nothing could ask for a remote shell yet). Measurement
+for it is already done and points at a likely split: `AiEvent::ToolCall` is a
+six-field positional tuple whose `shell` and `host` would sit adjacent as two
+`Option<String>`, a silent-transposition hazard worth converting to a struct
+variant; and `ShellTarget` needs a host, which is nine sites in one file.
+Row 04c must also fix the `open_shell_test_seam` flaw the 04b review recorded,
+before it adds tests that would trip over it.
+
+Fourteen rows in M21; live host `pinky`; `max_turns` 1000.
