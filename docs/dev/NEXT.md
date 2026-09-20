@@ -1,38 +1,39 @@
 # NEXT
 
-**Active phase:** none — **M21 phase-03 is `done`** (2026-09-20,
-`approved_first_try`, the milestone's first).
+**Active phase:** `docs/dev/milestones/M21-host-model/phase-04a-ssh-shell.md`
+— 04a, ssh-shell. **Drafted 2026-09-20**, status `todo`.
 
-The spawn path now carries a program **and its argv** end to end, and every
-shell records the host it runs on. Verified live at review: a real
-`daemoneye shell-host` started with `-- --norc --noprofile` shows those flags
-in the process table, and the empty case leaves no stray separator.
+**Row 04 was split.** It bundled the SSH substrate with two tool-surface
+changes, each an eleven-step checklist pass. Phase 03 spent 479 turns on
+strictly less. 04a is the substrate; 04b is the tool surface and is undrafted.
 
-**Local behaviour is unchanged**, which was the phase's sharpest constraint.
-The host token renders only for a named host, pinned by a test and by a
-mutation the reviewer re-ran at both render sites.
+**Every hard question was answered live against `pinky` before writing a line
+of spec**, using the argv support phase 03 just landed to start a genuine
+ssh-backed shell host:
 
-All gates green: lib **1917 passed / 4 ignored**, doc_truth 14, integration 32,
-isolation 9, bug_tracker 6.
+- The marker protocol works over `ssh -tt` **unchanged**. `hostname` returned
+  `pinky`; the end marker arrived immediately.
+- Real exit codes propagate: `(exit 42)` → **42**, `false` → 1, `true` → 0.
+- ControlMaster earns its flags: **157 ms cold, 4–5 ms warm**, and the control
+  socket appears under the daemon-owned path.
+- `pinky` runs bash with key auth, so no credential prompt is involved here.
+- The remote shell's terminal-integration escape sequences do **not** break
+  parsing, so the spec tells the executor *not* to add a stripper.
+- A bare `exit N` kills the session, so the probe uses a subshell.
 
-**Three disclosed deviations, all acceptable.** Two extra tests beyond the
-pinned count, itemized with reasons rather than padded or hidden; a mutation
-implemented as a substitution because deleting the guard leaves nothing to
-render; and an end-to-end block carrying `ps` evidence above the pinned line,
-which is stronger than what was asked for. The run also flagged one of its own
-probes as wrong-polarity rather than quietly dropping it.
+**One real defect surfaced that no test would have caught.** The marker
+protocol picks its exit-variable syntax from the *daemon's* login shell, but
+over SSH the *remote* shell is what interprets it. An operator whose own shell
+is fish, connecting to a bash host, would emit the wrong variable and no exit
+code would parse. The drafting host hid this because both ends are bash. 04a
+pins remote shells to POSIX `$?` and tests it with the local shell set to fish.
 
-**Next row: 04 — ssh-shell.** This is the one that finally connects: `Host::Ssh`
-spawn with ControlMaster flags, the `var/run/ssh/` path, readiness against a
-remote prompt, and the marker protocol over ssh. **Row 04 must measure the
-remote exit variable rather than assume it** — `wrap_command` closes with the
-*daemon's* login shell, but over ssh the *remote* shell interprets it.
+Every acceptance criterion was run against HEAD `fbb48267` and fails there. Two
+were wrong on the first pass and corrected: a baseline of 108 that is really
+97, and an unsatisfiable criterion demanding zero occurrences of `pinky` in
+source — it already appears as a test fixture, which is fine.
 
-Run `/rexymcp:architect next` to draft it. Ten rows in M21; live host `pinky`;
-`max_turns` 1000.
+Dispatch with `/rexymcp:dispatch phase-04a`.
 
-**Carried to M21 close, now with a positive data point.** 03 is the first M21
-phase whose mutations and probes were either measured at drafting or labelled
-plainly as predictions, and the first to land first-try. The standing proposal
-— extend the pre-dispatch check to every mutation and prescribed probe — has
-four failures and one success behind it.
+**After 04a:** 04b, the tool surface. Ten rows became eleven; live host
+`pinky`; `max_turns` 1000.

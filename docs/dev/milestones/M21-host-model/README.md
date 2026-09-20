@@ -76,7 +76,8 @@ the live close is last.
 | 01b | input-scrub-on-prompt ([phase-01b-input-scrub-on-prompt.md](phase-01b-input-scrub-on-prompt.md)) — the shell host writes `[redacted]` instead of the credential's bytes while the screen shows a secret prompt. **Drafting measured the race:** the pump broadcasts to the daemon *before* it feeds the screen, so a screen-based check loses to a daemon that answers immediately — the flag is armed from the chunk, ahead of the broadcast | done           |
 | 02 | host-config ([phase-02-host-config.md](phase-02-host-config.md)) — `src/host.rs` with `HostId`, `[hosts.<name>]` as a free-form `HostEntry` map on `Config`, `validate_hosts`, runbook `hosts:` frontmatter, template docs. Pure and additive — nothing executes. **Drafting probe decided the struct name:** `doc_truth` discovers config sections by a `Config`/`Entry` type suffix, so `HostSpec` is invisible to the gate and `HostEntry` is not | done      |
 | 03 | shell-spawn-argv ([phase-03-shell-spawn-argv.md](phase-03-shell-spawn-argv.md)) — the spawn path carries a program **and its argv** end to end (`shell-host` clap → `run_host` → `PtyBackend::spawn` → `PtyShell::spawn` → `CommandBuilder`), and `ShellRecord` gains `host: HostId` across its nine sites. Local behaviour byte-identical. **Drafting probed the clap shape:** `last = true, num_args = 0.., allow_hyphen_values = true` round-trips a real ssh argv and still parses with no `--` | done      |
-| 04 | ssh-shell — `Host::Ssh` spawn: `ssh -tt -o ControlMaster=auto -o ControlPath=<var/run/ssh/%C> -o ControlPersist=10m <dest>` as the shell program; the `var/run/ssh/` path constructor + lifecycle row; readiness = remote prompt; the marker protocol over ssh (the remote-shell exit-variable decision is **measured here**). `open_shell { host? }` and `run_terminal_command { host? }`. Live: one command on the configured host, in the cast log. ControlMaster reuse measured | todo (not drafted) |
+| 04a | ssh-shell ([phase-04a-ssh-shell.md](phase-04a-ssh-shell.md)) — `Host::Ssh` spawn through 03's argv path: `ssh_argv` builder, `ssh_dir()` + its lifecycle/audit rows, and the remote exit-variable decision. **No tool changes.** All the hard facts measured live against `pinky` at drafting: the marker protocol works over `ssh -tt`, exit codes 0/1/42 propagate, ControlMaster is 157 ms cold vs 4–5 ms warm | todo |
+| 04b | ssh-tool-surface — `open_shell { host? }` and `run_terminal_command { host? }`: two passes through the eleven-step tool checklist, counts unchanged at 42/28. **Split from 04 at drafting** — bundling the substrate with two tool-surface changes is the shape that cost phase 03 its budget | todo (not drafted) |
 | 05 | ssh-prompt-detection — host-key (`continue connecting`), password, passphrase and `Permission denied` patterns extend 01a's detector; 01b's scrub covers them. **Remote sudo** is 01a's detector over the ssh PTY — verified live | todo (not drafted) |
 | 06 | new-host-approval — `Response::ToolCallPrompt` gains a `classification` (`command` / `remote_shell` / `new_host` / `escape_hatch`); an unconfigured destination is allowed but gated as `new_host` with an offer to persist to `[hosts]`; the client renders the class and names the host; session-scope `A` is per class per host. Ghost `hosts:` enforced — an unlisted host is refused and recorded (the M18 D6 "parked escape-hatch" pattern). The re-homed M19 phase-09 lands here as a classification | todo (not drafted) |
 | 07 | remote-file-ops-over-pty — `read_file` / `edit_file` gain `host?`; the four `target_pane` sites in `file_ops/ops.rs` route the existing hex-encoded python/perl one-liners through an idle shell on the host (or a new one — never into an `interactive` shell) with **marker-delimited** results instead of pane scraping; `target_pane` retired from both tools. Closes M22's deferral. `CLAUDE.md` / `README.md` rows | todo (not drafted) |
@@ -214,6 +215,22 @@ Every row above was shaped by one of these. Each was read from the tree on
   probe found the phantom-key half skips any section containing a `.`, so
   `[hosts.web01]` keys go unchecked until `doc_truth` gains a `hosts`
   special-case beside its `models` one — 02 adds it and mutation-proves it.
+
+- **Row 04 split into 04a/04b at drafting (2026-09-20), and the substrate's
+  hard questions were answered live against `pinky` first.** Every risk the
+  scoping README listed for this row is now measured, not assumed: the marker
+  protocol works unchanged over `ssh -tt` (exit codes 0, 1 and 42 all
+  propagate); ControlMaster is worth its flags at **157 ms cold vs 4–5 ms
+  warm**; `pinky` runs bash so `$?` is right there; the remote shell's OSC
+  shell-integration sequences do **not** break `parse_outcome`; and a bare
+  `exit N` kills the session, so the probe uses a subshell.
+
+  One real defect surfaced that no test would have caught: `shell_exec.rs`
+  passes `login_shell()` — the **daemon's** `$SHELL` — as the name whose
+  exit-variable syntax the marker uses, but over SSH the **remote** shell
+  interprets it. A fish-using operator on a bash host would emit `$status`,
+  which bash expands to empty, and no exit code would parse. 04a pins remote
+  shells to POSIX `$?` and tests it with `SHELL` set to fish.
 
 ### Not in this milestone
 
