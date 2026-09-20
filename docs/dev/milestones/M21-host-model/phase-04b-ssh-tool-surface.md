@@ -1,7 +1,7 @@
 # Phase 04b: ssh-tool-surface — `open_shell { host? }`
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04a (the `ssh_argv` builder and `spawn_ssh_host` this
 phase gives its first caller)
 **Estimated diff:** ~330 lines
@@ -776,3 +776,148 @@ PASTE MATCH
 `the_flag_clears_once_the_answer_is_submitted` (§ Current state 7, not
 this phase's defect): failed once in this run's suite sequence, then passed
 on re-run twice and passed under `--exact`. Not chased.
+
+### Update — ts=1789932713089 (complete, server-authored)
+
+**Summary:** **Summary.** Resumed the phase at the escalation's four named edits and finished it: `PendingCall::OpenShell` gained `host` (the field behind both standing build errors), its `to_tool_call` / `summary()` / constructor-list sites follow, `defs.rs` carries the `host` `ParamDef` with an updated description, and the three doc rows (`sre.toml`, `CLAUDE.md`, `README.md`) and the seven Task-6 tests landed — all after Tasks 1–3, which were already correct on disk. Both mutations were applied and observed: dropping the reuse-filter host term turned `a_remote_shell_is_never_reused_for_a_local_command` red at the expected assert, and deleting the up-front `host_entry` produced the exact poisoned sentence § Current state 5 predicted ("unknown host … — the per-owner shell limit is 5. Close one of your shells") before the test's refusal assertion failed; both were restored. The end-to-end capture ran against `pinky` through `open_shell_with` with a real-argv in-process ssh spawn and printed `record_host=pinky listed_host=pinky remote_hostname=pinky remote_exit_code=42`, pasted into its own end-to-end entry with a `PASTE MATCH` verdict, plus a full acceptance-criteria sweep entry.
+
+**Notes for review.**
+- **Test count is 1935 passed / 0 failed / 5 ignored, not the spec's derived 1934.** The eighth test (the ignored end-to-end one) accounts for the ignored count as predicted; the extra *passed* test is `open_shell_rejects_a_malformed_host_name_before_any_spawn`, which I added because Task 3b explicitly arms the `HostId::parse` error path but the seven named tests never exercised it. Stated per the acceptance criterion rather than trimming a test to hit the number.
+- **Adaptation, not a blocker:** Task 6's tests 6 and 7 go through `open_shell`, which resolves `crate::shell::registry()` — a `OnceLock` no test can assert on. I added a test-only seam (`open_shell_test_seam`) that swaps a fresh registry in for one test; production resolves the real singleton unchanged, and in non-test builds the two `cfg` dummy helpers defer to `spawn_detached_host`/`registry()`.
+- The `open_shell` result sentence appends `" It is on host <name>."` for a named host; the local sentence is byte-identical to before and pinned by `open_shell_local_result_is_unchanged`.
+- The `the_flag_clears_once_the_answer_is_submitted` flake (§ Current state 7) failed once mid-run, passed on re-run and under `--exact` — not chased, per the spec.
+- Working tree is clean; two commits (`fe83163b` feat, `0eb3d06e` docs). Phase doc status left `in-progress` for the server's completion tail.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.51s
+
+
+LINT
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.56s
+
+
+TEST
+ header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.00s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +1 -1
+- `assets/prompts/sre.toml` — +14 -4
+- `docs/dev/milestones/M21-host-model/phase-04b-ssh-tool-surface.md` — +103 -0
+- `src/ai/tools/defs.rs` — +12 -2
+- `src/ai/types/pending.rs` — +11 -7
+- `src/daemon/executor/knowledge/shell.rs` — +373 -10
+- `src/shell/registry.rs` — +46 -0
+- `src/shell/session.rs` — +50 -0
+
+**Commit:** 0eb3d06e843955d532953764df399b96d0c7e51d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
