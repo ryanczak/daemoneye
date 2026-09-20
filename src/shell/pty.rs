@@ -204,8 +204,8 @@ pub struct PtyShell {
 
 impl PtyShell {
     /// Spawn `shell` (a path like `/bin/bash` or a bare name) in a new PTY of
-    /// `(rows, cols)`.
-    pub fn spawn(shell: &str, size: (u16, u16)) -> anyhow::Result<Self> {
+    /// `(rows, cols)`, passing it `args` as its argv (`&[]` = none).
+    pub fn spawn(shell: &str, args: &[String], size: (u16, u16)) -> anyhow::Result<Self> {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: size.0,
@@ -217,6 +217,7 @@ impl PtyShell {
             .context("openpty failed")?;
 
         let mut cmd = CommandBuilder::new(shell);
+        cmd.args(args);
         cmd.env("TERM", "xterm-256color");
         let child = pair
             .slave
@@ -690,7 +691,7 @@ mod pause_resume_tests {
     #[test]
     fn pty_pause_then_resume_actually_restarts_the_job() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80))
+        let mut shell = PtyShell::spawn("bash", &[], (24, 80))
             .map(JobGuard)
             .expect("bash available");
         start_job(&mut shell, b"sleep 30\n");
@@ -750,7 +751,7 @@ mod pause_resume_tests {
     #[test]
     fn pty_stop_with_no_foreground_job_remembers_nothing() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80))
+        let mut shell = PtyShell::spawn("bash", &[], (24, 80))
             .map(JobGuard)
             .expect("bash available");
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -778,7 +779,7 @@ mod pause_resume_tests {
     #[test]
     fn pty_cancel_clears_the_paused_group() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80))
+        let mut shell = PtyShell::spawn("bash", &[], (24, 80))
             .map(JobGuard)
             .expect("bash available");
         start_job(&mut shell, b"sleep 30\n");
@@ -814,7 +815,7 @@ mod pause_resume_tests {
     #[test]
     fn pty_pause_resume_pause_toggles_more_than_once() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80))
+        let mut shell = PtyShell::spawn("bash", &[], (24, 80))
             .map(JobGuard)
             .expect("bash available");
         start_job(&mut shell, b"sleep 30\n");
@@ -1023,9 +1024,53 @@ mod tests {
     }
 
     #[test]
+    fn spawn_passes_argv_to_the_program() {
+        let _home = crate::test_home_guard();
+        let arg = "argv-probe-ok".to_string();
+        let shell = PtyShell::spawn("/bin/echo", &[arg], (24, 80)).expect("echo available");
+        poll_for_output(&shell, b"argv-probe-ok");
+    }
+
+    #[test]
+    fn spawn_without_argv_is_unchanged() {
+        let _home = crate::test_home_guard();
+        let mut shell =
+            PtyShell::spawn("bash", &[], (24, 80)).expect("bash available in the test env");
+        let outcome = shell
+            .run("printf 'no-argv-ok\n'", Duration::from_secs(10))
+            .expect("empty argv still starts a usable shell");
+        assert_eq!(outcome.exit_code, 0, "printf exit code");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(
+            text.contains("no-argv-ok"),
+            "empty-argv shell usable: {text:?}"
+        );
+    }
+
+    /// Wait for the shell's reader task to surface `needle` on the broadcast
+    /// stream. `echo` needs no input, so the only wait is the reader's.
+    fn poll_for_output(shell: &PtyShell, needle: &[u8]) {
+        let mut rx = shell.subscribe();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match rx.try_recv() {
+                Ok(chunk) if chunk.windows(needle.len()).any(|w| w == needle) => return,
+                _ => {}
+            }
+            assert!(
+                Instant::now() < deadline,
+                "output {:?} never appeared within the wait",
+                std::str::from_utf8(needle)
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
     fn pty_run_times_out_on_a_silent_command() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
+        let mut shell =
+            PtyShell::spawn("bash", &[], (24, 80)).expect("bash available in the test env");
         let started = Instant::now();
         let budget = Duration::from_secs(2);
         let result = shell.run("sleep 20", budget);
@@ -1045,7 +1090,8 @@ mod tests {
     #[test]
     fn pty_bash_roundtrip_returns_real_exit_code() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
+        let mut shell =
+            PtyShell::spawn("bash", &[], (24, 80)).expect("bash available in the test env");
         let outcome = shell
             .run("echo hello; sh -c 'exit 42'", Duration::from_secs(10))
             .expect("the command completes well inside the timeout");
@@ -1072,7 +1118,8 @@ mod tests {
     #[test]
     fn pty_runs_many_commands_on_one_shell() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
+        let mut shell =
+            PtyShell::spawn("bash", &[], (24, 80)).expect("bash available in the test env");
         for (i, expected_code) in [0, 0, 42, 7, 0].iter().enumerate() {
             let cmd = format!("printf 'out{i}\\n'; sh -c 'exit {expected_code}'");
             let outcome = shell
@@ -1090,7 +1137,8 @@ mod tests {
     #[test]
     fn pty_shell_is_usable_after_a_timeout() {
         let _home = crate::test_home_guard();
-        let mut shell = PtyShell::spawn("bash", (24, 80)).expect("bash available in the test env");
+        let mut shell =
+            PtyShell::spawn("bash", &[], (24, 80)).expect("bash available in the test env");
         let logs = [false, true, false];
         for (i, expect_timeout) in logs.iter().enumerate() {
             let cmd = if *expect_timeout {

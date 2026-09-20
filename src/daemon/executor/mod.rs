@@ -344,7 +344,7 @@ where
                             id.as_str(),
                             tx,
                             rx,
-                            |id| crate::shell::spawn_detached_host(id, 24, 80),
+                            |id| crate::shell::spawn_detached_host(id, &[], 24, 80),
                         )
                         .await
                         {

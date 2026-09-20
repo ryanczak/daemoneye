@@ -639,7 +639,7 @@ mod tests {
     async fn spawn_with_cast(id: ShellId) -> anyhow::Result<std::path::PathBuf> {
         let dir = tempfile::tempdir().context("tempdir for cast")?;
         let cast = dir.path().join(format!("{}.cast", id.as_str()));
-        let backend = crate::shell::PtyBackend::spawn("bash", ROWS, COLS, 100, &cast, 0)
+        let backend = crate::shell::PtyBackend::spawn("bash", &[], ROWS, COLS, 100, &cast, 0)
             .context("spawning bash")?;
         let lock = crate::daemon::instance::InstanceLock::acquire(&lock_path(id.as_str()))
             .context("holding the per-id instance lock")?;
@@ -707,7 +707,7 @@ mod tests {
         let cast = crate::shell::cast_path(id.as_str(), started);
         std::fs::create_dir_all(cast.parent().context("cast has a parent")?)
             .context("creating the logs dir")?;
-        let backend = crate::shell::PtyBackend::spawn("bash", ROWS, COLS, 100, &cast, started)
+        let backend = crate::shell::PtyBackend::spawn("bash", &[], ROWS, COLS, 100, &cast, started)
             .context("spawning bash into the logs dir")?;
         let lock = crate::daemon::instance::InstanceLock::acquire(&lock_path(id.as_str()))
             .context("holding the per-id instance lock")?;

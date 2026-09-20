@@ -1,7 +1,7 @@
 # Phase 03: the spawn path carries a program *and its arguments*
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 02 (`HostId`). **done**.
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -412,3 +412,34 @@ in an authorized file, fix it and record that you did.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-20 04:10 (started, executor)
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+Pre-flight all confirmed against the working tree (HEAD `a1d4d897`, the
+drafting commit, one commit ahead of the pinned `f82402c7` which touches only
+this phase doc — no code delta):
+
+- `grep -c 'args' src/shell/launch.rs` → **1** (the existing `.args([...])`
+  call).
+- `grep -cE '^    pub host: HostId,' src/shell/registry.rs` → **0**.
+- `cargo test --lib` → **1908 passed; 0 failed; 4 ignored**.
+- `cargo test --lib 'shell::'` → **263 passed**.
+- `cargo test --lib 'daemon::executor::knowledge::shell'` → **67 passed**.
+
+Measured sites before editing (the spec's list confirmed, plus two
+`PtyShell` test-construction callers `grep` turned up beyond the production
+path): `ShellRecord` literals at `src/shell/session.rs:319, :368, :379,
+:510`, `src/shell/registry.rs:201, :324, :405, :406`,
+`src/daemon/executor/knowledge/shell.rs:1927`; `PtyShell::spawn` callers in
+`src/shell/backend.rs:88` plus eight in `src/shell/pty.rs`'s own tests;
+`PtyBackend::spawn` callers in `bg_shell.rs:262`, `shell_exec.rs:642/:710`,
+`knowledge/shell.rs:1841`, `session.rs:181`, plus test helpers; `run_host`
+callers `src/main.rs:437` and two in `launch.rs`'s tests;
+`spawn_detached_host` callers `executor/mod.rs:347`, `bg_shell.rs:103`,
+`knowledge/shell.rs:1646`. `src/host.rs` confirms `HostId` derives
+`Debug, Clone, PartialEq, Eq, Hash` — the derives Task 4 needs are present.
+
+Status flipped to `in-progress` here and in the milestone README's phase
+table; working through the spec in task order.
+

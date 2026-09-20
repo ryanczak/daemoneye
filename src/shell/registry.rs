@@ -74,6 +74,9 @@ impl Owner {
 pub struct ShellRecord {
     pub id: ShellId,
     pub owner: Owner,
+    /// Where this shell runs. `HostId::Local` for every shell the daemon
+    /// spawns today; a named host arrives with the SSH spawn.
+    pub host: crate::host::HostId,
     pub started_unix: u64,
     /// Set when an interactive command (ssh, mosh, …) took this shell's
     /// terminal. Such a shell still passes the liveness probe — its `bash` is
@@ -201,6 +204,7 @@ where
             ShellRecord {
                 id: id.clone(),
                 owner: owner.clone(),
+                host: crate::host::HostId::Local,
                 started_unix,
                 interactive: false,
                 dedicated,
@@ -324,6 +328,7 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
                 ShellRecord {
                     id: id.clone(),
                     owner: Owner::Adopted,
+                    host: crate::host::HostId::Local,
                     started_unix,
                     interactive: false,
                     // An adopted shell's original purpose is unknown; `false`
@@ -406,6 +411,7 @@ mod tests {
         ShellRecord {
             id: ShellId::from_index(index),
             owner,
+            host: crate::host::HostId::Local,
             started_unix: 0,
             interactive: false,
             dedicated: false,
@@ -1043,6 +1049,24 @@ mod tests {
             bg_flag,
             Some(true),
             "the pair is the behaviour: the same one constructor site must yield both"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_spawned_shell_records_the_local_host() {
+        let reg = ShellRegistry::default();
+        let id = spawn_for(&reg, Owner::Chat("a".into()), 5, false, |_id| async {
+            Ok(())
+        })
+        .await
+        .expect("the stub spawn must succeed");
+        let host = with_shells(&reg, |store| {
+            store.get(id.as_str()).map(|record| record.host.clone())
+        });
+        assert_eq!(
+            host,
+            Some(crate::host::HostId::Local),
+            "the record the normal path creates must carry the implicit local host"
         );
     }
 }

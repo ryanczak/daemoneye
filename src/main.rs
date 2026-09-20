@@ -62,6 +62,11 @@ enum Commands {
         rows: u16,
         #[arg(long, default_value_t = 80)]
         cols: u16,
+        /// Arguments for the shell program, after `--`.
+        /// Empty for a local login shell; an SSH host passes its flags and
+        /// destination here.
+        #[arg(last = true, num_args = 0.., allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Show daemon status (uptime, sessions, provider, circuit breaker)
     Status,
@@ -430,11 +435,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             shell,
             rows,
             cols,
+            args,
         } => {
             let shell = shell
                 .or_else(|| std::env::var("SHELL").ok())
                 .unwrap_or_else(|| "bash".to_string());
-            shell::run_host(&id, &shell, rows, cols).await?;
+            shell::run_host(&id, &shell, &args, rows, cols).await?;
         }
         Commands::Status => {
             cli::run_status().await?;

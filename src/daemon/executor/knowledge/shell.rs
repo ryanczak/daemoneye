@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 pub(super) struct ShellRow {
     pub id: String,
     pub owner_key: String,
+    pub host: crate::host::HostId,
     pub started_unix: u64,
     pub interactive: bool,
     pub dedicated: bool,
@@ -111,6 +112,7 @@ fn collect_row(record: &ShellRecord) -> ShellRow {
     ShellRow {
         id: record.id.as_str().to_string(),
         owner_key: record.owner.key(),
+        host: record.host.clone(),
         started_unix: record.started_unix,
         interactive: record.interactive,
         dedicated: record.dedicated,
@@ -157,12 +159,23 @@ fn format_shell_rows(rows: &[ShellRow], scope: Option<&str>, now_unix: u64) -> S
         if row.exited_unix.is_some() {
             flags.push_str(" [exited]");
         }
+        let host_part = host_part(&row.host);
         out.push_str(&format!(
-            "  {}  owner:{}{age_part}{flags}\n",
+            "  {}  owner:{}{host_part}{age_part}{flags}\n",
             row.id, row.owner_key
         ));
     }
     out
+}
+
+/// The host token a shell's line carries. Empty for the implicit local host:
+/// a shell on `HostId::Local` must render exactly as it did before hosts
+/// existed, so the token only appears for a named host.
+fn host_part(host: &crate::host::HostId) -> String {
+    match host {
+        crate::host::HostId::Local => String::new(),
+        crate::host::HostId::Named(name) => format!(" host:{name}"),
+    }
 }
 
 fn format_age(age_secs: u64) -> String {
@@ -238,7 +251,11 @@ fn format_shell_context(rows: &[ShellRow], owner_key: &str, now_unix: u64) -> St
             if row.exited_unix.is_some() {
                 flags.push_str(" [exited]");
             }
-            format!("{}{age_part}{flags}", row.id)
+            let host_part = match &row.host {
+                crate::host::HostId::Local => String::new(),
+                crate::host::HostId::Named(name) => format!(" host:{name}"),
+            };
+            format!("{}{host_part}{age_part}{flags}", row.id)
         })
         .collect();
     out.push_str(&parts.join(", "));
@@ -1643,7 +1660,7 @@ pub async fn open_shell(caller: &Owner) -> String {
         caller,
         max_per_owner,
         SHELL_READY_TIMEOUT,
-        |id| crate::shell::spawn_detached_host(id, TEST_ROWS, TEST_COLS),
+        |id| crate::shell::spawn_detached_host(id, &[], TEST_ROWS, TEST_COLS),
     )
     .await
 }
@@ -1838,7 +1855,7 @@ pub(crate) mod lifecycle_test_support {
     pub async fn spawn_with_cast(id: crate::shell::ShellId) -> anyhow::Result<PathBuf> {
         let dir = tempfile::tempdir().context("tempdir for cast")?;
         let cast = dir.path().join(format!("{}.cast", id.as_str()));
-        let backend = crate::shell::PtyBackend::spawn("bash", ROWS, COLS, 100, &cast, 0)
+        let backend = crate::shell::PtyBackend::spawn("bash", &[], ROWS, COLS, 100, &cast, 0)
             .context("spawning bash")?;
         let lock =
             crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id.as_str()))
@@ -1913,11 +1930,39 @@ mod tests {
         ShellRow {
             id: id.to_string(),
             owner_key: owner_key.to_string(),
+            host: crate::host::HostId::Local,
             started_unix,
             interactive,
             dedicated,
             exited_unix,
         }
+    }
+
+    fn row_on(id: &str, owner_key: &str, host: crate::host::HostId, started_unix: u64) -> ShellRow {
+        ShellRow {
+            id: id.to_string(),
+            owner_key: owner_key.to_string(),
+            host,
+            started_unix,
+            interactive: false,
+            dedicated: false,
+            exited_unix: None,
+        }
+    }
+
+    #[test]
+    fn a_named_host_row_carries_the_host_through_the_formatter() {
+        let rows = vec![row_on(
+            "s9",
+            "chat:a",
+            crate::host::HostId::Named("pinky".to_string()),
+            NOW - 30,
+        )];
+        let out = format_shell_rows(&rows, None, NOW);
+        assert!(
+            out.contains("s9  owner:chat:a host:pinky"),
+            "the helper-built named-host row reaches the formatter: {out}"
+        );
     }
 
     fn insert(reg: &ShellRegistry, index: u32, owner: Owner, started_unix: u64) {
@@ -1927,6 +1972,7 @@ mod tests {
                 ShellRecord {
                     id: ShellId::from_index(index),
                     owner,
+                    host: crate::host::HostId::Local,
                     started_unix,
                     interactive: false,
                     dedicated: false,
@@ -2376,6 +2422,62 @@ mod tests {
         let out = format_shell_rows(&rows, None, NOW);
         assert!(out.contains("1 shell (scope \"mine\")"), "get: {out}");
         assert!(out.contains("age:30s"), "age: {out}");
+    }
+
+    /// Local rendering is pinned **exactly**: the phase's rule is that a
+    /// `HostId::Local` shell's lines are byte-identical to the pre-host
+    /// output, so a user with no hosts configured sees nothing new.
+    #[test]
+    fn local_shells_render_without_a_host() {
+        let rows = vec![row("s1", "chat:a", NOW - 30, false, false, None)];
+        let exact = format_shell_rows(&rows, None, NOW);
+        assert_eq!(
+            exact, "1 shell (scope \"mine\"):\n  s1  owner:chat:a  age:30s\n",
+            "the local line must be today's bytes, no host token: {exact:?}"
+        );
+        let block = format_shell_context(&rows, "chat:a", NOW);
+        assert_eq!(
+            block,
+            "[SHELLS] 1 — s1 age:30s\n[DEFAULT SHELL] s1 — run_terminal_command \
+             with no shell argument lands here\n",
+            "the ambient block must be today's bytes too: {block:?}"
+        );
+    }
+
+    /// A named host's token appears on both surfaces. Nothing spawns an SSH
+    /// shell in this phase — the row is constructed directly.
+    #[test]
+    fn a_named_host_is_shown() {
+        let host = crate::host::HostId::Named("pinky".to_string());
+        let rows = vec![ShellRow {
+            id: "s1".to_string(),
+            owner_key: "chat:a".to_string(),
+            host: host.clone(),
+            started_unix: NOW - 30,
+            interactive: false,
+            dedicated: false,
+            exited_unix: None,
+        }];
+        let out = format_shell_rows(&rows, None, NOW);
+        assert!(
+            out.contains("host:pinky"),
+            "list_shells names the host: {out}"
+        );
+        let line = out.lines().find(|l| l.contains("s1")).expect("the line");
+        assert!(
+            line.contains("owner:chat:a host:pinky"),
+            "the token sits after the owner: {line}"
+        );
+        let block = format_shell_context(&rows, "chat:a", NOW);
+        assert!(
+            block.contains("s1 host:pinky"),
+            "the ambient block names the host: {block}"
+        );
+        assert!(
+            !block.contains("host:local"),
+            "`local` is implicit and must never render: {block}"
+        );
+        let _ = host;
     }
 
     /// A shell with `per_command` recorded commands, each writing `output`,

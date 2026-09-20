@@ -100,7 +100,7 @@ pub(super) async fn start_background(
     max_per_owner: u32,
 ) -> anyhow::Result<(BackgroundStart, CommandHandle)> {
     start_background_with(reg, owner, cmd, max_per_owner, |id| {
-        crate::shell::spawn_detached_host(id, 24, 80)
+        crate::shell::spawn_detached_host(id, &[], 24, 80)
     })
     .await
 }
@@ -259,7 +259,7 @@ mod tests {
         let dir = tempfile::tempdir().context("tempdir for cast")?;
         let cast = dir.path().join(format!("{}.cast", id.as_str()));
         let backend =
-            PtyBackend::spawn("bash", ROWS, COLS, 100, &cast, 0).context("spawning bash")?;
+            PtyBackend::spawn("bash", &[], ROWS, COLS, 100, &cast, 0).context("spawning bash")?;
         let lock = crate::daemon::instance::InstanceLock::acquire(&lock_path(id.as_str()))
             .context("holding the per-id instance lock")?;
         let socket = socket_path(id.as_str());

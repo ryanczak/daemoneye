@@ -76,16 +76,18 @@ pub struct PtyBackend {
 }
 
 impl PtyBackend {
-    /// `shell` is a path or bare name; `cast` is where the recording goes.
+    /// `shell` is a path or bare name; `args` are its argv (`&[]` for a
+    /// local login shell); `cast` is where the recording goes.
     pub fn spawn(
         shell: &str,
+        args: &[String],
         rows: u16,
         cols: u16,
         scrollback: usize,
         cast: &Path,
         started_unix: u64,
     ) -> anyhow::Result<Arc<Self>> {
-        let pty = PtyShell::spawn(shell, (rows, cols)).context("spawning shell")?;
+        let pty = PtyShell::spawn(shell, args, (rows, cols)).context("spawning shell")?;
         let log =
             CastWriter::create(cast, cols, rows, started_unix).context("creating cast log")?;
         let screen = ShellScreen::new(rows, cols, scrollback);
@@ -253,7 +255,7 @@ mod tests {
 
     fn spawn_backend(dir: &tempfile::TempDir) -> Arc<PtyBackend> {
         let _home = crate::test_home_guard();
-        PtyBackend::spawn("bash", 24, 80, 100, &cast_path(dir), 0).expect("bash available")
+        PtyBackend::spawn("bash", &[], 24, 80, 100, &cast_path(dir), 0).expect("bash available")
     }
 
     fn recv_until(

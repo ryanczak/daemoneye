@@ -97,9 +97,14 @@ pub fn login_shell() -> String {
 /// `daemoneye shell-host` for `id`. Separate from `shell_for_owner` because
 /// `spawn_detached` resolves `current_exe()` and so cannot run under a test
 /// (F4).
-pub async fn spawn_detached_host(id: ShellId, rows: u16, cols: u16) -> anyhow::Result<()> {
+pub async fn spawn_detached_host(
+    id: ShellId,
+    args: &[String],
+    rows: u16,
+    cols: u16,
+) -> anyhow::Result<()> {
     let shell = login_shell();
-    launch::spawn_detached(id.as_str(), &shell, rows, cols).await
+    launch::spawn_detached(id.as_str(), &shell, args, rows, cols).await
 }
 
 /// A ready shell created for one command's exclusive use. Unlike
@@ -178,7 +183,8 @@ mod tests {
     async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
         let dir = tempfile::tempdir().context("tempdir for cast")?;
         let cast = dir.path().join(format!("{}.cast", id.as_str()));
-        let backend = PtyBackend::spawn("bash", 24, 80, 100, &cast, 0).context("spawning bash")?;
+        let backend =
+            PtyBackend::spawn("bash", &[], 24, 80, 100, &cast, 0).context("spawning bash")?;
         let lock = crate::daemon::instance::InstanceLock::acquire(&launch::lock_path(id.as_str()))
             .context("holding the per-id instance lock")?;
         let socket = launch::socket_path(id.as_str());
@@ -319,6 +325,7 @@ mod tests {
                 ShellRecord {
                     id: ShellId::from_index(5),
                     owner: owner.clone(),
+                    host: crate::host::HostId::Local,
                     started_unix: 0,
                     interactive: false,
                     dedicated: false,
@@ -368,6 +375,7 @@ mod tests {
                 ShellRecord {
                     id: ShellId::from_index(0),
                     owner: owner.clone(),
+                    host: crate::host::HostId::Local,
                     started_unix: 0,
                     interactive: false,
                     dedicated: false,
@@ -379,6 +387,7 @@ mod tests {
                 ShellRecord {
                     id: ShellId::from_index(1),
                     owner: owner.clone(),
+                    host: crate::host::HostId::Local,
                     started_unix: 0,
                     interactive: false,
                     dedicated: false,
@@ -510,6 +519,7 @@ mod tests {
                 ShellRecord {
                     id: ShellId::from_index(0),
                     owner: owner.clone(),
+                    host: crate::host::HostId::Local,
                     started_unix: 0,
                     interactive: false,
                     dedicated: true,

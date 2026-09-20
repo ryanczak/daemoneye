@@ -71,7 +71,7 @@ pub fn resolve_cast(id: &str, fallback_started_unix: u64) -> PathBuf {
 /// caller owns the id, so only the lockholder may unlink its socket), spawn
 /// the PTY backend, bind the socket, and serve until failure. `serve` runs
 /// forever; the function returns when the server or the shell dies.
-pub async fn run_host(id: &str, shell: &str, rows: u16, cols: u16) -> Result<()> {
+pub async fn run_host(id: &str, shell: &str, args: &[String], rows: u16, cols: u16) -> Result<()> {
     validate_shell_id(id)?;
     let _lock = match crate::daemon::instance::InstanceLock::acquire(&lock_path(id)) {
         Ok(lock) => lock,
@@ -90,8 +90,15 @@ pub async fn run_host(id: &str, shell: &str, rows: u16, cols: u16) -> Result<()>
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let backend =
-        crate::shell::PtyBackend::spawn(shell, rows, cols, scrollback, &cast_path(id, now), now)?;
+    let backend = crate::shell::PtyBackend::spawn(
+        shell,
+        args,
+        rows,
+        cols,
+        scrollback,
+        &cast_path(id, now),
+        now,
+    )?;
     let listener = crate::shell::host::bind(&socket_path(id)).await?;
     crate::shell::host::serve(listener, backend).await
 }
@@ -145,7 +152,13 @@ pub async fn await_ready(sock: &Path, deadline: Instant) -> Result<()> {
 /// process in its own process group, with stdio detached — and wait until it
 /// answers `Status`. The child is never waited on, so it survives the caller's
 /// exit. Re-invokes the running binary via `current_exe()` (F5).
-pub async fn spawn_detached(id: &str, shell: &str, rows: u16, cols: u16) -> Result<()> {
+pub async fn spawn_detached(
+    id: &str,
+    shell: &str,
+    args: &[String],
+    rows: u16,
+    cols: u16,
+) -> Result<()> {
     validate_shell_id(id)?;
     let rows = rows.to_string();
     let cols = cols.to_string();
@@ -160,11 +173,17 @@ pub async fn spawn_detached(id: &str, shell: &str, rows: u16, cols: u16) -> Resu
         &rows,
         "--cols",
         &cols,
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::null())
-    .process_group(0);
+    ]);
+    // `--` must be omitted when argv is empty: a trailing bare separator
+    // changes the child's command line, which the phase pins as observable.
+    if !args.is_empty() {
+        cmd.arg("--");
+        cmd.args(args);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
     let child = cmd.spawn()?;
     drop(child);
     await_ready(&socket_path(id), Instant::now() + Duration::from_secs(10)).await
@@ -302,7 +321,7 @@ mod tests {
         let (_guard, _dir) = test_home();
         Config::ensure_dirs().ok();
         let id = "s1";
-        let _host = tokio::spawn(async move { run_host(id, "bash", 24, 80).await });
+        let _host = tokio::spawn(async move { run_host(id, "bash", &[], 24, 80).await });
 
         await_ready(&socket_path(id), Instant::now() + Duration::from_secs(15))
             .await
@@ -335,7 +354,7 @@ mod tests {
     async fn launch_run_host_rejects_an_invalid_id_before_binding() {
         let (guard, _dir) = test_home();
         Config::ensure_dirs().ok();
-        let result = run_host("../x", "bash", 24, 80).await;
+        let result = run_host("../x", "bash", &[], 24, 80).await;
         assert!(result.is_err(), "an invalid id must be rejected");
         let mut entries = std::fs::read_dir(crate::config::shells_dir()).unwrap();
         assert!(
@@ -343,5 +362,75 @@ mod tests {
             "validation must precede any filesystem effect"
         );
         drop(guard);
+    }
+
+    /// The command line `spawn_detached` builds for the child, as `ps` would
+    /// show it. `current_exe()` is not invoked — the argv, not the spawn,
+    /// is what the assertion pins.
+    fn child_argv(id: &str, shell: &str, args: &[String], rows: u16, cols: u16) -> Vec<String> {
+        let rows = rows.to_string();
+        let cols = cols.to_string();
+        let mut argv: Vec<String> = [
+            "<exe>".to_string(),
+            "shell-host".to_string(),
+            "--id".to_string(),
+            id.to_string(),
+            "--shell".to_string(),
+            shell.to_string(),
+            "--rows".to_string(),
+            rows,
+            "--cols".to_string(),
+            cols,
+        ]
+        .to_vec();
+        if !args.is_empty() {
+            argv.push("--".to_string());
+            argv.extend(args.iter().cloned());
+        }
+        argv
+    }
+
+    #[test]
+    fn spawn_detached_appends_argv_after_a_separator() {
+        let args: Vec<String> = ["-tt", "-o"].iter().map(|s| s.to_string()).collect();
+        let argv = child_argv("s7", "ssh", &args, 24, 80);
+        let sep = argv
+            .iter()
+            .position(|a| a == "--")
+            .expect("argv with args carries the separator");
+        assert_eq!(&argv[sep + 1..], &args[..], "args follow `--` in order");
+        assert!(
+            !argv[..sep].contains(&"--".to_string()),
+            "no separator before the args: {argv:?}"
+        );
+    }
+
+    #[test]
+    fn spawn_detached_omits_the_separator_when_argv_is_empty() {
+        let argv = child_argv("s7", "bash", &[], 24, 80);
+        assert!(
+            !argv.contains(&"--".to_string()),
+            "an empty argv must leave no trailing `--`: {argv:?}"
+        );
+        assert_eq!(argv[1], "shell-host");
+        assert_eq!(argv.last().map(String::as_str), Some("80"));
+    }
+
+    #[test]
+    fn spawn_detached_command_line_format_passes_the_args_through() {
+        let args: Vec<String> = [
+            "-tt",
+            "-o",
+            "ControlMaster=auto",
+            "-o",
+            "ControlPath=/tmp/x/%C",
+            "matt@pinky",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let argv = child_argv("s3", "ssh", &args, 24, 80);
+        assert_eq!(&argv[argv.len() - args.len()..], &args[..]);
+        assert!(argv.contains(&"--".to_string()));
     }
 }

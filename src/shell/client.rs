@@ -469,7 +469,8 @@ mod tests {
         let _home = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         let cast = dir.path().join("e2e.cast");
-        let backend = PtyBackend::spawn("bash", 24, 80, 100, &cast, 0).expect("bash available");
+        let backend =
+            PtyBackend::spawn("bash", &[], 24, 80, 100, &cast, 0).expect("bash available");
         let path = dir.path().join("shell.sock");
         let listener = host::bind(&path).await.expect("bind the shell socket");
         tokio::spawn(host::serve(listener, Arc::clone(&backend)));
