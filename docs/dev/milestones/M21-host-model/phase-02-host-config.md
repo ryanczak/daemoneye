@@ -1,7 +1,7 @@
 # Phase 02: `[hosts.<name>]` becomes real config
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** none in M21 — this is pure and additive. 01a/01b are `done`
 but nothing here touches them.
 **Estimated diff:** ~320 lines
@@ -920,3 +920,60 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 15d58c02999232ae75313d854adedcb8918537ee
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-19
+
+- **Verdict:** approved_after_1
+- **Bounces:** one `hard_fail` (`NoProgressStall`, 200 read-only turns) and a
+  refined re-dispatch. **No bug filed — the stall's cause was an architect
+  defect**, a mutation specified backwards.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (two runs, 391
+  then 181 turns).
+- **Gates, architect-run:** `cargo fmt --all --check`, `cargo build`,
+  `cargo clippy --all-targets --all-features -- -D warnings` all exit 0;
+  `cargo test` → lib **1908 passed / 4 ignored**, doc_truth 14, integration
+  32 / 2 ignored, isolation 9 / 1 ignored, bug_tracker 6.
+- **Every acceptance and must-survive criterion re-run by hand** and on target,
+  including the finish condition the escalation set:
+  `grep -c 'starts_with("hosts")' tests/doc_truth.rs` → **1**.
+- **Both mutations re-run by the reviewer**, in the corrected directions:
+  neutering the reserved-`local` check reddens
+  `host_id_treats_local_as_reserved_and_case_insensitive`; adding a stray key
+  under `[hosts.web01]` with the branch in place reddens
+  `seeded_config_template_has_no_phantom_keys`, naming
+  `"[hosts.web01] totally_made_up_key"`. Both green on revert.
+- **Hygiene:** the six new `.unwrap()`s are all in test modules. The production
+  paths added — `HostId::parse` and `validate_hosts` — contain **zero**
+  `unwrap`/`expect`/`panic!`, which matters because `validate_hosts` is
+  specced to warn and never stop the daemon.
+- **Scope deviations:** one, **forced by measurement and correctly resolved.**
+  The escalation told the executor to leave the phantom-key example commented
+  in the shipped template *and* to keep `doc_truth` at 14 passed. Those are
+  contradictory: `template_keys` strips a leading `#`
+  (`trim_start_matches('#')`), so a **commented** stray is still a documented
+  key, and once the `hosts` branch exists it is caught as a phantom. Verified
+  at review — with the branch in place and the stray commented, the test
+  **FAILS** naming `"[hosts.web01] totally_made_up_key"`. The executor removed
+  the stray from the shipped template and made Mutation B add it temporarily.
+  That is the better outcome on both counts: the criterion holds and no stray
+  ships in a user-facing config file. **The escalation had measured only the
+  two uncommented states and never the commented-with-branch one.**
+- **Caveat the executor raised, accepted as honest:** `hosts_parsed=2` is not
+  printed by any CLI surface, since `src/cli/` is out of scope here. It is
+  evidenced by the two seeded `[hosts.*]` blocks plus binary-observable proof
+  that the map held real entries — the running daemon's reserved-key and
+  empty-`ssh` warnings name `[hosts.local]` and `[hosts.web01]`. The entry says
+  so plainly rather than asserting a number it could not read, which is the
+  behaviour the previous phase's bounce asked for.
+- **Calibration — one item, architect-side, and it is the fourth of its
+  family.** The stall's cause was Mutation B written inverted: it told the
+  executor to *remove* the branch and expect red, but removing the branch makes
+  the key skipped, so the mutation goes green. 200 read-only turns went into
+  chasing that impossible red. Across four phases now — 01b's unobservable
+  Mutation A, 01b's echoing Task 6 probe, 02's inverted Mutation B, and 02's
+  contradictory escalation note — the same root cause: **a procedure was
+  written into a spec without being run once.** The M22 pre-dispatch trigger
+  covers pinned counts only. **Recommendation for M21 close, now with four
+  occurrences behind it:** extend it to every mutation and every prescribed
+  probe — apply the mutant, run it, and paste the observed direction into the
+  spec before dispatch.

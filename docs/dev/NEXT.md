@@ -1,39 +1,34 @@
 # NEXT
 
-**Active phase:** `docs/dev/milestones/M21-host-model/phase-02-host-config.md`
-— 02, host-config. **Stalled 2026-09-19** (`NoProgressStall`, 200 read-only
-turns), status `in-progress`. Refinement applied.
+**Active phase:** none — **M21 phase-02 is `done`** (2026-09-19,
+`approved_after_1`).
 
-**The stall was my defect, not the executor's: Mutation B was specified
-backwards.** It told the executor to *remove* the `hosts` branch and expect the
-phantom-key test to go red. Removing the branch makes the key **skipped**,
-which is the very gap the branch closes — so the mutation goes green and the
-run spent 200 turns chasing an impossible red.
+`[hosts.<name>]` is real config now: `HostId` with a validated, reserved-name
+parser, a `HostEntry` map on `Config`, `validate_hosts` that warns without ever
+stopping the daemon, runbook `hosts:` frontmatter, and a documented template
+block. Nothing executes yet — a must-survive criterion pins that nothing under
+the shell or executor directories changed.
 
-Both directions measured at escalation:
+All gates green: lib **1908 passed / 4 ignored**, doc_truth 14, integration 32,
+isolation 9, bug_tracker 6. Both mutations re-run independently at review.
 
-| State | Result |
-|---|---|
-| branch present + phantom key uncommented | **FAILED** — the real red |
-| branch absent + phantom key uncommented | green |
+**The gate now actually covers the new section.** The `hosts` branch in
+`doc_truth` means a stray key under `[hosts.*]` is caught — verified by adding
+one and watching the test name it.
 
-The spec now carries the corrected direction with that table.
+**Next row: 03 — shell-spawn-argv.** The spawn path learns to carry a program
+*and its arguments* end to end, and `ShellRecord` gains a host. This is the
+9-site struct change measured back in M22, and it is what unblocks the SSH
+shell in row 04.
 
-**All four gates are green on the executor's work** — build, clippy, lib at
-**1908 passed**, doc_truth 14. `HostId`, `HostEntry`, `validate_hosts`, the
-runbook `hosts:` field and the template block all landed and are sound.
+Run `/rexymcp:architect next` to draft it. Ten rows in M21; live host `pinky`;
+`max_turns` 1000.
 
-**One piece of code is genuinely missing, and the stall hid it:** Task 5's
-`starts_with("hosts")` branch was never added — the run wrote a comment
-describing it and two guarding asserts instead. Finish condition is
-falsifiable: that grep must report **1**, and reports **0** now.
-
-Re-dispatch with `/rexymcp:dispatch phase-02`.
-
-**Calibration, carried to M21 close.** This is the third consecutive phase
-where I specced a mutation or a probe without running it first: 01b's Mutation
-A was unobservable, 01b's Task 6 probe used an echoing shell builtin, and now
-02's Mutation B is inverted. I applied the "run the procedure at drafting"
-rule to this phase's *discovery* probes and not to its *mutations*. The
-existing note in my own records says mutations must be applied before being
-pinned. Proposal stands: fold that into the pre-dispatch check.
+**Carried to M21 close — now four occurrences, and worth folding.** Every
+defect in this milestone so far traces to one habit: a procedure written into a
+spec without being run once. 01b's Mutation A was unobservable, 01b's Task 6
+probe used an echoing shell builtin, 02's Mutation B was inverted, and 02's own
+escalation note was self-contradictory — the executor caught that last one and
+was right. The existing pre-dispatch trigger covers pinned counts only. The
+proposal is to extend it to every mutation and prescribed probe: apply it, run
+it, and paste the observed direction into the spec before dispatch.
