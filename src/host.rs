@@ -160,15 +160,20 @@ mod tests {
             1,
             "the destination appears exactly once: {argv:?}"
         );
-        assert!(
-            argv.iter()
-                .position(|a| a.as_str() == "matt@web01.lan")
-                .expect("one")
-                > argv
-                    .iter()
-                    .rposition(|a| a.as_str() == "ControlPersist=10m")
-                    .expect("the last -o value"),
-            "no flag may follow the destination — ssh reads a later flag as a remote command: {argv:?}"
+        // Statement-wise on the flag set, so the "last" claim cannot pass on
+        // the prefix the builder happens to produce.
+        assert_eq!(
+            &argv[..argv.len() - 1],
+            &[
+                "-tt".to_string(),
+                "-o".to_string(),
+                "ControlMaster=auto".to_string(),
+                "-o".to_string(),
+                "ControlPath=/tmp/cp/%C".to_string(),
+                "-o".to_string(),
+                "ControlPersist=10m".to_string(),
+            ],
+            "every element before the destination is a flag or its value: {argv:?}"
         );
     }
 
