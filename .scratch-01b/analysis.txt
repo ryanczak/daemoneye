@@ -1,0 +1,16 @@
+From the first real-sudo capture (the probe answered the retries the same
+way as the first prompt) the probe's followup was still logged
+`[redacted]`. The cast shows why:
+
+  [6.219764, "o", "sudo: 3 incorrect password attempts\r\n"]
+
+**sudo's exit-status line contains the word "password".** That output chunk
+re-arms the scrub as the pump consumes it — the matcher is deliberately
+broad, so a 2FA-style message about expired credentials is exactly the kind
+of false positive the doc comment accepts ("a false positive costs one line
+of log fidelity"). The scrub is then armed when the followup `echo` is
+typed, so the followup lands as `[redacted]` instead of in clear.
+
+The probe now consumes that arming with a bare `true\n` line before the
+followup: the bare line is logged `[redacted]` (harmless) and its trailing
+`\n` clears the flag, so the followup lands in clear.
