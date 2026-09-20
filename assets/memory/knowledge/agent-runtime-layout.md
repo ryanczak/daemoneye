@@ -46,6 +46,7 @@ automation, configuration, and logs live under it.
       schedules.json         ← scheduled job store (atomic JSON)
       pane_prefs.json        ← per-session foreground pane preferences
       shells/                ← per-shell runtime state (survives daemon restart)
+      ssh/                   ← SSH ControlMaster control sockets, clear at startup
 
     log/
       daemon.log             ← daemon process log (structured JSON lines)

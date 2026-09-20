@@ -109,6 +109,11 @@ pub static INVENTORY: &[InventoryEntry] = &[
         source: "config::pipe_log_dir()",
     },
     InventoryEntry {
+        path: "var/run/ssh",
+        status: PathStatus::Current,
+        source: "config::ssh_dir()",
+    },
+    InventoryEntry {
         path: "var/index",
         status: PathStatus::Current,
         source: "config::var_index_dir()",

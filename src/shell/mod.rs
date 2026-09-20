@@ -43,7 +43,10 @@ pub use registry::{
     sweep_stale, with_shells,
 };
 pub use screen::ShellScreen;
-pub use session::{login_shell, shell_for_owner, spawn_dedicated_for, spawn_detached_host};
+pub use session::{
+    host_entry, login_shell, marker_shell_name, shell_for_owner, spawn_dedicated_for,
+    spawn_detached_host, spawn_ssh_host, which_ssh,
+};
 
 use std::sync::OnceLock;
 

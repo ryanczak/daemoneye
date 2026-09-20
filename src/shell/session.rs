@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 
+use crate::config::Config;
+use crate::host::ssh_argv;
 use crate::shell::launch;
 use crate::shell::registry::{
     Owner, ShellId, ShellRegistry, host_is_alive, spawn_for, with_shells,
@@ -93,10 +95,26 @@ pub fn login_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string())
 }
 
+/// The shell name whose exit-variable syntax the marker protocol must use.
+///
+/// For a remote shell this is **not** the daemon's `$SHELL`: the *remote*
+/// shell interprets the marker. A fish-using operator on a bash host would
+/// otherwise emit `$status`, which bash expands to empty, and the exit code
+/// would never parse. Remote shells are pinned to POSIX `$?` (the name `"sh"`,
+/// which [`exit_var`](crate::shell::pty::exit_var) maps to `$?`); a remote fish
+/// login shell is unsupported and documented as such.
+pub fn marker_shell_name(host: &crate::host::HostId) -> String {
+    match host {
+        crate::host::HostId::Local => login_shell(),
+        crate::host::HostId::Named(_) => "sh".to_string(),
+    }
+}
+
 /// The `spawn` argument `shell_for_owner` takes in production: a detached
 /// `daemoneye shell-host` for `id`. Separate from `shell_for_owner` because
 /// `spawn_detached` resolves `current_exe()` and so cannot run under a test
 /// (F4).
+/// spawning an SSH shell for `owner` on `host`.
 pub async fn spawn_detached_host(
     id: ShellId,
     args: &[String],
@@ -105,6 +123,71 @@ pub async fn spawn_detached_host(
 ) -> anyhow::Result<()> {
     let shell = login_shell();
     launch::spawn_detached(id.as_str(), &shell, args, rows, cols).await
+}
+
+/// Spawn a detached `daemoneye shell-host` for `id` that opens a shell on the
+/// named host `name`, over SSH, in the daemon user's own PTY — their
+/// `~/.ssh/config`, keys and `SSH_AUTH_SOCK`. Host entry `ssh` must be
+/// configured; `name` is the `[hosts.<name>]` key.
+///
+/// `host` is the `[hosts.<name>]` key of a **named** host; the implicit local
+/// host is refused here because `spawn_detached_host` already covers it.
+pub async fn spawn_ssh_host(id: ShellId, name: &str, rows: u16, cols: u16) -> anyhow::Result<()> {
+    let entry = host_entry(name)?;
+    let control = crate::config::ssh_dir();
+    std::fs::create_dir_all(&control).with_context(|| format!("creating {}", control.display()))?;
+    let argv = ssh_argv(&entry, &control);
+    let program = which_ssh()?;
+    launch::spawn_detached(id.as_str(), &program, &argv, rows, cols).await
+}
+
+/// Turn a named host into the `HostEntry` whose `ssh` destination it carries.
+/// Refuses `HostId::Local` and any name `[hosts]` does not configure; a host
+/// with an empty destination is its own refusal.
+pub fn host_entry(name: &str) -> anyhow::Result<crate::config::HostEntry> {
+    let cfg = Config::load().unwrap_or_default();
+    if name.eq_ignore_ascii_case("local") {
+        return Err(anyhow::anyhow!(
+            "the local host is implicit — it has no [hosts] entry and needs no ssh \
+             spawn; a plain command (no `shell` argument) already runs there"
+        ));
+    }
+    match cfg.hosts.get(name) {
+        Some(entry) if !entry.ssh.trim().is_empty() => Ok(entry.clone()),
+        Some(_) => Err(anyhow::anyhow!(
+            "host {name} is configured but its ssh destination is empty — \
+             set ssh = \"user@hostname\" in [hosts.{name}]"
+        )),
+        None => {
+            let mut known: Vec<&str> = cfg.hosts.keys().map(|s| s.as_str()).collect();
+            known.sort();
+            let listed = if known.is_empty() {
+                "no hosts are configured — add a [hosts.<name>] section \
+                 with an ssh = \"user@hostname\" entry to config.toml"
+                    .to_string()
+            } else {
+                format!("configured hosts: {}", known.join(", "))
+            };
+            Err(anyhow::anyhow!("unknown host {name:?}; {listed}"))
+        }
+    }
+}
+
+/// The `ssh` binary to spawn, resolved on `PATH` (`/usr/bin/ssh` on this
+/// daemon host). A missing `ssh` is an error naming the remedy, never a
+/// silent fallback and never a spawn failure deep in the PTY.
+pub fn which_ssh() -> anyhow::Result<String> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join("ssh");
+        if candidate.is_file() {
+            return Ok(candidate.to_string_lossy().into_owned());
+        }
+    }
+    Err(anyhow::anyhow!(
+        "ssh was not found on PATH for the daemon user — an SSH shell needs the \
+         ssh(1) binary; install openssh-clients or add it to PATH"
+    ))
 }
 
 /// A ready shell created for one command's exclusive use. Unlike
@@ -629,5 +712,113 @@ mod tests {
             guard.is_empty(),
             "a record for a host that never came up must be rolled back, not handed to the next caller"
         );
+    }
+
+    /// Set `$SHELL` to fish for the assertion inside, then restore it. The
+    /// fish value is what mutation B must turn red on; the test itself owns
+    /// both the set and the cleanup because the caller cannot observe it.
+    fn with_fish_shell(f: impl FnOnce()) {
+        unsafe {
+            std::env::set_var("SHELL", "/usr/bin/fish");
+        }
+        f();
+        unsafe {
+            std::env::remove_var("SHELL");
+        }
+    }
+
+    /// The bug this phase exists for: a **remote** shell's marker must use
+    /// POSIX `$?` even when the daemon host's `$SHELL` is fish, because the
+    /// remote shell — not the daemon's — interprets the marker. fish's
+    /// `$status`, expanded by bash on the far side, is empty and no exit code
+    /// would ever parse.
+    #[test]
+    fn a_remote_shell_uses_the_posix_exit_variable() {
+        let _guard = crate::test_home_guard();
+        let named = crate::host::HostId::Named("pinky".to_string());
+        with_fish_shell(|| {
+            assert_eq!(
+                crate::shell::pty::exit_var(&marker_shell_name(&named)),
+                "$?",
+                "a remote shell must ride POSIX $?, not the daemon's $SHELL"
+            );
+        });
+        // Without the env var set the answer is the same, but the test above
+        // is the load-bearing one: it is exactly the state mutation B turns
+        // red in.
+        assert_eq!(
+            crate::shell::pty::exit_var(&marker_shell_name(&named)),
+            "$?"
+        );
+    }
+
+    /// A local shell's marker name is the daemon's login shell, unchanged from
+    /// before hosts existed: `exit_var` keeps mapping fish/csh/tcsh to
+    /// `$status`. Pinned because the remote branch must not leak into it.
+    #[test]
+    fn a_local_shell_still_uses_the_login_shell() {
+        let _guard = crate::test_home_guard();
+        unsafe {
+            std::env::set_var("SHELL", "/usr/bin/fish");
+        }
+        let name = marker_shell_name(&crate::host::HostId::Local);
+        assert_eq!(name, "/usr/bin/fish", "a local shell names login_shell()");
+        assert_eq!(
+            crate::shell::pty::exit_var(&name),
+            "$status",
+            "local fish keeps $status"
+        );
+        unsafe {
+            std::env::remove_var("SHELL");
+        }
+        assert_eq!(
+            marker_shell_name(&crate::host::HostId::Local),
+            "bash",
+            "no $SHELL falls back to bash, as login_shell always did"
+        );
+    }
+
+    /// A host the config does not carry is refused by name, and the refusal
+    /// lists the ones that *are* configured so the model can correct itself
+    /// in one turn.
+    #[test]
+    fn an_unknown_host_is_refused_by_name() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
+             ssh = \"matt@web01.lan\"\n\n[hosts.db01]\nssh = \"db01\"\n",
+        )
+        .expect("write config");
+        let err = host_entry("pinkly").expect_err("an unknown host is refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("pinkly"),
+            "the refusal must name the unknown host: {msg}"
+        );
+        assert!(
+            msg.contains("web01") && msg.contains("db01"),
+            "the refusal must list the configured hosts: {msg}"
+        );
+    }
+
+    /// The implicit local host is not a `[hosts]` entry and this spawn path is
+    /// for named hosts only; the message points at the local path that already
+    /// exists instead of trying to ssh loopback.
+    #[test]
+    fn the_local_host_is_refused_here() {
+        let _guard = crate::test_home_guard();
+        for spelling in ["local", "Local", "LOCAL", "lOcAl"] {
+            let err = host_entry(spelling).expect_err("the local host is refused");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("local"),
+                "the refusal must name the local host: {msg}"
+            );
+            assert!(
+                msg.contains("implicit") || msg.contains("already runs"),
+                "the refusal must point at the existing local path: {msg}"
+            );
+        }
     }
 }

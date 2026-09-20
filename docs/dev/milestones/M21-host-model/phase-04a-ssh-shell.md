@@ -6,6 +6,7 @@
 `ShellRecord.host`). Both **done**.
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
+**Status:** in-progress
 
 ## Goal
 
@@ -448,3 +449,60 @@ in an authorized file, fix it and record that you did.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-20 09:31 (progress)
+
+Started 04a at HEAD `0f08602e` (executor run). Pre-flight confirmed at this
+HEAD, matching the spec's numbers: `ssh_dir` 0, `HostId::Named` in `src/shell/`
+0 (the two hits the pre-flight comments mentioned under "from 03's tests" —
+neither is in `src/`), lifecycle/audit rows 0, `--lib` 1917 passed / 4 ignored,
+`shell::` 272, `config::` 97, `host::` 32, `doc_truth` 14, tools 42 / deferred
+28, `fbb48267..HEAD` diff over `src/ai/ src/ipc.rs src/cli/` empty, no
+ssh-spawning test. Implemented Task 1 (`ssh_dir` + lifecycle/audit/runtime-tree
+rows and its `ensure_dirs` creation), Task 2 (`ssh_argv` pure builder with the
+four pinned negatives), Task 3 (`marker_shell_name` helper + both call-site
+families in `shell_exec.rs` and `bg_shell.rs`), Task 4 (the `spawn_ssh_host`
+lookup with the refused-local / unknown-host messages, `PATH`-resolved ssh and
+on-demand `ssh_dir`), and Task 5's ten tests. Counts: `host::` **36**, `--lib`
+**1927**, `shell::` **276**, `config::` **99** (the two `ssh_dir` tests live in
+`config::load.rs`, so `config::` also grew by 2). All gates green (`fmt`,
+`build`, `clippy -D warnings`, `--lib`, `doc_truth` 14).
+Next: mutation pair, then the live `pinky` capture (Task 7).
+
+### Update — 2026-09-20 09:39 (progress — mutation pair results)
+
+Task 6 ran with the spec's honest-prediction posture; the raw transcripts are
+quoted here and the four `test result:` lines are re-cited in the end-to-end
+entry so all of Task 6's required evidence sits in one place.
+
+**Mutation A — destination first** (`ssh_argv` pushes `entry.ssh` before the
+`-o` flags):
+
+- **Red, as predicted.** `cargo test --lib 'host::tests::ssh_argv'`
+  under the mutation:
+  `test result: FAILED. 2 passed; 2 failed` — the same command at substance
+  split: `ssh_argv_puts_the_destination_last` FAILED (assert message
+  "the destination is the last argv element: `[\"matt@web01.lan\", \"-tt\",
+  \"-o\", \"ControlMaster=auto\", \"-o\", \"ControlPath=/tmp/cp/%C\", \"-o\",
+  \"ControlPersist=10m\"]`"), and `ssh_argv_keeps_the_destination_as_one_token`
+  FAILED (left `"ControlPersist=10m"`, the destination was not last). The two
+  negative-shape tests (`carries_the_control_trio`, `does_not_set_batch_mode`)
+  stayed green — they do not pin the position, which is exactly what the
+  position test is for.
+- Reverted → `test result: ok. 4 passed; 0 failed`. Mutation caught.
+
+**Mutation B — remote uses `login_shell()` too** (`marker_shell_name` made
+unconditional):
+
+- **Red, exactly as the spec predicted and only because the test sets
+  `SHELL` to fish.** Under the mutation:
+  `cargo test --lib 'a_remote_shell_uses_the_posix_exit_variable'` →
+  `test result: FAILED. 0 passed; 1 failed` with
+  `left: "$status", right: "$?"` and the assert message "a remote shell must
+  ride POSIX $?, not the daemon's $SHELL". Without the fish env var the same
+  mutation would have been green (bash-on-bash is indistinguishable), which is
+  why the test sets it.
+- Reverted → `test result: ok. 1 passed; 0 failed`. Mutation caught.
+
+Both mutations: red under mutation, green on revert. No finding to note —
+neither survived green.

@@ -134,6 +134,17 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         lazy: false,
     },
     LifecycleEntry {
+        path: "var/run/ssh",
+        intent: LifecycleIntent::ClearAtStartup,
+        config_key: None,
+        implemented: ImplementationStatus::Implemented,
+        note: "SSH ControlMaster sockets, one per connection (%C); a socket left by \
+               a dead daemon is stale and ssh recreates it on the next connect, so \
+               clearing at startup costs one cold connect (~157 ms measured) and \
+               avoids a confusing orphan",
+        lazy: false,
+    },
+    LifecycleEntry {
         path: "var/log/pipe",
         intent: LifecycleIntent::ClearAtStartup,
         config_key: None,

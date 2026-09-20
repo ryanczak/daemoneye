@@ -263,6 +263,12 @@ pub static RUNTIME_TREE: TreeNode = TreeNode {
                             blank_before: false,
                             children: &[],
                         },
+                        TreeNode {
+                            name: "ssh/",
+                            note: Some("SSH ControlMaster control sockets, clear at startup"),
+                            blank_before: false,
+                            children: &[],
+                        },
                     ],
                 },
                 TreeNode {

@@ -19,7 +19,7 @@ use crate::daemon::run::{
 use crate::daemon::session::{SessionStore, append_session_message, with_sessions};
 use crate::shell::{
     CommandHandle, CommandOutcome, Owner, ShellId, ShellRegistry, login_shell, spawn_command,
-    spawn_dedicated_for,
+    spawn_dedicated_for, with_shells,
 };
 
 /// How long a started background command may run before its reader task gives
@@ -87,7 +87,13 @@ where
             },
         },
     });
-    let handle = spawn_command(&socket, cmd, &login_shell(), BACKGROUND_CMD_TIMEOUT).await?;
+    let marker_name = with_shells(reg, |store| {
+        store
+            .get(shell_id.as_str())
+            .map(|record| crate::shell::marker_shell_name(&record.host))
+    })
+    .unwrap_or_else(login_shell);
+    let handle = spawn_command(&socket, cmd, &marker_name, BACKGROUND_CMD_TIMEOUT).await?;
     Ok((BackgroundStart { run_id, shell_id }, handle))
 }
 

@@ -41,6 +41,12 @@ pub fn shells_dir() -> PathBuf {
     var_run_dir().join("shells")
 }
 
+/// `~/.daemoneye/var/run/ssh/` — SSH ControlMaster sockets, one per
+/// connection (`%C`). Created on demand; the sockets are owned by `ssh`.
+pub fn ssh_dir() -> PathBuf {
+    var_run_dir().join("ssh")
+}
+
 /// Directory where shell session recordings are stored: `~/.daemoneye/var/log/shells/`.
 pub fn shell_logs_dir() -> PathBuf {
     var_log_dir().join("shells")
@@ -234,4 +240,59 @@ pub fn load_named_prompt(name: &str) -> PromptDef {
         return def;
     }
     PromptDef::builtin_minimal()
+}
+
+#[cfg(test)]
+mod ssh_dir_tests {
+    use super::ssh_dir;
+    use crate::config::lifecycle::POLICY_TABLE;
+    use crate::config::path_audit::INVENTORY;
+
+    #[test]
+    fn ssh_dir_is_under_var_run() {
+        let _guard = crate::test_home_guard();
+        let dir = ssh_dir();
+        assert!(
+            dir.ends_with("var/run/ssh"),
+            "the ControlMaster socket dir sits under var/run: {}",
+            dir.display()
+        );
+        assert!(
+            dir.starts_with(crate::config::config_dir()),
+            "it is under the daemon's own config tree: {} vs {}",
+            dir.display(),
+            crate::config::config_dir().display()
+        );
+    }
+
+    #[test]
+    fn ssh_dir_has_lifecycle_and_audit_rows() {
+        let lifecycle_hit = POLICY_TABLE
+            .iter()
+            .filter(|e| e.path == "var/run/ssh")
+            .count();
+        assert_eq!(
+            lifecycle_hit, 1,
+            "exactly one lifecycle row names var/run/ssh"
+        );
+        let audit_hit = INVENTORY.iter().filter(|e| e.path == "var/run/ssh").count();
+        assert_eq!(audit_hit, 1, "exactly one audit row names var/run/ssh");
+        let row = POLICY_TABLE
+            .iter()
+            .find(|e| e.path == "var/run/ssh")
+            .expect("the lifecycle row above");
+        assert!(
+            format!("{:?}", row.intent).contains("ClearAtStartup"),
+            "a stale ControlMaster socket is cleared at startup: {:?}",
+            row.intent
+        );
+        let audit = INVENTORY
+            .iter()
+            .find(|e| e.path == "var/run/ssh")
+            .expect("the audit row above");
+        assert_eq!(
+            audit.source, "config::ssh_dir()",
+            "the row names its source"
+        );
+    }
 }

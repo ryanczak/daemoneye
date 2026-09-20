@@ -20,8 +20,8 @@ use crate::daemon::utils::{
 use crate::ipc::{Request, Response};
 use crate::shell::PromptReply;
 use crate::shell::{
-    CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, await_ready, login_shell,
-    mark_interactive, meta_path_for, run_command, run_command_with_prompts, shell_for_owner,
+    CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, await_ready, mark_interactive,
+    marker_shell_name, meta_path_for, run_command, run_command_with_prompts, shell_for_owner,
     socket_path, spawn_for, with_shells,
 };
 use crate::shell::{CommandRecord, marked_inner_range};
@@ -298,11 +298,11 @@ where
         );
         return Ok((id, ShellRunResult { text, exit_code: 0 }));
     }
-    let started_unix = with_shells(reg, |store| {
+    let (started_unix, record_host) = with_shells(reg, |store| {
         store
             .get(id.as_str())
-            .map(|record| record.started_unix)
-            .unwrap_or(0)
+            .map(|record| (record.started_unix, record.host.clone()))
+            .unwrap_or((0, crate::host::HostId::Local))
     });
     // The cast length BEFORE the command runs — the producer window's left
     // edge. Read here, not inside the indexing step: by the time a completed
@@ -316,20 +316,31 @@ where
     // Task 3, step 1: a command without sudo takes the plain path. Everything
     // about the call is identical to what shipped before this phase.
     let Some(prompts) = prompts else {
-        let outcome = run_command(&socket, cmd, &login_shell(), applied_timeout)
-            .await
-            .map_err(|e| {
-                e.context(format!(
-                    "command exceeded the {applied_timeout:#?} limit in shell {}",
-                    id.as_str()
-                ))
-            })?;
+        let outcome = run_command(
+            &socket,
+            cmd,
+            &marker_shell_name(&record_host),
+            applied_timeout,
+        )
+        .await
+        .map_err(|e| {
+            e.context(format!(
+                "command exceeded the {applied_timeout:#?} limit in shell {}",
+                id.as_str()
+            ))
+        })?;
         return finish_run(reg, cmd, &id, &outcome, before).await;
     };
 
     let wrapped = prompts.wrapped.clone();
-    let outcome =
-        run_sudo_command(&socket, &wrapped, &login_shell(), applied_timeout, prompts).await;
+    let outcome = run_sudo_command(
+        &socket,
+        &wrapped,
+        &marker_shell_name(&record_host),
+        applied_timeout,
+        prompts,
+    )
+    .await;
     match outcome {
         Ok(outcome) => finish_run(reg, cmd, &id, &outcome, before).await,
         Err(e) => {

@@ -2,7 +2,10 @@
 //!
 //! The local host is implicit and always available; every configured
 //! `[hosts.<name>]` entry is an execution target.  Nothing executes here —
-//! this module is identities and validation only.
+//! this module is identities, validation, and the `ssh` argv a host shell
+//! spawns with.
+
+use crate::config::HostEntry;
 
 /// The name of a configured host, or the implicit local host.
 ///
@@ -63,9 +66,37 @@ impl std::fmt::Display for HostId {
     }
 }
 
+/// The `ssh` argv for a shell on `entry`, with the control-socket path the
+/// daemon owns.
+///
+/// `-tt` forces a PTY even though ssh's stdin is already one — without it a
+/// remote command sees no tty and line-buffers, and the marker protocol needs
+/// an interactive shell. The ControlMaster trio is measured, not assumed:
+/// cold connect 157 ms, warm 4–5 ms.
+///
+/// `entry.ssh` is passed as **one** argv element: `ssh` treats everything
+/// after the destination as the remote command, so splitting it on whitespace
+/// would turn the remainder into a command. The control path ends in `%C`
+/// unquoted — `ssh` receives it as argv, so shell quoting would become part
+/// of the path. No `-o BatchMode=yes`: prompts must reach the user, and
+/// suppressing them here would defeat the credential mechanism.
+pub fn ssh_argv(entry: &HostEntry, control_path: &std::path::Path) -> Vec<String> {
+    vec![
+        "-tt".to_string(),
+        "-o".to_string(),
+        "ControlMaster=auto".to_string(),
+        "-o".to_string(),
+        format!("ControlPath={}/%C", control_path.display()),
+        "-o".to_string(),
+        "ControlPersist=10m".to_string(),
+        entry.ssh.clone(),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
-    use super::HostId;
+    use super::*;
+    use crate::config::HostEntry;
 
     #[test]
     fn host_id_parses_a_named_host() {
@@ -102,5 +133,91 @@ mod tests {
                 "error for {name:?} must state the accepted shape, got {err:?}"
             );
         }
+    }
+
+    fn entry(ssh: &str) -> HostEntry {
+        HostEntry {
+            ssh: ssh.to_string(),
+            tags: Vec::new(),
+            sudo_scripts: Vec::new(),
+            sandbox_profile: None,
+        }
+    }
+
+    #[test]
+    fn ssh_argv_puts_the_destination_last() {
+        let argv = ssh_argv(&entry("matt@web01.lan"), std::path::Path::new("/tmp/cp"));
+        assert_eq!(
+            argv.last().map(String::as_str),
+            Some("matt@web01.lan"),
+            "the destination is the last argv element: {argv:?}"
+        );
+        assert_eq!(
+            argv.iter()
+                .filter(|a| a.as_str() == "matt@web01.lan")
+                .count(),
+            1,
+            "the destination appears exactly once: {argv:?}"
+        );
+        assert!(
+            argv.iter()
+                .position(|a| a.as_str() == "matt@web01.lan")
+                .expect("one")
+                > argv
+                    .iter()
+                    .rposition(|a| a.as_str() == "ControlPersist=10m")
+                    .expect("the last -o value"),
+            "no flag may follow the destination — ssh reads a later flag as a remote command: {argv:?}"
+        );
+    }
+
+    #[test]
+    fn ssh_argv_keeps_the_destination_as_one_token() {
+        let argv = ssh_argv(&entry("matt@web01.lan"), std::path::Path::new("/tmp/cp"));
+        assert!(
+            argv.contains(&"matt@web01.lan".to_string()),
+            "entry.ssh is one argv element, never split on whitespace: {argv:?}"
+        );
+        assert_eq!(argv[argv.len() - 1], "matt@web01.lan");
+    }
+
+    #[test]
+    fn ssh_argv_carries_the_control_trio() {
+        let argv = ssh_argv(
+            &entry("db01"),
+            std::path::Path::new("/home/u/.daemoneye/var/run/ssh"),
+        );
+        assert_eq!(
+            argv.iter().filter(|a| a.as_str() == "-o").count(),
+            3,
+            "exactly three -o flags: {argv:?}"
+        );
+        assert!(
+            argv.iter().any(|a| a.as_str() == "ControlMaster=auto"),
+            "ControlMaster=auto must be present: {argv:?}"
+        );
+        assert!(
+            argv.iter()
+                .any(|a| a.as_str() == "ControlPath=/home/u/.daemoneye/var/run/ssh/%C"),
+            "the control path must end in %C and carry the daemon's dir: {argv:?}"
+        );
+        assert!(
+            argv.iter().any(|a| a.as_str() == "ControlPersist=10m"),
+            "ControlPersist=10m must be present: {argv:?}"
+        );
+        assert_eq!(
+            argv.iter().filter(|a| a.as_str() == "-tt").count(),
+            1,
+            "-tt appears once: {argv:?}"
+        );
+    }
+
+    #[test]
+    fn ssh_argv_does_not_set_batch_mode() {
+        let argv = ssh_argv(&entry("db01"), std::path::Path::new("/tmp/cp"));
+        assert!(
+            argv.iter().all(|a| !a.contains("BatchMode")),
+            "prompts must reach the user; BatchMode would suppress them: {argv:?}"
+        );
     }
 }
