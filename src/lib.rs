@@ -8,6 +8,7 @@ pub mod cli;
 pub mod config;
 pub mod cost;
 pub mod daemon;
+pub mod host;
 pub mod ipc;
 pub mod scheduler;
 pub mod scripts;

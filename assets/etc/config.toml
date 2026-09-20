@@ -377,3 +377,28 @@ prompt = "sre"
 #                               # (0 = keep forever; default: 7)
 # mailbox_retention_days  = 7   # delete agent mailbox results older than this
 #                               # (0 = keep forever; default: 7)
+
+# ── Hosts ────────────────────────────────────────────────────────────────────
+
+# [hosts.web01]
+# Named remote execution targets, keyed by host name.  The local host is
+# implicit — it is never configured here.  Names match [A-Za-z0-9._-], 1-64
+# chars, and `local` is reserved.
+#
+# ssh            = "matt@web01.lan"  # any ssh(1) destination; ~/.ssh/config
+#                                    # is honoured, so a bare Host alias works.
+#                                    # Required — an entry without it is a
+#                                    # config error.
+# tags           = ["web", "prod"]   # free-form labels for grouping; not
+#                                    # interpreted by the daemon
+# sudo_scripts   = ["pg-failover"]   # scripts that may run under sudo on this
+#                                    # host (the 1.x remote-sudoers model;
+#                                    # parsed, not yet enforced)
+# sandbox_profile = "none"           # M18 container profile for this host's
+#                                    # commands (parsed, not yet enforced)
+
+# totally_made_up_key = "x"
+# [hosts.db01]
+# ssh            = "db01"
+# sudo_scripts   = ["pg-failover"]
+

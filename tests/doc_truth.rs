@@ -690,11 +690,21 @@ fn seeded_config_template_has_no_phantom_keys() {
         let body = struct_body(&src, ty).unwrap_or_else(|| panic!("struct {ty} not found"));
         known.insert(section.clone(), struct_fields(body).into_iter().collect());
     }
+    assert!(
+        known.iter().any(|(_, f)| f.contains("ssh")),
+        "config_sections(ssh) must find HostEntry so [hosts.*] keys are checked",
+    );
+    assert!(
+        known.keys().any(|s| s == "hosts"),
+        "config_sections must register the hosts section for the phantom check",
+    );
 
     let mut phantom = Vec::new();
     for (section, key) in template_keys(&template) {
-        // `[models.<name>]` fields belong to the entry struct; `[x.y]` free-form
-        // maps (e.g. `[limits.per_tool]`) have user-chosen keys.
+        // `[models.<name>]` and `[hosts.<name>]` fields belong to their entry
+        // struct; other `[x.y]` free-form maps (e.g. `[limits.per_tool]` or
+        // the template's commented models blocks) have entry- or user-chosen
+        // keys and are skipped.
         let base = section.split('.').next().unwrap_or("").to_string();
         let lookup = if section.starts_with("models") {
             "models"

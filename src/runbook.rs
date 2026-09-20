@@ -94,6 +94,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
         let model = parse_string_field(frontmatter, "model");
         let auto_approve_commands = parse_bool_field(frontmatter, "auto_approve_commands");
         let agent = parse_string_field(frontmatter, "agent");
+        let hosts = parse_list_field(frontmatter, "hosts");
 
         let ghost_config = GhostConfig {
             enabled,
@@ -107,6 +108,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
             tool_policy: None,
             spawn_depth: 0,
             parent_job_id: None,
+            hosts,
         };
 
         (tags, memories, ghost_config, body)
@@ -563,6 +565,24 @@ Last updated: 2026-03-01
         let raw = "---\nenabled: true\n---\n# Runbook: test\n\n## Alert Criteria\n- x\n";
         let (_, _, gc, _) = parse_frontmatter(raw);
         assert_eq!(gc.max_ghost_turns, 0);
+    }
+
+    #[test]
+    fn runbook_without_hosts_is_unrestricted() {
+        let raw = "---\nenabled: true\n---\n# Runbook: test\n\n## Alert Criteria\n- x\n";
+        let (_, _, gc, _) = parse_frontmatter(raw);
+        assert!(
+            gc.hosts.is_empty(),
+            "no hosts: line must stay unrestricted (empty = unrestricted), got {:?}",
+            gc.hosts
+        );
+    }
+
+    #[test]
+    fn runbook_hosts_frontmatter_parses() {
+        let raw = "---\nenabled: true\nhosts: [web01, db01]\n---\n# Runbook: test\n\n## Alert Criteria\n- x\n";
+        let (_, _, gc, _) = parse_frontmatter(raw);
+        assert_eq!(gc.hosts, vec!["web01".to_string(), "db01".to_string()]);
     }
 
     #[test]

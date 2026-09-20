@@ -1,3 +1,4 @@
+use crate::host::HostId;
 use serde::{Deserialize, Serialize};
 
 /// Top-level configuration loaded from `~/.daemoneye/etc/config.toml`.
@@ -10,6 +11,10 @@ pub struct Config {
     /// be present; it is used when no session-level override is active.
     #[serde(default = "default_models")]
     pub models: std::collections::HashMap<String, ModelEntry>,
+    /// Named remote execution targets, keyed by host name.  Empty by default —
+    /// no `[hosts]` section is required.
+    #[serde(default)]
+    pub hosts: std::collections::HashMap<String, HostEntry>,
     #[serde(default)]
     pub masking: MaskingConfig,
     #[serde(default)]
@@ -51,6 +56,7 @@ impl Default for Config {
         Config {
             ai: AiConfig::default(),
             models: default_models(),
+            hosts: std::collections::HashMap::new(),
             masking: MaskingConfig::default(),
             context: ContextConfig::default(),
             notifications: NotificationsConfig::default(),
@@ -943,6 +949,69 @@ pub struct MaskingConfig {
     /// Example: `["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]`
     #[serde(default)]
     pub extra_patterns: Vec<String>,
+}
+
+impl Config {
+    /// Walk `[hosts.*]` and return one human-readable problem per bad entry.
+    /// Never panics and never stops the daemon: a typo'd host must not take
+    /// the whole thing down, so the caller only logs what comes back.
+    pub fn validate_hosts(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        for (name, entry) in &self.hosts {
+            if entry.ssh.trim().is_empty() {
+                problems.push(format!(
+                    "[hosts.{name}] ssh is empty or whitespace — every host needs a destination; \
+                     set ssh = \"user@hostname\" (or a bare alias from ~/.ssh/config)."
+                ));
+            }
+            if name.eq_ignore_ascii_case("local") {
+                problems.push(format!(
+                    "[hosts.{name}] `local` is reserved — the local host is implicit and cannot \
+                     be a [hosts] entry; remove this block and rely on HostId::Local."
+                ));
+                continue;
+            }
+            if let Err(err) = HostId::parse(name) {
+                problems.push(format!("[hosts.{name}] invalid host name: {err}"));
+            }
+        }
+        problems
+    }
+}
+
+/// A remote execution target.  Define one or more named entries in
+/// `config.toml` under `[hosts.<name>]`.  The local host is implicit and is
+/// **not** configured here.
+///
+/// Example:
+/// ```toml
+/// [hosts.web01]
+/// ssh = "matt@web01.lan"
+/// tags = ["web", "prod"]
+///
+/// [hosts.db01]
+/// ssh = "db01"
+/// sudo_scripts = ["pg-failover"]
+/// ```
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct HostEntry {
+    /// Any `ssh(1)` destination; `~/.ssh/config` is honoured, so a bare
+    /// `Host` alias is valid.  Required — an entry without it is a config
+    /// error.
+    #[serde(default)]
+    pub ssh: String,
+    /// Free-form labels for grouping.  Not interpreted by the daemon.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Scripts that may be run under `sudo` on this host, the 1.x
+    /// remote-sudoers model.  Parsed here; enforced in a later phase.
+    #[serde(default)]
+    pub sudo_scripts: Vec<String>,
+    /// M18 container profile to run this host's commands under, or `"none"`.
+    /// Parsed here; **not enforced** — the container work meets the host
+    /// model in a later milestone.
+    #[serde(default)]
+    pub sandbox_profile: Option<String>,
 }
 
 /// Per-model AI provider configuration.  Define one or more named entries in

@@ -871,4 +871,109 @@ mod tests {
         );
         assert!(logs.starts_with(&base), "{logs:?} must start with {base:?}");
     }
+
+    // ── [hosts] ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn hosts_default_to_empty() {
+        let cfg = Config::default();
+        assert!(
+            cfg.hosts.is_empty(),
+            "no [hosts] section must mean no hosts, got {:?}",
+            cfg.hosts
+        );
+        let parsed: Config = toml::from_str("[models.default]\nprovider = \"ollama\"\n").unwrap();
+        assert!(
+            parsed.hosts.is_empty(),
+            "a config with no [hosts] section parses and stays empty"
+        );
+    }
+
+    #[test]
+    fn hosts_parse_from_toml() {
+        let cfg: Config = toml::from_str(
+            "[hosts.web01]\n\
+             ssh = \"matt@web01.lan\"\n\
+             tags = [\"web\", \"prod\"]\n\
+             \n\
+             [hosts.db01]\n\
+             ssh = \"db01\"\n\
+             sudo_scripts = [\"pg-failover\"]\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.hosts.len(), 2);
+        let web01 = cfg.hosts.get("web01").expect("web01 must parse");
+        assert_eq!(web01.ssh, "matt@web01.lan");
+        assert_eq!(web01.tags, vec!["web".to_string(), "prod".to_string()]);
+        let db01 = cfg.hosts.get("db01").expect("db01 must parse");
+        assert_eq!(db01.ssh, "db01");
+        assert_eq!(db01.sudo_scripts, vec!["pg-failover".to_string()]);
+        assert!(db01.tags.is_empty(), "unset tags must default to empty");
+        assert_eq!(
+            db01.sandbox_profile, None,
+            "unset sandbox_profile must default to None"
+        );
+    }
+
+    #[test]
+    fn validate_hosts_reports_empty_ssh_and_reserved_local() {
+        let cfg: Config = toml::from_str(
+            "[models.default]\n\
+             provider = \"ollama\"\n\
+             \n\
+             [hosts.nokey]\n\
+             \n\
+             [hosts.local]\n\
+             ssh = \"matt@localhost\"\n",
+        )
+        .unwrap();
+        let problems = cfg.validate_hosts();
+        assert_eq!(
+            problems.len(),
+            2,
+            "exactly two problems expected (empty ssh, reserved local), got {problems:?}"
+        );
+        assert!(
+            problems.iter().any(|p| p.contains("nokey")),
+            "the empty-ssh problem must name its host: {problems:?}"
+        );
+        assert!(
+            problems.iter().any(|p| p.contains("local")),
+            "the reserved-key problem must name its host: {problems:?}"
+        );
+    }
+
+    #[test]
+    fn validate_hosts_rejects_a_name_host_id_parse_rejects() {
+        let cfg: Config = toml::from_str(
+            "[models.default]\n\
+             provider = \"ollama\"\n\
+             \n\
+             [hosts.\"../etc\"]\n\
+             ssh = \"matt@escape\"\n",
+        )
+        .unwrap();
+        let problems = cfg.validate_hosts();
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].contains(".."),
+            "the problem must echo parse's rejected name: {problems:?}"
+        );
+    }
+
+    #[test]
+    fn validate_hosts_stays_silent_on_clean_entries() {
+        let cfg: Config = toml::from_str(
+            "[models.default]\n\
+             provider = \"ollama\"\n\
+             \n\
+             [hosts.web01]\n\
+             ssh = \"matt@web01.lan\"\n",
+        )
+        .unwrap();
+        assert!(
+            cfg.validate_hosts().is_empty(),
+            "a clean entry yields no problems"
+        );
+    }
 }

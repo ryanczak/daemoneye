@@ -1,7 +1,7 @@
 # Phase 02: `[hosts.<name>]` becomes real config
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none in M21 — this is pure and additive. 01a/01b are `done`
 but nothing here touches them.
 **Estimated diff:** ~320 lines
@@ -499,3 +499,40 @@ in an authorized file, fix it and record that you did.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-20 02:20 (started)
+
+**Executor:** executor (headless run).
+Pre-flight confirmed at HEAD `6fdfe57d`... apart from the HEAD short-hash: the
+tip is now `ddfd7dcc`, the drafting commit itself, with `6fdfe57d` its parent —
+the tree is unchanged from what was probed. `src/host.rs` absent, no `pub
+hosts` in `config/types.rs`, no `hosts` in `runbook.rs`; `cargo test --lib` →
+1898 passed, 4 ignored; `--test doc_truth` → 14 passed. Status flipped to
+`in-progress` here and in the milestone README; working through the spec in
+task order.
+
+
+### Update — 2026-09-20 02:55 (Mutation B, first attempt — red attempt badly designed, discarding)
+
+**What happened:** ran the mutation as sketched (branch removed + phantom
+template key) and got a **green** — 1 passed. The discard reason is in the log
+above: `seeded_config_template_has_no_phantom_keys` has no self-check that
+HostEntry reached its `known` map, so a `[hosts.*]` key skates through the
+`section.contains('.') → continue` and the mutation is unobservable. The DAG
+has no arrow to anything that would have caught this earlier. (Memory note:
+the two low-signal risks that bit here were an untested cleanup and an
+unverified assertion — both in the same block.)
+
+**Doing instead:** re-run the mutation with two self-check assertions first
+added to the test (`config_sections(ssh)` in `known`, `hosts` section
+registered) — those must stay green logically, and give an unambiguous
+(a) state. Then the mutation run is one run, one red, and the green revert.
+
+```
+mutation B, pre-check (branch removed, phantom key removed, asserts added):
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+(meta: original sketch's figures — not claimed as a real mutation run.)

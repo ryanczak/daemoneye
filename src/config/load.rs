@@ -157,6 +157,7 @@ impl Config {
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         cfg.validate_pricing();
         cfg.validate_compaction();
+        cfg.validate_hosts();
         Ok(cfg)
     }
 

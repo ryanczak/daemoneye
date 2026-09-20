@@ -125,6 +125,12 @@ pub struct GhostConfig {
     /// Job ID of the parent ghost that spawned this one (if any).
     #[serde(default)]
     pub parent_job_id: Option<String>,
+    /// Hosts this ghost may open shells on, by `[hosts.<name>]` key.
+    /// Empty = unrestricted, preserving every existing runbook's behaviour
+    /// (a `hosts:` line is absent from all of them).  Parsed here;
+    /// **enforced in a later phase**.
+    #[serde(default)]
+    pub hosts: Vec<String>,
 }
 
 /// Effective limit configuration sent in `DaemonStatus` and `LimitsInfo` responses.

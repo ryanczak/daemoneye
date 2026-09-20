@@ -502,6 +502,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     startup_config.execution.validate();
 
+    // Warn about host entries that will not resolve; a typo'd host must not
+    // stop the daemon.
+    for warn in startup_config.validate_hosts() {
+        log::warn!("{warn}");
+    }
+
     // Remove orphaned sandbox containers and leaked staging volumes before any
     // sandboxed run. No-op while the sandbox is disabled.
     crate::daemon::executor::container::sweep_sandbox_leftovers(&startup_config.sandbox);
