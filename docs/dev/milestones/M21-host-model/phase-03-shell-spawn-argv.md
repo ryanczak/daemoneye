@@ -609,3 +609,56 @@ PASTE MATCH
 `/tmp/e2e-03.txt` produced by the capture script before any editing — `diff`
 reported no difference. All three throwaway HOMEs and the two extra hosts from
 this run were removed afterwards; no `daemoneye` processes were left running.)
+
+### Update — 2026-09-19 22:30 (acceptance-criteria sweep, all against the committed tree)
+
+Every acceptance grep and gate, run at `0b94aa9f`:
+
+**Pinned literals:**
+
+| Criterion | Measured |
+|---|---|
+| `grep -cE '^        args: Vec<String>,' src/main.rs` | **1** |
+| `grep -c 'allow_hyphen_values' src/main.rs` | **1** |
+| `grep -A3 '^pub async fn run_host(' src/shell/launch.rs` | `pub async fn run_host(id: &str, shell: &str, args: &[String], rows: u16, cols: u16) -> Result<()> {` — signature contains `args` |
+| `grep -c 'cmd.args(args)' src/shell/pty.rs` | **1** |
+| `grep -cE '^    pub host: crate::host::HostId,|^    pub host: HostId,' src/shell/registry.rs` | **1** |
+| `HostId::Local` file count (`grep -rc … \| grep -v ':0' \| wc -l`) | **3** — `src/shell/session.rs` (4), `src/shell/registry.rs` (5), `src/daemon/executor/knowledge/shell.rs` (6) |
+
+**Test counts:**
+
+| Filter | Before | After | Notes |
+|---|---|---|---|
+| `cargo test --lib` | 1908 passed / 4 ignored | **1917 passed / 4 ignored** | +9: the spec's seven plus two extras (see Task 6 note) |
+| `cargo test --lib 'shell::'` | 263 | **272** | +9; the two knowledge-module tests are under `daemon::…`, as the spec's note anticipated — the `--lib` total is the criterion that matters and it matches its own +9 |
+| `cargo test --lib 'daemon::executor::knowledge::shell'` | 67 | **70** | +3 (two rendering + one formatter-helper) |
+| `cargo test --test doc_truth` | 14 | **14 passed, unchanged** | |
+| `cargo test --lib 'host::'` | **32 passed** | **32 passed** | baseline measured at `f82402c7` (`git show` → same number), unchanged — `src/host.rs` is byte-identical (md5 `626e91ee…` both sides) |
+
+**Where the seven Task 6 tests landed** (the spec's "say where" note): two in
+`src/shell/pty.rs` (argv + no-argv spawn), three in `src/shell/launch.rs`
+(both `spawn_detached` rules plus the args-through ssh-shaped
+reconstruction), one in `src/shell/registry.rs`
+(`a_spawned_shell_records_the_local_host`), two in
+`src/daemon/executor/knowledge/shell.rs`
+(`local_shells_render_without_a_host` on the full local string, and
+`a_named_host_is_shown` — plus that module's third,
+`a_named_host_row_carries_the_host_through_the_formatter`, which exists
+because the named-host row is otherwise constructible only through the
+`row()` helper; it keeps the dead-code warning away and asserts the helper's
+rows reach the formatter).
+
+**Must-survive greps:** `^pub struct ShellRecord` → 1; `fn login_shell` → 1;
+`git diff --stat f82402c7..HEAD -- src/daemon/utils/sudo.rs src/config/` →
+**empty**; `^pub enum HostId` → 1; `^        name: "` → **42**;
+`deferred_group: None` → **28**. All pass.
+
+**Gates (final, at `0b94aa9f`):**
+
+```
+cargo fmt --all --check   → exit 0, no output
+cargo build               → Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+cargo clippy --all-targets --all-features -- -D warnings
+                          → Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.14s
+cargo test --lib          → test result: ok. 1917 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 19.97s
+```
