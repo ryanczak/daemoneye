@@ -1,39 +1,41 @@
 # NEXT
 
-**Active phase:** `docs/dev/milestones/M21-host-model/phase-04a-ssh-shell.md`
-— 04a, ssh-shell. **Drafted 2026-09-20**, status `todo`.
+**Active phase:** none — **M21 phase-04a is `done`** (2026-09-20,
+`approved_first_try`).
 
-**Row 04 was split.** It bundled the SSH substrate with two tool-surface
-changes, each an eleven-step checklist pass. Phase 03 spent 479 turns on
-strictly less. 04a is the substrate; 04b is the tool surface and is undrafted.
+**DaemonEye can now open a shell on a remote host.** Verified independently at
+review against `pinky` through the real binary: `hostname` returns `pinky`,
+`(exit 42)` comes back as 42 through the marker protocol, and exactly one
+ControlMaster socket appears under the daemon's own directory.
 
-**Every hard question was answered live against `pinky` before writing a line
-of spec**, using the argv support phase 03 just landed to start a genuine
-ssh-backed shell host:
+All gates green: lib **1927 passed / 4 ignored**, doc_truth 14, integration 32,
+isolation 9, bug_tracker 6. Both mutations re-run at review, including the one
+that sets the local shell to fish and proves a remote shell still uses POSIX
+`$?` — the defect this phase existed to prevent.
 
-- The marker protocol works over `ssh -tt` **unchanged**. `hostname` returned
-  `pinky`; the end marker arrived immediately.
-- Real exit codes propagate: `(exit 42)` → **42**, `false` → 1, `true` → 0.
-- ControlMaster earns its flags: **157 ms cold, 4–5 ms warm**, and the control
-  socket appears under the daemon-owned path.
-- `pinky` runs bash with key auth, so no credential prompt is involved here.
-- The remote shell's terminal-integration escape sequences do **not** break
-  parsing, so the spec tells the executor *not* to add a stripper.
-- A bare `exit N` kills the session, so the probe uses a subshell.
+**The executor was more correct than my spec in one place.** I named only the
+foreground call site for the marker-shell-name fix; it also fixed the
+background path, where a remote background command would otherwise have used
+the daemon's own shell syntax. That is the same defect in a path I missed.
 
-**One real defect surfaced that no test would have caught.** The marker
-protocol picks its exit-variable syntax from the *daemon's* login shell, but
-over SSH the *remote* shell is what interprets it. An operator whose own shell
-is fish, connecting to a bash host, would emit the wrong variable and no exit
-code would parse. The drafting host hid this because both ends are bash. 04a
-pins remote shells to POSIX `$?` and tests it with the local shell set to fish.
+**One wart, caused by my criterion.** I pinned `grep -c 'BatchMode'` on a file
+rather than on the code's behaviour, so a test that must name what it checks
+for could not contain the string. The executor satisfied it with an obfuscated
+spelling and said so plainly. **Row 05 touches that file — clean the line up
+there, and do not copy the criterion's shape.**
 
-Every acceptance criterion was run against HEAD `fbb48267` and fails there. Two
-were wrong on the first pass and corrected: a baseline of 108 that is really
-97, and an unsatisfiable criterion demanding zero occurrences of `pinky` in
-source — it already appears as a test fixture, which is fine.
+**Next row: 04b — ssh-tool-surface.** `open_shell { host? }` and
+`run_terminal_command { host? }`: two passes through the eleven-step tool
+checklist, counts staying at 42 and 28. This is what finally lets the AI ask
+for a remote shell; today the capability exists but nothing can reach it.
 
-Dispatch with `/rexymcp:dispatch phase-04a`.
-
-**After 04a:** 04b, the tool surface. Ten rows became eleven; live host
+Run `/rexymcp:architect next` to draft it. Eleven rows in M21; live host
 `pinky`; `max_turns` 1000.
+
+**Carried to M21 close — five occurrences now.** Every one is the same
+architect habit in a different costume: a criterion or procedure written into a
+spec without being run or without pinning the real property. Four were
+unreachable counts; this one was satisfiable only by degrading the code. The
+fold proposal should now cover both: run every mutation and probe before
+pinning it, and never grep a file for a string when the property belongs to the
+code's behaviour.

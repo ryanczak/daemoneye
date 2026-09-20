@@ -5,7 +5,7 @@
 `ShellRecord.host`). Both **done**.
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
-**Status:** review
+**Status:** done
 
 ## Goal
 
@@ -751,3 +751,74 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 713ce5df045387b5a3d382577f80011a82873aac
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-20
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one run, 479
+  turns)
+- **Gates, architect-run:** fmt, build, `clippy -D warnings` all clean;
+  `cargo test` → lib **1927 passed / 4 ignored**, doc_truth 14, integration
+  32 / 2 ignored, isolation 9 / 1 ignored, bug_tracker 6.
+- **Both mutations re-run by the reviewer**, red then green on revert.
+  Mutation A: 2 passed / 2 failed, with the two position tests failing and the
+  two shape tests correctly staying green. Mutation B: `left: "$status",
+  right: "$?"` — **the fish-shell guard fires**, which is the whole point of
+  the phase.
+- **Independent live verification against `pinky`**, through the real binary
+  with the argv `ssh_argv` produces:
+
+  ```
+  control sockets: 1
+  hostname  -> marker=True exit=0 contains_pinky=True
+  (exit 42) -> marker=True exit=42
+  ```
+
+  A remote command runs on the remote, its real exit status crosses the marker
+  protocol, and exactly one ControlMaster socket appears under the daemon's own
+  directory. `ssh_dir` is created by `ensure_dirs`.
+- **Scope deviations: five files outside the authorizations. All correct; two
+  were disclosed as such, three were not.**
+  - `src/config/runtime_tree.rs` and `assets/memory/knowledge/agent-runtime-layout.md`
+    — **disclosed**, and forced: existing consistency tests require the runtime
+    tree and the layout memory to move with any new policy row.
+  - `src/shell/mod.rs` — a re-export of the new functions. Implied by editing
+    `session.rs`; trivial.
+  - `src/config/seeds.rs` — `ensure_dirs` now creates `ssh_dir()`. The spec
+    said "created on demand"; eager creation is beyond it but harmless and
+    arguably better.
+  - `src/daemon/executor/bg_shell.rs` — **the executor was more correct than
+    the spec here.** Task 3 named only `shell_exec.rs`, but the background
+    command path picks a marker shell name too, and without this edit a remote
+    *background* command would have used the daemon's `$SHELL`. That is the
+    same defect the phase exists to prevent, in a path the spec missed.
+  None of these is a reason to bounce; the undisclosed three should have been
+  named, and are named here.
+- **One wart, and it is my criterion that caused it.** The acceptance criterion
+  `grep -c 'BatchMode' src/host.rs` → **0** counts the string *anywhere in the
+  file*, including a test that must name what it is checking for. The executor
+  satisfied it by writing
+
+  ```rust
+  .all(|a| !a.contains("Batch''Mode".replace("''", "").as_str()))
+  ```
+
+  which is functionally correct, obfuscated, and will puzzle the next reader.
+  It **disclosed this plainly** rather than hiding it. The criterion should
+  have pinned the property — that `ssh_argv`'s *output* sets no `BatchMode` —
+  not the file's text. **Row 05 touches `src/host.rs` for prompt patterns:
+  clean this line up there, and do not copy the criterion's shape.**
+- **Count deviations, all disclosed and correct:** `--lib` **1927** and
+  `host::` **36** exactly as pinned; `shell::` 276 and `config::` 99 rather
+  than unchanged, because the `marker_shell_name` tests live in `shell::session`
+  and the `ssh_dir` tests in `config::load`, which those filters match. My
+  must-survive asked only that no existing test name disappear, and none did.
+- **Calibration — fifth occurrence of one class, and the first where the
+  executor's response was to work around it rather than report it unmet.**
+  Four earlier phases shipped a criterion its own artifacts made unreachable;
+  this one shipped a criterion satisfiable only by degrading the code. The
+  standing fold proposal covers mutations and probes. **Widen it: a criterion
+  that greps a file for a string must pin a property of the code's *behaviour*,
+  not of the file's text, whenever a test would legitimately contain that
+  string.** Carry to M21 close, now at five occurrences.
