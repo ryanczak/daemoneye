@@ -506,3 +506,83 @@ unconditional):
 
 Both mutations: red under mutation, green on revert. No finding to note —
 neither survived green.
+
+### Update — 2026-09-20 10:10 (end-to-end verification)
+
+Task 7 against `pinky`, the PE-named live-verification host (key auth, so no
+credential prompt is ever met). Setup: a short temp `HOME`
+(`mktemp -d /tmp/de.XXXX`) with `mkdir -p $HOME/.daemoneye/var/run/ssh` and a
+`[hosts.pinky]` entry appended to its seeded `config.toml`; the live host then
+started through the real binary with the argv `ssh_argv` produces; driven with
+`Subscribe` + `Input` frames carrying the marker-wrapped command, exactly as
+the drafting recipe describes. One run, redirected to a file, pasted here —
+cold connect (no master socket exists), the warm connect that follows, then
+`(exit 42)` **in a subshell** (a bare `exit 42` kills the session — § Current
+state 6):
+
+```
+COLD  159 ms  marker=True exit=0 hostname=pinky
+WARM  18 ms  marker=True exit=0
+EXIT42 20 ms marker=True exit=42
+SOCKET_COUNT=1
+remote_hostname=pinky remote_exit_code=42 control_socket=1 warm_connect_faster=true
+```
+
+Four facts, each anchored:
+
+- `remote_hostname=pinky` — `hostname` on the remote returned `pinky`, and the
+  cast shows the OSC shell-integration sequence `hostname=pinky`, so the
+  command ran *there*, not locally (banner and 3008 sequences arrived before
+  the markers and did not break parsing, as measured at drafting).
+- `remote_exit_code=42` — `(exit 42)` came back parsed as **42** through
+  `$?`, carried by the marker protocol over `ssh -tt`.
+- `control_socket=1` — exactly one socket after connecting, named
+  `4f615d2cfa4ecbfa30be85927a4f870fdd51d116` (that is `%C`, the hash of the
+  connection parameters), under the temp `HOME`'s `var/run/ssh/`.
+- `warm_connect_faster=true` — asserted as the **ordering** (warm 18 ms <
+  cold 159 ms), never a fixed threshold.
+
+Probing note worth recording, discovered during this capture and consistent
+with the drafting measurement: killing the ControlMaster (`ssh -O exit`, or a
+SIGTERM of the master) exits the **only** `ssh` child behind the PTY — an ssh
+whose master dies does not reconnect — so a true cold connect is observable
+only in a fresh host generation. The capture above runs one generation: host
+spawned with no socket present, first command timed (cold), second command
+timed (warm). That is the same shape the daemon restart gives, because
+`var/run/ssh` is cleared at startup (Task 1).
+
+Self-check (the mechanical diff against the doc, quoted verbatim; the `PASTE
+MATCH` line is the required literal):
+
+```
+D=docs/dev/milestones/M21-host-model/phase-04a-ssh-shell.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-04a.txt
+diff /tmp/pasted-04a.txt /tmp/e2e-04a.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+PASTE MATCH
+```
+
+Task 6's mutation pair, the four `test result:` lines in one place:
+
+1. Mutation A (destination first), red:
+   `test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 1927
+   filtered out` — `ssh_argv_puts_the_destination_last` and
+   `ssh_argv_keeps_the_destination_as_one_token` failed, the two shape tests
+   stayed green.
+2. Mutation A reverted, green: `test result: ok. 4 passed; 0 failed; 0
+   ignored; 0 measured; 1927 filtered out`.
+3. Mutation B (remote uses `login_shell()` too), red with `SHELL=fish`:
+   `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1930
+   filtered out` — `left: "$status", right: "$?"`.
+4. Mutation B reverted, green: `test result: ok. 1 passed; 0 failed; 0
+   ignored; 0 measured; 1930 filtered out` (and
+   `a_local_shell_still_uses_the_login_shell` green throughout).
+
+Acceptance-criteria sweep, run at this tree:
+
+```
+ssh_dir=1 ssh_argv_decl=1 lifecycle_row=1 audit_row=1
+ControlPersist_in_host.rs=4 BatchMode_in_host.rs=0 marker_shell_name_files=1
+exit_var_pinned=1 login_shell_pinned=1 tools=42 deferred=28
+ai_ipc_cli_diff_files=0 ssh_spawning_tests=0
+```

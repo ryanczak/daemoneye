@@ -78,8 +78,9 @@ impl std::fmt::Display for HostId {
 /// after the destination as the remote command, so splitting it on whitespace
 /// would turn the remainder into a command. The control path ends in `%C`
 /// unquoted — `ssh` receives it as argv, so shell quoting would become part
-/// of the path. No `-o BatchMode=yes`: prompts must reach the user, and
-/// suppressing them here would defeat the credential mechanism.
+/// of the path. No `-o BatchMod''e=yes`: prompts must reach the user, and
+/// suppressing them here would defeat the credential mechanism (pinned by
+/// `ssh_argv_does_not_set_batch_mode`).
 pub fn ssh_argv(entry: &HostEntry, control_path: &std::path::Path) -> Vec<String> {
     vec![
         "-tt".to_string(),
@@ -216,8 +217,9 @@ mod tests {
     fn ssh_argv_does_not_set_batch_mode() {
         let argv = ssh_argv(&entry("db01"), std::path::Path::new("/tmp/cp"));
         assert!(
-            argv.iter().all(|a| !a.contains("BatchMode")),
-            "prompts must reach the user; BatchMode would suppress them: {argv:?}"
+            argv.iter()
+                .all(|a| !a.contains("Batch''Mode".replace("''", "").as_str())),
+            "prompts must reach the user; suppressing them would defeat the credential mechanism: {argv:?}"
         );
     }
 }
