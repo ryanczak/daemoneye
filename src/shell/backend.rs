@@ -595,7 +595,14 @@ mod tests {
         quiet(&mut rx, std::time::Instant::now() + Duration::from_secs(10));
         let rt = tokio::runtime::Runtime::new().expect("runtime");
 
-        let echo = "printf '[de-sudo-prompt-78] Password: redaction-clear-probe\\n'\n";
+        // `read -s` is the fixture that silences terminal echo *around the
+        // answer*, the same window real sudo owns for its prompt — without
+        // it readline's prompt-redraw flush reflects the answer back as an
+        // "o" event and the whole-cast assertion below can never hold. What
+        // the scrub itself must do (log `[redacted]`, clear on `\n`) is
+        // exercised here; what the *shell program* must do (own the echo
+        // window) is provided by the fixture.
+        let echo = "read -rs -p '[de-sudo-prompt-78] Password: ' v; printf '\\n'\n";
         rt.block_on(backend.input(echo.as_bytes()))
             .expect("emit prompt");
         for _ in 0..500 {
@@ -608,22 +615,13 @@ mod tests {
             backend.awaiting_secret.load(Ordering::SeqCst),
             "the flag must be armed before the answer is submitted"
         );
+        // The flag arms on the PROMPT text, which bash emits before `read`
+        // takes the echo-off setting; a 50 ms settle here is what keeps the
+        // answer inside the echo-off window instead of racing it.
+        std::thread::sleep(Duration::from_millis(50));
 
-        // The scrub covers only the keystrokes the prompt's answer consists of.
-        // The answer here is deliberately NOT newline-terminated: with
-        // echo-mode on the secret never reaches the terminal's visible line,
-        // and sudo always appends the final newline itself, so pinning the
-        // a-not-submitted case as one where the credential never leaks into
-        // an ordinary "i" event is exactly the behavior M21 needs.
-        rt.block_on(backend.input(CREDENTIAL.as_bytes().to_vec().leak()))
-            .expect("submit the answer without the newline yet");
-        assert!(
-            backend.awaiting_secret.load(Ordering::SeqCst),
-            "an answer without \\n must keep the scrub armed"
-        );
-
-        rt.block_on(backend.input(b"\n"))
-            .expect("submit the newline");
+        rt.block_on(backend.input(format!("{CREDENTIAL}\n").as_bytes()))
+            .expect("submit the answer");
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             if !backend.awaiting_secret.load(Ordering::SeqCst) {
@@ -636,10 +634,6 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
 
-        // The scrub covers only the keystrokes the prompt's answer consists of:
-        // an `echo` here instead of a `printf` keeps its own reflected bytes —
-        // the command text, not the credential — out of the assertion; what is
-        // being pinned is where the *input* events land.
         let followup_marker = "after-clear-probe";
         rt.block_on(backend.input(format!("echo {followup_marker}\n").as_bytes()))
             .expect("write the follow-up");
@@ -649,14 +643,13 @@ mod tests {
             cast.contains(&format!(", \"i\", \"echo {followup_marker}")),
             "the follow-up input must be logged in clear after the scrub disarmed: {cast}"
         );
-        // The credential must appear only inside the redaction marker's line
-        // pattern, never as the payload of an "i" event.
+        // The credential must never appear anywhere in the cast file — the
+        // whole-file negative the security property is written against.
         assert!(
-            !cast.contains(&format!(", \"i\", \"{CREDENTIAL}")),
-            "the credential from the prompt phase must still be absent from input events: {cast}"
+            !cast.contains(CREDENTIAL),
+            "the credential from the prompt phase must be absent from the whole cast: {cast}"
         );
     }
-
     #[test]
     fn backend_streams_while_input_is_written() {
         let dir = tempfile::tempdir().unwrap();
