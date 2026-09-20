@@ -1,38 +1,39 @@
 # NEXT
 
 **Active phase:** `docs/dev/milestones/M21-host-model/phase-02-host-config.md`
-— 02, host-config. **Drafted 2026-09-19**, status `todo`.
+— 02, host-config. **Stalled 2026-09-19** (`NoProgressStall`, 200 read-only
+turns), status `in-progress`. Refinement applied.
 
-Makes `[hosts.<name>]` real config: `src/host.rs` with `HostId`, a `HostEntry`
-free-form map on `Config`, `validate_hosts`, runbook `hosts:` frontmatter, and
-template documentation. **Pure and additive — nothing executes.** No SSH, no
-shell spawning, no ControlMaster; those are rows 03 and 04.
+**The stall was my defect, not the executor's: Mutation B was specified
+backwards.** It told the executor to *remove* the `hosts` branch and expect the
+phantom-key test to go red. Removing the branch makes the key **skipped**,
+which is the very gap the branch closes — so the mutation goes green and the
+run spent 200 turns chasing an impossible red.
 
-**Two drafting probes decided the shape, run against the real gate rather than
-reasoned about:**
+Both directions measured at escalation:
 
-1. **The struct name decides whether the doc gate sees the section at all.**
-   `tests/doc_truth.rs` discovers config sections by a type-name suffix of
-   `Config` or `Entry`. Named `HostSpec` — the name the design and this
-   milestone's own README used — the gate reports 14 passed and the section is
-   **invisible**: a user-facing config table would ship undocumented with
-   nothing complaining. Named `HostEntry`, the gate fails and demands the
-   fields be documented. The phase ships `HostEntry` and says why; the README
-   is corrected.
-2. **Phantom keys under `[hosts.*]` are not checked.** The gate skips any
-   section containing a `.` unless it has an explicit special-case, which only
-   `models` has. A deliberately invented key under `[hosts.web01]` passed
-   unnoticed. The phase adds the `hosts` branch and mutation-proves it with
-   that same key.
+| State | Result |
+|---|---|
+| branch present + phantom key uncommented | **FAILED** — the real red |
+| branch absent + phantom key uncommented | green |
 
-This is the calibration item from 01b applied: where a criterion's value comes
-from a procedure, run the procedure at drafting.
+The spec now carries the corrected direction with that table.
 
-Every acceptance criterion was run against HEAD `6fdfe57d` and fails there.
-Baselines measured: `config` 104, `runbook` 36, lib 1898 → 1906, doc_truth 14
-unchanged.
+**All four gates are green on the executor's work** — build, clippy, lib at
+**1908 passed**, doc_truth 14. `HostId`, `HostEntry`, `validate_hosts`, the
+runbook `hosts:` field and the template block all landed and are sound.
 
-Dispatch with `/rexymcp:dispatch phase-02`.
+**One piece of code is genuinely missing, and the stall hid it:** Task 5's
+`starts_with("hosts")` branch was never added — the run wrote a comment
+describing it and two guarding asserts instead. Finish condition is
+falsifiable: that grep must report **1**, and reports **0** now.
 
-**After 02:** 03 shell-spawn-argv. Ten rows in M21; live host `pinky`;
-`max_turns` 1000.
+Re-dispatch with `/rexymcp:dispatch phase-02`.
+
+**Calibration, carried to M21 close.** This is the third consecutive phase
+where I specced a mutation or a probe without running it first: 01b's Mutation
+A was unobservable, 01b's Task 6 probe used an echoing shell builtin, and now
+02's Mutation B is inverted. I applied the "run the procedure at drafting"
+rule to this phase's *discovery* probes and not to its *mutations*. The
+existing note in my own records says mutations must be applied before being
+pinned. Proposal stands: fold that into the pre-dispatch check.

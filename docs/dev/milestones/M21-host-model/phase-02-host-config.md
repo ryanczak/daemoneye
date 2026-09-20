@@ -357,13 +357,24 @@ capture block.
 `local` check so `"local"` becomes `Named("local")`.
 `host_id_treats_local_as_reserved_and_case_insensitive` must go **red**.
 
-**Mutation B — stop checking phantom keys under `[hosts.*]`.** Remove the
-`hosts` branch Task 5 adds to `doc_truth.rs`, and add
-`totally_made_up_key = "x"` under the template's `[hosts.<name>]` block.
-`seeded_config_template_has_no_phantom_keys` must go **red**. Revert both.
+**Mutation B — CORRECTED 2026-09-19; the original was backwards.** With Task
+5's `hosts` branch **in place**, uncomment the template's
+`totally_made_up_key = "x"` line under `[hosts.<name>]`.
+`seeded_config_template_has_no_phantom_keys` must go **red**, panicking at the
+phantom assertion. Re-comment the line; it goes green.
 
-**Mutation B is known to work**: the drafting probe ran exactly this shape and
-confirmed that *without* the `hosts` branch the phantom key passes unnoticed.
+**Both directions were run at escalation, so this is measured, not assumed:**
+
+| State | Result |
+|---|---|
+| branch **present** + key uncommented | **FAILED** — the specced red |
+| branch **absent** + key uncommented | `test result: ok` — green |
+
+The original spec said to *remove* the branch and expect red. That is exactly
+inverted: removing the branch makes the key **skipped** by the `'.'` rule,
+which is the very gap the branch closes. The previous run looped 200
+read-only turns chasing that impossible red. **Do not remove the branch as
+part of this mutation.**
 
 ### Task 8 — end-to-end capture
 
@@ -426,7 +437,7 @@ current value.
 - [ ] `grep -c 'starts_with("hosts")' tests/doc_truth.rs` → **1** (now 0)
 - [ ] `grep -c 'mod host' src/lib.rs` → **1** (now 0) — the module is wired in
 - [ ] `cargo test --test doc_truth` reports **14 passed, unchanged** — this phase adds no doc_truth test, it extends one
-- [ ] `cargo test --lib` reports **1906** (now 1898) — the eight Task 6 tests
+- [ ] `cargo test --lib` reports **1908** — corrected 2026-09-19 from 1906: the run landed ten tests rather than eight, which is fine. A *falling* count means tests were deleted to hit a number
 - [ ] Task 8's `PASTE MATCH` block reads exactly `hosts_section_documented=true template_parses=true hosts_parsed=2 reserved_rejected=true`, **or** the Update Log states plainly which fact could not be captured and why
 - [ ] The literal `PASTE MATCH` line appears in the end-to-end entry
 - [ ] Task 7's mutation pair, all four `test result:` lines, in the Update Log
@@ -536,3 +547,93 @@ test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```
 
 (meta: original sketch's figures — not claimed as a real mutation run.)
+
+### Update — 2026-09-19 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the stall has a single, specific cause and it is an architect
+defect — **Mutation B was specified backwards and cannot redden as written**,
+so the executor looped 200 read-only turns chasing a red that does not exist.
+The spec is corrected below; the code the executor wrote is sound.
+
+**Architect gate run against the partial tree, 2026-09-19** — all four green:
+
+| Gate | Result |
+|---|---|
+| `cargo build` | clean |
+| `cargo clippy --all-targets --all-features -- -D warnings` | clean |
+| `cargo test --lib` | **1908 passed**, 4 ignored |
+| `cargo test --test doc_truth` | 14 passed |
+
+`HostId`, `HostEntry`, `validate_hosts`, the runbook `hosts:` field, the
+module wiring and the template block all landed and work.
+
+**The defect, measured both ways.** Mutation B told the executor to *remove*
+the `hosts` branch and *add* the phantom key, then expect red. Run at
+escalation:
+
+- branch **absent** + phantom key present → `test result: ok` (**green**).
+  Removing the branch makes the key *skipped* by the `'.'` rule, which is the
+  whole reason the branch is needed. The mutation as written asserts the
+  opposite of what it proves.
+- branch **present** + phantom key present → `FAILED`, panicking at
+  `doc_truth.rs:728`. **This is the correct direction** and it is now the
+  specced Mutation B.
+
+**A second thing the stall hid, which the corrected mutation now catches.**
+Task 5's `starts_with("hosts")` branch was **never added**. The executor wrote
+a comment describing it and two `assert!`s guarding that `config_sections`
+registers `hosts`, but the lookup still falls through to the `'.'` rule, so
+`[hosts.*]` keys remain unchecked. The acceptance criterion
+`grep -c 'starts_with("hosts")' tests/doc_truth.rs` → **1** correctly reads
+**0** and is the finish condition for the re-dispatch.
+
+**Tree state:** the run left the mutation half-applied (phantom key
+uncommented, branch removed). Reverting it to `HEAD` is that mutation's
+correct end state — "revert both" — so nothing of the executor's work product
+was discarded. The tree is clean at `e6c945e0`.
+
+### Notes for executor — 2026-09-19 (RESUME — read this first)
+
+**You did not fail; the spec did.** Mutation B was written backwards and
+cannot go red as it was phrased, which is what the 200 read-only turns were
+spent on. It is corrected above with both directions measured. **All four
+gates are green on your work** — `cargo build`, `clippy -D warnings`,
+`cargo test --lib` at **1908 passed**, `doc_truth` at 14. `HostId`,
+`HostEntry`, `validate_hosts`, the runbook `hosts:` field and the template
+block are all sound. **Do not re-derive any of it.**
+
+**There is exactly one piece of code missing, and it is three lines.** Task 5's
+branch was never added to `tests/doc_truth.rs`. You wrote a comment describing
+it and two `assert!`s guarding that `config_sections` registers `hosts` — keep
+those, they are a reasonable extra — but the lookup still falls through to the
+`'.'` rule, so `[hosts.*]` keys are not actually checked. Add the branch:
+
+```rust
+        let lookup = if section.starts_with("models") {
+            "models"
+        } else if section.starts_with("hosts") {
+            "hosts"
+        } else if section.contains('.') {
+            continue;
+        } else {
+            base.as_str()
+        };
+```
+
+**Finish condition, falsifiable:** `grep -c 'starts_with("hosts")'
+tests/doc_truth.rs` must report **1**. It currently reports **0**.
+
+**Then run the corrected Mutation B** — branch in place, uncomment the
+template's `totally_made_up_key` line, confirm red, re-comment, confirm green.
+Both `test result:` lines into the Update Log, plus Mutation A's pair.
+
+**Then Task 8's capture**, which was never reached.
+
+**Two things to leave alone:** the phantom-key line in the template stays
+**commented** in its final state — it exists so the mutation has something to
+uncomment, and an uncommented stray in a shipped config template is a real
+defect. And `cargo test --lib` is at **1908**, two above the doc's pinned
+1906; that is fine, you added ten tests rather than eight. **State the number
+you land on in the Update Log rather than deleting tests to hit 1906** — the
+criterion is being corrected to 1908 below.
