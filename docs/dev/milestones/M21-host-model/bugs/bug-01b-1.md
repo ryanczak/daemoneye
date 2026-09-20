@@ -1,7 +1,7 @@
 # Bug 1 on phase-01b: the end-to-end evidence redefines the criterion it reports, and the ordering the phase exists to protect is unpinned
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-09-19 — all three findings verified fixed at review; capture re-run independently with real sudo (whole-file grep 0), mutation B reproduced red/green
 **Filed:** 2026-09-19
 
 ## What's wrong

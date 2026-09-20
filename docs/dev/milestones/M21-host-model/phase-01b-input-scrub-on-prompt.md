@@ -1,7 +1,7 @@
 # Phase 01b: the credential never reaches the cast log
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** 01a (the prompt round-trip that writes the credential). **done**.
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=security, size=s
@@ -910,3 +910,62 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 123d7a229601cbe5f2c3b8b0505062c27a5ed96c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-19
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-01b-1, major, now closed). Two of its three findings
+  were architect defects in the spec the executor followed.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (two runs, 267
+  then 523 turns).
+- **Gates, architect-run:** `cargo fmt --all --check`, `cargo build`,
+  `cargo clippy --all-targets --all-features -- -D warnings` all exit 0;
+  `cargo test` → lib **1898 passed / 4 ignored**, doc_truth 14, integration
+  32 / 2 ignored, isolation 9 / 1 ignored, bug_tracker 6. Every pinned module
+  count **unchanged** as the bounce required: `shell::backend` 15,
+  `shell::log` 21, `daemon::utils::sudo` 14. No scope creep.
+- **The bounce's three findings are closed, and the reviewer verified each
+  independently rather than reading the claim:**
+  1. The capture now drives **real `sudo`**, and the whole-file predicate is
+     reported under its own name with no redefinition anywhere in the entry
+     (`grep` for an `"i"`-event qualifier in that entry → 0).
+  2. Mutation A is recorded as **withdrawn as unobservable**, with the
+     structural source-order pin in its place. No red was manufactured.
+  3. Both Task 4 credential assertions are now whole-cast
+     (`!cast.contains(CREDENTIAL)` at two sites; the `"i"`-scoped form is
+     gone). The probe-artifact bug doc is deleted; only `bug-01b-1.md` remains.
+- **Independent end-to-end re-run by the reviewer**, real `sudo` against a
+  real shell host:
+
+  ```
+  whole-file grep for the secret : 0
+  redaction markers              : 4
+  followup in clear ("i" event)  : 1
+  input events: sudo -k…  [redacted] ×4  echo reviewer-followup-clear
+  ```
+
+  This reproduces the executor's capture exactly, under the **specced**
+  predicate. Mutation B re-applied by the reviewer: red, then green on revert.
+- **Scope deviations:** none.
+- **Two real findings the second run surfaced, both recorded in its Update Log
+  and both correct.** Real `sudo` re-prompts three times and each retry
+  re-arms the scrub, so a probe answering only the first prompt leaves the
+  rest pending. And sudo's own closing line, `sudo: 3 incorrect password
+  attempts`, contains the word "password", so the broad matcher re-arms on it
+  and the next command is redacted. **That is the documented cost of matching
+  broadly, working as designed** — one line of log fidelity, never a leak —
+  and the reviewer's independent capture shows the same four markers for the
+  same reason.
+- **Calibration — one item, architect-side, and it is the same class as the
+  last two.** Task 6 prescribed a sudo-*shaped* probe (`read -r pw`) to avoid
+  a real credential, without checking that a shell `read` leaves terminal echo
+  on. The criterion it was meant to demonstrate was therefore unreachable by
+  the probe the same spec mandated, and the executor met the probe rather than
+  the criterion. This is the third consecutive phase where an acceptance
+  criterion and the spec's own instructions were inconsistent (08b, 10b, and
+  now here). The M22 pre-dispatch trigger asks whether pinned counts were
+  re-derived after the spec's own artifacts; it does **not** ask whether the
+  spec's prescribed *procedure* can produce the value its criterion demands.
+  **Recommend at M21 close:** extend the trigger to cover that — for every
+  criterion whose value comes from a procedure the spec prescribes, run the
+  procedure once at drafting.
