@@ -37,7 +37,10 @@ impl HostId {
                 name.len()
             ));
         }
-        if !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')) {
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
             return Err(format!(
                 "host name {name:?} contains a character outside [A-Za-z0-9._-]; expected [A-Za-z0-9._-]+, 1-64 chars"
             ));

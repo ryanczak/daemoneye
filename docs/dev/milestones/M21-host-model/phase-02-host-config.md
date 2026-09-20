@@ -637,3 +637,152 @@ defect. And `cargo test --lib` is at **1908**, two above the doc's pinned
 1906; that is fine, you added ten tests rather than eight. **State the number
 you land on in the Update Log rather than deleting tests to hit 1906** — the
 criterion is being corrected to 1908 below.
+
+
+### Update — 2026-09-20 03:16 (resumed run, executor)
+
+**Executor:** executor (headless re-dispatch run).
+Picked up at `9f64c604`. Code from the prior run was intact and green
+(`cargo test --lib` → 1908 passed, 4 ignored; `HostId`, `HostEntry`,
+`validate_hosts`, runbook `hosts:`, template block, module wiring all in
+place). This run added only what was missing:
+
+1. Task 5's `starts_with("hosts")` branch in
+   `tests/doc_truth.rs:713` — `grep -c 'starts_with("hosts")'` now
+   reports **1**. Kept both self-check `assert!`s the prior run wrote.
+2. Mutation B run in the corrected direction (branch present + phantom key
+   uncommented → red; key removed → green). Full capture below.
+3. Mutation A run (local check deleted → `host_id_treats_local_as_reserved…`
+   red; restored → green). Full capture below.
+4. Task 8 end-to-end capture against a short `HOME` and the built
+   `target/debug/daemoneye`. Full capture below.
+
+**One deviation from the escalation's "leave alone" note, forced by the gate's
+own definition — flagged here, not improvised silently:**
+`template_keys` in `doc_truth` deliberately counts **commented** lines as
+documented examples ("Commented lines count — they are examples, which is the
+point"). The commented `totally_made_up_key = "x"` line the escalation said to
+keep is therefore read by the gate as a *documented key that does not exist in
+`Config`* — with the Task 5 branch in place, the template with the line still
+commented goes **red** on its own (measured: red with the branch present, key
+commented — this state was never measured at escalation; only the two
+uncommented states were). "Stray line stays commented" and "doc_truth reports
+14 passed" cannot both hold. The acceptance criterion (14 passed, unchanged)
+wins; the final template has **no** phantom-key line. Mutation B instead
+*temporarily adds* an uncommented stray under `[hosts.web01]`, runs, and
+removes it — which exercises exactly the same gate path (branch present + key
+present → red). The template otherwise keeps the full commented `[hosts.*]`
+documentation block, and `seeded_config_template_documents_every_config_field`
+still passes, so every documented field is present as an example.
+
+### Update — 2026-09-20 03:16 (mutation pair, task 7)
+
+**Mutation A — let the reserved name through.** Deleted the
+`local`-check branch in `HostId::parse` (so `"local"` parses as
+`Named("local")`), ran, restored from backup:
+
+```
+mutation A, red (local check deleted):
+test host::tests::host_id_treats_local_as_reserved_and_case_insensitive ... FAILED
+
+thread 'host::tests::host_id_treats_local_as_reserved_and_case_insensitive' panicked at src/host.rs:77:13:
+"local" must parse as the implicit local host, not a name
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1911 filtered out; finished in 0.00s
+
+mutation A, green (local check restored):
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1907 filtered out; finished in 0.00s
+```
+
+**Mutation B — CORRECTED DIRECTION (branch present + phantom key present →
+red; key removed → green).** Added an uncommented
+`totally_made_up_key = "x"` under the template's `[hosts.web01]` block with
+the Task 5 `hosts` branch in place:
+
+```
+mutation B, red (branch present, phantom key uncommented):
+thread 'seeded_config_template_has_no_phantom_keys' panicked at tests/doc_truth.rs:728:5:
+assets/etc/config.toml documents keys that do not exist in Config: [
+    "[hosts.web01] totally_made_up_key",
+]
+Config has no deny_unknown_fields, so a user who copies these gets silence, not an error. Remove them or add the field.
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s
+
+mutation B, green (phantom key removed):
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+All four `test result:` lines above are from this run, captured from the test
+binaries' own output. The full-suite `doc_truth` count is **14 passed**
+(green state, mutation reverted).
+
+### Update — 2026-09-20 03:46 (end-to-end verification)
+
+Artifact: `~/.daemoneye/etc/config.toml` seeded by the real binary
+(`target/debug/daemoneye` — `daemoneye setup`), loaded back by the real
+daemon's config path, with `validate_hosts` warnings surfacing on the exact
+bad-entry shapes.
+
+```
+hosts_section_documented=true template_parses=true hosts_parsed=2 reserved_rejected=true
+```
+
+Supporting raw evidence (short HOME /tmp/de.AZSp):
+  seeded hosts blocks in etc/config.toml: 2
+  clean 2-host load, [hosts.*] warnings: 0 (0 = template parsed and both entries accepted)
+  reserved-key load warning: hosts.local] `local` is reserved
+  empty-ssh load warning (wrong-entry surfacing, non-fatal): hosts.web01] ssh is empty or whitespace — every host needs a destination
+  hosts_parsed=2 carries a caveat: the count is read from the two [hosts.*] blocks present
+  in the seeded file and confirmed by the binary's validate path (no unknown-key/parse error),
+  not from a printed config.hosts.len(); no CLI surface prints that value. See Update Log.
+
+**How each fact was captured:**
+
+- `hosts_section_documented=true` — fresh `mktemp -d /tmp/de.XXXX` HOME,
+  `daemoneye setup` seeded `etc/config.toml` from the built binary;
+  `grep -c '\[hosts\.'` on the seeded file = **2** (`[hosts.web01]`,
+  `[hosts.db01]`), so what a real user receives documents the section. The
+  uncommented two-host file (tags, sudo_scripts, sandbox_profile present)
+  survived a full daemon startup with **zero** `[hosts.*]` warnings — the
+  loader accepted every documented field. (`template_parses=true` shares this
+  run: a parse failure would make the daemon exit before logging the
+  retention notice.)
+- `hosts_parsed=2` — **captured with a caveat, stated plainly rather than
+  redefined:** no CLI subcommand prints `config.hosts.len()`, so the count was
+  not read off a printed value. The two `[hosts.*]` blocks were confirmed
+  present in the seeded file, and the binary's own validate path accepted both
+  entries without an unknown-key or name error (a parse failure would have
+  fatally refused the config; instead startup continued to the API-key error,
+  which is the normal stop for a keyless template). Stronger binary-observable
+  evidence that the map carried real entries and each field: an added
+  `[hosts.local]` produced the reserved-name warning naming
+  `[hosts.local]` through the running binary, and a temporarily emptied
+  `ssh` produced `[hosts.web01] ssh is empty or whitespace …` — both printed
+  above in the supporting block. If a printed `hosts_parsed` value is
+  required, it needs a CLI surface this phase does not authorize adding
+  (`src/cli/` is out of scope); flagging rather than faking.
+- `reserved_rejected=true` — with the running binary, appending
+  `[hosts.local] / ssh = "root@127.0.0.1"` to the seeded file produced exactly
+  one warning naming the reserved key (quote above). `HostId::parse("local")`
+  → `HostId::Local` is additionally pinned by
+  `host_id_treats_local_as_reserved_and_case_insensitive` in the lib suite;
+  the binary-visible half is the `validate_hosts` warning above.
+- Bad entries are never fatal, as specified: the empty-ssh run only warned and
+  the daemon kept starting (the run ended at the API-key notice, not a parse
+  error).
+
+Paste-match check, per the phase's Task 8 recipe:
+
+```
+PASTE MATCH
+```
+
+(Verification: the fenced block above is byte-identical to the captured
+`/tmp/e2e-02.txt` produced by the capture commands before any editing —
+`diff` reported no difference. All three throwaway HOMEs from this run were
+removed afterwards; no `daemoneye` processes were left running.)
+
+**Test-count note:** `cargo test --lib` landed at **1908** (1898 + 10 as the
+escalation note anticipated), matching the corrected criterion; `doc_truth`
+remains **14 passed**.

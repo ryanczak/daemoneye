@@ -710,6 +710,8 @@ fn seeded_config_template_has_no_phantom_keys() {
         let base = section.split('.').next().unwrap_or("").to_string();
         let lookup = if section.starts_with("models") {
             "models"
+        } else if section.starts_with("hosts") {
+            "hosts"
         } else if section.contains('.') {
             continue;
         } else {

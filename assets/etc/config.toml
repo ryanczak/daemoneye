@@ -396,8 +396,6 @@ prompt = "sre"
 #                                    # parsed, not yet enforced)
 # sandbox_profile = "none"           # M18 container profile for this host's
 #                                    # commands (parsed, not yet enforced)
-# totally_made_up_key = "x"          # strays like this are what the phantom-key
-#                                    # gate catches under [hosts.*]
 
 # [hosts.db01]
 # ssh            = "db01"
