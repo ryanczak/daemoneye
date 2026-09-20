@@ -1,7 +1,7 @@
 # Phase 04b: ssh-tool-surface — `open_shell { host? }`
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-04a (the `ssh_argv` builder and `spawn_ssh_host` this
 phase gives its first caller)
 **Estimated diff:** ~330 lines
@@ -921,3 +921,74 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0eb3d06e843955d532953764df399b96d0c7e51d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-20
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 — the first dispatch `hard_fail`ed on
+  `VerifierFailurePersistent { consecutive_failures: 6 }` partway through
+  Task 4 and was resumed, not re-dispatched. No bug doc was filed.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** one, disclosed by the executor and accepted — see
+  Calibration.
+- **Calibration:** two items, both architect-side; neither blocks.
+
+**Independently re-verified at review, not read from the executor's report.**
+
+- All four gates re-run as separate invocations: `cargo fmt --all --check`
+  clean, `cargo build` clean, `cargo clippy --all-targets --all-features
+  -- -D warnings` exit 0, `cargo test` green. Lib **1935 passed / 0 failed /
+  5 ignored**.
+- Every acceptance criterion re-run. All six test filters return their pinned
+  values, including `open_shell_on_` at **2 passed, 1 ignored**. Preservation
+  criteria hold: 42 `ToolDef` entries, 28 core, `doc_truth` 14.
+- **Both mutations re-applied and observed by the reviewer.** Mutation A
+  (drop `record.host == HostId::Local` from the reuse filter) turns
+  `a_remote_shell_is_never_reused_for_a_local_command` red at
+  `session.rs:444`. Mutation B (delete the up-front `host_entry`) reproduces
+  the exact poisoned sentence § Current state 5 predicted: *"unknown host
+  \"nope\"; configured hosts: db01, web01 — the per-owner shell limit is 5.
+  Close one of your shells"*. Both restored; tree clean after each.
+- **The live end-to-end was re-run against `pinky` by the reviewer** and
+  printed the identical line, `record_host=pinky listed_host=pinky
+  remote_hostname=pinky remote_exit_code=42`, in 1.98 s, leaving no control
+  socket behind under `ssh_dir()`.
+- Hygiene: every new `unwrap`/`expect`/`panic!`/`println!` is in test code,
+  which STANDARDS §1 exempts. The single production `expect` in the touched
+  file (`shell.rs:1452`, the ANSI-strip regex) predates this phase — it came
+  in with M22. The one new `#[ignore]` is the live-host test this phase doc
+  prescribed, which is STANDARDS §3.4's required shape, not a masked
+  diagnostic.
+
+**The test count is 1935, not the spec's derived 1934, and the executor was
+right.** It added an eighth named test,
+`open_shell_rejects_a_malformed_host_name_before_any_spawn`, because Task 3b
+arms the `HostId::parse` error path and none of the seven named tests
+exercised it. It stated the number and the reason rather than trimming a test
+to hit the pin, which is exactly what the criterion asked for. My arithmetic
+was the thing that was wrong.
+
+**Calibration 1 — the hard_fail was my spec's fault, and the remedy was
+already known.** This is the second time a phase changing an
+exhaustively-matched type has tripped `VerifierFailurePersistent`; the first
+added a variant, this one added a field. Task 4 should have said the tree will
+not compile mid-task, batched the enum sites, and told the executor to build
+only after the batch. It now does. Filed upstream as
+`ryanczak/rexyMCP#10` with a replay of all 435 session logs: seven of the
+detector's eight fires were wiring sweeps that completed on the next dispatch.
+Recorded as `multi_site_break` + `spec_bug`; **not** charged to the model.
+
+**Calibration 2 — an accepted scope deviation with a latent flaw for row
+04c.** Tests driving the public `open_shell` need a registry they can assert
+on, and the daemon's is a `OnceLock`; the executor added a `cfg(test)`
+`open_shell_test_seam` that swaps one in. Production is unaffected and proven
+— under `cfg(not(test))` the two helpers resolve to `crate::shell::registry()`
+and `spawn_detached_host`. STANDARDS §3.3 endorses a seam here. Two flaws,
+neither active today: `swap_in` returns the **previous value, not an RAII
+guard**, so the global is never restored and the doc comment above it
+("restore the old by dropping the guard") is false; and the swapped registry
+is `Box::leak`ed. Harmless now because all four consumers swap and all
+serialize through `lifecycle_home()`'s `test_home_guard()`. **It becomes a
+real order-dependent flake the moment a test calls `open_shell` without
+swapping — which row 04c will do.** Fix it there, as a real guard, before
+adding `run_terminal_command { host }` tests.
