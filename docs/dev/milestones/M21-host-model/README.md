@@ -74,13 +74,13 @@ the live close is last.
 |----|-------|--------|
 | 01a | credential-prompt-on-pty ([phase-01a-credential-prompt-on-pty.md](phase-01a-credential-prompt-on-pty.md)) — detect a `sudo` password prompt on a **local** PTY shell and round-trip it through `Response::CredentialPrompt` / `CredentialResponse`, the mechanism the tmux path has and the PTY path has **none** of. **Drafting probe confirmed the defect live:** real `sudo` on a PTY shell emits `[sudo] password for matt: ` and **no end marker ever arrives** | done |
 | 01b | input-scrub-on-prompt ([phase-01b-input-scrub-on-prompt.md](phase-01b-input-scrub-on-prompt.md)) — the shell host writes `[redacted]` instead of the credential's bytes while the screen shows a secret prompt. **Drafting measured the race:** the pump broadcasts to the daemon *before* it feeds the screen, so a screen-based check loses to a daemon that answers immediately — the flag is armed from the chunk, ahead of the broadcast | done           |
-| 02 | host-config — `src/host.rs`: `HostId`, `HostSpec { ssh, tags, sudo_scripts, sandbox_profile }`, `[hosts.<name>]` as a free-form map on `Config` (the `[models.<name>]` subtable mechanism `doc_truth` already handles), template docs, validation. Runbook `hosts: [...]` frontmatter → `GhostConfig.hosts`. Pure, additive | todo (not drafted) |
+| 02 | host-config ([phase-02-host-config.md](phase-02-host-config.md)) — `src/host.rs` with `HostId`, `[hosts.<name>]` as a free-form `HostEntry` map on `Config`, `validate_hosts`, runbook `hosts:` frontmatter, template docs. Pure and additive — nothing executes. **Drafting probe decided the struct name:** `doc_truth` discovers config sections by a `Config`/`Entry` type suffix, so `HostSpec` is invisible to the gate and `HostEntry` is not | todo |
 | 03 | shell-spawn-argv — the spawn path carries a program **and its arguments** end to end (`shell-host` clap → `launch::spawn_detached` → `PtyShell::spawn`), and `ShellRecord` gains `host: HostId` (the 9-site struct change 04a measured). `list_shells` and `[SHELLS]` show the host. Local behaviour byte-identical | todo (not drafted) |
 | 04 | ssh-shell — `Host::Ssh` spawn: `ssh -tt -o ControlMaster=auto -o ControlPath=<var/run/ssh/%C> -o ControlPersist=10m <dest>` as the shell program; the `var/run/ssh/` path constructor + lifecycle row; readiness = remote prompt; the marker protocol over ssh (the remote-shell exit-variable decision is **measured here**). `open_shell { host? }` and `run_terminal_command { host? }`. Live: one command on the configured host, in the cast log. ControlMaster reuse measured | todo (not drafted) |
 | 05 | ssh-prompt-detection — host-key (`continue connecting`), password, passphrase and `Permission denied` patterns extend 01a's detector; 01b's scrub covers them. **Remote sudo** is 01a's detector over the ssh PTY — verified live | todo (not drafted) |
 | 06 | new-host-approval — `Response::ToolCallPrompt` gains a `classification` (`command` / `remote_shell` / `new_host` / `escape_hatch`); an unconfigured destination is allowed but gated as `new_host` with an offer to persist to `[hosts]`; the client renders the class and names the host; session-scope `A` is per class per host. Ghost `hosts:` enforced — an unlisted host is refused and recorded (the M18 D6 "parked escape-hatch" pattern). The re-homed M19 phase-09 lands here as a classification | todo (not drafted) |
 | 07 | remote-file-ops-over-pty — `read_file` / `edit_file` gain `host?`; the four `target_pane` sites in `file_ops/ops.rs` route the existing hex-encoded python/perl one-liners through an idle shell on the host (or a new one — never into an `interactive` shell) with **marker-delimited** results instead of pane scraping; `target_pane` retired from both tools. Closes M22's deferral. `CLAUDE.md` / `README.md` rows | todo (not drafted) |
-| 08 | ghost-host-mapping — `GhostPolicy.ssh_target` maps onto `HostId` unchanged in meaning: `wrap_remote`'s `ssh <target> '<cmd>'` string-wrap becomes "run in a shell on that host"; `resolve_command`, `remote_stream_cmd` and `remote_materialize_cmd` keep their semantics; `HostSpec.sudo_scripts` is the 1.x remote-sudoers model. The re-homed M19 phase-12 (`sandbox_profile` on a host) is parsed here, not enforced | todo (not drafted) |
+| 08 | ghost-host-mapping — `GhostPolicy.ssh_target` maps onto `HostId` unchanged in meaning: `wrap_remote`'s `ssh <target> '<cmd>'` string-wrap becomes "run in a shell on that host"; `resolve_command`, `remote_stream_cmd` and `remote_materialize_cmd` keep their semantics; `HostEntry.sudo_scripts` is the 1.x remote-sudoers model. The re-homed M19 phase-12 (`sandbox_profile` on a host) is parsed here, not enforced | todo (not drafted) |
 | 08b | spawn-ghost-host — `spawn_ghost_shell { host? }` (§ 2.5): a coordinator names the host a specialist's shells open on; the value must be in the runbook's `hosts:` list (row 06's enforcement) or it is refused as an unlisted host. Rides 08's mapping; **PE added at sign-off** | todo (not drafted) |
 | 09 | live-close — the exit criterion end to end: a remote sudo edit from chat on the configured host; cast log shows the edit, no `"i"` event carries the password; ControlMaster reuse timed. Architect-run; the phase exists so the obligation is a tracked `## Spec` task, not a close-out promise | todo (not drafted) |
 
@@ -201,6 +201,19 @@ Every row above was shaped by one of these. Each was read from the tree on
   streaming" once; `CLAUDE.md`'s `edit_file` row says "remote via
   `target_pane`". PE rule: README current at every 2.0 milestone close and on
   any user-visible change — rows 07 and 08 carry those edits.
+
+- **The config struct is `HostEntry`, not `HostSpec` — probed at 02 drafting
+  (2026-09-19).** `tests/doc_truth.rs` discovers config sections by walking
+  `Config`'s fields and keeping those whose **type name ends with `Config` or
+  `Entry`**. Measured both ways against the real gate: named `HostSpec`,
+  `doc_truth` reports **14 passed** and the section is invisible — a
+  user-facing config table would ship wholly undocumented with nothing
+  complaining. Named `HostEntry`, the gate **fails** naming `"[hosts] ssh"`
+  and `"[hosts] tags"` as undocumented, which is the gate working. The design
+  and this README's earlier rows said `HostSpec`; 02 supersedes that. A second
+  probe found the phantom-key half skips any section containing a `.`, so
+  `[hosts.web01]` keys go unchecked until `doc_truth` gains a `hosts`
+  special-case beside its `models` one — 02 adds it and mutation-proves it.
 
 ### Not in this milestone
 
