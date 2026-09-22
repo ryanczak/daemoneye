@@ -1,7 +1,7 @@
 # Phase 04c: host-keyed reuse — the plumbing `run_terminal_command { host }` needs
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** in-progress — bounced by review, see `bugs/bug-04c-1.md`
 **Depends on:** phase-04b (`spawn_for_on_host`, `ShellRecord.host`, the seam this phase repairs)
 **Estimated diff:** ~330 lines across 6 files, plus 8 tests
 **Tags:** language=rust, kind=refactor, size=m
@@ -389,6 +389,41 @@ today.
       as the **first fenced block** of an entry titled
       `### Update — <date> (end-to-end verification)`, and the diff snippet
       printed the literal `PASTE MATCH` into that entry.
+
+**Added by the review bounce (bug-04c-1) — both confirmed failing against the
+current tree on 2026-09-22.** Everything above is **met**: the reviewer
+reproduced the full E2E capture byte for byte, `PASTE MATCH` prints, all eight
+tests pass, all four gates are clean and no other target moved. These two are
+about test determinism and an out-of-scope edit.
+
+- [ ] `swap_in_restores_the_previous_registry_on_drop` serializes on the same
+      guard as the five other tests that touch `open_shell_test_seam`'s
+      `REPLACE` global — it is currently the only one of the six that does
+      not, while being the one that mutates it (`STANDARDS.md` §3.3,
+      deterministic tests):
+
+      ```sh
+      awk '/fn swap_in_restores_the_previous_registry_on_drop/,/^    }$/' \
+        src/daemon/executor/knowledge/shell.rs \
+        | grep -c 'test_home_guard()\|lifecycle_home()'
+      ```
+
+      → **≥ 1** (current: **0**). `test_home_guard()` alone suffices — the
+      test needs no `$HOME`, only the lock.
+- [ ] `spawn_dedicated_for` is restored or declared. § Out of scope said it
+      was "unchanged and **untouched**"; `session.rs:222` now calls
+      `spawn_for_on_host` and the Update Log states the opposite:
+
+      ```sh
+      awk '/pub async fn spawn_dedicated_for/,/^}$/' src/shell/session.rs \
+        | grep -c 'spawn_for_on_host'
+      ```
+
+      → **0** (current: **1**), **or** it stays `1` with an Update Log entry
+      naming the edit and its reason. Behaviour is identical either way;
+      what must not stand is the Update Log contradicting the diff.
+- [ ] *Preservation* — `cargo test --lib` still **1943 / 0 / 5**, all four
+      gates green, the eight named tests still pass.
 
 ## Mutations
 
