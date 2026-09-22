@@ -1,7 +1,14 @@
 # NEXT
 
-**Active phase:** **M21 phase-01c — prompt-echo-race**, drafted 2026-09-20,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-01c`.
+**Active phase:** **none** — M21 phase-01c is `done` (2026-09-22,
+`approved_after_2`). The test gate it repaired is green: `cargo test --lib` is
+**1935 passed / 0 failed / 5 ignored**, five consecutive full-suite runs,
+independently re-verified at review. **04c — run-command-host is unblocked**;
+run `/rexymcp:architect next` to advance the pointer to it.
+
+The account below is the drafting-time record of why 01c was inserted ahead of
+04c. It is kept for the history; its "is red" claims describe the tree at
+`73bc8586`, not today's.
 
 **This is not the row that was queued, and the reason matters.** Drafting 04c
 began with measuring the tree, and the measurement found that **`cargo test` is

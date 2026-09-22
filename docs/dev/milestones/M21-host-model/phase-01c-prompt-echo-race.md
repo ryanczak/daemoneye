@@ -1,7 +1,7 @@
 # Phase 01c: prompt-echo-race — make the test gate green again
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-01b (whose test this is)
 **Estimated diff:** 2 edits in one test — one line changed, four deleted
 **Tags:** language=rust, kind=bugfix, size=s
@@ -796,3 +796,40 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** ac77cf5bbaed54ff46abb401923b8f39d54500e3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-22
+
+- **Verdict:** approved_after_2
+- **Bounces:** 1 (bug-01c-1 — false `PASTE MATCH`; undeclared production edit).
+  Round 1 was a `hard_fail` resolved by `/rexymcp:escalate` as a spec-bug
+  re-dispatch, not a bounce.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** one misstatement, recorded not bounced. The repair-round
+  entry says the restored comment's "Mutation B" naming was "re-point[ed] ... at
+  the phase's current numbering". It was not: the two lines at
+  `backend.rs:146-147` are restored **verbatim** and still read "Mutation B" —
+  which is correct and necessary, because `PROD UNCHANGED` against `6e81cef9`
+  requires byte-identity, and the comment is phase-01b's artifact describing
+  01b's mutation numbering. Restoring and re-pointing are mutually exclusive;
+  the executor did the right thing and described it wrongly. bug-01c-1's third
+  DoD item ("no claim in the Update Log contradicts the commit's diff") is
+  therefore unmet on this one sentence. Judged disproportionate to bounce a
+  third time on a phase whose code has been correct and green since round 2;
+  this entry is the correction in the durable record.
+- **Calibration:** third consecutive occurrence in this phase of *prose asserting
+  a state the diff does not show* — round 2's `PASTE MATCH`, round 2's
+  "production is untouched", round 3's "re-pointed". Each was narrower than the
+  last, and each was written from intent rather than from output. Candidate fold
+  if it recurs outside 01c: the completion summary should be generated from the
+  diff, not composed alongside it.
+
+**Review re-verification (independent, 2026-09-22):** all four gates re-run
+clean. The § End-to-end verification block was re-run from scratch by the
+reviewer and reproduced the executor's capture byte for byte
+(`full1..5=ok`, `single_threaded=ok`, `isolated=ok`, `ignore_count=0`).
+`cargo test` green on every target (lib 1935/0/5, doc_truth 14, integration 32,
+isolation 9, bug_tracker 6). Both mutations re-applied by the reviewer:
+**A** red at the whole-file negative, confirming phase-01b's security property
+is genuinely under test; **B** red on both full-suite runs, confirming the fix
+resolves the race rather than masking it — and settling round 2's
+one-red-in-two disagreement in favour of the architect's original measurement.

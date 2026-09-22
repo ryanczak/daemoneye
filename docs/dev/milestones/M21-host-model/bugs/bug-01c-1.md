@@ -1,7 +1,7 @@
 # Bug 1 on phase-01c: the recorded `PASTE MATCH` is false — the check fails against the tree
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-09-22 — both findings verified fixed at review. `PASTE MATCH` now prints against the repair-round entry (anchored at its first fenced block) and the review independently re-ran the whole § End-to-end verification block, reproducing all eight captured values byte for byte. Production region restored byte-identical to `6e81cef9` — `PROD UNCHANGED`. **Residual, waived:** the repair entry says the restored comment was "re-point[ed]" at Mutation A; it was in fact restored verbatim, still reading "Mutation B" (it is phase-01b's comment, and restoring it verbatim is what `PROD UNCHANGED` requires — the two cannot both be true). DoD item 3 is therefore unmet on a single descriptive sentence; corrected in the review verdict rather than bounced a third time.
 **Filed:** 2026-09-21
 
 ## What's wrong
