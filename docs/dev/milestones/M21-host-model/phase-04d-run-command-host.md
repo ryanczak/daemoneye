@@ -1,7 +1,7 @@
 # Phase 04d: run-command-host — `run_terminal_command { host? }`
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04c (host-keyed `shell_for_owner`, the struct-variant `AiEvent::ToolCall`)
 **Estimated diff:** ~420 lines across 9 files, plus 8 tests (7 run, 1 live/ignored)
 **Tags:** language=rust, kind=feature, size=m
@@ -491,3 +491,151 @@ run path. All gates green after restoration: `cargo fmt --all` clean, `cargo
 build` clean, `cargo clippy --all-targets --all-features -- -D warnings` exits 0,
 `cargo test --lib` → 1950 passed / 0 failed / 6 ignored, doc_truth 14 ok,
 integration 32 ok, isolation 9 ok, bug_tracker 6 ok.
+
+### Update — 2026-09-22 21:29 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Built `run_terminal_command { host? }` end to end: the `host: Option<String>` field through `RunTerminalCommandArgs` → `AiEvent::ToolCall` (struct variant, so it can't transpose with `shell`) → `PendingCall::Foreground` → `stream.rs`'s ToolCall push (Background untouched, dropped with a comment) → `dispatch.rs`'s round-trip → the `ParamDef` beside `shell` in `defs.rs`; the executor's Foreground arm resolves the host **before any spawn** (parse error verbatim, then `host_entry`'s `unknown host …; configured hosts: …` verbatim) and branches into two `run_in_shell_with_prompts` calls per the `open_shell` pattern — local arm keeps `spawn_detached_host` byte-for-byte, named arm uses `spawn_ssh_host`. `run_in_shell_core` takes `host: HostId`, passes it to `shell_for_owner` (host-keyed reuse) and `spawn_for_on_host`, refuses a `shell` id whose record host differs from the named host with a sentence naming **both** (never relocates; no `host` named ⇒ no comparison, `shell: "s3"` unchanged), and `PendingCall::Foreground::summary()` names the host (`"uptime" in s3 on pinky`). Doc rows updated in `CLAUDE.md`, `README.md`, `sre.toml`; tool counts untouched (doc_truth 14 ok).
+
+**Deviations / notes for review:** (1) The pre-spawn `host_entry` check lives in `run_in_shell_core` (with the `HostId::parse` check in `mod.rs`), not solely in `mod.rs` — same pre-spawn point, and it lets the unit tests drive the real refusal; the executor arm's `mod.rs` parse still runs first so production never hands core a malformed name. (2) Acceptance says 1950 lib tests; I shipped **1951** (one over) because I added `summary_foreground_names_the_shell_and_host_it_targets` to pin Task 2's summary()-names-the-host contract — the criterion explicitly permits reporting a deliberate extra rather than trimming; all seven pinned Task-6 tests plus the `#[ignore]` live test are in place as named, and the only `#[ignore]` added is test 8 (ignore total 5 → 6). (3) Two pre-existing `spawn_for` call sites in `shell_exec.rs`'s own tests were moved to `spawn_for_on_host` with `HostId::Local` (the import swap forced it; behavior identical).
+
+**End-to-end verification:** the § E2E block ran verbatim — `lib1..3=ok`, `lib_counts=1950p-0f-6i`, `host_params=2`, `event_host=1`, `pending_host=1`, `reuse_hardcoded=0`, `ignore_total=6`, `doc_truth=ok` — pasted mechanically as the first fenced block of `### Update — 2026-09-22 14:20 (end-to-end verification)`, with `PASTE MATCH` from the diff recorded in that entry. Both mutations ran once each and both went **red** as required (A: the mismatch test failed with the command actually running in the local shell — the silent-relocation failure; B: the unknown-host test failed with no `unknown host` sentence, the refusal wording property); both were restored and re-ran green. The live test ran by hand against `pinky`: `record_host=pinky reused=s0 remote_hostname=pinky remote_exit_code=42`, `1 passed` — its output is pasted in the same entry. Preservation: integration 32, isolation 9, bug_tracker 6 all green; `cargo fmt --all` clean, build clean, clippy `-D warnings` exits 0. Committed as `f6035e3a`; `git status --short` is empty; phase doc + README row left at `in-progress` and no `(complete)` entry written, per the lifecycle split.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.71s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +1 -1
+- `assets/prompts/sre.toml` — +9 -2
+- `docs/dev/milestones/M21-host-model/README.md` — +1 -1
+- `docs/dev/milestones/M21-host-model/phase-04d-run-command-host.md` — +63 -1
+- `src/ai/backends/gemini.rs` — +1 -0
+- `src/ai/tools/args.rs` — +2 -0
+- `src/ai/tools/defs.rs` — +12 -0
+- `src/ai/tools/dispatch.rs` — +2 -0
+- `src/ai/types/events.rs` — +1 -0
+- `src/ai/types/pending.rs` — +36 -6
+- `src/daemon/executor/mod.rs` — +181 -51
+- `src/daemon/executor/shell_exec.rs` — +524 -23
+- `src/daemon/ghost.rs` — +3 -0
+- `src/daemon/stream.rs` — +6 -0
+
+**Commit:** f6035e3a0d66c6f9d8e213928da3df158adcfaab
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
