@@ -874,3 +874,54 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 799678c482724cef8503b998c8a1ec29aea26b58
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+
+### Update — 2026-09-22 18:56 (progress — bug-04c-1, both defects)
+
+**Executor run on the review bounce.** The bounce's two defects are fixed;
+everything the previous run shipped is untouched.
+
+- **The seam test now serializes.** `swap_in_restores_the_previous_registry_on_drop`
+  takes `let _home = crate::test_home_guard();` as its first line — for the
+  **lock**, not the `HOME` swap (the test needs no `$HOME`; the doc comment on
+  the test says so, since the lock and the home swap travel in one helper and
+  only one is visible at the call site). That is the same serialization the
+  five other `REPLACE`-touching tests get through `lifecycle_home()`, so its
+  no-swap precondition is a fact for as long as it runs, and its own
+  `swap_in`/`Drop` window cannot overlap theirs.
+- **`spawn_dedicated_for` is restored to `spawn_for`, per § Out of scope.**
+  The previous run's create-step change (`shell_for_owner` →
+  `spawn_for_on_host`) dropped `spawn_for` from `session.rs`'s import list,
+  which forced the other in-file caller to follow it; this run re-imports
+  `spawn_for` and puts `spawn_dedicated_for` back on it. The line is now
+  `let id = spawn_for(reg, owner, max_per_owner, true, spawn).await?;` —
+  identical behaviour to `spawn_for_on_host(…, HostId::Local, true, …)`,
+  because `spawn_for` *is* that one-line delegation. The previous run's
+  Update Log claimed the function was untouched while the diff said
+  otherwise; that contradiction is what this run removes — the diff and the
+  log now agree, with `spawn_dedicated_for` back on its out-of-scope form.
+
+Both bounce greps after the fix:
+
+```
+seam_test_guard=1   (awk 'fn swap_in_restores…' | grep -c 'test_home_guard()\|lifecycle_home()')
+dedicated_on_host=0 (awk 'pub async fn spawn_dedicated_for' | grep -c 'spawn_for_on_host')
+```
+
+`seam_test_guard=1` is the bounce's ≥ 1 criterion; `dedicated_on_host=0` is
+its first branch (back to `spawn_for`), so no log entry naming an undeclared
+edit is needed.
+
+The fix commit is `2c20ada2` (`fix:` — two files, +10/−10); the E2E capture
+above was taken **after** it and re-printed identical values, and the
+post-fix gates are clean: `cargo fmt --all` clean, `cargo build` 0 warnings,
+`cargo clippy --all-targets --all-features -- -D warnings` exit 0, full
+`cargo test` → lib 1943/0/5, `doc_truth 14`, `integration 32/2i`,
+`isolation 9/1i`, `bug_tracker 6` — every target unmoved, matching the
+previous run's preservation counts.
+
+Preservation on the bounce's own line: the eight named tests still pass by
+the spec's filter (`8 passed; 0 failed; 0 ignored; 0 measured; 1940 filtered
+out`), and `cargo test --lib` is back at **1943 passed / 0 failed / 5
+ignored** — no test was added or removed by the bounce, so the count stays
+exactly where the phase put it.
