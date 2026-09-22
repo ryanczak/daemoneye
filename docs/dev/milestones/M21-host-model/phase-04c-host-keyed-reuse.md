@@ -499,4 +499,155 @@ Task 2 (struct-variant `ToolCall`, four sites batched) first, then Task 3
 Task 4 (the mirror's host term + the `[DEFAULT SHELL]` omission), Task 5's
 eight tests, then the verbatim E2E capture and both mutations.
 
+### Update — 2026-09-22 09:20 (progress — Task 1's call-site adaptation)
+
+Task 1 is in. Two implementation notes worth the reviewer's attention:
+
+- **The seam guard.** `swap_in` now returns a private `SwapGuard` whose
+  `Drop` writes the *previous* contents back, so nested swaps restore in
+  order rather than clearing to `None`. The four existing call sites
+  (`let _swap = open_shell_test_seam::swap_in(&reg);`) compile unedited —
+  an `Option` binding became a guard binding with no syntax change, exactly
+  the constraint Task 1 pinned.
+- **Owned registry, two `&` added.** `open_shell_test_registry` returned
+  `&'static ShellRegistry` and both `cfg(test)`/`cfg(not(test))` forms now
+  return an owned clone (`registry()` is a `&'static` singleton, so the
+  `None` branch is `.clone()` — an `Arc` bump). The two `open_shell_with`
+  callers at the old lines 1674/1693 then needed `&` in front of the call
+  because the function now hands back a value. Both were caught by the
+  verifier's type check and fixed; no `Box::leak` survives on this path.
+  The three `Box::leak` occurrences the spec warned about (the unrelated
+  `AtomicBool` helpers) are untouched.
+
+### Update — 2026-09-22 09:28 (progress — Tasks 2, 3, 4)
+
+- **Task 2, one batch.** `AiEvent::ToolCall` is now a struct variant
+  (`id`, `cmd`, `wait`, `thought_signature`, `shell`, `timeout_secs`; same
+  types, positional `///` comment deleted). All four sites converted in the
+  same pass before building: `args.rs` (construct, named), `gemini.rs`
+  (construct, `cmd` moved in, `Some(!bg)` → `wait:`), `stream.rs` (match,
+  binds by name into the same body), `ghost.rs` (match — it now binds
+  `cmd: command`, `wait: _wait`, `shell: _shell`,
+  `timeout_secs: _timeout_secs` by name and still pushes
+  `PendingCall::Background` unconditionally, behaviour unchanged).
+  `grep -rn 'AiEvent::ToolCall' src/` shows exactly the four sites, all
+  braced.
+- **Task 3.** `shell_for_owner` takes `host: HostId` next to `owner` and
+  the filter reads `record.host == host`; the "(row 04c)" sentence is
+  deleted and the comment states the host-keyed rule. All three production
+  call sites pass `HostId::Local` (`shell_exec.rs:213` foreground reuse,
+  `bg_shell.rs:484` test setup, and the `mod.rs` re-export needed no
+  change) — plus the 12 test call sites, all `Local`, all mechanical.
+- **Task 3, one line beyond the reuse filter — and it is the bug that made
+  the new tests red:** `shell_for_owner`'s **creation step** called
+  `spawn_for`, which hard-codes `HostId::Local`. With only the filter
+  changed, `shell_for_owner(…, Named("pinky"))` spawned the *new* shell
+  stamped `Local`, so the negative test got its `pinky` shell handed to a
+  local request (filter skips it) and then the *same* thing again on the
+  next ask. The spec's own defence says it: a shell handed out to a caller
+  that asked for a different host is the same relocation in the other
+  direction. The create step now calls `spawn_for_on_host(…, host, false,
+  spawn)` (the 04b additive function; `spawn_for` remains a one-line
+  `Local` delegation used by `spawn_dedicated_for`, untouched per § Out of
+  scope). With that, both Task 5 `session.rs` tests pass. This is the
+  smallest change that makes "reuse on host" mean anything; flagging it so
+  the reviewer can confirm the intent (nothing else in `session.rs`
+  changed shape).
+
+### Update — 2026-09-22 09:32 (progress — Task 5)
+
+All eight tests in, by the pinned names: `swap_in_restores_…` (nested
+swaps prove restore-not-clear), `open_shell_without_a_swap_…` (asserts
+the daemon singleton received the record and the seam stayed empty),
+`default_shell_for_skips_a_remote_shell`,
+`default_shell_for_prefers_the_local_shell_over_a_lower_indexed_remote_one`
+(remote `s1`, local `s2` → `s2`), `shell_context_omits_the_default_line_…`
+(`[SHELLS]` kept, `[DEFAULT SHELL]` gone), the two `session.rs` reuse
+tests (real spawns through `spawn_in_process_host`, `pinky` as a registry
+value only — no ssh), and
+`run_terminal_command_args_map_to_named_event_fields` (in
+`src/ai/tools/dispatch.rs`'s tests module — `args.rs` has no test module
+and its items are `pub(super)`, so the dispatch-level test is where the
+existing `ToolArgs` coverage lives; it asserts all six named fields
+through `dispatch_tool_event`). Verified individually and as the
+spec's eight-name filter: **8 passed**.
+
+### Update — 2026-09-22 09:40 (end-to-end verification)
+
+```
+lib1=ok
+lib2=ok
+lib3=ok
+lib_counts=1943p-0f-5i
+host_params=1
+positional_toolcall=0
+hardcoded_local=0
+static_return=0
+```
+
+The block above is the § End-to-end verification script's own output,
+redirected to `/tmp/e2e-04c.txt` and pasted unmodified. All six expected
+values line up: `lib1..3=ok` (1943/0/5, three consecutive runs),
+`lib_counts=1943p-0f-5i`, `host_params=1` (only `open_shell` — the surface
+did not move), `positional_toolcall=0` (no positional construction or match
+of `AiEvent::ToolCall` survives in any of the five files),
+`hardcoded_local=0` (the reuse filter has no hard-coded host),
+`static_return=0` (neither `cfg` form of `open_shell_test_registry`
+returns `&'static`; the `Box::leak` is gone).
+
+Other targets unmoved (preservation): `cargo test` full run → lib
+1943/0/5, plus `doc_truth 14 passed`, `integration 32 passed / 2 ignored`,
+`isolation 9 passed / 1 ignored`, `bug_tracker 6 passed`, doc-tests 0 —
+identical to the baseline's counts on every non-lib target.
+
+The eight-by-name filter from the acceptance criteria printed
+`test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1940 filtered
+out`.
+
+Paste self-check:
+
+```
+PASTE MATCH
+```
+
+`diff /tmp/pasted-04c.txt /tmp/e2e-04c.txt` produced no output and echoed
+`PASTE MATCH`, so the block above is byte-identical to the captured file.
+
+### Mutation checks
+
+**Mutation A — drop the host term from `shell_for_owner`'s reuse filter.**
+Deleted `&& record.host == host` from the filter (`patch`, then re-applied
+after the run). `cargo test --lib
+shell_for_owner_does_not_reuse_a_shell_from_another_host` → **red**, as
+required: the test failed with `the local caller must not land in the
+pinky shell, left: "s0", right: "s0"` — with the host term gone the local
+request reused the pinky shell, which is precisely the defect. Only that
+one test reddened in the filtered run (1 failed). Reverted; the test is
+green again (`1 passed`), and the full lib count is back at 1943/0/5.
+
+**Mutation B — drop the host term from the mirror.** Deleted
+`&& row.host == crate::host::HostId::Local` from `default_shell_for`
+(`patch`, then re-applied after the run). `cargo test --lib
+default_shell_for_skips_a_remote_shell
+default_shell_for_prefers_the_local_shell_over_a_lower_indexed_remote_one
+shell_context_omits_the_default_line_when_every_shell_is_remote` → **all
+three red**, as required:
+
+```
+test daemon::executor::knowledge::shell::tests::shell_context_omits_the_default_line_when_every_shell_is_remote ... FAILED
+test daemon::executor::knowledge::shell::tests::default_shell_for_prefers_the_local_shell_over_a_lower_indexed_remote_one ... FAILED
+test daemon::executor::knowledge::shell::tests::default_shell_for_skips_a_remote_shell ... FAILED
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 1945 filtered out; finished in 0.00s
+```
+
+No test stayed green, so each of the three pins the host property.
+Reverted; all three green again, full lib 1943/0/5. Each mutation was
+applied and reverted with the `patch` tool; each was run exactly once as
+the budget requires.
+
+**Post-mutation gate re-run:** `cargo fmt --all` clean,
+`cargo build` clean (0 warnings), `cargo clippy --all-targets
+--all-features -- -D warnings` exits 0,
+`cargo test --lib` → 1943 passed / 0 failed / 5 ignored.
+
 <!-- entries appended below this line -->
