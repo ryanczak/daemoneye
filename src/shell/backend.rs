@@ -143,6 +143,8 @@ impl ShellBackend for PtyBackend {
             .write_input(bytes)
             .context("write input to shell")?;
         // Real bytes always reach the shell — only the log is scrubbed.
+        // Mutation B in the Update Log deletes this branch and shows the same
+        // test going red on finding the credential in the cast.
         if self.awaiting_secret.load(Ordering::SeqCst) {
             self.log
                 .lock()

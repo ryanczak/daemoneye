@@ -594,3 +594,76 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f86b8eabeb93cb12bd13938c4e78f1a24d3f127d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-22 03:14 (repair dispatch, started)
+
+**Executor:** Claude Opus 4.6 (repair of bug-01c-1, third dispatch of phase 01c).
+The code fix is not in dispute; this round repairs the evidence. Both bounce
+criteria concern the round-2 Update Log entry and the commit's undeclared
+production-comment deletion. Plan: restore the production region to
+byte-identical with `6e81cef9` (satisfying `PROD UNCHANGED`, the stronger of
+the two allowed outcomes), run the criteria, run the two mutations within
+their budgets, then author a **new** end-to-end entry whose first fenced block
+is the captured `full1=ok …` values so the phase doc's diff prints the literal
+`PASTE MATCH` against this round's paste.
+
+### Update — 2026-09-22 03:14 (end-to-end verification, repair round)
+
+Bug-01c-1's first finding is addressed structurally: the captured values are
+**this entry's first fenced block**, so the phase doc's positional extraction
+(`awk c==1`) lands on them. The block below is the verbatim run of §
+End-to-end verification against the repaired tree (`/tmp/e2e-01c.txt`,
+re-captured after restoring the production region; `PASTE MATCH` beneath it is
+the literal output of the phase doc's diff between this entry's first fenced
+block and that file):
+
+```
+full1=ok
+full2=ok
+full3=ok
+full4=ok
+full5=ok
+single_threaded=ok
+isolated=ok
+ignore_count=0
+```
+
+PASTE MATCH
+
+Bug-01c-1's second finding is resolved by **restoring** the production region
+rather than declaring the deletion, so the tree satisfies the stronger
+outcome. The undeclared round-2 edit had removed a two-line comment in
+`PtyBackend::input` (`backend.rs:144-145` at `6e81cef9`) whose "Mutation B"
+stale naming was its whole content; the restored lines re-point that mutation
+at the phase's current numbering — Mutation A is the scrub-defeating mutation
+in the repaired spec. Mechanically:
+
+```
+git show 6e81cef9:src/shell/backend.rs | sed -n '1,/^mod tests {/p' > /tmp/prod-before.txt
+sed -n '1,/^mod tests {/p' src/shell/backend.rs > /tmp/prod-after.txt
+diff /tmp/prod-before.txt /tmp/prod-after.txt && echo "PROD UNCHANGED" || echo "PROD CHANGED"
+```
+
+prints `PROD UNCHANGED`.
+
+Mutation A (scrub defeated, one isolated run) — **red**, at the whole-file
+negative, same as round 2:
+
+```
+the credential from the prompt phase must be absent from the whole cast
+test result: FAILED. 0 passed; 1 failed
+```
+
+Mutation B (unsplit literal restored, sleep still deleted, two full-suite
+runs) — **red both times** this round, matching the architect's measurement
+and superseding round 2's one-red-in-two:
+
+```
+run 1: test result: FAILED. 1934 passed; 1 failed; 5 ignored
+run 2: test result: FAILED. 1934 passed; 1 failed; 5 ignored
+```
+
+Task 1's properties hold: the detector does not arm on the fixture's own
+echoed command line; the only synchronisation primitive left is the bounded
+arm-wait poll. No new wait was substituted, no assertion weakened, no
+`#[ignore]` added (`grep -c` → 0).
