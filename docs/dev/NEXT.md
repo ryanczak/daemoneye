@@ -1,7 +1,26 @@
 # NEXT
 
-**Active phase:** **M21 phase-04d — run-command-host**, drafted 2026-09-22,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-04d`.
+**Active phase:** **none** — M21 phase-04d is `done` (2026-09-22,
+`approved_first_try`), and it was verified **live against `pinky`**:
+
+```
+record_host=pinky reused=s0 remote_hostname=pinky remote_exit_code=42
+```
+
+`run_terminal_command { host? }` ships. **Row 05 — ssh-prompt-detection is
+next**; run `/rexymcp:architect next` to draft it.
+
+**Carry into 05's drafting — two spec-side calibrations from 04d's review,
+both this architect's, not the executor's.** Pinning a test count *and*
+permitting a justified extra, without also requiring the § End-to-end
+verification block to be **re-captured as the final act before commit**, let
+04d's capture ship one count stale (`1950` recorded, `1951` actual; every
+other value correct, and the executor's own notes stated the true number). And
+"no new `#[allow]` anywhere else" needed a carve-out for a mirror **test**
+helper — scope that ban to production paths.
+
+The account below is the drafting-time record for 04d. Its pre-phase
+measurements describe the tree at `117cffe2`, not today's.
 
 **What it adds.** `run_terminal_command { host? }` — the one-shot remote form,
 on the plumbing 04c landed. `shell_for_owner` is already host-keyed and
