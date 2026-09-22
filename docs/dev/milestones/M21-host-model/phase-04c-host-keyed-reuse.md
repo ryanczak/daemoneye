@@ -1,7 +1,7 @@
 # Phase 04c: host-keyed reuse — the plumbing `run_terminal_command { host }` needs
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04b (`spawn_for_on_host`, `ShellRecord.host`, the seam this phase repairs)
 **Estimated diff:** ~330 lines across 6 files, plus 8 tests
 **Tags:** language=rust, kind=refactor, size=m
@@ -678,3 +678,164 @@ that run is the evidence to act on. Recorded here so the next run's red
 is diagnosable rather than mysterious.
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-22 17:19 (complete, server-authored)
+
+**Summary:** </think>All checks are done. Let me do a final verification pass of the completion checklist:
+
+- [x] Phase doc's Status: line still says `in-progress` ✓
+- [x] Milestone README's phase-table row still says `in-progress` ✓
+- [x] No hand-written `(complete)` entry ✓
+- [x] `cargo fmt --all` run before `git add` ✓
+- [x] All verification commands ran clean ✓ (fmt, build, clippy -D warnings exit 0, cargo test lib 1943/0/5, other targets unchanged)
+- [x] Final message substantive Summary + Notes for review — that's now
+- [x] `git status --short` shows nothing ✓
+- [x] `git log` shows commits include every file touched ✓
+
+Everything is committed. Time to write the final summary.</think>
+Phase 04c is complete and committed (commits `2212b2fc` code, `24e251b6` + `799678c4` update-log docs; working tree clean; phase status left `in-progress` for the server's completion tail).
+
+**Summary**
+
+Host-keyed reuse is in, with no tool-surface movement. `shell_for_owner` takes the `HostId` to reuse on next to `owner` (all three production callers pass `HostId::Local`, so local behaviour is byte-identical — the 12 test callers were updated mechanically); `AiEvent::ToolCall` is now a struct variant with all four sites converted in one batch (`args.rs`, `gemini.rs`, `stream.rs`, `ghost.rs` — ghost still pushes `PendingCall::Background` unconditionally); `default_shell_for` gained the host term its doc comment claimed it already mirrored, so a remote-only session omits the `[DEFAULT SHELL]` line entirely while the `[SHELLS]` listing keeps naming remote shells with their host; and `open_shell_test_seam` is a real RAII guard whose `Drop` restores the previous registry (nested swaps unwind correctly) with the `Box::leak`'d `&'static` returned as an owned clone instead. The verbatim E2E block was captured and pasted (`PASTE MATCH` self-check passed): `lib_counts=1943p-0f-5i` on three consecutive runs, `host_params=1`, `positional_toolcall=0`, `hardcoded_local=0`, `static_return=0`; all other targets unmoved (doc_truth 14, integration 32/2i, isolation 9/1i, bug_tracker 6). Both mutations were applied once, observed red (A: 1 test red with `left: "s0", right: "s0"`; B: all 3 mirror tests red), and reverted with the patch tool.
+
+**Notes for review**
+
+- **One line beyond the reuse filter (Task 3):** `shell_for_owner`'s *creation* step still called `spawn_for`, which hard-codes `HostId::Local` — with only the filter changed, a pinky request spawned its new shell stamped Local and the negative test failed (`left: "s0", right: "s0"`). The create step now calls 04b's `spawn_for_on_host(…, host, false, spawn)`; `spawn_for` survives as the one-line Local delegation used by `spawn_dedicated_for`, untouched per § Out of scope. This is the smallest change that makes "reuse on host" mean anything — flagging it since the spec named only the filter.
+- **Test 8's placement:** it lives in `src/ai/tools/dispatch.rs`'s tests module rather than `args.rs` — args.rs has no test module and its items are `pub(super)`; the dispatch level is where the existing `ToolArgs` coverage lives and it asserts all six named fields through the real `dispatch_tool_event` path.
+- **A 1-in-80 lib blip** was observed once during re-capture (`lib1=FAILED`, then `ok` on the next two and on 80+ subsequent full-lib runs; the failing name was never captured because the capture script greps only the result line). Not pinned, not papered over — recorded in its own Update Log entry with the candidates I excluded, so the next red is diagnosable.
+- **Task 1 adaptation:** `open_shell_test_registry` returning an owned clone forced `&` at its two `open_shell_with` call sites (value → borrow); the four `let _swap = …swap_in(&reg)` call sites compile unedited as the spec required.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+ header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.67s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M21-host-model/phase-04c-host-keyed-reuse.md` — +188 -1
+- `src/ai/backends/gemini.rs` — +7 -7
+- `src/ai/tools/args.rs` — +8 -8
+- `src/ai/tools/dispatch.rs` — +45 -0
+- `src/ai/types/events.rs` — +8 -9
+- `src/daemon/executor/bg_shell.rs` — +1 -0
+- `src/daemon/executor/knowledge/shell.rs` — +156 -17
+- `src/daemon/executor/shell_exec.rs` — +11 -1
+- `src/daemon/ghost.rs` — +6 -6
+- `src/daemon/stream.rs` — +8 -1
+- `src/shell/session.rs` — +155 -22
+
+**Commit:** 799678c482724cef8503b998c8a1ec29aea26b58
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
