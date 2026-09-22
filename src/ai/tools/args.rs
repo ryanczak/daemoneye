@@ -313,14 +313,14 @@ impl ToolArgs for RunTerminalCommandArgs {
         serde_json::from_value(value).ok()
     }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::ToolCall(
-            id.to_string(),
-            self.command,
-            self.wait,
-            ts,
-            self.shell,
-            self.timeout_secs,
-        )
+        AiEvent::ToolCall {
+            id: id.to_string(),
+            cmd: self.command,
+            wait: self.wait,
+            thought_signature: ts,
+            shell: self.shell,
+            timeout_secs: self.timeout_secs,
+        }
     }
 }
 

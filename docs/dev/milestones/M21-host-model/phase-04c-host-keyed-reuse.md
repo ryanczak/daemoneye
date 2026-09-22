@@ -1,7 +1,7 @@
 # Phase 04c: host-keyed reuse — the plumbing `run_terminal_command { host }` needs
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04b (`spawn_for_on_host`, `ShellRecord.host`, the seam this phase repairs)
 **Estimated diff:** ~330 lines across 6 files, plus 8 tests
 **Tags:** language=rust, kind=refactor, size=m
@@ -489,5 +489,14 @@ You may edit, and nothing else:
   (`shell.rs:3296, 3321, 3352`) — Task 1 must keep them compiling unedited.
 
 ## Update Log
+
+### Update — 2026-09-22 16:05 (started)
+
+**Status flipped to `in-progress`; README row 04c matches.** Executor run
+beginning on a clean tree at `5afbf15e`. Plan: Task 1 (RAII seam guard) and
+Task 2 (struct-variant `ToolCall`, four sites batched) first, then Task 3
+(host parameter through `shell_for_owner` and its three production callers),
+Task 4 (the mirror's host term + the `[DEFAULT SHELL]` omission), Task 5's
+eight tests, then the verbatim E2E capture and both mutations.
 
 <!-- entries appended below this line -->

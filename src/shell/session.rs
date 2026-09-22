@@ -11,14 +11,16 @@ use crate::config::Config;
 use crate::host::ssh_argv;
 use crate::shell::launch;
 use crate::shell::registry::{
-    Owner, ShellId, ShellRegistry, host_is_alive, spawn_for, with_shells,
+    Owner, ShellId, ShellRegistry, host_is_alive, spawn_for_on_host, with_shells,
 };
 
-/// A ready shell socket for `owner`: reuse the owner's live shell, or create
-/// one. Returns the shell id and the path to its bound, ready socket.
+/// A ready shell socket for `owner` on `host`: reuse the owner's live shell
+/// on that host, or create one. Returns the shell id and the path to its
+/// bound, ready socket.
 pub async fn shell_for_owner<F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
+    host: crate::host::HostId,
     max_per_owner: u32,
     ready_timeout: Duration,
     spawn: F,
@@ -42,14 +44,14 @@ where
                 // stays and the host stays alive: later work addresses the
                 // session by id. A dedicated shell is excluded for the same
                 // reason in the other direction: it belongs to exactly one
-                // command, so it is never offered to anything else. A shell
-                // on a named host runs commands *there*, so handing it to a
-                // caller that asked for no host would silently relocate the
-                // command; host-keyed reuse needs a caller that can ask
-                // (row 04c).
+                // command, so it is never offered to anything else. Reuse is
+                // host-keyed: a shell runs its commands on the host its
+                // record names, so it is handed only to a caller asking for
+                // that same host — anything else would silently relocate
+                // the command.
                 !record.interactive
                     && !record.dedicated
-                    && record.host == crate::host::HostId::Local
+                    && record.host == host
                     && record.owner.key() == owner_key
             })
             .map(|record| record.id.clone())
@@ -73,8 +75,9 @@ where
         return Ok((id, socket));
     }
 
-    // (3) Otherwise create one, then wait for it to become ready.
-    let id = spawn_for(reg, owner, max_per_owner, false, spawn).await?;
+    // (3) Otherwise create one on the requested host, then wait for it to
+    // become ready.
+    let id = spawn_for_on_host(reg, owner, max_per_owner, host, false, spawn).await?;
     let socket = launch::socket_path(id.as_str());
     if let Err(e) = launch::await_ready(&socket, Instant::now() + ready_timeout).await {
         // (4) A record for a host that never came up would be handed to the
@@ -216,7 +219,15 @@ where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let id = spawn_for(reg, owner, max_per_owner, true, spawn).await?;
+    let id = spawn_for_on_host(
+        reg,
+        owner,
+        max_per_owner,
+        crate::host::HostId::Local,
+        true,
+        spawn,
+    )
+    .await?;
     let socket = launch::socket_path(id.as_str());
     if let Err(e) = launch::await_ready(&socket, Instant::now() + ready_timeout).await {
         // A record for a host that never came up would be handed to the next
@@ -295,6 +306,7 @@ mod tests {
         let (id, socket) = shell_for_owner(
             &reg,
             owner.clone(),
+            crate::host::HostId::Local,
             5,
             Duration::from_secs(15),
             spawn_in_process_host,
@@ -339,14 +351,21 @@ mod tests {
             }
         };
 
-        let (first_id, _) =
-            shell_for_owner(&reg, owner.clone(), 5, Duration::from_secs(15), host_spawn)
-                .await
-                .expect("the first request creates a shell");
+        let (first_id, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            host_spawn,
+        )
+        .await
+        .expect("the first request creates a shell");
 
         let (second_id, _) = shell_for_owner(
             &reg,
             owner.clone(),
+            crate::host::HostId::Local,
             5,
             Duration::from_secs(15),
             |_id| async { Ok(()) },
@@ -374,6 +393,7 @@ mod tests {
         let (ida, _) = shell_for_owner(
             &reg,
             Owner::Chat("a".into()),
+            crate::host::HostId::Local,
             5,
             Duration::from_secs(15),
             spawn_in_process_host,
@@ -383,6 +403,7 @@ mod tests {
         let (idb, _) = shell_for_owner(
             &reg,
             Owner::Chat("b".into()),
+            crate::host::HostId::Local,
             5,
             Duration::from_secs(15),
             spawn_in_process_host,
@@ -425,6 +446,7 @@ mod tests {
         let (id, _) = shell_for_owner(
             &reg,
             owner.clone(),
+            crate::host::HostId::Local,
             5,
             Duration::from_secs(15),
             spawn_in_process_host,
@@ -476,6 +498,7 @@ mod tests {
         let (id, socket) = shell_for_owner(
             &reg,
             owner.clone(),
+            crate::host::HostId::Local,
             5,
             Duration::from_secs(15),
             spawn_in_process_host,
@@ -537,9 +560,14 @@ mod tests {
         let lock = launch::lock_path("s1");
         let _held = crate::daemon::instance::InstanceLock::acquire(&lock).expect("hold s1");
 
-        let result = shell_for_owner(&reg, owner, 1, Duration::from_secs(15), |_id| async {
-            Ok(())
-        })
+        let result = shell_for_owner(
+            &reg,
+            owner,
+            crate::host::HostId::Local,
+            1,
+            Duration::from_secs(15),
+            |_id| async { Ok(()) },
+        )
         .await;
 
         let err = result.expect_err("a request over the cap must Err, not panic");
@@ -558,9 +586,14 @@ mod tests {
 
         // The spawn succeeds without binding a socket, so `await_ready` cannot
         // succeed and must time out.
-        let result = shell_for_owner(&reg, owner, 5, Duration::from_millis(50), |_id| async {
-            Ok(())
-        })
+        let result = shell_for_owner(
+            &reg,
+            owner,
+            crate::host::HostId::Local,
+            5,
+            Duration::from_millis(50),
+            |_id| async { Ok(()) },
+        )
         .await;
 
         assert!(result.is_err(), "a host that never becomes ready must Err");
@@ -583,6 +616,7 @@ mod tests {
         let (marked_id, _) = shell_for_owner(
             &reg,
             owner.clone(),
+            crate::host::HostId::Local,
             5,
             Duration::from_secs(15),
             spawn_in_process_host,
@@ -607,6 +641,7 @@ mod tests {
         let (second_id, _) = shell_for_owner(
             &reg,
             owner.clone(),
+            crate::host::HostId::Local,
             5,
             Duration::from_secs(15),
             spawn_in_process_host,
@@ -672,6 +707,7 @@ mod tests {
         let (next_id, _) = shell_for_owner(
             &reg,
             owner.clone(),
+            crate::host::HostId::Local,
             5,
             Duration::from_secs(15),
             spawn_in_process_host,
@@ -709,6 +745,7 @@ mod tests {
         let (reusable_id, _) = shell_for_owner(
             &reg,
             owner.clone(),
+            crate::host::HostId::Local,
             5,
             Duration::from_secs(15),
             spawn_in_process_host,
@@ -876,5 +913,101 @@ mod tests {
                 "the refusal must point at the existing local path: {msg}"
             );
         }
+    }
+
+    /// Task 3's positive case: a caller asking for the shell's own host gets
+    /// that shell back, reused, without a spawn.
+    #[tokio::test]
+    async fn shell_for_owner_reuses_a_shell_on_the_requested_host() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("hosted".into());
+
+        let (opened, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            crate::host::HostId::Named("pinky".into()),
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the owner's pinky shell comes up");
+
+        let (asked, _) = shell_for_owner(
+            &reg,
+            owner,
+            crate::host::HostId::Named("pinky".into()),
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the second request on the same host is answered");
+
+        assert_eq!(
+            asked.as_str(),
+            opened.as_str(),
+            "a caller asking for the host a live shell runs on reuses that shell"
+        );
+    }
+
+    /// Task 3's negative case: a host the shell is not on must not be handed
+    /// out — the caller gets a new shell, and the remote shell is *skipped*,
+    /// left in the registry for later work that names its host.
+    #[tokio::test]
+    async fn shell_for_owner_does_not_reuse_a_shell_from_another_host() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("mixed".into());
+
+        let (remote_id, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            crate::host::HostId::Named("pinky".into()),
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the owner's pinky shell comes up");
+
+        let (local_id, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the local request is answered with a shell");
+
+        assert_ne!(
+            local_id.as_str(),
+            remote_id.as_str(),
+            "the local caller must not land in the pinky shell"
+        );
+
+        let (remote_rows, local_rows) = with_shells(&reg, |store| {
+            (
+                store
+                    .values()
+                    .filter(|r| r.id.as_str() == remote_id.as_str())
+                    .count(),
+                store
+                    .values()
+                    .filter(|r| r.id.as_str() == local_id.as_str())
+                    .count(),
+            )
+        });
+        assert_eq!(
+            remote_rows, 1,
+            "the pinky shell must be skipped, not reaped: it is still in the registry"
+        );
+        assert_eq!(
+            local_rows, 1,
+            "the fresh local shell is the one the local caller got"
+        );
     }
 }

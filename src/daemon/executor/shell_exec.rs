@@ -210,7 +210,15 @@ where
     // falling back would run the command somewhere the model did not ask for.
     let (id, socket) = match target {
         ShellTarget::Reuse => {
-            shell_for_owner(reg, owner, max_per_owner, SHELL_READY_TIMEOUT, spawn).await?
+            shell_for_owner(
+                reg,
+                owner,
+                crate::host::HostId::Local,
+                max_per_owner,
+                SHELL_READY_TIMEOUT,
+                spawn,
+            )
+            .await?
         }
         ShellTarget::New => {
             let id = spawn_for(reg, owner, max_per_owner, false, spawn).await?;
@@ -779,6 +787,7 @@ mod tests {
         let (reused, _) = shell_for_owner(
             &reg,
             owner.clone(),
+            crate::host::HostId::Local,
             5,
             SHELL_READY_TIMEOUT,
             spawn_in_process_host,
@@ -831,6 +840,7 @@ mod tests {
         let (other, _) = shell_for_owner(
             &reg,
             Owner::Ghost("a".into()),
+            crate::host::HostId::Local,
             5,
             SHELL_READY_TIMEOUT,
             spawn_in_process_host,

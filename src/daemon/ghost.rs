@@ -826,14 +826,14 @@ async fn do_ghost_turn(
                     AiEvent::Token(t) => {
                         assistant_content.push_str(&t);
                     }
-                    AiEvent::ToolCall(
+                    AiEvent::ToolCall {
                         id,
-                        command,
-                        _wait,
+                        cmd: command,
+                        wait: _wait,
                         thought_signature,
-                        _shell,
-                        _timeout_secs,
-                    ) => {
+                        shell: _shell,
+                        timeout_secs: _timeout_secs,
+                    } => {
                         pending_calls.push(PendingCall::Background {
                             id,
                             cmd: command,

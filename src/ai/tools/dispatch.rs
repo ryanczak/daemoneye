@@ -905,4 +905,49 @@ mod tests {
             "unknown tool name must not resolve to a category"
         );
     }
+
+    /// `run_terminal_command`'s args land in the named fields of the struct
+    /// variant, each value in the field it was given. A positional tuple
+    /// transposed two adjacent `Option<String>`s silently; the named fields
+    /// are what keeps row 04d's `host?` from landing in `shell`'s slot.
+    #[test]
+    fn run_terminal_command_args_map_to_named_event_fields() {
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "run_terminal_command",
+            &json!({
+                "command": "echo named-fields",
+                "wait": false,
+                "shell": "s9",
+                "timeout_secs": 33
+            }),
+            Some("sig-1".to_string()),
+        )
+        .expect("run_terminal_command must dispatch");
+        let AiEvent::ToolCall {
+            id,
+            cmd,
+            wait,
+            thought_signature,
+            shell,
+            timeout_secs,
+        } = ev
+        else {
+            panic!("expected AiEvent::ToolCall, got {ev:?}")
+        };
+        assert_eq!(id, "tc_1", "the call id lands in `id`");
+        assert_eq!(cmd, "echo named-fields", "the command lands in `cmd`");
+        assert_eq!(wait, Some(false), "the wait value lands in `wait`");
+        assert_eq!(
+            thought_signature.as_deref(),
+            Some("sig-1"),
+            "the thought signature lands in `thought_signature`"
+        );
+        assert_eq!(shell.as_deref(), Some("s9"), "the shell lands in `shell`");
+        assert_eq!(
+            timeout_secs,
+            Some(33),
+            "the timeout lands in `timeout_secs`"
+        );
+    }
 }

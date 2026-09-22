@@ -484,6 +484,7 @@ mod tests {
         let (foreground_id, _) = crate::shell::shell_for_owner(
             &reg,
             owner.clone(),
+            crate::host::HostId::Local,
             5,
             shell_exec::SHELL_READY_TIMEOUT,
             spawn_in_process_host,

@@ -199,8 +199,10 @@ fn format_age(age_secs: u64) -> String {
 /// `None` when the owner has no eligible shell.
 ///
 /// Pure mirror of `shell_for_owner`'s step-(1) reuse predicate
-/// (`src/shell/session.rs:27`): lowest **numeric** index among the owner's
-/// shells that are neither `interactive` nor `dedicated`.
+/// (`src/shell/session.rs`): lowest **numeric** index among the owner's
+/// shells that run on `HostId::Local` and are neither `interactive` nor
+/// `dedicated` — a bare `run_terminal_command` lands on the daemon host, so
+/// a remote shell is never its default.
 ///
 /// **Deliberate divergence:** `shell_for_owner` settles liveness with a
 /// per-shell flock probe — the registry's own liveness check — while this
@@ -214,6 +216,7 @@ fn default_shell_for(rows: &[ShellRow], owner_key: &str) -> Option<String> {
                 && !row.dedicated
                 && row.exited_unix.is_none()
                 && row.owner_key == owner_key
+                && row.host == crate::host::HostId::Local
         })
         .min_by_key(|row| ShellIndex::new(&row.id).0)
         .map(|row| row.id.clone())
@@ -1671,7 +1674,7 @@ pub async fn open_shell(caller: &Owner, host: Option<&str>) -> String {
     match &host {
         crate::host::HostId::Local => {
             open_shell_with(
-                open_shell_test_registry(),
+                &open_shell_test_registry(),
                 caller,
                 crate::host::HostId::Local,
                 max_per_owner,
@@ -1690,7 +1693,7 @@ pub async fn open_shell(caller: &Owner, host: Option<&str>) -> String {
                 return format!("Error: {e}");
             }
             open_shell_with(
-                open_shell_test_registry(),
+                &open_shell_test_registry(),
                 caller,
                 crate::host::HostId::Named(name.clone()),
                 max_per_owner,
@@ -1778,22 +1781,23 @@ where
 /// The registry `open_shell`'s tests drive. The daemon-wide singleton is a
 /// `OnceLock` that survives across tests, so a test that goes through the
 /// public form needs a registry it can assert on afterwards — swap in a fresh
-/// one and restore the old by dropping the guard.
+/// one and restore the old when the returned guard drops.
 #[cfg(test)]
 pub(crate) mod open_shell_test_seam {
     use std::sync::Mutex;
 
     static REPLACE: Mutex<Option<crate::shell::ShellRegistry>> = Mutex::new(None);
 
-    /// Install `fresh` as the registry `open_shell` resolves, for the
-    /// lifetime of what this returns.
-    pub(super) fn swap_in(
-        fresh: &crate::shell::ShellRegistry,
-    ) -> Option<crate::shell::ShellRegistry> {
-        REPLACE
+    /// Install `fresh` as the registry `open_shell` resolves, for as long as
+    /// the returned guard is alive: dropping it puts back whatever `REPLACE`
+    /// held before the swap, so nested swaps unwind in order and an outer
+    /// test's registry survives an inner test's.
+    pub(super) fn swap_in(fresh: &crate::shell::ShellRegistry) -> SwapGuard {
+        let previous = REPLACE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .replace(fresh.clone())
+            .replace(fresh.clone());
+        SwapGuard { previous }
     }
 
     /// The swapped-in registry, if any test currently holds one.
@@ -1803,13 +1807,27 @@ pub(crate) mod open_shell_test_seam {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
+
+    /// Restores the pre-swap contents of `REPLACE` when dropped. Holds the
+    /// *previous* value rather than clearing, so nesting restores in order.
+    pub(super) struct SwapGuard {
+        previous: Option<crate::shell::ShellRegistry>,
+    }
+
+    impl Drop for SwapGuard {
+        fn drop(&mut self) {
+            *REPLACE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = self.previous.take();
+        }
+    }
 }
 
 #[cfg(test)]
-fn open_shell_test_registry() -> &'static crate::shell::ShellRegistry {
+fn open_shell_test_registry() -> crate::shell::ShellRegistry {
     match open_shell_test_seam::swapped() {
-        Some(swapped) => Box::leak(Box::new(swapped)),
-        None => crate::shell::registry(),
+        Some(swapped) => swapped,
+        None => crate::shell::registry().clone(),
     }
 }
 
@@ -1852,8 +1870,8 @@ async fn spawn_pinky_ssh(id: ShellId) -> anyhow::Result<()> {
 }
 
 #[cfg(not(test))]
-fn open_shell_test_registry() -> &'static crate::shell::ShellRegistry {
-    crate::shell::registry()
+fn open_shell_test_registry() -> crate::shell::ShellRegistry {
+    crate::shell::registry().clone()
 }
 
 #[cfg(not(test))]
@@ -2252,6 +2270,44 @@ mod tests {
         );
     }
 
+    /// Task 4: the default is the lowest-indexed **local** shell. A remote
+    /// shell is never named — a bare `run_terminal_command` would not land
+    /// there, so naming it in the prompt is the defect this phase fixes.
+    #[test]
+    fn default_shell_for_skips_a_remote_shell() {
+        let rows = vec![row_on(
+            "s0",
+            "chat:a",
+            crate::host::HostId::Named("pinky".to_string()),
+            NOW - 100,
+        )];
+        assert_eq!(
+            default_shell_for(&rows, "chat:a"),
+            None,
+            "a session whose only shells are remote has no default"
+        );
+    }
+
+    /// The negative-ordering case: index order alone would answer `s1`; only
+    /// a host term the ordering cannot overrule answers `s2`.
+    #[test]
+    fn default_shell_for_prefers_the_local_shell_over_a_lower_indexed_remote_one() {
+        let rows = vec![
+            row_on(
+                "s1",
+                "chat:a",
+                crate::host::HostId::Named("pinky".to_string()),
+                NOW - 100,
+            ),
+            row("s2", "chat:a", NOW - 100, false, false, None),
+        ];
+        assert_eq!(
+            default_shell_for(&rows, "chat:a"),
+            Some("s2".to_string()),
+            "the local s2 is the default even though the remote s1 has the lower index"
+        );
+    }
+
     // -- format_shell_context (phase-08a) -----------------------------------
 
     #[test]
@@ -2337,6 +2393,29 @@ mod tests {
         assert!(
             !out.contains("[DEFAULT SHELL]"),
             "the default line must be omitted entirely, not named 'none': {out}"
+        );
+    }
+
+    /// Task 4's prompt-facing half: the remote shell still appears in the
+    /// `[SHELLS]` listing with its host, but the `[DEFAULT SHELL]` line is
+    /// gone entirely — its own text promises where a bare command lands, and
+    /// for a remote shell that promise is false.
+    #[test]
+    fn shell_context_omits_the_default_line_when_every_shell_is_remote() {
+        let rows = vec![row_on(
+            "s1",
+            "chat:a",
+            crate::host::HostId::Named("pinky".to_string()),
+            NOW - 30,
+        )];
+        let out = format_shell_context(&rows, "chat:a", NOW);
+        assert!(
+            out.contains("[SHELLS] 1") && out.contains("s1") && out.contains("pinky"),
+            "the remote shell is still listed with its host: {out}"
+        );
+        assert!(
+            !out.contains("[DEFAULT SHELL]"),
+            "a remote-only session has no default; the line's promise would be false: {out}"
         );
     }
 
@@ -3363,6 +3442,66 @@ mod tests {
             with_shells(&reg, |store| store.len()),
             0,
             "a refused name must not leave a record behind"
+        );
+    }
+
+    /// Task 1's contract: the guard restores what `REPLACE` held *before* the
+    /// swap, so a nested swap's drop puts the outer swap back rather than
+    /// clearing to `None`.
+    #[test]
+    fn swap_in_restores_the_previous_registry_on_drop() {
+        let outer = ShellRegistry::default();
+        let inner = ShellRegistry::default();
+        assert!(
+            open_shell_test_seam::swapped().is_none(),
+            "precondition: no swap is in scope (this test must not depend on another)"
+        );
+        let _outer = open_shell_test_seam::swap_in(&outer);
+        {
+            let _inner = open_shell_test_seam::swap_in(&inner);
+            assert!(
+                open_shell_test_seam::swapped().is_some(),
+                "the inner swap is in force while its guard lives"
+            );
+        }
+        assert!(
+            open_shell_test_seam::swapped().is_some(),
+            "the inner drop restores the outer swap, it does not clear to none"
+        );
+        drop(_outer);
+        assert!(
+            open_shell_test_seam::swapped().is_none(),
+            "the outer drop restores the empty state the test found"
+        );
+    }
+
+    /// The case 04b's review named as the seam's latent flake: a caller that
+    /// goes through the public `open_shell` with **no** swap in scope must
+    /// resolve the daemon singleton — a fresh, empty registry — not whatever
+    /// an earlier test left in the seam. An unresolved (leaked or stale)
+    /// seam is what would make this test order-dependent.
+    #[tokio::test]
+    async fn open_shell_without_a_swap_uses_the_daemon_registry() {
+        let (_home, _dir) = lifecycle_home();
+        assert!(
+            open_shell_test_seam::swapped().is_none(),
+            "precondition: no swap is in scope (this test must not depend on another)"
+        );
+        let out = open_shell(&Owner::Chat("no-swap".into()), None).await;
+        assert!(
+            out.contains("Opened shell"),
+            "the precondition is a ready local shell: {out}"
+        );
+        // The record landed in the daemon singleton, and the seam is still
+        // empty — nothing was installed.
+        let singleton_ids = with_shells(crate::shell::registry(), |store| store.len());
+        assert!(
+            singleton_ids >= 1,
+            "the record must land in the daemon registry, not a swapped one: {singleton_ids}"
+        );
+        assert!(
+            open_shell_test_seam::swapped().is_none(),
+            "the path must not install a registry of its own"
         );
     }
 

@@ -326,14 +326,14 @@ impl AiClient for GeminiClient {
                                                     if !first_token_seen {
                                                         first_token_seen = true;
                                                     }
-                                                    let _ = tx.send(AiEvent::ToolCall(
-                                                        next_tool_id(),
+                                                    let _ = tx.send(AiEvent::ToolCall {
+                                                        id: next_tool_id(),
                                                         cmd,
-                                                        Some(!bg),
-                                                        None,
-                                                        None,
-                                                        None,
-                                                    ));
+                                                        wait: Some(!bg),
+                                                        thought_signature: None,
+                                                        shell: None,
+                                                        timeout_secs: None,
+                                                    });
                                                 } else {
                                                     let _ = tx.send(AiEvent::Error(format!(
                                                         "Gemini produced a malformed function call \
