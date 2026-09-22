@@ -1,68 +1,52 @@
 # NEXT
 
-**Active phase:** **none** — M21 phase-04c is `done` (2026-09-22,
-`approved_after_1`). **04d — run-command-host is unblocked**; run
-`/rexymcp:architect next` to draft it.
+**Active phase:** **M21 phase-04d — run-command-host**, drafted 2026-09-22,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-04d`.
 
-04c delivered the plumbing: `shell_for_owner` is host-keyed (create step
-included — the spec named only the filter, and the executor found the
-creation half from a red test), `AiEvent::ToolCall` is a struct variant so
-04d's `host` cannot transpose with `shell`, the `[DEFAULT SHELL]` line no
-longer names a remote shell, and `open_shell_test_seam` is a real RAII guard
-with all six of its tests serialized on the shared home lock.
+**What it adds.** `run_terminal_command { host? }` — the one-shot remote form,
+on the plumbing 04c landed. `shell_for_owner` is already host-keyed and
+`AiEvent::ToolCall` is already a struct variant, so this row carries a `host`
+from the tool schema down to them and answers the question the milestone
+reserved for it: **what `shell` and `host` mean together.**
 
-The account below is the drafting-time record. Its pre-phase measurements
-describe the tree at `5afbf15e`, not today's.
+**The semantics are an eight-row table in Task 1**, and its load-bearing line
+is the last one: a `shell` id whose shell is on a *different* host than the
+one named is **refused, naming both**, never relocated. Silently relocating
+would run a command somewhere the model did not ask for — the same failure the
+existing ownership check on `ShellTarget::Existing` exists to prevent.
+Mutation A deletes that bail and must turn the test red.
 
-**04c split at drafting, and the split is what the measurement bought.** The
-queued row was "`run_terminal_command { host? }` plus host-keyed reuse".
-Measuring the tree turned that into two rows: **04c is plumbing with no tool
-surface**, **04d is the tool surface on top of it**. This is the third time an
-04-row has split on a measured seam, and the same shape row 03 used before
-04a spent it.
+**Measured at drafting: the spawn closure is monomorphic.**
+`run_in_shell_with_prompts` takes one `spawn: F`, and the local
+(`spawn_detached_host`) and remote (`spawn_ssh_host`) closures have different
+types, so a single generic call cannot serve both. `open_shell`
+(`knowledge/shell.rs:1662-1705`) already solved this with a two-arm `match`,
+each arm calling the generic function with its own closure — that code is
+quoted in § Current state 2 as the pattern to copy, with an explicit "do not
+try to box the closure."
 
-**The measurement found a live defect, not just a seam.**
-`default_shell_for` (`src/daemon/executor/knowledge/shell.rs:210`) documents
-itself as a *"pure mirror of `shell_for_owner`'s step-(1) reuse predicate"*.
-It is not: `shell_for_owner` filters `record.host == HostId::Local`, and the
-mirror never reads `row.host` at all, though `ShellRow` carries it. A
-throwaway probe (added, run, reverted) returned:
+**Host refusals resolve before any spawn.** `HostId::parse` rejects a
+malformed name (and maps `"local"` to `HostId::Local`, which is legal);
+`host_entry` rejects an unconfigured one with `unknown host "nope"; configured
+hosts: pinky`. Both must reach the model as their own sentence rather than
+being dressed as shell-limit or timeout advice — `open_shell`'s doc comment
+states that rule and the spec quotes it. Mutation B deletes the `host_entry`
+call and must turn the unknown-host test red.
 
-```
-PROBE default_shell_for(remote-only rows) = Some("s1")
-```
+**Pre-dispatch check run; every non-preservation criterion confirmed failing:**
+`host_params=1` (→2), `event_host=0` (→1), `pending_host=0` (→1),
+`reuse_hardcoded=1` (→0), `ignore_total=5` (→6), and the eight named tests
+`0 passed; 1948 filtered out`. **One criterion was corrected by that check** —
+`grep -c 'host: Option<String>' src/ai/types/events.rs` already read **1**
+today, because `AiEvent::OpenShell` has such a field at `events.rs:186`. It
+was a vacuous guard; it is now scoped to the `ToolCall` variant with `awk`,
+and the spec says why an unscoped grep proves nothing.
 
-so a session whose only shell is remote gets this line in every prompt:
+**42 tools, 28 core, 14 deferred — unchanged.** `host?` is a parameter, not a
+tool, and `tests/doc_truth.rs` is the gate that catches it if the counts move.
 
-```
-[DEFAULT SHELL] s1 — run_terminal_command with no shell argument lands here
-```
-
-which is **false** — a bare `run_terminal_command` skips `s1` and spawns a new
-local shell. 04b shipped the surface that makes remote shells reachable; this
-is the prompt lying about them. Task 4 fixes it, and a mutation pins it.
-
-**Two hazards repaired before the surface lands on them.** `AiEvent::ToolCall`
-is a six-field positional tuple; 04d would add `host: Option<String>` directly
-beside `shell: Option<String>`, which transposes silently and compiles. 04c
-converts it to a struct variant first (4 sites). And 04b's review recorded the
-`open_shell_test_seam` flaw — `swap_in` returns the previous value rather than
-an RAII guard, so the global is never restored, and the swapped registry is
-`Box::leak`ed — with the instruction *"Fix it there, as a real guard, before
-adding `run_terminal_command { host }` tests."* 04c adds exactly those tests,
-so Task 1 is that fix.
-
-**Pre-dispatch check run, every non-preservation criterion confirmed failing:**
-`lib_counts=1935p-0f-5i` (target 1943), `positional_toolcall=4` (target 0),
-`hardcoded_local=1` (target 0), `static_return=2` (target 0), and the
-eight named tests `0 passed; 1940 filtered out`. Two criteria were
-**corrected** during that check — a `Box::leak` grep that would have dragged
-three out-of-scope `AtomicBool` helpers into the phase, and an eight-name
-`cargo test` invocation that fails with `error: unexpected argument` because
-cargo takes a single `TESTNAME` (the filters need the `--` separator).
-
-**Next after 04c: 04d — run-command-host.** The `ParamDef`, the `PendingCall`
-field, `ShellTarget`'s host, the dispatch arm, the three doc rows, and the
-live `pinky` capture. 42 tools unchanged — `host?` is a parameter, not a tool.
+**Next after 04d: 05 — ssh-prompt-detection**, then 06 (new-host approval,
+which is where the approval panel learns to name the host — deliberately *not*
+04d's job), 07, 08, 08b, 09.
 
 Fifteen rows in M21; live host `pinky`; `max_turns` 1000.
