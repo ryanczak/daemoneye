@@ -32,7 +32,38 @@ and correctly does *not* match the host-key question — whose answer is `yes`,
 not a secret, and belongs in the log in clear. Two tests pin all three facts
 and the needle list is a preservation criterion.
 
-## Measured blocker for row 09 — needs a PE decision before 09 is drafted
+## RESOLVED 2026-09-22 (mid-dispatch of 05) — PE made `pinky` require a sudo password
+
+The blocker below was real when 05 was drafted and is **no longer true**. The
+PE changed `pinky`'s sudoers while phase-05 was running; re-measured:
+
+```
+$ ssh pinky 'sudo -k; sudo -n true; echo rc=$?'
+sudo: interactive authentication is required
+sudo_n_rc=1
+```
+
+**And the sentinel survives the ssh hop** — the exact measurement row 09
+needs, taken over `ssh -tt` with the daemon's own `SUDO_PROMPT` form:
+
+```
+[sudo: [de-sudo-prompt-77]] Password: *
+```
+
+`pinky`'s sudo wraps the sentinel as `[sudo: …]` and appends `Password: *`
+(a different build/config from the local host), but the sentinel is present
+as a substring, so `classify_prompt`'s `output.contains(sentinel)` matches
+and 01a's round-trip applies unchanged. Note the trailing `Password:` — the
+sentinel check runs **first** (phase-05 test 6 pins that), so it classifies
+as `SudoPassword`, never as an ssh prompt.
+
+**Phase 05 is unaffected and was left running.** Its live block uses key
+login (still works) and `su`, neither of which the sudoers change touches.
+Its § Current state 4 is now stale as a *current* fact but was correct as
+measured; that gets recorded at 05's review, not by editing the doc under a
+running executor. **Row 09's exit criterion is verifiable as written.**
+
+## (superseded) Measured blocker for row 09 — needs a PE decision before 09 is drafted
 
 ```
 $ ssh pinky 'sudo -k; sudo -n true; echo rc=$?; sudo -l'
