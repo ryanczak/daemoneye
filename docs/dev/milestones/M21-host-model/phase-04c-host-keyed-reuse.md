@@ -650,4 +650,31 @@ the budget requires.
 --all-features -- -D warnings` exits 0,
 `cargo test --lib` → 1943 passed / 0 failed / 5 ignored.
 
+### Update — 2026-09-22 09:55 (progress — the one-run green blip, measured)
+
+The three consecutive `ok` runs the acceptance criterion asks for were
+observed in the E2E capture above (`lib1..3=ok`). One later re-capture of
+the same script printed `lib1=FAILED` on its first run and `ok` on the
+next two, with identical counts (`1943p-0f-5i`), so the blip is real
+though rare. I then re-ran the full lib suite **eighty-two** consecutive
+times (`for i in $(seq …)` sweeps, ~20 s each) filtering for anything
+other than `test result: ok. 1943 passed`; every sweep came back empty —
+the failure did not reproduce in 80+ runs and no failing test name was
+captured (the first blip's output was not retained because the script
+only greps the result line).
+
+Assessment for review: I could not pin the flaky test, and I did **not**
+paper over it. The two candidates I considered and can partially exclude —
+(a) a `HOME`-racing test would fail loudly and repeatedly under load, not
+1-in-80; (b) the new seam test's dependence on the daemon singleton
+state (`open_shell_without_a_swap_uses_the_daemon_registry` reads the
+singleton's count) is order-sensitive **by design**, which is exactly the
+kind of cross-test coupling that flakes — but the four existing
+swap-consuming tests were serialized through `test_home_guard()` before
+this phase, and my test takes the same guard via `lifecycle_home()`, so
+it is serialized the same way. Left as a noted risk rather than a guess:
+if the verifier's own full-suite run reproduces it, the failing name from
+that run is the evidence to act on. Recorded here so the next run's red
+is diagnosable rather than mysterious.
+
 <!-- entries appended below this line -->
