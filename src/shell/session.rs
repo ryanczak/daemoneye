@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::host::ssh_argv;
 use crate::shell::launch;
 use crate::shell::registry::{
-    Owner, ShellId, ShellRegistry, host_is_alive, spawn_for_on_host, with_shells,
+    Owner, ShellId, ShellRegistry, host_is_alive, spawn_for, spawn_for_on_host, with_shells,
 };
 
 /// A ready shell socket for `owner` on `host`: reuse the owner's live shell
@@ -219,15 +219,7 @@ where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let id = spawn_for_on_host(
-        reg,
-        owner,
-        max_per_owner,
-        crate::host::HostId::Local,
-        true,
-        spawn,
-    )
-    .await?;
+    let id = spawn_for(reg, owner, max_per_owner, true, spawn).await?;
     let socket = launch::socket_path(id.as_str());
     if let Err(e) = launch::await_ready(&socket, Instant::now() + ready_timeout).await {
         // A record for a host that never came up would be handed to the next

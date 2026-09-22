@@ -3448,8 +3448,16 @@ mod tests {
     /// Task 1's contract: the guard restores what `REPLACE` held *before* the
     /// swap, so a nested swap's drop puts the outer swap back rather than
     /// clearing to `None`.
+    ///
+    /// `test_home_guard()` is here for its **lock**, not its `HOME` swap: the
+    /// `REPLACE` global below is shared with the five `open_shell` seam tests
+    /// (`#[test]`s run in parallel threads), and this test both reads it as a
+    /// precondition and mutates it twice. The other five serialize on
+    /// `lifecycle_home()`, which bundles the same lock; this test needs no
+    /// `$HOME`, so it takes the lock by itself.
     #[test]
     fn swap_in_restores_the_previous_registry_on_drop() {
+        let _home = crate::test_home_guard();
         let outer = ShellRegistry::default();
         let inner = ShellRegistry::default();
         assert!(
