@@ -1,7 +1,7 @@
 # Phase 04c: host-keyed reuse — the plumbing `run_terminal_command { host }` needs
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress — bounced by review, see `bugs/bug-04c-1.md`
+**Status:** review
 **Depends on:** phase-04b (`spawn_for_on_host`, `ShellRecord.host`, the seam this phase repairs)
 **Estimated diff:** ~330 lines across 6 files, plus 8 tests
 **Tags:** language=rust, kind=refactor, size=m
@@ -925,3 +925,187 @@ the spec's filter (`8 passed; 0 failed; 0 ignored; 0 measured; 1940 filtered
 out`), and `cargo test --lib` is back at **1943 passed / 0 failed / 5
 ignored** — no test was added or removed by the bounce, so the count stays
 exactly where the phase put it.
+
+### Update — 2026-09-22 18:57 (complete, server-authored)
+
+**Summary:** Both bounce defects are fixed, verified, and committed; the tree is clean and the phase doc stays at `in-progress` for the server's completion tail.
+
+**Summary**
+
+The bounce (bug-04c-1) is fully addressed. First, `swap_in_restores_the_previous_registry_on_drop` now takes `crate::test_home_guard()` as its first line — the same shared lock the five other seam-touching tests serialize on through `lifecycle_home()`, with a doc comment explaining that it is there for the lock, not the `HOME` swap, since the test needs no `$HOME` and the two jobs live in one helper. Second, `spawn_dedicated_for` was restored to its pre-phase form: it calls `spawn_for(reg, owner, max_per_owner, true, spawn)` again (the one-line `Local` delegation), which is what § Out of scope named — the prior run's create-step change had silently dragged it off `spawn_for`, contradicting both the out-of-scope list and its own Update Log, and the diff and log now agree. Both bounce greps measure as required (`seam_test_guard=1` ≥ 1; `dedicated_on_host=0`), and I appended the bug-04c-1 Update Log entry recording both fixes, the post-fix gates, and the fix commit hash.
+
+**Notes for review**
+
+- Preservation held exactly: `cargo test --lib` → **1943 passed / 0 failed / 5 ignored** (no test added or trimmed — the bounce asked for no new tests), and every other target is unmoved: `doc_truth 14`, `integration 32/2i`, `isolation 9/1i`, `bug_tracker 6`.
+- All four gates are green post-fix: `cargo fmt --all` clean, `cargo build` 0 warnings, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, full `cargo test` green.
+- The eight named tests still pass by the spec's filter: `8 passed; 0 failed; 0 ignored; 1940 filtered out`.
+- The phase's original E2E capture (`/tmp/e2e-04c.txt`) was re-taken **after** the fix commits and prints identical values — `lib1..3=ok`, `lib_counts=1943p-0f-5i`, `host_params=1`, `positional_toolcall=0`, `hardcoded_local=0`, `static_return=0` — and the doc-paste self-check still prints `PASTE MATCH`, so the phase's own evidence is undisturbed.
+- Commits this run: `2c20ada2` (the two-file fix, `fix:`) and `c9b39cd3` (the Update Log entry, `docs:`); `git status --short` is empty.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+TEST
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+test result: ok. 1943 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 20.05s
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M21-host-model/phase-04c-host-keyed-reuse.md` — +51
+- `src/daemon/executor/knowledge/shell.rs` — +8
+- `src/shell/session.rs` — +2 -10
+
+**Commit:** c9b39cd3aa2c58f8c8b22b28c8bf9b5b02ea2cd9
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.20s
+
+
+TEST
+ header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.55s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M21-host-model/phase-04c-host-keyed-reuse.md` — +51 -0
+- `src/daemon/executor/knowledge/shell.rs` — +8 -0
+- `src/shell/session.rs` — +2 -10
+
+**Commit:** c9b39cd3622b81b6cff399fdeead80ba88fb2099
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
