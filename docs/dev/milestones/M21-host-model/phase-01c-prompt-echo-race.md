@@ -1,9 +1,9 @@
 # Phase 01c: prompt-echo-race — make the test gate green again
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01b (whose test this is)
-**Estimated diff:** ~60 lines, test-only
+**Estimated diff:** 2 edits in one test — one line changed, four deleted
 **Tags:** language=rust, kind=bugfix, size=s
 
 ## Goal
@@ -90,23 +90,34 @@ longer enough for bash to get from "echoed the command" to "`read` has cleared
 — see `src/shell/pty.rs`, where the `DE_''BEG` literal is deliberately split
 so the echoed command cannot match its own marker.
 
-### 4. Two fixes that do NOT work — measured, so you do not repeat them
+### 4. Correction — the split literal DOES work; the drafting prototype was wrong
 
-Both were prototyped on a scratch copy at drafting and both **failed**:
+**This section replaces the original § 4, which was wrong and cost the first
+dispatch its whole budget.** The original said both candidate fixes failed. One
+of them is the right answer, implemented incorrectly. Everything below was
+re-measured by the architect on **2026-09-21** against this tree.
 
-- **Reordering the fixture so echo is off before the prompt is printed**
-  (`stty -echo; printf '…Password: '; read -r v; stty echo`) made it *worse* —
-  it then failed in isolation too (`0 passed; 1 failed`), because the echoed
-  command line still carries the prompt text and now arms the flag even
-  earlier relative to `stty`.
-- **Splitting the prompt literal alone**
-  (`'…Pass'"'"'word: '`) while deleting the sleep also failed in isolation.
-  The split does stop the false arm, but with the sleep gone something else in
-  the sequence is still unsynchronised.
+- **Reordering the fixture** (`stty -echo; printf '…Password: '; read -r v;
+  stty echo`) — genuinely a dead end. Not retried, do not retry it.
+- **Splitting the prompt literal — reported as failing, but it does not fail.**
+  The prototype wrote `'…Pass'"'"'word: '`. That is **not** this codebase's
+  split idiom: `"'"` inserts a *literal apostrophe*, so the prompt the fixture
+  actually emitted was `Pass'word: `, which the detector can never match. The
+  idiom `src/shell/pty.rs` uses is `''` — an empty single-quoted string between
+  the two halves — as in `DE_''BEG` (`pty.rs:58-63`).
+- **The prototype also split only one of the two needles.**
+  `looks_like_secret_prompt` (`backend.rs:50-60`) case-folds and matches a list
+  containing **both** `"password"` **and** `"de-sudo-prompt-"`. The fixture
+  prompt `[de-sudo-prompt-78] Password: ` contains both, so splitting only
+  `Password` leaves `de-sudo-prompt-78` intact in the echoed command line and
+  the flag arms exactly as before. **Both needles must be split.**
 
-Draw the obvious conclusion: **the split literal and the wait condition have to
-be fixed together**, and the wait must be on a condition that is actually true
-only once echo is off. Do not ship a longer sleep.
+With both needles split, the flag can only arm on the prompt that `read -rs`
+itself emits — and `read -rs` has already taken echo off by then. The arm
+therefore *becomes* the synchronisation condition, and **the sleep is deleted
+outright rather than replaced**. The existing arm-wait poll at
+`backend.rs:610-619` is then a real wait on a real condition, which is what
+Task 1 asks for.
 
 ### 5. The property that must survive
 
@@ -120,28 +131,55 @@ it.
 
 ### Task 1 — make the wait deterministic
 
-In `src/shell/backend.rs`, fix
-`the_flag_clears_once_the_answer_is_submitted` so it passes under the full
-parallel suite.
+**The fix is two edits, both in the test, and it is verified — apply it.**
+It is given here as a worked example because the first dispatch spent its
+entire budget trying to derive it. Per § 4 the derivation is done; your job is
+to apply it, prove it with the mutations, and capture the evidence.
 
-**Constraints, not a prescribed edit** — you hold the compiler and the test
-runner, so choose the mechanism:
+Edit 1 — split **both** needles in the fixture prompt (`backend.rs:607`):
+
+```rust
+// before
+let echo = "read -rs -p '[de-sudo-prompt-78] Password: ' v; printf '\\n'\n";
+// after
+let echo = "read -rs -p '[de-sudo-prompt''-78] Pass''word: ' v; printf '\\n'\n";
+```
+
+What `read -rs` *emits* is still `[de-sudo-prompt-78] Password: ` and still
+arms the detector. What the shell *echoes back* is the source text
+`[de-sudo-prompt''-78] Pass''word: `, which matches neither needle.
+
+Edit 2 — delete the 50 ms sleep and its three-line comment entirely
+(`backend.rs:620-623`), leaving nothing in its place. Do **not** substitute a
+new wait: the arm-wait poll above it is now sufficient, because the flag can
+only arm after `read -rs` has turned echo off.
+
+**Architect-measured results for exactly this edit** (re-verify, do not trust):
+
+```
+cargo test --lib the_flag_clears_once_the_answer_is_submitted   ok, 5/5, 0.11s
+cargo test --lib                 ok. 1935 passed; 0 failed; 5 ignored   5/5
+```
+
+If your own runs reproduce those two lines, Task 1 is done. Stop measuring and
+move to Task 2.
+
+
+**Properties the edit above already satisfies** — listed so you can check it,
+not so you can re-derive it:
 
 - The detector must **not** arm on the fixture's own echoed command line.
-  Split the prompt literal the way `src/shell/pty.rs` splits `DE_''BEG`, so
-  what `printf`/`read -p` *emits* matches the detector and what the shell
-  *echoes back* does not.
-- The answer must **not** be written until terminal echo is genuinely off.
-  Wait on a condition that is only true then — not on a fixed duration. **No
-  `sleep` may remain as the synchronisation primitive**; STANDARDS §3.3 says
-  tests are deterministic and names `sleep` specifically. A bounded poll loop
-  with a deadline is fine, which is the shape the file already uses at
-  `backend.rs:610-619` and `backend.rs:627-638`.
-- Do not change `src/shell/backend.rs`'s production code unless you find the
-  defect is in the detector rather than the fixture. **If it is** — if the
-  detector genuinely should not match a prompt pattern appearing in an `"i"`
-  echo — say so in the Update Log and fix it there instead; that is a better
-  outcome, not a scope violation.
+- The answer must **not** be written until terminal echo is genuinely off, and
+  the wait must be on a condition that is only true then — not on a fixed
+  duration. **No `sleep` may remain as the synchronisation primitive**;
+  STANDARDS §3.3 says tests are deterministic and names `sleep` specifically.
+  Edit 2 satisfies this by removing the sleep and leaving the existing bounded
+  poll at `backend.rs:610-619` as the only wait.
+- Production code in `src/shell/backend.rs` stays unchanged. Edits 1 and 2 are
+  both inside the test. **If you become convinced the defect is really in the
+  detector** — that `looks_like_secret_prompt` should not match a prompt
+  pattern arriving in an echo — say so in the Update Log and fix it there
+  instead; that is a better outcome, not a scope violation. Do not do both.
 
 ### Task 2 — keep the assertions
 
@@ -156,16 +194,55 @@ Apply each with the `patch` tool (the executor contract forbids `sed -i`,
 `perl -i`, `> file` and `rm -rf`), run it, restore, and report what you
 observed. A mutation that stays green is a finding to write down.
 
-**Mutation A — defeat the scrub.** Make the input path log the raw bytes
-instead of `[redacted]` while the secret flag is armed.
-`the_flag_clears_once_the_answer_is_submitted` must go **red**. This proves
-your fixed test still tests the thing.
+**Run budget — this is a hard constraint.** Each mutation below needs the
+suite run the stated number of times and **no more**. The first dispatch of
+this phase died in a measurement loop: it ran `cargo test --lib` over 850
+times, never edited a line of code, and was killed by the no-progress
+governor at 200 consecutive read-only calls. Repeating a green run does not
+make it greener. If a result contradicts what is written here, record the
+contradiction and move on — do not re-run to resolve it.
 
-**Mutation B — restore the race.** Replace your new wait condition with the
-old `std::thread::sleep(Duration::from_millis(50))`. The test must go **red
-under the full suite** (`cargo test --lib`), which is the failure this phase
-exists to remove. If it stays green under the full suite, your fix may be
-masking rather than resolving the race — say so.
+**Mutation A — defeat the scrub.** In `PtyBackend::input` (`backend.rs:152`),
+change the armed branch to log the real bytes instead of the placeholder:
+
+```rust
+// before
+.write_input(self.started.elapsed(), b"[redacted]")
+// after
+.write_input(self.started.elapsed(), bytes)
+```
+
+Run **once, isolated**: `cargo test --lib
+the_flag_clears_once_the_answer_is_submitted`. Architect-measured result — it
+goes **red** on the whole-file negative at `backend.rs:645`:
+
+```
+the credential from the prompt phase must be absent from the whole cast
+test result: FAILED. 0 passed; 1 failed
+```
+
+Restore, then continue. This is the mutation that proves the security
+property is still under test.
+
+**Mutation B — restore the race.** Revert Edit 1 only: put the unsplit prompt
+literal back, and leave the sleep deleted.
+
+```rust
+// mutation B fixture (the unsplit original)
+let echo = "read -rs -p '[de-sudo-prompt-78] Password: ' v; printf '\\n'\n";
+```
+
+Run **the full suite twice** (`cargo test --lib`), not more.
+Architect-measured result — red both times, which is the failure this phase
+exists to remove:
+
+```
+test result: FAILED. 1934 passed; 1 failed; 5 ignored
+```
+
+Restore Edit 1. If Mutation B stays **green** under the full suite, your fix
+may be masking rather than resolving the race — say so in the Update Log
+rather than investigating further.
 
 ### Task 4 — capture the end-to-end evidence
 
@@ -256,3 +333,106 @@ You may edit, and nothing else:
   literal, not as something to change.
 
 ## Update Log
+
+<!-- entries appended below this line -->
+
+### Notes for executor — 2026-09-21
+
+**The spec you were given was wrong, and that is why the first dispatch
+failed.** Original § 4 told you that "splitting the prompt literal alone"
+had been prototyped and failed, so you correctly stopped pursuing it — and
+then had nothing left to try, because the other listed candidate was also
+ruled out. The briefing shows the consequence: 274 tool calls, 0 edits to
+`src/shell/backend.rs`, and a `NoProgressStall` after 200 consecutive
+read-only calls, most of them re-running `cargo test --lib` (it reached run
+#857) trying to characterise the flake instead of fixing it.
+
+The claim was false for two independent reasons, both now verified against
+this tree and written into the replacement § 4: the drafting prototype used
+`'"'"'` (which inserts a *literal apostrophe*, so the emitted prompt was
+`Pass'word: ` and could never match the detector) instead of the codebase's
+own `''` idiom from `pty.rs`; and it split only the `password` needle, while
+`looks_like_secret_prompt` also matches `de-sudo-prompt-`, which the fixture
+prompt contains. Splitting **both** needles works, and with the false arm
+gone the 50 ms sleep is deleted rather than replaced.
+
+Three things changed for this re-dispatch. **§ 4 is replaced** with the
+corrected, re-measured account. **Task 1 now inlines the exact two-edit fix
+as a worked example** with the architect's measured results, because the
+derivation is done and repeating it is what burned the last run — the old
+"choose the mechanism" framing is demoted to a checklist of properties the
+given edit already satisfies. **Task 3 pins each mutation's exact patch, its
+measured expected output, and a hard run budget** (Mutation A: one isolated
+run; Mutation B: two full-suite runs), because an unbounded "verify it"
+instruction is what the previous run turned into a loop.
+
+Apply the edit, run the criteria once each, run the two mutations within
+their budgets, capture the § End-to-end verification block, and report. If
+your measurements disagree with the architect's, write the disagreement down
+and stop — do not re-run to resolve it.
+
+### Update — 2026-09-21 18:39 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the `hard_fail` traces to a false claim in the spec's § 4 that
+ruled out the one approach that works, so the fix is a corrected spec with the
+verified edit inlined — not a takeover on a first failure.
+
+### Update — 2026-09-22 01:55 (started)
+
+**Executor:** Claude Opus 4.6 (re-dispatch, second attempt of phase 01c).
+Picked up the corrected spec. Applying the two-edit worked example from
+Task 1 as written, then the mutation pair within its run budget, then the
+§ End-to-end verification block.
+
+### Update — 2026-09-22 02:05 (end-to-end verification)
+
+Task 1 applied as specified: Edit 1 splits both needles in the fixture prompt
+with the `''` idiom, Edit 2 deletes the 50 ms sleep outright. Production
+`src/shell/backend.rs` is untouched — both edits are inside the test. Task 2:
+all pre-existing assertions retained, none weakened, no `#[ignore]`.
+
+Mutation A (scrub defeated, one isolated run) — **red**, at the whole-file
+negative:
+
+```
+the credential from the prompt phase must be absent from the whole cast
+test result: FAILED. 0 passed; 1 failed
+```
+
+Mutation B (unsplit literal restored, sleep still deleted, two full-suite
+runs) — **red once, green once**, not red twice:
+
+```
+run 1: test result: FAILED. 1934 passed; 1 failed; 5 ignored
+run 2: test result: ok. 1935 passed; 0 failed; 5 ignored
+```
+
+The spec's § Task 3 said red both times; run 2 came back green. **This is a
+disagreement with the architect's measurement, recorded and not re-run** —
+under mutation B the false arm is back, so the answer can land inside or
+outside the echo-off window depending on load, which is exactly the race the
+phase is removing. One red in two is consistent with a race that became
+near-deterministic (spec §1: it was ~1-in-4 before 04b added load); it does
+not change the conclusion, and Edit 1 is restored.
+
+Task 1's properties hold: the detector does not arm on the fixture's own
+echoed command line; the only synchronisation primitive left is the bounded
+arm-wait poll. No new wait was substituted.
+
+The § End-to-end verification block, run verbatim (evidence file
+`/tmp/e2e-01c.txt`; `PASTE MATCH` is the output of the phase doc's diff
+between this entry's last fenced block and that file):
+
+```
+full1=ok
+full2=ok
+full3=ok
+full4=ok
+full5=ok
+single_threaded=ok
+isolated=ok
+ignore_count=0
+```
+
+PASTE MATCH

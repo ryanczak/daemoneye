@@ -143,8 +143,6 @@ impl ShellBackend for PtyBackend {
             .write_input(bytes)
             .context("write input to shell")?;
         // Real bytes always reach the shell — only the log is scrubbed.
-        // Mutation B in the Update Log deletes this branch and shows the same
-        // test going red on finding the credential in the cast.
         if self.awaiting_secret.load(Ordering::SeqCst) {
             self.log
                 .lock()
@@ -603,8 +601,12 @@ mod tests {
         // "o" event and the whole-cast assertion below can never hold. What
         // the scrub itself must do (log `[redacted]`, clear on `\n`) is
         // exercised here; what the *shell program* must do (own the echo
-        // window) is provided by the fixture.
-        let echo = "read -rs -p '[de-sudo-prompt-78] Password: ' v; printf '\\n'\n";
+        // window) is provided by the fixture. Both needles in the prompt are
+        // split with `''` — the idiom `pty.rs::wrap_command` uses for the
+        // marker — so the echoed command line matches neither `password` nor
+        // `de-sudo-prompt-`; the flag can then arm only on the prompt that
+        // `read -rs` itself emits, which it prints *after* echo is off.
+        let echo = "read -rs -p '[de-sudo-prompt''-78] Pass''word: ' v; printf '\\n'\n";
         rt.block_on(backend.input(echo.as_bytes()))
             .expect("emit prompt");
         for _ in 0..500 {
@@ -617,10 +619,6 @@ mod tests {
             backend.awaiting_secret.load(Ordering::SeqCst),
             "the flag must be armed before the answer is submitted"
         );
-        // The flag arms on the PROMPT text, which bash emits before `read`
-        // takes the echo-off setting; a 50 ms settle here is what keeps the
-        // answer inside the echo-off window instead of racing it.
-        std::thread::sleep(Duration::from_millis(50));
 
         rt.block_on(backend.input(format!("{CREDENTIAL}\n").as_bytes()))
             .expect("submit the answer");
