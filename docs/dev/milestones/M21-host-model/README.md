@@ -9,8 +9,8 @@ and never reaching the shell log.
 
 **Status:** in-progress — scoped 2026-09-18, **PE sign-off on the breakdown
 2026-09-18** with two decisions: the live-verification host is **`pinky`**, and
-`host?` on `spawn_ghost_shell` is in scope as row 08b. Rows 01a–04b are `done`. **01c is `done`** (2026-09-22,
-`approved_after_2`) — the test gate it repaired is green, unblocking 04c.
+`host?` on `spawn_ghost_shell` is in scope as row 08b. Rows 01a–01c are `done`. **04c is drafted** (2026-09-22) and
+split 04d off at drafting on a measured defect in the `[DEFAULT SHELL]` line.
 
 **Depends on:** M20 (the PTY shell substrate every remote shell is), M22
 (`open_shell` / `list_shells` / the `[SHELLS]` block, and the two `host?`
@@ -64,10 +64,10 @@ deferrals this milestone closes). Not on M23 or M25.
 ## Phases
 
 Proposed, pre-measurement — **each will be re-derived and may split at
-drafting on a measured seam**, as every M20 and M22 row did. **Fourteen rows**
-(01a, 01b, 01c, 02, 03, 04a, 04b, 04c, 05–08, 08b, 09) — 04 has split twice at
-drafting, both times on a measured seam, and 01c was inserted when the test
-gate went deterministically red. Ordering: the
+drafting on a measured seam**, as every M20 and M22 row did. **Fifteen rows**
+(01a, 01b, 01c, 02, 03, 04a, 04b, 04c, 04d, 05–08, 08b, 09) — 04 has split
+**three times** at drafting, every time on a measured seam, and 01c was
+inserted when the test gate went deterministically red. Ordering: the
 credential mechanism the PTY path lacks comes first because remote sudo, host
 keys and passphrases all ride on it; config and the argv-carrying spawn path
 are pure and unblock the SSH shell; the SSH shell unblocks everything remote;
@@ -82,7 +82,8 @@ the live close is last.
 | 03 | shell-spawn-argv ([phase-03-shell-spawn-argv.md](phase-03-shell-spawn-argv.md)) — the spawn path carries a program **and its argv** end to end (`shell-host` clap → `run_host` → `PtyBackend::spawn` → `PtyShell::spawn` → `CommandBuilder`), and `ShellRecord` gains `host: HostId` across its nine sites. Local behaviour byte-identical. **Drafting probed the clap shape:** `last = true, num_args = 0.., allow_hyphen_values = true` round-trips a real ssh argv and still parses with no `--` | done      |
 | 04a | ssh-shell ([phase-04a-ssh-shell.md](phase-04a-ssh-shell.md)) — `Host::Ssh` spawn through 03's argv path: `ssh_argv` builder, `ssh_dir()` + its lifecycle/audit rows, and the remote exit-variable decision. **No tool changes.** All the hard facts measured live against `pinky` at drafting: the marker protocol works over `ssh -tt`, exit codes 0/1/42 propagate, ControlMaster is 157 ms cold vs 4–5 ms warm | done      |
 | 04b | ssh-tool-surface ([phase-04b-ssh-tool-surface.md](phase-04b-ssh-tool-surface.md)) — `open_shell { host? }`, plus the registry plumbing that makes it mean anything: `spawn_for_on_host` (additive) and a reuse scan that never hands a remote shell to a local command. **Split again at drafting**, on a measured seam: `spawn_ssh_host` has zero callers, every `ShellRecord.host` is hard-coded `Local`, and `marker_shell_name` / `list_shells` already read the field. With `open_shell { host }` the existing `run_terminal_command { shell }` already reaches the remote shell, so the one-shot `host?` form is its own row | done |
-| 04c | run-command-host — `run_terminal_command { host? }`: the one-shot remote form, and host-keyed reuse in `shell_for_owner` (04b leaves it local-only because nothing can yet ask for a remote shell). Decides what `shell` + `host` together mean | todo (not drafted) |
+| 04c | host-keyed-reuse ([phase-04c-host-keyed-reuse.md](phase-04c-host-keyed-reuse.md)) — the plumbing `run_terminal_command { host }` needs, with **no tool surface**: `shell_for_owner` takes the host to reuse on, `AiEvent::ToolCall` becomes a struct variant before 04d adds a second adjacent `Option<String>`, and 04b's `open_shell_test_seam` becomes a real RAII guard. **Split at drafting on a measured defect:** `default_shell_for` calls itself a pure mirror of `shell_for_owner`'s reuse predicate but never reads `row.host`, so `[DEFAULT SHELL]` names a remote shell as where a bare command lands — probed `Some("s1")` on remote-only rows, and it is false | todo |
+| 04d | run-command-host — `run_terminal_command { host? }` on 04c's plumbing: the `ParamDef`, the `PendingCall` field, `ShellTarget`'s host, the dispatch arm and the three doc rows (`sre.toml`, `CLAUDE.md`, `README.md`). Decides what `shell` + `host` together mean. **42 tools unchanged** — `host?` is a parameter, not a tool. Live `pinky` capture | todo (not drafted) |
 | 05 | ssh-prompt-detection — host-key (`continue connecting`), password, passphrase and `Permission denied` patterns extend 01a's detector; 01b's scrub covers them. **Remote sudo** is 01a's detector over the ssh PTY — verified live | todo (not drafted) |
 | 06 | new-host-approval — `Response::ToolCallPrompt` gains a `classification` (`command` / `remote_shell` / `new_host` / `escape_hatch`); an unconfigured destination is allowed but gated as `new_host` with an offer to persist to `[hosts]`; the client renders the class and names the host; session-scope `A` is per class per host. Ghost `hosts:` enforced — an unlisted host is refused and recorded (the M18 D6 "parked escape-hatch" pattern). The re-homed M19 phase-09 lands here as a classification | todo (not drafted) |
 | 07 | remote-file-ops-over-pty — `read_file` / `edit_file` gain `host?`; the four `target_pane` sites in `file_ops/ops.rs` route the existing hex-encoded python/perl one-liners through an idle shell on the host (or a new one — never into an `interactive` shell) with **marker-delimited** results instead of pane scraping; `target_pane` retired from both tools. Closes M22's deferral. `CLAUDE.md` / `README.md` rows | todo (not drafted) |
