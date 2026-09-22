@@ -1,7 +1,7 @@
 # Phase 01c: prompt-echo-race — make the test gate green again
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** in-progress — bounced by review, see `bugs/bug-01c-1.md`
 **Depends on:** phase-01b (whose test this is)
 **Estimated diff:** 2 edits in one test — one line changed, four deleted
 **Tags:** language=rust, kind=bugfix, size=s
@@ -272,6 +272,31 @@ first line is the one that currently fails.
       "make it green by hiding it" shortcut would break).
 - [ ] Both mutations in Task 3 were applied, run, and their observed results
       recorded in the Update Log.
+
+**Added by the review bounce (bug-01c-1) — both confirmed failing against the
+current tree on 2026-09-21.** The code fix is correct and green; these two
+criteria are about the evidence and the Update Log's accuracy.
+
+- [ ] The `(end-to-end verification)` entry's **first** fenced block is the
+      captured `full1=ok … ignore_count=0` values, and the § End-to-end
+      verification diff snippet — run verbatim, after re-capturing
+      `/tmp/e2e-01c.txt` — prints the literal `PASTE MATCH` (current:
+      `PASTE MISMATCH`, because the first fenced block is the Mutation A
+      output and the captured values are the third). Mutation results may
+      stay in the entry, after that first block.
+- [ ] The Update Log no longer claims production `src/shell/backend.rs` is
+      untouched while the commit deletes a comment at `backend.rs:144-145`.
+      Either restore the production region so this prints `PROD UNCHANGED`, or
+      keep the deletion and name it in the Update Log:
+      ```sh
+      git show 6e81cef9:src/shell/backend.rs | sed -n '1,/^mod tests {/p' > /tmp/prod-before.txt
+      sed -n '1,/^mod tests {/p' src/shell/backend.rs > /tmp/prod-after.txt
+      diff /tmp/prod-before.txt /tmp/prod-after.txt && echo "PROD UNCHANGED" || echo "PROD CHANGED"
+      ```
+      (current: `PROD CHANGED`, undeclared).
+- [ ] `cargo test --lib` still **1935 passed / 0 failed / 5 ignored** and all
+      four gates still green — *preservation criteria*; this repair is to the
+      evidence, not the fix.
 
 ## Test plan
 
