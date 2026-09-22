@@ -1,7 +1,7 @@
 # Phase 04d: run-command-host — `run_terminal_command { host? }`
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04c (host-keyed `shell_for_owner`, the struct-variant `AiEvent::ToolCall`)
 **Estimated diff:** ~420 lines across 9 files, plus 8 tests (7 run, 1 live/ignored)
 **Tags:** language=rust, kind=feature, size=m
@@ -429,3 +429,65 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-22 13:46 (started, executor)
+
+Status flipped `todo` → `in-progress` (phase doc + milestone README row). Baseline
+confirmed at commit `117cffe2` on `master`: `cargo test --lib` → **1943 passed /
+0 failed / 5 ignored**, `grep -c 'name: "host"' src/ai/tools/defs.rs` → **1** —
+both match the phase doc's "Measured on" figures. Executor: claude (M21
+phase-04d run-command-host). Implementing Tasks 1–7 in order.
+
+### Update — 2026-09-22 14:20 (end-to-end verification)
+
+The § End-to-end verification block, run verbatim; its output is the first
+fenced block below (captured to /tmp/e2e-04d.txt and pasted mechanically):
+
+```
+lib1=ok
+lib2=ok
+lib3=ok
+lib_counts=1950p-0f-6i
+host_params=2
+event_host=1
+pending_host=1
+reuse_hardcoded=0
+ignore_total=6
+doc_truth=ok
+```
+`PASTE MATCH` — the diff of the pasted block against /tmp/e2e-04d.txt exited 0.
+
+**Mutations** (each applied with `patch`, run once, restored, re-run green):
+
+- **A — relocate instead of refusing** (the `ShellTarget::Existing` host-mismatch
+  bail deleted): `cargo test --lib
+  run_terminal_command_refuses_a_shell_whose_host_differs_from_the_named_host`
+  → **FAILED** as required, `a shell on another host must be refused:
+  (ShellId("s0"), ShellRunResult { text: "must-not-run", exit_code: 0 })` — with
+  the bail gone the command ran in the local shell under a `host: "web01"`
+  request, which is exactly the silent relocation the row forbids. Restored →
+  the test is green again.
+- **B — skip the pre-spawn host check** (the `host_entry` call deleted):
+  `cargo test --lib run_terminal_command_refuses_an_unknown_host_before_any_spawn`
+  → **FAILED** as required, `an unconfigured host is refused: (ShellId("s0"),
+  ShellRunResult { text: "never", exit_code: 0 })` — with the check gone the
+  unknown host fell through to the spawn, no `unknown host` sentence anywhere.
+  Restored → green again.
+
+**Live run** (`cargo test --lib run_terminal_command_on_pinky_end_to_end --
+--ignored --nocapture`, pinky reachable over ssh, key auth):
+
+```
+record_host=pinky reused=s0 remote_hostname=pinky remote_exit_code=42
+Exit request sent.
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1955 filtered out; finished in 1.81s
+```
+
+The remote `hostname` says pinky, a reused shell id came back for the second
+command, and the remote `(exit 42)` propagated — the same four facts
+`open_shell_on_pinky_end_to_end` prints, seen through `run_terminal_command`'s
+run path. All gates green after restoration: `cargo fmt --all` clean, `cargo
+build` clean, `cargo clippy --all-targets --all-features -- -D warnings` exits 0,
+`cargo test --lib` → 1950 passed / 0 failed / 6 ignored, doc_truth 14 ok,
+integration 32 ok, isolation 9 ok, bug_tracker 6 ok.

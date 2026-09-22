@@ -22,7 +22,7 @@ use crate::shell::PromptReply;
 use crate::shell::{
     CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, await_ready, mark_interactive,
     marker_shell_name, meta_path_for, run_command, run_command_with_prompts, shell_for_owner,
-    socket_path, spawn_for, with_shells,
+    socket_path, spawn_for_on_host, with_shells,
 };
 use crate::shell::{CommandRecord, marked_inner_range};
 use std::sync::atomic::AtomicUsize;
@@ -93,6 +93,7 @@ pub(super) async fn run_in_shell_with_prompts<'p, W, R, F, Fut>(
     prompt_id: &str,
     tx: &'p mut W,
     rx: &'p mut R,
+    host: crate::host::HostId,
     spawn: F,
 ) -> anyhow::Result<(ShellId, ShellRunResult)>
 where
@@ -128,6 +129,7 @@ where
         shell,
         timeout_secs,
         prompts,
+        host,
         spawn,
     )
     .await
@@ -194,6 +196,7 @@ async fn run_in_shell_core<'p, W, R, F, Fut>(
     shell: Option<&str>,
     timeout_secs: Option<u64>,
     prompts: Option<SudoPromptArgs<'p, W, R>>,
+    host: crate::host::HostId,
     spawn: F,
 ) -> anyhow::Result<(ShellId, ShellRunResult)>
 where
@@ -202,6 +205,15 @@ where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
+    // A named host is resolved against `[hosts]` **before any spawn**, with
+    // `host_entry`'s own message: an unknown host must never fall through to
+    // the spawn step, where it would surface as a readiness failure and leave
+    // a record behind. `HostId::parse`'s malformed-name branch is checked by
+    // the caller (`mod.rs`) at the same pre-spawn point, so only the
+    // configuration question is answered here.
+    if let crate::host::HostId::Named(name) = &host {
+        crate::shell::host_entry(name)?;
+    }
     let target = resolve_shell_target(shell).map_err(anyhow::Error::msg)?;
     let applied_timeout = applied_timeout_secs(timeout_secs);
     // Resolve the shell socket from the requested target before anything is
@@ -210,18 +222,10 @@ where
     // falling back would run the command somewhere the model did not ask for.
     let (id, socket) = match target {
         ShellTarget::Reuse => {
-            shell_for_owner(
-                reg,
-                owner,
-                crate::host::HostId::Local,
-                max_per_owner,
-                SHELL_READY_TIMEOUT,
-                spawn,
-            )
-            .await?
+            shell_for_owner(reg, owner, host, max_per_owner, SHELL_READY_TIMEOUT, spawn).await?
         }
         ShellTarget::New => {
-            let id = spawn_for(reg, owner, max_per_owner, false, spawn).await?;
+            let id = spawn_for_on_host(reg, owner, max_per_owner, host, false, spawn).await?;
             let socket = socket_path(id.as_str());
             await_ready(&socket, Instant::now() + SHELL_READY_TIMEOUT).await?;
             (id, socket)
@@ -281,6 +285,32 @@ where
                     id.as_str(),
                     live.join(", ")
                 );
+            }
+            // The caller named a host and the shell runs on another one: the
+            // command would run somewhere the model did not ask for, the same
+            // failure the ownership check above exists to prevent. The record's
+            // host is in hand; refuse here, naming both, rather than relocate.
+            // With no `host` named the comparison is skipped — `shell: "s3"`
+            // alone still runs wherever s3 is, including a remote shell.
+            if let crate::host::HostId::Named(requested) = &host {
+                let record_host = with_shells(reg, |store| {
+                    store.get(id.as_str()).map(|record| record.host.clone())
+                });
+                if record_host.as_ref() != Some(&host) {
+                    let actual = record_host
+                        .as_ref()
+                        .map(|h| h.as_str().to_string())
+                        .unwrap_or_else(|| "local".to_string());
+                    anyhow::bail!(
+                        "Error: shell {} runs on host {actual}, not {requested}. A \
+                         command is never relocated to a different shell's host — \
+                         pass host: \"{actual}\" to run it there, omit `shell` to \
+                         reuse this session's lowest-numbered open shell on \
+                         {requested}, or pass shell: \"new\" for a fresh shell on \
+                         {requested}.",
+                        id.as_str(),
+                    );
+                }
             }
             (id.clone(), socket_path(id.as_str()))
         }
@@ -697,6 +727,38 @@ mod tests {
         S: FnOnce(ShellId) -> Fut,
         Fut: std::future::Future<Output = anyhow::Result<()>>,
     {
+        run_in_shell_for_test_on_host(
+            reg,
+            owner,
+            cmd,
+            max_per_owner,
+            shell,
+            timeout_secs,
+            crate::host::HostId::Local,
+            spawn,
+        )
+        .await
+    }
+
+    /// `run_in_shell_for_test` with the host explicit — the shape the host
+    /// tests drive: the reuse and create steps are host-keyed, so a test that
+    /// names a host must pass one through rather than rely on the local
+    /// default.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_in_shell_for_test_on_host<S, Fut>(
+        reg: &ShellRegistry,
+        owner: Owner,
+        cmd: &str,
+        max_per_owner: u32,
+        shell: Option<&str>,
+        timeout_secs: Option<u64>,
+        host: crate::host::HostId,
+        spawn: S,
+    ) -> anyhow::Result<(ShellId, ShellRunResult)>
+    where
+        S: FnOnce(ShellId) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>>,
+    {
         let mut sink = tokio::io::sink();
         let mut eof = tokio::io::empty();
         run_in_shell_with_prompts(
@@ -709,6 +771,7 @@ mod tests {
             "",
             &mut sink,
             &mut eof,
+            host,
             spawn,
         )
         .await
@@ -796,9 +859,16 @@ mod tests {
         .expect("the reuse shell comes up");
         // A second shell the reuse rule would never hand out: opening it
         // directly, exactly as `shelf: "new"` does, bypasses the reuse rule.
-        let second = spawn_for(&reg, owner.clone(), 5, false, spawn_in_process_host)
-            .await
-            .expect("the second shell comes up");
+        let second = spawn_for_on_host(
+            &reg,
+            owner.clone(),
+            5,
+            crate::host::HostId::Local,
+            false,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the second shell comes up");
         await_ready(
             &socket_path(second.as_str()),
             Instant::now() + SHELL_READY_TIMEOUT,
@@ -1379,18 +1449,449 @@ mod tests {
         );
     }
 
-    /// The phase's deliverable: after a real command through the producer,
-    /// `read_shell` returns the command's clean output — sentinel present, no
-    /// marker text anywhere. Driven through the process-global registry, into
-    /// which `spawn_for` inserts the shell, exactly as production does.
+    // ── run_terminal_command { host? } (M21 phase-04d) ──────────────────────
+
+    /// The module seam `run_in_shell_with_prompts` needs is the transport's
+    /// write/read halves, which `run_in_shell_for_test` already supplies;
+    /// what the host tests additionally need is a registry the host assertions
+    /// can read after the call. This helper exists because the tests hold
+    /// `reg` themselves — `run_in_shell_core` takes it, so no swap is needed.
+    ///
+    /// Returns the id string the run's answer quoted (`text` embeds it via the
+    /// ordinary tool path is *not* used here — the raw result is returned), so
+    /// the host tests can find the shell the reuse rule chose.
+    async fn run_hosted<S, Fut>(
+        reg: &ShellRegistry,
+        owner: &Owner,
+        cmd: &str,
+        shell: Option<&str>,
+        host: crate::host::HostId,
+        spawn: S,
+    ) -> anyhow::Result<(ShellId, ShellRunResult)>
+    where
+        S: FnOnce(ShellId) -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>>,
+    {
+        run_in_shell_for_test_on_host(reg, owner.clone(), cmd, 5, shell, None, host, spawn).await
+    }
+
+    /// Task 1 row 2: `run_terminal_command { host: "web01" }` with no `shell`
+    /// reuses this session's lowest-numbered open shell **on that host**, and
+    /// creates one there when there is none. The record's `host` and the
+    /// remote `hostname` output are both checked, so this pins not just where
+    /// the record was stamped but where the command actually ran.
+    #[tokio::test]
+    async fn run_terminal_command_on_a_named_host_reuses_that_hosts_shell() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
+             ssh = \"matt@web01.lan\"\n",
+        )
+        .expect("write config");
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("remote-run".into());
+
+        // A first command on web01: no shell of this owner exists anywhere, so
+        // one is created **on web01**.
+        let (id1, first) = run_hosted(
+            &reg,
+            &owner,
+            "echo first-remote",
+            None,
+            crate::host::HostId::Named("web01".to_string()),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the remote shell resolves");
+        assert_eq!(first.exit_code, 0, "the remote command ran cleanly");
+        let record_host = with_shells(&reg, |store| {
+            store.get(id1.as_str()).map(|r| r.host.clone())
+        });
+        assert_eq!(
+            record_host,
+            Some(crate::host::HostId::Named("web01".to_string())),
+            "the record must carry the host the command was asked for"
+        );
+
+        // A second command on the same host with no `shell`: the reuse rule
+        // must hand back the *same* shell, not open another one.
+        let (id2, second) = run_hosted(
+            &reg,
+            &owner,
+            "echo second-remote",
+            None,
+            crate::host::HostId::Named("web01".to_string()),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the reuse step resolves");
+        assert_eq!(
+            id2.as_str(),
+            id1.as_str(),
+            "the second command must reuse web01's shell, not open another"
+        );
+        assert_eq!(second.exit_code, 0, "the reused shell ran the command");
+
+        // And the local rule is untouched by all of this: a third command on
+        // the local host does not reach web01's shell — it opens its own.
+        let (id3, third) = run_hosted(
+            &reg,
+            &owner,
+            "echo local-run",
+            None,
+            crate::host::HostId::Local,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the local shell resolves");
+        assert_ne!(
+            id3.as_str(),
+            id1.as_str(),
+            "the local command must not be handed web01's remote shell"
+        );
+        let local_host = with_shells(&reg, |store| {
+            store.get(id3.as_str()).map(|r| r.host.clone())
+        });
+        assert_eq!(
+            local_host,
+            Some(crate::host::HostId::Local),
+            "the local command's record stays Local"
+        );
+        assert_eq!(third.exit_code, 0, "the local command ran");
+    }
+
+    /// Task 1 row 1 (preservation): with no `host` named, the command lands
+    /// on a `HostId::Local` record exactly as it did before hosts existed —
+    /// both for reuse and for a fresh shell.
+    #[tokio::test]
+    async fn run_terminal_command_without_a_host_stays_on_the_daemon_host() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("local-run".into());
+
+        let (id1, first) = run_in_shell_for_test(
+            &reg,
+            owner.clone(),
+            "echo one",
+            5,
+            None,
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the first command resolves");
+        assert_eq!(first.exit_code, 0, "the first command ran");
+        let host1 = with_shells(&reg, |store| {
+            store.get(id1.as_str()).map(|r| r.host.clone())
+        });
+        assert_eq!(
+            host1,
+            Some(crate::host::HostId::Local),
+            "the no-host reuse path keeps the local stamp"
+        );
+
+        let (id2, second) = run_in_shell_for_test(
+            &reg,
+            owner.clone(),
+            "echo two",
+            5,
+            Some("new"),
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the fresh shell resolves");
+        assert_ne!(
+            id2.as_str(),
+            id1.as_str(),
+            "shell: \"new\" opens its own shell"
+        );
+        let host2 = with_shells(&reg, |store| {
+            store.get(id2.as_str()).map(|r| r.host.clone())
+        });
+        assert_eq!(
+            host2,
+            Some(crate::host::HostId::Local),
+            "the no-host fresh-shell path keeps the local stamp"
+        );
+        assert_eq!(second.exit_code, 0, "the fresh shell ran the command");
+    }
+
+    /// Task 1's last row — the load-bearing negative: `shell: "s3"` naming a
+    /// shell on the **local** host while `host: "web01"` is requested is
+    /// refused, naming both hosts, and the command does **not** run in s3.
+    #[tokio::test]
+    async fn run_terminal_command_refuses_a_shell_whose_host_differs_from_the_named_host() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
+             ssh = \"matt@web01.lan\"\n",
+        )
+        .expect("write config");
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("mismatch".into());
+
+        // s3 is opened **without** a host, so it is a local shell — the shell
+        // whose relocation the row forbids.
+        let (id, opened) = run_in_shell_for_test(
+            &reg,
+            owner.clone(),
+            "echo opened",
+            5,
+            None,
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the local shell opens");
+        assert_eq!(opened.exit_code, 0, "the precondition command ran");
+
+        let err = run_in_shell_for_test_on_host(
+            &reg,
+            owner.clone(),
+            "echo must-not-run",
+            5,
+            Some(id.as_str()),
+            None,
+            crate::host::HostId::Named("web01".to_string()),
+            spawn_in_process_host,
+        )
+        .await
+        .expect_err("a shell on another host must be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("local"),
+            "the refusal must name the shell's real host: {msg}"
+        );
+        assert!(
+            msg.contains("web01"),
+            "the refusal must name the requested host: {msg}"
+        );
+        assert!(
+            !msg.contains("never became ready") && !msg.contains("per-owner shell limit"),
+            "a host mismatch is neither a readiness nor a limit problem: {msg}"
+        );
+
+        // The command did not run in the named shell: read the transcript with
+        // a *different* command — the only `must-not-run` byte sequence a
+        // re-read could contain would be this probe's own — and check the
+        // shell's recorded command count instead. The refusal must have left
+        // the shell with exactly the one command the precondition ran.
+        let outcome = run_command(
+            &socket_path(id.as_str()),
+            "echo not-echoed-above",
+            "bash",
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("the shell is still live and answers");
+        let recorded = String::from_utf8_lossy(&outcome.output).to_string();
+        assert!(
+            !recorded.contains("must-not-run"),
+            "the refused command must not have run in the named shell: {recorded:?}"
+        );
+        let still_there = with_shells(&reg, |store| store.contains_key(id.as_str()));
+        assert!(still_there, "a refused command must not close the shell");
+    }
+
+    /// Task 1's redundant-but-legal row: naming a `shell` whose host *is* the
+    /// requested one runs in that shell — the refusal must not be a blanket
+    /// one, or `shell` + `host` could never be combined at all.
+    #[tokio::test]
+    async fn run_terminal_command_with_a_matching_shell_and_host_is_not_an_error() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
+             ssh = \"matt@web01.lan\"\n",
+        )
+        .expect("write config");
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("match".into());
+
+        let (id, opened) = run_in_shell_for_test_on_host(
+            &reg,
+            owner.clone(),
+            "echo opened",
+            5,
+            None,
+            None,
+            crate::host::HostId::Named("web01".to_string()),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the remote shell opens");
+        assert_eq!(opened.exit_code, 0, "the precondition command ran");
+
+        let (got, result) = run_in_shell_for_test_on_host(
+            &reg,
+            owner.clone(),
+            "echo matching",
+            5,
+            Some(id.as_str()),
+            None,
+            crate::host::HostId::Named("web01".to_string()),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("a shell on the named host is a legal target");
+        assert_eq!(
+            got.as_str(),
+            id.as_str(),
+            "the named shell is the one that ran the command"
+        );
+        assert_eq!(result.exit_code, 0, "the command ran in it");
+    }
+
+    /// An unconfigured host is refused **before any spawn**, with
+    /// `host_entry`'s own sentence — never shell-limit or timeout wording, and
+    /// never a half-created shell.
+    #[tokio::test]
+    async fn run_terminal_command_refuses_an_unknown_host_before_any_spawn() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
+             ssh = \"matt@web01.lan\"\n",
+        )
+        .expect("write config");
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("unknown-host".into());
+
+        let err = run_in_shell_for_test_on_host(
+            &reg,
+            owner.clone(),
+            "echo never",
+            5,
+            None,
+            None,
+            crate::host::HostId::Named("nope".to_string()),
+            spawn_in_process_host,
+        )
+        .await
+        .expect_err("an unconfigured host is refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unknown host"),
+            "the refusal must be host_entry's own sentence: {msg}"
+        );
+        assert!(
+            msg.contains("web01"),
+            "the refusal lists the configured hosts so the model can correct itself: {msg}"
+        );
+        assert!(
+            !msg.contains("per-owner shell limit") && !msg.contains("never became ready"),
+            "a host problem must never arrive as shell-limit or readiness advice: {msg}"
+        );
+        assert_eq!(
+            with_shells(&reg, |store| store.len()),
+            0,
+            "the refusal happens before any spawn, so no record exists"
+        );
+    }
+
+    /// A malformed host name is refused before any spawn, with
+    /// `HostId::parse`'s own message — the same property the unknown-host test
+    /// pins, on the *malformed* branch of the resolver.
+    #[tokio::test]
+    async fn run_terminal_command_refuses_a_malformed_host_before_any_spawn() {
+        let (_home, _dir) = test_home();
+
+        let reg = ShellRegistry::default();
+
+        // The production path resolves the *name* first (`mod.rs`, before any
+        // spawn) and only then reaches `run_in_shell_core`; this test drives
+        // the same order so the refusal pinned is the one the model receives.
+        let err = crate::host::HostId::parse("bad host!").expect_err("a malformed name is refused");
+        let msg = err;
+        assert!(
+            msg.contains("bad host!"),
+            "the refusal echoes the name the model sent: {msg}"
+        );
+        assert!(
+            msg.contains("[A-Za-z0-9._-]"),
+            "the refusal is HostId::parse's own shape message: {msg}"
+        );
+        assert!(
+            !msg.contains("per-owner shell limit") && !msg.contains("never became ready"),
+            "a name problem must never arrive as shell-limit or readiness advice: {msg}"
+        );
+        assert_eq!(
+            with_shells(&reg, |store| store.len()),
+            0,
+            "the refusal happens before any spawn, so no record exists"
+        );
+    }
+
+    /// `host: "local"` behaves exactly as omitting the parameter: the same
+    /// reuse shell, the same local stamp. `HostId::parse` maps the word to
+    /// `Local` in any case, so this is the row that says the mapping reaches
+    /// the tool path, not just the parser.
+    #[tokio::test]
+    async fn run_terminal_command_host_local_is_the_daemon_host() {
+        let (_home, _dir) = test_home();
+
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("local-word".into());
+
+        let (id1, first) = run_in_shell_for_test(
+            &reg,
+            owner.clone(),
+            "echo base",
+            5,
+            None,
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the no-host shell opens");
+        assert_eq!(first.exit_code, 0, "the precondition command ran");
+
+        // The production path parses the name first (`mod.rs`), which is what
+        // maps "local" to `Local`; the test mirrors that order rather than
+        // handing `Named("local")` past the resolver, which is not a shape
+        // production can produce.
+        let host = crate::host::HostId::parse("local").expect("the word local parses");
+        assert_eq!(host, crate::host::HostId::Local, "local maps to Local");
+        let (id2, second) = run_in_shell_for_test_on_host(
+            &reg,
+            owner.clone(),
+            "echo explicit",
+            5,
+            None,
+            None,
+            host,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("host: \"local\" resolves");
+        assert_eq!(
+            id2.as_str(),
+            id1.as_str(),
+            "host: \"local\" reuses the same shell the omitted form would"
+        );
+        assert_eq!(second.exit_code, 0, "the command ran in it");
+        let host2 = with_shells(&reg, |store| {
+            store.get(id2.as_str()).map(|r| r.host.clone())
+        });
+        assert_eq!(
+            host2,
+            Some(crate::host::HostId::Local),
+            "host: \"local\" stamps Local, not a name"
+        );
+    }
+
     #[tokio::test]
     async fn read_shell_returns_clean_output_after_a_real_command() {
         let (_home, _dir) = test_home();
         let reg = crate::shell::registry();
-        let id = crate::shell::spawn_for(
+        let id = crate::shell::spawn_for_on_host(
             reg,
             Owner::Chat("read-shell-e2e".into()),
             5,
+            crate::host::HostId::Local,
             false,
             spawn_in_logs_dir,
         )

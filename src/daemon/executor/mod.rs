@@ -285,6 +285,7 @@ where
             id,
             cmd,
             shell,
+            host,
             timeout_secs,
             ..
         } => {
@@ -334,51 +335,17 @@ where
                             .unwrap_or_default()
                             .shells
                             .max_per_owner;
-                        let outcome = match shell_exec::run_in_shell_with_prompts(
-                            crate::shell::registry(),
-                            owner.clone(),
-                            cmd,
-                            max_per_owner,
-                            shell.as_deref(),
-                            *timeout_secs,
-                            id.as_str(),
-                            tx,
-                            rx,
-                            |id| crate::shell::spawn_detached_host(id, &[], 24, 80),
-                        )
-                        .await
-                        {
-                            Ok((shell_id, result)) => {
-                                crate::daemon::stats::finish_command(cmd_id, result.exit_code);
-                                send_response_split(
-                                    tx,
-                                    Response::ToolResult {
-                                        tool_call_id: id.to_string(),
-                                        output: result.text.clone(),
-                                    },
-                                )
-                                .await?;
-                                crate::daemon::utils::log_shell_command(
-                                    session_id,
-                                    shell_id.as_str(),
-                                    cmd,
-                                    "approved",
-                                    result.exit_code,
-                                    &result.text,
-                                );
-                                result.text
-                            }
-                            Err(e) => {
-                                let shell_id =
-                                    crate::shell::registry_lookup(&owner, |id| id.to_string())
-                                        .unwrap_or_else(|| "s?".to_string());
-                                let msg = format!(
-                                    "Error running command in shell {shell_id}: {e:#}. \
-                                     The command may still be running in that shell — \
-                                     do not assume it failed outright; retrying could \
-                                     double-apply its effect."
-                                );
-                                crate::daemon::stats::finish_command(cmd_id, 1);
+                        // `host` is resolved **before** any spawn: a malformed
+                        // name is refused with `HostId::parse`'s own message and
+                        // an unconfigured one with `host_entry`'s — never routed
+                        // through the shell-error wording, which would dress a
+                        // host problem in shell-limit or timeout advice the
+                        // model cannot act on.
+                        let host = match host.as_deref().map(crate::host::HostId::parse) {
+                            None => crate::host::HostId::Local,
+                            Some(Ok(parsed)) => parsed,
+                            Some(Err(msg)) => {
+                                let msg = format!("Error: {msg}");
                                 send_response_split(
                                     tx,
                                     Response::ToolResult {
@@ -387,15 +354,178 @@ where
                                     },
                                 )
                                 .await?;
-                                crate::daemon::utils::log_shell_command(
-                                    session_id,
-                                    &shell_id,
+                                crate::daemon::stats::finish_command(cmd_id, 1);
+                                return Ok(ToolCallOutcome::Result(msg));
+                            }
+                        };
+                        // The two arms spawn different programs, so their closure
+                        // types differ and each calls `run_in_shell_with_prompts`
+                        // itself (the same split `open_shell` makes).
+                        let outcome = match &host {
+                            crate::host::HostId::Local => {
+                                match shell_exec::run_in_shell_with_prompts(
+                                    crate::shell::registry(),
+                                    owner.clone(),
                                     cmd,
-                                    "shell-error",
-                                    -1,
-                                    &msg,
-                                );
-                                msg
+                                    max_per_owner,
+                                    shell.as_deref(),
+                                    *timeout_secs,
+                                    id.as_str(),
+                                    tx,
+                                    rx,
+                                    crate::host::HostId::Local,
+                                    |id| crate::shell::spawn_detached_host(id, &[], 24, 80),
+                                )
+                                .await
+                                {
+                                    Ok((shell_id, result)) => {
+                                        crate::daemon::stats::finish_command(
+                                            cmd_id,
+                                            result.exit_code,
+                                        );
+                                        send_response_split(
+                                            tx,
+                                            Response::ToolResult {
+                                                tool_call_id: id.to_string(),
+                                                output: result.text.clone(),
+                                            },
+                                        )
+                                        .await?;
+                                        crate::daemon::utils::log_shell_command(
+                                            session_id,
+                                            shell_id.as_str(),
+                                            cmd,
+                                            "approved",
+                                            result.exit_code,
+                                            &result.text,
+                                        );
+                                        result.text
+                                    }
+                                    Err(e) => {
+                                        let shell_id =
+                                            crate::shell::registry_lookup(&owner, |id| {
+                                                id.to_string()
+                                            })
+                                            .unwrap_or_else(|| "s?".to_string());
+                                        let msg = format!(
+                                            "Error running command in shell {shell_id}: {e:#}. \
+                                             The command may still be running in that shell — \
+                                             do not assume it failed outright; retrying could \
+                                             double-apply its effect."
+                                        );
+                                        crate::daemon::stats::finish_command(cmd_id, 1);
+                                        send_response_split(
+                                            tx,
+                                            Response::ToolResult {
+                                                tool_call_id: id.to_string(),
+                                                output: msg.clone(),
+                                            },
+                                        )
+                                        .await?;
+                                        crate::daemon::utils::log_shell_command(
+                                            session_id,
+                                            &shell_id,
+                                            cmd,
+                                            "shell-error",
+                                            -1,
+                                            &msg,
+                                        );
+                                        msg
+                                    }
+                                }
+                            }
+                            crate::host::HostId::Named(name) => {
+                                if let Err(e) = crate::shell::host_entry(name) {
+                                    let msg = format!("Error: {e}");
+                                    send_response_split(
+                                        tx,
+                                        Response::ToolResult {
+                                            tool_call_id: id.to_string(),
+                                            output: msg.clone(),
+                                        },
+                                    )
+                                    .await?;
+                                    crate::daemon::stats::finish_command(cmd_id, 1);
+                                    crate::daemon::utils::log_shell_command(
+                                        session_id,
+                                        "s?",
+                                        cmd,
+                                        "host-error",
+                                        -1,
+                                        &msg,
+                                    );
+                                    return Ok(ToolCallOutcome::Result(msg));
+                                }
+                                match shell_exec::run_in_shell_with_prompts(
+                                    crate::shell::registry(),
+                                    owner.clone(),
+                                    cmd,
+                                    max_per_owner,
+                                    shell.as_deref(),
+                                    *timeout_secs,
+                                    id.as_str(),
+                                    tx,
+                                    rx,
+                                    host.clone(),
+                                    |id| crate::shell::spawn_ssh_host(id, name, 24, 80),
+                                )
+                                .await
+                                {
+                                    Ok((shell_id, result)) => {
+                                        crate::daemon::stats::finish_command(
+                                            cmd_id,
+                                            result.exit_code,
+                                        );
+                                        send_response_split(
+                                            tx,
+                                            Response::ToolResult {
+                                                tool_call_id: id.to_string(),
+                                                output: result.text.clone(),
+                                            },
+                                        )
+                                        .await?;
+                                        crate::daemon::utils::log_shell_command(
+                                            session_id,
+                                            shell_id.as_str(),
+                                            cmd,
+                                            "approved",
+                                            result.exit_code,
+                                            &result.text,
+                                        );
+                                        result.text
+                                    }
+                                    Err(e) => {
+                                        let shell_id =
+                                            crate::shell::registry_lookup(&owner, |id| {
+                                                id.to_string()
+                                            })
+                                            .unwrap_or_else(|| "s?".to_string());
+                                        let msg = format!(
+                                            "Error running command in shell {shell_id}: {e:#}. \
+                                             The command may still be running in that shell — \
+                                             do not assume it failed outright; retrying could \
+                                             double-apply its effect."
+                                        );
+                                        crate::daemon::stats::finish_command(cmd_id, 1);
+                                        send_response_split(
+                                            tx,
+                                            Response::ToolResult {
+                                                tool_call_id: id.to_string(),
+                                                output: msg.clone(),
+                                            },
+                                        )
+                                        .await?;
+                                        crate::daemon::utils::log_shell_command(
+                                            session_id,
+                                            &shell_id,
+                                            cmd,
+                                            "shell-error",
+                                            -1,
+                                            &msg,
+                                        );
+                                        msg
+                                    }
+                                }
                             }
                         };
                         return Ok(ToolCallOutcome::Result(outcome));

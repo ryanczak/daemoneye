@@ -930,6 +930,7 @@ mod tests {
             wait,
             thought_signature,
             shell,
+            host,
             timeout_secs,
         } = ev
         else {
@@ -944,6 +945,7 @@ mod tests {
             "the thought signature lands in `thought_signature`"
         );
         assert_eq!(shell.as_deref(), Some("s9"), "the shell lands in `shell`");
+        assert_eq!(host, None, "the unnamed host lands as `None` in `host`");
         assert_eq!(
             timeout_secs,
             Some(33),

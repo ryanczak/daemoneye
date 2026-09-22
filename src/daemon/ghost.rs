@@ -832,6 +832,9 @@ async fn do_ghost_turn(
                         wait: _wait,
                         thought_signature,
                         shell: _shell,
+                        // Ghost Shell host routing is row 08b, not this row;
+                        // every ghost command stays on the daemon host.
+                        host: _host,
                         timeout_secs: _timeout_secs,
                     } => {
                         pending_calls.push(PendingCall::Background {

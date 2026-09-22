@@ -17,6 +17,7 @@ pub(super) struct RunTerminalCommandArgs {
     command: String,
     wait: Option<bool>,
     shell: Option<String>,
+    host: Option<String>,
     timeout_secs: Option<u64>,
 }
 
@@ -319,6 +320,7 @@ impl ToolArgs for RunTerminalCommandArgs {
             wait: self.wait,
             thought_signature: ts,
             shell: self.shell,
+            host: self.host,
             timeout_secs: self.timeout_secs,
         }
     }

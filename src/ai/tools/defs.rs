@@ -85,6 +85,18 @@ pub static TOOLS: &[ToolDef] = &[
                               shell is not a target.",
             },
             ParamDef {
+                name: "host",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional configured host (a [hosts.<name>] key, e.g. \"pinky\") \
+                              to run the command on. Omitted or \"local\": the daemon host. \
+                              With host and no shell the command reuses this session's \
+                              lowest-numbered open shell on that host, or opens one there; \
+                              a shell id naming a shell on a **different** host is refused \
+                              (the refusal names both hosts) rather than relocated — a \
+                              command runs only where you asked.",
+            },
+            ParamDef {
                 name: "timeout_secs",
                 ty: ParamTy::Int,
                 required: false,

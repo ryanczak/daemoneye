@@ -3612,6 +3612,97 @@ mod tests {
             .status();
     }
 
+    /// `run_terminal_command`'s run path with the transport's write/read halves
+    /// bound to sink/EOF (no sudo) and the spawn step in-process over the real
+    /// `ssh` argv — the live-test shape [`open_shell_on_pinky_end_to_end`]
+    /// mirrors, but through the reuse-or-create step instead of `open_shell`.
+    async fn run_pinky_via_run_path(
+        reg: &ShellRegistry,
+        owner: Owner,
+        cmd: &str,
+    ) -> anyhow::Result<(ShellId, crate::daemon::executor::shell_exec::ShellRunResult)> {
+        let mut sink = tokio::io::sink();
+        let mut eof = tokio::io::empty();
+        crate::daemon::executor::shell_exec::run_in_shell_with_prompts(
+            reg,
+            owner,
+            cmd,
+            5,
+            None,
+            Some(120),
+            "",
+            &mut sink,
+            &mut eof,
+            crate::host::HostId::Named("pinky".to_string()),
+            |id| async move { spawn_pinky_ssh(id).await },
+        )
+        .await
+    }
+
+    /// M21 phase-04d's end-to-end check: `run_terminal_command { host: "pinky" }`
+    /// really runs on the remote host. Same preconditions as
+    /// [`open_shell_on_pinky_end_to_end`]: the live host `pinky` over ssh with
+    /// key auth (no prompt). The run path is [`run_in_shell_core`]'s host
+    /// parameter — the reuse-or-create step the tool drives — with the spawn
+    /// step bound in-process (the real `ssh` argv; `spawn_ssh_host` cannot run
+    /// under a test binary because `launch::spawn_detached` re-invokes
+    /// `current_exe()`), then the command's output and exit code are asserted
+    /// against the real remote and printed on one line.
+    #[tokio::test]
+    #[ignore = "requires the configured host `pinky` reachable over ssh"]
+    async fn run_terminal_command_on_pinky_end_to_end() {
+        let (_home, dir) = lifecycle_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\nssh = \"pinky\"\n",
+        )
+        .expect("write config");
+        crate::config::ssh_dir();
+
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("e2e-rc-host".into());
+        let (id, first) = run_pinky_via_run_path(&reg, owner.clone(), "hostname")
+            .await
+            .expect("the pinky run resolves");
+        assert_eq!(first.exit_code, 0, "`hostname` ran cleanly on pinky");
+        let hostname_out = first.text.trim().lines().last().unwrap_or("").to_string();
+        assert!(
+            hostname_out.contains("pinky"),
+            "`hostname` must say pinky: {hostname_out:?}"
+        );
+
+        let record_host = with_shells(&reg, |store| store.get(id.as_str()).map(|r| r.host.clone()));
+        assert_eq!(
+            record_host,
+            Some(crate::host::HostId::Named("pinky".to_string())),
+            "the record must carry the host the command was asked for"
+        );
+
+        let (id2, second) = run_pinky_via_run_path(&reg, owner.clone(), "(exit 42)")
+            .await
+            .expect("the exit-42 run resolves");
+        assert_eq!(id2.as_str(), id.as_str(), "the second command reused s*");
+        assert_eq!(second.exit_code, 42, "the remote non-zero exit propagates");
+
+        println!(
+            "record_host=pinky reused={reused} remote_hostname={hostname_out} remote_exit_code={}",
+            second.exit_code,
+            reused = id2.as_str(),
+        );
+
+        close_shell_with(&reg, id.as_str(), &owner, Duration::from_millis(3000)).await;
+        let cp = crate::config::ssh_dir();
+        let _ = std::process::Command::new("ssh")
+            .args([
+                "-O",
+                "exit",
+                "-o",
+                &format!("ControlPath={}/%C", cp.display()),
+                "pinky",
+            ])
+            .status();
+    }
+
     // ── close_shell ──────────────────────────────────────────────────────────
 
     #[tokio::test]

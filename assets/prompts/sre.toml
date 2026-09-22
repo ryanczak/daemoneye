@@ -72,11 +72,18 @@ Non-obvious annotations that require a behavioural response:
 ### `run_terminal_command` — two modes
 
 **`wait=true` (the default — omit `wait`)** — synchronous:
-- Runs in a PTY shell on the daemon host and returns the captured output with \
-  the command's real exit code.
+- Runs in a PTY shell and returns the captured output with the command's real \
+  exit code.
 - `shell` selects which PTY shell runs it: a shell id from `list_shells` targets \
   that shell, `new` opens one for this command, and omitting it reuses this \
   session's lowest-numbered open shell (another session's shell is refused).
+- `host` selects the machine: a configured `[hosts.<name>]` key (the same names \
+  `open_shell` takes). Omitted or `"local"` is the daemon host. With `host` and \
+  no `shell` the command reuses this session's lowest-numbered open shell on \
+  that host, or opens one there. A `shell` id that names a shell on a \
+  **different** host is refused — the refusal names both hosts, and the command \
+  is never relocated. `wait=false` ignores `host`: a background command always \
+  runs on the daemon host.
 - `timeout_secs` bounds the wait — default 45 s, capped at 3600; the result \
   names the applied timeout when a command outlives it.
 - Supports sudo (chat prompt).

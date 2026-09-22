@@ -322,9 +322,14 @@ where
                     wait,
                     thought_signature,
                     shell,
+                    host,
                     timeout_secs,
                 } => {
                     if routes_to_background(wait) {
+                        // `wait: false` stays on the daemon host; a named host
+                        // on a background command is row 08b's surface, so the
+                        // value is dropped here (sre.toml promises this).
+                        let _ = host;
                         pending_calls.push(PendingCall::Background {
                             id,
                             cmd,
@@ -336,6 +341,7 @@ where
                             id,
                             cmd,
                             shell,
+                            host,
                             timeout_secs,
                             thought_signature: thought_signature.clone(),
                         });

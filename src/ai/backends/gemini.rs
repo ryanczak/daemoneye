@@ -332,6 +332,7 @@ impl AiClient for GeminiClient {
                                                         wait: Some(!bg),
                                                         thought_signature: None,
                                                         shell: None,
+                                                        host: None,
                                                         timeout_secs: None,
                                                     });
                                                 } else {

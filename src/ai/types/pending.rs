@@ -7,6 +7,7 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         cmd: String,
         shell: Option<String>,
+        host: Option<String>,
         timeout_secs: Option<u64>,
     },
     Background {
@@ -341,6 +342,7 @@ impl PendingCall {
                 thought_signature,
                 cmd,
                 shell,
+                host,
                 timeout_secs,
             } => ToolCall {
                 id: id.clone(),
@@ -350,6 +352,7 @@ impl PendingCall {
                     "command": cmd,
                     "background": false,
                     "shell": shell,
+                    "host": host,
                     "timeout_secs": timeout_secs
                 })),
             },
@@ -1035,17 +1038,23 @@ impl PendingCall {
                 };
                 format!("\"{q}\"")
             }
-            // A foreground run may now name the shell it targets; the shell
-            // is the part of the line the user watches needs to know.
-            PendingCall::Foreground { cmd, shell, .. } => {
+            // A foreground run may name the shell it targets and the host it
+            // runs on; both are what the user watching the line needs to know
+            // — a panel that says only "run a command" for a remote command is
+            // the wrong summary.
+            PendingCall::Foreground {
+                cmd, shell, host, ..
+            } => {
                 let q = if cmd.len() > 40 {
                     &cmd[..40]
                 } else {
                     cmd.as_str()
                 };
-                match shell {
-                    Some(s) => format!("\"{q}\" in {s}"),
-                    None => format!("\"{q}\""),
+                match (shell, host) {
+                    (Some(s), Some(h)) => format!("\"{q}\" in {s} on {h}"),
+                    (Some(s), None) => format!("\"{q}\" in {s}"),
+                    (None, Some(h)) => format!("\"{q}\" on {h}"),
+                    (None, None) => format!("\"{q}\""),
                 }
             }
             PendingCall::GetShellContext { scope, .. } => scope.clone().unwrap_or_default(),
@@ -1199,6 +1208,7 @@ mod tests {
             thought_signature: None,
             cmd: cmd.to_string(),
             shell: None,
+            host: None,
             timeout_secs: None,
         }
     }
@@ -1437,6 +1447,25 @@ mod tests {
     }
 
     #[test]
+    fn summary_foreground_names_the_shell_and_host_it_targets() {
+        let mk = |shell: Option<&str>, host: Option<&str>| PendingCall::Foreground {
+            id: "x".to_string(),
+            thought_signature: None,
+            cmd: "uptime".to_string(),
+            shell: shell.map(|s| s.to_string()),
+            host: host.map(|h| h.to_string()),
+            timeout_secs: None,
+        };
+        assert_eq!(mk(None, None).summary(), "\"uptime\"");
+        assert_eq!(mk(Some("s3"), None).summary(), "\"uptime\" in s3");
+        assert_eq!(mk(None, Some("pinky")).summary(), "\"uptime\" on pinky");
+        assert_eq!(
+            mk(Some("s3"), Some("pinky")).summary(),
+            "\"uptime\" in s3 on pinky"
+        );
+    }
+
+    #[test]
     fn summary_get_shell_context_empty() {
         let call = PendingCall::GetShellContext {
             id: "x".to_string(),
@@ -1525,6 +1554,7 @@ mod tests {
                 thought_signature: None,
                 cmd: "ls".to_string(),
                 shell: None,
+                host: None,
                 timeout_secs: None,
             },
             PendingCall::Background {

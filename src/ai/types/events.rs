@@ -9,6 +9,7 @@ pub enum AiEvent {
         wait: Option<bool>,
         thought_signature: Option<String>,
         shell: Option<String>,
+        host: Option<String>,
         timeout_secs: Option<u64>,
     },
     ScheduleCommand {
