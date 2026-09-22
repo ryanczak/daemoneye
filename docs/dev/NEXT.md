@@ -1,7 +1,18 @@
 # NEXT
 
-**Active phase:** **M21 phase-04c — host-keyed-reuse**, drafted 2026-09-22,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-04c`.
+**Active phase:** **none** — M21 phase-04c is `done` (2026-09-22,
+`approved_after_1`). **04d — run-command-host is unblocked**; run
+`/rexymcp:architect next` to draft it.
+
+04c delivered the plumbing: `shell_for_owner` is host-keyed (create step
+included — the spec named only the filter, and the executor found the
+creation half from a red test), `AiEvent::ToolCall` is a struct variant so
+04d's `host` cannot transpose with `shell`, the `[DEFAULT SHELL]` line no
+longer names a remote shell, and `open_shell_test_seam` is a real RAII guard
+with all six of its tests serialized on the shared home lock.
+
+The account below is the drafting-time record. Its pre-phase measurements
+describe the tree at `5afbf15e`, not today's.
 
 **04c split at drafting, and the split is what the measurement bought.** The
 queued row was "`run_terminal_command { host? }` plus host-keyed reuse".

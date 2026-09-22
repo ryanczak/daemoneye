@@ -1,7 +1,7 @@
 # Bug 1 on phase-04c: the new seam test is itself order-dependent
 
 **Severity:** minor
-**Status:** open
+**Status:** closed 2026-09-22 — both findings verified fixed at review. The guard audit now reads **GUARDED on all six** seam-touching tests: `swap_in_restores_the_previous_registry_on_drop` takes `crate::test_home_guard()` as its first line, with a doc comment naming the lock (not the `$HOME` swap) as the reason. `spawn_dedicated_for` is **byte-identical to its pre-phase form** at `5afbf15e` — the stronger of the two allowed branches — so no declaration is needed. Preservation held: lib 1943/0/5 on three runs, all four gates green, the eight named tests pass, the phase's own E2E capture reproduces byte for byte and `PASTE MATCH` still prints.
 **Filed:** 2026-09-22
 
 ## What's wrong

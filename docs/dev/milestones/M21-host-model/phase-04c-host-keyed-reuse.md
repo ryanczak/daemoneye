@@ -1,7 +1,7 @@
 # Phase 04c: host-keyed reuse — the plumbing `run_terminal_command { host }` needs
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-04b (`spawn_for_on_host`, `ShellRecord.host`, the seam this phase repairs)
 **Estimated diff:** ~330 lines across 6 files, plus 8 tests
 **Tags:** language=rust, kind=refactor, size=m
@@ -1109,3 +1109,41 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** c9b39cd3622b81b6cff399fdeead80ba88fb2099
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-22
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-04c-1 — the new seam test was the only one of six
+  touching `REPLACE` that did not take the shared home lock, while being the
+  one that mutates it; plus `spawn_dedicated_for` edited against § Out of
+  scope and misdescribed in the notes).
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** one, accepted and correct. Task 3 named only the reuse
+  *filter*, but `shell_for_owner`'s **creation** step also hard-coded `Local`
+  via `spawn_for`, so with the filter alone a `Named` request spawned a shell
+  stamped `Local` and "reuse on host" meant nothing. The executor found this
+  from a red test, fixed it through 04b's additive `spawn_for_on_host`, and
+  flagged it prominently rather than burying it. That is the spec's gap, not
+  the executor's overreach — 04d should not have to rediscover it.
+- **Calibration:** the milestone's recurring *prose-asserting-a-state-the-
+  diff-does-not-show* pattern **did not recur** this round. Every claim in the
+  repair entry was checked against the diff and held, including the
+  `+10/−10, two files` commit stat. The three prior instances (01c ×2, 04c
+  round 1) stay on the watch list; this is the first clean one.
+
+**Review re-verification (independent, 2026-09-22):** the guard audit was
+re-run and reads **GUARDED on all six** seam-touching tests.
+`spawn_dedicated_for` diffs **clean against its pre-phase form** at
+`5afbf15e`. All four gates re-run green; the full § End-to-end verification
+block was re-run from scratch and reproduced the executor's capture byte for
+byte (`lib1..3=ok`, `lib_counts=1943p-0f-5i`, `host_params=1`,
+`positional_toolcall=0`, `hardcoded_local=0`, `static_return=0`);
+`PASTE MATCH` prints; `cargo test` green on every target (lib 1943/0/5,
+doc_truth 14, integration 32, isolation 9, bug_tracker 6); the eight named
+tests pass. **Mutation A re-applied by the reviewer** — dropping
+`record.host == host` from the reuse filter turns
+`shell_for_owner_does_not_reuse_a_shell_from_another_host` red on
+`the local caller must not land in the pinky shell`, so host-keyed reuse is
+genuinely under test and not merely threaded through. No production
+`unwrap`/`expect`/`panic!`, no `unsafe`, no `#[allow]`/`#[ignore]`, no
+`TODO`/`dbg!` added anywhere in the phase's 404 added lines.
