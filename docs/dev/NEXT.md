@@ -1,71 +1,71 @@
 # NEXT
 
-**Active phase:** **none** — M21 phase-04d is `done` (2026-09-22,
-`approved_first_try`), and it was verified **live against `pinky`**:
+**Active phase:** **M21 phase-05 — ssh-prompt-detection**, drafted 2026-09-22,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-05`.
+
+**Every prompt string in the spec was captured live off `pinky` at drafting**,
+through a PTY with the same `-tt` argv the daemon spawns. Each of the three
+prompts **hangs to a 124 timeout today** — the same failure 01a found for
+local sudo:
 
 ```
-record_host=pinky reused=s0 remote_hostname=pinky remote_exit_code=42
+Are you sure you want to continue connecting (yes/no/[fingerprint])?
+matt@pinky.home.planetfoo.org's password:
+Password:                                  (su, over the ssh PTY)
 ```
 
-`run_terminal_command { host? }` ships. **Row 05 — ssh-prompt-detection is
-next**; run `/rexymcp:architect next` to draft it.
+and `Permission denied (publickey,password).` ends the connection with exit
+255 — terminal, not answerable, so the row fails fast rather than waiting out
+`timeout_secs`.
 
-**Carry into 05's drafting — two spec-side calibrations from 04d's review,
-both this architect's, not the executor's.** Pinning a test count *and*
-permitting a justified extra, without also requiring the § End-to-end
-verification block to be **re-captured as the final act before commit**, let
-04d's capture ship one count stale (`1950` recorded, `1951` actual; every
-other value correct, and the executor's own notes stated the true number). And
-"no new `#[allow]` anywhere else" needed a carve-out for a mirror **test**
-helper — scope that ban to production paths.
+**Measured hazard the spec pins with a test and a mutation.** The host-key
+prompt contains the word *fingerprint* twice (`ED25519 key fingerprint is:`
+and `(yes/no/[fingerprint])`). `is_fingerprint_prompt` matches only the three
+biometric sentences, so it does not fire today — but `classify_prompt` checks
+it **first**, so broadening it to a bare `"fingerprint"` would classify every
+host-key prompt as an unanswerable biometric prompt. Mutation A makes exactly
+that edit and must turn the test red.
 
-The account below is the drafting-time record for 04d. Its pre-phase
-measurements describe the tree at `117cffe2`, not today's.
+**The scrub needs no change, and that is measured too.**
+`looks_like_secret_prompt` already matches the password and passphrase prompts
+and correctly does *not* match the host-key question — whose answer is `yes`,
+not a secret, and belongs in the log in clear. Two tests pin all three facts
+and the needle list is a preservation criterion.
 
-**What it adds.** `run_terminal_command { host? }` — the one-shot remote form,
-on the plumbing 04c landed. `shell_for_owner` is already host-keyed and
-`AiEvent::ToolCall` is already a struct variant, so this row carries a `host`
-from the tool schema down to them and answers the question the milestone
-reserved for it: **what `shell` and `host` mean together.**
+## Measured blocker for row 09 — needs a PE decision before 09 is drafted
 
-**The semantics are an eight-row table in Task 1**, and its load-bearing line
-is the last one: a `shell` id whose shell is on a *different* host than the
-one named is **refused, naming both**, never relocated. Silently relocating
-would run a command somewhere the model did not ask for — the same failure the
-existing ownership check on `ShellTarget::Existing` exists to prevent.
-Mutation A deletes that bail and must turn the test red.
+```
+$ ssh pinky 'sudo -k; sudo -n true; echo rc=$?; sudo -l'
+sudo_n_rc=0
+User matt may run the following commands on pinky:
+    (ALL) NOPASSWD: ALL
+```
 
-**Measured at drafting: the spawn closure is monomorphic.**
-`run_in_shell_with_prompts` takes one `spawn: F`, and the local
-(`spawn_detached_host`) and remote (`spawn_ssh_host`) closures have different
-types, so a single generic call cannot serve both. `open_shell`
-(`knowledge/shell.rs:1662-1705`) already solved this with a two-arm `match`,
-each arm calling the generic function with its own closure — that code is
-quoted in § Current state 2 as the pattern to copy, with an explicit "do not
-try to box the closure."
+**`pinky` never prompts for sudo.** Two consequences:
 
-**Host refusals resolve before any spawn.** `HostId::parse` rejects a
-malformed name (and maps `"local"` to `HostId::Local`, which is legal);
-`host_entry` rejects an unconfigured one with `unknown host "nope"; configured
-hosts: pinky`. Both must reach the model as their own sentence rather than
-being dressed as shell-limit or timeout advice — `open_shell`'s doc comment
-states that rule and the spec quotes it. Mutation B deletes the `host_entry`
-call and must turn the unknown-host test red.
+1. The milestone README's row-05 line said "Remote sudo is 01a's detector over
+   the ssh PTY — **verified live**." On this host that verification is not
+   available. Phase 05 does not claim it; its live check uses `su` over the
+   ssh PTY instead, which does prompt (measured, and the block runs clean).
+2. **Row 09's exit criterion is unverifiable as written** — "a remote sudo
+   edit … with the password absent from every `"i"` event" is trivially
+   satisfied when there is no password. Options when 09 is drafted: use a host
+   that requires a sudo password, add a password-requiring sudoers rule on
+   `pinky` for one command, or restate the criterion around `su`. **This is a
+   PE call on a signed-off exit criterion, not the architect's.**
 
-**Pre-dispatch check run; every non-preservation criterion confirmed failing:**
-`host_params=1` (→2), `event_host=0` (→1), `pending_host=0` (→1),
-`reuse_hardcoded=1` (→0), `ignore_total=5` (→6), and the eight named tests
-`0 passed; 1948 filtered out`. **One criterion was corrected by that check** —
-`grep -c 'host: Option<String>' src/ai/types/events.rs` already read **1**
-today, because `AiEvent::OpenShell` has such a field at `events.rs:186`. It
-was a vacuous guard; it is now scoped to the `ToolCall` variant with `awk`,
-and the spec says why an unscoped grep proves nothing.
+**Pre-dispatch check run; both non-preservation criteria confirmed failing:**
+`lib_counts=1951p-0f-6i` (→1961), `new_variants=0` (→3). The three
+preservation lines correctly pass today and are labelled as such
+(`fingerprint_not_broadened=0`, `needles=5`, `ignore_total=6`). The ten named
+tests read `0 passed; 1957 filtered out`, and the § Live verification block
+was **run as written** and returned `hostkey_q=1 su_password=1`.
 
-**42 tools, 28 core, 14 deferred — unchanged.** `host?` is a parameter, not a
-tool, and `tests/doc_truth.rs` is the gate that catches it if the counts move.
+**Both 04d calibrations are folded into this spec:** the E2E criterion now says
+*re-capture as the last thing before committing, or the evidence is stale*,
+and the no-new-`#[ignore]` line is scoped rather than blanket.
 
-**Next after 04d: 05 — ssh-prompt-detection**, then 06 (new-host approval,
-which is where the approval panel learns to name the host — deliberately *not*
-04d's job), 07, 08, 08b, 09.
+**Next after 05: 06 — new-host-approval**, which owns the interactive
+host-key trust flow this row deliberately stops short of.
 
 Fifteen rows in M21; live host `pinky`; `max_turns` 1000.
