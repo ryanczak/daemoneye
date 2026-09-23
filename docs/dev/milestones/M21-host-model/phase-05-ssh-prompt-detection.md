@@ -1,7 +1,7 @@
 # Phase 05: ssh-prompt-detection — the four prompts an ssh connection can raise
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress — executor started 2026-09-22
 **Depends on:** phase-04d (`run_terminal_command { host? }` reaches an ssh shell)
 **Estimated diff:** ~360 lines across 3 files, plus 10 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -306,9 +306,15 @@ line produces **against the current tree**.
 - [ ] `PromptKind` has the three new variants:
       ``awk '/pub enum PromptKind/,/^\}/' src/daemon/utils/sudo.rs | grep -cE '^\s+(SshHostKey|SshPassword|SshPassphrase),'``
       → **3** (current: 0).
-- [ ] `is_fingerprint_prompt` was **not** broadened:
-      `grep -c '"fingerprint"' src/daemon/utils/sudo.rs` → **0** (current: 0 —
-      *preservation*, and the § Current state 3 hazard).
+- [ ] `is_fingerprint_prompt` was **not** broadened — **scoped to the
+      function**:
+      ``awk '/pub fn is_fingerprint_prompt/,/^\}/' src/daemon/utils/sudo.rs | grep -c '"fingerprint"'``
+      → **0** (*preservation*, and the § Current state 3 hazard). **Do not grep
+      the whole file**: the word legitimately appears in doc comments
+      explaining this very hazard, so an unscoped grep reads non-zero on a
+      correct tree. (Corrected at the 2026-09-22 escalation — the first
+      dispatch's tree tripped the unscoped form on a comment while the matcher
+      itself was untouched.)
 - [ ] `looks_like_secret_prompt`'s needle list is unchanged:
       ``awk '/const NEEDLES/,/\];/' src/shell/backend.rs | grep -c '"'`` →
       **5** (current: 5 — *preservation*; § Current state 6 says no change is
@@ -379,7 +385,7 @@ cd /home/matt/src/daemoneye
   done
   printf 'lib_counts=%s\n' "$(cargo test --lib 2>&1 | grep -E '^test result' | tail -1 | sed -E 's/.*ok\. ([0-9]+) passed; ([0-9]+) failed; ([0-9]+) ignored.*/\1p-\2f-\3i/')"
   printf 'new_variants=%s\n' "$(awk '/pub enum PromptKind/,/^\}/' src/daemon/utils/sudo.rs | grep -cE '^\s+(SshHostKey|SshPassword|SshPassphrase),')"
-  printf 'fingerprint_not_broadened=%s\n' "$(grep -c '"fingerprint"' src/daemon/utils/sudo.rs)"
+  printf 'fingerprint_not_broadened=%s\n' "$(awk '/pub fn is_fingerprint_prompt/,/^\}/' src/daemon/utils/sudo.rs | grep -c '"fingerprint"')"
   printf 'needles=%s\n' "$(awk '/const NEEDLES/,/\];/' src/shell/backend.rs | grep -c '"')"
   printf 'ignore_total=%s\n' "$(grep -rc '#\[ignore' --include=*.rs src/ | grep -v ':0' | awk -F: '{s+=$2} END {print s}')"
 } > /tmp/e2e-05.txt
@@ -451,3 +457,56 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-22 22:55 (started, executor)
+
+Status flipped `todo → in-progress` (phase doc + milestone README row). Pre-flight
+at HEAD `f6e11915` (the tree is identical to the drafted `61e519e9` on all source
+files — the extra commit is the PE's row-09 sudoers note in `docs/dev/NEXT.md`
+only): `cargo test --lib` → **1951 passed / 0 failed / 6 ignored**, matching the
+phase doc's measured baseline. All four § Current state strings re-confirmed
+against the code before editing (`is_fingerprint_prompt`'s three biometric
+sentences only, `looks_like_secret_prompt`'s five needles, `classify_prompt`'s
+fingerprint-then-sentinel order). Executor: claude (M21 phase-05
+ssh-prompt-detection). Implementing Tasks 1–6 in order.
+
+### Update — 2026-09-22 16:05 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the spec held — Tasks 1 and 2 landed clean and well-reasoned
+from it — and the run died on one mechanical wall in Task 3's plumbing, which
+is the "most of the phase done, hit one wall" shape rather than a spec gap a
+re-dispatch would fix.
+
+**What is already done and must not be redone.** `PromptKind` carries all
+three new variants, `classify_ssh_prompt` and `is_ssh_permission_denied` are
+written, the ordering (fingerprint → sentinel → ssh text) is right, and the
+`su`/bare-`Password:` decision is made and documented with its reasoning.
+`ssh_credential_prompt` and the shared `credential_round_trip<W, R>` helper
+are a **good** factoring — keeping sudo and ssh on one wire shape is exactly
+right. Keep all of it.
+
+**The wall, and it is two mechanical defects, not a design problem.** The
+build fails with 13 errors, all one class:
+
+- `shell_exec.rs:467` — `send_response_split(&mut **tx, …)` over-dereferences.
+  `tx` is already `&mut W`, so `**tx` is `E0614: type W cannot be
+  dereferenced`. It wants `&mut *tx`.
+- `shell_exec.rs:523` / `:525` — the shared state was rewrapped as
+  `std::sync::Arc::new(std::sync::Mutex::new(Some(tx)))`. A
+  `std::sync::MutexGuard<Option<&mut W>>` is not `AsyncWrite`, which is the
+  other 12 errors. **The pre-existing pattern at these lines was**
+  `std::sync::Arc::new(tokio::sync::Mutex::new(tx))` — an async mutex, locked
+  with `.lock().await` and used as `&mut **guard`. Going back to that shape is
+  what makes the helper compile; the `Option<…>` and the `UnpoisonExt` import
+  are not needed.
+
+**Still to do:** Task 4's ten tests — none of the pinned names exists yet —
+then Tasks 5 and 6.
+
+**One acceptance criterion was wrong and is now fixed — it is not your bug.**
+`fingerprint_not_broadened` grepped the whole of `sudo.rs`, so it read `1`
+against your tree purely because you wrote the word `"fingerprint"` in a doc
+comment explaining the hazard. `is_fingerprint_prompt` itself is byte-identical
+to `HEAD`, which is correct. The criterion is now scoped to the function and
+reads `0`. Do not delete that comment to satisfy the old form.
