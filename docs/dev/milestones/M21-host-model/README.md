@@ -11,8 +11,9 @@ and never reaching the shell log.
 2026-09-18** with two decisions: the live-verification host is **`pinky`**, and
 `host?` on `spawn_ghost_shell` is in scope as row 08b. Rows 01a–01c and 04c–05 are `done`. **06 split into 06a/06b/06c at
 drafting** (2026-09-23) — it was four features in one row. **06a is `done`** (2026-09-23,
-`approved_first_try`): the approval panel names the host. 06b owns the `new_host` gate and
-the per-host session scope; 06c owns ghost `hosts:` enforcement.
+`approved_first_try`): the approval panel names the host. **06b is drafted** —
+per-host session scope. 06c owns making an unconfigured host allowed-but-gated;
+06d owns ghost `hosts:` enforcement.
 
 **Depends on:** M20 (the PTY shell substrate every remote shell is), M22
 (`open_shell` / `list_shells` / the `[SHELLS]` block, and the two `host?`
@@ -66,9 +67,9 @@ deferrals this milestone closes). Not on M23 or M25.
 ## Phases
 
 Proposed, pre-measurement — **each will be re-derived and may split at
-drafting on a measured seam**, as every M20 and M22 row did. **Seventeen rows**
-(01a, 01b, 01c, 02, 03, 04a, 04b, 04c, 04d, 05, 06a, 06b, 06c, 07, 08, 08b,
-09) — 04 has split **three times** at drafting and 06 once, every time on a
+drafting on a measured seam**, as every M20 and M22 row did. **Eighteen rows**
+(01a, 01b, 01c, 02, 03, 04a, 04b, 04c, 04d, 05, 06a, 06b, 06c, 06d, 07, 08,
+08b, 09) — 04 has split **three times** at drafting and 06 once, every time on a
 measured seam, and 01c was inserted when the test gate went deterministically
 red. Ordering: the
 credential mechanism the PTY path lacks comes first because remote sudo, host
@@ -89,8 +90,9 @@ the live close is last.
 | 04d | run-command-host ([phase-04d-run-command-host.md](phase-04d-run-command-host.md)) — `run_terminal_command { host? }` on 04c's plumbing: the `ParamDef`, the `PendingCall` field, the `AiEvent` field, the dispatch arm and the three doc rows. **Decides what `shell` + `host` together mean** — an eight-row table whose load-bearing line is that a `shell` id on a *different* host is refused, never relocated. **Measured at drafting:** the spawn closure is monomorphic, so the remote arm cannot share the local call — `open_shell`'s two-arm split is the quoted pattern. **42 tools unchanged**; `host?` is a parameter, and `doc_truth` is the gate on that | done |
 | 05 | ssh-prompt-detection ([phase-05-ssh-prompt-detection.md](phase-05-ssh-prompt-detection.md)) — `PromptKind` gains `SshHostKey` / `SshPassword` / `SshPassphrase`; the answerable two reuse 01a's `CredentialPrompt` round-trip, the host key fails fast (row 06 owns the trust flow) and `Permission denied` ends the run instead of hanging. **All four prompt strings captured live off `pinky` at drafting** — each hangs to a 124 timeout today. **Measured hazard:** the host-key prompt contains the word *fingerprint* twice, so broadening `is_fingerprint_prompt` would misclassify every one; a negative test and a mutation pin it. **Measured blocker for row 09:** `pinky` is `(ALL) NOPASSWD: ALL`, so remote sudo there never prompts | done |
 | 06a | prompt-classification ([phase-06a-prompt-classification.md](phase-06a-prompt-classification.md)) — `Response::ToolCallPrompt` gains a `classification` (`command` / `remote_shell` / `new_host` / `escape_hatch`), `ApprovalRequest` carries the host, and the client renders the class **naming the host** — the milestone's approval-panel exit criterion. Classifies and renders only; no gating change. **Measured at drafting:** `prompt_and_await_approval` runs *before* host resolution, so today you approve a command whose destination you were never shown and only then get `unknown host` | done |
-| 06b | new-host-gating — the `new_host` class becomes a gate: an unconfigured destination is offered for persistence to `[hosts]` rather than refused after the fact, which means reordering the host check ahead of the prompt (06a deliberately leaves the order alone). Session-scope `A` becomes per class per host in `SessionApproval` | todo (not drafted) |
-| 06c | ghost-hosts-enforced — `GhostConfig.hosts` is parsed today (`runbook.rs:97`) but `GhostPolicy` has no `hosts` field, so a runbook's host list is **unenforced**. An unlisted host is refused and recorded (the M18 D6 parked-escape-hatch pattern) | todo (not drafted) |
+| 06b | per-host-approval ([phase-06b-per-host-approval.md](phase-06b-per-host-approval.md)) — session `A` becomes per class **per host**, and `new_host` / `escape_hatch` never auto-approve. **Measured at drafting:** 06a threaded `Classification` into the prompt but it is read only for the panel body — `auto_approved` still consults the bare `regular`/`sudo` flags, and `commands = true` is the shipped default, so today a remote command is named in the panel and then auto-approved with no chance to refuse. Changes who is asked, not what is reachable | todo |
+| 06c | new-host-allowed — an unconfigured destination becomes **allowed but gated** rather than refused after approval, which means reordering host resolution ahead of the prompt and letting `spawn_ssh_host` work without a `[hosts]` entry (the bare name as the ssh destination), plus the offer to persist it to `[hosts]`. Carries its own security weight; split out of 06b deliberately | todo (not drafted) |
+| 06d | ghost-hosts-enforced — `GhostConfig.hosts` is parsed today (`runbook.rs:97`) but `GhostPolicy` has no `hosts` field, so a runbook's host list is **unenforced**. An unlisted host is refused and recorded (the M18 D6 parked-escape-hatch pattern) | todo (not drafted) |
 | 07 | remote-file-ops-over-pty — `read_file` / `edit_file` gain `host?`; the four `target_pane` sites in `file_ops/ops.rs` route the existing hex-encoded python/perl one-liners through an idle shell on the host (or a new one — never into an `interactive` shell) with **marker-delimited** results instead of pane scraping; `target_pane` retired from both tools. Closes M22's deferral. `CLAUDE.md` / `README.md` rows | todo (not drafted) |
 | 08 | ghost-host-mapping — `GhostPolicy.ssh_target` maps onto `HostId` unchanged in meaning: `wrap_remote`'s `ssh <target> '<cmd>'` string-wrap becomes "run in a shell on that host"; `resolve_command`, `remote_stream_cmd` and `remote_materialize_cmd` keep their semantics; `HostEntry.sudo_scripts` is the 1.x remote-sudoers model. The re-homed M19 phase-12 (`sandbox_profile` on a host) is parsed here, not enforced | todo (not drafted) |
 | 08b | spawn-ghost-host — `spawn_ghost_shell { host? }` (§ 2.5): a coordinator names the host a specialist's shells open on; the value must be in the runbook's `hosts:` list (row 06's enforcement) or it is refused as an unlisted host. Rides 08's mapping; **PE added at sign-off** | todo (not drafted) |

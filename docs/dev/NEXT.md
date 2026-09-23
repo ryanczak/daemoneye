@@ -1,73 +1,58 @@
 # NEXT
 
-**Active phase:** **none** — M21 phase-06a is `done` (2026-09-23,
-`approved_first_try`). The approval panel now names the host:
-`→ host: pinky (configured)`, `→ host: nope (unconfigured)`, or
-`→ ghost shell reaching outside its sandbox`. **Row 06b — new-host-gating is
-next**; run `/rexymcp:architect next` to draft it.
+**Active phase:** **M21 phase-06b — per-host-approval**, drafted 2026-09-23,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-06b`.
 
-**What 06b inherits.** 06a classified and rendered but deliberately did not
-gate, so the § Current state 4 ordering defect is still live: the user is
-shown the destination now, but an unconfigured host is still refused *after*
-approval, because `prompt_and_await_approval` runs ahead of host resolution
-(`executor/mod.rs:316-345`). 06b reorders that and turns `new_host` into an
-offer to persist to `[hosts]`, plus per-class-per-host session scope in
-`SessionApproval` — which 06a left untouched, verified at review.
+**Measured at drafting, and it is the reason this row exists.** 06a threaded
+`Classification` all the way into `prompt_tool_call_ratatui` — and it is read
+**only for the panel body**. Every use of it inside that function:
 
-**Carry into 06b's drafting — spec hygiene, this architect's.**
-§ Authorizations must enumerate the **construction sites** a struct-field
-addition forces, not just the files holding the definition and the intended
-call site. 06a's field additions to `ToolCallPrompt` and `ApprovalRequest`
-compile-forced edits to `slash.rs` and `foreground.rs`, neither listed; the
-executor did the minimal correct thing and disclosed it. Third benign instance
-in M21 (04c, 04d, 06a) — spec hygiene, not a WORKFLOW fold.
+```
+ 9:    classification: &crate::ipc::Classification,     <- the parameter
+14:    let body = tool_call_panel_body(command, background, target_pane, classification);
+18:    let auto_approved = if is_sudo {
+19:        approval.sudo
+21:        approval.regular
+```
 
-The account below is the drafting-time record for 06a; its pre-phase
-measurements describe the tree at `e439a38c`.
+The decision at 18–21 has no host term, and `commands = true` is the **shipped
+default**. So on a default install today the panel prints
+`→ host: pinky (configured)` and immediately `✓ auto-approved (session)`: the
+user is shown the destination and given no chance to refuse it. 06b makes the
+decision host-aware — `A` on the daemon host no longer covers `pinky`, `A` on
+`pinky` no longer covers `web01`, and **`new_host` / `escape_hatch` never
+auto-approve at all**, which Mutation A pins.
 
-**Row 06 split into 06a/06b/06c at drafting — it was four features in one
-row:** the `classification` field and its rendering, the `new_host` gate with
-its offer-to-persist, per-class-per-host session scope, and ghost `hosts:`
-enforcement. M21 is now **seventeen rows**.
+**06b changes who gets asked, not what is reachable.** An unconfigured host is
+still refused after approval, exactly as today.
 
-**06a is the panel half.** `Response::ToolCallPrompt` gains a `classification`
-(`command` / `remote_shell` / `new_host` / `escape_hatch`), `ApprovalRequest`
-carries the host, and the client renders the class **naming the host** — the
-milestone's "approval panel names the host" exit criterion. It classifies and
-renders; it changes no gating.
+**Row 06 split again — it is now 06a–06d, and M21 is eighteen rows.** Making
+an unconfigured host *allowed but gated* turned out to be its own change with
+its own security weight: it needs host resolution reordered ahead of the
+prompt **and** `spawn_ssh_host` working without a `[hosts]` entry (the bare
+name as the ssh destination), plus the persist offer. That is **06c**. Ghost
+`hosts:` enforcement moves to **06d**.
 
-**Measured at drafting, and it is why the panel half ships first.**
-`prompt_and_await_approval` runs **before** host resolution
-(`executor/mod.rs:316-345`; `host_entry` is refused only inside the
-`Ok(cmd_id)` arm that follows). So today:
+**Pre-dispatch check run; both non-preservation criteria confirmed failing**
+(`decision_uses_class=0`→1, `host_sets=3`→5), `lib_counts=1970p-0f-6i`→1980,
+the two preservation lines correctly pass (`bare_flags=2`, `ignore_total=6`),
+and the ten named tests read `0 passed; 1976 filtered out`.
 
-1. the model calls `run_terminal_command { command: "uptime", host: "nope" }`
-2. the panel shows `uptime` and nothing about `nope`
-3. the user approves
-4. *then* the run returns `Error: unknown host "nope"; configured hosts: pinky`
+**Both standing calibrations are applied in this spec.** Every structural grep
+is `awk`-scoped **and each range was checked to anchor on real text** (57 and
+16 lines respectively) — a range that matches nothing also returns 0, which is
+the vacuous guard that shipped twice. And § Authorizations now **explicitly
+authorizes the construction sites a field addition compile-forces**, naming
+the three known ones in `approval.rs` and requiring the executor to list any
+others it touches — the omission that recurred in 04c, 04d and 06a.
 
-You approve a command whose destination you were never shown, and the refusal
-lands after your decision. 06a fixes step 2 without touching the order;
-**reordering is 06b's job** and the spec says so explicitly, twice.
+One criterion is deliberately soft: `host_sets=5` assumes two
+`HashSet<String>`s. The spec tells the executor that if it picks a different
+shape it should re-pin the number and say so, rather than contort the design
+to hit mine.
 
-**Pre-dispatch check run; all three structural criteria confirmed failing**
-(`variants=0`→4, `prompt_field=0`→1, `req_host=0`→1), `lib_counts=1961p-0f-6i`
-→1970, `ignore_total=6` preserved, and the nine named tests read
-`0 passed; 1967 filtered out`.
-
-**The over-broad-grep calibration was applied, and then verified rather than
-assumed.** Every structural criterion in 06a is `awk`-scoped to its construct.
-More importantly, each range was **checked to anchor on real text** — ranges
-that match nothing also return 0, which is the vacuous guard that shipped
-twice (04d `event_host`, 05 `fingerprint_not_broadened`). The
-`ToolCallPrompt` and `ApprovalRequest` ranges were printed and confirmed
-non-empty; the `Classification` range is legitimately empty today, so its
-declaration is pinned verbatim in Task 1 and the grep was **simulated against
-that exact text** and returns 4. Still two occurrences, not three — no
-WORKFLOW fold yet.
-
-**Next after 06a: 06b — new-host-gating**, then 06c (ghost `hosts:`), 07, 08,
+**Next after 06b: 06c — new-host-allowed**, then 06d (ghost `hosts:`), 07, 08,
 08b, 09.
 
-Seventeen rows in M21; live host `pinky` (sudo requires a password since
+Eighteen rows in M21; live host `pinky` (sudo requires a password since
 2026-09-22); `max_turns` 1000.
