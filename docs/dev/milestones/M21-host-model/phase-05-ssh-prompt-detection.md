@@ -1,7 +1,7 @@
 # Phase 05: ssh-prompt-detection — the four prompts an ssh connection can raise
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-04d (`run_terminal_command { host? }` reaches an ssh shell)
 **Estimated diff:** ~360 lines across 3 files, plus 10 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -781,3 +781,69 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** c6fda86844e61f2b114d9804864661fa2df0a7b0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-23
+
+- **Verdict:** approved_after_1
+- **Bounces:** none at review. One `hard_fail` → **resume** cycle:
+  `VerifierFailurePersistent` (6 consecutive, `shell_exec.rs`) after 335 turns,
+  resumed rather than re-dispatched because Tasks 1–2 had landed clean and the
+  wall was two mechanical defects in Task 3's plumbing. The resume cleared all
+  13 build errors and finished the phase.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** two, both accepted and disclosed.
+  1. **A test name now contradicts its body, and that is this spec's fault.**
+     `stale_ssh_prompt_text_from_an_earlier_command_does_not_classify` asserts
+     that the echo **does** classify (`Some(SshPassphrase)`), pinning the
+     text-only matcher's limitation. That is exactly what Task 4's escape
+     hatch asked for — "pin the limitation in the test rather than deleting
+     the test" — but Task 4 also said "names are pinned", so the executor
+     correctly kept a name that the inverted semantics falsified. The body is
+     scrupulously honest: its assert messages read "pinned limitation" and its
+     comment states the real guard is structural (ssh text reaches the
+     classifier only during connection establishment), not a property of
+     `classify_prompt`. Renaming is a later tidy-up, not a defect in this work.
+  2. **Disclosed cleanup beyond the task list** — dead `SudoPromptArgs`
+     fields (`sentinel`, `plain_cmd`) dropped, `index_command_output`'s doc
+     comment restored after the first run's diff silently dropped it, and the
+     `UnpoisonExt` import removed. All three are consequences of repairing the
+     first run's own damage; `clippy -D warnings` passes, so the dropped
+     fields were genuinely dead.
+- **Calibration:** **third architect-side spec defect in three phases, and the
+  first two are the same class.** (a) `fingerprint_not_broadened` grepped the
+  whole file and read non-zero on a *correct* tree, because the executor wrote
+  `"fingerprint"` in a doc comment explaining the hazard — corrected at the
+  escalation; the `event_host` criterion in 04d was the identical over-broad
+  grep. **If a third over-broad grep ships, fold it:** *scope every structural
+  grep to the construct it is about, never the file.* (b) "names are pinned"
+  plus an escape hatch that can invert a test's meaning needs "…and you may
+  rename a test whose meaning the escape hatch inverts."
+
+**Review re-verification (independent, 2026-09-23):** all four gates re-run
+clean. The full § End-to-end verification block was re-run from scratch and
+reproduced the executor's capture **byte for byte** — `lib1..3=ok`,
+`lib_counts=1961p-0f-6i` (exactly the pinned figure, no extra test),
+`new_variants=3`, `fingerprint_not_broadened=0`, `needles=5`,
+`ignore_total=6`. `PASTE MATCH` prints from the doc's own diff. `cargo test`
+green on every target (lib 1961/0/6, doc_truth 14, integration 32,
+isolation 9, bug_tracker 6). All ten pinned tests pass — eight in `sudo.rs`,
+two in `backend.rs`.
+
+**The § Live verification block was re-run by the reviewer against the real
+`pinky`** and returned `hostkey_q=1  su_password=1`, so the classifier's
+fragments are what a real ssh connection emits, not only what the unit tests
+feed it.
+
+**Mutation A re-applied by the reviewer** — adding `|| output.contains("fingerprint")`
+to `is_fingerprint_prompt` turns `host_key_prompt_is_not_a_fingerprint_prompt`
+red, so the measured § Current state 3 hazard is genuinely under test.
+
+**The resume's repair is confirmed in the tree:** the transports are back on
+`std::sync::Arc::new(tokio::sync::Mutex::new(tx))` (`shell_exec.rs:519/521`),
+`UnpoisonExt` is gone (0 occurrences), and the four routing arms are wired —
+`SshPassword`/`SshPassphrase` through the shared `credential_round_trip` with
+kind-specific wording, `SshHostKey` and `Permission denied` failing fast with
+give-ups that name the host. No production `unwrap`/`expect`/`panic!`, no
+`unsafe`, no `TODO`/`dbg!`, and no new `#[ignore]` across 311 added lines; the
+one new `#[allow(clippy::too_many_arguments)]` sits on the production function
+that gained `host_name`, the same accepted pattern its neighbours carry.

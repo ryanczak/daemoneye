@@ -1,7 +1,28 @@
 # NEXT
 
-**Active phase:** **M21 phase-05 — ssh-prompt-detection**, drafted 2026-09-22,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-05`.
+**Active phase:** **none** — M21 phase-05 is `done` (2026-09-23,
+`approved_after_1`, one `hard_fail` → resume). **Row 06 — new-host-approval is
+next**; run `/rexymcp:architect next` to draft it. 06 owns the interactive
+host-key trust flow 05 deliberately stops short of: 05 fails fast on an
+unknown key, naming the host.
+
+Verified live against `pinky` at review — `hostkey_q=1  su_password=1`, so the
+classifier's fragments are what a real ssh connection emits.
+
+**Carry into 06's drafting — architect-side calibration, two items.**
+(a) **Scope every structural grep to the construct it is about, never the
+file.** `fingerprint_not_broadened` grepped all of `sudo.rs` and read non-zero
+against a *correct* tree, because the executor wrote `"fingerprint"` in a doc
+comment explaining the hazard; the `event_host` criterion in 04d was the
+identical mistake. **Two occurrences — a third makes it a WORKFLOW fold.**
+(b) "Names are pinned" needs "…and you may rename a test whose meaning an
+escape hatch inverts" — 05 shipped
+`stale_ssh_prompt_text_from_an_earlier_command_does_not_classify` asserting
+that it *does* classify, because the spec pinned the name and then invited
+the inversion.
+
+The account below is the drafting-time record for 05; its pre-phase
+measurements describe the tree at `61e519e9`.
 
 **Every prompt string in the spec was captured live off `pinky` at drafting**,
 through a PTY with the same `-tt` argv the daemon spawns. Each of the three
