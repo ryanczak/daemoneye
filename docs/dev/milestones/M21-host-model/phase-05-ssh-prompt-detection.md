@@ -1,7 +1,7 @@
 # Phase 05: ssh-prompt-detection — the four prompts an ssh connection can raise
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress — executor started 2026-09-22
+**Status:** review
 **Depends on:** phase-04d (`run_terminal_command { host? }` reaches an ssh shell)
 **Estimated diff:** ~360 lines across 3 files, plus 10 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -622,3 +622,162 @@ against your tree purely because you wrote the word `"fingerprint"` in a doc
 comment explaining the hazard. `is_fingerprint_prompt` itself is byte-identical
 to `HEAD`, which is correct. The criterion is now scoped to the function and
 reads `0`. Do not delete that comment to satisfy the old form.
+
+### Update — 2026-09-23 00:48 (complete, server-authored)
+
+**Summary:** </think>Everything is done:
+
+- Task 1: PromptKind has SshHostKey/SshPassword/SshPassphrase with safety doc — done (prior run).
+- Task 2: classify_ssh_prompt + is_ssh_permission_denied — done (prior run), verified.
+- Task 3: plumbing fixed — done. Also cleaned up dead fields, restored the dropped doc comment, verified everything builds.
+- Task 4: ten tests — done, all pass.
+- Task 5: E2E captured, pasted, PASTE MATCH — done.
+- Task 6: live check run by hand (hostkey_q=1, su_password=1) — done.
+- Mutations A and B: applied, observed red, restored — done.
+- cargo fmt/build/clippy/test — all clean.
+- Committed as c6fda868, tree clean.
+- Status left in-progress; server authors the completion entry.
+
+One thing to double check: the phase doc's `grep -rc '#\[ignore'` total is 6, matches. And the `su_password`/hostkey evidence is pasted in the same E2E entry. Good.
+
+Also the E2E entry's first fenced block is the output and the diff check passed with the verifier's own awk command.
+
+Final message: Summary + Notes for review, 2-6 sentences.</think>
+**Summary**
+
+M21 phase-05 is complete on the committed tree (`c6fda868`, working tree clean; phase status left `in-progress` for the server's completion flip). Tasks 3–6 landed: the Task 3 plumbing now compiles — `credential_round_trip` takes `tx` directly (the `&mut **` over-deref removed) and the shared transports are back on the pre-existing `Arc<tokio::sync::Mutex<&mut W>>` shape locked with `.lock().await` and used as `&mut **guard` — with the ssh password/passphrase arms reusing the sudo `CredentialPrompt` wire round-trip through that helper (kind-specific wording: "ssh login password required" / "ssh key passphrase required"), host-key and `Permission denied` failing fast with give-ups that name the host. I also cleaned the plumbing the resume diff left ragged: dropped `SudoPromptArgs`'s dead `sentinel`/`plain_cmd` fields, restored `index_command_output`'s doc comment (silently dropped by the prior diff), and removed the unneeded `UnpoisonExt` import. All ten pinned tests pass (8 in `sudo.rs`, 2 in `backend.rs`), including the `su` decision (bare `Password:` deliberately **not** classified, reasoning pinned in the test) and the stale-echo limitation pinned rather than hidden, per the spec's escape hatch.
+
+**Notes for review**
+
+- **Deviations, both reportable adaptations:** (1) the give-up wording names `host <name>` unconditionally — `record_host.as_str()` is never empty (`HostId::as_str` returns `"local"`), so the `is_empty` fallback the prior diff sketched was dead code and I documented the invariant in the parameter's doc comment instead; (2) `ssh_credential_prompt`'s catch-all became an explicit match over the three non-credential kinds rather than `_`, so a future `PromptKind` variant forces this site to state its wording.
+- **Mutations verified red, not assumed:** Mutation A → `host_key_prompt_is_not_a_fingerprint_prompt` FAILED (`0 passed; 1 failed`); Mutation B → `the_sentinel_still_wins_over_ssh_text` FAILED (`Some(SshPassword)` vs `Some(SudoPassword)`). Both restored and re-verified green.
+- **E2E:** the § End-to-end verification block was run verbatim as the last pre-commit capture, pasted as the first fenced block of `### Update — 2026-09-23 00:20 (end-to-end verification)`, and the verifier's own extraction/diff prints `PASTE MATCH` against the *committed* tree (`lib1..3=ok`, `lib_counts=1961p-0f-6i`, `new_variants=3`, `fingerprint_not_broadened=0`, `needles=5`, `ignore_total=6`). Other targets unmoved: doc_truth 14, integration 32 (2 ignored), isolation 9 (1 ignored), bug_tracker 6.
+- **Live:** the § Live verification block ran by hand against `pinky` — `hostkey_q=1`, `su_password=1` — pasted into the same entry after the mutation records (via `su`, since pinky's sudo is NOPASSWD).
+- `cargo fmt --all` (run before staging), `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings` all clean; no new `#[ignore]`, no TODOs, no debug calls.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+ header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.30s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M21-host-model/phase-05-ssh-prompt-detection.md` — +112 -0
+- `src/daemon/executor/shell_exec.rs` — +55 -62
+- `src/daemon/utils/sudo.rs` — +118 -0
+- `src/shell/backend.rs` — +28 -0
+
+**Commit:** c6fda86844e61f2b114d9804864661fa2df0a7b0
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
