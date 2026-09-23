@@ -39,6 +39,10 @@ struct ApprovalRequest<'a> {
     cmd: &'a str,
     background: bool,
     target_pane_hint: Option<&'a str>,
+    /// The `host` argument the call names, verbatim — `None` means the daemon
+    /// host. Carried only so the prompt can classify and name the
+    /// destination; the call's own host resolution is untouched.
+    host: Option<&'a str>,
 }
 
 /// The outcome of a single tool call execution.
@@ -320,6 +324,7 @@ where
                         cmd,
                         background: false,
                         target_pane_hint: None,
+                        host: host.as_deref(),
                     },
                     session_id,
                     ghost_policy.as_ref(),
@@ -565,6 +570,7 @@ where
                         cmd,
                         background: true,
                         target_pane_hint: None,
+                        host: None,
                     },
                     session_id,
                     ghost_policy.as_ref(),
@@ -1064,6 +1070,7 @@ where
                     cmd: &approval_cmd,
                     background: false,
                     target_pane_hint: None,
+                    host: None,
                 },
                 session_id,
                 None,
@@ -1282,12 +1289,22 @@ where
         cmd,
         background,
         target_pane_hint,
+        host,
     } = req;
     let mode = if background {
         "background"
     } else {
         "foreground"
     };
+    // The configured host names, read once for the classification. On a load
+    // error the map is empty, so every named host classifies as `new_host` —
+    // the honest class for "I could not read the host table".
+    let known_hosts: Vec<String> = crate::config::Config::load()
+        .unwrap_or_default()
+        .hosts
+        .keys()
+        .cloned()
+        .collect();
 
     // ── Ghost Shell Logic ──────────────────────────────────────────────────
     if let Some(policy) = ghost_policy {
@@ -1350,6 +1367,7 @@ where
             command: cmd.to_string(),
             background,
             target_pane: target_pane_hint.map(|s| s.to_string()),
+            classification: crate::ipc::classify(host, ghost_policy.is_some(), &known_hosts),
         },
     )
     .await?;

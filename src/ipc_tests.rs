@@ -290,6 +290,7 @@ fn response_tool_call_prompt_roundtrip() {
         command: "ls -la".to_string(),
         background: false,
         target_pane: Some("%5".to_string()),
+        classification: Classification::default(),
     };
     match roundtrip_resp(&resp) {
         Response::ToolCallPrompt {
@@ -297,11 +298,17 @@ fn response_tool_call_prompt_roundtrip() {
             command,
             background,
             target_pane,
+            classification,
         } => {
             assert_eq!(id, "tc_3");
             assert_eq!(command, "ls -la");
             assert!(!background);
             assert_eq!(target_pane, Some("%5".to_string()));
+            assert_eq!(
+                classification,
+                Classification::Command,
+                "the plain roundtrip carries the default class"
+            );
         }
         _ => panic!("wrong variant"),
     }
@@ -316,6 +323,80 @@ fn response_tool_call_prompt_no_target_pane_roundtrip() {
         Response::ToolCallPrompt { target_pane, .. } => assert!(target_pane.is_none()),
         _ => panic!("wrong variant"),
     }
+}
+
+#[test]
+fn tool_call_prompt_round_trips_its_classification() {
+    let resp = Response::ToolCallPrompt {
+        id: "tc_3".to_string(),
+        command: "uptime".to_string(),
+        background: false,
+        target_pane: None,
+        classification: Classification::NewHost {
+            host: "nope".to_string(),
+        },
+    };
+    match roundtrip_resp(&resp) {
+        Response::ToolCallPrompt {
+            id,
+            command,
+            background,
+            target_pane,
+            classification,
+        } => {
+            assert_eq!(id, "tc_3");
+            assert_eq!(command, "uptime");
+            assert!(!background);
+            assert!(target_pane.is_none());
+            assert_eq!(
+                classification,
+                Classification::NewHost {
+                    host: "nope".to_string()
+                },
+                "the class and its host name must survive the wire"
+            );
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn tool_call_prompt_without_a_classification_defaults_to_command() {
+    // An older client's frame: no `classification`, no `target_pane`. The
+    // `#[serde(default)]` on both fields is what keeps it deserialising.
+    let json = r#"{"ToolCallPrompt":{"id":"tc_3","command":"ls -la","background":false}}"#;
+    let parsed: Response = serde_json::from_str(json).expect("backward-compat deserialize");
+    match parsed {
+        Response::ToolCallPrompt {
+            classification,
+            target_pane,
+            ..
+        } => {
+            assert_eq!(
+                classification,
+                Classification::Command,
+                "an unclassified frame is by definition an ordinary local command"
+            );
+            assert!(target_pane.is_none());
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn classification_serialises_in_snake_case() {
+    let wire = serde_json::to_string(&Classification::RemoteShell {
+        host: "pinky".to_string(),
+    })
+    .expect("serialize");
+    assert!(
+        wire.contains("remote_shell"),
+        "the wire form of RemoteShell is remote_shell, not Rust casing: {wire}"
+    );
+    assert!(
+        !wire.contains("RemoteShell"),
+        "a client rendering the variant name must not see Rust casing: {wire}"
+    );
 }
 
 #[test]
@@ -948,5 +1029,65 @@ fn response_container_status_roundtrip() {
     }) {
         Response::ContainerStatus { report: got } => assert_eq!(got, report),
         other => panic!("wrong variant: {other:?}"),
+    }
+}
+
+// ── Classification (M21 phase-06a) ────────────────────────────────────────
+
+#[test]
+fn classify_a_local_command_is_command() {
+    let known: Vec<String> = vec!["pinky".to_string()];
+    assert_eq!(
+        crate::ipc::classify(None, false, &known),
+        Classification::Command,
+        "no host argument means the daemon host"
+    );
+}
+
+#[test]
+fn classify_host_local_is_command() {
+    let known: Vec<String> = vec!["pinky".to_string()];
+    for spelling in ["local", "LOCAL", "Local"] {
+        assert_eq!(
+            crate::ipc::classify(Some(spelling), false, &known),
+            Classification::Command,
+            "{spelling} must classify as the daemon host, matching HostId::parse"
+        );
+    }
+}
+
+#[test]
+fn classify_a_configured_host_is_remote_shell() {
+    let known: Vec<String> = vec!["pinky".to_string(), "web01".to_string()];
+    assert_eq!(
+        crate::ipc::classify(Some("web01"), false, &known),
+        Classification::RemoteShell {
+            host: "web01".to_string()
+        },
+        "a name [hosts] configures is a remote shell carrying that name"
+    );
+}
+
+#[test]
+fn classify_an_unconfigured_host_is_new_host() {
+    let known: Vec<String> = vec!["pinky".to_string()];
+    assert_eq!(
+        crate::ipc::classify(Some("nope"), false, &known),
+        Classification::NewHost {
+            host: "nope".to_string()
+        },
+        "a name [hosts] does not configure is a new host"
+    );
+}
+
+#[test]
+fn classify_a_ghost_is_an_escape_hatch_whatever_the_host() {
+    let known: Vec<String> = vec!["pinky".to_string()];
+    for host in [None, Some("pinky"), Some("nope")] {
+        assert_eq!(
+            crate::ipc::classify(host, true, &known),
+            Classification::EscapeHatch,
+            "a ghost reaching a shell is the escape-hatch case and outranks the host question (host={host:?})"
+        );
     }
 }

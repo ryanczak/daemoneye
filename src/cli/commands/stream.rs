@@ -429,6 +429,7 @@ pub(super) async fn ask_with_session_ratatui(
                 command,
                 background,
                 target_pane,
+                classification,
             } => {
                 let sb = crate::cli::render::StatusBarState {
                     session_id: "",
@@ -449,6 +450,7 @@ pub(super) async fn ask_with_session_ratatui(
                     &command,
                     background,
                     target_pane.as_deref(),
+                    &classification,
                 )
                 .await?;
                 send_request(
@@ -1095,6 +1097,7 @@ async fn prompt_with_session_approve(
 
 // ── Ratatui prompt functions (called from ask_with_session_ratatui) ──────────
 
+#[allow(clippy::too_many_arguments)] // 8 params: the flow needs renderer, stdin, status, approval, command, background, pane, and class
 pub(super) async fn prompt_tool_call_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
@@ -1103,19 +1106,12 @@ pub(super) async fn prompt_tool_call_ratatui(
     command: &str,
     background: bool,
     target_pane: Option<&str>,
+    classification: &crate::ipc::Classification,
 ) -> anyhow::Result<(bool, Option<String>)> {
     use crate::daemon::utils::command_has_sudo;
 
-    let where_label = if background {
-        "daemon · runs silently"
-    } else {
-        "terminal · visible to you"
-    };
-
-    let mut body = vec![format!("$ {}", command)];
-    if let Some(tp) = target_pane {
-        body.push(format!("→ target: {}", tp));
-    }
+    let where_label = tool_call_panel_label(background);
+    let body = tool_call_panel_body(command, background, target_pane, classification);
     let _ = renderer.commit_panel(where_label, &body, false);
 
     let is_sudo = command_has_sudo(command);
@@ -1157,6 +1153,45 @@ pub(super) async fn prompt_tool_call_ratatui(
     } else {
         let _ = renderer.commit("  ✗ skipped\n");
         Ok((false, None))
+    }
+}
+
+/// The approval-panel body a `ToolCallPrompt` renders, classification included.
+///
+/// Separate from `prompt_tool_call_ratatui` because that function is the whole
+/// interactive flow (panel + input + decision); the tests pin the body text
+/// against a test backend without driving the input loop.
+pub(super) fn tool_call_panel_body(
+    command: &str,
+    _background: bool,
+    target_pane: Option<&str>,
+    classification: &crate::ipc::Classification,
+) -> Vec<String> {
+    let mut body = vec![format!("$ {}", command)];
+    if let Some(tp) = target_pane {
+        body.push(format!("→ target: {}", tp));
+    }
+    match classification {
+        crate::ipc::Classification::Command => {}
+        crate::ipc::Classification::RemoteShell { host } => {
+            body.push(format!("→ host: {} (configured)", host));
+        }
+        crate::ipc::Classification::NewHost { host } => {
+            body.push(format!("→ host: {} (unconfigured)", host));
+        }
+        crate::ipc::Classification::EscapeHatch => {
+            body.push("→ ghost shell reaching outside its sandbox".to_string());
+        }
+    }
+    body
+}
+
+/// The label above the approval-panel body.
+pub(super) fn tool_call_panel_label(background: bool) -> &'static str {
+    if background {
+        "daemon · runs silently"
+    } else {
+        "terminal · visible to you"
     }
 }
 
@@ -1772,5 +1807,37 @@ mod stream_seam_tests {
             StreamOutcome::Reanchor => {} // expected
             other => panic!("expected Reanchor, got {other:?}"),
         }
+    }
+}
+
+// ── tool-call approval panel (M21 phase-06a) ─────────────────────────────
+
+#[cfg(test)]
+mod tool_call_panel_tests {
+    use super::*;
+
+    #[test]
+    fn the_local_command_panel_is_unchanged() {
+        let body = tool_call_panel_body(
+            "uptime",
+            false,
+            Some("%5"),
+            &crate::ipc::Classification::Command,
+        );
+        assert_eq!(
+            body,
+            vec!["$ uptime".to_string(), "→ target: %5".to_string()],
+            "a Command classification adds nothing to the pre-phase panel body"
+        );
+        assert_eq!(
+            tool_call_panel_label(false),
+            "terminal · visible to you",
+            "the foreground label is the pre-phase wording"
+        );
+        assert_eq!(
+            tool_call_panel_label(true),
+            "daemon · runs silently",
+            "the background label is the pre-phase wording"
+        );
     }
 }

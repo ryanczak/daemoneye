@@ -1,7 +1,7 @@
 # Phase 06a: prompt-classification — the approval panel names the host
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04d (`run_terminal_command { host? }`), phase-05 (the ssh prompt kinds)
 **Estimated diff:** ~330 lines across 5 files, plus 9 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -369,3 +369,84 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-22 20:07 (started, executor)
+
+Status flipped `todo → in-progress` (phase doc + milestone README row). Pre-flight
+at HEAD `e439a38c` on a clean tree: `cargo test --lib` → **1961 passed / 0
+failed / 6 ignored**, matching the phase doc's measured baseline at `257a7340`.
+§ Current state re-confirmed before editing: `ToolCallPrompt` at `src/ipc.rs`
+carries only `id`/`command`/`background`/`target_pane` with `target_pane`'s
+`#[serde(default)]` idiom; `ApprovalRequest` at `src/daemon/executor/mod.rs`
+carries no host; the `PendingCall::Foreground` arm destructures `host` and does
+not forward it; `grep -rn 'Classification' --include=*.rs src/` matches only
+`PathClassification` (an unrelated config-inventory type). Executor: claude
+(M21 phase-06a prompt-classification). Implementing Tasks 1–6 in order.
+
+### Update — 2026-09-22 20:22 (end-to-end verification)
+
+The § End-to-end verification block, run verbatim and pasted as its output
+(quirks of `cargo test`'s caching noted inline below the block):
+
+```
+lib1=ok
+lib2=ok
+lib3=ok
+lib_counts=1970p-0f-6i
+variants=4
+prompt_field=1
+req_host=1
+ignore_total=6
+```
+
+Three consecutive green `--lib` runs, counts 1970 passed / 0 failed / 6 ignored
+(1961 baseline + the nine Task-5 tests), the enum's four variants, the
+`ToolCallPrompt` field, `ApprovalRequest.host`, and the `#[ignore]` total all
+read back exactly as the acceptance criteria expect.
+
+Diff snippet: `diff /tmp/pasted-06a.txt /tmp/e2e-06a.txt` → `PASTE MATCH`.
+
+## Mutations
+
+**Mutation A — drop the serde default.** Removed `#[serde(default)]` from
+`classification` on `Response::ToolCallPrompt`, ran
+`cargo test --lib tool_call_prompt_without_a_classification_defaults_to_command`
+once: **red** — `backward-compat deserialize: Error("missing field
+`classification`", line: 1, column: 69)`, exactly the older-client break the
+test guards. Default restored; the test is green again.
+
+**Mutation B — let the host outrank the ghost.** Moved the `is_ghost` check in
+`classify` below the host checks, ran
+`cargo test --lib classify_a_ghost_is_an_escape_hatch_whatever_the_host` once:
+**red** — `a ghost reaching a shell is the escape-hatch case and outranks the
+host question (host=None)`; the `None` arm alone is enough to catch the
+reordering because it short-circuits before the ghost check can run. Precedence
+restored; the test is green again.
+
+## Command output tails
+
+- `cargo build` → clean, no warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` → exits 0.
+- `cargo fmt --all` → clean (run immediately before staging).
+- `cargo test --lib` → 1970 passed / 0 failed / 6 ignored, three consecutive runs.
+- `cargo test` full: doc_truth 14, integration 32 (2 ignored), isolation 9
+  (1 ignored), bug_tracker 6, all unmoved from the phase doc's counts.
+
+## Notes for review
+
+- The nine pinned test names are all present and pass under a single
+  `cargo test --lib -- <nine names>` filter (9 passed / 1967 filtered out).
+- The panel body builder was split out as `tool_call_panel_body` /
+  `tool_call_panel_label` in `stream.rs` so Task 5's test 9 can pin the text
+  without driving the interactive input loop; `prompt_tool_call_ratatui` now
+  calls them, so the rendered panel is what the test pins.
+- `ApprovalRequest.host` is `None` at the two `foreground.rs` sites and the
+  `Background`/`SendInput` sites in `executor/mod.rs` — those calls carry no
+  `host` argument today, so `None` (the daemon host) is the faithful value, and
+  it leaves their rendered panels byte-identical.
+- The client render reuses `target_pane`'s arrow convention: `→ host: pinky
+  (configured)` / `→ host: nope (unconfigured)` / `→ ghost shell reaching
+  outside its sandbox`. Local panels are unchanged, per Task 4's preservation
+  requirement.
+- `classify` lives in `src/ipc.rs` beside the enum (Task 3 allowed either
+  home); `prompt_and_await_approval` reads `Config::load().hosts.keys()` there.

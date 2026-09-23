@@ -413,6 +413,54 @@ pub struct RecentCommand {
     pub status: String,
 }
 
+/// What kind of approval a `ToolCallPrompt` is asking for, so the client can
+/// render the stakes rather than showing every command identically.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum Classification {
+    /// An ordinary command on the daemon host.
+    #[default]
+    Command,
+    /// A command on a configured `[hosts.<name>]` host.
+    RemoteShell { host: String },
+    /// A command naming a host that `[hosts]` does not configure.
+    NewHost { host: String },
+    /// A ghost shell reaching outside its sandbox.
+    EscapeHatch,
+}
+
+/// Classify a tool-call approval from its destination and origin — pure, so
+/// the classifier is unit-testable with no config on disk.
+///
+/// The rules, in order:
+/// 1. a ghost reaching a shell is the escape-hatch case, whatever the host —
+///    it outranks the host question;
+/// 2. no host, or `"local"` in any case, is an ordinary command on the daemon
+///    host (`HostId::parse` maps `"local"` to `HostId::Local`; this matches
+///    it rather than diverging);
+/// 3. a name `[hosts]` configures is a remote shell;
+/// 4. anything else is a new host.
+pub fn classify(host: Option<&str>, is_ghost: bool, known_hosts: &[String]) -> Classification {
+    if is_ghost {
+        return Classification::EscapeHatch;
+    }
+    let named = match host {
+        None => return Classification::Command,
+        Some(name) if name.eq_ignore_ascii_case("local") => return Classification::Command,
+        Some(name) => name,
+    };
+    if known_hosts.iter().any(|k| k == named) {
+        Classification::RemoteShell {
+            host: named.to_string(),
+        }
+    } else {
+        Classification::NewHost {
+            host: named.to_string(),
+        }
+    }
+}
+
 /// Messages sent from the daemon back to the CLI client.
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)] // DaemonStatus is large by design; boxing would add indirection to every IPC response match
@@ -451,6 +499,11 @@ pub enum Response {
         /// visually highlight the pane during the approval window.
         #[serde(default)]
         target_pane: Option<String>,
+        /// What kind of approval this is — ordinary, remote, a new host, or a
+        /// ghost reaching outside its sandbox. Defaulted so an older client
+        /// still deserialises a newer daemon's frame.
+        #[serde(default)]
+        classification: Classification,
     },
     /// The approved background command requires a credential (sudo password, etc.).
     /// The client MUST prompt the user with echo disabled and return a `CredentialResponse`.

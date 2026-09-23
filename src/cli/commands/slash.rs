@@ -679,6 +679,7 @@ mod tests {
             command: "rm -rf /secret".into(),
             background: false,
             target_pane: None,
+            classification: crate::ipc::Classification::default(),
         };
         let line = error_line(&resp);
         assert!(line.contains("ToolCallPrompt"), "should name variant");
