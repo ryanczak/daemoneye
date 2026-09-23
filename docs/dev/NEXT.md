@@ -1,80 +1,60 @@
 # NEXT
 
-**Active phase:** **none** — M21 phase-06b is `done` (2026-09-23,
-`approved_first_try`). Session `A` is now per class **per host**, and
-`new_host` / `escape_hatch` never auto-approve whatever the session state or
-config default. **Row 06c — new-host-allowed is next**; run
-`/rexymcp:architect next` to draft it.
+**Active phase:** **M21 phase-06c — new-host-allowed**, drafted 2026-09-23,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-06c`.
 
-**Carry into 06c's drafting — a new constraint, discovered by the executor.**
-**E2E blocks must not contain `sudo`-shaped tokens in their command lines.**
-06b's `bare_flags` criterion embedded `(regular|sudo): bool,` in a `grep -E`,
-and the executor's shell gate refuses any line carrying such a token — it had
-to run the block byte-identical from a gitignored script and disclosed that.
-Use a character class (`su[d]o`) or match the field another way. **This
-matters for 06c specifically**, which is all about sudo-adjacent gating. First
-occurrence; recorded, not folded.
+**What it changes.** A well-formed but unconfigured host is **gated, not
+refused**. The two cases separate:
 
-**06c's job, and it carries real security weight.** An unconfigured host is
-still refused *after* approval. Making it allowed-but-gated needs three things
-together: host resolution reordered ahead of the prompt, `spawn_ssh_host`
-working without a `[hosts]` entry (the bare name as the ssh destination), and
-the offer to persist it. 06b deliberately left all three alone — verified at
-review: `executor/mod.rs` and `policy.rs` are untouched.
+| Case | Today | After 06c |
+|---|---|---|
+| malformed (`"bad host!"`) | refused **after** approval | refused **before** the prompt |
+| well-formed, unconfigured (`"nope"`) | refused after approval | classified `new_host`, asked, and on approval connected to |
 
-The account below is the drafting-time record for 06b; its pre-phase
-measurements describe the tree at `4405f8ca`.
+On approval the bare name becomes its own ssh destination — not a hack:
+`HostEntry.ssh`'s own doc says a bare `Host` alias is valid, and the live
+`[hosts.pinky] ssh = "pinky"` proves it.
 
-**Measured at drafting, and it is the reason this row exists.** 06a threaded
-`Classification` all the way into `prompt_tool_call_ratatui` — and it is read
-**only for the panel body**. Every use of it inside that function:
+**`open_shell { host }` keeps the strict lookup**, deliberately, with its own
+criterion. It is an explicit "give me a shell there"; requiring configuration
+for that is the boundary this row draws.
+
+**The persist-to-`[hosts]` offer is deferred, and needs a PE decision.**
+Measured at drafting: the daemon has **no config-write path** — `grep` finds
+exactly one write, `seeds.rs:50`, which lays down the whole bundled template
+on first run. The dependency is `toml = "1.1"`, **not `toml_edit`**, and a
+deserialize→serialize round-trip discards comments:
 
 ```
- 9:    classification: &crate::ipc::Classification,     <- the parameter
-14:    let body = tool_call_panel_body(command, background, target_pane, classification);
-18:    let auto_approved = if is_sudo {
-19:        approval.sudo
-21:        approval.regular
+$ wc -l ~/.daemoneye/etc/config.toml    → 193
+$ grep -c '^#' ~/.daemoneye/etc/config.toml → 96
 ```
 
-The decision at 18–21 has no host term, and `commands = true` is the **shipped
-default**. So on a default install today the panel prints
-`→ host: pinky (configured)` and immediately `✓ auto-approved (session)`: the
-user is shown the destination and given no chance to refuse it. 06b makes the
-decision host-aware — `A` on the daemon host no longer covers `pinky`, `A` on
-`pinky` no longer covers `web01`, and **`new_host` / `escape_hatch` never
-auto-approve at all**, which Mutation A pins.
+Half the user's config is comments. Persisting a host therefore needs either a
+new `toml_edit` dependency or an **append-only text writer** (a
+`[hosts.<name>]` table at EOF is valid TOML and preserves everything above).
+Both are defensible; picking one is not this row's call.
 
-**06b changes who gets asked, not what is reachable.** An unconfigured host is
-still refused after approval, exactly as today.
+**Pre-dispatch check run; three criteria confirmed failing** —
+`lib_counts=1984p-0f-6i`→1994, `permissive_exists=0`→1,
+`run_path_permissive=0`→1 — with three preservation lines correctly passing
+(`open_shell_stays_strict=0`, `strict_lookup_intact=1`, `ignore_total=6`), and
+the ten named tests reading `0 passed; 1990 filtered out`.
 
-**Row 06 split again — it is now 06a–06d, and M21 is eighteen rows.** Making
-an unconfigured host *allowed but gated* turned out to be its own change with
-its own security weight: it needs host resolution reordered ahead of the
-prompt **and** `spawn_ssh_host` working without a `[hosts]` entry (the bare
-name as the ssh destination), plus the persist offer. That is **06c**. Ghost
-`hosts:` enforcement moves to **06d**.
+**The check caught two of my own defects again.** A criterion counting
+`host_entry` inside `run_in_shell_core` read **2**, because one hit is a
+*comment* — the over-broad-match class one level in, this time inside a
+correctly-scoped range. And with it wrong, only **one** criterion actually
+failed, so the structural criteria proved nothing about the row's real work.
+Both replaced: the greps now match the **call** (`host_entry_or_bare(name)`)
+rather than the word, and a new `permissive_exists` criterion pins the new
+function. **Scope the range *and* match a token that cannot appear in prose.**
 
-**Pre-dispatch check run; both non-preservation criteria confirmed failing**
-(`decision_uses_class=0`→1, `host_sets=3`→5), `lib_counts=1970p-0f-6i`→1980,
-the two preservation lines correctly pass (`bare_flags=2`, `ignore_total=6`),
-and the ten named tests read `0 passed; 1976 filtered out`.
+**The `su`+`do`-token constraint from 06b is applied and audited.** No command
+in this spec contains the blocked token — verified by grep against the
+finished doc, not assumed.
 
-**Both standing calibrations are applied in this spec.** Every structural grep
-is `awk`-scoped **and each range was checked to anchor on real text** (57 and
-16 lines respectively) — a range that matches nothing also returns 0, which is
-the vacuous guard that shipped twice. And § Authorizations now **explicitly
-authorizes the construction sites a field addition compile-forces**, naming
-the three known ones in `approval.rs` and requiring the executor to list any
-others it touches — the omission that recurred in 04c, 04d and 06a.
-
-One criterion is deliberately soft: `host_sets=5` assumes two
-`HashSet<String>`s. The spec tells the executor that if it picks a different
-shape it should re-pin the number and say so, rather than contort the design
-to hit mine.
-
-**Next after 06b: 06c — new-host-allowed**, then 06d (ghost `hosts:`), 07, 08,
-08b, 09.
+**Next after 06c: 06d — ghost `hosts:` enforcement**, then 07, 08, 08b, 09.
 
 Eighteen rows in M21; live host `pinky` (sudo requires a password since
 2026-09-22); `max_turns` 1000.
