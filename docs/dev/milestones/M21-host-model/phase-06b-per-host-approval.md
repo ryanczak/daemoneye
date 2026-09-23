@@ -1,7 +1,7 @@
 # Phase 06b: per-host-approval — session approval stops leaking across hosts
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-06a (`Classification` on the prompt)
 **Estimated diff:** ~300 lines across 3 files, plus 10 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -660,3 +660,66 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 649e5832b4d4f5089902b1dfd13a4432f933b982
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-23
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none. Only the three authorized files changed
+  (`approval.rs`, `stream.rs`, `slash.rs`); no `TODO`/`dbg!`/`#[allow]`/
+  `unsafe`/`#[ignore]` and no production `unwrap`/`expect`/`panic!` across 417
+  added lines. The three helper scripts the run left in `.rexymcp/` are inside
+  a gitignored scratch directory and are not committed.
+- **Count re-pin, correctly handled.** The lib count is **1984**, not the
+  pinned 1980: four extras, each named in the Update Log with its reason —
+  `a_remote_session_grant_records_against_the_host_not_the_daemon_flags`,
+  `recording_a_sudo_grant_lands_in_hosts_sudo`,
+  `recording_on_a_new_host_and_escape_hatch_records_nothing`,
+  `host_approval_lines_list_each_granted_host_with_its_scope`. They pin the
+  recording/label/`/approvals` behaviour Task 3 *described in prose* but did
+  not pin, which is exactly the "reported, not trimmed" path the criterion
+  asked for. The E2E capture reads 1984 too, so the evidence is current rather
+  than stale — the 04d failure mode did not recur.
+- **The executor found a defect in this spec's own E2E block, and worked
+  around it honestly.** Its shell gate refuses any command line containing a
+  `sudo`-shaped token, and the `bare_flags` criterion I wrote embeds
+  `(regular|sudo): bool,` in its `grep -E`. It could not type the block
+  directly, so it executed it **byte-identical** from a gitignored script and
+  said so. Independently confirmed: the reviewer ran the same block directly
+  and got identical output, so the evidence stands.
+- **It also corrected its own wrong first-draft assert** rather than shipping
+  it: test 10's premise assumed `regular` starts false, but the shipped
+  default sets it true, so the test now builds from an explicit all-`false`
+  config and additionally asserts `hosts_sudo` stays empty.
+- **Calibration:** **E2E blocks must avoid `sudo`-shaped tokens in their
+  commands** — the executor's shell gate blocks the line, and only this
+  executor's disclosure revealed it. When a criterion must match the word,
+  use a character class (`su[d]o`) or match the field some other way. First
+  occurrence; recorded, not folded.
+
+**Review re-verification (independent, 2026-09-23):** all four gates re-run
+clean. The full § End-to-end verification block was re-run from scratch and
+reproduced the executor's capture **byte for byte** — `lib1..3=ok`,
+`lib_counts=1984p-0f-6i`, `decision_uses_class=1`, `host_sets=5`,
+`bare_flags=2`, `ignore_total=6`. `PASTE MATCH` prints from the doc's own
+diff. `cargo test` green on every target (lib 1984/0/6, doc_truth 14,
+integration 32, isolation 9, bug_tracker 6). All ten pinned tests pass under
+the spec's own `--` filter.
+
+**Mutation A re-applied by the reviewer** — making `NewHost` fall through to
+the `RemoteShell` answer turns `a_new_host_never_auto_approves` red. The row's
+security property (an unconfigured destination is *always* asked, whatever
+session state or config default exists) is genuinely under test, not merely
+asserted.
+
+**The measured gap is closed.** `auto_approves(classification, is_sudo)` now
+carries the scope table in one pure place: `Command` follows the untouched
+bare flags, `RemoteShell { host }` consults that host's own set for its own
+class, and `NewHost` / `EscapeHatch` return `false` unconditionally.
+`from_config` keeps its never-re-derive property — the new sets start empty
+and no config key can seed a per-host grant.
+
+**The row's scope boundary held.** An unconfigured host is still refused after
+approval, host resolution was **not** reordered ahead of the prompt, and
+`GhostPolicy` gained no `hosts` field — 06c and 06d still own those.

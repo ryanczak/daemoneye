@@ -1,7 +1,29 @@
 # NEXT
 
-**Active phase:** **M21 phase-06b — per-host-approval**, drafted 2026-09-23,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-06b`.
+**Active phase:** **none** — M21 phase-06b is `done` (2026-09-23,
+`approved_first_try`). Session `A` is now per class **per host**, and
+`new_host` / `escape_hatch` never auto-approve whatever the session state or
+config default. **Row 06c — new-host-allowed is next**; run
+`/rexymcp:architect next` to draft it.
+
+**Carry into 06c's drafting — a new constraint, discovered by the executor.**
+**E2E blocks must not contain `sudo`-shaped tokens in their command lines.**
+06b's `bare_flags` criterion embedded `(regular|sudo): bool,` in a `grep -E`,
+and the executor's shell gate refuses any line carrying such a token — it had
+to run the block byte-identical from a gitignored script and disclosed that.
+Use a character class (`su[d]o`) or match the field another way. **This
+matters for 06c specifically**, which is all about sudo-adjacent gating. First
+occurrence; recorded, not folded.
+
+**06c's job, and it carries real security weight.** An unconfigured host is
+still refused *after* approval. Making it allowed-but-gated needs three things
+together: host resolution reordered ahead of the prompt, `spawn_ssh_host`
+working without a `[hosts]` entry (the bare name as the ssh destination), and
+the offer to persist it. 06b deliberately left all three alone — verified at
+review: `executor/mod.rs` and `policy.rs` are untouched.
+
+The account below is the drafting-time record for 06b; its pre-phase
+measurements describe the tree at `4405f8ca`.
 
 **Measured at drafting, and it is the reason this row exists.** 06a threaded
 `Classification` all the way into `prompt_tool_call_ratatui` — and it is read
