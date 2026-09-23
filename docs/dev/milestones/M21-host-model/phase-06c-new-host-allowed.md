@@ -1,7 +1,7 @@
 # Phase 06c: new-host-allowed — an unconfigured host is gated, not refused
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06a (`Classification`), phase-06b (`NewHost` never auto-approves)
 
 **Estimated diff:** ~340 lines across 4 files, plus 10 tests
@@ -488,3 +488,143 @@ Restored to the plain `known_hosts` membership test; both tests green again
 Executor: **this run (headless)**. Status flipped `todo → in-progress`; README
 row updated to match. No code touched yet. Baseline before any change: the
 phase doc's stated `cargo test --lib` = 1984 passed / 0 failed / 6 ignored.
+
+### Update — 2026-09-23 17:13 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 06c implemented and committed (`20732fbe`). The foreground run path now parses the `host` argument *before* `prompt_and_await_approval` (`resolve_foreground_host` in `executor/mod.rs`, parsed once and fed both the panel's classification and the run), so a malformed name is refused with `HostId::parse`'s own `[A-Za-z0-9._-]` wording without ever prompting; a well-formed unconfigured name passes that gate, classifies as `new_host`, is always asked (06b), and on approval resolves through the new `host_entry_or_bare` lookup (`session.rs`) to `HostEntry { ssh: <name> }` — the same shape `[hosts.pinky] ssh = "pinky"` already has. `host_entry` itself is untouched and `open_shell` keeps the strict lookup (deliberate boundary, pinned by grep = 0 in `knowledge/shell.rs`).
+
+**Notes for review:**
+- One pre-existing test was overwritten rather than preserved: `run_terminal_command_refuses_an_unknown_host_before_any_spawn` pinned the *opposite* of this row (unconfigured → refused, with `host_entry`'s wording). It became `run_terminal_command_an_unconfigured_host_resolves_to_its_own_destination`; the malformed-name twin beside it is superseded by `a_malformed_host_is_refused_without_prompting`. Net 1984 → 1994, exactly the criterion's +10, no extras.
+- Test 6's seam cannot observe the transport directly; per the spec's allowance, `a_malformed_host_is_refused_without_prompting` asserts the refusal and wording, and the ordering is carried by the call site (parse precedes the prompt; `run_in_shell_core` sees only an already-parsed id) — stated in the Update Log.
+- Tests 9–10 landed in `ipc_tests.rs` beside 06a's `classify` tests (classifier location), with the security property asserted against the classification's input, since `SessionApproval` is `pub(super)` to `cli::commands` and out of reach from there.
+- Both mutations were applied, run once, observed **red** exactly as the spec requires (A: empty-ssh test failed; B: both classification tests failed with `RemoteShell { host: "nope" }`), then restored and re-verified green.
+- E2E block ran verbatim, captured to `/tmp/e2e-06c.txt`, pasted as the first fenced block of the `end-to-end verification` entry, and the diff printed **PASTE MATCH** (`lib1..3=ok`, `1994p-0f-6i`, all four greps and ignore_total as expected); `cargo fmt`/`build`/`clippy -D warnings` clean; full `cargo test`: lib 1994/0/6, doc_truth 14, integration 32, isolation 9, bug_tracker 6 — all preservation targets unmoved. The `[hosts]` persist offer remains deferred as scoped; the deferred-decision note for the PE already lives in `NEXT.md` per the phase doc.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+ open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_uses_first_occurrence_only ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M21-host-model/phase-06c-new-host-allowed.md` — +117 -1
+- `src/daemon/executor/mod.rs` — +129 -23
+- `src/daemon/executor/shell_exec.rs` — +26 -62
+- `src/ipc_tests.rs` — +56 -0
+- `src/shell/mod.rs` — +2 -2
+- `src/shell/session.rs` — +136 -5
+
+**Commit:** 20732fbe85bda94872bfec549dfe4688faa7f3ea
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
