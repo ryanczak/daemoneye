@@ -511,6 +511,34 @@ mod tests {
     }
 
     #[test]
+    fn an_ssh_password_prompt_arms_the_scrub() {
+        let password = "matt@pinky.home.planetfoo.org's password: ";
+        assert!(
+            looks_like_secret_prompt(password),
+            "the measured ssh login prompt must arm the scrub"
+        );
+        let passphrase = "Enter passphrase for key '/home/matt/.ssh/id_ed25519': ";
+        assert!(
+            looks_like_secret_prompt(passphrase),
+            "the ssh key-passphrase prompt must arm the scrub"
+        );
+    }
+
+    #[test]
+    fn the_host_key_question_does_not_arm_the_scrub() {
+        let snap = "The authenticity of host 'pinky.home.planetfoo.org (172.16.50.75)' \
+                    can't be established.\r\nED25519 key fingerprint is: \
+                    SHA256:8H2tFe0tLZodJlVr7s88lqZFVQTt6eo4XiGLGm1q4GI\r\n\
+                    This key is not known by any other names.\r\nAre you sure you want to \
+                    continue connecting (yes/no/[fingerprint])? ";
+        assert!(
+            !looks_like_secret_prompt(snap),
+            "the host-key question names no secret; its `yes` answer belongs in the log \
+             in clear"
+        );
+    }
+
+    #[test]
     fn input_after_a_prompt_logs_a_redaction_marker() {
         const CREDENTIAL: &str = "hunter2-secret-test";
         let dir = tempfile::tempdir().unwrap();

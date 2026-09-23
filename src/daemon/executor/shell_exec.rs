@@ -14,8 +14,8 @@ use super::foreground;
 use super::send_response_split;
 use crate::ai::mask_sensitive;
 use crate::daemon::utils::{
-    PromptKind, classify_prompt, command_has_sudo, normalize_output, sudo_password_prompt,
-    sudo_sentinel, with_sudo_sentinel,
+    PromptKind, classify_prompt, command_has_sudo, is_ssh_permission_denied, normalize_output,
+    sudo_password_prompt, sudo_sentinel, with_sudo_sentinel,
 };
 use crate::ipc::{Request, Response};
 use crate::shell::PromptReply;
@@ -102,7 +102,7 @@ where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let (has_sudo, sentinel_value, wrapped) = if command_has_sudo(cmd) {
+    let (has_sudo, _sentinel_value, wrapped) = if command_has_sudo(cmd) {
         let idx = PTY_SENTINEL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let sentinel = sudo_sentinel(idx);
         (true, sentinel.clone(), with_sudo_sentinel(cmd, &sentinel))
@@ -111,10 +111,8 @@ where
     };
     let prompts = if has_sudo {
         Some(SudoPromptArgs {
-            sentinel: sentinel_value,
             wrapped: wrapped.clone(),
             id: prompt_id.to_string(),
-            plain_cmd: cmd.to_string(),
             tx,
             rx,
         })
@@ -135,16 +133,16 @@ where
     .await
 }
 
-/// A sudo command's prompt plumbing.
+/// A sudo command's prompt plumbing. `wrapped` is the command with its
+/// sentinel already inserted; the classifier re-derives the sentinel from the
+/// PTY counter rather than threading it twice.
 pub(super) struct SudoPromptArgs<'p, W, R>
 where
     W: tokio::io::AsyncWriteExt + Unpin + 'p,
     R: tokio::io::AsyncBufReadExt + Unpin + 'p,
 {
-    sentinel: String,
     wrapped: String,
     id: String,
-    plain_cmd: String,
     tx: &'p mut W,
     rx: &'p mut R,
 }
@@ -377,6 +375,7 @@ where
         &marker_shell_name(&record_host),
         applied_timeout,
         prompts,
+        record_host.as_str(),
     )
     .await;
     match outcome {
@@ -428,18 +427,83 @@ struct SudoAttempts {
 /// default, and the wording `sudo_password_prompt(attempt, MAX)` emits).
 const MAX_SUDO_RETRIES: usize = 3;
 
+/// The prompt wording an ssh credential prompt shows the client: names what
+/// is actually being asked for — a key passphrase is not a login password —
+/// instead of `sudo_password_prompt`'s sudo wording.
+fn ssh_credential_prompt(kind: PromptKind) -> String {
+    match kind {
+        PromptKind::SshPassword => "ssh login password required".to_string(),
+        PromptKind::SshPassphrase => "ssh key passphrase required".to_string(),
+        PromptKind::SshHostKey | PromptKind::SudoPassword | PromptKind::Fingerprint => {
+            "ssh authentication required".to_string()
+        }
+    }
+}
+
+/// One `Response::CredentialPrompt` → `Request::CredentialResponse` round
+/// trip over the caller's transport, shared by the sudo and ssh arms so the
+/// two cannot diverge on the wire shape, the timeout, the zeroizing or the
+/// attempt count. `id` is the prompt id the client echoes back; `prompt` is
+/// the human-facing wording.
+async fn credential_round_trip<W, R>(
+    id: &str,
+    tx: &mut W,
+    rx: &mut R,
+    prompt: String,
+) -> PromptReply
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    let write = send_response_split(
+        tx,
+        Response::CredentialPrompt {
+            id: id.to_string(),
+            prompt,
+        },
+    )
+    .await;
+    if let Err(e) = write {
+        return PromptReply::GiveUp(format!("credential prompt could not be sent: {e}"));
+    }
+    let mut cred_line = String::new();
+    let read = tokio::time::timeout(super::USER_PROMPT_TIMEOUT, rx.read_line(&mut cred_line)).await;
+    let answer = match read {
+        Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
+            Ok(Request::CredentialResponse { credential, .. }) => {
+                let credential = zeroize::Zeroizing::new(credential);
+                let mut bytes = credential.as_bytes().to_vec();
+                bytes.push(b'\n');
+                PromptReply::Send(bytes)
+            }
+            _ => PromptReply::GiveUp("credentials could not be read".to_string()),
+        },
+        _ => PromptReply::GiveUp("credentials were not supplied in time".to_string()),
+    };
+    zeroize::Zeroize::zeroize(&mut cred_line);
+    answer
+}
+
 /// Run one sudo command under [`run_command_with_prompts`], classified by
 /// [`classify_prompt`], with the retry/give-up semantics.
 ///
 /// The prompt round-trips over the same `tx`/`rx` the tmux path uses. On the
 /// third failed password the credential is never sent again; the give-up write
 /// of a single `\n` is what un-parks the shell without leaking the credential.
+///
+/// `host_name` is the destination this command's shell reaches when the run is
+/// on a named host, `"local"` for the daemon host: the ssh give-up wording
+/// names it, so the model is told *which* host refused. An ssh prompt can
+/// only appear on a named host — the daemon host's shell spawns no ssh — so
+/// a `local` here never reaches the ssh arms' wording.
+#[allow(clippy::too_many_arguments)]
 async fn run_sudo_command<'p, W, R>(
     socket: &Path,
     cmd: &str,
     shell_name: &str,
     timeout: Duration,
     prompts: SudoPromptArgs<'p, W, R>,
+    host_name: &str,
 ) -> anyhow::Result<CommandOutcome>
 where
     W: tokio::io::AsyncWriteExt + Unpin + 'p,
@@ -448,23 +512,15 @@ where
     let idx = PTY_SENTINEL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let sentinel = sudo_sentinel(idx);
     let wrapped_cmd = with_sudo_sentinel(cmd, &sentinel);
-    let SudoPromptArgs {
-        id,
-        plain_cmd,
-        sentinel,
-        tx,
-        rx,
-        wrapped: _,
-    } = prompts;
-    let _ = sentinel;
+    let SudoPromptArgs { id, tx, rx, .. } = prompts;
     let attempts = std::sync::Arc::new(std::sync::Mutex::new(SudoAttempts::default()));
     let id = std::sync::Arc::new(id);
-    let _plain_cmd = std::sync::Arc::new(plain_cmd);
     let tx: std::sync::Arc<tokio::sync::Mutex<&mut W>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(tx));
     let rx: std::sync::Arc<tokio::sync::Mutex<&mut R>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(rx));
     let sentinel = std::sync::Arc::new(sentinel);
+    let host_name = host_name.to_string();
     run_command_with_prompts(
         socket,
         &wrapped_cmd,
@@ -477,6 +533,7 @@ where
             let rx = std::sync::Arc::clone(&rx);
             let state = std::sync::Arc::clone(&attempts);
             let sentinel = std::sync::Arc::clone(&sentinel);
+            let host_name = host_name.clone();
             async move {
                 let attempts_used = {
                     let s = state.lock().expect("sudo attempt state");
@@ -484,51 +541,17 @@ where
                 };
                 match classify_prompt(&out, &sentinel) {
                     Some(PromptKind::SudoPassword) if attempts_used < MAX_SUDO_RETRIES => {
-                        let prompt = sudo_password_prompt(attempts_used, MAX_SUDO_RETRIES);
-                        {
-                            let mut guard = tx.lock().await;
-                            let write = send_response_split(
-                                &mut **guard,
-                                Response::CredentialPrompt {
-                                    id: (*id).clone(),
-                                    prompt,
-                                },
-                            )
-                            .await;
-                            if let Err(e) = write {
-                                return PromptReply::GiveUp(format!(
-                                    "credential prompt could not be sent: {e}"
-                                ));
-                            }
-                        }
-                        let mut cred_line = String::new();
-                        let read = {
-                            let mut guard = rx.lock().await;
-                            tokio::time::timeout(
-                                super::USER_PROMPT_TIMEOUT,
-                                guard.read_line(&mut cred_line),
+                        let answer = {
+                            let mut tx_guard = tx.lock().await;
+                            let mut rx_guard = rx.lock().await;
+                            credential_round_trip(
+                                id.as_ref(),
+                                &mut **tx_guard,
+                                &mut **rx_guard,
+                                sudo_password_prompt(attempts_used, MAX_SUDO_RETRIES),
                             )
                             .await
                         };
-                        let alive_line = cred_line.as_bytes().to_vec();
-                        let answer = match read {
-                            Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
-                                Ok(Request::CredentialResponse { credential, .. }) => {
-                                    let credential = zeroize::Zeroizing::new(credential);
-                                    let mut bytes = credential.as_bytes().to_vec();
-                                    bytes.push(b'\n');
-                                    PromptReply::Send(bytes)
-                                }
-                                _ => PromptReply::GiveUp(
-                                    "sudo credentials could not be read".to_string(),
-                                ),
-                            },
-                            _ => PromptReply::GiveUp(
-                                "sudo credentials were not supplied in time".to_string(),
-                            ),
-                        };
-                        drop(alive_line);
-                        zeroize::Zeroize::zeroize(&mut cred_line);
                         if matches!(answer, PromptReply::Send(_)) {
                             state.lock().expect("sudo attempt state").attempts += 1;
                         }
@@ -536,10 +559,9 @@ where
                     }
                     Some(PromptKind::SudoPassword) => PromptReply::GiveUp(format!(
                         "sudo authentication failed after {MAX_SUDO_RETRIES} incorrect password \
-                     attempts — `{}` was not executed. To avoid password prompts for repeated \
-                     operations, install a NOPASSWD sudoers rule with: \
-                     `daemoneye install-sudoers <script-name>`",
-                        cmd
+                     attempts — the command was not executed. To avoid password prompts for \
+                     repeated operations, install a NOPASSWD sudoers rule with: \
+                     `daemoneye install-sudoers <script-name>`"
                     )),
                     Some(PromptKind::Fingerprint) => PromptReply::GiveUp(
                         "sudo is waiting for fingerprint authentication which cannot be satisfied \
@@ -547,6 +569,31 @@ where
                      a NOPASSWD sudoers rule with `daemoneye install-sudoers <script-name>`"
                             .to_string(),
                     ),
+                    Some(kind @ (PromptKind::SshPassword | PromptKind::SshPassphrase)) => {
+                        // An ssh credential prompt asks for the remote login
+                        // or a key passphrase, not for sudo, so it gets its
+                        // own wording; the sudo attempt count must not turn
+                        // its first answer into a give-up.
+                        let mut tx_guard = tx.lock().await;
+                        let mut rx_guard = rx.lock().await;
+                        credential_round_trip(
+                            id.as_ref(),
+                            &mut **tx_guard,
+                            &mut **rx_guard,
+                            ssh_credential_prompt(kind),
+                        )
+                        .await
+                    }
+                    Some(PromptKind::SshHostKey) => PromptReply::GiveUp(format!(
+                        "ssh is asking whether to trust host {host_name}'s unknown host key, \
+                         which cannot be answered here — accept the fingerprint once from \
+                         your own terminal, or wait for the new-host approval flow"
+                    )),
+                    _ if is_ssh_permission_denied(&out) => PromptReply::GiveUp(format!(
+                        "ssh authentication was refused for host {host_name}: Permission \
+                         denied — the credentials given did not authenticate and the \
+                         command was not executed"
+                    )),
                     _ => PromptReply::Wait,
                 }
             }

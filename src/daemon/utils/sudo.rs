@@ -79,6 +79,17 @@ pub enum PromptKind {
     /// A fingerprint prompt — it cannot be satisfied by typing, so the
     /// caller must give up rather than wait.
     Fingerprint,
+    /// ssh's unknown-host-key question. Answerable, but **not with a
+    /// secret** — the answer is `yes` — so it is never routed through the
+    /// credential round-trip; the caller gives up and the trust decision is
+    /// the new-host approval flow's (M21 row 06).
+    SshHostKey,
+    /// ssh's login password prompt (`user@host's password:`) — answerable
+    /// with a credential.
+    SshPassword,
+    /// ssh's key-passphrase prompt (`Enter passphrase for …`) — answerable
+    /// with a credential.
+    SshPassphrase,
 }
 
 /// Pure: what `output` is prompting for, given the sentinel this invocation
@@ -88,6 +99,16 @@ pub enum PromptKind {
 /// that text is locale- and `sudo.conf`-dependent, and stale output from an
 /// earlier command in the same shell must not trigger a prompt. The sentinel
 /// is per-invocation, so it cannot collide across commands.
+///
+/// The ssh branches below **are** matched by text, diverging from that rule —
+/// deliberately, and safely for a narrower reason: ssh offers no sentinel
+/// mechanism (no `SUDO_PROMPT` equivalent). That is acceptable here because
+/// these prompts occur during **connection establishment on a shell the
+/// daemon just spawned** — there is no earlier command in that shell whose
+/// stale output could match. A `grep`ed fragment of a later command's own
+/// echo cannot reach the classifier before ssh has finished connecting,
+/// because nothing is written into the shell until its marker-wrapped
+/// command runs, which is only after ssh is authenticated.
 pub fn classify_prompt(output: &str, sentinel: &str) -> Option<PromptKind> {
     if is_fingerprint_prompt(output) {
         return Some(PromptKind::Fingerprint);
@@ -95,7 +116,40 @@ pub fn classify_prompt(output: &str, sentinel: &str) -> Option<PromptKind> {
     if output.contains(sentinel) {
         return Some(PromptKind::SudoPassword);
     }
+    classify_ssh_prompt(output)
+}
+
+/// Pure: which ssh prompt `output` is raising, by text. Order with
+/// `classify_prompt`'s: the fingerprint question (which contains the word
+/// "fingerprint" twice, on the host-key form) and this invocation's sudo
+/// sentinel both outrank every ssh text match. `None` when none matches.
+pub fn classify_ssh_prompt(output: &str) -> Option<PromptKind> {
+    if output.contains("Are you sure you want to continue connecting") {
+        return Some(PromptKind::SshHostKey);
+    }
+    if output.contains("Enter passphrase for") {
+        return Some(PromptKind::SshPassphrase);
+    }
+    // ssh's own prompt shape (`user@host's password: `). `su`'s bare
+    // `Password:` is deliberately **not** matched: it is broader — any
+    // program that prints `Password:` anywhere would arm it, stale text
+    // included, and the stale-output negative the sentinel rule exists for
+    // applies with full force in a shell that has already run commands. The
+    // cost of missing it is bounded: `su` over a daemon ssh shell then waits
+    // out the command's own timeout instead of being answered, which is the
+    // status quo this phase found and does not worsen.
+    if output.contains("'s password:") {
+        return Some(PromptKind::SshPassword);
+    }
     None
+}
+
+/// True when `output` carries ssh's terminal `Permission denied` line — not a
+/// prompt: ssh has already failed and exits 255, so the caller must give up
+/// rather than keep reading. Pure; named so the give-up decision can be
+/// tested without a shell.
+pub fn is_ssh_permission_denied(output: &str) -> bool {
+    output.contains("Permission denied")
 }
 
 /// Per-invocation sudo prompt sentinel. The closing bracket makes the match
@@ -298,6 +352,124 @@ mod tests {
             classify_prompt(snap, "[de-sudo-prompt-1]"),
             Some(PromptKind::Fingerprint),
             "a fingerprint prompt cannot be typed at, even with the sentinel visible"
+        );
+    }
+
+    #[test]
+    fn classify_prompt_matches_the_ssh_host_key_question() {
+        let snap = "The authenticity of host 'pinky.home.planetfoo.org (172.16.50.75)' \
+                    can't be established.\r\nED25519 key fingerprint is: \
+                    SHA256:8H2tFe0tLZodJlVr7s88lqZFVQTt6eo4XiGLGm1q4GI\r\n\
+                    This key is not known by any other names.\r\nAre you sure you want to \
+                    continue connecting (yes/no/[fingerprint])? ";
+        assert_eq!(
+            classify_prompt(snap, "[de-sudo-prompt-1]"),
+            Some(PromptKind::SshHostKey)
+        );
+    }
+
+    #[test]
+    fn classify_prompt_matches_an_ssh_password_prompt() {
+        let snap = "matt@pinky.home.planetfoo.org's password: ";
+        assert_eq!(
+            classify_prompt(snap, "[de-sudo-prompt-1]"),
+            Some(PromptKind::SshPassword)
+        );
+    }
+
+    #[test]
+    fn classify_prompt_matches_an_ssh_passphrase_prompt() {
+        let snap = "Enter passphrase for key '/home/matt/.ssh/id_ed25519': ";
+        assert_eq!(
+            classify_prompt(snap, "[de-sudo-prompt-1]"),
+            Some(PromptKind::SshPassphrase)
+        );
+    }
+
+    #[test]
+    fn host_key_prompt_is_not_a_fingerprint_prompt() {
+        let snap = "The authenticity of host 'pinky.home.planetfoo.org (172.16.50.75)' \
+                    can't be established.\r\nED25519 key fingerprint is: \
+                    SHA256:8H2tFe0tLZodJlVr7s88lqZFVQTt6eo4XiGLGm1q4GI\r\n\
+                    This key is not known by any other names.\r\nAre you sure you want to \
+                    continue connecting (yes/no/[fingerprint])? ";
+        assert!(
+            !is_fingerprint_prompt(snap),
+            "the host-key question contains the word \"fingerprint\" twice but names no \
+             reader; a biometric matcher that fires here would misclassify every unknown \
+             host as an unanswerable fingerprint prompt"
+        );
+        assert_eq!(
+            classify_prompt(snap, "[de-sudo-prompt-1]"),
+            Some(PromptKind::SshHostKey),
+            "the host-key question must classify as SshHostKey, not Fingerprint"
+        );
+    }
+
+    #[test]
+    fn a_real_biometric_prompt_still_classifies_as_fingerprint() {
+        for snap in [
+            "Place your finger on the fingerprint reader",
+            "Swipe your finger across the fingerprint reader",
+            "Failed to match fingerprint",
+        ] {
+            assert_eq!(
+                classify_prompt(snap, "[de-sudo-prompt-1]"),
+                Some(PromptKind::Fingerprint),
+                "preservation: {snap:?} must remain unanswerable"
+            );
+        }
+    }
+
+    #[test]
+    fn the_sentinel_still_wins_over_ssh_text() {
+        let snap = "matt@pinky.home.planetfoo.org's password: \r\n[de-sudo-prompt-1] \r\n";
+        assert_eq!(
+            classify_prompt(snap, "[de-sudo-prompt-1]"),
+            Some(PromptKind::SudoPassword),
+            "this invocation's sentinel outranks ssh text in the same chunk"
+        );
+    }
+
+    #[test]
+    fn su_password_prompt_classification_is_pinned() {
+        // `su` prints a bare `Password:`. It is deliberately NOT matched:
+        // the bare form is broader than ssh's `'s password:` — any program
+        // that prints `Password:` anywhere, stale output included, would arm
+        // it — and the stale-output negative the sentinel rule exists for
+        // applies with full force in a shell that has already run commands.
+        // The cost of the miss is bounded: an unanswered `su` waits out the
+        // command's own timeout, the status quo this phase measured and does
+        // not worsen.
+        assert_eq!(
+            classify_prompt("Password: ", "[de-sudo-prompt-1]"),
+            None,
+            "a bare `Password:` is not classified as an ssh prompt"
+        );
+    }
+
+    #[test]
+    fn stale_ssh_prompt_text_from_an_earlier_command_does_not_classify() {
+        // ssh's prompts appear only during connection establishment, so a
+        // fragment of ssh text echoed by a *later* command in that shell can
+        // only be a command's own echo, never a live prompt. The classifier
+        // has no way to tell an echo from a prompt by text alone — the
+        // limitation is pinned here rather than hidden: the matcher is
+        // text-only and would match the echo too, so the guard is the
+        // structural one in the phase doc's safety argument (ssh text
+        // reaches the classifier only while the connection is being
+        // established), not a property of `classify_prompt` itself.
+        let echo = "$ grep \"Enter passphrase for\" notes.txt\nEnter passphrase for\n$ ";
+        assert_eq!(
+            classify_ssh_prompt(echo),
+            Some(PromptKind::SshPassphrase),
+            "pinned limitation: the text-only matcher cannot distinguish a command echo \
+             from a live prompt"
+        );
+        assert_eq!(
+            classify_prompt(echo, "[de-sudo-prompt-1]"),
+            Some(PromptKind::SshPassphrase),
+            "the same echo through classify_prompt"
         );
     }
 }

@@ -458,6 +458,118 @@ You may edit, and nothing else:
 
 <!-- entries appended below this line -->
 
+### Update — 2026-09-23 00:20 (end-to-end verification)
+
+Captured mechanically against the tree with the ten new tests in place
+(`lib_counts=1961p-0f-6i`, i.e. 1951 + 10). This first fenced block is the
+`cat /tmp/e2e-05.txt` output of the § End-to-end verification block, run
+verbatim (the block itself is pasted below, after it):
+
+```text
+lib1=ok
+lib2=ok
+lib3=ok
+lib_counts=1961p-0f-6i
+new_variants=3
+fingerprint_not_broadened=0
+needles=5
+ignore_total=6
+```
+
+Every expected value matches: `lib1..3=ok`, `lib_counts=1961p-0f-6i`,
+`new_variants=3`, `fingerprint_not_broadened=0`, `needles=5`, `ignore_total=6`.
+
+The verbatim § End-to-end verification block that produced it:
+
+```sh
+cd /home/matt/src/daemoneye
+{
+  for i in 1 2 3; do
+    printf 'lib%d=%s\n' "$i" "$(cargo test --lib 2>&1 | grep -E '^test result' | tail -1 | grep -oE 'ok|FAILED')"
+  done
+  printf 'lib_counts=%s\n' "$(cargo test --lib 2>&1 | grep -E '^test result' | tail -1 | sed -E 's/.*ok\. ([0-9]+) passed; ([0-9]+) failed; ([0-9]+) ignored.*/\1p-\2f-\3i/')"
+  printf 'new_variants=%s\n' "$(awk '/pub enum PromptKind/,/^\}/' src/daemon/utils/sudo.rs | grep -cE '^\s+(SshHostKey|SshPassword|SshPassphrase),')"
+  printf 'fingerprint_not_broadened=%s\n' "$(awk '/pub fn is_fingerprint_prompt/,/^\}/' src/daemon/utils/sudo.rs | grep -c '"fingerprint"')"
+  printf 'needles=%s\n' "$(awk '/const NEEDLES/,/\];/' src/shell/backend.rs | grep -c '"')"
+  printf 'ignore_total=%s\n' "$(grep -rc '#\[ignore' --include=*.rs src/ | grep -v ':0' | awk -F: '{s+=$2} END {print s}')"
+} > /tmp/e2e-05.txt
+cat /tmp/e2e-05.txt
+```
+
+**Mutations** (each applied with the `patch` tool, run once, restored; both
+restores verified green):
+
+- **Mutation A** — `|| output.contains("fingerprint")` added to
+  `is_fingerprint_prompt`; `cargo test --lib
+  host_key_prompt_is_not_a_fingerprint_prompt` went **red**:
+  `test result: FAILED. 0 passed; 1 failed` — the host-key question
+  misclassifies as `Fingerprint`, the § Current state 3 hazard reproduced by
+  edit. Restored; green again.
+- **Mutation B** — the ssh password match moved above the sentinel check in
+  `classify_prompt`; `cargo test --lib the_sentinel_still_wins_over_ssh_text`
+  went **red**: `test result: FAILED. 0 passed; 1 failed` — a chunk with both
+  the sentinel and `'s password:` classified `SshPassword` instead of
+  `SudoPassword`, proving the ordering is pinned rather than incidental.
+  Restored; green again.
+
+**Live verification** (run by hand against `pinky`, per § Live verification —
+`su` over the ssh PTY rather than remote sudo, because `pinky` is NOPASSWD,
+§ Current state 4):
+
+```text
+hostkey_q=1
+su_password=1
+```
+
+Both are ≥ 1: the classifier's fragments are what a real ssh connection emits
+on this host — the unknown-host-key question and `su`'s `Password:` prompt
+were both captured live through `script -qc` with the same `-tt` ssh the
+daemon spawns.
+
+### Update — 2026-09-23 00:10 (progress, executor)
+
+Resumed from the escalation. Task 3 is now complete and building: the
+over-deref in `credential_round_trip` is `&mut *tx` (→ `tx` after the
+parameter is already `&mut W`), the shared transports went back to the
+pre-existing `Arc<tokio::sync::Mutex<&mut W>>` shape locked with
+`.lock().await` and used as `&mut **guard`, and the dead `sentinel` /
+`plain_cmd` fields came off `SudoPromptArgs` (the classifier re-derives the
+sentinel from the PTY counter). `index_command_output`'s doc comment, which a
+prior run's diff had silently dropped, is restored. The three ssh arms are
+routed: password/passphrase reuse the sudo wire round-trip through the shared
+`credential_round_trip` helper with kind-specific wording, host key gives up
+naming the host, and `Permission denied` gives up naming the host.
+
+Tasks 4, 5 first halves are in. The ten pinned tests all pass:
+
+- 8 in `src/daemon/utils/sudo.rs` — the three positive matches, the
+  `host_key_prompt_is_not_a_fingerprint_prompt` negative, the biometric
+  preservation test, the sentinel-over-ssh-text ordering test, the `su`
+  `Password:` decision (not classified; reasoning in the test and in the
+  classifier's comment), and the stale-echo pin (the text-only matcher cannot
+  distinguish an echo from a live prompt — pinned, per the spec's escape
+  hatch, with the structural guard named).
+- 2 in `src/shell/backend.rs` — the password/passphrase scrub arming and the
+  host-key question not arming the scrub.
+
+Mutation A and Mutation B were both applied and observed red, then restored:
+A (`|| output.contains("fingerprint")` in `is_fingerprint_prompt`) →
+`host_key_prompt_is_not_a_fingerprint_prompt` FAILED, `1 failed; 0 passed` —
+the § Current state 3 hazard reproduced by edit. B (ssh password match moved
+above the sentinel check) → `the_sentinel_still_wins_over_ssh_text` FAILED,
+`1 failed; 0 passed` — the ordering is pinned, not incidental. Both restores
+verified green.
+
+The task-10 filter runs `10 passed; 0 failed`, `--lib` is
+`1961 passed; 0 failed; 6 ignored`, and the other targets are unmoved
+(doc_truth 14, integration 32 (2 ignored), isolation 9 (1 ignored),
+bug_tracker 6). `cargo build`, `cargo fmt --all -- --check`, and
+`cargo clippy --all-targets --all-features -- -D warnings` are all clean.
+
+The live § Live verification block was also captured by hand (hostkey_q=1,
+su_password=1); its paste goes into the end-to-end entry below with the
+mutations.
+
 ### Update — 2026-09-22 22:55 (started, executor)
 
 Status flipped `todo → in-progress` (phase doc + milestone README row). Pre-flight
