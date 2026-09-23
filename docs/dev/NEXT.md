@@ -1,7 +1,29 @@
 # NEXT
 
-**Active phase:** **M21 phase-06a — prompt-classification**, drafted
-2026-09-23, status `todo`. Dispatch with `/rexymcp:dispatch phase-06a`.
+**Active phase:** **none** — M21 phase-06a is `done` (2026-09-23,
+`approved_first_try`). The approval panel now names the host:
+`→ host: pinky (configured)`, `→ host: nope (unconfigured)`, or
+`→ ghost shell reaching outside its sandbox`. **Row 06b — new-host-gating is
+next**; run `/rexymcp:architect next` to draft it.
+
+**What 06b inherits.** 06a classified and rendered but deliberately did not
+gate, so the § Current state 4 ordering defect is still live: the user is
+shown the destination now, but an unconfigured host is still refused *after*
+approval, because `prompt_and_await_approval` runs ahead of host resolution
+(`executor/mod.rs:316-345`). 06b reorders that and turns `new_host` into an
+offer to persist to `[hosts]`, plus per-class-per-host session scope in
+`SessionApproval` — which 06a left untouched, verified at review.
+
+**Carry into 06b's drafting — spec hygiene, this architect's.**
+§ Authorizations must enumerate the **construction sites** a struct-field
+addition forces, not just the files holding the definition and the intended
+call site. 06a's field additions to `ToolCallPrompt` and `ApprovalRequest`
+compile-forced edits to `slash.rs` and `foreground.rs`, neither listed; the
+executor did the minimal correct thing and disclosed it. Third benign instance
+in M21 (04c, 04d, 06a) — spec hygiene, not a WORKFLOW fold.
+
+The account below is the drafting-time record for 06a; its pre-phase
+measurements describe the tree at `e439a38c`.
 
 **Row 06 split into 06a/06b/06c at drafting — it was four features in one
 row:** the `classification` field and its rendering, the `new_host` gate with

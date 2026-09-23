@@ -1,7 +1,7 @@
 # Phase 06a: prompt-classification — the approval panel names the host
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-04d (`run_terminal_command { host? }`), phase-05 (the ssh prompt kinds)
 **Estimated diff:** ~330 lines across 5 files, plus 9 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -595,3 +595,56 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** a6ad7319ac833674887363bf64ea461c1cbacf84
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-23
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** two files outside § Authorizations, both
+  **compile-forced and both disclosed** — and the omission is this spec's, not
+  the executor's. Adding a field to `Response::ToolCallPrompt` and to
+  `ApprovalRequest` breaks every construction site, so
+  `src/cli/commands/slash.rs` (+1, a test frame gaining
+  `Classification::default()`) and `src/daemon/executor/foreground.rs` (+2, the
+  tmux path's two `ApprovalRequest`s gaining `host: None`) had to move. `None`
+  is correct there: those paths carry no host, so their panels are unchanged.
+  The Update Log names both sites and explains the `None`. Two further
+  adaptations were disclosed and are sound: the panel body/label were split
+  into `tool_call_panel_body` / `tool_call_panel_label` so test 9 pins real
+  rendered text without driving the interactive loop, and
+  `prompt_tool_call_ratatui` took the `#[allow(clippy::too_many_arguments)]`
+  its neighbours already carry on reaching 8 parameters.
+- **Calibration:** § Authorizations should enumerate the *construction sites* a
+  struct-field addition forces, not only the files holding the definition and
+  the intended call site. This is the third time a phase in M21 has had to
+  touch an unlisted file for a compile-forced reason (04c `spawn_dedicated_for`,
+  04d test 8's placement, 06a here) — unlike the grep-scoping issue these were
+  each benign and disclosed, so the fix is spec hygiene at drafting, not a
+  WORKFLOW fold.
+
+**Review re-verification (independent, 2026-09-23):** all four gates re-run
+clean. The full § End-to-end verification block was re-run from scratch and
+reproduced the executor's capture **byte for byte** — `lib1..3=ok`,
+`lib_counts=1970p-0f-6i` (exactly the pinned figure, no extra test),
+`variants=4`, `prompt_field=1`, `req_host=1`, `ignore_total=6`. `PASTE MATCH`
+prints from the doc's own diff. `cargo test` green on every target (lib
+1970/0/6, doc_truth 14, integration 32, isolation 9, bug_tracker 6). All nine
+pinned tests pass — eight in `ipc.rs`, one in `stream.rs`.
+
+**Mutation A re-applied by the reviewer** — removing `#[serde(default)]` from
+`classification` turns
+`tool_call_prompt_without_a_classification_defaults_to_command` red with
+`Error("missing field \`classification\`", line: 1, column: 69)`. The wire
+back-compat an older client depends on is genuinely under test, not merely
+asserted.
+
+No production `unwrap`/`expect`/`panic!`, no `unsafe`, no `TODO`/`dbg!`/
+`println!`, and no new `#[ignore]` across 292 added lines; the single new
+`#[allow]` is the arity lint on `prompt_tool_call_ratatui`, matching its
+neighbours and masking no diagnostic.
+
+**The row's scope boundary held.** `SessionApproval`
+(`src/cli/commands/approval.rs`) is untouched, the host check was **not**
+reordered ahead of the prompt, and `GhostPolicy` gained no `hosts` field —
+06b and 06c still own those.
