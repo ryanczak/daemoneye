@@ -292,9 +292,16 @@ fn cmd_approvals(ctx: SlashCtx<'_>, rest: &str) {
                     "files    : {}",
                     scope(ctx.approval.file_edits_all, ctx.approval.file_edits.len())
                 ),
-                String::new(),
-                "change with: /approvals on|off|revoke".to_string(),
             ];
+            let mut body = body;
+            let hosts = ctx.approval.host_approval_lines();
+            if !hosts.is_empty() {
+                body.push(String::new());
+                body.push("per-host commands:".to_string());
+                body.extend(hosts);
+            }
+            body.push(String::new());
+            body.push("change with: /approvals on|off|revoke".to_string());
             let _ = ctx.renderer.commit_panel("approvals", &body, false);
         }
         "on" | "auto" => {

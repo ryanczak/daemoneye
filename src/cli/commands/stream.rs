@@ -1115,34 +1115,35 @@ pub(super) async fn prompt_tool_call_ratatui(
     let _ = renderer.commit_panel(where_label, &body, false);
 
     let is_sudo = command_has_sudo(command);
-    let auto_approved = if is_sudo {
-        approval.sudo
-    } else {
-        approval.regular
-    };
+    let auto_approved = approval.auto_approves(classification, is_sudo);
 
     if auto_approved {
         let _ = renderer.commit("  ✓ auto-approved (session)\n");
         return Ok((true, None));
     }
 
-    let session_label = if is_sudo { "sudo session" } else { "session" };
+    let session_label = approval_session_label(classification, is_sudo);
+    let offer_session = matches!(
+        classification,
+        crate::ipc::Classification::Command | crate::ipc::Classification::RemoteShell { .. }
+    );
     let input =
-        read_approval_input_panel(renderer, stdin, "approve command", session_label, status).await;
+        read_approval_input_panel(renderer, stdin, "approve command", &session_label, status).await;
     let (approved, is_session, user_msg) = parse_approval_response(&input);
+    let is_session = is_session && offer_session;
 
     if approved {
         if is_session {
-            if is_sudo {
-                approval.sudo = true;
-            } else {
-                approval.regular = true;
+            match approval.record_session_approval(classification, is_sudo) {
+                Some(kind) => {
+                    let _ = renderer.commit(&format!(
+                        "  ✓ approved — {kind} auto-approved for this session\n"
+                    ));
+                }
+                None => {
+                    let _ = renderer.commit("  ✓ approved\n");
+                }
             }
-            let kind = if is_sudo { "sudo" } else { "regular" };
-            let _ = renderer.commit(&format!(
-                "  ✓ approved — all {} commands auto-approved for this session\n",
-                kind
-            ));
         } else {
             let _ = renderer.commit("  ✓ approved\n");
         }
@@ -1153,6 +1154,23 @@ pub(super) async fn prompt_tool_call_ratatui(
     } else {
         let _ = renderer.commit("  ✗ skipped\n");
         Ok((false, None))
+    }
+}
+
+/// The session label the approval panel shows after `[A]pprove for`, naming
+/// the host (or the always-asked class) the grant would widen.
+pub(super) fn approval_session_label(
+    classification: &crate::ipc::Classification,
+    is_sudo: bool,
+) -> String {
+    let scope = if is_sudo { "sudo session" } else { "session" };
+    match classification {
+        crate::ipc::Classification::Command => scope.to_string(),
+        crate::ipc::Classification::RemoteShell { host } => format!("{host} {scope}"),
+        crate::ipc::Classification::NewHost { host } => {
+            format!("{host} (unconfigured) — always asked")
+        }
+        crate::ipc::Classification::EscapeHatch => "escape hatch — always asked".to_string(),
     }
 }
 
@@ -1815,6 +1833,7 @@ mod stream_seam_tests {
 #[cfg(test)]
 mod tool_call_panel_tests {
     use super::*;
+    use crate::daemon::utils::command_has_sudo;
 
     #[test]
     fn the_local_command_panel_is_unchanged() {
@@ -1838,6 +1857,82 @@ mod tool_call_panel_tests {
             tool_call_panel_label(true),
             "daemon · runs silently",
             "the background label is the pre-phase wording"
+        );
+    }
+
+    #[test]
+    fn the_local_approval_flow_is_unchanged() {
+        let approval = SessionApproval::from_config(&crate::config::ApprovalsConfig::default());
+        let command = "uptime";
+        let is_sudo = command_has_sudo(command);
+        let class = crate::ipc::Classification::Command;
+
+        assert!(
+            approval.auto_approves(&class, is_sudo),
+            "a non-sudo Command under the shipped default auto-approves as before this phase"
+        );
+        assert!(
+            !approval.auto_approves(&class, true),
+            "a sudo Command under the shipped default is still asked, as before this phase"
+        );
+
+        let body = tool_call_panel_body(command, false, Some("%5"), &class);
+        assert_eq!(
+            body,
+            vec!["$ uptime".to_string(), "→ target: %5".to_string()],
+            "the Command panel body is byte-identical to the pre-phase wording"
+        );
+        assert_eq!(
+            approval_session_label(&class, false),
+            "session",
+            "the Command session label is the pre-phase wording"
+        );
+        assert_eq!(
+            approval_session_label(&class, true),
+            "sudo session",
+            "the Command sudo session label is the pre-phase wording"
+        );
+    }
+
+    #[test]
+    fn a_remote_session_grant_records_against_the_host_not_the_daemon_flags() {
+        let mut approval = SessionApproval::from_config(&crate::config::ApprovalsConfig::default());
+        let class = crate::ipc::Classification::RemoteShell {
+            host: "pinky".to_string(),
+        };
+        approval.record_session_approval(&class, false);
+        assert!(
+            approval.auto_approves(&class, false),
+            "after the A answer, non-sudo on pinky auto-approves"
+        );
+        assert!(
+            !approval.auto_approves(&crate::ipc::Classification::Command, true),
+            "the remote grant must not widen the daemon-host sudo flag"
+        );
+        assert!(
+            approval.host_approval_lines().len() == 1
+                && approval.host_approval_lines()[0].contains("pinky"),
+            "the per-host state holds exactly pinky"
+        );
+        assert_eq!(
+            approval_session_label(&class, false),
+            "pinky session",
+            "the remote session label names the host"
+        );
+        assert_eq!(
+            approval_session_label(
+                &crate::ipc::Classification::NewHost {
+                    host: "nope".to_string()
+                },
+                false
+            ),
+            "nope (unconfigured) — always asked",
+            "the unconfigured label names the host and the always-asked property"
+        );
+        assert_eq!(
+            approval_session_label(&crate::ipc::Classification::EscapeHatch, false),
+            "escape hatch — always asked",
+            "the escape-hatch label states the always-asked property"
         );
     }
 }
