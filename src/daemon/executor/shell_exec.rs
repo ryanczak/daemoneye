@@ -204,13 +204,12 @@ where
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
     // A named host is resolved against `[hosts]` **before any spawn**, with
-    // `host_entry`'s own message: an unknown host must never fall through to
-    // the spawn step, where it would surface as a readiness failure and leave
-    // a record behind. `HostId::parse`'s malformed-name branch is checked by
-    // the caller (`mod.rs`) at the same pre-spawn point, so only the
-    // configuration question is answered here.
+    // the permissive lookup (`host_entry_or_bare`): an unconfigured host is
+    // allowed as its own ssh destination, behind the approval the user has
+    // already given. `HostId::parse`'s malformed-name branch is checked by the
+    // caller (`mod.rs`), so only the configuration question is answered here.
     if let crate::host::HostId::Named(name) = &host {
-        crate::shell::host_entry(name)?;
+        crate::shell::host_entry_or_bare(name)?;
     }
     let target = resolve_shell_target(shell).map_err(anyhow::Error::msg)?;
     let applied_timeout = applied_timeout_secs(timeout_secs);
@@ -1791,12 +1790,14 @@ mod tests {
         );
         assert_eq!(result.exit_code, 0, "the command ran in it");
     }
-
-    /// An unconfigured host is refused **before any spawn**, with
-    /// `host_entry`'s own sentence — never shell-limit or timeout wording, and
-    /// never a half-created shell.
+    /// An unconfigured host is **not** refused by the run path any more: it
+    /// resolves through the permissive lookup to its own ssh destination,
+    /// behind the approval the caller has already given, and the shell it
+    /// opens carries the named host. Never a half-created shell on refusal —
+    /// the refusals that remain (`local`, empty-ssh) still fire before any
+    /// spawn.
     #[tokio::test]
-    async fn run_terminal_command_refuses_an_unknown_host_before_any_spawn() {
+    async fn run_terminal_command_an_unconfigured_host_resolves_to_its_own_destination() {
         let (_home, dir) = test_home();
         std::fs::write(
             dir.path().join(".daemoneye/etc/config.toml"),
@@ -1805,12 +1806,12 @@ mod tests {
         )
         .expect("write config");
         let reg = ShellRegistry::default();
-        let owner = Owner::Chat("unknown-host".into());
+        let owner = Owner::Chat("new-host".into());
 
-        let err = run_in_shell_for_test_on_host(
+        let (id, result) = run_in_shell_for_test_on_host(
             &reg,
             owner.clone(),
-            "echo never",
+            "echo reachable",
             5,
             None,
             None,
@@ -1818,57 +1819,20 @@ mod tests {
             spawn_in_process_host,
         )
         .await
-        .expect_err("an unconfigured host is refused");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("unknown host"),
-            "the refusal must be host_entry's own sentence: {msg}"
-        );
-        assert!(
-            msg.contains("web01"),
-            "the refusal lists the configured hosts so the model can correct itself: {msg}"
-        );
-        assert!(
-            !msg.contains("per-owner shell limit") && !msg.contains("never became ready"),
-            "a host problem must never arrive as shell-limit or readiness advice: {msg}"
-        );
+        .expect("an unconfigured host resolves behind its approval");
+        assert_eq!(result.exit_code, 0, "the command ran in the shell");
+        let record_host = with_shells(&reg, |store| store.get(id.as_str()).map(|r| r.host.clone()));
         assert_eq!(
-            with_shells(&reg, |store| store.len()),
-            0,
-            "the refusal happens before any spawn, so no record exists"
+            record_host,
+            Some(crate::host::HostId::Named("nope".to_string())),
+            "the record must carry the host the command was asked for"
         );
-    }
-
-    /// A malformed host name is refused before any spawn, with
-    /// `HostId::parse`'s own message — the same property the unknown-host test
-    /// pins, on the *malformed* branch of the resolver.
-    #[tokio::test]
-    async fn run_terminal_command_refuses_a_malformed_host_before_any_spawn() {
-        let (_home, _dir) = test_home();
-
-        let reg = ShellRegistry::default();
-
-        // The production path resolves the *name* first (`mod.rs`, before any
-        // spawn) and only then reaches `run_in_shell_core`; this test drives
-        // the same order so the refusal pinned is the one the model receives.
-        let err = crate::host::HostId::parse("bad host!").expect_err("a malformed name is refused");
-        let msg = err;
-        assert!(
-            msg.contains("bad host!"),
-            "the refusal echoes the name the model sent: {msg}"
-        );
-        assert!(
-            msg.contains("[A-Za-z0-9._-]"),
-            "the refusal is HostId::parse's own shape message: {msg}"
-        );
-        assert!(
-            !msg.contains("per-owner shell limit") && !msg.contains("never became ready"),
-            "a name problem must never arrive as shell-limit or readiness advice: {msg}"
-        );
+        // The destination the spawn reaches is the bare name — the same shape
+        // a configured `[hosts.pinky] ssh = "pinky"` already has.
+        let entry = crate::shell::host_entry_or_bare("nope").expect("the host resolves");
         assert_eq!(
-            with_shells(&reg, |store| store.len()),
-            0,
-            "the refusal happens before any spawn, so no record exists"
+            entry.ssh, "nope",
+            "an unconfigured host becomes its own ssh destination"
         );
     }
 

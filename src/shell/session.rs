@@ -136,13 +136,15 @@ pub async fn spawn_detached_host(
 
 /// Spawn a detached `daemoneye shell-host` for `id` that opens a shell on the
 /// named host `name`, over SSH, in the daemon user's own PTY — their
-/// `~/.ssh/config`, keys and `SSH_AUTH_SOCK`. Host entry `ssh` must be
-/// configured; `name` is the `[hosts.<name>]` key.
+/// `~/.ssh/config`, keys and `SSH_AUTH_SOCK`. The entry is resolved with
+/// [`host_entry_or_bare`]: a configured host uses its entry, an unconfigured
+/// one becomes its own destination. `name` is the `[hosts.<name>]` key shape
+/// `HostId::parse` accepts.
 ///
-/// `host` is the `[hosts.<name>]` key of a **named** host; the implicit local
-/// host is refused here because `spawn_detached_host` already covers it.
+/// `host` is a **named** host; the implicit local host is refused here
+/// because `spawn_detached_host` already covers it.
 pub async fn spawn_ssh_host(id: ShellId, name: &str, rows: u16, cols: u16) -> anyhow::Result<()> {
-    let entry = host_entry(name)?;
+    let entry = host_entry_or_bare(name)?;
     let control = crate::config::ssh_dir();
     std::fs::create_dir_all(&control).with_context(|| format!("creating {}", control.display()))?;
     let argv = ssh_argv(&entry, &control);
@@ -179,6 +181,43 @@ pub fn host_entry(name: &str) -> anyhow::Result<crate::config::HostEntry> {
             };
             Err(anyhow::anyhow!("unknown host {name:?}; {listed}"))
         }
+    }
+}
+
+/// The permissive lookup the run path uses: a configured host returns its
+/// configured entry; a well-formed name `[hosts]` does not configure returns a
+/// synthesised entry whose `ssh` destination is the name itself — `ssh(1)`
+/// destinations honour `~/.ssh/config`, so a bare alias is a valid
+/// destination, and `[hosts.pinky] ssh = "pinky"` is exactly that shape.
+///
+/// Callers: `run_terminal_command`'s pre-spawn check (`shell_exec.rs`,
+/// `executor/mod.rs`) and `spawn_ssh_host`, all behind an approval the user
+/// has already given for this destination. Not for `open_shell { host }`,
+/// which keeps the strict [`host_entry`]: it is an explicit "give me a shell
+/// there" and a name the operator has not configured is refused there rather
+/// than reached for.
+///
+/// Still refused here: `"local"` in any case (the implicit host is never a
+/// remote destination), and a configured host whose `ssh` is empty — a
+/// half-written entry is a mistake, not an invitation to guess.
+pub fn host_entry_or_bare(name: &str) -> anyhow::Result<crate::config::HostEntry> {
+    let cfg = Config::load().unwrap_or_default();
+    if name.eq_ignore_ascii_case("local") {
+        return Err(anyhow::anyhow!(
+            "the local host is implicit — it has no [hosts] entry and needs no ssh \
+             spawn; a plain command (no `shell` argument) already runs there"
+        ));
+    }
+    match cfg.hosts.get(name) {
+        Some(entry) if !entry.ssh.trim().is_empty() => Ok(entry.clone()),
+        Some(_) => Err(anyhow::anyhow!(
+            "host {name} is configured but its ssh destination is empty — \
+             set ssh = \"user@hostname\" in [hosts.{name}]"
+        )),
+        None => Ok(crate::config::HostEntry {
+            ssh: name.to_string(),
+            ..Default::default()
+        }),
     }
 }
 
@@ -905,6 +944,98 @@ mod tests {
                 "the refusal must point at the existing local path: {msg}"
             );
         }
+    }
+
+    // ── host_entry_or_bare (M21 phase-06c) ──────────────────────────────────
+
+    #[test]
+    fn a_configured_host_returns_its_configured_entry() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\n\
+             ssh = \"pinky-real\"\n",
+        )
+        .expect("write config");
+        let entry = host_entry_or_bare("pinky").expect("a configured host resolves permissively");
+        assert_eq!(
+            entry.ssh, "pinky-real",
+            "configuration still wins: the entry's own destination, not the bare name"
+        );
+    }
+
+    #[test]
+    fn an_unconfigured_host_becomes_its_own_ssh_destination() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n",
+        )
+        .expect("write config");
+        let entry = host_entry_or_bare("nope").expect("an unconfigured host is allowed");
+        assert_eq!(
+            entry.ssh, "nope",
+            "the bare name is its own ssh(1) destination, honouring ~/.ssh/config"
+        );
+        assert!(
+            entry.tags.is_empty() && entry.sudo_scripts.is_empty(),
+            "a synthesised entry carries nothing else"
+        );
+    }
+
+    #[test]
+    fn a_configured_host_with_an_empty_ssh_is_still_an_error() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.half]\n",
+        )
+        .expect("write config");
+        let err =
+            host_entry_or_bare("half").expect_err("a half-written entry is an error, not a guess");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("half") && msg.contains("ssh destination is empty"),
+            "the refusal names the entry and its empty destination: {msg}"
+        );
+        assert!(
+            !msg.contains("half\""),
+            "the empty destination must never be replaced by the bare name: {msg}"
+        );
+    }
+
+    #[test]
+    fn the_local_host_is_still_refused_by_the_permissive_lookup() {
+        let _guard = crate::test_home_guard();
+        for spelling in ["local", "LOCAL", "Local"] {
+            let err = host_entry_or_bare(spelling)
+                .expect_err("the local host is never a remote destination");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("implicit"),
+                "{spelling}'s refusal must point at the implicit host: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_strict_lookup_still_refuses_an_unconfigured_host() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n",
+        )
+        .expect("write config");
+        let err = host_entry("nope").expect_err("the strict lookup refuses an unknown host");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unknown host"),
+            "host_entry keeps its own refusal wording: {msg}"
+        );
+        assert!(
+            msg.contains("no hosts are configured"),
+            "the strict refusal still tells the model what to do: {msg}"
+        );
     }
 
     /// Task 3's positive case: a caller asking for the shell's own host gets

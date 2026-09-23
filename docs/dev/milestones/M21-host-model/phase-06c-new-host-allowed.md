@@ -1,7 +1,7 @@
 # Phase 06c: new-host-allowed — an unconfigured host is gated, not refused
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06a (`Classification`), phase-06b (`NewHost` never auto-approves)
 
 **Estimated diff:** ~340 lines across 4 files, plus 10 tests
@@ -372,3 +372,119 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-23 10:10 (end-to-end verification)
+
+The § End-to-end verification block, run verbatim. Captured mechanically to
+`/tmp/e2e-06c.txt`; the file's contents — **the output, which is what the
+paste-diff compares** — are the first fenced block below:
+
+```
+lib1=ok
+lib2=ok
+lib3=ok
+lib_counts=1994p-0f-6i
+open_shell_stays_strict=0
+permissive_exists=1
+run_path_permissive=1
+strict_lookup_intact=1
+ignore_total=6
+```
+
+The command that produced it (for the record; not the compared content):
+
+```sh
+cd /home/matt/src/daemoneye
+{
+  for i in 1 2 3; do
+    printf 'lib%d=%s\n' "$i" "$(cargo test --lib 2>&1 | grep -E '^test result' | tail -1 | grep -oE 'ok|FAILED')"
+  done
+  printf 'lib_counts=%s\n' "$(cargo test --lib 2>&1 | grep -E '^test result' | tail -1 | sed -E 's/.*ok\. ([0-9]+) passed; ([0-9]+) failed; ([0-9]+) ignored.*/\1p-\2f-\3i/')"
+  printf 'open_shell_stays_strict=%s\n' "$(grep -c 'host_entry_or_bare' src/daemon/executor/knowledge/shell.rs)"
+  printf 'permissive_exists=%s\n' "$(grep -c 'fn host_entry_or_bare' src/shell/session.rs)"
+  printf 'run_path_permissive=%s\n' "$(awk '/async fn run_in_shell_core/,/^\}/' src/daemon/executor/shell_exec.rs | grep -c 'host_entry_or_bare(name)')"
+  printf 'strict_lookup_intact=%s\n' "$(awk '/pub fn host_entry\(/,/^\}/' src/shell/session.rs | grep -c 'Some(entry) if')"
+  printf 'ignore_total=%s\n' "$(grep -rc '#\[ignore' --include=*.rs src/ | grep -v ':0' | awk -F: '{s+=$2} END {print s}')"
+} > /tmp/e2e-06c.txt
+cat /tmp/e2e-06c.txt
+```
+
+Expected: `lib1..3=ok`, `lib_counts=1994p-0f-6i`, `open_shell_stays_strict=0`,
+`permissive_exists=1`, `run_path_permissive=1`, `strict_lookup_intact=1`,
+`ignore_total=6` — **all match**.
+
+Paste-diff (compares the first fenced block against `/tmp/e2e-06c.txt`):
+
+```sh
+D=docs/dev/milestones/M21-host-model/phase-06c-new-host-allowed.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-06c.txt
+diff /tmp/pasted-06c.txt /tmp/e2e-06c.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+PASTE MATCH
+
+## Mutations (run once each, restored, results recorded)
+
+**Mutation A — let the permissive lookup swallow an empty `ssh`.** In
+`host_entry_or_bare` the `Some(_)` arm (an entry whose `ssh` is empty) was
+changed from `Err(...)` to the same synthesised `Ok(...)` the unconfigured
+arm returns. `cargo test --lib
+a_configured_host_with_an_empty_ssh_is_still_an_error` → **FAILED** (red, as
+required): "a half-written entry is an error, not a guess — the refusal names
+the entry and its empty destination" did not hold, because the lookup now
+returns `HostEntry { ssh: "half" }` instead of erroring. Restored to `Err`;
+the test is green again (`1 passed; 0 failed`).
+
+**Mutation B — make the permissive lookup change the classification.** In
+`ipc::classify` the `known_hosts` membership test gained
+`|| crate::shell::host_entry_or_bare(named).is_ok()`.
+`cargo test --lib -- an_unconfigured_host_still_classifies_as_new_host
+a_new_host_still_never_auto_approves` → **both FAILED** (red, as required):
+
+```
+test ipc::tests::an_unconfigured_host_still_classifies_as_new_host ... FAILED
+test ipc::tests::a_new_host_still_never_auto_approves ... FAILED
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1998 filtered out
+left: RemoteShell { host: "nope" }, right: NewHost { host: "nope" }
+```
+
+Restored to the plain `known_hosts` membership test; both tests green again
+(`2 passed; 0 failed`).
+
+## Notes the reviewer should see
+
+- **`open_shell` stays on the strict lookup.** `knowledge/shell.rs:1692` was
+  not touched — `grep -c host_entry_or_bare` on that file is `0` above, which
+  is the pinned *preservation* criterion, and the boundary is deliberate.
+- **Test 6's "no prompt sent" seam.** `resolve_foreground_host` is the
+  pre-prompt gate as a pure function; the test
+  `a_malformed_host_is_refused_without_prompting` asserts the refusal and its
+  wording but does not observe the transport. What makes the ordering real is
+  the call site: the parse runs before `prompt_and_await_approval` in
+  `PendingCall::Foreground`, and `run_in_shell_core`'s own
+  pre-spawn check can only see an already-parsed id — a malformed name cannot
+  reach either the prompt or the spawn. The same-name parse-twice hazard is
+  gone: the prompt's classification is fed `Some(host.as_str())` from the
+  parsed id.
+- **Renamed one overwritten test.** The pre-row test
+  `run_terminal_command_refuses_an_unknown_host_before_any_spawn` pinned the
+  *opposite* of this row (unconfigured → refused), so it was rewritten as
+  `run_terminal_command_an_unconfigured_host_resolves_to_its_own_destination`
+  (host resolves, record carries the name, entry.ssh is the bare name).
+  The malformed-name test that lived beside it is superseded by
+  `a_malformed_host_is_refused_without_prompting` in `mod.rs`, which pins the
+  same wording. Net tests: 1984 → 1994 (+10), as the criterion pins.
+- **`An unconfigured host` reaching `run_in_shell_core` with an entry.** The
+  lookup runs inside `run_in_shell_core` *after* the approval the caller has
+  already obtained, so the spawn that connects to an unconfigured destination
+  is still gated — 06b's never-auto-approve is what keeps the gate on.
+- **Files touched for compile-forced reasons:** none beyond the authorised
+  set — `host_entry`'s signature did not change, so no construction site was
+  forced to move.
+
+### Update — 2026-09-23 08:16 (started)
+
+Executor: **this run (headless)**. Status flipped `todo → in-progress`; README
+row updated to match. No code touched yet. Baseline before any change: the
+phase doc's stated `cargo test --lib` = 1984 passed / 0 failed / 6 ignored.

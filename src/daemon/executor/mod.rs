@@ -155,6 +155,25 @@ pub(crate) fn ghost_may_run_foreground(is_ghost: bool, sandbox_enabled: bool) ->
     !is_ghost || !sandbox_enabled // a ghost gets no unsandboxed door out
 }
 
+/// Resolve the foreground call's `host` argument **before** the approval
+/// prompt.
+///
+/// A malformed name is refused with [`crate::host::HostId::parse`]'s own
+/// message — a name that can never be a host is not a decision the user
+/// should be asked to make, so it never reaches the panel. An *unconfigured*
+/// well-formed name is deliberately **not** refused here: it is
+/// phase-06c's `new_host` case and must reach the prompt, then connect on
+/// approval using the bare name as its own ssh destination.
+///
+/// Returns the parsed id for the prompt's classification and the later run
+/// (parsed once, not twice), or the refusal sentence for the model.
+fn resolve_foreground_host(host: Option<&str>) -> Result<crate::host::HostId, String> {
+    match host {
+        None => Ok(crate::host::HostId::Local),
+        Some(name) => crate::host::HostId::parse(name),
+    }
+}
+
 pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
     tx: &mut W,
@@ -309,6 +328,28 @@ where
                 ));
             }
 
+            // The host is parsed **before** the approval prompt: a malformed
+            // name is refused here, without asking — a name that can never be
+            // a host is not a decision to put to the user. The parsed id feeds
+            // both the prompt's classification and the run, so the name is
+            // parsed once. An *unconfigured* well-formed name is not refused
+            // here; it classifies as `new_host` and is asked (06b), then
+            // connects on approval using the bare name (06c).
+            let host = match resolve_foreground_host(host.as_deref()) {
+                Ok(host) => host,
+                Err(msg) => {
+                    let msg = format!("Error: {msg}");
+                    send_response_split(
+                        tx,
+                        Response::ToolResult {
+                            tool_call_id: id.to_string(),
+                            output: msg.clone(),
+                        },
+                    )
+                    .await?;
+                    return Ok(ToolCallOutcome::Result(msg));
+                }
+            };
             // The PTY shell substrate, the default. A ghost session or
             // `backend = "tmux"` (the opt-out) falls through to
             // `run_foreground` unchanged, so the opt-out behaviour is
@@ -324,7 +365,7 @@ where
                         cmd,
                         background: false,
                         target_pane_hint: None,
-                        host: host.as_deref(),
+                        host: Some(host.as_str()),
                     },
                     session_id,
                     ghost_policy.as_ref(),
@@ -340,27 +381,30 @@ where
                             .unwrap_or_default()
                             .shells
                             .max_per_owner;
-                        // `host` is resolved **before** any spawn: a malformed
-                        // name is refused with `HostId::parse`'s own message and
-                        // an unconfigured one with `host_entry`'s — never routed
-                        // through the shell-error wording, which would dress a
-                        // host problem in shell-limit or timeout advice the
-                        // model cannot act on.
-                        let host = match host.as_deref().map(crate::host::HostId::parse) {
-                            None => crate::host::HostId::Local,
-                            Some(Ok(parsed)) => parsed,
-                            Some(Err(msg)) => {
-                                let msg = format!("Error: {msg}");
-                                send_response_split(
-                                    tx,
-                                    Response::ToolResult {
-                                        tool_call_id: id.to_string(),
-                                        output: msg.clone(),
-                                    },
-                                )
-                                .await?;
-                                crate::daemon::stats::finish_command(cmd_id, 1);
-                                return Ok(ToolCallOutcome::Result(msg));
+                        // `host` is already parsed above, before the prompt.
+                        // The permissive lookup runs **after** approval: an
+                        // unconfigured host resolves to its own ssh
+                        // destination there, and only an empty-ssh half-written
+                        // entry refuses — never routed through the shell-error
+                        // wording, which would dress a host problem in
+                        // shell-limit or timeout advice the model cannot act on.
+                        let host = match &host {
+                            crate::host::HostId::Local => crate::host::HostId::Local,
+                            crate::host::HostId::Named(name) => {
+                                if let Err(e) = crate::shell::host_entry_or_bare(name) {
+                                    let msg = format!("Error: {e}");
+                                    send_response_split(
+                                        tx,
+                                        Response::ToolResult {
+                                            tool_call_id: id.to_string(),
+                                            output: msg.clone(),
+                                        },
+                                    )
+                                    .await?;
+                                    crate::daemon::stats::finish_command(cmd_id, 1);
+                                    return Ok(ToolCallOutcome::Result(msg));
+                                }
+                                host.clone()
                             }
                         };
                         // The two arms spawn different programs, so their closure
@@ -440,7 +484,11 @@ where
                                 }
                             }
                             crate::host::HostId::Named(name) => {
-                                if let Err(e) = crate::shell::host_entry(name) {
+                                // The permissive lookup: an unconfigured host
+                                // is its own ssh destination behind the
+                                // approval above; only "local" and an
+                                // empty-ssh half-written entry refuse here.
+                                if let Err(e) = crate::shell::host_entry_or_bare(name) {
                                     let msg = format!("Error: {e}");
                                     send_response_split(
                                         tx,
@@ -1646,6 +1694,64 @@ mod ghost_foreground_gate_tests {
     #[test]
     fn ghost_may_run_foreground_denies_ghosts_when_the_sandbox_is_on() {
         assert!(!ghost_may_run_foreground(true, true));
+    }
+}
+
+#[cfg(test)]
+mod host_gate_tests {
+    use super::resolve_foreground_host;
+
+    // ── resolve_foreground_host ordering (M21 phase-06c) ────────────────────
+
+    #[test]
+    fn a_malformed_host_is_refused_without_prompting() {
+        let err = resolve_foreground_host(Some("bad host!"))
+            .expect_err("a name that can never be a host is refused before any prompt");
+        assert!(
+            err.contains("bad host!"),
+            "the refusal echoes the name the model sent: {err}"
+        );
+        assert!(
+            err.contains("[A-Za-z0-9._-]"),
+            "the refusal is HostId::parse's own shape message: {err}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_host_refusal_names_the_character_class() {
+        for bad in ["bad host!", "", "web/01", "../etc"] {
+            let err =
+                resolve_foreground_host(Some(bad)).expect_err("every malformed name is refused");
+            assert!(
+                err.contains("A-Za-z0-9._-"),
+                "the refusal must carry the accepted character class, not shell-limit or \
+                 timeout advice: {err}"
+            );
+            assert!(
+                !err.contains("per-owner shell limit") && !err.contains("timed out"),
+                "the refusal is a host-shape sentence only: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unconfigured_host_is_not_refused_before_the_prompt() {
+        // The whole point of the row: a well-formed name `[hosts]` does not
+        // configure must pass this gate and reach the panel. (Whether it is in
+        // `[hosts]` is the classification's question, not the parser's.)
+        let parsed = resolve_foreground_host(Some("nope"))
+            .expect("an unconfigured well-formed host is not refused here");
+        assert_eq!(
+            parsed,
+            crate::host::HostId::Named("nope".to_string()),
+            "the parsed id is carried on, so the name is parsed once"
+        );
+    }
+
+    #[test]
+    fn an_omitted_host_resolves_to_local_before_the_prompt() {
+        let parsed = resolve_foreground_host(None).expect("no host argument is the daemon host");
+        assert_eq!(parsed, crate::host::HostId::Local);
     }
 }
 

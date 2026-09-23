@@ -44,8 +44,8 @@ pub use registry::{
 };
 pub use screen::ShellScreen;
 pub use session::{
-    host_entry, login_shell, marker_shell_name, shell_for_owner, spawn_dedicated_for,
-    spawn_detached_host, spawn_ssh_host, which_ssh,
+    host_entry, host_entry_or_bare, login_shell, marker_shell_name, shell_for_owner,
+    spawn_dedicated_for, spawn_detached_host, spawn_ssh_host, which_ssh,
 };
 
 use std::sync::OnceLock;

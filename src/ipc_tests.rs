@@ -1091,3 +1091,59 @@ fn classify_a_ghost_is_an_escape_hatch_whatever_the_host() {
         );
     }
 }
+
+// ── 06c preservation: the permissive lookup must not move the class ───────
+
+#[test]
+fn an_unconfigured_host_still_classifies_as_new_host() {
+    // phase-06c adds `host_entry_or_bare`, which will happily resolve an
+    // unconfigured name; the classification reads only `[hosts]`, so a host
+    // that just became *reachable* must not become *trusted*.
+    let known: Vec<String> = vec!["pinky".to_string()];
+    assert_eq!(
+        crate::ipc::classify(Some("nope"), false, &known),
+        Classification::NewHost {
+            host: "nope".to_string()
+        },
+        "a host the permissive lookup accepts is still not a RemoteShell: it must reach \
+         the panel as new_host and be asked"
+    );
+    // And the flip side: a configured host stays configured.
+    assert_eq!(
+        crate::ipc::classify(Some("pinky"), false, &known),
+        Classification::RemoteShell {
+            host: "pinky".to_string()
+        },
+        "a host [hosts] configures is still a RemoteShell"
+    );
+}
+
+#[test]
+fn a_new_host_still_never_auto_approves() {
+    // phase-06b's security property, re-pinned where 06c could have
+    // undermined it: making a host reachable (the permissive lookup) does not
+    // make it trusted. The never-auto-approve rule lives on the class, so a
+    // `NewHost` for a host the run path would now connect to is still asked.
+    let known: Vec<String> = vec!["pinky".to_string()];
+    for is_sudo in [false, true] {
+        assert_eq!(
+            crate::ipc::classify(Some("nope"), false, &known),
+            Classification::NewHost {
+                host: "nope".to_string()
+            },
+            "the class for an unconfigured host is NewHost, not RemoteShell, whatever \
+             the run path now resolves (is_sudo={is_sudo})"
+        );
+    }
+    // The classifier is the decision input, so the anti-escalation property
+    // it pins is: the lookup is not consulted. A name that resolves to its
+    // own destination cannot be distinguished from one that was configured,
+    // because neither reaches this function's `[hosts]` test.
+    assert_ne!(
+        crate::ipc::classify(Some("nope"), false, &known),
+        crate::ipc::Classification::RemoteShell {
+            host: "nope".to_string()
+        },
+        "NewHost is what an unconfigured host stays — never the auto-approvable class"
+    );
+}
