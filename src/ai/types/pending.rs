@@ -78,7 +78,7 @@ pub enum PendingCall {
         offset: Option<u64>,
         limit: Option<u64>,
         pattern: Option<String>,
-        target_pane: Option<String>,
+        host: Option<String>,
     },
     EditFile {
         id: String,
@@ -537,13 +537,13 @@ impl PendingCall {
                 offset,
                 limit,
                 pattern,
-                target_pane,
+                host,
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "read_file".to_string(),
                 arguments: args_to_string(
-                    serde_json::json!({"path": path, "offset": offset, "limit": limit, "pattern": pattern, "target_pane": target_pane}),
+                    serde_json::json!({"path": path, "offset": offset, "limit": limit, "pattern": pattern, "host": host}),
                 ),
             },
             PendingCall::EditFile {
@@ -1198,7 +1198,7 @@ mod tests {
             offset: None,
             limit: None,
             pattern: None,
-            target_pane: None,
+            host: None,
         }
     }
 
@@ -1368,7 +1368,7 @@ mod tests {
             offset: Some(100),
             limit: Some(50),
             pattern: None,
-            target_pane: None,
+            host: None,
         };
         assert_eq!(call.summary(), "/var/log/syslog lines=100-150");
     }
@@ -1382,7 +1382,7 @@ mod tests {
             offset: None,
             limit: None,
             pattern: Some("nameserver".to_string()),
-            target_pane: None,
+            host: None,
         };
         assert_eq!(call.summary(), "/etc/hosts grep=\"nameserver\"");
     }

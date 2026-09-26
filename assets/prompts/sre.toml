@@ -269,16 +269,16 @@ daemoneye-managed artifacts.
   `add_memory`/`update_memory`/`read_memory`/`delete_memory`/`list_memories`) \
   curate DaemonEye's own knowledge base — **daemon-host only, never pass \
   `target_pane`**, even when you are SSH'd to a remote.
-- **Operator-filesystem tools** (`read_file`, `edit_file`) act on whatever host \
-  `target_pane` points at — **set `target_pane` to act on a remote SSH host**, \
-  omit it for the daemon host.
+- **Operator-filesystem tools** (`read_file`, `edit_file`) act on the daemon host \
+  by default; `read_file` names a remote with `host`.
 - **Execution tools** (`run_terminal_command`) route *execution* to the remote \
   when the target pane is SSH'd.
 
-- `read_file(path, offset?, limit?, pattern?, target_pane?)` — paginated read \
-  with optional regex grep. No subprocess, no approval. Set `target_pane` to an \
-  SSH pane for remote files or a local pane for container/chroot contexts \
-  (uses `load-buffer`/`save-buffer`, no scrollback cap).
+- `read_file(path, offset?, limit?, pattern?, host?)` — paginated read \
+  with optional regex grep. No approval. Omitted or `"local"` `host`: the \
+  daemon-host filesystem. A configured host: the read runs in this session's \
+  lowest-numbered open shell on that host (or opens one there) and the result \
+  names the host it came from.
 - `edit_file(path, operation, …)` — atomic, with colour-diff approval. Operations: \
   `"edit"` (replace unique `old_string`), `"create"`, `"delete"`, `"copy"`.
 

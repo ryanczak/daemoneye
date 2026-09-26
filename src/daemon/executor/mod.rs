@@ -879,17 +879,35 @@ where
             offset,
             limit,
             pattern,
-            target_pane,
+            host,
             ..
         } => {
-            file_ops::run_read_file(
-                path,
-                *offset,
-                *limit,
-                pattern.as_deref(),
-                target_pane.as_deref(),
-            )
-            .await
+            // A ghost reaching a host its runbook does not name is refused
+            // before the run — the same boundary the foreground arm enforces.
+            let host_id = match host.as_deref() {
+                None => crate::host::HostId::Local,
+                Some(name) => match crate::host::HostId::parse(name) {
+                    Ok(parsed) => parsed,
+                    Err(msg) => return Ok(ToolCallOutcome::Result(format!("Error: {msg}"))),
+                },
+            };
+            if let Some(policy) = ghost_policy.as_ref()
+                && !policy.may_use_host(&host_id)
+            {
+                let msg = ghost_host_refusal(policy, &host_id);
+                crate::daemon::utils::log_event(
+                    "ghost_host_refused",
+                    serde_json::json!({
+                        "session": session_id.unwrap_or("-"),
+                        "tool": "read_file",
+                        "requested_host": host_id.as_str(),
+                        "allowed_hosts": policy.hosts,
+                    }),
+                );
+                return Ok(ToolCallOutcome::Result(msg));
+            }
+            file_ops::run_read_file(path, *offset, *limit, pattern.as_deref(), host.as_deref())
+                .await
         }
 
         PendingCall::EditFile {

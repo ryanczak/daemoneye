@@ -464,7 +464,7 @@ where
                     offset,
                     limit,
                     pattern,
-                    target_pane,
+                    host,
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::ReadFile {
@@ -474,7 +474,7 @@ where
                         offset,
                         limit,
                         pattern,
-                        target_pane,
+                        host,
                     });
                 }
                 AiEvent::EditFile {

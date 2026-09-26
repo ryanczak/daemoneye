@@ -506,7 +506,7 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `delete_script` **⚠** | Delete a script |
 | `write_runbook` **⚠** | Create or update a runbook in `~/.daemoneye/runbooks/` |
 | `delete_runbook` **⚠** | Delete a runbook |
-| `read_file` | Paginated file read with optional grep filter; masks sensitive data |
+| `read_file` | Paginated file read with optional grep filter; masks sensitive data. `host?` reads on a configured `[hosts.<name>]` host through a shell there — omitted or `"local"` = the daemon host |
 | `search_repository` | Search runbooks, scripts, memory, or the event log |
 | `get_shell_context` | Capture a fresh terminal snapshot on demand; `scope` selects the shells only, the session (default), or all sessions |
 | `list_shells` | List the PTY shells the daemon is running — id (`s3`), owner, age, and interactive / dedicated / exited flags; `scope` selects this session's shells (default) or all |

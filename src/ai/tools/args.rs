@@ -74,7 +74,7 @@ pub(super) struct ReadFileArgs {
     offset: Option<u64>,
     limit: Option<u64>,
     pattern: Option<String>,
-    target_pane: Option<String>,
+    host: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -429,7 +429,7 @@ impl ToolArgs for ReadFileArgs {
             offset: self.offset,
             limit: self.limit,
             pattern: self.pattern,
-            target_pane: self.target_pane,
+            host: self.host,
             thought_signature: ts,
         }
     }

@@ -280,9 +280,9 @@ pub static TOOLS: &[ToolDef] = &[
         description: "Preferred over cat/head/tail/grep for reading files. \
                       Read a file with line-range pagination and optional grep filtering. \
                       Sensitive data is masked. \
-                      Without target_pane: reads directly from the DAEMON HOST filesystem. \
-                      With target_pane: runs in that pane — use this when the file \
-                      is on a remote SSH host the user is connected to.",
+                      Without host: reads directly from the DAEMON HOST filesystem. \
+                      With host: reads on that host through a shell there — use this \
+                      when the file is on a remote SSH host.",
         params: &[
             ParamDef {
                 name: "path",
@@ -310,12 +310,14 @@ pub static TOOLS: &[ToolDef] = &[
                                      pattern are returned (like grep). Applied after offset/limit.",
             },
             ParamDef {
-                name: "target_pane",
+                name: "host",
                 ty: ParamTy::Str,
                 required: false,
-                description: "Optional tmux pane ID. When set, the read runs inside that \
-                                     pane (useful for files on a remote SSH host). Omit for \
-                                     daemon-host files.",
+                description: "Optional configured host (a [hosts.<name>] key, e.g. \"pinky\") \
+                              to read the file on. Omitted or \"local\": the daemon host. \
+                              When set, the read runs in this session's lowest-numbered open \
+                              shell on that host (or opens one there) and no approval is \
+                              needed — a read changes nothing.",
             },
         ],
         deferred_group: None,

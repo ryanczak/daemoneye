@@ -69,7 +69,7 @@ pub enum AiEvent {
         offset: Option<u64>,
         limit: Option<u64>,
         pattern: Option<String>,
-        target_pane: Option<String>,
+        host: Option<String>,
         thought_signature: Option<String>,
     },
     EditFile {

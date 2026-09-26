@@ -24,6 +24,16 @@ pub(super) use shell::{
 // `daemon`, and a `pub(super)` binding cannot be widened on re-export.
 pub use shell::{ContextBreadth, resolve_context_scope, shell_context_block, shells_only_context};
 
+/// `close_shell_with` is `pub(super)`-wired inside `shell.rs`; the read-file
+/// live test (07a) reaches it through this re-export.
+#[cfg(test)]
+pub(crate) use shell::close_shell_with;
+
+/// The live check's ssh spawn fixture, re-exported for `file_ops/read.rs`'s
+/// ignored pinky test — same reason as `close_shell_with` above.
+#[cfg(test)]
+pub(crate) use shell::spawn_pinky_ssh;
+
 use crate::daemon::session::{SessionStore, with_sessions};
 
 // ── ArtifactCtx + track_artifact moved verbatim from old lines 20–46 ──

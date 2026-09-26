@@ -5,6 +5,8 @@ mod write;
 pub(super) use read::run_read_file;
 pub(super) use write::{EditArgs, run_edit_file};
 
+use super::shell_exec::SHELL_READY_TIMEOUT;
+use crate::shell::{Owner, ShellId, ShellRegistry, run_command, shell_for_owner, with_shells};
 use crate::tmux;
 use std::time::Duration;
 
@@ -112,4 +114,64 @@ async fn remote_run_and_capture(
             return Ok(snap);
         }
     }
+}
+
+/// Run `cmd` in a shell on `host` and return the shell's **real** captured
+/// output — the PTY-substrate analogue of [`remote_run_and_capture`], with no
+/// tmux pane and no polling.
+///
+/// The shell comes from [`shell_for_owner`], so an **idle** shell `owner`
+/// already holds on `host` is reused and an `interactive` or `dedicated` one
+/// is never taken (a shell an interactive command owns eats every byte; a
+/// dedicated one exists for exactly one command). The command is run through
+/// [`run_command`], which returns the bytes between this command's nonce
+/// markers and its real exit code — what `extract_marked` then cuts.
+///
+/// A file read must **not** prompt: this calls the plain [`run_command`], not
+/// `run_command_with_prompts`, so no `CredentialPrompt` round-trip is ever
+/// opened from a read. A remote shell whose ssh handshake needs a credential
+/// fails here with the connection error instead — that is a finding to report,
+/// not a feature to add on a silent read.
+pub(super) async fn run_in_host_shell<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    host: crate::host::HostId,
+    cmd: &str,
+    timeout_secs: u64,
+    spawn: F,
+) -> anyhow::Result<String>
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    if let crate::host::HostId::Named(name) = &host {
+        crate::shell::host_entry_or_bare(name)?;
+    }
+    let max_per_owner = crate::config::Config::load()
+        .unwrap_or_default()
+        .shells
+        .max_per_owner;
+    let (id, socket) = shell_for_owner(
+        reg,
+        owner,
+        host.clone(),
+        max_per_owner,
+        SHELL_READY_TIMEOUT,
+        spawn,
+    )
+    .await?;
+    let marker_name = with_shells(reg, |store| {
+        store
+            .get(id.as_str())
+            .map(|record| crate::shell::marker_shell_name(&record.host))
+    })
+    .unwrap_or_else(|| crate::shell::marker_shell_name(&host));
+    let outcome = run_command(
+        &socket,
+        cmd,
+        &marker_name,
+        Duration::from_secs(timeout_secs),
+    )
+    .await?;
+    Ok(String::from_utf8_lossy(&outcome.output).into_owned())
 }

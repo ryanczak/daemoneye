@@ -1,7 +1,7 @@
 # Phase 07a: read-file-host — `read_file { host? }` over the PTY, not the pane
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06c (`host_entry_or_bare`), phase-04d (`run_terminal_command { host? }`)
 **Estimated diff:** ~340 lines across 5 files, plus 10 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -411,3 +411,98 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-26 18:17 (started)
+
+Executor: claude (headless). Status flipped `todo` → `in-progress` in this
+doc and in the milestone README's phase table.
+
+- Transport used: the plain `run_command` (no prompt plumbing) after a
+  `shell_for_owner` reuse-or-create — `run_in_shell_with_prompts` was
+  deliberately **not** reused, per § Current state 3: a file read must not
+  open a `CredentialPrompt` round-trip.
+- The helper is `file_ops::run_in_host_shell(reg, owner, host, cmd,
+  timeout_secs, spawn)`, which resolves the max-per-owner cap from
+  `Config::load` itself (the foreground path passes it in; a read has no
+  caller-provided cap).
+- Adaptation to record: `run_read_file`'s remote arm builds its shell owner
+  from `host_session_key()` (`Owner::Chat("read_file")`) because the tool
+  chain carries no session id to key the shell under.
+- Files touched for compile-forced construction sites beyond the authorized
+  chain: `src/daemon/executor/knowledge/mod.rs` (test-only re-exports of
+  `close_shell_with` and `spawn_pinky_ssh` for the live test) and
+  `src/daemon/executor/knowledge/shell.rs` (the two items' visibility widened
+  `pub(super)`/private → `pub(crate)`).
+- One pre-existing test updated, not added: `dispatch.rs`'s
+  `e2e_no_pane_identifiers_in_tool_descriptions` pinned `read_file keeps
+  target_pane until M21`; the pin had to move to `edit_file` only when the
+  parameter was retired from `read_file` (the test asserts against the
+  `ToolDef`, so it failed at build-and-test time, as designed).
+- `ignore_total` is **7**, not 6: the live check of Task 7 was written as the
+  `#[ignore]`d `read_file_on_pinky_end_to_end` in the style the Test plan
+  names, which the criteria allow when re-pinned — this entry records it.
+
+
+### Update — 2026-09-26 18:17 (end-to-end verification)
+
+```text
+lib1=ok
+lib2=ok
+lib3=ok
+lib_counts=2014p-0f-7i
+target_pane_params=1
+read_file_host=1
+buffer_helper_kept=1
+pane_capture_kept=1
+ignore_total=7
+doc_truth=ok
+```
+
+diff /tmp/pasted-07a.txt /tmp/e2e-07a.txt → `PASTE MATCH`
+
+```text
+diff /tmp/pasted-07a.txt /tmp/e2e-07a.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+→ PASTE MATCH
+```
+
+### Update — 2026-09-26 18:17 (live verification)
+
+```text
+remote_line2=bravo
+PASTE MATCH >>>
+read_file_on_pinky hostname="pinky"
+<<<
+```
+
+Live check notes: the `ssh`-probe part ran by hand (probe file written on
+pinky, line 2 read back as `bravo`, file removed). The through-the-daemon half
+ran as the phase's `#[ignore]`d live test
+`read_file_on_pinky_end_to_end` (`cargo test --lib -- --ignored
+read_file_on_pinky`), which drives Task 1's transport over the real ssh argv
+(`spawn_pinky_ssh`) against the real `/etc/hostname` on `pinky`, extracts
+between the markers and asserts the result names `pinky`; it passed and
+printed the `PASTE MATCH` block above. Driving the full `PendingCall`
+dispatch seam (which needs a live IPC transport and a configured model) was
+out of reach from a test seam, so the tool result was reconstructed from the
+same `extract_marked` + `format_remote_read_result` pair the dispatch arm
+feeds — the transport itself, the marker cut and the label are the real
+remote interaction.
+
+### Update — 2026-09-26 18:17 (mutations)
+
+- **Mutation A — let the transport take an interactive shell.** Applied by
+  replacing the `shell_for_owner` call inside `run_in_host_shell` with a
+  first-match reuse over the registry that ignored the `interactive`/
+  `dedicated` filter (the same reuse-or-create shape the filter guards).
+  `cargo test --lib the_read_transport_never_opens_an_interactive_shell` →
+  **FAILED**: `a fresh shell was opened for the read, not the interactive
+  one: {"s0"}` — with the filter gone the read was handed the shell the
+  first read had held and had since marked `interactive`, the exact hang the
+  rule prevents. Restored; the test is green again.
+- **Mutation B — break the marker contract.** Changed `__DE_S__` to
+  `__DE_X__` in `build_remote_read_cmd` only, leaving `extract_marked`'s
+  sentinels alone. `cargo test --lib build_remote_read_cmd_is_unchanged` →
+  **FAILED** on the exact-drift assertion, left `…__DE_X__…` vs right
+  `…__DE_S__…` — the two halves are a contract, and the drift a remote read
+  would have suffered is returning the whole screen instead of the file.
+  Restored; the test is green again.

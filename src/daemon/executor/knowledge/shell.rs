@@ -1841,7 +1841,7 @@ async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
 /// bound to the shell's socket is an `ssh` talking to the real remote host
 /// while the registry sees a normal in-process shell host.
 #[cfg(test)]
-async fn spawn_pinky_ssh(id: ShellId) -> anyhow::Result<()> {
+pub(crate) async fn spawn_pinky_ssh(id: ShellId) -> anyhow::Result<()> {
     let control = crate::config::ssh_dir();
     use anyhow::Context as _;
     std::fs::create_dir_all(&control).with_context(|| format!("creating {}", control.display()))?;
@@ -1910,7 +1910,7 @@ pub async fn close_shell(shell: &str, caller: &Owner) -> String {
 }
 
 /// `close_shell` with the registry and the signal timeout injected.
-pub(super) async fn close_shell_with(
+pub(crate) async fn close_shell_with(
     reg: &ShellRegistry,
     shell: &str,
     caller: &Owner,
@@ -2184,7 +2184,7 @@ mod tests {
     /// substrate resolves through it — the same shape `shell_exec`'s
     /// `test_home()` gives, so `socket_path`/`lock_path` land inside the
     /// sandbox. Must be held for the test's whole body.
-    pub(super) fn lifecycle_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
+    pub(crate) fn lifecycle_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
         let guard = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) }
