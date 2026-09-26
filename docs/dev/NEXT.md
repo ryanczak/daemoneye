@@ -6,28 +6,22 @@ ghost-boundary half of the milestone is finished. **Row 07 —
 remote-file-ops-over-pty is next**; run `/rexymcp:architect next` to draft it.
 Four rows remain: 07, 08, 08b, 09.
 
-## Needs a PE decision — a calibration fold, four occurrences
+## RESOLVED 2026-09-26 — the fold already existed; occurrences recorded, not duplicated
 
-An **over-broad structural grep** has produced a wrong or vacuous acceptance
-criterion in **four consecutive rows**:
+The PE said "fold it". Grepping `WORKFLOW.md` first (per the standing rule
+from M24 close) showed that **every one of the four M21 occurrences is already
+covered** by § "Run every count criterion; never derive it" — its "text-based
+greps count prose" corollary, its scoping table (row 1: `sed -n
+'1,/^#\[cfg(test)\]/p'` for production-only; row 4: expect a new identifier's
+own test names and `use` lines to match), and the M24 paragraph on validating
+against the *post-phase* corpus. A fifth rule would have been a duplicate.
 
-| Row | Criterion | What it wrongly matched |
-|---|---|---|
-| 04d | `event_host` | a different enum variant's identical field |
-| 05 | `fingerprint_not_broadened` | a doc comment explaining the hazard |
-| 06c | `run_path_checks_host` | a comment *inside* a correctly-scoped range |
-| 06d | `both_gates` | the phase's own tests (3 of 5 matches) |
-
-None shipped a defect — each was caught at pre-dispatch or by the executor,
-and in 06b and 06d the **executor** caught it rather than me. But
-`WORKFLOW.md` § Calibration says one is data, two a trend, three a fix, and
-this is four. **The rule, stated as it would be folded:** a structural
-criterion must scope to the construct *and* match a token that cannot appear
-in prose, comments, or tests; when the property is "N production call sites",
-either exclude the test module or pin a behaviour instead of a count.
-
-I have not folded it — `STANDARDS.md`/`WORKFLOW.md` changes need your
-sign-off. Say the word and I will, or leave it as a note I keep applying.
+What landed instead: an **M21 occurrence trailer** on that section, naming the
+four rows against the clauses they each violated and the real defect —
+**non-application**. 06d slipped because its criterion was validated against
+the pre-phase tree only, which the M24 paragraph explicitly warns about. This
+is the second milestone (after M24) in which an existing rule was re-proposed
+rather than applied.
 
 ## Still open — the persist-to-`[hosts]` offer
 

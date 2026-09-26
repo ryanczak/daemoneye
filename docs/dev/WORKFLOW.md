@@ -1503,6 +1503,26 @@ before dispatch, and require every non-preservation line to fail.**
 across 08a and 09 — none cost a dispatch, which is the argument for making the
 pre-dispatch run a literal step rather than a habit.)*
 
+**M21 occurrences — four in four consecutive rows, every one already covered
+above, none new.** Recorded 2026-09-26 on PE sign-off *instead of* a fifth
+rule, because the architect proposed a fold and a grep of this file showed it
+would duplicate every clause: 04d's `event_host` already read its target on
+the pre-phase tree (the *vacuous* tell); 05's `fingerprint_not_broadened` and
+06c's `run_path_checks_host` matched comments (*"text-based greps count
+prose"*); 06d's `both_gates` matched the phase's own tests (table rows 1 and
+4, and the M24 post-phase-corpus paragraph). All were caught — three at
+pre-dispatch, one by the executor, none cost a dispatch — so the mechanism
+works when it is run. **The one that slipped past the architect (06d) slipped
+for the reason the M24 paragraph names:** the criterion was validated against
+the pre-phase tree, where the symbol did not yet exist and `0` was trivially
+right, and not against the post-phase corpus in which the tests naming it
+arrive with the code. The literal step that closes it is already written
+above: *simulate the post-phase corpus for any identifier the phase
+introduces* — the architect did exactly this for 06a's enum and skipped it
+for 06d's call-site count. This is the second milestone in which an existing
+rule was re-proposed rather than applied (M24 close was the first); per
+`NEXT.md`, grep this file before proposing a fold.
+
 ### A check the executor cannot satisfy is a bounce you wrote yourself
 
 The fold above says *run every count*. This one is about a different failure:
