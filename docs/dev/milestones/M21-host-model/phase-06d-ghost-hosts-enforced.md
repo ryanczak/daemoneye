@@ -1,7 +1,7 @@
 # Phase 06d: ghost-hosts-enforced — a runbook's `hosts:` list becomes a boundary
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-06c (`resolve_foreground_host`, the host gate's placement)
 **Estimated diff:** ~300 lines across 3 files, plus 10 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -618,3 +618,66 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** ac7ee38742af86520fbecdf986322ff13d2f319e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none that are the executor's. `foreground.rs` (+1) is
+  a compile-forced struct literal, which § Authorizations explicitly
+  permitted and the Update Log lists. `src/daemon/policy_tests.rs` is a new
+  sibling test file; Task 4 left placement to the executor, and a sibling
+  file beside a 200-line `policy.rs` is a reasonable reading.
+- **One criterion of mine was wrong, and the executor handled it exactly
+  right.** `both_gates` reads **5**, not the pinned **2** — my grep swept the
+  whole file, and three of the five matches are the phase's own tests
+  (`mod.rs:1881`, `1889`, `1902`). The real property holds precisely: there
+  are **two** production call sites, `mod.rs:377` (the `Foreground` arm) and
+  `mod.rs:1101` (`PendingCall::OpenShell`), which is exactly the two doors
+  § Current state 4 named. The executor identified all three test matches by
+  line, named both call sites, and wrote *"flagging rather than silently
+  re-pinning"* — which is the behaviour this process wants and the opposite
+  of quietly editing the number to pass.
+- **Calibration — this is now a fold candidate, not a note.** An over-broad
+  grep has produced a wrong or vacuous criterion in **four consecutive
+  rows**: 04d (`event_host` matched another variant), 05
+  (`fingerprint_not_broadened` matched a doc comment), 06c (`host_entry`
+  matched a comment inside a correctly-scoped range) and 06d (`may_use_host`
+  matched tests). Each was caught, none shipped a defect, and twice the
+  executor caught it rather than me. `WORKFLOW.md` § Calibration says one is
+  data, two a trend, three a fix — this is four. **The rule that keeps
+  working when applied:** a structural criterion must scope to the construct
+  *and* match a token that cannot appear in prose, comments, or tests; when
+  the property is "N production call sites", the grep must exclude the test
+  module or the criterion must pin a behaviour instead. Folding it into
+  `WORKFLOW.md` needs the PE's sign-off, so it is recorded here and carried
+  in `NEXT.md` rather than folded unilaterally.
+
+**Review re-verification (independent, 2026-09-26):** all four gates re-run
+clean. The full § End-to-end verification block was re-run from scratch and
+reproduced the executor's capture **byte for byte** — including the
+`both_gates=5` value, so the evidence is current and self-consistent rather
+than papered over. `lib_counts=2004p-0f-6i` is exactly the pinned figure with
+no extra test; `policy_field=1`, `from_config_copies=1`, `predicate=1`,
+`stale_claim_gone=0`, `ignore_total=6`. `PASTE MATCH` prints from the doc's
+own diff. `cargo test` green on every target (lib 2004/0/6, doc_truth 14,
+integration 32, isolation 9, bug_tracker 6). All ten pinned tests pass.
+
+**Mutation A re-applied by the reviewer** — the compatibility guard. Removing
+the `self.hosts.is_empty() ||` clause from `may_use_host` turns
+`an_empty_hosts_list_is_unrestricted` red. That clause is the only thing
+standing between this row and silently breaking **every runbook on disk**,
+since all of them omit `hosts:`, and it is genuinely under test.
+
+**The `ipc.rs` stale claim is gone** — `stale_claim_gone=0` — so the field's
+doc no longer promises enforcement in "a later phase" now that this is it.
+
+**The `log_event` invariant holds:** no added line passes a `pid`
+(`grep -cE '^\+.*"pid"'` → 0); `log_event` stamps it. And
+`an_unlisted_host_refusal_is_recorded` takes
+`crate::test_home_guard()` as its **first line** before touching `HOME` —
+the order-dependence trap this milestone already paid for once, avoided here
+without being told. The three `unsafe` blocks are all
+`std::env::set_var`/`remove_var` in that test, the mandated edition-2024
+idiom, matching the pattern already at `mod.rs:2124`.

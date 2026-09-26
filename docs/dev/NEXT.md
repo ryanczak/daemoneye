@@ -1,8 +1,50 @@
 # NEXT
 
-**Active phase:** **M21 phase-06d — ghost-hosts-enforced**, drafted
-2026-09-26, status `todo`. Dispatch with `/rexymcp:dispatch phase-06d`.
-**This is the last of the 06 rows.**
+**Active phase:** **none** — M21 phase-06d is `done` (2026-09-26,
+`approved_first_try`). **All four 06 rows are complete**, so the approval and
+ghost-boundary half of the milestone is finished. **Row 07 —
+remote-file-ops-over-pty is next**; run `/rexymcp:architect next` to draft it.
+Four rows remain: 07, 08, 08b, 09.
+
+## Needs a PE decision — a calibration fold, four occurrences
+
+An **over-broad structural grep** has produced a wrong or vacuous acceptance
+criterion in **four consecutive rows**:
+
+| Row | Criterion | What it wrongly matched |
+|---|---|---|
+| 04d | `event_host` | a different enum variant's identical field |
+| 05 | `fingerprint_not_broadened` | a doc comment explaining the hazard |
+| 06c | `run_path_checks_host` | a comment *inside* a correctly-scoped range |
+| 06d | `both_gates` | the phase's own tests (3 of 5 matches) |
+
+None shipped a defect — each was caught at pre-dispatch or by the executor,
+and in 06b and 06d the **executor** caught it rather than me. But
+`WORKFLOW.md` § Calibration says one is data, two a trend, three a fix, and
+this is four. **The rule, stated as it would be folded:** a structural
+criterion must scope to the construct *and* match a token that cannot appear
+in prose, comments, or tests; when the property is "N production call sites",
+either exclude the test module or pin a behaviour instead of a count.
+
+I have not folded it — `STANDARDS.md`/`WORKFLOW.md` changes need your
+sign-off. Say the word and I will, or leave it as a note I keep applying.
+
+## Still open — the persist-to-`[hosts]` offer
+
+Deferred from 06c and unchanged: no config-write path exists, the dependency
+is `toml` not `toml_edit`, and a round-trip would discard 96 of the config's
+193 comment lines. Needs either a new dependency or an append-only writer.
+Nothing blocks 07–09 on it.
+
+## Standing constraints for 07's drafting
+
+- **No `su`+`do`-shaped token** in any command a spec asks the executor to
+  run — the shell gate refuses the line. Audit the *runnable blocks*, not the
+  whole document (my first audit of 06d made exactly that mistake).
+- **§ Authorizations must name** the re-export site for a new `pub fn`, and
+  the construction sites a field addition compile-forces. 06d's explicit
+  authorization for the latter worked — `foreground.rs` was fixed minimally
+  and listed.
 
 **What it closes.** A runbook can already declare `hosts: [web01, db01]` and
 the daemon already parses it — into a field whose own doc says **"enforced in
