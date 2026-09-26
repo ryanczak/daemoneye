@@ -1,7 +1,7 @@
 # Phase 07a: read-file-host — `read_file { host? }` over the PTY, not the pane
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-06c (`host_entry_or_bare`), phase-04d (`run_terminal_command { host? }`)
 **Estimated diff:** ~340 lines across 5 files, plus 10 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -659,3 +659,60 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 2008b34223a7eb78cdffda3bbaf03b21acf905ce
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (661 turns, the
+  longest run of this milestone)
+- **Scope deviations:** none that are the executor's.
+- **THIS SPEC CONTAINED A FALSE PREMISE, and the executor handled it
+  correctly.** § Current state 4 and § Out of scope both claimed the four
+  write ops still need `local_read_via_buffer` and `build_local_buffer_read_cmd`,
+  and forbade deleting them. **They do not.** Measured at review:
+  `grep -c 'local_read_via_buffer\|build_local_buffer_read_cmd' src/daemon/executor/file_ops/ops.rs`
+  → **0**, and `local_read_via_buffer` now has **zero** callers anywhere.
+  Obeying the instruction therefore left two genuinely dead functions, and
+  with `clippy -D warnings` the only alternatives were `#[allow(dead_code)]`
+  or deleting them — which the spec forbade. The executor chose the allow and
+  **documented the real reason on both**: *"Kept alive for row 07b, which
+  retires the pane-era helpers with the write ops."* That is the right answer
+  to a contradictory spec, not a lint-silencing shim.
+  **`remote_run_and_capture` was correctly pinned** — it has four live callers
+  (`ops.rs:58, 268, 417, 578`), exactly the four write branches.
+  **Remedy: 07b deletes all three**, which its row description already
+  anticipates; its spec must state that the two read-path helpers are already
+  dead rather than repeating this premise.
+- **Calibration:** the false premise came from reading `read.rs`'s
+  `target_pane` branch and assuming the write ops shared its helpers, instead
+  of grepping `ops.rs` for them. **When a spec says "X still uses Y, do not
+  delete Y", grep for the callers of Y before writing the sentence** — the
+  same measure-don't-infer rule this project applies to system facts applies
+  to claims about its own call graph.
+
+**Review re-verification (independent, 2026-09-26):** all four gates re-run
+clean. `lib_counts=2014p-0f-7i` — exactly the pinned 2014, and the `7 ignored`
+is the allowed branch of the criterion, **disclosed** in the Update Log as the
+`#[ignore]`d `read_file_on_pinky_end_to_end`. Every structural criterion
+reproduces: `target_pane_params=1` (2 → 1 as pinned; 07b takes it to 0),
+`read_file_host=1`, `buffer_helper_kept=1`, `pane_capture_kept=1`. `PASTE
+MATCH` prints from the doc's own diff. `cargo test` green on every target
+(lib 2014/0/7, doc_truth 14, integration 32, isolation 9, bug_tracker 6). All
+ten pinned tests pass.
+
+**The live test was run by the reviewer against the real `pinky`** and passes,
+printing `read_file_on_pinky hostname="pinky"` — so a remote read really does
+come back through a shell on the host, not a pane snapshot.
+
+**Mutation B re-applied by the reviewer** — changing `__DE_S__` to `__DE_X__`
+in the command builder alone turns `build_remote_read_cmd_is_unchanged` red
+with *"the wire format must not drift"*. The two halves of the marker contract
+are pinned against each other, which is what stops a remote read silently
+returning the whole screen instead of the file.
+
+No production `unwrap`/`expect`/`panic!` (the two `.expect("must exist")` are
+in `dispatch.rs`'s test module), no `dbg!`, no `TODO`. The two `unsafe` blocks
+are `std::env::set_var` inside a `with_home` test helper whose **first line**
+is `crate::test_home_guard()` — the idiom this milestone has been bitten by
+and now applies without being told.
