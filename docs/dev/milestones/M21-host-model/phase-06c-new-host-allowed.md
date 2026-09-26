@@ -1,7 +1,7 @@
 # Phase 06c: new-host-allowed — an unconfigured host is gated, not refused
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-06a (`Classification`), phase-06b (`NewHost` never auto-approves)
 
 **Estimated diff:** ~340 lines across 4 files, plus 10 tests
@@ -628,3 +628,57 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 20732fbe85bda94872bfec549dfe4688faa7f3ea
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-25
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** one inaccurate sentence, nothing hidden. The Update
+  Log states *"Files touched for compile-forced reasons: none beyond the
+  authorised set"*, but `src/shell/mod.rs` was touched (+2/−2) to add
+  `host_entry_or_bare` to the `pub use session::{…}` re-export — which a new
+  `pub fn` in `session.rs` always forces in this codebase. The file **is**
+  listed in the entry's own Files-changed block, so the reader is not misled,
+  and the edit is exactly right. **The omission is this spec's**:
+  § Authorizations listed `session.rs` but not its re-export in `mod.rs`.
+- **Scope boundaries verified, not assumed.** § Out of scope forbade a config
+  writer; the diff's four `std::fs::write` calls are **all test fixtures**
+  writing a `config.toml` into a `tempdir` (`session.rs:911–1024`, all inside
+  `mod tests`), which is this codebase's established fixture pattern. No
+  production write path was added. `open_shell` keeps the strict lookup —
+  `host_entry_or_bare` appears **zero** times in `knowledge/shell.rs` — and
+  `GhostPolicy` gained no `hosts` field, so 06d's work is untouched.
+- **Calibration:** § Authorizations must name the **re-export site** whenever
+  a task adds a `pub fn` to a module that is re-exported through a `mod.rs`.
+  This is the fourth benign compile-forced-file omission in M21 (04c, 04d,
+  06a, 06c). Each was minimal, correct and disclosed, so it stays spec hygiene
+  rather than a WORKFLOW fold — but it is now the most frequent defect in my
+  own drafting and the next spec should list the site up front.
+
+**Review re-verification (independent, 2026-09-25):** all four gates re-run
+clean. The full § End-to-end verification block was re-run from scratch and
+reproduced the executor's capture **byte for byte** — `lib1..3=ok`,
+`lib_counts=1994p-0f-6i` (exactly the pinned figure, no extra test),
+`open_shell_stays_strict=0`, `permissive_exists=1`, `run_path_permissive=1`,
+`strict_lookup_intact=1`, `ignore_total=6`. `PASTE MATCH` prints from the
+doc's own diff. `cargo test` green on every target (lib 1994/0/6, doc_truth
+14, integration 32, isolation 9, bug_tracker 6). All ten pinned tests pass.
+
+**Mutation B re-applied by the reviewer** — the load-bearing one. Making
+`classify` return `RemoteShell` for an unconfigured name turns **both**
+`an_unconfigured_host_still_classifies_as_new_host` **and**
+`a_new_host_still_never_auto_approves` red:
+
+```
+test ipc::tests::a_new_host_still_never_auto_approves ... FAILED
+test ipc::tests::an_unconfigured_host_still_classifies_as_new_host ... FAILED
+test result: FAILED. 0 passed; 2 failed
+```
+
+That is the row's central security property under test: making a host
+**reachable** must not make it **trusted**. It is the precise way this row
+could have silently undone 06b, and it cannot.
+
+No production `unwrap`/`expect`/`panic!`, no `unsafe`, no `TODO`/`dbg!`/
+`println!`, no new `#[allow]` and no new `#[ignore]` across 349 added lines.

@@ -1,7 +1,33 @@
 # NEXT
 
-**Active phase:** **M21 phase-06c — new-host-allowed**, drafted 2026-09-23,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-06c`.
+**Active phase:** **none** — M21 phase-06c is `done` (2026-09-25,
+`approved_first_try`). An unconfigured host is now gated rather than refused:
+malformed names are refused before the prompt, well-formed unknown ones reach
+the panel as `new_host` and connect using the bare name as their own ssh
+destination. `open_shell` keeps the strict lookup. **Row 06d — ghost `hosts:`
+enforcement is next**, and it is the last of the 06 rows; run
+`/rexymcp:architect next` to draft it.
+
+**Still open for the PE — the persist-to-`[hosts]` offer.** 06c deliberately
+did not build it. The measurement stands: there is no config-write path (one
+write exists, the first-run template seed), the dependency is `toml` not
+`toml_edit`, and a round-trip would discard 96 of the config's 193 lines. It
+needs either a new dependency or an append-only writer. Nothing blocks the
+remaining rows on it.
+
+**Carry into 06d's drafting — spec hygiene, this architect's, fourth
+instance.** § Authorizations must name the **re-export site** whenever a task
+adds a `pub fn` to a module re-exported through a `mod.rs`. 06c's new
+`host_entry_or_bare` forced a `src/shell/mod.rs` edit that the list did not
+cover (04c, 04d and 06a were the same class in different guises). Each was
+minimal, correct and disclosed, so it remains spec hygiene rather than a
+WORKFLOW fold — but it is now the most frequent defect in my own drafting.
+
+Also still standing: **no `su`+`do`-shaped token in any command** a spec asks
+the executor to run — the shell gate refuses the line outright.
+
+The account below is the drafting-time record for 06c; its pre-phase
+measurements describe the tree at `2a11e913`.
 
 **What it changes.** A well-formed but unconfigured host is **gated, not
 refused**. The two cases separate:
