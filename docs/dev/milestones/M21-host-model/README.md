@@ -16,8 +16,9 @@ drafting** (2026-09-23) — it was four features in one row. **06a is `done`** (
 `approved_first_try`) — unconfigured hosts are gated rather than refused.
 **All four 06 rows are `done`** — 06d closed 2026-09-26
 (`approved_first_try`), so the approval and ghost-boundary half of the
-milestone is complete. **Row 07 — remote-file-ops-over-pty is next**;
-07, 08, 08b and 09 remain. 06c owns making an unconfigured host allowed-but-gated;
+milestone is complete. **07 split into 07a/07b at drafting** — the read path is one
+`target_pane` branch, the write path is four. **07a is drafted**; 07b, 08,
+08b and 09 remain. 06c owns making an unconfigured host allowed-but-gated;
 06d owns ghost `hosts:` enforcement.
 
 **Depends on:** M20 (the PTY shell substrate every remote shell is), M22
@@ -72,9 +73,9 @@ deferrals this milestone closes). Not on M23 or M25.
 ## Phases
 
 Proposed, pre-measurement — **each will be re-derived and may split at
-drafting on a measured seam**, as every M20 and M22 row did. **Eighteen rows**
-(01a, 01b, 01c, 02, 03, 04a, 04b, 04c, 04d, 05, 06a, 06b, 06c, 06d, 07, 08,
-08b, 09) — 04 has split **three times** at drafting and 06 once, every time on a
+drafting on a measured seam**, as every M20 and M22 row did. **Nineteen rows**
+(01a, 01b, 01c, 02, 03, 04a, 04b, 04c, 04d, 05, 06a, 06b, 06c, 06d, 07a,
+07b, 08, 08b, 09) — 04 has split **three times** at drafting and 06 once, every time on a
 measured seam, and 01c was inserted when the test gate went deterministically
 red. Ordering: the
 credential mechanism the PTY path lacks comes first because remote sudo, host
@@ -98,7 +99,8 @@ the live close is last.
 | 06b | per-host-approval ([phase-06b-per-host-approval.md](phase-06b-per-host-approval.md)) — session `A` becomes per class **per host**, and `new_host` / `escape_hatch` never auto-approve. **Measured at drafting:** 06a threaded `Classification` into the prompt but it is read only for the panel body — `auto_approved` still consults the bare `regular`/`sudo` flags, and `commands = true` is the shipped default, so today a remote command is named in the panel and then auto-approved with no chance to refuse. Changes who is asked, not what is reachable | done |
 | 06c | new-host-allowed ([phase-06c-new-host-allowed.md](phase-06c-new-host-allowed.md)) — a well-formed unconfigured host is **gated, not refused**: the malformed case is refused *before* the prompt, the unconfigured case reaches the panel as `new_host` and on approval connects using the bare name as its own ssh destination (`HostEntry.ssh` already documents a bare alias as valid, and `[hosts.pinky] ssh = "pinky"` proves it). `open_shell` keeps the **strict** lookup — a deliberate boundary with its own criterion. **The persist offer is deferred:** measured at drafting, the daemon has no config-write path and `toml` (not `toml_edit`) would discard 96 of the config's 193 lines | done |
 | 06d | ghost-hosts-enforced ([phase-06d-ghost-hosts-enforced.md](phase-06d-ghost-hosts-enforced.md)) — a runbook's `hosts:` list becomes a boundary: `GhostPolicy` carries it, `may_use_host` decides, **both** doors are gated (the `Foreground` arm and `PendingCall::OpenShell`), and an unlisted host is refused naming the allowed set and recorded via `log_event`. **Empty stays unrestricted** — every runbook on disk omits `hosts:`, a mutation pins it, and `src/ipc.rs`'s "enforced in a later phase" note is deleted in the same row. Closes the milestone's ghost-`hosts:` exit criterion | done |
-| 07 | remote-file-ops-over-pty — `read_file` / `edit_file` gain `host?`; the four `target_pane` sites in `file_ops/ops.rs` route the existing hex-encoded python/perl one-liners through an idle shell on the host (or a new one — never into an `interactive` shell) with **marker-delimited** results instead of pane scraping; `target_pane` retired from both tools. Closes M22's deferral. `CLAUDE.md` / `README.md` rows | todo (not drafted) |
+| 07a | read-file-host ([phase-07a-read-file-host.md](phase-07a-read-file-host.md)) — `read_file { host? }` reads through a **shell on the host** with marker-delimited output instead of scraping a pane; `target_pane` retired from `read_file` (2 → 1). Builds the shell transport 07b reuses. **Measured at drafting:** the marker protocol already exists (`build_remote_read_cmd` emits `__DE_S__`, `extract_marked` cuts it) — only the transport is wrong, `send-keys` then poll `capture-pane` every 300 ms | todo |
+| 07b | edit-file-host — `edit_file { host? }` on 07a's transport: the **four** write branches (`ops.rs:35, 247, 391, 545` — create/delete/copy/edit), `target_pane` retired from `edit_file` (1 → 0, closing the milestone's tool-surface exit criterion), and the pane-era helpers (`remote_run_and_capture`, `local_read_via_buffer`, `get_pane_remote_host`) finally deleted | todo (not drafted) |
 | 08 | ghost-host-mapping — `GhostPolicy.ssh_target` maps onto `HostId` unchanged in meaning: `wrap_remote`'s `ssh <target> '<cmd>'` string-wrap becomes "run in a shell on that host"; `resolve_command`, `remote_stream_cmd` and `remote_materialize_cmd` keep their semantics; `HostEntry.sudo_scripts` is the 1.x remote-sudoers model. The re-homed M19 phase-12 (`sandbox_profile` on a host) is parsed here, not enforced | todo (not drafted) |
 | 08b | spawn-ghost-host — `spawn_ghost_shell { host? }` (§ 2.5): a coordinator names the host a specialist's shells open on; the value must be in the runbook's `hosts:` list (row 06's enforcement) or it is refused as an unlisted host. Rides 08's mapping; **PE added at sign-off** | todo (not drafted) |
 | 09 | live-close — the exit criterion end to end: a remote sudo edit from chat on the configured host; cast log shows the edit, no `"i"` event carries the password; ControlMaster reuse timed. Architect-run; the phase exists so the obligation is a tracked `## Spec` task, not a close-out promise | todo (not drafted) |

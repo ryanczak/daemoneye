@@ -1,84 +1,51 @@
 # NEXT
 
-**Active phase:** **none** — M21 phase-06d is `done` (2026-09-26,
-`approved_first_try`). **All four 06 rows are complete**, so the approval and
-ghost-boundary half of the milestone is finished. **Row 07 —
-remote-file-ops-over-pty is next**; run `/rexymcp:architect next` to draft it.
-Four rows remain: 07, 08, 08b, 09.
+**Active phase:** **M21 phase-07a — read-file-host**, drafted 2026-09-26,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-07a`.
 
-## RESOLVED 2026-09-26 — the fold already existed; occurrences recorded, not duplicated
+**Row 07 split into 07a/07b at drafting, on a counted seam.** The read path
+is **one** `target_pane` branch (`read.rs:154`); the write path is **four**
+(`ops.rs:35, 247, 391, 545`). 07a does the read and builds the shell
+transport; 07b does the four writes on top of it and deletes the pane-era
+helpers. M21 is nineteen rows.
 
-The PE said "fold it". Grepping `WORKFLOW.md` first (per the standing rule
-from M24 close) showed that **every one of the four M21 occurrences is already
-covered** by § "Run every count criterion; never derive it" — its "text-based
-greps count prose" corollary, its scoping table (row 1: `sed -n
-'1,/^#\[cfg(test)\]/p'` for production-only; row 4: expect a new identifier's
-own test names and `use` lines to match), and the M24 paragraph on validating
-against the *post-phase* corpus. A fifth rule would have been a duplicate.
+**Measured at drafting: the marker protocol already exists — only the
+transport is wrong.** `build_remote_read_cmd` (`read.rs:19`) already emits
+`echo '__DE_S__'; sed -n 'N,Mp' '<path>' …; echo '__DE_E__'`, and `read.rs:176`
+already calls `extract_marked(&snap, "__DE_S__", "__DE_E__")`. What runs it is
+`remote_run_and_capture` (`file_ops/mod.rs:90`): `send-keys`, then poll
+`capture-pane` every 300 ms until a sentinel appears. That races the shell, is
+bounded by the visible pane, and needs a tmux pane to exist. 07a swaps the
+transport and keeps both halves of the marker contract — **Mutation B breaks
+one sentinel and must turn the preservation test red**, because a silent drift
+between them is how a remote read starts returning the whole screen.
 
-What landed instead: an **M21 occurrence trailer** on that section, naming the
-four rows against the clauses they each violated and the real defect —
-**non-application**. 06d slipped because its criterion was validated against
-the pre-phase tree only, which the M24 paragraph explicitly warns about. This
-is the second milestone (after M24) in which an existing rule was re-proposed
-rather than applied.
+**`target_pane` goes 2 → 1 here, 1 → 0 in 07b**, which is when the milestone's
+*"`target_pane` is gone from the tool surface"* exit criterion closes. Two
+criteria pin that `remote_run_and_capture` and `local_read_via_buffer`
+**survive** 07a — the four write branches still need them.
 
-## Still open — the persist-to-`[hosts]` offer
+**Pre-dispatch check run; both non-preservation criteria confirmed failing**
+(`target_pane_params=2`→1, `read_file_host=0`→1), with three preservation
+lines correctly passing and the ten named tests reading
+`0 passed; 2010 filtered out`.
 
-Deferred from 06c and unchanged: no config-write path exists, the dependency
-is `toml` not `toml_edit`, and a round-trip would discard 96 of the config's
-193 comment lines. Needs either a new dependency or an append-only writer.
-Nothing blocks 07–09 on it.
+**The new mechanical step was applied, and it earned its place.** Per the
+memory note added at 06d's close: for every `grep -c` criterion on an
+identifier the phase introduces, simulate the **post-phase corpus** before
+dispatch. Done here — a scratch file carrying test 10's likely shapes
+(`p.name == "target_pane"`, `p.name == "host"`) plus a `use` line was
+concatenated onto `defs.rs` and both criteria re-run against it. Neither
+moved (`target_pane_params` stays 2, `read_file_host` stays 0 in its scoped
+range), so neither is contaminated. **Separately verified the `awk` range
+does not overrun**: `/name: "read_file"/,/category:/` captures exactly that
+one `ToolDef` and its five params — which matters because `open_shell` also
+has a `host` param that a sloppier range would have counted.
 
-## Standing constraints for 07's drafting
+**Token audit on runnable blocks only** — four `sh` blocks and four inline
+commands, zero `su`+`do` hits.
 
-- **No `su`+`do`-shaped token** in any command a spec asks the executor to
-  run — the shell gate refuses the line. Audit the *runnable blocks*, not the
-  whole document (my first audit of 06d made exactly that mistake).
-- **§ Authorizations must name** the re-export site for a new `pub fn`, and
-  the construction sites a field addition compile-forces. 06d's explicit
-  authorization for the latter worked — `foreground.rs` was fixed minimally
-  and listed.
+**Next after 07a: 07b — edit-file-host**, then 08, 08b, 09.
 
-**What it closes.** A runbook can already declare `hosts: [web01, db01]` and
-the daemon already parses it — into a field whose own doc says **"enforced in
-a later phase."** This is that phase, and the same row deletes that sentence.
-It is the milestone's *"Ghost `hosts:` is enforced"* exit criterion.
-
-**The compatibility trap, and the mutation that guards it.** `hosts: []` means
-**unrestricted**, not "nothing allowed" — every runbook on disk omits the
-line, and `runbook.rs:570` already pins that meaning. If this row got it
-backwards it would silently break all of them. Mutation A drops exactly that
-clause and must turn `an_empty_hosts_list_is_unrestricted` red.
-
-**Two doors, both gated.** `PendingCall::Foreground` (via 06c's
-`resolve_foreground_host`) and `PendingCall::OpenShell` (`mod.rs:1040`) can
-each reach a host, and neither consults the policy today. A criterion pins
-**two** `may_use_host` call sites, and Mutation B removes the `open_shell`
-one — with an explicit instruction that if the test stays green, that is a
-*finding* about test coverage rather than a pass.
-
-**Pre-dispatch check run; five criteria confirmed failing** — `policy_field=0`→1,
-`from_config_copies=0`→1, `predicate=0`→1, `both_gates=0`→2,
-`stale_claim_gone=1`→0 — with `lib_counts=1994p-0f-6i`→2004,
-`ignore_total=6` preserved, and the ten named tests reading
-`0 passed; 2000 filtered out`.
-
-**All three standing calibrations applied, and the last one caught me again.**
-Every structural grep is `awk`-scoped and each range was verified to anchor on
-real text (19, 8 and 6 lines). § Authorizations pre-emptively addresses the
-re-export question (none needed — `executor/mod.rs:10` already imports
-`GhostPolicy` directly) and the field-addition construction sites. And on the
-`su`+`do`-token audit: my **first audit grep was itself over-broad**, matching
-the whole document and flagging two hits that turned out to be a quoted
-`rust` block and one prose line. Re-audited against the runnable blocks only
-— **all three `sh` blocks clean, zero runnable commands carry the token.**
-That is the third time in three rows that an over-broad match has bitten,
-twice now in my own verification rather than in a criterion.
-
-**Next after 06d: 07 — remote-file-ops-over-pty**, then 08, 08b, 09. When 06d
-lands, every 06 row is done and the approval/ghost half of the milestone is
-complete.
-
-Eighteen rows in M21; live host `pinky` (sudo requires a password since
+Nineteen rows in M21; live host `pinky` (sudo requires a password since
 2026-09-22); `max_turns` 1000.
