@@ -1,7 +1,7 @@
 # Phase 06d: ghost-hosts-enforced — a runbook's `hosts:` list becomes a boundary
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06c (`resolve_foreground_host`, the host gate's placement)
 **Estimated diff:** ~300 lines across 3 files, plus 10 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -464,3 +464,157 @@ Restored; test green again.
 `lib_counts=2004p-0f-6i` with **no extra test added and none trimmed**.
 Mutation-B's "coverage added" note resolved inside existing test 10, so the
 count is unchanged.
+
+### Update — 2026-09-26 16:31 (complete, server-authored)
+
+**Summary:** </think>Clean tree, commit made. Let me verify the completion checklist:
+
+- [x] Phase doc's Status: still `in-progress` — yes, I never flipped to review
+- [x] Milestone README row `in-progress`
+- [x] No `(complete)` entry hand-written
+- [x] `cargo fmt --all` run before git add
+- [x] All verification commands clean
+- [x] Final message substantive — now
+- [x] `git status --short` empty
+- [x] `git log -1 --stat` shows all files
+
+One thing to double check: the acceptance criterion for the ten pinned tests ran 10 passed — done earlier. Also `cargo test` other targets unmoved: doc_truth 14, integration 32, isolation 9, bug_tracker 6 — all verified.
+
+Now write the final Summary + Notes for review.</think>
+**Summary:** Phase 06d is implemented and committed (`ac7ee387`). `GhostPolicy` now carries the runbook's `hosts:` list (`from_config` copies it), decides with the pure predicate `may_use_host` beside `is_safe` — `HostId::Local` always permitted, empty list unrestricted, named hosts matched exactly and case-sensitively — and **both** host-taking doors consult it: the `Foreground` arm after `resolve_foreground_host` (mod.rs:377) and the `OpenShell` arm before `knowledge::open_shell` (mod.rs:1101). Each refusal returns a `ToolCallOutcome::Result` naming the requested host and the allowed set (`ghost_host_refusal`, modeled on `ghost_may_run_foreground`'s call-site shape) and records a `ghost_host_refused` event via `log_event` with no `pid`. The stale "enforced in a later phase" claim is deleted from `src/ipc.rs` (replaced with a pointer to the predicate). All ten pinned tests pass; `cargo test --lib` → **2004 passed / 0 failed / 6 ignored** on three consecutive runs, doc_truth 14 / integration 32 / isolation 9 / bug_tracker 6 unmoved, fmt/clippy clean, and the E2E capture block ran verbatim with `PASTE MATCH` into the end-to-end Update Log entry.
+
+**Notes for review:**
+- **Files touched for the field addition:** `src/daemon/policy.rs`, `src/daemon/executor/foreground.rs` (two test-only `GhostPolicy` literals gained `hosts: Vec::new()`), `src/daemon/policy_tests.rs` (the four fixture constructors). No production constructor needed a fix — `from_config` is the only one.
+- **`both_gates` reads 5, not the pinned 2** — the grep sweeps the whole file, and three matches are the phase's own gate tests (1881/1889/1902). The two *call sites* are lines 377 and 1101, quoted in the Update Log. If the criterion wants `2` literally, the E2E line needs a call-site-scoped grep (e.g. matching only lines inside `execute_tool_call`) — flagging rather than silently re-pinning.
+- **Mutation B stayed green** — the finding § Mutations anticipates: test 7 drives the shared refusal helper, not the `OpenShell` dispatch arm, so deleting that arm's gate is invisible to it. Documented in the Update Log; the arm's gate is pinned structurally by the call-site grep rather than by a new dispatch-driving test (a dispatch test would need a full `execute_tool_call` harness with duplex streams and a session store, which is the shape no existing mod.rs test has). Say the word if you want that harness anyway — it would be a new test beyond the pinned ten.
+- **`hosts:` parsing (runbook frontmatter → `GhostConfig`) is unchanged** — this row is enforcement only, per the out-of-scope list (`spawn_ghost_shell { host? }`, `ssh_target` mapping, case-insensitivity all left for their rows).
+- Working tree is clean and the phase doc still reads `in-progress` with no server-tail entries — ready for review.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+. ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_session_info_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M21-host-model/phase-06d-ghost-hosts-enforced.md` — +81 -1
+- `src/daemon/executor/foreground.rs` — +1 -0
+- `src/daemon/executor/mod.rs` — +208 -7
+- `src/daemon/policy.rs` — +33 -1
+- `src/ipc.rs` — +2 -2
+
+**Commit:** ac7ee38742af86520fbecdf986322ff13d2f319e
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
