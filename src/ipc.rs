@@ -127,8 +127,8 @@ pub struct GhostConfig {
     pub parent_job_id: Option<String>,
     /// Hosts this ghost may open shells on, by `[hosts.<name>]` key.
     /// Empty = unrestricted, preserving every existing runbook's behaviour
-    /// (a `hosts:` line is absent from all of them).  Parsed here;
-    /// **enforced in a later phase**.
+    /// (a `hosts:` line is absent from all of them). Enforced by
+    /// `GhostPolicy::may_use_host` at both host-taking tool calls.
     #[serde(default)]
     pub hosts: Vec<String>,
 }

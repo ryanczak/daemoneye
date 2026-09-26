@@ -174,6 +174,26 @@ fn resolve_foreground_host(host: Option<&str>) -> Result<crate::host::HostId, St
     }
 }
 
+/// The sentence a ghost reads when it asks for a host its runbook did not
+/// grant: the refused host **and** the allowed set, so the model can correct
+/// itself rather than retrying blindly.
+fn ghost_host_refusal(policy: &GhostPolicy, host: &crate::host::HostId) -> String {
+    let allowed = if policy.hosts.is_empty() {
+        "the runbook grants every host (its `hosts:` list is empty, which is \
+         unrestricted), so this refusal should not have happened"
+            .to_string()
+    } else {
+        format!("{} ({})", policy.hosts.join(", "), policy.hosts.len())
+    };
+    format!(
+        "Error: this runbook's `hosts:` list does not grant host {}. \
+         Hosts this runbook allows: {}. \
+         Stay on the hosts the runbook names, or work on the daemon host.",
+        host.as_str(),
+        allowed
+    )
+}
+
 pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
     tx: &mut W,
@@ -350,6 +370,32 @@ where
                     return Ok(ToolCallOutcome::Result(msg));
                 }
             };
+            // A runbook's `hosts:` list is a boundary, not advice: a ghost
+            // reaching a host its runbook did not name is refused here, with
+            // the allowed set named so the model can correct itself.
+            if let Some(policy) = ghost_policy.as_ref()
+                && !policy.may_use_host(&host)
+            {
+                let msg = ghost_host_refusal(policy, &host);
+                crate::daemon::utils::log_event(
+                    "ghost_host_refused",
+                    serde_json::json!({
+                        "session": session_id.unwrap_or("-"),
+                        "tool": "run_terminal_command",
+                        "requested_host": host.as_str(),
+                        "allowed_hosts": policy.hosts,
+                    }),
+                );
+                send_response_split(
+                    tx,
+                    Response::ToolResult {
+                        tool_call_id: id.to_string(),
+                        output: msg.clone(),
+                    },
+                )
+                .await?;
+                return Ok(ToolCallOutcome::Result(msg));
+            }
             // The PTY shell substrate, the default. A ghost session or
             // `backend = "tmux"` (the opt-out) falls through to
             // `run_foreground` unchanged, so the opt-out behaviour is
@@ -1037,13 +1083,43 @@ where
             )))
         }
 
-        PendingCall::OpenShell { host, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::open_shell(
-                &Owner::Chat(session_id.unwrap_or_default().to_string()),
-                host.as_deref(),
-            )
-            .await,
-        )),
+        PendingCall::OpenShell { host, .. } => {
+            // The same boundary the foreground arm enforces: a ghost may open
+            // a shell on a host its runbook names only. Gating here too is
+            // what closes the second door — `open_shell` is reachable on its
+            // own, not only through `run_terminal_command`.
+            if let Some(policy) = ghost_policy.as_ref() {
+                let asked = match host.as_deref() {
+                    None => crate::host::HostId::Local,
+                    Some(name) => match crate::host::HostId::parse(name) {
+                        Ok(parsed) => parsed,
+                        Err(msg) => {
+                            return Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
+                        }
+                    },
+                };
+                if !policy.may_use_host(&asked) {
+                    let msg = ghost_host_refusal(policy, &asked);
+                    crate::daemon::utils::log_event(
+                        "ghost_host_refused",
+                        serde_json::json!({
+                            "session": session_id.unwrap_or("-"),
+                            "tool": "open_shell",
+                            "requested_host": asked.as_str(),
+                            "allowed_hosts": policy.hosts,
+                        }),
+                    );
+                    return Ok(ToolCallOutcome::Result(msg));
+                }
+            }
+            Ok(ToolCallOutcome::Result(
+                knowledge::open_shell(
+                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
+                    host.as_deref(),
+                )
+                .await,
+            ))
+        }
 
         PendingCall::CloseShell { shell, .. } => Ok(ToolCallOutcome::Result(
             knowledge::close_shell(
@@ -1752,6 +1828,131 @@ mod host_gate_tests {
     fn an_omitted_host_resolves_to_local_before_the_prompt() {
         let parsed = resolve_foreground_host(None).expect("no host argument is the daemon host");
         assert_eq!(parsed, crate::host::HostId::Local);
+    }
+}
+
+#[cfg(test)]
+mod ghost_host_gate_tests {
+    use super::{ghost_host_refusal, resolve_foreground_host};
+    use crate::daemon::policy::GhostPolicy;
+
+    fn ghost_with_hosts(hosts: &[&str]) -> GhostPolicy {
+        GhostPolicy {
+            hosts: hosts.iter().map(|h| h.to_string()).collect(),
+            ..GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
+        }
+    }
+
+    /// The refusal sentence names the host the ghost asked for **and** the
+    /// hosts the runbook allows — the model needs both to correct itself
+    /// instead of retrying blindly.
+    #[test]
+    fn a_ghost_naming_an_unlisted_host_is_refused_with_both_lists() {
+        let policy = ghost_with_hosts(&["pinky"]);
+        let host = resolve_foreground_host(Some("web01")).expect("web01 is well-formed");
+        let msg = ghost_host_refusal(&policy, &host);
+        assert!(
+            msg.contains("web01"),
+            "the refusal must name the requested host: {msg}"
+        );
+        assert!(
+            msg.contains("pinky"),
+            "the refusal must name the allowed host(s): {msg}"
+        );
+        assert!(
+            msg.starts_with("Error:"),
+            "a refusal is error text the model reads as a failed call: {msg}"
+        );
+    }
+
+    /// A chat session has no ghost policy at all, so the gate must be a
+    /// no-op for it — both the Foreground and OpenShell doors consult the
+    /// policy only when one exists.
+    #[test]
+    fn a_non_ghost_session_is_not_gated_by_hosts() {
+        // `execute_tool_call` derives `ghost_policy` from the session entry:
+        // a non-ghost session yields `None`, and every gate below is behind
+        // `if let Some(policy) = ghost_policy.as_ref()`. That condition,
+        // evaluated at the seam the dispatcher consults, is what "not gated"
+        // means here: with no policy the gate expression is false for every
+        // host, so a chat session reaches any host untouched.
+        let policy: Option<&GhostPolicy> = None;
+        let gate_fires = policy
+            .is_some_and(|p| !p.may_use_host(&crate::host::HostId::Named("any-host".to_string())));
+        assert!(
+            !gate_fires,
+            "no policy means no gate: a chat session reaches any host"
+        );
+        // Even a ghost whose runbook grants nothing named is unrestricted.
+        let unrestricted = ghost_with_hosts(&[]);
+        assert!(
+            unrestricted.may_use_host(&crate::host::HostId::Named("any-host".to_string())),
+            "an empty hosts list stays unrestricted for the gate too"
+        );
+    }
+
+    /// The common case: a ghost working on the daemon host is untouched by
+    /// the boundary, however restrictive its `hosts:` list is.
+    #[test]
+    fn a_ghost_may_still_use_the_daemon_host() {
+        let policy = ghost_with_hosts(&["pinky"]);
+        let local = resolve_foreground_host(None).expect("an omitted host is local");
+        assert_eq!(local, crate::host::HostId::Local);
+        assert!(
+            policy.may_use_host(&local),
+            "the daemon host is never a hosts: question: a ghost running local \
+             commands is the default ghost workflow"
+        );
+    }
+
+    /// The "recorded" half: the refusal reaches the event log with the
+    /// requested host in its fields. `log_event` is fire-and-forget (it
+    /// swallows write errors by design), so the test drives the same
+    /// helper the gate calls and asserts the segment file gained a record.
+    #[test]
+    fn an_unlisted_host_refusal_is_recorded() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        crate::config::Config::ensure_dirs().ok();
+
+        let policy = ghost_with_hosts(&["pinky"]);
+        let host = resolve_foreground_host(Some("web01")).expect("web01 is well-formed");
+        let msg = ghost_host_refusal(&policy, &host);
+        crate::daemon::utils::log_event(
+            "ghost_host_refused",
+            serde_json::json!({
+                "session": "ghost-test",
+                "tool": "run_terminal_command",
+                "requested_host": host.as_str(),
+                "allowed_hosts": policy.hosts,
+            }),
+        );
+
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).expect("the event segment was written");
+        let found = content.lines().any(|line| {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                return false;
+            };
+            v.get("event").and_then(|e| e.as_str()) == Some("ghost_host_refused")
+                && v.get("requested_host").and_then(|h| h.as_str()) == Some("web01")
+                && v.get("allowed_hosts").is_some()
+        });
+        assert!(
+            found,
+            "the refusal must be recorded naming the requested host and the              allowed list — segment:\n{content}"
+        );
+        assert!(
+            msg.contains("web01"),
+            "the refusal text is the model-visible half: {msg}"
+        );
+
+        match saved_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 }
 

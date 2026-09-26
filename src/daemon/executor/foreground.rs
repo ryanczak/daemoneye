@@ -1307,6 +1307,7 @@ fn run_background_resolves_ghost_script_paths() {
         run_with_sudo: false,
         ssh_target: None,
         auto_approve_commands: true,
+        hosts: Vec::new(),
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()

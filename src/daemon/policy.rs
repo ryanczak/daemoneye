@@ -25,6 +25,12 @@ pub struct GhostPolicy {
     /// Carried here for completeness; the system prompt reads from `GhostConfig`
     /// directly. Kept as a mirror so `GhostPolicy` is a complete snapshot.
     pub auto_approve_commands: bool,
+    /// Hosts this ghost may open shells on, by `[hosts.<name>]` key.
+    /// **Empty is unrestricted**: a runbook with no `hosts:` line constrains
+    /// nothing, so every runbook written before this field existed keeps its
+    /// behaviour. A non-empty list is a whitelist — the ghost may reach a
+    /// named host only when it appears here (exact, case-sensitive match).
+    pub hosts: Vec<String>,
 }
 
 impl GhostPolicy {
@@ -35,6 +41,7 @@ impl GhostPolicy {
             run_with_sudo: config.run_with_sudo,
             ssh_target: config.ssh_target.clone(),
             auto_approve_commands: config.auto_approve_commands,
+            hosts: config.hosts.clone(),
         }
     }
 
@@ -54,7 +61,6 @@ impl GhostPolicy {
         if !crate::daemon::utils::command_has_sudo(command) {
             return true;
         }
-
         // Sudo command — check script whitelist.
         // run_with_sudo does not affect is_safe; it only controls auto-sudo in resolve_command.
         let mut tokens = command.split_whitespace();
@@ -69,6 +75,32 @@ impl GhostPolicy {
             .and_then(|n| n.to_str())
             .unwrap_or(effective_token);
         self.auto_approve_scripts.iter().any(|s| s == basename)
+    }
+
+    /// Whether this ghost may reach `host`.
+    ///
+    /// Rules, in this order:
+    ///
+    /// 1. `HostId::Local` is **always permitted**. `hosts:` restricts a
+    ///    runbook's *remote* reach; a ghost running on the daemon host is not
+    ///    a host question at all. This rule precedes the empty-list rule so
+    ///    that an unrestricted list can never be misread as "local is
+    ///    forbidden too" — empty must widen, never narrow.
+    /// 2. An **empty `hosts` list is unrestricted** — the compatibility rule
+    ///    that keeps every runbook written before this field existed working
+    ///    (a `hosts:` line is absent from all of them).
+    /// 3. A named host must appear in the list. Matching is **exact and
+    ///    case-sensitive**, the same comparison `classify` and the
+    ///    `[hosts]` lookup already use for `[hosts.<name>]` keys: a
+    ///    `hosts:` entry and a host name are the same string or they are
+    ///    nothing.
+    pub fn may_use_host(&self, host: &crate::host::HostId) -> bool {
+        match host {
+            crate::host::HostId::Local => true,
+            crate::host::HostId::Named(name) => {
+                self.hosts.is_empty() || self.hosts.iter().any(|h| h == name)
+            }
+        }
     }
 
     /// Rewrite a whitelisted script reference to its absolute (local) or

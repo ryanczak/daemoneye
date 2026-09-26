@@ -2,6 +2,7 @@ use super::*;
 
 fn policy(scripts: &[&str]) -> GhostPolicy {
     GhostPolicy {
+        hosts: Vec::new(),
         auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
         run_with_sudo: false,
         ssh_target: None,
@@ -11,6 +12,7 @@ fn policy(scripts: &[&str]) -> GhostPolicy {
 
 fn sudo_policy(scripts: &[&str]) -> GhostPolicy {
     GhostPolicy {
+        hosts: Vec::new(),
         auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
         run_with_sudo: true,
         ssh_target: None,
@@ -20,6 +22,7 @@ fn sudo_policy(scripts: &[&str]) -> GhostPolicy {
 
 fn remote_policy(scripts: &[&str], target: &str) -> GhostPolicy {
     GhostPolicy {
+        hosts: Vec::new(),
         auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
         run_with_sudo: false,
         ssh_target: Some(target.to_string()),
@@ -29,6 +32,7 @@ fn remote_policy(scripts: &[&str], target: &str) -> GhostPolicy {
 
 fn remote_sudo_policy(scripts: &[&str], target: &str) -> GhostPolicy {
     GhostPolicy {
+        hosts: Vec::new(),
         auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
         run_with_sudo: true,
         ssh_target: Some(target.to_string()),
@@ -488,4 +492,93 @@ fn remote_script_name_delegates_to_call() {
             cmd
         );
     }
+}
+
+// ── may_use_host (M21 phase-06d) ──────────────────────────────────────────
+
+fn hosts_policy(hosts: &[&str]) -> GhostPolicy {
+    GhostPolicy {
+        hosts: hosts.iter().map(|h| h.to_string()).collect(),
+        ..policy(&[])
+    }
+}
+
+#[test]
+fn an_empty_hosts_list_is_unrestricted() {
+    // The compatibility guard: every runbook on disk omits `hosts:`, so an
+    // empty list permitting everything named is what keeps them working.
+    let p = hosts_policy(&[]);
+    assert!(
+        p.may_use_host(&crate::host::HostId::Named("anything".to_string())),
+        "an empty hosts list must stay unrestricted, got a refusal for 'anything'"
+    );
+}
+
+#[test]
+fn a_listed_host_is_permitted() {
+    let p = hosts_policy(&["pinky"]);
+    assert!(
+        p.may_use_host(&crate::host::HostId::Named("pinky".to_string())),
+        "a host the runbook names must be permitted"
+    );
+}
+
+#[test]
+fn an_unlisted_host_is_refused() {
+    let p = hosts_policy(&["pinky"]);
+    assert!(
+        !p.may_use_host(&crate::host::HostId::Named("web01".to_string())),
+        "the headline negative: a host the runbook did not name must be refused"
+    );
+}
+
+#[test]
+fn the_local_host_is_always_permitted() {
+    // Rule 1 precedes rule 2: local must be true for an empty list *and* for a
+    // non-empty one that never mentions it — `hosts:` narrows remote reach,
+    // never the daemon host the ghost is already running on.
+    let empty = hosts_policy(&[]);
+    let listed = hosts_policy(&["pinky"]);
+    assert!(
+        empty.may_use_host(&crate::host::HostId::Local),
+        "local must stay permitted under an empty list"
+    );
+    assert!(
+        listed.may_use_host(&crate::host::HostId::Local),
+        "local must stay permitted even when the list names only 'pinky'"
+    );
+}
+
+#[test]
+fn host_matching_is_exact() {
+    // Neither a prefix nor a case variant is a match — the same comparison
+    // `[hosts]` config keys and `hosts:` entries use.
+    let p = hosts_policy(&["pinky"]);
+    assert!(
+        !p.may_use_host(&crate::host::HostId::Named("pinky.example.com".to_string())),
+        "a prefix must not match"
+    );
+    assert!(
+        !p.may_use_host(&crate::host::HostId::Named("Pinky".to_string())),
+        "a case variant must not match"
+    );
+}
+
+#[test]
+fn from_config_carries_the_hosts_list() {
+    let gc = crate::ipc::GhostConfig {
+        hosts: vec!["pinky".to_string(), "db01".to_string()],
+        ..Default::default()
+    };
+    let policy = GhostPolicy::from_config(&gc);
+    assert_eq!(
+        policy.hosts,
+        vec!["pinky".to_string(), "db01".to_string()],
+        "the list must survive the GhostConfig → GhostPolicy copy, or the \
+         executor gates on a policy that was never told"
+    );
+    assert!(
+        !policy.may_use_host(&crate::host::HostId::Named("web01".to_string())),
+        "the carried list must actually decide"
+    );
 }
