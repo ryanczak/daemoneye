@@ -1,7 +1,7 @@
 # Phase 07a: read-file-host — `read_file { host? }` over the PTY, not the pane
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06c (`host_entry_or_bare`), phase-04d (`run_terminal_command { host? }`)
 **Estimated diff:** ~340 lines across 5 files, plus 10 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -506,3 +506,156 @@ remote interaction.
   `…__DE_S__…` — the two halves are a contract, and the drift a remote read
   would have suffered is returning the whole screen instead of the file.
   Restored; the test is green again.
+
+### Update — 2026-09-26 20:28 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 07a is implemented and committed (`2008b342`). `read_file` now takes `host?` (retiring `target_pane` from that tool only — `edit_file` keeps it for row 07b): `None`/`"local"` takes the daemon-host read path byte-for-byte unchanged, and a named host runs the **unchanged** marker-delimited command through the new `file_ops::run_in_host_shell` transport — `shell_for_owner` reuse (idle shells only, never interactive/dedicated), `host_entry_or_bare` for unconfigured hosts, and the plain `run_command` with no prompt plumbing. The result label names the host it came from.
+
+**Notes for review:**
+- **Entry point used:** the plain `run_command` after a `shell_for_owner` reuse-or-create, not `run_in_shell_with_prompts` — a file read must not open a `CredentialPrompt` round-trip, per § Current state 3. Recorded in the phase's Update Log.
+- **Test-fixture re-exports** (compile-forced construction sites, listed in the Update Log as authorized): `knowledge/shell.rs`'s `spawn_pinky_ssh` and `close_shell_with` widened to `pub(crate)` and re-exported through `knowledge/mod.rs` under `#[cfg(test)]`, so the live test could drive the real ssh argv without a third fixture copy.
+- **One pre-existing test updated:** `dispatch.rs`'s `e2e_no_pane_identifiers_in_tool_descriptions` pinned "read_file keeps target_pane until M21"; it asserts against the `ToolDef`, so it went red at build-and-test time and its pin moved to `edit_file` only.
+- **`ignore_total` = 7** (was 6): the Task 7 live check ships as the `#[ignore]`d `read_file_on_pinky_end_to_end`, in the style the Test plan names; the criteria allow this when re-pinned, which the Update Log does.
+- **Gates:** `cargo test --lib` → **2014 passed / 0 failed / 7 ignored**, green on three consecutive runs; doc_truth 14, integration 32, isolation 9, bug_tracker 6 all unmoved; fmt/build/clippy(-D warnings) clean. `target_pane_params=1`, `read_file_host=1`, `buffer_helper_kept=1`, `pane_capture_kept=1`.
+- **Both mutations applied and observed red**, then restored and re-verified green (A: the interactive-shell filter is load-bearing — the read was handed the interactive shell and the fresh-shell assertion failed; B: `__DE_S__` → `__DE_X__` tripped the exact wire-format assertion). Results recorded in the Update Log.
+- **End-to-end + live evidence** are in the phase doc's Update Log, each in its own entry, with the `PASTE MATCH` diff confirming the pasted block is byte-identical to the captured file. The live check ran against `pinky`: the ssh probe printed `remote_line2=bravo`, and the `#[ignore]`d test drove the real transport over ssh and printed `read_file_on_pinky hostname="pinky"` — the full `PendingCall` dispatch seam needs a live IPC transport plus a configured model, so the tool result was reconstructed from the same `extract_marked`/`format_remote_read_result` pair the dispatch arm feeds; the transport, marker cut and label are the real remote interaction. Status remains `in-progress` with the tree clean, ready for the server's `review` flip.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.46s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +1 -1
+- `assets/prompts/sre.toml` — +7 -7
+- `docs/dev/milestones/M21-host-model/README.md` — +1 -1
+- `docs/dev/milestones/M21-host-model/phase-07a-read-file-host.md` — +96 -1
+- `src/ai/tools/args.rs` — +2 -2
+- `src/ai/tools/defs.rs` — +9 -7
+- `src/ai/tools/dispatch.rs` — +22 -8
+- `src/ai/types/events.rs` — +1 -1
+- `src/ai/types/pending.rs` — +6 -6
+- `src/daemon/executor/file_ops/mod.rs` — +62 -0
+- `src/daemon/executor/file_ops/read.rs` — +628 -99
+- `src/daemon/executor/knowledge/mod.rs` — +10 -0
+- `src/daemon/executor/knowledge/shell.rs` — +3 -3
+- `src/daemon/executor/mod.rs` — +27 -9
+- `src/daemon/stream.rs` — +2 -2
+
+**Commit:** 2008b34223a7eb78cdffda3bbaf03b21acf905ce
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
