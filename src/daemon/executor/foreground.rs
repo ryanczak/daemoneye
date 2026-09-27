@@ -1,4 +1,5 @@
 use super::find_best_target_pane;
+use super::ghost_host_refusal;
 use super::prompt_and_await_approval;
 use super::send_response_split;
 use super::{ApprovalRequest, GhostCtx, SessionCtx, ToolCallOutcome};
@@ -951,6 +952,85 @@ where
                 .map(|p| p.run_with_sudo)
                 .unwrap_or(false));
 
+    // The runbook's `hosts:` list fences `ssh_target` before anything runs:
+    // a non-empty list must grant the host the value resolved to, and a
+    // value that resolved to no configured host cannot be granted at all.
+    if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost)
+        && !policy.may_use_ssh_target()
+    {
+        let (requested_host, msg) = match policy.remote_host.as_ref() {
+            Some(h) => (h.as_str().to_string(), ghost_host_refusal(policy, h)),
+            None => {
+                let target = policy.ssh_target.clone().unwrap_or_default();
+                let list = policy.hosts.join(", ");
+                let msg = format!(
+                    "Error: this runbook's ssh_target {target} is not a configured host, \
+                     so its `hosts:` list cannot grant it. Hosts this runbook allows: \
+                     {list} ({}). Configure a [hosts.<name>] entry whose ssh is {target}, \
+                     or work on the daemon host.",
+                    policy.hosts.len()
+                );
+                (target, msg)
+            }
+        };
+        crate::daemon::utils::log_event(
+            "ghost_host_refused",
+            serde_json::json!({
+                "session": session_id.unwrap_or("-"),
+                "tool": "run_terminal_command",
+                "requested_host": requested_host,
+                "allowed_hosts": policy.hosts,
+            }),
+        );
+        send_response_split(
+            tx,
+            Response::ToolResult {
+                tool_call_id: id.to_string(),
+                output: msg.clone(),
+            },
+        )
+        .await?;
+        return Ok(ToolCallOutcome::Result(msg));
+    }
+
+    // The resolved host's `sudo_scripts` gates elevated script runs: a host
+    // that declares a whitelist refuses anything it does not name.
+    if remote_script_is_sudo
+        && let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost)
+        && let Some((name, _)) = remote_script.as_ref()
+        && !policy.may_elevate_script(name)
+    {
+        let host = policy
+            .remote_host
+            .as_ref()
+            .map(|h| h.as_str().to_string())
+            .unwrap_or_default();
+        let list = policy.remote_sudo_scripts.join(", ");
+        let msg = format!(
+            "Error: script {name} is not in host {host}'s sudo_scripts ({list}), so it may \
+             not run under sudo there. Add it to [hosts.{host}] sudo_scripts, or run it \
+             without sudo."
+        );
+        crate::daemon::utils::log_event(
+            "ghost_elevation_refused",
+            serde_json::json!({
+                "session": session_id.unwrap_or("-"),
+                "host": host,
+                "script": name,
+                "allowed_scripts": policy.remote_sudo_scripts,
+            }),
+        );
+        send_response_split(
+            tx,
+            Response::ToolResult {
+                tool_call_id: id.to_string(),
+                output: msg.clone(),
+            },
+        )
+        .await?;
+        return Ok(ToolCallOutcome::Result(msg));
+    }
+
     // Ghost shells: resolve bare/relative script names to absolute path.
     let resolved_cmd;
     let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
@@ -1308,6 +1388,8 @@ fn run_background_resolves_ghost_script_paths() {
         ssh_target: None,
         auto_approve_commands: true,
         hosts: Vec::new(),
+        remote_host: None,
+        remote_sudo_scripts: Vec::new(),
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -1446,4 +1528,211 @@ fn run_background_resolves_ghost_script_paths() {
     let _ = std::process::Command::new("tmux")
         .args(["kill-server"])
         .output();
+}
+
+#[cfg(test)]
+mod refusal_gate_tests {
+    use super::run_background;
+    use crate::TEST_HOME_LOCK;
+    use crate::daemon::executor::{GhostCtx, SessionCtx, ToolCallOutcome};
+    use crate::daemon::session::SessionStore;
+
+    /// Drive `run_background` the way a ghost does and return the tool result
+    /// it produced. Unlike `run_background_resolves_ghost_script_paths` this
+    /// needs **no tmux and no script on disk**: both gates this row adds
+    /// return before the approval prompt and before any tmux call, so the
+    /// command is refused without ever reaching the pane. It does need an
+    /// isolated `HOME`, because refusals write to the event segment.
+    async fn drive_run_background_refusal(
+        session_id: &str,
+        session_name: &str,
+        sessions: &SessionStore,
+        policy: &crate::daemon::policy::GhostPolicy,
+        cmd: &str,
+    ) -> String {
+        let ctx = SessionCtx {
+            session_id: Some(session_id),
+            session_name,
+            chat_pane: None,
+            sessions,
+        };
+        let ghost_ctx = GhostCtx {
+            policy: Some(policy),
+            is_ghost: true,
+        };
+        let (_client_tx, daemon_rx) = tokio::io::duplex(64 * 1024);
+        let (mut daemon_tx, _client_rx) = tokio::io::duplex(64 * 1024);
+        let mut daemon_rx = tokio::io::BufReader::new(daemon_rx);
+        match run_background(
+            session_id,
+            cmd,
+            ctx,
+            ghost_ctx,
+            &mut daemon_tx,
+            &mut daemon_rx,
+        )
+        .await
+        .expect("run_background must not error on the refusal path")
+        {
+            ToolCallOutcome::Result(t) => t,
+            ToolCallOutcome::UserMessage(t) => format!("[redirected] {t}"),
+            ToolCallOutcome::SpawnGhostSession { .. } => String::new(),
+        }
+    }
+
+    /// Isolate `HOME` for a test that writes to the event segment. Holds the
+    /// suite-wide `HOME` lock while the guard lives, points `HOME` at a
+    /// tempdir whose directories are pre-created, and restores `HOME` on
+    /// drop. The lock is held for the guard's whole life so two refusal
+    /// tests can never interleave their `HOME` writes.
+    struct HomeGuard {
+        saved: Option<String>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl HomeGuard {
+        fn new() -> Self {
+            let lock = TEST_HOME_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let saved = std::env::var("HOME").ok();
+            unsafe { std::env::set_var("HOME", tmp.path()) };
+            crate::config::Config::ensure_dirs().expect("ensure dirs");
+            std::mem::forget(tmp);
+            Self { saved, _lock: lock }
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.saved {
+                    Some(v) => std::env::set_var("HOME", v),
+                    None => std::env::remove_var("HOME"),
+                }
+            }
+        }
+    }
+
+    /// A ghost on a configured host whose elevated-permission whitelist names
+    /// another script may not elevate this one: the call is refused **before**
+    /// approval and before any tmux call, naming the script and the allowed
+    /// set, and the refusal is recorded. Without the gate this command would
+    /// auto-approve and only fail later with "not available on the daemon
+    /// host", so the assertion on the exact message is what makes this test
+    /// go red when the gate is removed.
+    #[test]
+    fn an_unlisted_elevated_script_is_refused_on_a_configured_host() {
+        let _home = HomeGuard::new();
+
+        let sessions = SessionStore::new();
+        let session_id = "ghost-elevation-refused";
+        let policy = crate::daemon::policy::GhostPolicy {
+            auto_approve_scripts: vec!["other.sh".to_string()],
+            ssh_target: Some("db01".to_string()),
+            hosts: Vec::new(),
+            remote_host: Some(crate::host::HostId::parse("db01").expect("well-formed host")),
+            remote_sudo_scripts: vec!["allowed.sh".to_string()],
+            ..crate::daemon::policy::GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
+        };
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let text = rt.block_on(async {
+            drive_run_background_refusal(
+                session_id,
+                "de-elevation-refused",
+                &sessions,
+                &policy,
+                "sudo other.sh",
+            )
+            .await
+        });
+
+        assert!(
+            text.contains("other.sh") && text.contains("allowed.sh"),
+            "the refusal must name the refused script and the allowed set: {text}"
+        );
+        assert!(
+            text.contains("db01"),
+            "the refusal must name the host: {text}"
+        );
+
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).expect("read the event segment");
+        let refused = content.lines().find_map(|line| {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                return None;
+            };
+            (v.get("event").and_then(|e| e.as_str()) == Some("ghost_elevation_refused"))
+                .then_some(v)
+        });
+        assert!(
+            refused.is_some(),
+            "the elevation refusal must be recorded in the event segment:\n{content}"
+        );
+    }
+
+    /// A ghost whose `ssh_target` names no configured host cannot be granted
+    /// by a non-empty `hosts:` list at all — a list that cannot name what it
+    /// allows is not a fence. The refusal names the raw value and the allowed
+    /// set, and is recorded with the raw value as `requested_host`.
+    #[test]
+    fn an_unconfigured_ssh_target_is_outside_a_nonempty_hosts_list() {
+        let _home = HomeGuard::new();
+
+        let sessions = SessionStore::new();
+        let session_id = "ghost-unconfigured-target";
+        let policy = crate::daemon::policy::GhostPolicy {
+            ssh_target: Some("user@far".to_string()),
+            hosts: vec!["db01".to_string()],
+            remote_host: None,
+            remote_sudo_scripts: Vec::new(),
+            ..crate::daemon::policy::GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
+        };
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let text = rt.block_on(async {
+            drive_run_background_refusal(
+                session_id,
+                "de-unconfigured-target",
+                &sessions,
+                &policy,
+                "uptime",
+            )
+            .await
+        });
+
+        assert!(
+            text.contains("user@far"),
+            "the refusal must name the raw ssh_target: {text}"
+        );
+        assert!(
+            text.contains("db01"),
+            "the refusal must name the allowed set: {text}"
+        );
+
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).expect("read the event segment");
+        let refused = content.lines().find_map(|line| {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                return None;
+            };
+            (v.get("event").and_then(|e| e.as_str()) == Some("ghost_host_refused")).then_some(v)
+        });
+        let refused = refused.unwrap_or_else(|| {
+            panic!("the host refusal must be recorded in the event segment:\n{content}")
+        });
+        assert_eq!(
+            refused.get("requested_host").and_then(|h| h.as_str()),
+            Some("user@far"),
+            "an unresolved ssh_target is recorded under its own value, not a host key"
+        );
+    }
 }

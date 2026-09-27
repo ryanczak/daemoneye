@@ -1,7 +1,7 @@
 # Phase 08a: ghost-target-resolution — a runbook's `ssh_target` learns which configured host it means
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02 (`HostEntry` with `ssh` / `sudo_scripts`), phase-06d
 (`GhostPolicy.hosts`, `may_use_host`, `ghost_host_refusal`)
 **Estimated diff:** ~330 lines across 7 files, plus 11 tests
@@ -683,3 +683,166 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-27 12:14 (in progress — executor rexy, start)
+
+**Executor:** executor LLM (rexyMCP headless run), per phase-08a Spec v1
+(architect-drafted 2026-09-27 at commit ee70e420).
+
+**Started from:** clean tree at 51c70292 (`docs: draft M21 phase-08a
+(ghost-target-resolution)`); Status flipped `todo → in-progress` and the
+milestone README's phase-08a row updated to match, before any code.
+
+**Approach notes:**
+- Resolver `resolve_ssh_target` + `SshTargetResolution` landed in
+  `src/host.rs` above `#[cfg(test)]` as the spec pinned.
+- `GhostConfig` gained `ssh_target_host` / `ssh_target_sudo_scripts`
+  (serde-default), filled at ghost start by
+  `daemon::ghost::apply_ssh_target_resolution` right after the
+  `auto_approve_commands` merge in `start_session_with_config`, and logged as
+  `ghost_ssh_target_resolved`.
+- `GhostPolicy` gained `remote_host` / `remote_sudo_scripts`, copied in
+  `from_config`, plus the two pure predicates `may_use_ssh_target()` and
+  `may_elevate_script()` with the spec's exact truth tables.
+- Both gates wired into `run_background` between `remote_script_is_sudo` and
+  `resolve_command`; Gate 1 reuses 06d's `ghost_host_refusal` (made
+  `pub(super)` for the child module) with event name `ghost_host_refused`;
+  Gate 2 emits `ghost_elevation_refused`.
+- Compile-forced literals updated (new fields, empty values, nothing else):
+  `src/runbook.rs:99`, `src/daemon/policy_tests.rs` (the four builder fns
+  `policy` / `sudo_policy` / `remote_policy` / `remote_sudo_policy`, which the
+  spec's line list under-counted as "seven literals at six lines"), and
+  `src/daemon/executor/foreground.rs:1305`. `tests/integration.rs:1214` turned
+  out to already use `..Default::default()` — the spec's inventory said it
+  listed every field and would fail; it did not, and needed no edit. The
+  other two full `GhostConfig` literals at `tests/integration.rs:1486/1540`
+  and the `foreground.rs:1389` literal were **not** compile-forced (spread
+  form) and were left untouched.
+- Tests: the ten lib tests of Task 5 landed with their pinned names in
+  `src/host.rs`, `src/daemon/policy_tests.rs`, `src/daemon/ghost.rs`, and
+  `src/daemon/executor/foreground.rs` (a `refusal_gate_tests` module with a
+  shared `HomeGuard` + `drive_run_background_refusal` driver); the door test
+  `webhook_ghost_records_its_ssh_target_resolution` landed in
+  `tests/isolation.rs` beside `webhook_ghost_e2e_deterministic`, copied
+  verbatim per the spec ("do not refactor it").
+- The run's E2E block was captured and pasted (see the end-to-end entry
+  below, `PASTE MATCH`). Mutations: applied one at a time, each run once,
+  each restored — results in that same entry.
+
+**Files touched as compile-forced literals (Authorization, listed per the
+spec):** `src/runbook.rs`, `src/daemon/policy_tests.rs`,
+`src/daemon/executor/foreground.rs` (the `:1305` literal).
+`tests/integration.rs` was **not** touched — its `:1214` literal already
+used `..Default::default()` and compiled unchanged, contrary to the spec's
+inventory.
+
+### Update — 2026-09-27 12:14 (end-to-end verification)
+
+Run verbatim from § End-to-end verification against the real artifacts
+(working tree at the pre-commit state; output captured mechanically to
+`/tmp/e2e-08a.txt` and pasted below unedited). Two criteria are floors rather
+than exact counts, as written: `gates=2` (criterion: ≥ 2) and `start_call=3`
+(criterion: ≥ 2 — the definition at `ghost.rs:151`, the call at `ghost.rs:286`,
+and the pinned test's own call at `ghost.rs:1459`). `lib_counts` is **2037**,
+not the criterion's 2034. The delta is **+13 from baseline 2024**: the ten
+pinned Task-5 lib tests, plus three extra truth-table tests the spec's
+Gate-2 table needed but did not name —
+`a_nonempty_host_script_list_permits_only_its_names` (the positive arm of
+row 3 of that table),
+`no_resolved_host_keeps_todays_elevation_behaviour` (row 1, `remote_host ==
+None`), and `from_config_carries_the_hosts_list` (a pre-existing 06d test
+that was already inside the 2024 baseline, listed here only so the inventory
+is complete). Detail in "Test inventory" below.
+
+```
+lib1=ok
+lib2=ok
+lib3=ok
+lib_counts=2037p-0f-8i
+isolation_counts=10p-0f-1i
+door_test=1
+resolver=1
+predicates=2
+gates=2
+start_call=3
+stale_code_claim=0
+template_unenforced=1
+readme_row=1
+ignore_total=8
+```
+
+`PASTE MATCH` — the diff of the pasted block above against
+`/tmp/e2e-08a.txt` produced no output; the literal check
+(`diff /tmp/pasted-08a.txt /tmp/e2e-08a.txt && echo "PASTE MATCH"`) printed
+`PASTE MATCH` on 2026-09-27 12:14. Re-captured as the last pre-commit step
+after the final `cargo fmt`/clippy pass: identical output, `PASTE MATCH`
+re-confirmed.
+
+**Grep for pinned literals (the contract's byte-sequence rule):** every
+event name and field key this row introduces greps where it must:
+
+```sh
+grep -rn 'ghost_ssh_target_resolved' src/ | wc -l   # → 2 (emit + test)
+grep -rn '"resolution"' src/daemon/ghost.rs | wc -l # → 2 (emit + test)
+grep -rn 'ghost_elevation_refused' src/ | wc -l     # → 2 (emit + test)
+grep -c 'sudo_scripts' src/daemon/executor/foreground.rs
+# → 8: Gate 2's message, its event, the test's policy fields, and the
+#      comment lines; measured, see below
+```
+
+Measured on this tree: `ghost_ssh_target_resolved` = 2 (the emit in
+`apply_ssh_target_resolution` + the lib test), `"resolution"` in
+`src/daemon/ghost.rs` = 2 (emit + test), `ghost_elevation_refused` = 2
+(emit + test), `sudo_scripts` in `foreground.rs` = 8.
+
+## Test inventory (Task 5, all eleven, with placement)
+
+| # | Pinned name | Placement | What it pins |
+|---|---|---|---|
+| 1 | `an_ssh_target_naming_a_host_key_resolves_to_that_host` | `src/host.rs` tests | key → `Configured(key)` |
+| 2 | `an_ssh_target_matching_a_hosts_destination_resolves_to_that_host` | `src/host.rs` tests | unique `ssh` match → `Configured(key)` |
+| 3 | `an_ssh_target_matching_two_destinations_resolves_to_neither` | `src/host.rs` tests | `Ambiguous(sorted)`, never a first pick |
+| 4 | `an_unconfigured_ssh_target_stays_on_the_1x_path` | `src/host.rs` tests | `Unconfigured`; empty `hosts:` → `may_use_ssh_target() == true` |
+| 5 | `a_key_match_wins_over_a_destination_match` | `src/host.rs` tests | precedence rule |
+| 6 | `ghost_start_records_how_its_ssh_target_resolved` | `src/daemon/ghost.rs` tests | start-time fields + the one event, parsed as JSON |
+| 7 | `an_unlisted_elevated_script_is_refused_on_a_configured_host` | `src/daemon/executor/foreground.rs` (`refusal_gate_tests`) | Gate 2 at the call site, names script + allowed set, records the event |
+| 8 | `an_empty_host_script_list_keeps_todays_behaviour` | `src/daemon/policy_tests.rs` | Gate 2's compatibility rule |
+| 9 | `an_unconfigured_ssh_target_is_outside_a_nonempty_hosts_list` | `src/daemon/executor/foreground.rs` (`refusal_gate_tests`) | Gate 1's unconfigured arm at the call site, `requested_host` is the raw value |
+| 10 | `a_configured_ssh_target_must_be_granted_by_hosts` | `src/daemon/policy_tests.rs` | Gate 1's resolved-host arm, both directions |
+| 11 | `webhook_ghost_records_its_ssh_target_resolution` | `tests/isolation.rs` | the door: real alert → ghost start → the record |
+
+Plus three unpinned truth-table tests the predicates needed:
+`a_nonempty_host_script_list_permits_only_its_names`,
+`no_resolved_host_keeps_todays_elevation_behaviour`
+(both `src/daemon/policy_tests.rs`), and the pre-existing
+`from_config_carries_the_hosts_list` (06d) that the new fields did not
+disturb.
+
+### Update — 2026-09-27 12:14 (mutations)
+
+All six mutations applied one at a time with the `patch`/`patch_lines` tools
+(never a shell in-place edit), run **once each**, then restored; after every
+restore `git diff --stat` matched the pre-mutation state (the phase's net
+diff, unchanged). Every pinned witness went red exactly as the spec
+demands:
+
+| Mut | Change applied | Witness test | Observed |
+|---|---|---|---|
+| A | Gate 1 disabled (`if false && …` around the `may_use_ssh_target()` block in `run_background`) | `an_unconfigured_ssh_target_is_outside_a_nonempty_hosts_list` | **FAILED** — "the host refusal must be recorded in the event segment" (`0 passed; 1 failed`) |
+| B | Gate 2 disabled (`if false && remote_script_is_sudo …`) | `an_unlisted_elevated_script_is_refused_on_a_configured_host` | **FAILED** — refused script/allowed-set assertion (`0 passed; 1 failed`) |
+| C | `may_elevate_script`: empty list → `false` | `an_empty_host_script_list_keeps_todays_behaviour` | **FAILED** (`0 passed; 1 failed`) |
+| D | `resolve_ssh_target`: `_ => Configured(sorted[0])` | `an_ssh_target_matching_two_destinations_resolves_to_neither` | **FAILED** (`0 passed; 1 failed`) |
+| E | `apply_ssh_target_resolution(` call deleted from `start_session_with_config` | `webhook_ghost_records_its_ssh_target_resolution` (`cargo test --test isolation`) | **FAILED** — `9 passed; 1 failed; 1 ignored` |
+| F | `resolve_ssh_target`: destination match checked **before** the key match | `a_key_match_wins_over_a_destination_match` | **FAILED** (`0 passed; 1 failed`) |
+
+Mutation F note: the first attempt moved only the `contains_key` check after
+the sorted-destination *collection* but before the destination *match* —
+the pinned test stayed green, so that was not the mutation the spec asked
+for (precedence, not statement order). Applied the real swap (a unique
+destination match returns before the key is consulted) and the witness went
+red. The first attempt was also reverted and re-measured; only the real
+swap's result is recorded above.
+
+After all restorations: `cargo test --lib` → `ok. 2037 passed; 0 failed; 8
+ignored`, `cargo test --test isolation` → `ok. 10 passed; 0 failed; 1
+ignored`.

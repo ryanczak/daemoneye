@@ -138,6 +138,65 @@ pub fn check_ghost_capacity(config: &crate::config::Config) -> bool {
     crate::daemon::stats::get_ghosts_active() < max
 }
 
+/// Resolve a ghost's `ssh_target` against `[hosts]` and record the outcome.
+///
+/// Runs **once, at ghost start** — `start_session_with_config` is the one
+/// funnel every ghost start passes through — so the session's `GhostConfig`
+/// carries the resolution and `GhostPolicy::from_config` copies it into the
+/// policy like any other field, instead of the per-tool-call policy path
+/// doing file I/O under the sessions lock.
+///
+/// `None` (no `ssh_target`) changes nothing and logs nothing: every ghost
+/// without a remote target keeps today's behaviour exactly.
+pub(crate) fn apply_ssh_target_resolution(
+    gc: &mut crate::ipc::GhostConfig,
+    hosts: &std::collections::HashMap<String, crate::config::HostEntry>,
+    session_id: &str,
+) -> Option<crate::host::SshTargetResolution> {
+    let target = gc.ssh_target.as_deref()?;
+    let resolution = crate::host::resolve_ssh_target(target, hosts);
+    let resolution_label;
+    let host;
+    let candidates: Vec<String>;
+    match &resolution {
+        crate::host::SshTargetResolution::Configured(key) => {
+            gc.ssh_target_host = Some(key.clone());
+            gc.ssh_target_sudo_scripts = hosts
+                .get(key)
+                .map(|entry| entry.sudo_scripts.clone())
+                .unwrap_or_default();
+            resolution_label = "configured";
+            host = serde_json::json!(key);
+            candidates = Vec::new();
+        }
+        crate::host::SshTargetResolution::Unconfigured => {
+            gc.ssh_target_host = None;
+            gc.ssh_target_sudo_scripts = Vec::new();
+            resolution_label = "unconfigured";
+            host = serde_json::Value::Null;
+            candidates = Vec::new();
+        }
+        crate::host::SshTargetResolution::Ambiguous(keys) => {
+            gc.ssh_target_host = None;
+            gc.ssh_target_sudo_scripts = Vec::new();
+            resolution_label = "ambiguous";
+            host = serde_json::Value::Null;
+            candidates = keys.clone();
+        }
+    }
+    crate::daemon::utils::log_event(
+        "ghost_ssh_target_resolved",
+        serde_json::json!({
+            "session": session_id,
+            "ssh_target": target,
+            "resolution": resolution_label,
+            "host": host,
+            "candidates": candidates,
+        }),
+    );
+    Some(resolution)
+}
+
 /// Orchestrates the lifecycle of an autonomous Ghost Shell.
 pub struct GhostManager;
 
@@ -224,6 +283,11 @@ impl GhostManager {
         let mut gc = ghost_config.clone();
         // Merge daemon-wide default: if either source enables the flag, the ghost gets it.
         gc.auto_approve_commands |= ghost_commands_default;
+        apply_ssh_target_resolution(
+            &mut gc,
+            &crate::config::Config::load().unwrap_or_default().hosts,
+            &session_id,
+        );
 
         let entry = SessionEntry {
             messages,
@@ -1370,6 +1434,99 @@ async fn do_ghost_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ghost_start_records_how_its_ssh_target_resolved() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        crate::config::Config::ensure_dirs().expect("ensure dirs");
+
+        let hosts = std::collections::HashMap::from([(
+            "db01".to_string(),
+            crate::config::HostEntry {
+                ssh: "matt@db01.lan".to_string(),
+                sudo_scripts: vec!["allowed.sh".to_string()],
+                ..Default::default()
+            },
+        )]);
+        let mut gc = crate::ipc::GhostConfig {
+            ssh_target: Some("db01".to_string()),
+            ..Default::default()
+        };
+
+        let resolution = apply_ssh_target_resolution(&mut gc, &hosts, "ghost-resolved");
+
+        assert_eq!(
+            resolution,
+            Some(crate::host::SshTargetResolution::Configured(
+                "db01".to_string()
+            )),
+            "a target naming a configured host must resolve to it"
+        );
+        assert_eq!(
+            gc.ssh_target_host,
+            Some("db01".to_string()),
+            "the GhostConfig must carry the resolved host"
+        );
+        assert_eq!(
+            gc.ssh_target_sudo_scripts,
+            vec!["allowed.sh".to_string()],
+            "the GhostConfig must carry the host's script whitelist"
+        );
+
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).expect("read the event segment");
+        let records: Vec<serde_json::Value> = content
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|v| {
+                v.get("event").and_then(|e| e.as_str()) == Some("ghost_ssh_target_resolved")
+            })
+            .collect();
+        assert_eq!(
+            records.len(),
+            1,
+            "exactly one resolution event per ghost start:\n{content}"
+        );
+        let record = &records[0];
+        assert_eq!(
+            record.get("resolution").and_then(|r| r.as_str()),
+            Some("configured"),
+            "the event must say which way the value resolved"
+        );
+        assert_eq!(
+            record.get("host").and_then(|h| h.as_str()),
+            Some("db01"),
+            "the event must carry the resolved host key"
+        );
+        assert_eq!(
+            record
+                .get("candidates")
+                .and_then(|c| c.as_array())
+                .map(Vec::len),
+            Some(0),
+            "a configured resolution carries no candidates"
+        );
+        assert_eq!(
+            record.get("ssh_target").and_then(|t| t.as_str()),
+            Some("db01"),
+            "the event must carry the raw ssh_target"
+        );
+        assert_eq!(
+            record.get("session").and_then(|s| s.as_str()),
+            Some("ghost-resolved"),
+            "the event must carry the ghost session id"
+        );
+
+        unsafe {
+            match saved {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
 
     #[test]
     fn uncovered_steps_all_marked_done_is_empty() {

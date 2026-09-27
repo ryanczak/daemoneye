@@ -131,6 +131,14 @@ pub struct GhostConfig {
     /// `GhostPolicy::may_use_host` at both host-taking tool calls.
     #[serde(default)]
     pub hosts: Vec<String>,
+    /// The `[hosts]` key this runbook's `ssh_target` resolved to at ghost
+    /// start; `None` when it named no configured host (the 1.x path) or was
+    /// ambiguous.
+    #[serde(default)]
+    pub ssh_target_host: Option<String>,
+    /// That host's `sudo_scripts`, copied at ghost start.
+    #[serde(default)]
+    pub ssh_target_sudo_scripts: Vec<String>,
 }
 
 /// Effective limit configuration sent in `DaemonStatus` and `LimitsInfo` responses.

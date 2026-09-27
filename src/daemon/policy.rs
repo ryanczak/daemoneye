@@ -31,6 +31,11 @@ pub struct GhostPolicy {
     /// behaviour. A non-empty list is a whitelist — the ghost may reach a
     /// named host only when it appears here (exact, case-sensitive match).
     pub hosts: Vec<String>,
+    /// The configured host `ssh_target` resolved to, or `None` (no
+    /// `ssh_target`, or one naming no configured host).
+    pub remote_host: Option<crate::host::HostId>,
+    /// `remote_host`'s `sudo_scripts`. Empty = unrestricted.
+    pub remote_sudo_scripts: Vec<String>,
 }
 
 impl GhostPolicy {
@@ -42,6 +47,33 @@ impl GhostPolicy {
             ssh_target: config.ssh_target.clone(),
             auto_approve_commands: config.auto_approve_commands,
             hosts: config.hosts.clone(),
+            remote_host: config
+                .ssh_target_host
+                .as_deref()
+                .and_then(|h| crate::host::HostId::parse(h).ok()),
+            remote_sudo_scripts: config.ssh_target_sudo_scripts.clone(),
+        }
+    }
+
+    /// May this ghost reach its `ssh_target` at all? The runbook's `hosts:`
+    /// list is the fence (06d's rule): empty is unrestricted; non-empty must
+    /// grant the resolved host; an `ssh_target` that resolved to no
+    /// configured host cannot be granted by a non-empty list.
+    pub fn may_use_ssh_target(&self) -> bool {
+        let Some(host) = self.remote_host.as_ref() else {
+            return self.hosts.is_empty();
+        };
+        self.may_use_host(host)
+    }
+
+    /// May this whitelisted script run under elevated permissions here? Only
+    /// a resolved host with a non-empty `sudo_scripts` restricts; everything
+    /// else keeps today's behaviour.
+    pub fn may_elevate_script(&self, name: &str) -> bool {
+        match (&self.remote_host, self.remote_sudo_scripts.is_empty()) {
+            (Some(_), true) => true,
+            (Some(_), false) => self.remote_sudo_scripts.iter().any(|s| s == name),
+            (None, _) => true,
         }
     }
 

@@ -392,8 +392,10 @@ prompt = "sre"
 # tags           = ["web", "prod"]   # free-form labels for grouping; not
 #                                    # interpreted by the daemon
 # sudo_scripts   = ["pg-failover"]   # scripts that may run under sudo on this
-#                                    # host (the 1.x remote-sudoers model;
-#                                    # parsed, not yet enforced)
+#                                    # host (the 1.x remote-sudoers model);
+#                                    # enforced for ghost runbooks whose
+#                                    # ssh_target resolves to this host —
+#                                    # an empty list restricts nothing
 # sandbox_profile = "none"           # M18 container profile for this host's
 #                                    # commands (parsed, not yet enforced)
 

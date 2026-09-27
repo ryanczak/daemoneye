@@ -1004,7 +1004,10 @@ pub struct HostEntry {
     #[serde(default)]
     pub tags: Vec<String>,
     /// Scripts that may be run under `sudo` on this host, the 1.x
-    /// remote-sudoers model.  Parsed here; enforced in a later phase.
+    /// remote-sudoers model. Enforced for ghost runbooks whose `ssh_target`
+    /// resolves to this host: a script not named here is refused before it
+    /// runs. An **empty list restricts nothing** — every entry written before
+    /// this field existed keeps its behaviour.
     #[serde(default)]
     pub sudo_scripts: Vec<String>,
     /// M18 container profile to run this host's commands under, or `"none"`.

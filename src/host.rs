@@ -66,6 +66,43 @@ impl std::fmt::Display for HostId {
     }
 }
 
+/// How a runbook's `ssh_target` maps onto `[hosts]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SshTargetResolution {
+    /// It names this configured host (the `[hosts]` key).
+    Configured(String),
+    /// No configured host matches — the 1.x `ssh <target>` path, unchanged.
+    Unconfigured,
+    /// Two or more hosts share this `ssh` destination; none is chosen.
+    /// Sorted, so the event and any message are deterministic.
+    Ambiguous(Vec<String>),
+}
+
+/// Resolve a runbook's `ssh_target` against the configured `[hosts]` table.
+///
+/// A key match wins outright; otherwise a unique `ssh`-destination match
+/// names the host, and two or more shared destinations name none — "the
+/// first match" in a `HashMap` is iteration-order noise, never a rule.
+pub fn resolve_ssh_target(
+    target: &str,
+    hosts: &std::collections::HashMap<String, HostEntry>,
+) -> SshTargetResolution {
+    if hosts.contains_key(target) {
+        return SshTargetResolution::Configured(target.to_string());
+    }
+    let mut by_destination: Vec<String> = hosts
+        .iter()
+        .filter(|(_, entry)| entry.ssh == target)
+        .map(|(key, _)| key.clone())
+        .collect();
+    by_destination.sort();
+    match by_destination.len() {
+        0 => SshTargetResolution::Unconfigured,
+        1 => SshTargetResolution::Configured(by_destination.remove(0)),
+        _ => SshTargetResolution::Ambiguous(by_destination),
+    }
+}
+
 /// The `ssh` argv for a shell on `entry`, with the control-socket path the
 /// daemon owns.
 ///
@@ -98,6 +135,99 @@ pub fn ssh_argv(entry: &HostEntry, control_path: &std::path::Path) -> Vec<String
 mod tests {
     use super::*;
     use crate::config::HostEntry;
+    use std::collections::HashMap;
+
+    fn hosts_from(pairs: &[(&str, &str)]) -> HashMap<String, HostEntry> {
+        pairs
+            .iter()
+            .map(|(key, ssh)| {
+                (
+                    key.to_string(),
+                    HostEntry {
+                        ssh: ssh.to_string(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// The positive case for both halves of the rule: the target is a
+    /// `[hosts]` **key**.
+    #[test]
+    fn an_ssh_target_naming_a_host_key_resolves_to_that_host() {
+        let hosts = hosts_from(&[("db01", "matt@db01.lan")]);
+        assert_eq!(
+            resolve_ssh_target("db01", &hosts),
+            SshTargetResolution::Configured("db01".to_string()),
+            "a target that is a [hosts] key names that host"
+        );
+    }
+
+    /// The other way a value resolves: it matches exactly one entry's `ssh`
+    /// destination. This is the documented `user@host` form meeting the
+    /// configured host.
+    #[test]
+    fn an_ssh_target_matching_a_hosts_destination_resolves_to_that_host() {
+        let hosts = hosts_from(&[("db01", "matt@db01.lan"), ("web01", "matt@web01.lan")]);
+        assert_eq!(
+            resolve_ssh_target("matt@db01.lan", &hosts),
+            SshTargetResolution::Configured("db01".to_string()),
+            "a target matching one entry's ssh destination names that host"
+        );
+    }
+
+    /// Two entries sharing a destination name none: picking either would be
+    /// picking iteration order out of a `HashMap`, and the sudo whitelist
+    /// that follows from the choice would be arbitrary.
+    #[test]
+    fn an_ssh_target_matching_two_destinations_resolves_to_neither() {
+        let hosts = hosts_from(&[("db01", "shared.invalid"), ("web02", "shared.invalid")]);
+        assert_eq!(
+            resolve_ssh_target("shared.invalid", &hosts),
+            SshTargetResolution::Ambiguous(vec!["db01".to_string(), "web02".to_string()]),
+            "two hosts sharing one ssh destination must resolve to an ambiguous \
+             set, sorted, never to a first pick"
+        );
+    }
+
+    /// The 1.x compatibility case: a value no `[hosts]` entry names, and no
+    /// entry's destination matches, is still an ordinary ssh destination —
+    /// and with the runbook's `hosts:` list empty it is unrestricted, exactly
+    /// as before this row.
+    #[test]
+    fn an_unconfigured_ssh_target_stays_on_the_1x_path() {
+        let hosts = hosts_from(&[("db01", "matt@db01.lan")]);
+        assert_eq!(
+            resolve_ssh_target("user@far", &hosts),
+            SshTargetResolution::Unconfigured,
+            "a value no host claims is the 1.x path, not an error"
+        );
+        let gc = crate::ipc::GhostConfig {
+            ssh_target: Some("user@far".to_string()),
+            hosts: Vec::new(),
+            ..Default::default()
+        };
+        let policy = crate::daemon::policy::GhostPolicy::from_config(&gc);
+        assert!(
+            policy.may_use_ssh_target(),
+            "an unconfigured ssh_target under an empty hosts: list is unrestricted"
+        );
+    }
+
+    /// The key match wins even when another entry's `ssh` destination equals
+    /// the key: the operator wrote `[hosts.b]`, and `[hosts.a] ssh = "b"` is
+    /// an ssh alias pointing *at* that host, not another host of the same
+    /// name.
+    #[test]
+    fn a_key_match_wins_over_a_destination_match() {
+        let hosts = hosts_from(&[("a", "b"), ("b", "x")]);
+        assert_eq!(
+            resolve_ssh_target("b", &hosts),
+            SshTargetResolution::Configured("b".to_string()),
+            "a key match must win outright over a destination match on 'b'"
+        );
+    }
 
     #[test]
     fn host_id_parses_a_named_host() {

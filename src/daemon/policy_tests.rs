@@ -7,6 +7,8 @@ fn policy(scripts: &[&str]) -> GhostPolicy {
         run_with_sudo: false,
         ssh_target: None,
         auto_approve_commands: false,
+        remote_host: None,
+        remote_sudo_scripts: Vec::new(),
     }
 }
 
@@ -17,6 +19,8 @@ fn sudo_policy(scripts: &[&str]) -> GhostPolicy {
         run_with_sudo: true,
         ssh_target: None,
         auto_approve_commands: false,
+        remote_host: None,
+        remote_sudo_scripts: Vec::new(),
     }
 }
 
@@ -27,6 +31,8 @@ fn remote_policy(scripts: &[&str], target: &str) -> GhostPolicy {
         run_with_sudo: false,
         ssh_target: Some(target.to_string()),
         auto_approve_commands: false,
+        remote_host: None,
+        remote_sudo_scripts: Vec::new(),
     }
 }
 
@@ -37,6 +43,8 @@ fn remote_sudo_policy(scripts: &[&str], target: &str) -> GhostPolicy {
         run_with_sudo: true,
         ssh_target: Some(target.to_string()),
         auto_approve_commands: false,
+        remote_host: None,
+        remote_sudo_scripts: Vec::new(),
     }
 }
 
@@ -580,5 +588,100 @@ fn from_config_carries_the_hosts_list() {
     assert!(
         !policy.may_use_host(&crate::host::HostId::Named("web01".to_string())),
         "the carried list must actually decide"
+    );
+}
+
+// ── may_use_ssh_target / may_elevate_script (M21 phase-08a) ───────────────
+
+fn remote_host_policy(
+    ssh_target: Option<&str>,
+    hosts: &[&str],
+    remote_host: Option<&str>,
+    remote_scripts: &[&str],
+) -> GhostPolicy {
+    GhostPolicy {
+        ssh_target: ssh_target.map(|t| t.to_string()),
+        hosts: hosts.iter().map(|h| h.to_string()).collect(),
+        remote_host: remote_host.map(|h| crate::host::HostId::parse(h).expect("well-formed host")),
+        remote_sudo_scripts: remote_scripts.iter().map(|s| s.to_string()).collect(),
+        ..policy(&[])
+    }
+}
+
+/// An `ssh_target` that names no configured host stays on the 1.x
+/// `ssh <target>` path — and with the runbook's `hosts:` list empty, nothing
+/// restricts it, exactly as before this row.
+#[test]
+fn an_unconfigured_ssh_target_stays_on_the_1x_path() {
+    let p = remote_host_policy(Some("user@far"), &[], None, &[]);
+    assert!(
+        p.may_use_ssh_target(),
+        "an unconfigured ssh_target with an empty hosts: list is the 1.x path: unrestricted"
+    );
+    assert_eq!(
+        p.remote_host, None,
+        "no configured host means the policy carries no remote host"
+    );
+}
+
+/// The headline rule of the row: a non-empty `hosts:` list is a fence for
+/// `ssh_target` too. When the value names no configured host, no host can be
+/// granted, so every call is refused — a list that cannot name what it
+/// allows is not a fence, and silently permitting the 1.x wrap under a
+/// non-empty list would let a runbook sidestep its own whitelist.
+#[test]
+fn a_configured_ssh_target_must_be_granted_by_hosts() {
+    let granted = remote_host_policy(Some("db01"), &["db01"], Some("db01"), &[]);
+    assert!(
+        granted.may_use_ssh_target(),
+        "a runbook that lists the resolved host may reach it"
+    );
+    let unlisted = remote_host_policy(Some("db01"), &["pinky"], Some("db01"), &[]);
+    assert!(
+        !unlisted.may_use_ssh_target(),
+        "the runbook's non-empty hosts: list does not grant 'db01', so the \
+         ssh_target must be refused"
+    );
+}
+
+/// `sudo_scripts` is a whitelist that only bites when the host declares one.
+/// An empty list must widen, never narrow — every `[hosts]` entry on disk
+/// omits it, and an enforced-by-default empty list would break each of them.
+#[test]
+fn an_empty_host_script_list_keeps_todays_behaviour() {
+    let p = remote_host_policy(Some("db01"), &[], Some("db01"), &[]);
+    assert!(
+        p.may_elevate_script("anything.sh"),
+        "an empty sudo_scripts list is unrestricted — the compatibility rule"
+    );
+    assert!(
+        p.may_elevate_script("restart-nginx.sh"),
+        "any whitelisted script name elevates on a host that declares no list"
+    );
+}
+
+/// A non-empty `sudo_scripts` list is a whitelist: only the names it carries
+/// may run under sudo on that host.
+#[test]
+fn a_nonempty_host_script_list_permits_only_its_names() {
+    let p = remote_host_policy(Some("db01"), &[], Some("db01"), &["allowed.sh"]);
+    assert!(
+        p.may_elevate_script("allowed.sh"),
+        "a listed script may run under sudo on its host"
+    );
+    assert!(
+        !p.may_elevate_script("other.sh"),
+        "the headline negative: an unlisted script must not elevate on that host"
+    );
+}
+
+/// With no resolved host at all (no `ssh_target`, or the 1.x path), the
+/// elevation gate keeps today's behaviour for every name.
+#[test]
+fn no_resolved_host_keeps_todays_elevation_behaviour() {
+    let p = remote_host_policy(None, &[], None, &[]);
+    assert!(
+        p.may_elevate_script("restart-nginx.sh"),
+        "no resolved host means the host-side whitelist cannot apply"
     );
 }

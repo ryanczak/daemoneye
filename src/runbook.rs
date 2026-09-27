@@ -109,6 +109,8 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
             spawn_depth: 0,
             parent_job_id: None,
             hosts,
+            ssh_target_host: None,
+            ssh_target_sudo_scripts: Vec::new(),
         };
 
         (tags, memories, ghost_config, body)
