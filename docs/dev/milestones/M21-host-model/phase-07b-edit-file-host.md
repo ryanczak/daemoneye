@@ -1,7 +1,7 @@
 # Phase 07b: edit-file-host — the four write ops over the PTY, and the pane era ends
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-07a (`run_in_host_shell`, the shell transport)
 **Estimated diff:** ~420 lines across 6 files, plus 11 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -635,3 +635,138 @@ used is the test guard's own, torn down on drop. The config edit the live
 drive needed (`file_edits = true` in `~/.daemoneye/etc/config.toml`, plus a
 `[hosts.pinky]` entry that was absent from the real config) was reverted
 afterwards; the probe file is gone from pinky.
+
+### Update — 2026-09-27 14:43 (complete, server-authored)
+
+**Summary:** </think>All tasks are now complete. Let me write my final Summary + Notes for review message.</think>
+**Summary + Notes for review**
+
+Resumed run `05b2a695` and finished M21 row 07b's remaining evidence stretch (the implementation itself was already on disk and untouched, per the guidance). What I did: fixed the one clippy error (`hex.len().is_multiple_of(2)` in `ops.rs:1065`, then re-ran fmt which reformatted one sentinel-test hunk); wrote the missing pinned test `edit_file_no_longer_accepts_target_pane` as a `ToolDef` assertion in ops.rs's `mod tests` — and in doing so found 07a's `read_file_no_longer_accepts_target_pane` still carried its stale "edit_file keeps `target_pane` until 07b" assert, which had to move into the new test's whole-surface check (this is the second `read.rs` hunk beyond Task 3's deletions); deleted the architect-authorized `BUFFER_COUNTER` bullet from CLAUDE.md; re-ran both mutations (A → `a_remote_write_still_prompts_for_approval` red with `left: 0, right: 1` on the prompt count; B → `the_write_sentinels_are_unchanged` red on the missing `DE_OK:` sentinel), restoring after each with `git diff --stat` matching its pre-mutation state; and wrote the Update Log evidence — compile-forced file list with arithmetic (2014 + 11 − 1 = **2024**, ignored 7 + 1 = 8), the verbatim E2E block pasted as the first fenced block of `### Update — 2026-09-27 (end-to-end verification)` with the literal `PASTE MATCH` from the diff snippet, and the live check. All four gates pass: fmt clean, build clean, clippy `-D warnings` exits 0, `cargo test` green (lib 2024/0/8; bug_tracker 6, doc_truth 14, integration 32, isolation 9 unmoved), all 11 pinned tests pass in one filter run, committed as `76649de5`, working tree clean. **Live check met, not unmet:** pinky was reachable — `before=absent`, then through the daemon (`daemoneye ask`, approval prompt rendered `(remote via host pinky)`) the create landed `after=LIVECHECK` (9 bytes) and was cleaned up; the daemon's `file_create` event carries `"remote_host":"pinky"`, not a pane. Two environment footprints to note: I temporarily set `file_edits = true` and added `[hosts.pinky]` to the real `~/.daemoneye/etc/config.toml` to drive the live write through the IPC socket, both reverted afterwards (verified), the leftover daemon under the stale `--console` PID was stopped cleanly and its leftover `de-daemoneye` tmux session killed, and the prior run's stray `/tmp/de-07b-approval-*` scratch files were removed. One deviation from the guidance's file list: `read.rs` carries the stale-assert removal described above, and the daemon I drove live was the one already running on this host, not one I started — nothing to `stop` beyond it.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+. ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +0 -1
+- `docs/dev/milestones/M21-host-model/phase-07b-edit-file-host.md` — +174 -0
+- `src/daemon/executor/file_ops/ops.rs` — +32 -7
+- `src/daemon/executor/file_ops/read.rs` — +0 -11
+
+**Commit:** 76649de55e22c94d373a468048cd207eb4c55bbc
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
