@@ -1,7 +1,7 @@
 # Phase 08a: ghost-target-resolution — a runbook's `ssh_target` learns which configured host it means
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-02 (`HostEntry` with `ssh` / `sudo_scripts`), phase-06d
 (`GhostPolicy.hosts`, `may_use_host`, `ghost_host_refusal`)
 **Estimated diff:** ~330 lines across 7 files, plus 11 tests
@@ -846,3 +846,152 @@ swap's result is recorded above.
 After all restorations: `cargo test --lib` → `ok. 2037 passed; 0 failed; 8
 ignored`, `cargo test --test isolation` → `ok. 10 passed; 0 failed; 1
 ignored`.
+
+### Update — 2026-09-27 19:27 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Phase 08a is implemented and committed (`c371eb13`, 14 files, +1080/−7): `resolve_ssh_target` + `SshTargetResolution` in `src/host.rs` (key match wins outright, else unique `ssh`-destination match, ambiguity → neither, sorted); the resolution is computed once at ghost start in `start_session_with_config` via `apply_ssh_target_resolution`, stored on `GhostConfig` as `ssh_target_host`/`ssh_target_sudo_scripts`, logged as `ghost_ssh_target_resolved`, and copied into `GhostPolicy`'s new `remote_host`/`remote_sudo_scripts` in `from_config`; both gates run in `run_background` before the approval prompt — Gate 1 reuses 06d's `ghost_host_refusal` (made `pub(super)`) under event name `ghost_host_refused`, Gate 2 emits `ghost_elevation_refused` — and the transport (`ssh <target> '<cmd>'` in a tmux window) is untouched. End-to-end verification ran verbatim and captured mechanically: `lib1..3=ok`, `lib_counts=2037p-0f-8i`, `isolation_counts=10p-0f-1i`, `door_test=1`, all greps at or above their floors (`resolver=1`, `predicates=2`, `gates=2`, `start_call=3`, `stale_code_claim=0`, `template_unenforced=1`, `readme_row=1`, `ignore_total=8`), pasted as the first fenced block of the end-to-end Update Log entry with `PASTE MATCH` re-confirmed after the final fmt/clippy pass; all six mutations were applied, run once each, and restored, and every pinned witness went red (results tabulated in the entry). Status remains `in-progress` per the contract — I did not write a `(complete)` entry; the README phase row, phase doc, and start/progress/e2e/mutation entries are all in the one commit.
+
+**Notes for review** — four spec deviations, none blocking:
+1. **Test count is 2037, not 2034.** Baseline 2024 + 13, not +10: the Gate-2 truth table's unnamed rows needed two extra predicate tests (`a_nonempty_host_script_list_permits_only_its_names`, `no_resolved_host_keeps_todays_elevation_behaviour`), and I had initially overlooked that the spec's eleven pinned names include two placed in `foreground.rs` — after correcting that the arithmetic lands at +13; the inventory table in the end-to-end entry names every test and its placement. One unpinned pair is `an_unconfigured_ssh_target_stays_on_the_1x_path` existing in *both* `src/host.rs` (resolver half) and `src/daemon/policy_tests.rs` (predicate half) — same name, different modules, both required by the spec's pinned list, and both match the `cargo test` filter.
+2. **The spec's literal inventory was wrong in two places.** `tests/integration.rs:1214` uses `..Default::default()` and did **not** need an edit (the spec said it would fail to compile — it didn't, untouched); the seven `GhostPolicy` literals in `policy_tests.rs` are four builder functions, and `foreground.rs:1305` needed it while `:1389` did not (spread form). All touched literal files are listed in the start entry as authorized.
+3. **Mutation F needed a real precedence swap.** Moving the `contains_key` check after destination *collection* (but before destination *match*) left the witness green; the recorded result is from the true swap (unique destination match returns before the key is consulted), which went red as required.
+4. **The refusal-gate call-site tests share a `HomeGuard`** in a `refusal_gate_tests` module that holds `TEST_HOME_LOCK` for the guard's whole life — the initial `test_home_guard()`-then-manual-restore shape interleaved under the default test threads (the tmux-based `run_background_resolves_ghost_script_paths` read a foreign `HOME`); with the lock held, three consecutive full `--lib` runs are green and `--test-threads=1` is green. Also note `mod.rs`'s `ghost_host_refusal` is now `pub(super)` — the minimal visibility change the child module needed, exactly as § Current state 4 predicted would not be required but the compiler did.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+der_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 11 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+
+test result: ok. 10 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +1 -1
+- `assets/etc/config.toml` — +4 -2
+- `docs/dev/milestones/M21-host-model/README.md` — +1 -1
+- `docs/dev/milestones/M21-host-model/phase-08a-ghost-target-resolution.md` — +164 -1
+- `src/config/types.rs` — +4 -1
+- `src/daemon/executor/foreground.rs` — +289 -0
+- `src/daemon/executor/mod.rs` — +1 -1
+- `src/daemon/ghost.rs` — +157 -0
+- `src/daemon/policy.rs` — +32 -0
+- `src/daemon/policy_tests.rs` — +103 -0
+- `src/host.rs` — +130 -0
+- `src/ipc.rs` — +8 -0
+- `src/runbook.rs` — +2 -0
+- `tests/isolation.rs` — +184 -0
+
+**Commit:** c371eb13bdb50a9ac450a03e21097c75d4f70a83
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
