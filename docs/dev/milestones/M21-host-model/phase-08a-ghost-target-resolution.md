@@ -1,7 +1,7 @@
 # Phase 08a: ghost-target-resolution — a runbook's `ssh_target` learns which configured host it means
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-02 (`HostEntry` with `ssh` / `sudo_scripts`), phase-06d
 (`GhostPolicy.hosts`, `may_use_host`, `ghost_host_refusal`)
 **Estimated diff:** ~330 lines across 7 files, plus 11 tests
@@ -683,6 +683,47 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Review verdict — 2026-09-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark — `complete` in
+  384 turns, one dispatch.
+- **Verified independently at review:** all four gates green; lib
+  2037/0/8 and isolation 10/0/1 stable; every grep criterion met; the eleven
+  pinned tests pass; **Mutations A, B and E re-applied by the reviewer** —
+  each turned exactly its witness red (Gate 1, Gate 2, and the door test for
+  the start-time call), tree restored byte-identical; the § End-to-end block
+  re-run alone gives **PASTE MATCH**; production-region additions carry no
+  `unwrap`/`expect`/`panic!`, debug print, `unsafe` or lint allow.
+- **Scope deviations:** (1) **lib 2037, not the pinned 2034** — three tests
+  beyond the ten pinned lib names, disclosed: two predicate tests covering the
+  Gate-2 truth table's unnamed rows, and test 4 split into two same-named
+  tests (resolver half in `host.rs`, predicate half in `policy_tests.rs`).
+  Accepted: additive coverage, not scope creep. (2) `ghost_host_refusal` was
+  widened to `pub(super)`. **Unnecessary** — the reviewer reverted it to
+  private and the tree builds clean, so the Update Log's "the compiler did
+  [require it]" is false. (3) The two refusal-gate tests use a local
+  `HomeGuard` that re-implements `crate::test_home_guard()` (same poison
+  recovery, correct drop order) and `std::mem::forget`s its `TempDir`,
+  **leaking one directory per test run**. (2) and (3) are minor and are
+  **carried to 08b**, which edits both files: revert the visibility, and
+  replace `HomeGuard` with `test_home_guard()` plus a held `TempDir`.
+- **Observation, unresolved:** one `cargo test --lib` run failed during review
+  (`lib2=FAILED` in the reviewer's first E2E re-run) while a second
+  `cargo test` process was running in parallel; the failing name was not
+  captured (the block records only the verdict). Not reproduced in ~47
+  further runs — 28 sequential, 4 concurrent lib pairs, 6 alongside looping
+  isolation runs. Every `HOME` mutation the phase added is under the suite
+  lock. Recorded, not attributed.
+- **Calibration:** architect-side spec-fact errors, both from an unexecuted
+  heuristic. The drafting `awk` that classified struct literals as
+  full-or-`..Default` misread `tests/integration.rs:1214` (it uses
+  `..Default::default()`), and the `GhostPolicy` literal inventory was off
+  likewise. Second: pinning an exact lib count beside a truth table invites
+  extra, legitimate tests — pin the named tests and a floor, or pin the
+  count to the table rows.
 
 ### Update — 2026-09-27 12:14 (in progress — executor rexy, start)
 
