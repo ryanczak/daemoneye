@@ -1,7 +1,7 @@
 # Bug 1 on phase-07b: the named-host delete / copy / edit tests never run the op, so a lying remote write ships green
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-09-27 — verified fixed at review. The four per-operation tests now drive `run_{create,delete,copy,edit}_with_spawn` on `HostId::Named` and assert the filesystem effect; mutants C, D and E were re-applied independently to production code only and each turned exactly its named test red (2023 passed / 1 failed), tree restored byte-identical. Retyped-command grep 0; lib 2024/0/8 on three runs, not 2025.
 **Filed:** 2026-09-27
 
 ## What's wrong
@@ -61,22 +61,22 @@ The delete / copy / edit tests never used it.
 
 ## Definition of done
 
-- [ ] Mutant C (above), applied with the `patch` tool to the production delete
+- [x] Mutant C (above), applied with the `patch` tool to the production delete
       branch only, turns **`delete_on_a_named_host_runs_through_the_shell`**
       red; restored afterwards. *(Against the current tree: survives — 2024
       passed.)*
-- [ ] Mutant D (above), applied to the production copy branch only, turns
+- [x] Mutant D (above), applied to the production copy branch only, turns
       **`copy_on_a_named_host_runs_through_the_shell`** red; restored
       afterwards. *(Against the current tree: survives — 2024 passed.)*
-- [ ] Mutant E (above), applied to `run_edit_with_spawn`'s named-host branch
+- [x] Mutant E (above), applied to `run_edit_with_spawn`'s named-host branch
       only, turns **`edit_on_a_named_host_runs_through_the_shell`** red;
       restored afterwards. *(Against the current tree: survives — 2024
       passed.)*
-- [ ] No test in `mod tests` retypes a production write command:
+- [x] No test in `mod tests` retypes a production write command:
       `awk '/^#\[cfg\(test\)\]/{t=1} t' src/daemon/executor/file_ops/ops.rs | grep -c "rm -- '\|cp -n -- '"`
       → **0** (current: 2).
-- [ ] `cargo test --lib` → **2024 passed, 0 failed, 8 ignored — not 2025.**
+- [x] `cargo test --lib` → **2024 passed, 0 failed, 8 ignored — not 2025.**
       This fix rewrites four existing tests in place; a rising count means a
       test was added instead of fixed.
-- [ ] fmt / build / clippy `-D warnings` / full `cargo test` green; the other
+- [x] fmt / build / clippy `-D warnings` / full `cargo test` green; the other
       targets unmoved (bug_tracker 6, doc_truth 14, integration 32, isolation 9).

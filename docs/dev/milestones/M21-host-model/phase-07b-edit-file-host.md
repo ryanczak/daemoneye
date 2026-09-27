@@ -1,7 +1,7 @@
 # Phase 07b: edit-file-host — the four write ops over the PTY, and the pane era ends
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-07a (`run_in_host_shell`, the shell transport)
 **Estimated diff:** ~420 lines across 6 files, plus 11 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -460,6 +460,35 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Review verdict — 2026-09-27
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 — [bug-07b-1](bugs/bug-07b-1.md) (major, `missing_spec_test`):
+  the named-host delete/copy/edit tests fed a retyped or builder-made command
+  to the transport instead of invoking the operation, so a remote write that
+  reported `DE_OK` while doing nothing passed 2024/2024. Fixed in `95382efe`;
+  the review independently re-applied mutants C, D and E to production code —
+  each turned exactly its named test red.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark — first dispatch
+  `budget_exceeded` at 1000/1000 turns in the evidence stretch (implementation
+  complete), resumed via `continue_phase` (560 turns, complete), bounce fixed
+  via `execute_phase` (265 turns, complete).
+- **Scope deviations:** compile-forced dead-code cascade from deleting
+  `local_read_via_buffer` — `BUFFER_COUNTER` (`src/daemon/session.rs`) and
+  `save_buffer` / `delete_buffer` / `wait_for` (`src/tmux/pane.rs`); within the
+  compile-forced authorization and listed in the Update Log. The matching
+  `CLAUDE.md` Global-statics bullet was removed under an architect
+  authorization at escalation. Two `#[allow(clippy::too_many_arguments)]` on the
+  8-argument `run_create_with_spawn` / `run_copy_with_spawn` test seams —
+  accepted, the codebase carries ten such allows. **Left stale, out of scope:**
+  `docs/architecture.md:47` and `AGENTS.md:110` still name `BUFFER_COUNTER`.
+- **Calibration:** a pinned per-branch test *name* passing is a proxy — the
+  spec pinned four per-operation tests but only one mutation for the whole
+  feature, and three of the four tests bypassed their operation. Pin **one
+  mutation per branch** when a spec pins per-branch tests. Second: an
+  `in-progress` resume should use `execute_phase`, not `continue_phase` — the
+  latter has no `run_id` and trips Claude Code's 1800 s MCP idle timeout.
 
 ### Notes for executor — 2026-09-27 (bounce 1, bug-07b-1)
 
