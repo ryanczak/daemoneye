@@ -7,7 +7,6 @@ pub(super) use write::{EditArgs, run_edit_file};
 
 use super::shell_exec::SHELL_READY_TIMEOUT;
 use crate::shell::{Owner, ShellId, ShellRegistry, run_command, shell_for_owner, with_shells};
-use crate::tmux;
 use std::time::Duration;
 
 /// Hex-encode a string (no external crate required).
@@ -88,37 +87,9 @@ fn resolve_path_for_guard(path: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(path)
 }
 
-/// Send a command to a pane and poll until a completion marker appears.
-async fn remote_run_and_capture(
-    pane_id: &str,
-    cmd: &str,
-    timeout_secs: u64,
-) -> anyhow::Result<String> {
-    let p = pane_id.to_string();
-    let c = cmd.to_string();
-    tmux::off_runtime("send-keys", move || tmux::send_keys(&p, &c))
-        .await
-        .ok_or_else(|| anyhow::anyhow!("timed out sending keys to pane {pane_id}"))??;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        if tokio::time::Instant::now() > deadline {
-            anyhow::bail!("Timed out waiting for remote command in pane {}", pane_id);
-        }
-        let p = pane_id.to_string();
-        let snap = tmux::off_runtime("capture-pane", move || tmux::capture_pane(&p, 600))
-            .await
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
-        if snap.contains("__DE_DONE__") {
-            return Ok(snap);
-        }
-    }
-}
-
 /// Run `cmd` in a shell on `host` and return the shell's **real** captured
-/// output — the PTY-substrate analogue of [`remote_run_and_capture`], with no
-/// tmux pane and no polling.
+/// output — the PTY-substrate transport for a file op, with no tmux pane and
+/// no polling.
 ///
 /// The shell comes from [`shell_for_owner`], so an **idle** shell `owner`
 /// already holds on `host` is reused and an `interactive` or `dedicated` one

@@ -162,7 +162,7 @@ pub(super) struct EditFileArgs {
     new_string: Option<String>,
     content: Option<String>,
     dest_path: Option<String>,
-    target_pane: Option<String>,
+    host: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -590,7 +590,7 @@ impl ToolArgs for EditFileArgs {
             new_string: self.new_string,
             content: self.content,
             dest_path: self.dest_path,
-            target_pane: self.target_pane,
+            host: self.host,
             thought_signature: ts,
         }
     }

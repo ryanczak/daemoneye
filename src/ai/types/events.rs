@@ -80,7 +80,7 @@ pub enum AiEvent {
         new_string: Option<String>,
         content: Option<String>,
         dest_path: Option<String>,
-        target_pane: Option<String>,
+        host: Option<String>,
         thought_signature: Option<String>,
     },
     WriteRunbook {

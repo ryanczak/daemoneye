@@ -1047,7 +1047,7 @@ async fn do_ghost_turn(
                         new_string,
                         content,
                         dest_path,
-                        target_pane,
+                        host,
                     } => {
                         pending_calls.push(PendingCall::EditFile {
                             id,
@@ -1058,7 +1058,7 @@ async fn do_ghost_turn(
                             new_string,
                             content,
                             dest_path,
-                            target_pane,
+                            host,
                         });
                     }
                     AiEvent::SpawnGhost {

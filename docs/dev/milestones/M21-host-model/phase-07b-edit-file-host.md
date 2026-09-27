@@ -1,7 +1,7 @@
 # Phase 07b: edit-file-host — the four write ops over the PTY, and the pane era ends
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07a (`run_in_host_shell`, the shell transport)
 **Estimated diff:** ~420 lines across 6 files, plus 11 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -436,3 +436,202 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-27 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** run `05b2a695` hit `budget_exceeded` (1000/1000 turns) in the
+evidence stretch with the implementation essentially done — every grep
+criterion passes and `cargo test` is green (lib 2023/0/8; bug_tracker 6,
+doc_truth 14, integration 32, isolation 9 unmoved) — so the spec was sound
+and a fresh context only needs the short remainder: fmt + one clippy error,
+the one pinned test that was never written (`edit_file_no_longer_accepts_target_pane`
+→ the 2023-vs-2024 gap), one stale `CLAUDE.md` bullet, and the Update Log
+evidence (mutations, E2E + `PASTE MATCH`, live run, compile-forced file list),
+none of which was recorded. The architect removed the untracked `typescript`
+file the prior run's `script` invocation left in the repo root.
+
+### Update — 2026-09-26 14:00 (started)
+
+Executor: claude (headless). Status flipped `todo` → `in-progress` in this doc and in the milestone README's phase table.
+
+Plan of attack, following the spec:
+
+- Task 1 threads `host: Option<String>` through `edit_file`'s chain (defs → args → AiEvent → PendingCall → stream push → dispatch arm → `EditArgs` → ops), replacing `target_pane`.
+- Task 2 converts the four branches onto `run_in_host_shell` (07a's transport, used as-is), keeping the command builders and the `DE_OK:`/`DE_ERROR:` scan byte-for-byte; the three user-facing strings name the host (`remote_host` in `log_event`, no `pid`). Approval (`EditFilePrompt`) is untouched.
+- Task 3 deletes `remote_run_and_capture`, `local_read_via_buffer`, `build_local_buffer_read_cmd` (+ its test) and both `#[allow(dead_code)]`s; `get_pane_remote_host` stays (two live callers).
+- Task 4 updates the three doc rows; Task 5 adds the eleven pinned tests; Task 6/7 capture the end-to-end and live evidence.
+
+### Update — 2026-09-27 (resume, completed the evidence stretch)
+
+Executor: claude (headless, resume of run `05b2a695`). Continued from the
+escalation entry above; the implementation was already on disk.
+
+- **Clippy** (guidance 1): `ops.rs` sentinel test's
+  `(hex.len() % 2 == 0 …)` → `hex.len().is_multiple_of(2)`;
+  `cargo clippy --all-targets --all-features -- -D warnings` now exits 0.
+- **The missing pinned test** (guidance 2): wrote
+  `edit_file_no_longer_accepts_target_pane` in `ops.rs`'s `mod tests`,
+  asserting against the `ToolDef` (no `target_pane` on `edit_file`, `host`
+  present, and — the row's exit criterion — no tool anywhere in `TOOLS`
+  carrying `target_pane`). While re-reading `read.rs` I found
+  `read_file_no_longer_accepts_target_pane` carried a stale
+  `still_on_edit_file` assertion from 07a (it pinned edit_file *still* having
+  the parameter); row 07b retired it, so that assertion is now false — it had
+  to move. It lives in the new test's third assert
+  (`target_pane is retired from the whole tool surface`), and the stale block
+  came out of the 07a test. That is why `read.rs` shows a second hunk beyond
+  Task 3's deletions.
+- **Test arithmetic** (guidance 2): 2014 baseline + 11 new − 1 deleted
+  (`local_buffer_read_cmd_signals_via_wait_for`, removed with
+  `build_local_buffer_read_cmd` per Task 3) = **2024**; ignored
+  7 + 1 live `edit_file_on_pinky_end_to_end` = **8**. Measured three
+  consecutive runs: `2024 passed; 0 failed; 8 ignored` each. The 11-test
+  filter command prints `11 passed; 0 failed; 2021 filtered out`.
+- **CLAUDE.md `BUFFER_COUNTER` bullet** (guidance 3, architect-authorized):
+  deleted the one line; the static and its `pane.rs` consumers are gone
+  (compile-forced by Task 3). Nothing else in CLAUDE.md beyond Task 4's
+  `edit_file` row.
+- **Mutations** (guidance 4): both re-run, one run each, restored after;
+  results recorded in the end-to-end entry below.
+- **Live check** (guidance 5c): pinky reachable; the create probe
+  (`LIVECHECK`) landed and read back. Details in the end-to-end entry.
+- Compile-forced file list is in the entry after this one.
+
+### Update — 2026-09-27 (compile-forced edits, arithmetic, mutation results)
+
+**Files touched under the "any construction site a field change compile-forces"
+authorization** (verified against `git status --short`; the nine Task-1 files
+are the spec's own authorization):
+
+- `src/daemon/session.rs` — deleted `BUFFER_COUNTER` (the static) and its doc
+  comment: nothing referenced it after `local_read_via_buffer` went.
+- `src/tmux/pane.rs` — deleted `save_buffer`, `delete_buffer` and `wait_for`
+  with their doc comments: the buffer read path was their only callers.
+- `src/daemon/ghost.rs` — `target_pane` → `host` in the `AiEvent::EditFile`
+  forwarding arm (Task 1's construction site).
+- `src/daemon/stream.rs` — same, in the chat-streaming arm.
+- `src/ai/tools/dispatch.rs` — the args-construction arm plus its test's
+  assertions (the test pinned edit_file *keeping* `target_pane`; row 07b
+  retires it, so the assertions flipped to the new expectation — listed here
+  because the test edit goes beyond a field rename).
+- `src/daemon/executor/file_ops/mod.rs` — removed the `crate::tmux` import
+  `remote_run_and_capture` was the last user of (Task 3 deletion requirement)
+  and reworded `run_in_host_shell`'s one doc-comment line that named the
+  deleted function; the function body itself is 07a's, untouched.
+- `CLAUDE.md` — the `BUFFER_COUNTER` bullet, deleted on the architect's
+  explicit authorization in the resume guidance (guidance 3).
+
+Test-count arithmetic: 2014 (baseline at `1e01cf69`) + 11 new (Task 5) − 1
+deleted (`local_buffer_read_cmd_signals_via_wait_for`, went with
+`build_local_buffer_read_cmd`) = **2024**; ignored 7 + 1
+(`edit_file_on_pinky_end_to_end`, Task 7's live check) = **8**. Measured:
+`2024 passed; 0 failed; 8 ignored` on three consecutive runs.
+
+**Mutation A** — in `run_create`'s named-host branch the `EditFilePrompt` send
+and the `await_edit_file_response` wait were removed (patch, then restore).
+`cargo test --lib a_remote_write_still_prompts_for_approval` printed:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2031 filtered out
+   assertion `left == right` failed: exactly one EditFilePrompt must fire before the host run
+   left: 0, right: 1
+```
+
+Red, as required — the security property is pinned to the prompt, not to the
+transport.
+
+**Mutation B** — `DE_OK:` → `DE_YES:` in `build_remote_create_cmd` only (patch,
+then restore). `cargo test --lib the_write_sentinels_are_unchanged` printed:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2031 filtered out
+   create's DE_OK sentinel is gone from the builder: "…echo '__DE_DONE__'…"
+```
+
+Red, as required — builder and scanner are a contract; a successful write
+would report as a failure if they drifted.
+
+After both restores, `git diff --stat` matched the pre-mutation state
+(19 files, 1103+/467−).
+
+### Update — 2026-09-27 (end-to-end verification)
+
+```
+lib1=ok
+lib2=ok
+lib3=ok
+lib_counts=2024p-0f-8i
+target_pane_params=0
+edit_file_host=1
+pane_branches_gone=0
+dead_helpers_gone=0
+dead_code_allows=0
+pane_host_helper_kept=2
+doc_truth=ok
+```
+
+Every line matches the § End-to-end verification's expected list:
+`lib1..3=ok`, `lib_counts=2024p-0f-8i` (the arithmetic above),
+`target_pane_params=0` (the milestone exit criterion),
+`edit_file_host=1`, `pane_branches_gone=0`, `dead_helpers_gone=0`,
+`dead_code_allows=0`, `pane_host_helper_kept=2`, `doc_truth=ok`.
+
+Diff snippet against the capture file: `PASTE MATCH`.
+
+## Live verification
+
+`pinky` was reachable (`ssh -o ConnectTimeout=8 pinky hostname` → `pinky`),
+so the block was run rather than reported unmet. Transcripts, captured
+mechanically:
+
+```
+$ ssh -o ConnectTimeout=8 pinky 'rm -f /tmp/de-07b-probe.txt'
+$ printf 'before=%s\n' "$(ssh -o ConnectTimeout=8 pinky 'test -e /tmp/de-07b-probe.txt && echo present || echo absent')"
+before=absent
+```
+
+The write went **through the daemon**, driven over the IPC socket from a
+`daemoneye ask` chat turn: the AI emitted `edit_file { operation: "create",
+path: "/tmp/de-07b-probe.txt", content: "LIVECHECK", host: "pinky" }`, the
+client's approval prompt rendered `(remote via host pinky)` with the
+`+LIVECHECK` diff line, and the approval was answered. The daemon's
+`file_create` event logged the write against the host, not a pane:
+
+```
+$ grep file_create ~/.daemoneye/var/log/events/events-20260927.jsonl | tail -1
+{"event":"file_create","path":"/tmp/de-07b-probe.txt","pid":603681,"remote_host":"pinky","session":"-","ts":"2026-09-27T14:30:09.093475158+00:00"}
+```
+
+```
+$ printf 'after=%s\n' "$(ssh -o ConnectTimeout=8 pinky 'cat /tmp/de-07b-probe.txt 2>/dev/null || echo MISSING')"
+after=LIVECHECK
+$ ssh -o ConnectTimeout=8 pinky 'stat -c "%s bytes %y" /tmp/de-07b-probe.txt'
+9 bytes 2026-09-27 07:30:09.090925777 -0700
+$ ssh -o ConnectTimeout=8 pinky 'rm -f /tmp/de-07b-probe.txt; ls /tmp/de-07b-probe.txt 2>&1 || echo GONE'
+ls: cannot access '/tmp/de-07b-probe.txt': No such file or directory
+GONE
+```
+
+`before` was `absent`, `after` was the content written, and the probe was
+cleaned up. A pre-existing `/tmp/de-07b-approval-probe.txt` (plus two stray
+`de-07b-approval-*` files) left in `/tmp` by the prior run were removed.
+
+The pinned live test `edit_file_on_pinky_end_to_end`
+(`-- --ignored --nocapture`) also passes over the real ssh argv:
+
+```
+PASTE MATCH >>>
+edit_file_on_pinky create sentence="Created /tmp/de-07b-probe.txt on host pinky."
+<<<
+PASTE MATCH >>>
+edit_file_on_pinky readback="wrote-through-daemoneye\r\n"
+<<<
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2031 filtered out; finished in 0.50s
+```
+
+Its ControlMaster socket was closed (`ssh -O exit …`) and the temp HOME it
+used is the test guard's own, torn down on drop. The config edit the live
+drive needed (`file_edits = true` in `~/.daemoneye/etc/config.toml`, plus a
+`[hosts.pinky]` entry that was absent from the real config) was reverted
+afterwards; the probe file is gone from pinky.

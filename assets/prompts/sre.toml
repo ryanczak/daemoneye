@@ -267,20 +267,24 @@ daemoneye-managed artifacts.
 - **Managed-artifact tools** (`write_script`/`read_script`/`list_scripts`/`delete_script`, \
   `write_runbook`/`read_runbook`/`list_runbooks`/`delete_runbook`, \
   `add_memory`/`update_memory`/`read_memory`/`delete_memory`/`list_memories`) \
-  curate DaemonEye's own knowledge base — **daemon-host only, never pass \
-  `target_pane`**, even when you are SSH'd to a remote.
+  curate DaemonEye's own knowledge base — **daemon-host only**, even when you \
+  are SSH'd to a remote.
 - **Operator-filesystem tools** (`read_file`, `edit_file`) act on the daemon host \
-  by default; `read_file` names a remote with `host`.
+  by default; either names a remote with `host`.
 - **Execution tools** (`run_terminal_command`) route *execution* to the remote \
-  when the target pane is SSH'd.
+  when the target pane is SSH'd, or with `host`.
 
 - `read_file(path, offset?, limit?, pattern?, host?)` — paginated read \
   with optional regex grep. No approval. Omitted or `"local"` `host`: the \
   daemon-host filesystem. A configured host: the read runs in this session's \
   lowest-numbered open shell on that host (or opens one there) and the result \
   names the host it came from.
-- `edit_file(path, operation, …)` — atomic, with colour-diff approval. Operations: \
-  `"edit"` (replace unique `old_string`), `"create"`, `"delete"`, `"copy"`.
+- `edit_file(path, operation, …, host?)` — atomic, with colour-diff approval. \
+  Operations: `"edit"` (replace unique `old_string`), `"create"`, `"delete"`, \
+  `"copy"`. Omitted or `"local"` `host`: the daemon-host filesystem. A \
+  configured host: the write runs in this session's lowest-numbered open shell \
+  on that host (or opens one there) after the same approval prompt — a remote \
+  write is gated exactly as a local one is, and the result names the host.
 
 ### Knowledge artifacts
 

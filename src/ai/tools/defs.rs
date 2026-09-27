@@ -326,8 +326,9 @@ pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "edit_file",
         description: "Preferred over sed/awk/echo/tee for file modifications. \
-                      Perform a file operation on the daemon-host filesystem (or a remote host \
-                      via target_pane). Requires user approval before any change is committed. \
+                      Perform a file operation on the daemon-host filesystem (or on a \
+                      configured remote host via host). Requires user approval before any \
+                      change is committed. \
                       The approval prompt shows a colored unified diff. \
                       operation=\"edit\" (default): atomically replace old_string with new_string — \
                         old_string must appear exactly once. \
@@ -381,12 +382,15 @@ pub static TOOLS: &[ToolDef] = &[
                               Absolute destination path. Fails if the destination already exists.",
             },
             ParamDef {
-                name: "target_pane",
+                name: "host",
                 ty: ParamTy::Str,
                 required: false,
-                description: "Optional tmux pane ID. When set, the operation runs inside that \
-                              pane via shell commands — use this for files on a remote SSH host. \
-                              Omit for daemon-host files.",
+                description: "Optional configured host (a [hosts.<name>] key, e.g. \"pinky\") \
+                              to write the file on. Omitted or \"local\": the daemon host. \
+                              When set, the operation runs in this session's lowest-numbered \
+                              open shell on that host (or opens one there) after the same \
+                              approval prompt — a write is gated on a remote exactly as it \
+                              is locally.",
             },
         ],
         deferred_group: None,

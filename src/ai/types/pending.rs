@@ -89,7 +89,7 @@ pub enum PendingCall {
         new_string: Option<String>,
         content: Option<String>,
         dest_path: Option<String>,
-        target_pane: Option<String>,
+        host: Option<String>,
     },
     WriteRunbook {
         id: String,
@@ -555,13 +555,13 @@ impl PendingCall {
                 new_string,
                 content,
                 dest_path,
-                target_pane,
+                host,
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "edit_file".to_string(),
                 arguments: args_to_string(
-                    serde_json::json!({"path": path, "operation": operation, "old_string": old_string, "new_string": new_string, "content": content, "dest_path": dest_path, "target_pane": target_pane}),
+                    serde_json::json!({"path": path, "operation": operation, "old_string": old_string, "new_string": new_string, "content": content, "dest_path": dest_path, "host": host}),
                 ),
             },
             PendingCall::WriteRunbook {
@@ -1340,7 +1340,7 @@ mod tests {
                 new_string: None,
                 content: None,
                 dest_path: None,
-                target_pane: None,
+                host: None,
             },
         ];
         for call in cases {
@@ -1624,7 +1624,7 @@ mod tests {
                 new_string: None,
                 content: None,
                 dest_path: None,
-                target_pane: None,
+                host: None,
             },
             PendingCall::WriteRunbook {
                 id: x(),

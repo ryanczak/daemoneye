@@ -97,7 +97,6 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 - `BG_DONE_TX`: `OnceLock<broadcast::Sender<String>>` — sends pane_id on activity; shared by foreground completion watchers.
 - `FG_HOOK_COUNTER`: `AtomicUsize` — unique `alert-activity[N]` hook slot per concurrent watcher.
 - `DAEMON_START`: `OnceLock<Instant>` — recorded at daemon startup; used by `daemon_uptime_secs()` for `daemoneye status`.
-- `BUFFER_COUNTER`: `AtomicUsize` — unique tmux buffer names (`de-rb-N`) for N12 local-pane file reads via `load-buffer`/`save-buffer`.
 
 ### Session context format
 
@@ -145,7 +144,7 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | Tool | Loaded | Description |
 |---|---|---|
 | `run_terminal_command` | core | Foreground (user pane) or background (daemon host window). `wait?` selects between them — omitted or `true` waits; `wait: false` is what `background: true` was and returns immediately with the shell id, follow it with `watch_shell` / `read_shell`. `shell?` targets a specific PTY shell by id or `"new"` (default: this session's lowest-numbered open shell, another session's shell is refused); `host?` runs it on a configured `[hosts.<name>]` host — omitted or `"local"` means the daemon host, a shell id naming a shell on a different host is refused (never relocated); `timeout_secs?` bounds the wait, default 45 s, cap 3600 |
-| `edit_file` | core | File operations on daemon host (or remote via `target_pane`): `operation="edit"` (atomic string replacement, requires `old_string`/`new_string`), `operation="create"` (new file from `content`), `operation="delete"` (remove file), `operation="copy"` (duplicate `path` to `dest_path`). All require user approval with colored unified diff. Atomic writes via `.de_tmp` → rename. **Blocked from `~/.daemoneye/`**. IPC: `EditFilePrompt` / `EditFileResponse`. |
+| `edit_file` | core | File operations on the daemon host (or on a configured `[hosts.<name>]` host with `host?` — omitted or `"local"` means the daemon host; the operation runs in a shell there after the same approval prompt): `operation="edit"` (atomic string replacement, requires `old_string`/`new_string`), `operation="create"` (new file from `content`), `operation="delete"` (remove file), `operation="copy"` (duplicate `path` to `dest_path`). All require user approval with colored unified diff. Atomic writes via `.de_tmp` → rename. **Blocked from `~/.daemoneye/`**. IPC: `EditFilePrompt` / `EditFileResponse`. |
 | `read_file` | core | Paginated file read with optional grep filter; masks sensitive data; `host?` reads on a configured `[hosts.<name>]` host through a shell there — omitted or `"local"` means the daemon host; path `canonicalize()`d to resolve symlinks; **blocked only from `etc/config.toml` and `etc/prompts/sre.toml`** (API credential files) |
 | `search_repository` | core | Grep across runbooks / scripts / memory / events |
 | `get_shell_context` | core | Fresh terminal snapshot on demand; optional `scope` param: `"shells"` (open shells + default only, no capture), `"session"` (default, user's session), `"all"` (adds foreign-session pane metadata) |

@@ -184,27 +184,19 @@ mod tests {
         for kept in ["command", "wait", "shell", "timeout_secs"] {
             assert!(names.contains(&kept), "{kept} must stay: {names:?}");
         }
-        // edit_file keeps its pane parameter until M21 row 07b; read_file's is
-        // retired — host? replaced it (phase-07a).
-        let read = TOOLS
-            .iter()
-            .find(|t| t.name == "read_file")
-            .expect("must exist");
-        assert!(
-            !read.params.iter().any(|p| p.name == "target_pane"),
-            "read_file's target_pane is retired"
-        );
-        assert!(
-            read.params.iter().any(|p| p.name == "host"),
-            "read_file carries host in its place"
-        );
+        // Row 07b retired edit_file's pane parameter too — host? replaced it,
+        // so target_pane is gone from the whole tool surface.
         let edit = TOOLS
             .iter()
             .find(|t| t.name == "edit_file")
             .expect("must exist");
         assert!(
-            edit.params.iter().any(|p| p.name == "target_pane"),
-            "edit_file keeps target_pane until M21 row 07b"
+            !edit.params.iter().any(|p| p.name == "target_pane"),
+            "edit_file's target_pane is retired by M21 row 07b"
+        );
+        assert!(
+            edit.params.iter().any(|p| p.name == "host"),
+            "edit_file carries host in its place"
         );
         println!(
             "PASTE MATCH >>>\npane_ids={} run_params={}\n<<<",

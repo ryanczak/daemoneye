@@ -9,7 +9,19 @@ pub struct EditArgs<'a> {
     pub new_string: Option<&'a str>,
     pub content: Option<&'a str>,
     pub dest_path: Option<&'a str>,
-    pub target_pane: Option<&'a str>,
+    pub host: Option<&'a str>,
+}
+
+/// Resolve an `edit_file` host argument the way `read_file` does: `None` /
+/// `"local"` is the daemon host; a name is refused up front if it can never
+/// be one (`HostId::parse`'s own message). An *unconfigured* well-formed name
+/// is deliberately not refused here — it is phase-06c's `new_host` case and
+/// `run_in_host_shell` resolves it to its bare ssh destination on approval.
+pub(super) fn resolve_edit_host(host: Option<&str>) -> Result<crate::host::HostId, String> {
+    match host {
+        None => Ok(crate::host::HostId::Local),
+        Some(name) => crate::host::HostId::parse(name),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -35,7 +47,7 @@ where
         new_string,
         content,
         dest_path,
-        target_pane,
+        host,
     } = args;
     let GhostCtx { is_ghost, .. } = ghost_ctx;
 
@@ -81,12 +93,16 @@ where
         ));
     }
 
+    // ── Host resolution ───────────────────────────────────────────────────
+    let host_id = match resolve_edit_host(host) {
+        Ok(id) => id,
+        Err(msg) => return Ok(ToolCallOutcome::Result(format!("Error: {msg}"))),
+    };
+
     match operation {
-        "create" => {
-            super::ops::run_create(id, path, content, target_pane, session_id, tx, rx).await
-        }
-        "delete" => super::ops::run_delete(id, path, target_pane, session_id, tx, rx).await,
-        "copy" => super::ops::run_copy(id, path, dest_path, target_pane, session_id, tx, rx).await,
+        "create" => super::ops::run_create(id, path, content, &host_id, session_id, tx, rx).await,
+        "delete" => super::ops::run_delete(id, path, &host_id, session_id, tx, rx).await,
+        "copy" => super::ops::run_copy(id, path, dest_path, &host_id, session_id, tx, rx).await,
         _ => {
             // "edit" (default) and any unrecognised value fall through here.
             let old =
@@ -104,7 +120,7 @@ where
                     path,
                     old_string: old,
                     new_string: new,
-                    target_pane,
+                    host: &host_id,
                 },
                 session_id,
                 tx,

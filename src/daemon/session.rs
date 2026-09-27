@@ -156,10 +156,6 @@ pub static COMPLETE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<(Stri
 /// Using a counter avoids the timestamp-modulo collision risk.
 pub static FG_HOOK_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Monotonically-incrementing counter used to generate unique tmux buffer names
-/// (`de-rb-N`) for N12 local-pane file reads via `load-buffer`/`save-buffer`.
-pub static BUFFER_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 pub fn bg_done_subscribe() -> tokio::sync::broadcast::Receiver<String> {
     BG_DONE_TX
         .get_or_init(|| {

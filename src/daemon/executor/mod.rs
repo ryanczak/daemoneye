@@ -918,7 +918,7 @@ where
             new_string,
             content,
             dest_path,
-            target_pane,
+            host,
             ..
         } => {
             file_ops::run_edit_file(
@@ -930,7 +930,7 @@ where
                     new_string: new_string.as_deref(),
                     content: content.as_deref(),
                     dest_path: dest_path.as_deref(),
-                    target_pane: target_pane.as_deref(),
+                    host: host.as_deref(),
                 },
                 session_id,
                 GhostCtx {

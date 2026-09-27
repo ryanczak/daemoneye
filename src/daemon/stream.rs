@@ -485,7 +485,7 @@ where
                     new_string,
                     content,
                     dest_path,
-                    target_pane,
+                    host,
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::EditFile {
@@ -497,7 +497,7 @@ where
                         new_string,
                         content,
                         dest_path,
-                        target_pane,
+                        host,
                     });
                 }
                 AiEvent::WriteRunbook {
