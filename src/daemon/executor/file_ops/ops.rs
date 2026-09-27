@@ -889,7 +889,7 @@ where
 mod tests {
     use super::*;
     use crate::daemon::executor::ToolCallOutcome;
-    use crate::daemon::executor::file_ops::{run_in_host_shell, sq_escape};
+    use crate::daemon::executor::file_ops::run_in_host_shell;
     use crate::ipc::Request;
     use std::sync::Arc;
 
@@ -1204,110 +1204,176 @@ mod tests {
         );
     }
 
-    // ── Tests 1–4: each op's command really runs through the shell ────────
+    // ── Tests 1–4: each op runs end to end on a named host ────────────────
     //
-    // The four "runs through the shell" tests share one body: build the op's
-    // command with the op's own builder (the same call site the op makes),
-    // run it through `run_in_host_shell` with the in-process PTY host, and
-    // apply the same `DE_OK:`/`DE_ERROR:` scan the op applies. A pane is not
-    // in the loop anywhere — the transport is the only path the command takes.
+    // The four "runs through the shell" tests drive the **operation** itself —
+    // `run_<op>_with_spawn` with `HostId::Named("web01")` and the in-process
+    // PTY host — the same seam test 10 (`a_remote_write_still_prompts_for_approval`)
+    // uses. The command the op builds reaches the shell through the op's own
+    // branch, and the assertion is on the **filesystem effect**, so a
+    // named-host branch that reports `DE_OK` without doing the work (the
+    // class bug-07b-1 was filed for) turns its test red.
 
-    async fn run_through_shell(reg: &crate::shell::ShellRegistry, cmd: &str, expect: &str) {
-        let snap = run_in_host_shell(
-            reg,
-            Owner::Chat(owner_key()),
-            crate::host::HostId::Named("web01".to_string()),
-            cmd,
-            REMOTE_WRITE_TIMEOUT_SECS,
-            spawn_in_process_host,
-        )
-        .await
-        .unwrap_or_else(|e| panic!("the host shell must run the command: {e:#}"));
-        let hit = snap
-            .lines()
-            .rev()
-            .find(|l| l.contains("DE_OK:") || l.contains("DE_ERROR:"))
-            .unwrap_or("__NO_SENTINEL__")
-            .to_string();
-        assert!(
-            hit.contains(expect),
-            "the sentinel scan must see {expect:?}, got {hit:?} from {snap:?}"
-        );
-    }
-
-    /// Test 1: create's command reaches the shell on a named host, not a pane.
+    /// Test 1: a create on a named host runs through the shell — the op's
+    /// own command, the op's own scan, the file landing on the host
+    /// filesystem.
     #[tokio::test]
     async fn create_on_a_named_host_runs_through_the_shell() {
         let (_home, dir) = remote_write_test_home();
-        let reg = crate::shell::ShellRegistry::default();
         let probe = dir.path().join("probe-create.txt");
-        let cmd = build_remote_create_cmd(probe.to_str().unwrap(), "through the shell\n");
-        run_through_shell(&reg, &cmd, &format!("DE_OK: Created {}", probe.display())).await;
+        let (mut tx, mut rx, prompts) = auto_approve_channel().await.unwrap();
+        let outcome = run_create_with_spawn(
+            "t1",
+            probe.to_str().unwrap(),
+            Some("through the shell\n"),
+            &crate::host::HostId::Named("web01".to_string()),
+            Some("sess-1"),
+            &mut tx,
+            &mut rx,
+            Box::new(|id| Box::pin(spawn_in_process_host(id))),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("run_create must not error: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
         assert!(
-            std::fs::read_to_string(&probe)
-                .unwrap()
-                .contains("through the shell"),
-            "the file landed on the host filesystem"
+            s.contains(&format!("Created {} on host web01.", probe.display())),
+            "the approved host create really ran: {s:?}"
+        );
+        let written = std::fs::read_to_string(&probe).unwrap_or_default();
+        assert!(
+            written.contains("through the shell"),
+            "the file landed on the (in-process) host filesystem: {written:?}"
+        );
+        assert_eq!(
+            prompts.lock().unwrap().len(),
+            1,
+            "the create is gated by exactly one EditFilePrompt"
         );
     }
 
-    /// Test 2: delete's command reaches the shell on a named host.
+    /// Test 2: a delete on a named host runs through the shell — the op
+    /// itself, not a retyped `rm`.
     #[tokio::test]
     async fn delete_on_a_named_host_runs_through_the_shell() {
         let (_home, dir) = remote_write_test_home();
-        let reg = crate::shell::ShellRegistry::default();
         let probe = dir.path().join("probe-delete.txt");
         std::fs::write(&probe, "to be deleted").unwrap();
-        let safe = sq_escape(probe.to_str().unwrap());
-        let cmd = format!(
-            "if [ -e '{safe}' ]; then rm -- '{safe}' && echo 'DE_OK: Deleted {safe}'; \
-             else echo 'DE_ERROR: file not found: {safe}'; fi; echo '__DE_DONE__'"
+        let (mut tx, mut rx, prompts) = auto_approve_channel().await.unwrap();
+        let outcome = run_delete_with_spawn(
+            "t2",
+            probe.to_str().unwrap(),
+            &crate::host::HostId::Named("web01".to_string()),
+            Some("sess-1"),
+            &mut tx,
+            &mut rx,
+            Box::new(|id| Box::pin(spawn_in_process_host(id))),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("run_delete must not error: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.contains(&format!("Deleted {} on host web01.", probe.display())),
+            "the approved host delete really ran: {s:?}"
         );
-        run_through_shell(&reg, &cmd, "DE_OK: Deleted").await;
-        assert!(!probe.exists(), "the file really was deleted");
+        assert!(
+            !probe.exists(),
+            "the file really was deleted by the op's own command"
+        );
+        assert_eq!(
+            prompts.lock().unwrap().len(),
+            1,
+            "the delete is gated by exactly one EditFilePrompt"
+        );
     }
 
-    /// Test 3: copy's command reaches the shell on a named host.
+    /// Test 3: a copy on a named host runs through the shell — the op
+    /// itself, not a retyped `cp`.
     #[tokio::test]
     async fn copy_on_a_named_host_runs_through_the_shell() {
         let (_home, dir) = remote_write_test_home();
-        let reg = crate::shell::ShellRegistry::default();
         let src = dir.path().join("probe-src.txt");
         let dst = dir.path().join("probe-dst.txt");
         std::fs::write(&src, "copy me").unwrap();
-        let safe_src = sq_escape(src.to_str().unwrap());
-        let safe_dst = sq_escape(dst.to_str().unwrap());
-        let cmd = format!(
-            "if [ ! -e '{safe_src}' ]; then echo 'DE_ERROR: source not found: {safe_src}'; \
-             elif [ -e '{safe_dst}' ]; then echo 'DE_ERROR: destination already exists: {safe_dst}'; \
-             else cp -n -- '{safe_src}' '{safe_dst}' && echo 'DE_OK: Copied {safe_src} to {safe_dst}' \
-             || echo 'DE_ERROR: cp failed'; fi; echo '__DE_DONE__'"
-        );
-        run_through_shell(&reg, &cmd, &format!("DE_OK: Copied {}", src.display())).await;
+        let (mut tx, mut rx, prompts) = auto_approve_channel().await.unwrap();
+        let outcome = run_copy_with_spawn(
+            "t3",
+            src.to_str().unwrap(),
+            Some(dst.to_str().unwrap()),
+            &crate::host::HostId::Named("web01".to_string()),
+            Some("sess-1"),
+            &mut tx,
+            &mut rx,
+            Box::new(|id| Box::pin(spawn_in_process_host(id))),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("run_copy must not error: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
         assert!(
-            std::fs::read_to_string(&dst).unwrap().contains("copy me"),
-            "the copy landed on the host filesystem"
+            s.contains(&format!(
+                "Copied {} to {} on host web01.",
+                src.display(),
+                dst.display()
+            )),
+            "the approved host copy really ran: {s:?}"
+        );
+        let copied = std::fs::read_to_string(&dst).unwrap_or_default();
+        assert!(
+            copied.contains("copy me"),
+            "the copy landed on the host filesystem: {copied:?}"
+        );
+        assert_eq!(
+            prompts.lock().unwrap().len(),
+            1,
+            "the copy is gated by exactly one EditFilePrompt"
         );
     }
 
-    /// Test 4: edit's command reaches the shell on a named host.
+    /// Test 4: an edit on a named host runs through the shell — the op
+    /// itself, its own builder's payload, not a builder call bypassing the
+    /// branch.
     #[tokio::test]
     async fn edit_on_a_named_host_runs_through_the_shell() {
         let (_home, dir) = remote_write_test_home();
-        let reg = crate::shell::ShellRegistry::default();
         let probe = dir.path().join("probe-edit.txt");
         std::fs::write(&probe, "the old string here").unwrap();
-        let cmd = super::super::write::build_remote_edit_cmd(
-            probe.to_str().unwrap(),
-            "the old string",
-            "the new string",
-        );
-        run_through_shell(&reg, &cmd, "DE_OK: Edited").await;
+        let (mut tx, mut rx, prompts) = auto_approve_channel().await.unwrap();
+        let outcome = run_edit_with_spawn(
+            RunEditArgs {
+                id: "t4",
+                path: probe.to_str().unwrap(),
+                old_string: "the old string",
+                new_string: "the new string",
+                host: &crate::host::HostId::Named("web01".to_string()),
+            },
+            Some("sess-1"),
+            &mut tx,
+            &mut rx,
+            Box::new(|id| Box::pin(spawn_in_process_host(id))),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("run_edit must not error: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
         assert!(
-            std::fs::read_to_string(&probe)
-                .unwrap()
-                .contains("the new string"),
-            "the edit landed on the host filesystem"
+            s.contains(&format!("Edited {} on host web01.", probe.display())),
+            "the approved host edit really ran: {s:?}"
+        );
+        let edited = std::fs::read_to_string(&probe).unwrap_or_default();
+        assert!(
+            edited.contains("the new string"),
+            "the edit landed on the host filesystem: {edited:?}"
+        );
+        assert_eq!(
+            prompts.lock().unwrap().len(),
+            1,
+            "the edit is gated by exactly one EditFilePrompt"
         );
     }
 
