@@ -1,56 +1,41 @@
 # NEXT
 
-**Active phase:** **M21 phase-07b — edit-file-host**, drafted 2026-09-26,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-07b`.
+**Active phase:** **M21 phase-08a — ghost-target-resolution**, drafted
+2026-09-27, status `todo`. Dispatch with `/rexymcp:dispatch phase-08a`.
 
-**What it closes.** The four `edit_file` write branches move onto 07a's
-`run_in_host_shell`, and `target_pane` leaves the tool surface entirely
-(1 → **0**), closing the milestone's *"`target_pane` is gone"* exit
-criterion. With the last pane consumer gone, the pane-era helpers are
-deleted.
+**What it does.** At ghost start, a runbook's `ssh_target` is resolved
+against `[hosts]` — by key, else by a unique match on a host's `ssh`
+destination — and recorded as `ghost_ssh_target_resolved`. On today's
+transport, two rules become real: `HostEntry.sudo_scripts` is **enforced**
+(empty = unrestricted), and a non-empty runbook `hosts:` must grant the
+resolved host. **The transport does not change** — a ghost command still runs
+as `ssh <target> '<cmd>'` in a tmux window; 08b moves it onto a PTY shell.
 
-**07a's false premise is corrected here, from a measured call graph.** 07a's
-doc claimed the write ops needed the read-path helpers and lumped
-`get_pane_remote_host` in with them. Grepped at this drafting:
+**Row 08 split at drafting, on four PE decisions (2026-09-27).** Measured
+first:
+- Half the old row was already done (`sudo_scripts` / `sandbox_profile` have
+  parsed since 02).
+- `ssh_target`'s documented `user@host` cannot parse as a `HostId`.
+- Ghosts never touch the PTY substrate — every ghost command is a tmux
+  `Background` with `host` dropped on purpose.
 
-| Helper | Real callers | 07b |
-|---|---|---|
-| `remote_run_and_capture` | 4, all in `ops.rs` — the branches being converted | delete |
-| `local_read_via_buffer` | **0** (already dead, carries an allow) | delete |
-| `build_local_buffer_read_cmd` | only the above, plus one test | delete with it |
-| `get_pane_remote_host` | **`prompt.rs:116`, `foreground.rs:219`** | **KEEP** — nothing to do with file ops |
+Decisions: resolve, else keep 1.x; split resolution (08a) from the PTY move
+(08b); enforce `sudo_scripts`; a remote ghost command is allowed under the
+sandbox, with `hosts:` as the fence. Full record in the M21 README Notes.
 
-Both `#[allow(dead_code)]` in `read.rs` go away **by deletion**, and a
-criterion pins `get_pane_remote_host`'s two callers so the correction cannot
-be undone by enthusiasm.
+**Probed before speccing.** The door test rides
+`webhook_ghost_e2e_deterministic`: a copy writing `[hosts.e2e-host]` and an
+`ssh_target: e2e-host` runbook passed in 0.09 s and loaded the host, with no
+resolution event — exactly the gap 08a fills.
 
-**The security mutation is the important one.** Every write op prompts via
-`EditFilePrompt` before touching anything. Mutation A removes that from the
-host path — the tempting simplification when adding a transport — and must
-turn `a_remote_write_still_prompts_for_approval` red.
+**Pre-dispatch check run.** Every grep criterion matches its stated current
+value (resolver 0, predicates 0, gates 0, start call 0, stale code claim 1,
+template claim 2 → 1, README row 0), both pinned-test filters run 0 passed,
+and no command block contains the shell-gated `su`+`do` token. **Six
+mutations**, one per gate and per rule — the 07b lesson that a test named for
+a branch is not proof it exercises the branch.
 
-**One criterion is deliberately a range, and the spec says why.** Task 3
-deletes a test while Task 5 adds eleven, so the net lib count is 2024 or
-2025 depending on the live-test choice. The architect cannot know it without
-running the tasks, so the spec asks the executor to **run it and pin what it
-gets, stating the arithmetic** — rather than guessing a number the executor
-must then contort to hit.
+**Next after 08a: 08b — ghost-remote-pty**, then 08c (spawn-ghost-host), 09.
 
-**Pre-dispatch check run; five criteria confirmed failing**
-(`target_pane_params=1`→0, `edit_file_host=0`→1, `pane_branches_gone=4`→0,
-`dead_helpers_gone=2`→0, `dead_code_allows=2`→0) with
-`pane_host_helper_kept=2` correctly passing as preservation.
-
-**The post-phase simulation caught a real contamination before dispatch.**
-The original criterion was `grep -c 'remote_run_and_capture' ops.rs → 0`.
-Simulating the corpus — a doc comment saying *"the pane transport
-`remote_run_and_capture` is gone"* — pushed it from 0 to **1**, i.e. the
-criterion would have read as a failed deletion for a correct tree. Replaced
-with `grep -c 'if let Some(pane) = target_pane' → 0`, which pins the same
-property on a **branch line that prose cannot contain**, and the spec records
-why. That is the 04d/05/06c/06d class caught at drafting rather than review.
-
-**Next after 07b: 08 — ghost-host-mapping**, then 08b, 09.
-
-Nineteen rows in M21; live host `pinky` (sudo requires a password since
+Twenty rows in M21; live host `pinky` (sudo requires a password since
 2026-09-22); `max_turns` 1000.

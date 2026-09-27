@@ -18,7 +18,7 @@ drafting** (2026-09-23) — it was four features in one row. **06a is `done`** (
 (`approved_first_try`), so the approval and ghost-boundary half of the
 milestone is complete. **07 split into 07a/07b at drafting** — the read path is one
 `target_pane` branch, the write path is four. **07a is `done`** (2026-09-26,
-`approved_first_try`) and **07b is drafted**; 07b, 08, 08b and 09 remain. 06c owns making an unconfigured host allowed-but-gated;
+`approved_first_try`) and **07b is `done`** (2026-09-27, `approved_after_1`) — `target_pane` is gone from the tool surface. **08 split into 08a/08b/08c at drafting** (2026-09-27, PE decisions in Notes); **08a is drafted**; 08a, 08b, 08c and 09 remain. 06c owns making an unconfigured host allowed-but-gated;
 06d owns ghost `hosts:` enforcement.
 
 **Depends on:** M20 (the PTY shell substrate every remote shell is), M22
@@ -73,9 +73,9 @@ deferrals this milestone closes). Not on M23 or M25.
 ## Phases
 
 Proposed, pre-measurement — **each will be re-derived and may split at
-drafting on a measured seam**, as every M20 and M22 row did. **Nineteen rows**
+drafting on a measured seam**, as every M20 and M22 row did. **Twenty rows**
 (01a, 01b, 01c, 02, 03, 04a, 04b, 04c, 04d, 05, 06a, 06b, 06c, 06d, 07a,
-07b, 08, 08b, 09) — 04 has split **three times** at drafting and 06 once, every time on a
+07b, 08a, 08b, 08c, 09) — 04 has split **three times** at drafting, 06 once and 08 once, every time on a
 measured seam, and 01c was inserted when the test gate went deterministically
 red. Ordering: the
 credential mechanism the PTY path lacks comes first because remote sudo, host
@@ -101,8 +101,9 @@ the live close is last.
 | 06d | ghost-hosts-enforced ([phase-06d-ghost-hosts-enforced.md](phase-06d-ghost-hosts-enforced.md)) — a runbook's `hosts:` list becomes a boundary: `GhostPolicy` carries it, `may_use_host` decides, **both** doors are gated (the `Foreground` arm and `PendingCall::OpenShell`), and an unlisted host is refused naming the allowed set and recorded via `log_event`. **Empty stays unrestricted** — every runbook on disk omits `hosts:`, a mutation pins it, and `src/ipc.rs`'s "enforced in a later phase" note is deleted in the same row. Closes the milestone's ghost-`hosts:` exit criterion | done |
 | 07a | read-file-host ([phase-07a-read-file-host.md](phase-07a-read-file-host.md)) — `read_file { host? }` reads through a **shell on the host** with marker-delimited output instead of scraping a pane; `target_pane` retired from `read_file` (2 → 1). Builds the shell transport 07b reuses. **Measured at drafting:** the marker protocol already exists (`build_remote_read_cmd` emits `__DE_S__`, `extract_marked` cuts it) — only the transport is wrong, `send-keys` then poll `capture-pane` every 300 ms | done |
 | 07b | edit-file-host ([phase-07b-edit-file-host.md](phase-07b-edit-file-host.md)) — the **four** write branches (`ops.rs:35, 247, 391, 545`) move onto 07a's `run_in_host_shell`; `target_pane` retired from `edit_file`, taking the tool surface to **0** and closing that exit criterion. Deletes the pane era — **but not `get_pane_remote_host`**, which the grep at drafting showed still has two live callers in `prompt.rs` and `foreground.rs` (07a's doc got this wrong; corrected here). A mutation pins that the host path still prompts for approval. Bounced once ([bug-07b-1](bugs/bug-07b-1.md), closed); `approved_after_1` | done |
-| 08 | ghost-host-mapping — `GhostPolicy.ssh_target` maps onto `HostId` unchanged in meaning: `wrap_remote`'s `ssh <target> '<cmd>'` string-wrap becomes "run in a shell on that host"; `resolve_command`, `remote_stream_cmd` and `remote_materialize_cmd` keep their semantics; `HostEntry.sudo_scripts` is the 1.x remote-sudoers model. The re-homed M19 phase-12 (`sandbox_profile` on a host) is parsed here, not enforced | todo (not drafted) |
-| 08b | spawn-ghost-host — `spawn_ghost_shell { host? }` (§ 2.5): a coordinator names the host a specialist's shells open on; the value must be in the runbook's `hosts:` list (row 06's enforcement) or it is refused as an unlisted host. Rides 08's mapping; **PE added at sign-off** | todo (not drafted) |
+| 08a | ghost-target-resolution ([phase-08a-ghost-target-resolution.md](phase-08a-ghost-target-resolution.md)) — at ghost start a runbook's `ssh_target` is **resolved against `[hosts]`** (key, else a unique `ssh`-destination match; ambiguity resolves to neither) and recorded as `ghost_ssh_target_resolved`. On today's transport, `HostEntry.sudo_scripts` becomes **enforced** (empty = unrestricted, mutation-pinned) and a non-empty `hosts:` must grant the resolved host. **Split at drafting on measured seams** (PE decisions 2026-09-27): half the old row was already done — `sudo_scripts` / `sandbox_profile` have parsed since 02 — `ssh_target`'s documented `user@host` cannot parse as a `HostId`, and ghosts never touch the PTY substrate. **Transport unchanged here** | todo |
+| 08b | ghost-remote-pty — a ghost command whose `ssh_target` resolved (08a) runs in a **PTY shell on that host** instead of `ssh <target> '<cmd>'` in a tmux window: the first production `Owner::Ghost`, ControlMaster, the entry's own `ssh` destination, and a credential prompt that fails fast (a ghost has no human). `resolve_command` / `remote_stream_cmd` / `remote_materialize_cmd` keep their semantics. An unresolved `ssh_target` keeps the 1.x wrap. **Sandbox:** a remote ghost command is allowed while `[sandbox] enabled` — `hosts:` is the fence (PE 2026-09-27) | todo (not drafted) |
+| 08c | spawn-ghost-host — `spawn_ghost_shell { host? }` (§ 2.5): a coordinator names the host a specialist's shells open on; the value must be in the runbook's `hosts:` list (row 06's enforcement) or it is refused as an unlisted host. Rides 08a/08b's mapping; also closes the ghost's dropped `host` argument (`ghost.rs:829-845`); **PE added at sign-off** | todo (not drafted) |
 | 09 | live-close — the exit criterion end to end: a remote sudo edit from chat on the configured host; cast log shows the edit, no `"i"` event carries the password; ControlMaster reuse timed. Architect-run; the phase exists so the obligation is a tracked `## Spec` task, not a close-out promise | todo (not drafted) |
 
 ## Notes
@@ -251,6 +252,41 @@ Every row above was shaped by one of these. Each was read from the tree on
   interprets it. A fish-using operator on a bash host would emit `$status`,
   which bash expands to empty, and no exit code would parse. 04a pins remote
   shells to POSIX `$?` and tests it with `SHELL` set to fish.
+
+- **Row 08 split into 08a/08b/08c at drafting (2026-09-27), on four PE
+  decisions.** Measured at HEAD `ee70e420` before any were asked:
+  - *Half the row was already done.* `HostEntry.sudo_scripts` and
+    `sandbox_profile` have parsed since 02 (`config/mod.rs:901-914`). Nothing
+    reads `sudo_scripts`.
+  - *Ghosts never touch the PTY substrate.* Every ghost `run_terminal_command`
+    becomes `PendingCall::Background` with `host` dropped on purpose
+    (`ghost.rs:829-845`), then runs **synchronously** in a tmux `de-gs-bg-*`
+    window whatever the backend (`executor/mod.rs:660`, `uses_pty &&
+    !is_ghost`). A remote one is `ssh <target> '<cmd>'` there — no
+    ControlMaster, no credential or host-key detection. `Owner::Ghost` exists
+    and has **no production user**.
+  - *`ssh_target` is not a host name.* Its documented form is `user@host`, and
+    `HostId::parse` rejects `@`. The design's `open_shell(host:
+    "ops@10.0.0.9")` example drifts from 02's grammar the same way.
+  - *Where resolution can run.* `GhostPolicy::from_config` is called per tool
+    call under the sessions lock; every ghost start funnels through
+    `start_session_with_config`. Resolution happens once there.
+
+  **PE decisions:** (1) `ssh_target` resolves against `[hosts]` — by key, else
+  by a unique `ssh`-destination match — and anything unresolved keeps the 1.x
+  wrap byte for byte; (2) split, with the pure resolution first (08a) and the
+  move onto a host PTY shell second (08b); (3) `sudo_scripts` is **enforced**,
+  empty = unrestricted; (4) with the sandbox enabled a ghost may still run a
+  **remote** command — the container protects the daemon host, and the
+  runbook's `hosts:` list is the fence.
+
+  **Probed at 08a drafting:** a copy of `webhook_ghost_e2e_deterministic` that
+  writes `[hosts.e2e-host]` to `etc_dir()/config.toml` and gives the runbook
+  `ssh_target: e2e-host` passes in 0.09 s and loads the host, so 08a's door
+  test rides the existing isolation harness. Unprobed and recorded for 08b:
+  with `[sandbox] enabled`, a ghost's background command runs in a
+  `--network=none` container, where an `ssh <target>` wrap would have no
+  network — read from `background/run.rs`, not executed.
 
 ### Not in this milestone
 
