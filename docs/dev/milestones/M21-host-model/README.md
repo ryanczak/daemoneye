@@ -18,7 +18,7 @@ drafting** (2026-09-23) — it was four features in one row. **06a is `done`** (
 (`approved_first_try`), so the approval and ghost-boundary half of the
 milestone is complete. **07 split into 07a/07b at drafting** — the read path is one
 `target_pane` branch, the write path is four. **07a is `done`** (2026-09-26,
-`approved_first_try`) and **07b is `done`** (2026-09-27, `approved_after_1`) — `target_pane` is gone from the tool surface. **08 split into 08a/08b/08c at drafting** (2026-09-27, PE decisions in Notes); **08a is `done`** (2026-09-27, `approved_first_try`); 08b, 08c and 09 remain. 06c owns making an unconfigured host allowed-but-gated;
+`approved_first_try`) and **07b is `done`** (2026-09-27, `approved_after_1`) — `target_pane` is gone from the tool surface. **08 split into 08a/08b/08c at drafting** (2026-09-27, PE decisions in Notes); **08a is `done`** (2026-09-27, `approved_first_try`). **Two substrate defects surfaced at the next drafting** and got rows of their own ahead of the ghost move (PE 2026-09-27): **08b is drafted** (shell exit detection); 08b, 08c, 08d, 08e and 09 remain. *Numbering note:* 08a's phase doc and review verdict say "08b" for the ghost PTY move and "08c" for spawn-ghost-host — those are now **08c** and **08d**. 06c owns making an unconfigured host allowed-but-gated;
 06d owns ghost `hosts:` enforcement.
 
 **Depends on:** M20 (the PTY shell substrate every remote shell is), M22
@@ -73,9 +73,9 @@ deferrals this milestone closes). Not on M23 or M25.
 ## Phases
 
 Proposed, pre-measurement — **each will be re-derived and may split at
-drafting on a measured seam**, as every M20 and M22 row did. **Twenty rows**
+drafting on a measured seam**, as every M20 and M22 row did. **Twenty-two rows**
 (01a, 01b, 01c, 02, 03, 04a, 04b, 04c, 04d, 05, 06a, 06b, 06c, 06d, 07a,
-07b, 08a, 08b, 08c, 09) — 04 has split **three times** at drafting, 06 once and 08 once, every time on a
+07b, 08a, 08b, 08c, 08d, 08e, 09) — 04 has split **three times** at drafting, 06 once and 08 twice, every time on a
 measured seam, and 01c was inserted when the test gate went deterministically
 red. Ordering: the
 credential mechanism the PTY path lacks comes first because remote sudo, host
@@ -102,8 +102,10 @@ the live close is last.
 | 07a | read-file-host ([phase-07a-read-file-host.md](phase-07a-read-file-host.md)) — `read_file { host? }` reads through a **shell on the host** with marker-delimited output instead of scraping a pane; `target_pane` retired from `read_file` (2 → 1). Builds the shell transport 07b reuses. **Measured at drafting:** the marker protocol already exists (`build_remote_read_cmd` emits `__DE_S__`, `extract_marked` cuts it) — only the transport is wrong, `send-keys` then poll `capture-pane` every 300 ms | done |
 | 07b | edit-file-host ([phase-07b-edit-file-host.md](phase-07b-edit-file-host.md)) — the **four** write branches (`ops.rs:35, 247, 391, 545`) move onto 07a's `run_in_host_shell`; `target_pane` retired from `edit_file`, taking the tool surface to **0** and closing that exit criterion. Deletes the pane era — **but not `get_pane_remote_host`**, which the grep at drafting showed still has two live callers in `prompt.rs` and `foreground.rs` (07a's doc got this wrong; corrected here). A mutation pins that the host path still prompts for approval. Bounced once ([bug-07b-1](bugs/bug-07b-1.md), closed); `approved_after_1` | done |
 | 08a | ghost-target-resolution ([phase-08a-ghost-target-resolution.md](phase-08a-ghost-target-resolution.md)) — at ghost start a runbook's `ssh_target` is **resolved against `[hosts]`** (key, else a unique `ssh`-destination match; ambiguity resolves to neither) and recorded as `ghost_ssh_target_resolved`. On today's transport, `HostEntry.sudo_scripts` becomes **enforced** (empty = unrestricted, mutation-pinned) and a non-empty `hosts:` must grant the resolved host. **Split at drafting on measured seams** (PE decisions 2026-09-27): half the old row was already done — `sudo_scripts` / `sandbox_profile` have parsed since 02 — `ssh_target`'s documented `user@host` cannot parse as a `HostId`, and ghosts never touch the PTY substrate. **Transport unchanged here**. `approved_first_try` | done |
-| 08b | ghost-remote-pty — a ghost command whose `ssh_target` resolved (08a) runs in a **PTY shell on that host** instead of `ssh <target> '<cmd>'` in a tmux window: the first production `Owner::Ghost`, ControlMaster, the entry's own `ssh` destination, and a credential prompt that fails fast (a ghost has no human). `resolve_command` / `remote_stream_cmd` / `remote_materialize_cmd` keep their semantics. An unresolved `ssh_target` keeps the 1.x wrap. **Sandbox:** a remote ghost command is allowed while `[sandbox] enabled` — `hosts:` is the fence (PE 2026-09-27). **Carries two 08a review residuals:** revert `ghost_host_refusal` to private, and replace `refusal_gate_tests`' `HomeGuard` (leaks a tempdir per run) with `test_home_guard()` | todo (not drafted) |
-| 08c | spawn-ghost-host — `spawn_ghost_shell { host? }` (§ 2.5): a coordinator names the host a specialist's shells open on; the value must be in the runbook's `hosts:` list (row 06's enforcement) or it is refused as an unlisted host. Rides 08a/08b's mapping; also closes the ghost's dropped `host` argument (`ghost.rs:829-845`); **PE added at sign-off** | todo (not drafted) |
+| 08b | shell-exit-detection ([phase-08b-shell-exit-detection.md](phase-08b-shell-exit-detection.md)) — a command sent to a shell whose program has exited **fails in seconds, saying so**, instead of waiting out its timeout and being reported as "may still be running". **Inserted at 08c drafting on a live probe:** a real `ssh -o BatchMode=yes` with an unknown host key died in 17 ms and the daemon's `run_command` waited the full 20 s. One shared loop (`read_to_marker`) polls `Status`; `ShellExited` is a typed error; both model-facing texts stop claiming the command may still run | todo |
+| 08c | ghost-remote-pty — a ghost command whose `ssh_target` resolved (08a) runs in a **PTY shell on that host** instead of `ssh <target> '<cmd>'` in a tmux window: the first production `Owner::Ghost`, ControlMaster, the entry's own `ssh` destination, and ghost SSH shells opened with **`-o BatchMode=yes`** so ssh never prompts (PE 2026-09-27; measured on pinky: key auth 378 ms, unknown key fails in 17 ms, password-only in 59 ms) — chat keeps prompting and `ssh_argv_does_not_set_batch_mode` stays pinned. Rides 08b's exit detection so a refused connection fails fast. `resolve_command` / `remote_stream_cmd` / `remote_materialize_cmd` keep their semantics. An unresolved `ssh_target` keeps the 1.x wrap. **Sandbox:** a remote ghost command is allowed while `[sandbox] enabled` — `hosts:` is the fence (PE 2026-09-27). **Carries two 08a review residuals:** revert `ghost_host_refusal` to private, and replace `refusal_gate_tests`' `HomeGuard` (leaks a tempdir per run) with `test_home_guard()` | todo (not drafted) |
+| 08d | spawn-ghost-host — `spawn_ghost_shell { host? }` (§ 2.5): a coordinator names the host a specialist's shells open on; the value must be in the runbook's `hosts:` list (row 06's enforcement) or it is refused as an unlisted host. Rides 08a/08c's mapping; also closes the ghost's dropped `host` argument (`ghost.rs:829-845`); **PE added at sign-off** | todo (not drafted) |
+| 08e | remote-connect-handshake — a **fresh** remote shell's connection-time prompt (password, passphrase, unknown host key) is handled **before** the first command is written. **Measured at 08c drafting:** a plain command's marker-wrapped bytes are typed straight into ssh's `password:` prompt and the run waits out its timeout; routing through the classifier cannot fix it, because the command is written before any prompt is classified. **Reopens phase-05:** its password/passphrase round trip was verified only by running `ssh` directly under `script`, never through a daemon shell. Needs a live-probed readiness handshake before drafting | todo (not drafted) |
 | 09 | live-close — the exit criterion end to end: a remote sudo edit from chat on the configured host; cast log shows the edit, no `"i"` event carries the password; ControlMaster reuse timed. Architect-run; the phase exists so the obligation is a tracked `## Spec` task, not a close-out promise | todo (not drafted) |
 
 ## Notes
@@ -287,6 +289,28 @@ Every row above was shaped by one of these. Each was read from the tree on
   with `[sandbox] enabled`, a ghost's background command runs in a
   `--network=none` container, where an `ssh <target>` wrap would have no
   network — read from `background/run.rs`, not executed.
+
+- **Two substrate defects under the ghost move, measured live at its
+  drafting (2026-09-27).** A throwaway test hosted a real `ssh` in an
+  in-process shell host and drove it with the daemon's real `run_command`:
+  - **Dead shell → full timeout (D2 → row 08b).** `ssh -o BatchMode=yes`
+    with an unknown host key exits 255 in **17 ms**; `run_command` waited
+    **20.0 s** and reported a timeout. The shell host stays alive after its
+    program dies and just sends nothing; nothing in the one shared read loop
+    asks `Status`, which already reports `Exited`.
+  - **Connection prompt eats the first command (D1 → row 08e).** With a
+    password-only login and no `BatchMode` (the chat configuration), the
+    screen showed `matt@pinky…'s password: ` followed by the command's
+    marker-wrapped bytes, and the run waited out its timeout. Phase-05 wired
+    ssh prompt classification into the **sudo** loop only, and its live
+    check ran `ssh` directly under `script`, never through a daemon shell,
+    so its password round trip is unverified end to end.
+
+  **PE decisions:** a new row ahead of the ghost move, then split on a
+  second measurement — 08b is exit detection only (all a `BatchMode` ghost
+  needs, since ssh then dies instead of prompting), and 08e takes the
+  connection-time handshake, drafted only after probing; ghost SSH shells
+  use `-o BatchMode=yes` (08c), chat keeps prompting.
 
 ### Not in this milestone
 

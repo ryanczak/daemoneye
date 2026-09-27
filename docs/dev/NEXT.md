@@ -1,41 +1,36 @@
 # NEXT
 
-**Active phase:** **M21 phase-08a — ghost-target-resolution**, drafted
-2026-09-27, status `todo`. Dispatch with `/rexymcp:dispatch phase-08a`.
+**Active phase:** **M21 phase-08b — shell-exit-detection**, drafted
+2026-09-27, status `todo`. Dispatch with `/rexymcp:dispatch phase-08b`.
 
-**What it does.** At ghost start, a runbook's `ssh_target` is resolved
-against `[hosts]` — by key, else by a unique match on a host's `ssh`
-destination — and recorded as `ghost_ssh_target_resolved`. On today's
-transport, two rules become real: `HostEntry.sudo_scripts` is **enforced**
-(empty = unrestricted), and a non-empty runbook `hosts:` must grant the
-resolved host. **The transport does not change** — a ghost command still runs
-as `ssh <target> '<cmd>'` in a tmux window; 08b moves it onto a PTY shell.
+**What it does.** A command sent to a shell whose program has exited fails
+in seconds, saying the shell exited — instead of waiting out its whole
+timeout, being reported as a timeout, and telling the model it "may still be
+running". One shared loop (`read_to_marker`) gains a 500 ms `Status` poll; a
+typed `ShellExited` error carries the fact to both model-facing texts.
 
-**Row 08 split at drafting, on four PE decisions (2026-09-27).** Measured
-first:
-- Half the old row was already done (`sudo_scripts` / `sandbox_profile` have
-  parsed since 02).
-- `ssh_target`'s documented `user@host` cannot parse as a `HostId`.
-- Ghosts never touch the PTY substrate — every ghost command is a tmux
-  `Background` with `host` dropped on purpose.
-
-Decisions: resolve, else keep 1.x; split resolution (08a) from the PTY move
-(08b); enforce `sudo_scripts`; a remote ghost command is allowed under the
-sandbox, with `hosts:` as the fence. Full record in the M21 README Notes.
-
-**Probed before speccing.** The door test rides
-`webhook_ghost_e2e_deterministic`: a copy writing `[hosts.e2e-host]` and an
-`ssh_target: e2e-host` runbook passed in 0.09 s and loaded the host, with no
-resolution event — exactly the gap 08a fills.
+**Why it jumped the queue.** Drafting the ghost PTY move (now 08c) meant
+measuring what happens when a ghost's ssh cannot connect. A throwaway test
+drove a real `ssh -o BatchMode=yes` through the daemon's real `run_command`:
+ssh died in 17 ms, the client waited the full 20 s. The same probe, without
+`BatchMode`, showed a second defect — a plain command's bytes typed into
+ssh's `password:` prompt — which became row 08e. PE decisions (2026-09-27):
+exit detection first, ghosts use `BatchMode=yes`, the connection-time
+handshake gets its own probed row.
 
 **Pre-dispatch check run.** Every grep criterion matches its stated current
-value (resolver 0, predicates 0, gates 0, start call 0, stale code claim 1,
-template claim 2 → 1, README row 0), both pinned-test filters run 0 passed,
-and no command block contains the shell-gated `su`+`do` token. **Six
-mutations**, one per gate and per rule — the 07b lesson that a test named for
-a branch is not proof it exercises the branch.
+value; the six pinned tests filter to 0 (2045 filtered out); two cited line
+numbers were wrong and are fixed. The lib count is pinned as a **floor**
+(≥ 2043) and the ignored count exactly (9) — the 08a calibration. The E2E
+block now records **the names** of any failing test, and says to run with no
+other `cargo test` in parallel — both from the 08a review.
 
-**Next after 08a: 08b — ghost-remote-pty**, then 08c (spawn-ghost-host), 09.
+**Renumbering.** 08a's doc says "08b" for the ghost PTY move and "08c" for
+spawn-ghost-host; those are now **08c** and **08d**. 08c carries two 08a
+review residuals.
 
-Twenty rows in M21; live host `pinky` (sudo requires a password since
-2026-09-22); `max_turns` 1000.
+**Next after 08b:** 08c (ghost-remote-pty), 08d (spawn-ghost-host), 08e
+(remote-connect-handshake, probe first), 09 (live close).
+
+Twenty-two rows in M21; live host `pinky` (sudo requires a password since
+2026-09-22; ssh is key-auth); `max_turns` 1000.
