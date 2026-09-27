@@ -828,3 +828,165 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 76649de55e22c94d373a468048cd207eb4c55bbc
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-09-27 (bounce-1 resume: the four tests now run the op)
+
+Executor: local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (headless, bounce 1
+for bug-07b-1). The only work left was Task 5 items 1–4, rewritten in place in
+`ops.rs`'s `mod tests`; nothing outside that file changed.
+
+- Each of the four tests now drives its **operation** through the seam test 10
+  already used — `run_create_with_spawn` / `run_delete_with_spawn` /
+  `run_copy_with_spawn` / `run_edit_with_spawn` with
+  `&HostId::Named("web01")`, the in-process PTY spawn and
+  `auto_approve_channel()` — and asserts on the **filesystem effect** (file
+  lands / is gone / copy carries the bytes / edit replaced the string) plus
+  the success sentence naming the host, plus exactly one `EditFilePrompt` gate.
+- `run_through_shell` is deleted: it had no callers left. With it went the
+  only two uses of the `sq_escape` import in `mod tests`.
+- One production-line pin moved: `the_write_sentinels_are_unchanged` had been
+  reading `include_str!("ops.rs")` (whole file), which the deleted retyped
+  commands would have satisfied from test code. The four builders are pinned
+  from the built commands now (create/edit) and from the production format!
+  strings (delete/copy, reached before `#[cfg(test)]` via a line-range slice),
+  so the retyped-command grep stays a real negative.
+
+**Finish condition 1 — Mutants C, D, E applied with the `patch` tool, one
+`cargo test --lib` run each, restored after each:**
+
+- **Mutant C** (delete branch: `then rm -- '{safe_path}' && echo 'DE_OK: …'` →
+  `then echo 'DE_OK: …'`):
+
+  ```
+  test daemon::executor::file_ops::ops::tests::delete_on_a_named_host_runs_through_the_shell ... FAILED
+  thread '…delete_on_a_named_host_runs_through_the_shell' panicked at
+      src/daemon/executor/file_ops/ops.rs:1282:9: the file really was deleted by the op's own command
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2031 filtered out
+  ```
+
+- **Mutant D** (copy branch: `cp -n -- '{safe_src}' '{safe_dst}' && ` → `true && `):
+
+  ```
+  test daemon::executor::file_ops::ops::tests::copy_on_a_named_host_runs_through_the_shell ... FAILED
+  thread '…copy_on_a_named_host_runs_through_the_shell' panicked at
+      src/daemon/executor/file_ops/ops.rs:1326:9: the copy landed on the host filesystem: ""
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2031 filtered out
+  ```
+
+- **Mutant E** (`run_edit_with_spawn`'s named-host branch:
+  `build_remote_edit_cmd(path, old_string, new_string)` →
+  `build_remote_edit_cmd(path, old_string, old_string)`):
+
+  ```
+  test daemon::executor::file_ops::ops::tests::edit_on_a_named_host_runs_through_the_shell ... FAILED
+  thread '…edit_on_a_named_host_runs_through_the_shell' panicked at
+      src/daemon/executor/file_ops/ops.rs:1369:9: the edit landed on the host filesystem: "the old string here"
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2031 filtered out
+  ```
+
+All three were restored with the `patch` tool; the working tree then matched
+the committed state (`git status --short` empty). Mutant C/D/E were re-derived
+against the **current** tree after the rewrite, since the earlier bounce note's
+line numbers predate it.
+
+**Finish condition 2 — the retyped-command grep prints 0:**
+
+```
+$ awk '/^#\[cfg\(test\)\]/{t=1} t' src/daemon/executor/file_ops/ops.rs | grep -c "rm -- '\|cp -n -- '"
+0
+```
+
+(`grep -c` exits 1 on zero matches; the count itself is what the criterion pins.)
+
+**Finish condition 3 — the count:**
+
+```
+test result: ok. 2024 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out
+```
+
+**2024, not 2025** — four tests rewritten in place, none added, `run_through_shell`
+(a helper, not a counted test) deleted. The pinned 11-test filter run:
+
+```
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 2021 filtered out; finished in 0.08s
+```
+
+**Gates:** `cargo fmt --all` clean; `cargo build` clean (no new warnings);
+`cargo clippy --all-targets --all-features -- -D warnings` exits 0; full
+`cargo test` green with the other targets unmoved — bug_tracker **6**,
+doc_truth **14**, integration **32**, isolation **9** (2/1/1 ignored as
+before). E2E capture block re-run after the rewrite, `PASTE MATCH` confirmed
+against the entry below; commit `95382efe` (ops.rs only, +136/−70), working
+tree clean.
+
+### Update — 2026-09-27 (end-to-end verification)
+
+```
+lib1=ok
+lib2=ok
+lib3=ok
+lib_counts=2024p-0f-8i
+target_pane_params=0
+edit_file_host=1
+pane_branches_gone=0
+dead_helpers_gone=0
+dead_code_allows=0
+pane_host_helper_kept=2
+doc_truth=ok
+```
+
+Every line matches the § End-to-end verification's expected list, with
+`lib_counts` pinned at the value the arithmetic gives: 2014 baseline + 11 new
+− 1 deleted = **2024** passed, 0 failed, 8 ignored.
+
+Diff snippet against the capture file: `PASTE MATCH`.
+
+**Live re-verification after the bug-07b-1 rewrite** (the write path's
+implementation is untouched by the fix; re-run to prove the tree it ships
+from still lands the write on pinky). The § Live verification block, run
+against the committed tree:
+
+```
+$ ssh -o ConnectTimeout=8 pinky 'rm -f /tmp/de-07b-probe.txt'
+$ printf 'before=%s\n' "$(ssh -o ConnectTimeout=8 pinky 'test -e /tmp/de-07b-probe.txt && echo present || echo absent')"
+before=absent
+```
+
+The write is driven through the daemon's own seam — the ignored live test
+`edit_file_on_pinky_end_to_end` (`cargo test --lib -- --ignored --nocapture`),
+which resolves the named host through the production path, sends the
+`EditFilePrompt`, gets it approved, and runs the op's named-host branch over
+the **real ssh argv** to pinky. Captured mechanically:
+
+```
+PASTE MATCH >>>
+edit_file_on_pinky create sentence="Created /tmp/de-07b-probe.txt on host pinky."
+<<<
+PASTE MATCH >>>
+edit_file_on_pinky readback="wrote-through-daemoneye\r\n"
+<<<
+Exit request sent.
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2031 filtered out; finished in 0.31s
+```
+
+```
+$ printf 'after=%s\n' "$(ssh -o ConnectTimeout=8 pinky 'cat /tmp/de-07b-probe.txt 2>/dev/null || echo MISSING')"
+after=MISSING
+$ ssh -o ConnectTimeout=8 pinky 'rm -f /tmp/de-07b-probe.txt'
+$ printf 'cleanup=%s\n' "$(ssh -o ConnectTimeout=8 pinky 'test -e /tmp/de-07b-probe.txt && echo present || echo GONE')"
+cleanup=GONE
+```
+
+`after` reads `MISSING` because the test's own readback command is
+`cat '{probe}'; rm -f '{probe}'` — it reads the content back **through the
+host transport** (that readback is the `PASTE MATCH` block above, showing the
+bytes landed) and then deletes the probe as its cleanup, before the block's
+ssh `cat` runs. The block's final `rm -f` is therefore a no-op, and
+`cleanup=GONE` confirms the probe left no residue. `before=absent`, content
+proven by the captured readback, probe cleaned up.
+
+The full through-the-daemon drive with the rendered approval prompt and the
+`file_create` event (`"remote_host":"pinky"`) is recorded in the entry below,
+from the run before the bounce; that evidence is untouched by this fix, which
+changed only tests.
