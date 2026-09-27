@@ -1,7 +1,7 @@
 # Phase 07b: edit-file-host — the four write ops over the PTY, and the pane era ends
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** in-progress (bounced 2026-09-27 — bug-07b-1: the named-host delete/copy/edit tests never run the op)
 **Depends on:** phase-07a (`run_in_host_shell`, the shell transport)
 **Estimated diff:** ~420 lines across 6 files, plus 11 tests
 **Tags:** language=rust, kind=feature, size=m
@@ -307,6 +307,30 @@ Parenthesised values are what each line produces **against the current tree**.
 - [ ] The § Live verification block was run and its output pasted into the
       same entry, or reported unmet with the reason.
 
+
+**Added at review, 2026-09-27 — [bug-07b-1](bugs/bug-07b-1.md).** Each was run
+against the current tree and fails there as stated.
+
+- [ ] **Mutant C** — production delete branch only:
+      `then rm -- '{safe_path}' && echo 'DE_OK: Deleted {safe_path}'` →
+      `then echo 'DE_OK: Deleted {safe_path}'` — turns
+      `delete_on_a_named_host_runs_through_the_shell` **red**; restored after.
+      *(Current: survives, `2024 passed; 0 failed`.)*
+- [ ] **Mutant D** — production copy branch only (the occurrence before
+      `#[cfg(test)]`): `cp -n -- '{safe_src}' '{safe_dst}' && ` → `true && ` —
+      turns `copy_on_a_named_host_runs_through_the_shell` **red**; restored.
+      *(Current: survives, `2024 passed; 0 failed`.)*
+- [ ] **Mutant E** — `run_edit_with_spawn`'s named-host branch only:
+      `build_remote_edit_cmd(path, old_string, new_string)` →
+      `build_remote_edit_cmd(path, old_string, old_string)` — turns
+      `edit_on_a_named_host_runs_through_the_shell` **red**; restored.
+      *(Current: survives, `2024 passed; 0 failed`.)*
+- [ ] No test retypes a production write command:
+      ``awk '/^#\[cfg\(test\)\]/{t=1} t' src/daemon/executor/file_ops/ops.rs | grep -c "rm -- '\|cp -n -- '"``
+      → **0** (current: 2).
+- [ ] `cargo test --lib` still → **2024 passed, 0 failed, 8 ignored — not
+      2025.** The fix rewrites four existing tests in place.
+
 ## Mutations
 
 Apply each with the `patch` tool (the executor contract forbids `sed -i`,
@@ -436,6 +460,40 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-09-27 (bounce 1, bug-07b-1)
+
+**GREEN GATES AND A CLEAN TREE ARE EXPECTED HERE AND ARE NOT EVIDENCE THE
+PHASE IS DONE.** fmt, build, clippy and all tests pass (lib 2024/0/8), and every
+original criterion is met. Already approved at review, **do not redo**: the
+implementation of all four named-host branches, the `target_pane` retirement,
+the pane-era deletions and the compile-forced ones, the doc rows, tests 5–11,
+Mutations A and B, the E2E evidence (architect re-run: PASTE MATCH) and the live
+run against `pinky`.
+
+**There is exactly one piece of work left: rewrite the four per-operation tests
+(Task 5 items 1–4) so each one invokes its operation, not the transport.** Today
+`delete_…` and `copy_…` retype the shell command inside the test, and `edit_…`
+(like `create_…`) calls the builder, and all four hand a string to the helper
+`run_through_shell`. So a delete, copy or edit that reports `DE_OK` while doing
+nothing passes the whole suite. The review observed this with Mutants C, D and E
+(see bug-07b-1).
+
+The seam you need is already in this file, and it works.
+`a_remote_write_still_prompts_for_approval` calls `run_create_with_spawn(…,
+&HostId::Named("web01".into()), …, Box::new(|id| Box::pin(spawn_in_process_host(id))))`
+with `auto_approve_channel()`. Drive `run_delete_with_spawn`, `run_copy_with_spawn`,
+`run_edit_with_spawn` and `run_create_with_spawn` the same way, and keep each
+test's assertion on the **filesystem effect**. After this, `run_through_shell`
+may have no remaining callers: delete it rather than leave it dead.
+
+**Finish condition — check it yourself before reporting:**
+1. Apply Mutants C, D and E one at a time with the `patch` tool, run `cargo test
+   --lib` once each, and confirm the named test goes red. Restore after each.
+   Record what each run printed in the Update Log.
+2. The retyped-command grep in the new criteria prints **0**.
+3. `cargo test --lib` prints **2024 passed, not 2025.** A rising count means you
+   added a test instead of fixing one.
 
 ### Update — 2026-09-27 (escalation)
 
