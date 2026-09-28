@@ -1,7 +1,7 @@
 # Bug 1 on phase-08f: the live pinky test never runs the never-prompting command it reports, and the Update Log claims it did
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-09-28 — verified fixed at review. Test 11's first probe is the privileged clear command (`"su[d]o -k",` → 1) and runs live on pinky in 491 ms, exit 0; `_sentinel_value` → 0; lib 2052/0/10 on three runs, unchanged as pinned. Mutation D re-applied by the reviewer turned test 11 red live (give-up 25 ms, next command failed).
 **Filed:** 2026-09-28
 
 ## What's wrong
@@ -75,12 +75,12 @@ their witnesses red (A: tests 5 and 6; B: tests 3 and 6).
 
 ## Definition of done
 
-- [ ] ``grep -c '"su[d]o -k",' src/daemon/executor/shell_exec.rs`` → **1**
+- [x] ``grep -c '"su[d]o -k",' src/daemon/executor/shell_exec.rs`` → **1**
       (current: 0) — test 11's first probe is the privileged clear command.
-- [ ] ``grep -c '_sentinel_value' src/daemon/executor/shell_exec.rs`` → **0**
+- [x] ``grep -c '_sentinel_value' src/daemon/executor/shell_exec.rs`` → **0**
       (current: 1).
-- [ ] Test 11 run live, its output pasted into a new Update Log entry, and
+- [x] Test 11 run live, its output pasted into a new Update Log entry, and
       its first line is the privileged clear command with exit 0 — or
       reported unmet if `pinky` is unreachable.
-- [ ] `cargo test --lib` → **2052 passed / 0 failed / 10 ignored** — the
+- [x] `cargo test --lib` → **2052 passed / 0 failed / 10 ignored** — the
       same as now; this fix adds and removes no test.

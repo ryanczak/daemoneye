@@ -1,7 +1,7 @@
 # Phase 08f: prompt-on-the-real-prompt — a PTY password prompt is answered once, only when it is really on screen
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-01a (the PTY credential round trip), phase-01b (the
 host-side input scrub), phase-08b (the `read_to_marker` slice structure)
 **Dispatched ahead of:** 08c (ghost-remote-pty), which runs ghost commands —
@@ -1211,3 +1211,38 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** a37f94cc20f1b3aac29fd41ad1dea98296a3dee1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-28
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 — bug-08f-1 (major): the live pinky test ran `true`, the
+  old helper's seed, while its print and the Task 8 entry reported the
+  privileged clear command; plus a dead sentinel-counter bump. Fixed in
+  `a37f94cc` with exactly the two edits the bounce named.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark — three runs:
+  the first ended `hard_fail` / `RunawayOutput` at turn 250 (the spec's fake
+  password program looped forever on EOF, and the executor had dropped two
+  backslashes transcribing it) and was **resumed** via `execute_phase` on the
+  refined doc; the second completed in 225 turns; the bounce fix in 101.
+- **Verified independently at review:** fmt, build (zero warnings), clippy
+  clean; `cargo test --lib` **2052/0/10 on three consecutive runs**, no
+  failing names; other targets unmoved (6/14/32/10); every grep criterion at
+  its pinned value; test 11 run live on pinky — privileged clear 491 ms exit 0,
+  give-up 337 ms, next command 11 ms. **All four mutations re-applied by the
+  reviewer:** A (unsplit sentinel) turned tests 5 and 6 red, B (whole buffer)
+  tests 3 and 6, C (newline give-up, at escalation) test 7, D (no settle, live)
+  test 11 — tree restored after each. Production additions carry no
+  `unwrap`/`expect`/`panic!`, debug print, `unsafe` or new lint allow.
+- **Scope deviations:** none in production code. Test 7 recovers the failing
+  run's shell id by parsing the error's context text — brittle to a wording
+  change, but the wording is itself pinned by the same test. Accepted.
+- **Calibration:** two architect-side spec defects. (1) A fake program
+  specced for PTY tests must be **bounded on EOF** (`read … || return 1`):
+  the unbounded loop produced the 25 MB runaway the moment the executor ran it
+  outside a PTY. (2) A constant whose correctness lives in escaping must say so
+  in the spec — the executor dropped two `\$` and every answered test failed
+  as "3 incorrect attempts". Executor-side: a helper conversion kept a
+  **seed** argument in place of the command under test and the evidence was
+  written from a print that still named the intended command — the class
+  [executor claims need re-running] exists for.
+
