@@ -693,3 +693,105 @@ runs `run_in_shell_with_prompts` directly (the shell is reused, so
 new non-ignored tests pass, the updated give-up test passes, the client
 framing tests are green, and the full gate set is clean. Running the
 end-to-end block and the mutations next.
+
+### Update — 2026-09-28 03:40 (end-to-end verification)
+
+The § End-to-end verification block, run verbatim as its own capture:
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2052p-0f-10i
+client_tests=26p-0f
+new_tests=9p-0f
+pty_sentinel=1
+pty_wrap_sites=1
+old_wrap_sites=0
+tmux_untouched=0
+gaveup_type=1
+false_comments=0
+scrub_helper=1
+ignore_total=10
+```
+
+PASTE MATCH
+
+**Mutation A — an echo-visible sentinel** (dropped the `replacen` split in
+`with_pty_prompt_sentinel`, ran tests 5 and 6):
+
+```
+failures:
+    daemon::executor::shell_exec::tests::a_password_prompt_that_never_appears_is_not_given_up
+    daemon::executor::shell_exec::tests::a_correct_password_is_sent_exactly_once
+
+test result: FAILED. 1 passed; 2 failed; ...
+
+thread 'a_password_prompt_that_never_appears_is_not_given_up' panicked: the
+never-prompting command resolves: the password prompt in shell s0 was
+cancelled — a password prompt appeared and nobody is attached to answer it…
+thread 'a_correct_password_is_sent_exactly_once' panicked: the credential
+must never reach the shell log: 3 copies in /tmp/.tmpMz3RrL/s0.cast
+```
+
+Both red, as measured at drafting: the echo-visible sentinel classifies the
+typed line, so the never-prompting command is given up, and the answer is
+typed at echo time (before the program disables echo) — 3 plaintext copies
+in the cast. Restored; `git diff --stat` matches its pre-mutation state.
+
+**Mutation B — offer the whole buffer** (`on_chunk` sees all of `buf`
+again, ran tests 3 and 6):
+
+```
+assertion `left == right` failed: exactly the command plus one answer
+crosses the socket; the ordinary output after the answer must not re-offer
+the already-answered prompt: [command, let-me-through\n, let-me-through\n]
+  left: 3
+ right: 2
+failures: run_command_with_prompts_offers_only_output_after_the_last_answer,
+          a_correct_password_is_sent_exactly_once
+test result: FAILED. 0 passed; 2 failed
+```
+
+Test 3 **red** as predicted (a second `let-me-through` write — the reasoned
+prediction held). Test 6 red too, reported as three failed authentication
+attempts. Restored; `git diff --stat` matches.
+
+**Mutation C — give up with a newline** (`GIVE_UP_BYTES = b"\n"`, ran
+test 7):
+
+```
+timed out after 10s waiting for command output: "echo AFTER"
+failures: an_unanswerable_password_prompt_gives_up_fast_and_leaves_the_shell_usable
+test result: FAILED. 0 passed; 1 failed; ... finished in 10.32s
+```
+
+Red as measured at drafting: `PROMPTING` re-prompts on an empty answer
+like both real versions, so the give-up parks the shell and `echo AFTER`
+waits out its 10 s timeout. Restored; `git diff --stat` matches, and
+`run_command_with_prompts_gives_up_without_an_answer` (test 4) passes
+again after the restore.
+
+**Mutation D — no settle (live only).** Run on `pinky` by hand: the settle
+loop was deleted keeping the `0x03` write, and test 11 was run —
+`echo AFTER` **timed out** at 10 s, red as measured at drafting
+(sudo-rs reads the next command's bytes as password characters before it
+dies). Restored; `git diff --stat` matches.
+
+**Task 8 live check** (`pinky` reachable, ssh BatchMode):
+
+```
+pinky `sudo -k`: 286.580077ms (exit 0)
+pinky give-up: 329.405805ms
+pinky next command: 12.12349ms
+test daemon::executor::shell_exec::tests::an_unanswerable_password_prompt_on_pinky_leaves_the_shell_usable ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2061 filtered out; finished in 0.63s
+```
+
+The never-prompting clear succeeds in 287 ms (Defect A fixed: no false
+give-up on the echo); the unanswerable prompt gives up honestly in 329 ms
+with `nobody is attached` (Defect C's cancel + Task 4's honest words); and
+the very next command on that shell runs in 12 ms (the settle wait's
+witness on sudo-rs). The pre-existing flake
+`input_after_a_prompt_logs_a_redaction_marker` did not appear in the three
+full lib runs.
