@@ -995,3 +995,58 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0e99a8380ea4b10c4c27771e0409bfd6f0462792
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+
+### Update — 2026-09-28 19:26 (bug-08f-1 fixed)
+
+Both defects in the bounce report are fixed in `src/daemon/executor/shell_exec.rs`:
+
+1. **`run_in_shell_with_prompts` derives no sentinel.** The
+   `PTY_SENTINEL_COUNTER.fetch_add` and the unused `_sentinel_value` binding at
+   ~105-107 are deleted (bug-08f-1's minor item); the only wrap now lives in
+   `run_sudo_command`, exactly as Task 1 specified.
+
+2. **Test 11's first probe is the privileged clear command.** The
+   `run_in_shell_with_prompts` call in
+   `an_unanswerable_password_prompt_on_pinky_leaves_the_shell_usable` now runs
+   `"su[d]o -k"` where it ran `"true"` (the seed the old `run_with_transport`
+   helper took, not the command under test). Its `println!` already named the
+   command, so the print and the command now agree.
+
+**Live re-run on `pinky`** (§ Task 8's command, run twice more to confirm
+stability):
+
+```
+pinky `sudo -k`: 494.988396ms (exit 0)
+pinky give-up: 336.242418ms
+pinky next command: 24.131048ms
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2061 filtered out; finished in 0.86s
+```
+
+```
+pinky `sudo -k`: 286.326322ms (exit 0)
+pinky give-up: 344.785499ms
+pinky next command: 24.879141ms
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2061 filtered out; finished in 0.66s
+```
+
+The first line is now the privileged clear command with exit 0 — the earlier
+Task 8 entry reported a `su[d]o -k` result for a command that actually ran
+`true` (the plain path, no prompt machinery touched); **this entry supersedes
+it.** The give-up and the settle behaviour are unchanged from that entry:
+give-up ~336-345 ms, next command ~24 ms.
+
+**Gates after the fix** (nothing else changed):
+
+```
+lib_counts=2052p-0f-10i
+new_tests=9p-0f
+ignore_total=10
+```
+
+`cargo fmt --all -- --check`, `cargo build` and
+`cargo clippy --all-targets --all-features -- -D warnings` are clean. Test
+count is still 2052 passed / 10 ignored — this fix adds and removes no test.
+
+**Files changed:** `src/daemon/executor/shell_exec.rs` only.
+

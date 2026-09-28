@@ -104,8 +104,6 @@ where
 {
     let has_sudo = command_has_sudo(cmd);
     let prompts = if has_sudo {
-        let idx = PTY_SENTINEL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let _sentinel_value = sudo_sentinel(idx);
         Some(SudoPromptArgs {
             wrapped: cmd.to_string(),
             id: prompt_id.to_string(),
@@ -2497,7 +2495,7 @@ mod tests {
         let (id, first) = run_in_shell_with_prompts(
             &reg,
             owner.clone(),
-            "true",
+            "sudo -k",
             5,
             None,
             Some(20),
