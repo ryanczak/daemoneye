@@ -1,7 +1,7 @@
 # Phase 08b: shell-exit-detection — a command sent to a dead shell fails in seconds, not at its timeout
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04a (SSH shells), the M20 shell substrate
 **Estimated diff:** ~200 lines across 4 files, plus 7 tests
 **Tags:** language=rust, kind=bugfix, size=s
@@ -472,3 +472,219 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-27 22:00 (started)
+
+**Executor:** rexy (headless run). Status → in-progress. Beginning Task 1: the
+`read_to_marker` exit poll, `ShellExited`, and its export; then Tasks 2–4 in
+order; the two mutations; the end-to-end capture; and the live check.
+
+### Update — 2026-09-27 18:09 (progress)
+
+**Executor:** rexy (headless run, same run as the started entry). All code and
+tests are in place and the gates pass; the E2E capture, the mutations and the
+live check are recorded below. One finding changes how the run ends:
+
+- **Task 1** — `read_to_marker` now slices its read at
+  `min(deadline, now + 500 ms)`, asks `status()` (1 s budget) when a slice
+  elapses short of the real deadline, and on `ShellState::Exited` drains for
+  250 ms before returning `ShellExited`. A `status` error (or any other
+  state) keeps the command waiting. `line` is cleared only after a complete
+  frame parses; the final-deadline error text is byte-identical.
+- **Task 2** — both `run_in_shell_core` context sites switch to
+  `"shell {id} exited before the command finished"` when the chain carries
+  `ShellExited`; the limit wording is untouched for real timeouts. The
+  orphaned doc-fragment line 76 is deleted.
+- **Task 3** — `shell_run_error_text` renders both PTY arms' run errors;
+  the `ShellExited` text names the shell, says it exited, and directs the
+  retry at a live shell (`shell: "new"` or omitted); the timeout text keeps
+  "may still be running".
+- **Task 4** — the six non-ignored tests pass in 2.06 s; the live ssh test is
+  added ignored (8 → 9 ignored).
+- One clippy finding surfaced during the run — `single_match` on the status
+  probe's fall-through — and was fixed by re-shaping the probe to an
+  `if let Ok(Status { Exited, .. })`; no behavior change.
+- **A pre-existing, load-dependent flake in
+  `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`
+  (code untouched by this phase) fired repeatedly during verification** —
+  measured against both this tree and the pristine drafting commit
+  (`801bbbd8`) in a throwaway worktree, so it is not caused by this change.
+  Full numbers in the blocker entry below. Because of it the acceptance
+  criterion "2043/0/9 on three consecutive runs" could not be banked
+  reliably; the capture pasted in the end-to-end entry shows what actually
+  ran.
+
+### Update — 2026-09-27 18:09 (end-to-end verification)
+
+**Executor:** rexy (headless run). The § End-to-end verification block, run
+verbatim; its output pasted as this entry's first fenced block:
+
+```
+lib1=FAILED shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker 
+lib2=FAILED shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker 
+lib3=ok 
+lib_counts=2043p-0f-9i
+client_tests=25p-0f
+exited_type=1
+loop_polls=1
+deadline_wording=1
+orphan_gone=0
+helper=1
+caveat_sites=1
+ignore_total=9
+```
+
+The paste check:
+
+```
+PASTE MATCH
+```
+
+`PASTE MATCH` is the literal from the § End-to-end verification snippet
+(`diff /tmp/pasted-08b.txt /tmp/e2e-08b.txt && echo "PASTE MATCH"`), pasted
+here as required; the diff was empty.
+
+Every row the block can bank is as the acceptance criteria expect:
+`exited_type=1`, `loop_polls=1`, `deadline_wording=1`, `orphan_gone=0`,
+`helper=1`, `caveat_sites=1`, `ignore_total=9`, `client_tests=25p-0f`, and
+`lib_counts` reached `2043p-0f-9i` in this capture (its final `cargo test
+--lib` was green; one of the three numbered runs was). What the block cannot
+bank is the headline: `lib1` and `lib2` each hit the pre-existing
+redaction-marker flake, so "three consecutive green runs" is **unmet here** —
+not because a phase test failed (none ever did; the failing test is
+`shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`, which
+this phase does not touch) but because of the measured pre-existing race
+detailed in the blocker entry below.
+
+Other-target counts (§ acceptance criterion, run outside the block because
+`cargo test` stops at the failing lib target):
+
+```
+bug_tracker: test result: ok. 6 passed; 0 failed
+doc_truth:   test result: ok. 14 passed; 0 failed
+integration: test result: ok. 32 passed; 0 failed; 2 ignored
+isolation:   test result: ok. 10 passed; 0 failed; 1 ignored
+```
+
+The six phase tests together, in one run (criterion: 6 passed):
+
+```
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2046 filtered out; finished in 2.06s
+```
+
+The three pinned preservation tests individually
+(`cargo test --lib -- <name>` each): `client_run_command_times_out_on_a_silent_command`
+→ `1 passed; 0 failed` (0.50 s), `client_run_command_survives_a_chunk_split_mid_marker`
+→ `1 passed; 0 failed`, `client_run_command_ignores_interleaved_non_chunk_frames`
+→ `1 passed; 0 failed`; the whole `shell::client::tests` module →
+`25 passed; 0 failed; 1 ignored`.
+
+## Mutations (M21 phase-08b)
+
+**Mutation A — never poll.** In `read_to_marker` the probe's match arm was
+changed from `ShellState::Exited` to `ShellState::Paused`, making the `Exited`
+branch unreachable.
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2051 filtered out; finished in 20.00s
+
+thread 'shell::client::tests::client_run_command_fails_fast_when_the_shell_program_has_exited' panicked at src/shell/client.rs:1385:9:
+the failure must land in seconds, not at the 20 s timeout: 20.001681149s
+```
+
+Red as required — the test waited out its full 20 s. Restored afterwards;
+`git diff --stat` matched its pre-mutation state (6 files, same insertions).
+
+**Mutation B — clear on a slice timeout.** `line.clear()` was moved back to
+the top of the loop so it also ran after a slice elapsed.
+
+```
+test result: FAILED. 7 passed; 18 failed; 1 ignored; 0 measured; 2026 filtered out; finished in 0.02s
+test shell::client::tests::client_run_command_on_a_live_shell_is_not_cut_short_by_the_exit_check ... FAILED
+test shell::client::tests::client_run_command_ignores_interleaved_non_chunk_frames ... FAILED
+... (14 more of the module's 25, all on the same malformed-frame shape)
+malformed frame from /tmp/.tmpX6LSnC/shell.sock while running "sleep 2; echo LIVE_OK":
+EOF while parsing a value at line 1 column 0
+```
+
+The mutation went **red, and red far beyond the spec's cautious prediction** —
+18 of the module's 25 tests failed, not just the exit tests. The reason the
+spec's "may not go red" hedge missed: a slice timeout fires on **every**
+command whose output takes longer than 500 ms to start arriving, which in the
+real-PTY fixtures is almost every command (the host answers the first frames
+only after bash starts), and with `line` cleared after a partially-read frame
+the next read starts mid-frame and every parse fails with `EOF while parsing a
+value`. The § Current state 4 rule is thus confirmed as load-bearing by
+observation, not just by reading. Restored afterwards; `git diff --stat`
+matched its pre-mutation state, and `shell::client::tests` was green again
+(`25 passed; 0 failed`).
+
+Run budget: one run each, as pinned.
+
+## Live check (Task 6)
+
+```
+elapsed=771.038912ms
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2051 filtered out; finished in 0.77s
+```
+
+(`cargo test --lib a_batchmode_ssh_shell_that_cannot_connect_fails_fast_on_pinky
+-- --ignored --nocapture`, output captured to a file and pasted; an earlier
+by-hand run printed `elapsed=772.39623ms`.) **The live criterion is met**:
+`pinky` is reachable and ssh refused the unknown host key in BatchMode, and
+the daemon's `run_command` reported `exited` in 0.77 s — against a 20 s
+timeout that used to be the whole wait.
+
+### Update — 2026-09-27 18:09 (blocker)
+
+**Blocked on:** the acceptance criterion "`cargo test --lib` → at least
+2043 passed / 0 failed / 9 ignored, on three consecutive runs" cannot be
+banked reliably on this host, because a **pre-existing** test —
+`shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`
+(`src/shell/backend.rs:542`), a file this phase is not authorized to touch —
+fails intermittently under suite concurrency. The phase's own six tests never
+failed in any run.
+
+**What I tried:** (numbers are runs with ≥1 failing lib test, on the same
+host within one hour; the failing test's identity was grepped every time)
+
+- Main tree (this phase's code), default threads: 10 consecutive runs → **3
+  failed**; another 6 → **3 failed**; another 6 → **1 failed**. Every failure
+  was `input_after_a_prompt_logs_a_redaction_marker`.
+- Pristine drafting commit `801bbbd8` in a throwaway worktree
+  (`git worktree add /tmp/dm-base`), default threads: 14 runs spread across
+  two windows → first window **0/14**, second window **8/10** (5/8 and 3/4);
+  contemporaneous 6-run samples → base **3/6** vs main **3/6**. The flake is
+  not caused by this phase's code; the earlier green window was system-load
+  luck.
+- `--test-threads=1`: **0/3** failed. `--test-threads=16`: **0/4**. `=24`:
+  **0/6**. `=30`: **1/3**. `=31`: **2/3** main, **2/6** base. The failure rate
+  rises with suite concurrency.
+- The test alone, 30 runs: **0/30**. Only `shell::client::tests` + it: 0/8.
+  Only `shell::backend::tests`: 0/5. The failure needs the full suite's load.
+- Skipping this phase's tests (with `--skip`): skipping the four client PTY
+  tests → **0/4** and **0/3**; skipping only the `shell_exec` exited test →
+  **2/4** and **1/6**. The phase's PTY-host tests add suite weight, which
+  raises the flake's hit rate — the same effect any added test would have.
+- Mechanism, established with a probe patch in the throwaway worktree (the
+  phase's tree was never touched): the test's credential reaches the cast
+  twice — as the scrubbed `i` event (`[redacted]`) and, ~0.1–3 ms later, as
+  bash's own echo in an `o` event. The test's poll loop breaks at the first
+  cast read that contains `[redacted]` and then asserts the credential is
+  absent from **that read**; the pass/fail coin is whether the pump's echo
+  write lands before that first read. No code decides it — only scheduler
+  timing. Sample casts: PASS ends at `i [redacted]`, FAIL shows
+  `[0.042829, "o", "hunter2-secret-test"]` after it.
+- The mutations (one run each), the six-test run, the three pinned
+  preservation tests, `clippy`, `fmt`, and the other test targets were all
+  green throughout; only this pre-existing test ever failed.
+
+**What I need:** a decision from the principal engineer on the pre-existing
+racy test, none of whose files this phase may edit: either authorize a fix in
+`src/shell/backend.rs` (e.g. have the test re-read until the cast stops
+growing before asserting, or run the credential-input→assertion window against
+a quiescence signal rather than the first sight of `[redacted]`), or accept
+that the three-consecutive-runs criterion is met with the observed flake
+flagged. Everything else in the phase is complete and verified; the code,
+mutations, E2E capture and live check are committed with the phase left
+**in-progress**.

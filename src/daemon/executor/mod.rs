@@ -194,6 +194,30 @@ pub(super) fn ghost_host_refusal(policy: &GhostPolicy, host: &crate::host::HostI
     )
 }
 
+/// What a shell-command failure tells the model. Both PTY arms render the
+/// run error through this one helper so they cannot diverge.
+///
+/// A `ShellExited` in the chain is a different fact from a timeout: the
+/// shell's program is gone, so **the command is not running there** and a
+/// retry must aim at a live shell — `shell: "new"` or no `shell` at all —
+/// rather than into the same dead one.
+fn shell_run_error_text(shell_id: &str, e: &anyhow::Error) -> String {
+    if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
+        format!(
+            "Error running command in shell {shell_id}: {e:#}. That shell has \
+             exited, so the command is not running there. Omit `shell` (or pass \
+             \"new\") to run it in a live shell."
+        )
+    } else {
+        format!(
+            "Error running command in shell {shell_id}: {e:#}. \
+             The command may still be running in that shell — \
+             do not assume it failed outright; retrying could \
+             double-apply its effect."
+        )
+    }
+}
+
 pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
     tx: &mut W,
@@ -502,12 +526,7 @@ where
                                                 id.to_string()
                                             })
                                             .unwrap_or_else(|| "s?".to_string());
-                                        let msg = format!(
-                                            "Error running command in shell {shell_id}: {e:#}. \
-                                             The command may still be running in that shell — \
-                                             do not assume it failed outright; retrying could \
-                                             double-apply its effect."
-                                        );
+                                        let msg = shell_run_error_text(shell_id.as_str(), &e);
                                         crate::daemon::stats::finish_command(cmd_id, 1);
                                         send_response_split(
                                             tx,
@@ -599,12 +618,7 @@ where
                                                 id.to_string()
                                             })
                                             .unwrap_or_else(|| "s?".to_string());
-                                        let msg = format!(
-                                            "Error running command in shell {shell_id}: {e:#}. \
-                                             The command may still be running in that shell — \
-                                             do not assume it failed outright; retrying could \
-                                             double-apply its effect."
-                                        );
+                                        let msg = shell_run_error_text(shell_id.as_str(), &e);
                                         crate::daemon::stats::finish_command(cmd_id, 1);
                                         send_response_split(
                                             tx,
@@ -2322,5 +2336,44 @@ mod tests {
             },
         }
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ── shell-exit detection (M21 phase-08b) ─────────────────────────────────
+
+    /// The model must never be told a command "may still be running" when the
+    /// shell it was sent to has exited — that caveat would invite a retry into
+    /// a dead shell. The timeout wording keeps it: for a real timeout the
+    /// command genuinely may still be running.
+    #[test]
+    fn a_dead_shell_error_does_not_say_the_command_may_still_be_running() {
+        let exited = anyhow::Error::new(crate::shell::ShellExited {
+            cmd: "echo hi".to_string(),
+        });
+        let text = shell_run_error_text("s7", &exited);
+        assert!(
+            text.contains("s7"),
+            "the text names the shell the command was sent to: {text}"
+        );
+        assert!(text.contains("exited"), "the text says exited: {text}");
+        assert!(
+            !text.contains("may still be running"),
+            "a dead shell runs nothing; the caveat must be gone: {text}"
+        );
+        assert!(
+            text.contains("shell"),
+            "the text points at the shell to retry in: {text}"
+        );
+
+        let timeout =
+            anyhow::anyhow!("timed out after 45s waiting for command output: \"sleep 60\"");
+        let text = shell_run_error_text("s7", &timeout);
+        assert!(
+            text.contains("may still be running"),
+            "a real timeout keeps the may-still-be-running caveat: {text}"
+        );
+        assert!(
+            !text.contains("has exited"),
+            "a real timeout is not an exit: {text}"
+        );
     }
 }

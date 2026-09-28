@@ -73,9 +73,9 @@ fn applied_timeout_secs(timeout_secs: Option<u64>) -> Duration {
     Duration::from_secs(secs)
 }
 
-/// The non-chat entry point: no transport, so a sudo command that needs a
-/// The entry point `executor/mod.rs` calls with a pub/sub transport. `cmd` is
-/// the plain command: whether it needs a sudo prompt and which sentinel it gets
+/// The non-chat entry point: the entry point `executor/mod.rs` calls with a
+/// pub/sub transport. `cmd` is the plain command: whether it needs a sudo
+/// prompt and which sentinel it gets
 /// is decided here, and the non-sudo result is byte-identical to the
 /// historical no-transport run (`prompts: None`).
 ///
@@ -359,10 +359,17 @@ where
         )
         .await
         .map_err(|e| {
-            e.context(format!(
-                "command exceeded the {applied_timeout:#?} limit in shell {}",
-                id.as_str()
-            ))
+            if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
+                e.context(format!(
+                    "shell {} exited before the command finished",
+                    id.as_str()
+                ))
+            } else {
+                e.context(format!(
+                    "command exceeded the {applied_timeout:#?} limit in shell {}",
+                    id.as_str()
+                ))
+            }
         })?;
         return finish_run(reg, cmd, &id, &outcome, before).await;
     };
@@ -382,10 +389,15 @@ where
         Err(e) => {
             // The give-up reason must reach the AI: surface it through the same
             // structured error the command's own timeout takes.
-            Err(e.context(format!(
-                "sudo in shell {} did not complete within the {applied_timeout:#?} limit",
-                id.as_str()
-            )))
+            let ctx = if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
+                format!("shell {} exited before the command finished", id.as_str())
+            } else {
+                format!(
+                    "sudo in shell {} did not complete within the {applied_timeout:#?} limit",
+                    id.as_str()
+                )
+            };
+            Err(e.context(ctx))
         }
     }
 }
@@ -1998,6 +2010,80 @@ mod tests {
         assert!(
             !raw.contains("SENTINEL_ALPHA"),
             "record 1's range must not reach back into command 0: {raw:?}"
+        );
+    }
+
+    // ── shell-exit detection (M21 phase-08b) ─────────────────────────────────
+
+    /// The production spawn substitute whose program **exits immediately**:
+    /// `sh -c 'exit 0'` in place of `spawn_with_cast`'s bash — everything else
+    /// identical, so the run path sees a socket that answers status with
+    /// `Exited` while the PTY child is gone.
+    async fn spawn_with_exited_shell(id: ShellId) -> anyhow::Result<std::path::PathBuf> {
+        let dir = tempfile::tempdir().context("tempdir for cast")?;
+        let cast = dir.path().join(format!("{}.cast", id.as_str()));
+        let backend = crate::shell::PtyBackend::spawn(
+            "sh",
+            &["-c".to_string(), "exit 0".to_string()],
+            ROWS,
+            COLS,
+            100,
+            &cast,
+            0,
+        )
+        .context("spawning the exiting shell")?;
+        let lock = crate::daemon::instance::InstanceLock::acquire(&lock_path(id.as_str()))
+            .context("holding the per-id instance lock")?;
+        let socket = socket_path(id.as_str());
+        let listener = bind(&socket)
+            .await
+            .context("binding the in-process host's socket")?;
+        tokio::spawn(serve(listener, Arc::clone(&backend)));
+        std::mem::forget(lock);
+        std::mem::forget(dir);
+        Ok(cast)
+    }
+
+    /// An exited shell must be *reported as exited*, not dressed up as a
+    /// timeout: nothing exceeded a limit and nothing is still running. The
+    /// wording the model reads decides what it does next — retrying into a
+    /// dead shell.
+    #[tokio::test]
+    async fn an_exited_shell_is_reported_as_exited_not_as_a_timeout() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("exited-e2e".into());
+        let mut sink = tokio::io::sink();
+        let mut eof = tokio::io::empty();
+        let started = std::time::Instant::now();
+        let err = run_in_shell_with_prompts(
+            &reg,
+            owner,
+            "echo hi",
+            5,
+            None,
+            Some(20),
+            "",
+            &mut sink,
+            &mut eof,
+            crate::host::HostId::Local,
+            |id| async move { spawn_with_exited_shell(id).await.map(|_cast| ()) },
+        )
+        .await
+        .expect_err("a dead shell must fail the run");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "the run must fail in seconds, not at its 20 s timeout: {elapsed:?}"
+        );
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("exited"),
+            "the failure must say the shell exited: {msg}"
+        );
+        assert!(
+            !msg.contains("exceeded"),
+            "a dead shell exceeded no limit: {msg}"
         );
     }
 }

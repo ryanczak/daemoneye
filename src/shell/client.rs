@@ -9,7 +9,7 @@ use anyhow::Context;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-use crate::shell::proto::{ShellRequest, ShellResponse, ShellSignal, encode};
+use crate::shell::proto::{ShellRequest, ShellResponse, ShellSignal, ShellState, encode};
 use crate::shell::pty::{CommandOutcome, Nonce, parse_outcome, wrap_command};
 #[cfg(test)]
 use crate::shell::test_begin_marker;
@@ -19,6 +19,44 @@ use crate::shell::test_end_marker;
 /// How long one prompt answer may take to reach the shell. Bounded well below
 /// any plausible command timeout so a wedged host cannot wedge the caller.
 const PROMPT_ROUND_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How often `read_to_marker` wakes to ask the host whether the shell's
+/// program is still alive. 500 ms keeps a dead shell's failure well under
+/// "a few seconds" while staying off a live command's critical path.
+const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// One `status` probe's own budget. Shorter than a poll interval so the probe
+/// itself cannot delay the next slice by more than it saves.
+const EXIT_STATUS_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long `read_to_marker` keeps draining after the host says the shell's
+/// program has exited: an end marker for a command that ran to completion may
+/// already be in flight on the connection.
+const EXIT_DRAIN_WINDOW: Duration = Duration::from_millis(250);
+
+/// The shell's program exited before this command's end marker arrived.
+///
+/// Distinct from a timeout on purpose: nothing the caller wrote exceeded any
+/// limit, and the command is *not* still running — its shell is gone. The
+/// error model sees it and stops saying "may still be running"; the caller is
+/// told to aim the command at a live shell instead of retrying into a dead one.
+#[derive(Debug)]
+pub struct ShellExited {
+    /// The command that was sent into the dead shell, as it was sent.
+    pub cmd: String,
+}
+
+impl std::fmt::Display for ShellExited {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "shell exited before the command finished: {:?}",
+            self.cmd
+        )
+    }
+}
+
+impl std::error::Error for ShellExited {}
 
 /// Send `sig` to the shell hosted at `sock`. Returns when the host has
 /// acknowledged, which is not the same as the job having reacted.
@@ -290,18 +328,52 @@ where
     // same callback answer.
     let mut answered_at: Option<usize> = None;
     let deadline = tokio::time::Instant::now() + timeout;
+    // A slice that elapses may leave a half frame in `line`: `read_until` is
+    // not cancellation-safe, and tokio keeps whatever it had appended. So
+    // `line` is cleared only after a *complete* frame has been parsed — after
+    // a slice the next `read_until` continues filling it, and the frame is
+    // parsed from the accumulated bytes, never from the last read's count.
     let mut line: Vec<u8> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
+    // When the host reports the shell's program dead, drain this long for an
+    // end marker that may already be in flight; past that, the shell has
+    // exited and this command will never complete.
+    let mut drain_until: Option<tokio::time::Instant> = None;
     loop {
-        line.clear();
-        let read = tokio::time::timeout_at(deadline, reader.read_until(b'\n', &mut line)).await;
+        let slice_end = match drain_until {
+            Some(end) => end,
+            None => deadline.min(tokio::time::Instant::now() + EXIT_POLL_INTERVAL),
+        };
+        let read = tokio::time::timeout_at(slice_end, reader.read_until(b'\n', &mut line)).await;
         let n = match read {
             Ok(Ok(n)) => n,
             Ok(Err(e)) => {
                 return Err(e).with_context(|| format!("reading frame from {}", sock.display()));
             }
             Err(_) => {
-                anyhow::bail!("timed out after {timeout:?} waiting for command output: {cmd:?}");
+                if tokio::time::Instant::now() >= deadline {
+                    anyhow::bail!(
+                        "timed out after {timeout:?} waiting for command output: {cmd:?}"
+                    );
+                }
+                if let Some(end) = drain_until {
+                    // The drain window is over and no end marker arrived: the
+                    // shell's program is gone and this command will never
+                    // finish.
+                    if tokio::time::Instant::now() >= end {
+                        return Err(ShellExited {
+                            cmd: cmd.to_string(),
+                        }
+                        .into());
+                    }
+                } else if let Ok(ShellResponse::Status {
+                    state: ShellState::Exited,
+                    ..
+                }) = status(sock, EXIT_STATUS_TIMEOUT).await
+                {
+                    drain_until = Some(tokio::time::Instant::now() + EXIT_DRAIN_WINDOW);
+                }
+                continue;
             }
         };
         if n == 0 {
@@ -319,6 +391,7 @@ where
                 );
             }
         };
+        line.clear();
         match frame {
             ShellResponse::Chunk { bytes } => {
                 // Chunks split arbitrarily (a PTY read can land mid-sequence),
@@ -475,6 +548,27 @@ mod tests {
         let listener = host::bind(&path).await.expect("bind the shell socket");
         tokio::spawn(host::serve(listener, Arc::clone(&backend)));
         Host { path, _dir: dir }
+    }
+
+    /// The same host shape with `program`/`args` as the shell's program — the
+    /// seam the exit tests use to put a program that dies immediately behind
+    /// an otherwise-live socket.
+    async fn spawn_host_running(program: &str, args: &[String]) -> Host {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let cast = dir.path().join("e2e.cast");
+        let backend = PtyBackend::spawn(program, args, 24, 80, 100, &cast, 0)
+            .expect("the shell program is spawnable");
+        let path = dir.path().join("shell.sock");
+        let listener = host::bind(&path).await.expect("bind the shell socket");
+        tokio::spawn(host::serve(listener, Arc::clone(&backend)));
+        Host { path, _dir: dir }
+    }
+
+    /// A host whose program has already exited, leaving the socket bound and
+    /// the host process alive but the PTY child gone.
+    async fn spawn_host_exited() -> Host {
+        spawn_host_running("sh", &["-c".to_string(), "exit 0".to_string()]).await
     }
 
     #[tokio::test]
@@ -1277,5 +1371,129 @@ mod tests {
                 "the output is the command's own bytes, identical to run_command's shape"
             );
         }
+    }
+
+    // ── shell-exit detection (M21 phase-08b) ─────────────────────────────────
+
+    #[tokio::test]
+    async fn client_run_command_fails_fast_when_the_shell_program_has_exited() {
+        let host = spawn_host_exited().await;
+        let started = std::time::Instant::now();
+        let result = run_command(&host.path, "echo hi", "sh", Duration::from_secs(20)).await;
+        let elapsed = started.elapsed();
+        let err = result.expect_err("a dead shell must fail the command");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the failure must land in seconds, not at the 20 s timeout: {elapsed:?}"
+        );
+        assert!(
+            err.chain()
+                .any(|c| c.downcast_ref::<ShellExited>().is_some()),
+            "the chain must carry the typed error: {err:#?}"
+        );
+        let text = format!("{err:#}");
+        assert!(text.contains("exited"), "the error says exited: {text}");
+    }
+
+    #[tokio::test]
+    async fn client_run_command_fails_fast_when_the_command_exits_the_shell() {
+        let host = spawn_host().await;
+        let started = std::time::Instant::now();
+        let result = run_command(&host.path, "exit 7", "bash", Duration::from_secs(20)).await;
+        let elapsed = started.elapsed();
+        let err = result.expect_err("exiting the shell must fail the command");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the failure must land in seconds, not at the 20 s timeout: {elapsed:?}"
+        );
+        let text = format!("{err:#}");
+        assert!(text.contains("exited"), "the error says exited: {text}");
+    }
+
+    #[tokio::test]
+    async fn client_run_command_on_a_live_shell_is_not_cut_short_by_the_exit_check() {
+        let host = spawn_host().await;
+        let outcome = run_command(
+            &host.path,
+            "sleep 2; echo LIVE_OK",
+            "bash",
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("the live shell completes the command");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(
+            text.contains("LIVE_OK"),
+            "the live command's output must arrive intact: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_spawn_command_fails_fast_when_the_shell_program_has_exited() {
+        let host = spawn_host_exited().await;
+        let started = std::time::Instant::now();
+        let handle = spawn_command(&host.path, "echo hi", "sh", Duration::from_secs(20))
+            .await
+            .expect("the spawn starts");
+        let outcome = handle.outcome.await.expect("the reader task joins");
+        let elapsed = started.elapsed();
+        let err = outcome.expect_err("a dead shell must fail the spawned command");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the spawned command must fail in seconds, not at the 20 s timeout: {elapsed:?}"
+        );
+        let text = format!("{err:#}");
+        assert!(text.contains("exited"), "the error says exited: {text}");
+    }
+
+    /// The live check (Task 6): a real `ssh` whose connection is refused in
+    /// BatchMode — the shape 08c's ghost shells take — fails in seconds with
+    /// "exited", not at the command's timeout. Run by hand:
+    /// `cargo test --lib a_batchmode_ssh_shell_that_cannot_connect_fails_fast_on_pinky -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "requires the configured host `pinky` reachable over ssh"]
+    async fn a_batchmode_ssh_shell_that_cannot_connect_fails_fast_on_pinky() {
+        let host = {
+            let _home = crate::test_home_guard();
+            let dir = tempfile::tempdir().unwrap();
+            let known = dir.path().join("known_hosts");
+            std::fs::write(&known, b"").unwrap();
+            let cast = dir.path().join("e2e.cast");
+            let args: Vec<String> = [
+                "-tt",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=8",
+                "-o",
+                &format!("UserKnownHostsFile={}", known.display()),
+                "-o",
+                "StrictHostKeyChecking=ask",
+                "pinky",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            let path = dir.path().join("shell.sock");
+            let listener = host::bind(&path).await.expect("bind the shell socket");
+            let backend =
+                PtyBackend::spawn("ssh", &args, 24, 80, 100, &cast, 0).expect("ssh is on PATH");
+            tokio::spawn(host::serve(listener, Arc::clone(&backend)));
+            Host { path, _dir: dir }
+        };
+        let started = std::time::Instant::now();
+        let result = run_command(&host.path, "echo hi", "sh", Duration::from_secs(20)).await;
+        let elapsed = started.elapsed();
+        println!("elapsed={elapsed:?}");
+        let err = result.expect_err("a refused ssh must fail the command");
+        let text = format!("{err:#}");
+        assert!(
+            text.contains("exited"),
+            "the failure names the exit, not a timeout: {text}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the failure must land in seconds, not at the 20 s timeout: {elapsed:?}"
+        );
     }
 }

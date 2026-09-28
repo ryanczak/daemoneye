@@ -18,8 +18,8 @@ mod session;
 pub use crate::daemon::utils::PromptKind;
 pub use backend::PtyBackend;
 pub use client::{
-    CommandHandle, PromptReply, run_command, run_command_with_prompts, send_input, send_signal,
-    spawn_command, status,
+    CommandHandle, PromptReply, ShellExited, run_command, run_command_with_prompts, send_input,
+    send_signal, spawn_command, status,
 };
 pub use host::{ShellBackend, bind, serve};
 pub use launch::{
