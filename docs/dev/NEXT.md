@@ -1,38 +1,39 @@
 # NEXT
 
-**Active phase:** **M21 phase-08f — prompt-on-the-real-prompt**, drafted
-2026-09-27, status `todo`. Dispatch with `/rexymcp:dispatch phase-08f`.
+**Active phase:** **M21 phase-08c — ghost-remote-pty**, drafted 2026-09-28,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-08c`.
 
-**What it does.** A PTY password prompt is recognised only when the program
-is really prompting, answered exactly once, and — when nobody can answer — cancelled
-with `^C` so the shell stays usable. Six files: a split, exported sentinel
-(one wrap, not two); the callback sees only output after the last answer; a
-`^C` give-up with a 300 ms settle wait and a typed `PromptGivenUp`; honest
-error text; the host scrub ends on `^C`.
+**What it does.** A ghost whose runbook `ssh_target` resolved to a configured
+host (08a) runs its `run_terminal_command` in a **PTY shell on that host**,
+owned by the ghost and reused for its later commands, opened with
+`-o BatchMode=yes` (so ssh never prompts), synchronous with a **300 s** cap,
+and **closed when the ghost ends** — both PE decisions of 2026-09-27. An
+unresolved `ssh_target` and `backend = "tmux"` keep the 1.x `ssh <target>
+'<cmd>'` tmux wrap byte for byte. The branch sits in `run_background` after
+the 08a gates, `resolve_command`, the approval and the remote-script build,
+so all of those are unchanged.
 
-**Why it jumped the queue.** Drafting 08c (ghost commands on a remote PTY
-shell) probed a ghost's elevated command through the real run path on
-`pinky`. It found the sentinel matched on the shell's echo (double
-`SUDO_PROMPT` wrap), a correct password **re-sent into the shell as a
-command** after it was accepted (13 plaintext copies in one cast — a
-shipped chat defect, not ghost-only), and a `\n` give-up that re-prompts on
-both sudo versions and eats the next command. PE decision 2026-09-27: new
-row ahead of 08c. The fix was prototyped and measured on pinky and locally
-before drafting; the prototype diff is quoted in the spec.
+**Carries four leftovers:** `ghost_host_refusal` back to private and
+`refusal_gate_tests`' leaking `HomeGuard` replaced (08a review), the
+self-contradictory `run_in_shell_with_prompts` doc comment (08b review), and
+a stale "row 08b" comment in `ghost.rs` (now 08d).
+
+**Measured at drafting (pinky, 2026-09-27/28).** BatchMode + ControlMaster:
+470 ms cold, 12 ms reused; `remote_stream_cmd` (incl. a 25 KB typed command)
+runs with the right exit code in the interactive remote shell; TERM ends an
+in-process **ssh** host in ~100 ms and `sh -c 'sleep 1000'` / `cat` in < 1 ms,
+but an interactive **bash ignores TERM** — so the close test uses a sleep
+host. 08f supplies the fail-fast cancel for an unanswerable password prompt.
 
 **Pre-dispatch check run.** The § End-to-end block was run verbatim against
-`873187e0`: every non-preservation line reads its stated current value
-(`new_tests=0p-0f`, `pty_sentinel=0`, `old_wrap_sites=2`, `gaveup_type=0`,
-`false_comments=2`, `scrub_helper=0`, `ignore_total=9`); both preservation
-lines hold (`tmux_untouched=0`, `client_tests=25p-0f`). Mutations A–C were
-measured against the prototype with the spec's own fake program; D (settle
-wait) is live-only, measured on pinky. **The backend redaction-marker flake
-hit 2 of 3 lib runs on the untouched tree** during this check — the doc
-tells the executor to report its name, not edit it.
+`b837bef4`: every non-preservation line reads its stated current value
+(`new_tests=0p-0f`, `ghost_argv=0`, `ghost_spawn=0`, `timeout=` — file
+absent, `routed=0`, `closed_at_end=0`, `leftovers=0-1-1-1`, `readme=0`,
+`ignore_total=10`); every preservation line holds (`argv_pins=4p-0f`,
+`refusal_tests=2p-0f`, `tmux_wrap=1`); lib green on all three runs.
 
-**Next after 08f:** 08c (ghost-remote-pty — PE: sync, 300 s cap; close a
-ghost's shells at exit), 08d (spawn-ghost-host), 08e
-(remote-connect-handshake, probe first), 09 (live close).
+**Next after 08c:** 08d (spawn-ghost-host), 08e (remote-connect-handshake,
+probe first), 09 (live close).
 
 Twenty-three rows in M21; live host `pinky` (sudo-rs 0.2.13, password
 required; ssh is key-auth); `max_turns` 1000.
