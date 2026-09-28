@@ -59,6 +59,14 @@ fn looks_like_secret_prompt(chunk: &str) -> bool {
     NEEDLES.iter().any(|n| lower.contains(n))
 }
 
+/// True when `bytes` end a secret-entry state: a real newline or carriage
+/// return submits the answer, and a Ctrl-C (the give-up write, 0x03) cancels
+/// the prompt outright — either way the shell is no longer at the prompt, so
+/// the scrub disarms and the next command's text is logged in clear.
+fn ends_secret_entry(bytes: &[u8]) -> bool {
+    bytes.contains(&b'\n') || bytes.contains(&b'\r') || bytes.contains(&0x03)
+}
+
 /// A live shell behind phase-05a's `ShellBackend`: one pump task feeds the
 /// subscriber broadcast, the cast log and the screen from the same PTY bytes.
 pub struct PtyBackend {
@@ -151,7 +159,7 @@ impl ShellBackend for PtyBackend {
                 .unwrap_or_log()
                 .write_input(self.started.elapsed(), b"[redacted]")
                 .context("record redacted input event")?;
-            let submitted = bytes.contains(&b'\n') || bytes.contains(&b'\r');
+            let submitted = ends_secret_entry(bytes);
             if submitted {
                 self.awaiting_secret.store(false, Ordering::SeqCst);
             }
@@ -614,6 +622,21 @@ mod tests {
             cast.contains("no-prompt-e2e-probe"),
             "an unarmed input must be logged verbatim: {cast}"
         );
+    }
+
+    #[test]
+    fn ctrl_c_ends_secret_entry() {
+        assert!(ends_secret_entry(b"x\n"), "a newline submits the answer");
+        assert!(
+            ends_secret_entry(b"x\r"),
+            "a carriage return submits the answer"
+        );
+        assert!(ends_secret_entry(b"\x03"), "Ctrl-C cancels the prompt");
+        assert!(
+            !ends_secret_entry(b"abc"),
+            "ordinary characters keep the scrub armed"
+        );
+        assert!(!ends_secret_entry(b""), "nothing ends what has not begun");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # Phase 08f: prompt-on-the-real-prompt — a PTY password prompt is answered once, only when it is really on screen
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01a (the PTY credential round trip), phase-01b (the
 host-side input scrub), phase-08b (the `read_to_marker` slice structure)
 **Dispatched ahead of:** 08c (ghost-remote-pty), which runs ghost commands —
@@ -336,12 +336,19 @@ module. They are spelled `f=su; f+=do; eval …` so the defining command does
 not itself contain the word and is not routed through the prompt path:
 
 ```rust
-const PROMPTING: &str = r#"f=su; f+=do; eval "$f() { local pw=; while [ -z \"\$pw\" ]; do read -rs -p \"\$SUDO_PROMPT\" pw; echo; done; echo GOT_\${#pw}; }""#;
+const PROMPTING: &str = r#"f=su; f+=do; eval "$f() { local pw=; while [ -z \"\$pw\" ]; do read -rs -p \"\$SUDO_PROMPT\" pw || return 1; echo; done; echo GOT_\${#pw}; }""#;
 const SILENT: &str = r#"f=su; f+=do; eval "$f() { echo NOPROMPT; }""#;
 ```
 
 `PROMPTING` re-prompts on an empty answer, as both real versions do (§ Current
-state 3) — that is what lets test 7 witness Defect C locally. Run a fake's
+state 3) — that is what lets test 7 witness Defect C locally. **Copy both
+constants byte-for-byte** — every `\$` matters: `$pw`, `$SUDO_PROMPT` and
+`${#pw}` must reach the *function body* unexpanded, so inside the `eval`
+string each is written `\$pw`, `\$SUDO_PROMPT`, `\${#pw}`. Drop one
+backslash and the variable expands to empty when the function is defined,
+the fake never sees a password, and every answered test fails with "3
+incorrect password attempts". The `|| return 1` makes the fake exit when its
+input ends; without it a `read` at EOF loops forever. Run a fake's
 definition as the **first command in that owner's shell** (plain path), then
 the command under test in the same shell.
 
@@ -627,3 +634,62 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-09-28
+
+**Resume, do not restart.** The first run ended `hard_fail` /
+`RunawayOutput` (25 MB from one bash call) at turn 250 with **Tasks 1–5
+implemented and correct** — the reviewer re-ran the tree: it builds, and
+7 of the 10 pinned tests pass (tests 1, 2, 3, 4, 5, 9, 10). **Do not
+rewrite the implementation.** Exactly three test-side edits remain, all in
+`src/daemon/executor/shell_exec.rs` tests:
+
+1. **`PROMPTING` is mistranscribed.** Your constant has `\"$pw\"` and
+   `GOT_${#pw}`; the spec has `\"\$pw\"` and `GOT_\${#pw}` — and the spec
+   constant now also carries `|| return 1` after the `read`. Replace yours
+   with the § Task 6 constant **byte-for-byte**. Reviewer-verified: with the
+   spec constant, tests 6 and 8 pass on your tree unchanged.
+2. **Test 7's second step** (`echo AFTER`) calls `run_with_transport`
+   again. That helper records the cast only when it **spawns**, and here the
+   shell is **reused**, so its `.expect("the spawn step recorded the host's
+   cast path")` panics. Call `run_in_shell_with_prompts` directly for that
+   step (owner, `"echo AFTER"`, `5`, `None`, `Some(10)`, `""`, sink, empty,
+   `HostId::Local`, a spawn closure returning `Ok(())`). Reviewer-verified:
+   test 7 then passes, and Mutation C (`GIVE_UP_BYTES = b"\n"`) turns it red
+   at its 10 s timeout.
+3. Then run the § End-to-end block, the mutations, and the live check as
+   specced.
+
+**Never run a fake password program outside a test's PTY, and never with
+piped or empty stdin** — that is what produced the 25 MB. If you must look
+at exploratory output, pipe it through `head -c 4000`.
+
+### Update — 2026-09-28 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the implementation is complete and correct (7/10 tests green,
+the other three pass once the test-side defects are fixed — measured on the
+executor's own tree); the wall was a spec fake that loops on EOF plus a
+mistranscribed constant and a helper reuse bug, so a re-dispatch would only
+redo 780 good lines.
+
+### Update — 2026-09-28 02:09 (progress)
+
+Started 08f. Read STANDARDS, the phase doc and the M21 README; baseline
+confirmed on this tree: `cargo test --lib` → 2043 passed / 0 failed / 9
+ignored, `cargo test` targets unmoved (bug_tracker 6, doc_truth 14,
+integration 32, isolation 10). Status flipped to `in-progress` here and in the
+README row. Working through Task 1 (the `with_pty_prompt_sentinel` PTY form
+and single-wrap in `run_in_shell_with_prompts`) first.
+
+### Update — 2026-09-28 03:10 (progress)
+
+Resumed 08f on the executor's own tree per the Notes for executor: Tasks 1–5
+were already on disk and left untouched. Fixed the three test-side defects the
+notes name in `shell_exec.rs` tests — `PROMPTING` is now the spec constant
+byte-for-byte (with `|| return 1` and `\${#pw}`), and test 7's second step
+runs `run_in_shell_with_prompts` directly (the shell is reused, so
+`run_with_transport`'s spawn-based cast recording does not apply). All nine
+new non-ignored tests pass, the updated give-up test passes, the client
+framing tests are green, and the full gate set is clean. Running the
+end-to-end block and the mutations next.

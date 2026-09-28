@@ -15,7 +15,7 @@ use super::send_response_split;
 use crate::ai::mask_sensitive;
 use crate::daemon::utils::{
     PromptKind, classify_prompt, command_has_sudo, is_ssh_permission_denied, normalize_output,
-    sudo_password_prompt, sudo_sentinel, with_sudo_sentinel,
+    sudo_password_prompt, sudo_sentinel, with_pty_prompt_sentinel,
 };
 use crate::ipc::{Request, Response};
 use crate::shell::PromptReply;
@@ -102,16 +102,12 @@ where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let (has_sudo, _sentinel_value, wrapped) = if command_has_sudo(cmd) {
-        let idx = PTY_SENTINEL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let sentinel = sudo_sentinel(idx);
-        (true, sentinel.clone(), with_sudo_sentinel(cmd, &sentinel))
-    } else {
-        (false, String::new(), cmd.to_string())
-    };
+    let has_sudo = command_has_sudo(cmd);
     let prompts = if has_sudo {
+        let idx = PTY_SENTINEL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _sentinel_value = sudo_sentinel(idx);
         Some(SudoPromptArgs {
-            wrapped: wrapped.clone(),
+            wrapped: cmd.to_string(),
             id: prompt_id.to_string(),
             tx,
             rx,
@@ -122,7 +118,7 @@ where
     run_in_shell_core::<W, R, F, Fut>(
         reg,
         owner,
-        &wrapped,
+        cmd,
         max_per_owner,
         shell,
         timeout_secs,
@@ -133,9 +129,9 @@ where
     .await
 }
 
-/// A sudo command's prompt plumbing. `wrapped` is the command with its
-/// sentinel already inserted; the classifier re-derives the sentinel from the
-/// PTY counter rather than threading it twice.
+/// A sudo command's prompt plumbing. `wrapped` is the command **as given**:
+/// the sentinel is derived and inserted once, inside `run_sudo_command`, so
+/// the typed line carries exactly one `SUDO_PROMPT` assignment.
 pub(super) struct SudoPromptArgs<'p, W, R>
 where
     W: tokio::io::AsyncWriteExt + Unpin + 'p,
@@ -389,7 +385,9 @@ where
         Err(e) => {
             // The give-up reason must reach the AI: surface it through the same
             // structured error the command's own timeout takes.
-            let ctx = if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
+            let ctx = if e.chain().any(|c| c.is::<crate::shell::PromptGivenUp>()) {
+                format!("the password prompt in shell {} was cancelled", id.as_str())
+            } else if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
                 format!("shell {} exited before the command finished", id.as_str())
             } else {
                 format!(
@@ -480,6 +478,14 @@ where
     let mut cred_line = String::new();
     let read = tokio::time::timeout(super::USER_PROMPT_TIMEOUT, rx.read_line(&mut cred_line)).await;
     let answer = match read {
+        // 0 bytes is EOF: nobody is attached to answer — every ghost reads
+        // from `tokio::io::empty()`. Name that, not a parse failure.
+        Ok(Ok(0)) => PromptReply::GiveUp(
+            "a password prompt appeared and nobody is attached to answer it — the prompt \
+             was cancelled and the command did not run with elevated privileges. Give \
+             this command passwordless access on that host, or run it from a chat session."
+                .to_string(),
+        ),
         Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
             Ok(Request::CredentialResponse { credential, .. }) => {
                 let credential = zeroize::Zeroizing::new(credential);
@@ -499,8 +505,9 @@ where
 /// [`classify_prompt`], with the retry/give-up semantics.
 ///
 /// The prompt round-trips over the same `tx`/`rx` the tmux path uses. On the
-/// third failed password the credential is never sent again; the give-up write
-/// of a single `\n` is what un-parks the shell without leaking the credential.
+/// third failed password the credential is never sent again; the give-up
+/// write of the single `0x03` byte is what cancels the prompt without leaking
+/// the credential.
 ///
 /// `host_name` is the destination this command's shell reaches when the run is
 /// on a named host, `"local"` for the daemon host: the ssh give-up wording
@@ -522,7 +529,7 @@ where
 {
     let idx = PTY_SENTINEL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let sentinel = sudo_sentinel(idx);
-    let wrapped_cmd = with_sudo_sentinel(cmd, &sentinel);
+    let wrapped_cmd = with_pty_prompt_sentinel(cmd, &sentinel);
     let SudoPromptArgs { id, tx, rx, .. } = prompts;
     let attempts = std::sync::Arc::new(std::sync::Mutex::new(SudoAttempts::default()));
     let id = std::sync::Arc::new(id);
@@ -727,6 +734,151 @@ mod tests {
     const ROWS: u16 = 24;
     /// The PTY geometry every shell host is spawned with.
     const COLS: u16 = 80;
+
+    /// A fake program that prompts like real sudo: it re-prompts on an empty
+    /// answer and prints the answered length. Spelled `f=su; f+=do; eval …`
+    /// so the defining command does not itself name the privilege tool and is
+    /// not routed through the prompt path.
+    const PROMPTING: &str = r#"f=su; f+=do; eval "$f() { local pw=; while [ -z \"\$pw\" ]; do read -rs -p \"\$SUDO_PROMPT\" pw || return 1; echo; done; echo GOT_\${#pw}; }""#;
+    /// A fake program that never prompts.
+    const SILENT: &str = r#"f=su; f+=do; eval "$f() { echo NOPROMPT; }""#;
+
+    /// The credential the "answered" transport holds, three
+    /// `Request::CredentialResponse` lines over a `Cursor`.
+    const CREDENTIAL: &str = "s3cret-answer-q";
+
+    /// The "attached" write half of [`answered_transport`]: records every
+    /// write the run path makes (the credential prompt goes here, not the
+    /// PTY) and discards them.
+    struct RecordingWriter {
+        writes: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl RecordingWriter {
+        fn new(writes: Arc<std::sync::Mutex<Vec<Vec<u8>>>>) -> Self {
+            Self { writes }
+        }
+    }
+
+    impl tokio::io::AsyncWrite for RecordingWriter {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            self.writes
+                .lock()
+                .expect("write log lock")
+                .push(buf.to_vec());
+            std::task::Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// An "attached" transport: the write half records every write (the
+    /// credential prompt goes there, not the PTY), the read half answers
+    /// every prompt with [`CREDENTIAL`]. Over a `Cursor`, so the read half
+    /// is exhausted exactly when the three attempts are.
+    fn answered_transport() -> (
+        Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+        impl tokio::io::AsyncBufRead + Unpin,
+    ) {
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let lines = (0..3)
+            .map(|_| {
+                let mut line = serde_json::to_string(&Request::CredentialResponse {
+                    id: "p".to_string(),
+                    credential: CREDENTIAL.to_string(),
+                })
+                .expect("CredentialResponse serialises");
+                line.push('\n');
+                line
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        (writes, std::io::Cursor::new(lines.into_bytes()))
+    }
+
+    /// Run `cmd` in the shell a first (seed) command opened, with the given
+    /// transport halves — "nobody attached" is sink/EOF, "answered" is
+    /// [`answered_transport`]. The seed runs through the same run path with
+    /// sink/EOF, defining the fake program; the command under test then runs
+    /// in that same shell with the real transport. Returns the shell id, the
+    /// run result and the cast path, so the log can be read raw.
+    async fn run_with_transport<'p, W, R>(
+        reg: &ShellRegistry,
+        owner: Owner,
+        seed_cmd: &str,
+        cmd: &str,
+        writer: &'p mut W,
+        reader: &'p mut R,
+    ) -> anyhow::Result<(ShellId, ShellRunResult, std::path::PathBuf)>
+    where
+        W: tokio::io::AsyncWriteExt + Unpin + 'p,
+        R: tokio::io::AsyncBufReadExt + Unpin + 'p,
+    {
+        let cast_path: Arc<std::sync::Mutex<Option<std::path::PathBuf>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let cells = Arc::clone(&cast_path);
+        let (id, _) = run_in_shell_with_prompts(
+            reg,
+            owner.clone(),
+            seed_cmd,
+            5,
+            None,
+            Some(20),
+            "",
+            &mut tokio::io::sink(),
+            &mut tokio::io::empty(),
+            crate::host::HostId::Local,
+            move |id: ShellId| {
+                let cells = Arc::clone(&cells);
+                async move {
+                    let path = spawn_with_cast(id).await?;
+                    std::mem::forget(path.clone());
+                    *cells.lock().expect("cast cell lock") = Some(path);
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .context("the seed command runs")?;
+        // The command under test, in the same shell the seed defined the fake
+        // in — with the real transport this time.
+        let (_same_id, out) = run_in_shell_with_prompts(
+            reg,
+            owner,
+            cmd,
+            5,
+            Some(id.as_str()),
+            Some(20),
+            "",
+            writer,
+            reader,
+            crate::host::HostId::Local,
+            move |_id: ShellId| async move { Ok(()) },
+        )
+        .await?;
+        let cast = cast_path
+            .lock()
+            .expect("cast cell lock")
+            .clone()
+            .expect("the spawn step recorded the host's cast path");
+        Ok((id, out, cast))
+    }
 
     /// Point `HOME` at a fresh temp dir for the duration of the test and
     /// serialise against other HOME-mutating tests (bug-05c-1).
@@ -2084,6 +2236,344 @@ mod tests {
         assert!(
             !msg.contains("exceeded"),
             "a dead shell exceeded no limit: {msg}"
+        );
+    }
+
+    /// Test 5: a command naming the privilege tool that **never prompts** is
+    /// not given up on — the old path classified on the shell's echo and
+    /// abandoned it with a false "could not be read" error.
+    #[tokio::test]
+    async fn a_password_prompt_that_never_appears_is_not_given_up() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("never-prompt".into());
+        let (id, result, _cast) = run_with_transport(
+            &reg,
+            owner,
+            SILENT,
+            "sudo true",
+            &mut tokio::io::sink(),
+            &mut tokio::io::empty(),
+        )
+        .await
+        .expect("the never-prompting command resolves");
+        assert_eq!(result.exit_code, 0, "the command ran cleanly");
+        assert!(
+            result.text.contains("NOPROMPT"),
+            "the fake's output reaches the model: {:?}",
+            result.text
+        );
+        assert!(
+            id.as_str().starts_with('s'),
+            "the run names its shell: {id:?}"
+        );
+    }
+
+    /// Test 6: a correct password is answered **exactly once** — never again
+    /// by later ordinary output, which is what Defect B did: the extra
+    /// answers ran as shell commands in plaintext, and the cast held over a
+    /// dozen copies of the secret.
+    #[tokio::test]
+    async fn a_correct_password_is_sent_exactly_once() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("answered-once".into());
+        let (writes, mut reader) = answered_transport();
+        let mut writer = RecordingWriter::new(Arc::clone(&writes));
+        let outcome = run_with_transport(
+            &reg,
+            owner,
+            PROMPTING,
+            "sudo true; sleep 1; echo TAIL",
+            &mut writer,
+            &mut reader,
+        )
+        .await;
+        if let Err(ref e) = outcome {
+            let seen = writes.lock().expect("write log lock");
+            panic!(
+                "the answered run resolves: {e:#} — the transport saw {} writes: {:?}",
+                seen.len(),
+                *seen
+            );
+        }
+        let (id, result, cast) = outcome.expect("checked above");
+        assert_eq!(result.exit_code, 0, "the command ran cleanly: {result:?}");
+        let text = result.text.clone();
+        assert!(
+            text.contains("GOT_15"),
+            "the fake reports the answered length (15 = \"s3cret-answer-q\" + \\n): {text:?}"
+        );
+        assert!(
+            text.contains("TAIL"),
+            "the rest of the line ran after the prompt was answered: {text:?}"
+        );
+        assert!(
+            id.as_str().starts_with('s'),
+            "the run names its shell: {id:?}"
+        );
+
+        let raw = std::fs::read_to_string(&cast)
+            .with_context(|| format!("reading the cast of shell {}", id.as_str()))
+            .expect("the cast is readable");
+        let secret_hits = raw.matches(CREDENTIAL).count();
+        assert_eq!(
+            secret_hits,
+            0,
+            "the credential must never reach the shell log: {secret_hits} copies in {}",
+            cast.display()
+        );
+        assert_eq!(
+            raw.matches("[redacted]").count(),
+            1,
+            "exactly one redacted entry — the answer: {raw}"
+        );
+        assert!(
+            !raw.contains("command not found"),
+            "a leaked answer runs as a shell command; none may appear: {raw}"
+        );
+    }
+
+    /// Test 7: nobody attached (the ghost shape) → the prompt is given up
+    /// **fast and honestly**, and the same shell runs the next command.
+    #[tokio::test]
+    async fn an_unanswerable_password_prompt_gives_up_fast_and_leaves_the_shell_usable() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("nobody-attached".into());
+        let started = std::time::Instant::now();
+        let (id, err) = match run_with_transport(
+            &reg,
+            owner.clone(),
+            PROMPTING,
+            "sudo true",
+            &mut tokio::io::sink(),
+            &mut tokio::io::empty(),
+        )
+        .await
+        {
+            Ok((spawned, _, _)) => {
+                panic!("an unanswerable prompt must fail the run: shell {spawned:?}")
+            }
+            Err(e) => (None::<ShellId>, e),
+        };
+        let _ = id;
+        let err = anyhow::anyhow!("{err:#}");
+        // The failing run's error names its shell only in the context: pull it
+        // out of the message so the next command can reuse the same shell.
+        let id = ShellId::parse(
+            err.to_string()
+                .split("shell ")
+                .nth(1)
+                .and_then(|rest| rest.split(&[' ', '\'', ')'][..]).next())
+                .expect("the failing run names its shell"),
+        )
+        .expect("the failing run names a valid shell");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the give-up must be fast, not a timeout: {elapsed:?}"
+        );
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("nobody is attached to answer it"),
+            "the reason names the real problem: {msg}"
+        );
+        assert!(
+            !msg.contains("did not complete within"),
+            "a cancelled prompt did not wait out a limit: {msg}"
+        );
+
+        let next_started = std::time::Instant::now();
+        let (same_id, next) = run_in_shell_with_prompts(
+            &reg,
+            owner,
+            "echo AFTER",
+            5,
+            Some(id.as_str()),
+            Some(10),
+            "",
+            &mut tokio::io::sink(),
+            &mut tokio::io::empty(),
+            crate::host::HostId::Local,
+            move |_shell: ShellId| async move { Ok(()) },
+        )
+        .await
+        .expect("the shell is still usable");
+        let next_elapsed = next_started.elapsed();
+        assert!(
+            next_elapsed < Duration::from_secs(5),
+            "the next command must not wait out its timeout: {next_elapsed:?}"
+        );
+        assert!(
+            next.text.contains("AFTER"),
+            "the next command ran: {:?}",
+            next.text
+        );
+        assert!(
+            same_id.as_str().starts_with('s'),
+            "the reused shell is named: {same_id:?}"
+        );
+    }
+
+    /// Test 8: a later command on the same line still sees the sentinel —
+    /// `export` (not a first-command-only prefix assignment) is what makes
+    /// the classification fire on the program that actually prompts.
+    #[tokio::test]
+    async fn a_later_command_on_the_line_still_gets_the_prompt_sentinel() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("later-on-line".into());
+        let (writes, mut reader) = answered_transport();
+        let mut writer = RecordingWriter::new(Arc::clone(&writes));
+        let (id, result, _cast) = run_with_transport(
+            &reg,
+            owner,
+            PROMPTING,
+            "cd /tmp && sudo true",
+            &mut writer,
+            &mut reader,
+        )
+        .await
+        .expect("the later-on-line run resolves");
+        assert_eq!(result.exit_code, 0, "the command ran cleanly: {result:?}");
+        assert!(
+            result.text.contains("GOT_15"),
+            "the prompt on the later command was classified and answered: {:?}",
+            result.text
+        );
+        assert!(
+            id.as_str().starts_with('s'),
+            "the run names its shell: {id:?}"
+        );
+    }
+
+    /// Live test 11: the real privilege tool on `pinky` (sudo-rs 0.2.13) —
+    /// the only witness for the settle wait (Mutation D is green locally).
+    #[tokio::test]
+    #[ignore = "requires the configured host `pinky` reachable over ssh"]
+    async fn an_unanswerable_password_prompt_on_pinky_leaves_the_shell_usable() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\nssh = \"pinky\"\n",
+        )
+        .expect("write config");
+        crate::config::ssh_dir();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("pinky-08f".into());
+        // The spawn step: in-process, the real `ssh` argv with `-o
+        // BatchMode=yes` inserted **before the destination** (the last argv
+        // element — options after it become the remote command). In-process
+        // rather than `spawn_detached` because a test binary cannot be
+        // re-invoked as the shell host.
+        let spawn = |id: ShellId| async move {
+            let control = crate::config::ssh_dir();
+            std::fs::create_dir_all(&control).context("creating the ssh control dir")?;
+            let entry = crate::config::HostEntry {
+                ssh: "pinky".into(),
+                ..Default::default()
+            };
+            let mut argv = crate::host::ssh_argv(&entry, &control);
+            let dest = argv.len() - 1;
+            argv.insert(dest, "BatchMode=yes".to_string());
+            argv.insert(dest, "-o".to_string());
+            let program = crate::shell::which_ssh()?;
+            let temp = tempfile::tempdir().context("tempdir for cast")?;
+            let cast = temp.path().join(format!("{}.cast", id.as_str()));
+            let backend =
+                crate::shell::PtyBackend::spawn(&program, &argv, ROWS, COLS, 100, &cast, 0)
+                    .context("spawning ssh to pinky")?;
+            let lock = crate::daemon::instance::InstanceLock::acquire(&lock_path(id.as_str()))
+                .context("holding the per-id instance lock")?;
+            let socket = socket_path(id.as_str());
+            let listener = bind(&socket).await.context("binding the host's socket")?;
+            tokio::spawn(serve(listener, Arc::clone(&backend)));
+            std::mem::forget(lock);
+            std::mem::forget(temp);
+            Ok(())
+        };
+        let started = std::time::Instant::now();
+        let (id, first) = run_in_shell_with_prompts(
+            &reg,
+            owner.clone(),
+            "true",
+            5,
+            None,
+            Some(20),
+            "",
+            &mut tokio::io::sink(),
+            &mut tokio::io::empty(),
+            crate::host::HostId::Named("pinky".to_string()),
+            spawn,
+        )
+        .await
+        .context("the never-prompting clear on pinky")
+        .expect("the never-prompting clear on pinky resolves");
+        let first_elapsed = started.elapsed();
+        println!(
+            "pinky `sudo -k`: {first_elapsed:?} (exit {})",
+            first.exit_code
+        );
+        assert_eq!(first.exit_code, 0, "the clear ran cleanly");
+        assert!(id.as_str().starts_with('s'), "the shell is named: {id:?}");
+
+        let prompt_started = std::time::Instant::now();
+        let mut sink = tokio::io::sink();
+        let mut eof = tokio::io::empty();
+        let err = run_in_shell_with_prompts(
+            &reg,
+            owner.clone(),
+            "sudo whoami",
+            5,
+            Some(id.as_str()),
+            Some(20),
+            "",
+            &mut sink,
+            &mut eof,
+            crate::host::HostId::Named("pinky".to_string()),
+            spawn,
+        )
+        .await
+        .expect_err("the unanswerable prompt must fail the run");
+        let prompt_elapsed = prompt_started.elapsed();
+        println!("pinky give-up: {prompt_elapsed:?}");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("nobody is attached"),
+            "the reason names the real problem: {msg}"
+        );
+        assert!(
+            prompt_elapsed < Duration::from_secs(5),
+            "the give-up must be fast: {prompt_elapsed:?}"
+        );
+
+        let after_started = std::time::Instant::now();
+        let (_, after) = run_in_shell_with_prompts(
+            &reg,
+            owner,
+            "echo AFTER",
+            5,
+            Some(id.as_str()),
+            Some(10),
+            "",
+            &mut tokio::io::sink(),
+            &mut tokio::io::empty(),
+            crate::host::HostId::Named("pinky".to_string()),
+            spawn,
+        )
+        .await
+        .expect("the shell is still usable");
+        let after_elapsed = after_started.elapsed();
+        println!("pinky next command: {after_elapsed:?}");
+        assert!(
+            after.text.contains("AFTER"),
+            "the next command ran: {:?}",
+            after.text
+        );
+        assert!(
+            after_elapsed < Duration::from_secs(5),
+            "the next command must not wait out its timeout: {after_elapsed:?}"
         );
     }
 }

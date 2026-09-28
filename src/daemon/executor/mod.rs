@@ -202,7 +202,13 @@ pub(super) fn ghost_host_refusal(policy: &GhostPolicy, host: &crate::host::HostI
 /// retry must aim at a live shell — `shell: "new"` or no `shell` at all —
 /// rather than into the same dead one.
 fn shell_run_error_text(shell_id: &str, e: &anyhow::Error) -> String {
-    if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
+    if e.chain().any(|c| c.is::<crate::shell::PromptGivenUp>()) {
+        format!(
+            "Error running command in shell {shell_id}: {e:#}. The password prompt \
+             was cancelled with Ctrl-C, so the command did not run with elevated \
+             privileges. Fix what the error names before retrying."
+        )
+    } else if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
         format!(
             "Error running command in shell {shell_id}: {e:#}. That shell has \
              exited, so the command is not running there. Omit `shell` (or pass \
@@ -2374,6 +2380,31 @@ mod tests {
         assert!(
             !text.contains("has exited"),
             "a real timeout is not an exit: {text}"
+        );
+    }
+
+    #[test]
+    fn a_given_up_prompt_error_does_not_say_the_command_may_still_be_running() {
+        let gave_up = anyhow::Error::new(crate::shell::PromptGivenUp {
+            reason: "nobody is attached to answer it".to_string(),
+        })
+        .context("the password prompt in shell s7 was cancelled");
+        let text = shell_run_error_text("s7", &gave_up);
+        assert!(
+            text.contains("s7"),
+            "the text names the shell the command was sent to: {text}"
+        );
+        assert!(
+            text.contains("cancelled"),
+            "the text says the prompt was cancelled: {text}"
+        );
+        assert!(
+            text.contains("nobody is attached to answer it"),
+            "the give-up reason reaches the model verbatim: {text}"
+        );
+        assert!(
+            !text.contains("may still be running"),
+            "a cancelled prompt runs nothing; the caveat must be gone: {text}"
         );
     }
 }

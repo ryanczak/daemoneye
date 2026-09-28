@@ -180,6 +180,35 @@ pub enum PromptReply {
     GiveUp(String),
 }
 
+/// A prompt the caller could not answer was cancelled with Ctrl-C.
+#[derive(Debug)]
+pub struct PromptGivenUp {
+    /// Why the prompt was abandoned, in the caller's words.
+    pub reason: String,
+}
+
+impl std::fmt::Display for PromptGivenUp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.reason)
+    }
+}
+
+impl std::error::Error for PromptGivenUp {}
+
+/// How long the shell's output must have been quiet after a Ctrl-C give-up
+/// before the caller may reuse it: sudo-rs has already read the next
+/// command's bytes as password characters when they land in the same
+/// millisecond as the cancel.
+const GIVE_UP_QUIET_WINDOW: Duration = Duration::from_millis(300);
+
+/// Hard cap on the give-up settle wait, so a chatty shell cannot stretch the
+/// abandon past a bounded time.
+const GIVE_UP_SETTLE_CAP: Duration = Duration::from_secs(3);
+
+/// The byte written to cancel a prompt the caller could not answer: a real
+/// sudo treats an empty newline as a wrong password and re-prompts.
+const GIVE_UP_BYTES: &[u8] = b"\x03";
+
 /// Run `cmd` in the shell hosted at `sock` and return its real outcome, with
 /// no prompt handling: the always-[`PromptReply::Wait`] callback keeps every
 /// frame flowing exactly as an unwrapped read loop would.
@@ -214,9 +243,15 @@ pub async fn run_command(
 ///   write half is load-bearing: dropping it half-shuts the stream and the
 ///   host tears the connection down before the end marker arrives). Reading
 ///   then continues for this command's end marker.
-/// - [`PromptReply::GiveUp(reason)`] — un-park the shell with a single `\n`
-///   (a shell at a sudo prompt eats the next command's bytes; Probe B proved
-///   the refusal completes sudo cleanly), and return `Err(reason)`.
+/// - [`PromptReply::GiveUp(reason)`] — cancel the prompt with the single byte
+///   `0x03` (Ctrl-C, an input byte, not a signal frame): a real sudo treats
+///   an empty newline as a wrong password and re-prompts, eating the next
+///   command's bytes. The shell's output is then given time to settle —
+///   quiet for [`GIVE_UP_QUIET_WINDOW`], capped at [`GIVE_UP_SETTLE_CAP`] —
+///   so the caller's next command cannot be read as password characters, and
+///   the reason is returned as an error whose chain carries
+///   [`PromptGivenUp`]. The command's end marker is **not** awaited: on
+///   sudo-rs it never comes after a cancel.
 ///
 /// A decision is acted on as it is returned. `on_chunk` is free to answer a
 /// later chunk differently — there is no internal dedup — so a caller that
@@ -323,10 +358,12 @@ where
     F: FnMut(&str) -> Fut,
     Fut: std::future::Future<Output = PromptReply>,
 {
-    // The accumulated output a `Send`/`GiveUp` decision was already acted on
-    // for. A prompt still on screen in the next chunk does not re-trigger the
-    // same callback answer.
-    let mut answered_at: Option<usize> = None;
+    // The byte offset in `buf` up to which the output was already offered to
+    // `on_chunk` and its decision acted on. A prompt still on screen in the
+    // next chunk is not offered again — the callback sees only output that
+    // arrived **after** the last `Send`/`GiveUp` — so a prompt already
+    // answered cannot re-trigger its own answer.
+    let mut offered_at: usize = 0;
     let deadline = tokio::time::Instant::now() + timeout;
     // A slice that elapses may leave a half frame in `line`: `read_until` is
     // not cancellation-safe, and tokio keeps whatever it had appended. So
@@ -401,21 +438,38 @@ where
                 if let Some(outcome) = parse_outcome(&buf, nonce) {
                     return Ok(outcome);
                 }
-                if last_answered_at(&answered_at) != Some(buf.len()) {
-                    let seen = String::from_utf8_lossy(&buf).into_owned();
+                if buf.len() > offered_at {
+                    let seen = String::from_utf8_lossy(&buf[offered_at..]).into_owned();
                     match on_chunk(&seen).await {
                         PromptReply::Wait => {}
                         PromptReply::Send(answer) => {
                             write_answer(writer, &answer).await?;
-                            answered_at = Some(buf.len());
+                            offered_at = buf.len();
                         }
                         PromptReply::GiveUp(reason) => {
-                            // Un-park the shell: sudo at an empty newline fails
-                            // fast with "no password was provided" and the end
-                            // marker still arrives. Never the credential, never
-                            // a signal.
-                            write_answer(writer, b"\n").await?;
-                            anyhow::bail!("{reason}");
+                            // Cancel the prompt with Ctrl-C — a real sudo
+                            // treats an empty newline as a wrong password and
+                            // re-prompts, eating the next command's bytes —
+                            // then give the shell time to settle before the
+                            // caller reuses it. Never the credential.
+                            write_answer(writer, GIVE_UP_BYTES).await?;
+                            let cap = tokio::time::Instant::now() + GIVE_UP_SETTLE_CAP;
+                            loop {
+                                let quiet = tokio::time::Instant::now() + GIVE_UP_QUIET_WINDOW;
+                                let mut scratch = Vec::new();
+                                match tokio::time::timeout_at(
+                                    quiet.min(cap),
+                                    reader.read_until(b'\n', &mut scratch),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(n)) if n > 0 && tokio::time::Instant::now() < cap => {
+                                        continue;
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            return Err(PromptGivenUp { reason }.into());
                         }
                     }
                 }
@@ -426,16 +480,6 @@ where
             }
         }
     }
-}
-
-/// The buffer length at which the last callback decision was made, or `None`.
-/// Asking the callback again on every chunk is safe — the answer to a new
-/// question is a new decision — but a chunk that adds *no* bytes would re-ask
-/// exactly the question the previous chunk was answered with, which is why the
-/// not-yet-answered state is `None` and a decision is recorded at the length
-/// it was made at.
-fn last_answered_at(answered_at: &Option<usize>) -> Option<usize> {
-    *answered_at
 }
 
 /// Write the answer through the same connection's write half. `PROMPT_ROUND`
@@ -1218,6 +1262,61 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn run_command_with_prompts_offers_only_output_after_the_last_answer() {
+            let host = spawn_scripted().await;
+            let tx = host.backend.tx.clone();
+            let path = host.path.clone();
+            let client = tokio::spawn(async move {
+                run_command_with_prompts(
+                    &path,
+                    "sudo true",
+                    "bash",
+                    Duration::from_secs(10),
+                    |output: &str| {
+                        if output.contains("[de-sudo-prompt-0]") {
+                            std::future::ready(PromptReply::Send(b"let-me-through\n".to_vec()))
+                        } else {
+                            std::future::ready(PromptReply::Wait)
+                        }
+                    },
+                )
+                .await
+            });
+            let sent = await_input(&host).await;
+            let (begin, end) = markers_for_sent_command(&sent);
+            let publisher = tokio::spawn(async move {
+                tx.send(begin).unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                tx.send(b"\r\n[de-sudo-prompt-0] ".to_vec()).unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                tx.send(b"\r\nROOT_OK\r\n".to_vec()).unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                tx.send(end).unwrap();
+            });
+            let outcome = client
+                .await
+                .expect("the client task joins")
+                .expect("the command completes");
+            let _ = publisher.await;
+            assert_eq!(outcome.exit_code, 0, "the scripted outcome is exit 0");
+
+            let writes = host.backend.writes();
+            assert_eq!(
+                writes.len(),
+                2,
+                "exactly the command plus one answer crosses the socket; the \
+                 ordinary output after the answer must not re-offer the \
+                 already-answered prompt: {writes:?}"
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&writes[1]),
+                "let-me-through\n",
+                "the answer reaches the shell byte-exact: {:?}",
+                writes[1]
+            );
+        }
+
+        #[tokio::test]
         async fn run_command_with_prompts_gives_up_without_an_answer() {
             let host = spawn_scripted().await;
             let tx = host.backend.tx.clone();
@@ -1254,10 +1353,16 @@ mod tests {
                 err.to_string().contains("cannot answer here"),
                 "the give-up reason is the error: {err:#}"
             );
+            assert!(
+                err.chain()
+                    .any(|c| c.downcast_ref::<PromptGivenUp>().is_some()),
+                "the give-up is the typed PromptGivenUp, so callers and the \
+                 model-facing text can name it: {err:#}"
+            );
             // The write races the host's recording task: poll until the
-            // un-parking newline lands (bounded, like `await_input`). Mutation
-            // B removes that write, so this test must then fail on the
-            // missing byte rather than pass with one write fewer.
+            // cancel write lands (bounded, like `await_input`). Mutation B
+            // removes that write, so this test must then fail on the missing
+            // byte rather than pass with one write fewer.
             let mut writes = Vec::new();
             for _ in 0..500 {
                 writes = host.backend.writes();
@@ -1269,19 +1374,21 @@ mod tests {
             assert_ne!(
                 writes.len(),
                 1,
-                "mutation B guard: the give-up path must still un-park the shell \
-                 with its own write — exactly one write here means the newline \
-                 was dropped"
+                "mutation B guard: the give-up path must still cancel the \
+                 prompt with its own write — exactly one write here means the \
+                 Ctrl-C byte was dropped"
             );
             assert_eq!(
                 writes.len(),
                 2,
-                "the command plus exactly one un-parking write: {writes:?}"
+                "the command plus exactly one cancel write: {writes:?}"
             );
             assert_eq!(
                 writes[1],
-                b"\n".to_vec(),
-                "the un-parking write is a single newline, never the credential"
+                b"\x03".to_vec(),
+                "the cancel write is the single Ctrl-C byte, never the \
+                 credential, never a newline a real sudo would treat as a \
+                 wrong password"
             );
         }
 

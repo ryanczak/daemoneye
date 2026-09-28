@@ -165,6 +165,17 @@ pub fn with_sudo_sentinel(cmd: &str, sentinel: &str) -> String {
     format!("SUDO_PROMPT='{sentinel}' {cmd}")
 }
 
+/// The PTY form of the prompt sentinel. `export` so every program on the
+/// line sees it, not only the first; the sentinel is split across two
+/// quoted strings so the shell's echo of the typed line never contains
+/// it — only the program's real prompt does.
+pub fn with_pty_prompt_sentinel(cmd: &str, sentinel: &str) -> String {
+    format!(
+        "export SUDO_PROMPT='{}'; {cmd}",
+        sentinel.replacen("sudo-prompt", "sudo-''prompt", 1)
+    )
+}
+
 /// Poll `pane_id` until a sudo password prompt appears in the scrollback, then
 /// inject `credential` via `send-keys`.  Returns `true` if injection happened,
 /// `false` if the prompt never appeared within the timeout.
@@ -299,6 +310,42 @@ mod tests {
         assert_eq!(
             with_sudo_sentinel("sudo pacman -Syu", "[de-sudo-prompt-4]"),
             "SUDO_PROMPT='[de-sudo-prompt-4]' sudo pacman -Syu"
+        );
+    }
+
+    #[test]
+    fn pty_prompt_sentinel_is_absent_from_the_typed_command() {
+        let wrapped = with_pty_prompt_sentinel("x true", &sudo_sentinel(7));
+        assert!(
+            !wrapped.contains("[de-sudo-prompt-7]"),
+            "the echo of the typed line must not carry the matchable sentinel: {wrapped}"
+        );
+        assert!(
+            !wrapped.contains("de-sudo-prompt-"),
+            "no matchable sentinel text may appear in the typed line at all: {wrapped}"
+        );
+        assert!(
+            wrapped.starts_with("export SUDO_PROMPT="),
+            "the PTY form exports so every command on the line sees it: {wrapped}"
+        );
+    }
+
+    #[test]
+    fn pty_prompt_sentinel_reaches_every_command_on_the_line() {
+        let wrapped = with_pty_prompt_sentinel(
+            "printf '%s|' \"$SUDO_PROMPT\"; true && printf '%s' \"$SUDO_PROMPT\"",
+            &sudo_sentinel(7),
+        );
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&wrapped)
+            .output()
+            .expect("bash is present in every test environment");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "[de-sudo-prompt-7]|[de-sudo-prompt-7]",
+            "both commands on the line see the unsplit sentinel: {:?}",
+            String::from_utf8_lossy(&out.stdout)
         );
     }
 
