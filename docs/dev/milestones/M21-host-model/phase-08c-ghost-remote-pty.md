@@ -1,7 +1,7 @@
 # Phase 08c: ghost-remote-pty — a ghost's command on a resolved host runs in a PTY shell there, and its shells close when it ends
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-08a (a runbook's `ssh_target` resolved against
 `[hosts]`), phase-08b (a dead shell fails fast), phase-08f (a password prompt
 nobody can answer is cancelled and leaves the shell usable)
@@ -898,3 +898,37 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** a1cefa13b1b0219de877cb5bc870398ae16b251d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark — `complete` in
+  330 turns, one dispatch.
+- **Verified independently at review:** fmt, build (zero warnings), clippy
+  clean; `cargo test --lib` **2058/0/11 on three consecutive runs**, no failing
+  names; other targets unmoved (6/14/32/10); every grep criterion at its pinned
+  value (`ghost_argv=1 spawn=1 export=1 timeout=1 routed=1 tmux=1 closed=1
+  leftovers=1-0-0-0 readme=1`); `ssh_argv` pins 5/0 and `refusal_gate_tests`
+  2/0. **Mutation C re-applied by the reviewer** (owner filter dropped) turned
+  test 6 red, file restored. **Test 7 run live by the reviewer on pinky:**
+  `hostname` 470 ms exit 0 and asserted `pinky`, the privileged clear command
+  16 ms exit 0, close → `Exited` within the 2 s poll. Test 5's fake is
+  byte-identical to `shell_exec.rs`'s `PROMPTING`. The routing branch sits
+  after the script build and before the `wrap_remote` block, as specced;
+  production additions carry no `unwrap`/`expect`/`panic!`, debug print,
+  `unsafe` or lint allow.
+- **Scope deviations:** none. Two comment nits, not carried: new production
+  comments cite phase ids (`08c:` in `foreground.rs` and `ghost.rs`, the
+  module doc of `ghost_remote.rs`), and `spawn_ghost_ssh_host`'s doc credits
+  the 17 ms BatchMode measurement to 08f's probe — it was 08b's.
+- **Environment event:** the executor's first run of tests 3–5 failed with
+  `No space left on device`. Cause: the **08f** runaway fake-program probe
+  (`timeout 10 bash /tmp/probe.sh … > /tmp/fakeout.txt`) survived its
+  `timeout` and grew `/tmp/fakeout.txt` to 33 GB over a day, which also broke
+  the architect session's shell. The executor killed it and removed the file.
+- **Calibration:** 08f's "bound fake programs on EOF" lesson has a second,
+  worse face — an unbounded probe does not only flood one tool output, it can
+  **outlive its run** and fill a shared filesystem a day later. Hold at one
+  occurrence of the class.
+
