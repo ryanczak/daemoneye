@@ -1,7 +1,7 @@
 # Phase 08c: ghost-remote-pty — a ghost's command on a resolved host runs in a PTY shell there, and its shells close when it ends
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-08a (a runbook's `ssh_target` resolved against
 `[hosts]`), phase-08b (a dead shell fails fast), phase-08f (a password prompt
 nobody can answer is cancelled and leaves the shell usable)
@@ -605,3 +605,119 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-28 13:15 (progress)
+
+Started 08c. Read STANDARDS, the phase doc and the M21 README; repo confirmed
+clean at `ef6b6e86` (08f approved at `b837bef4`). Baseline on this tree:
+`cargo test --lib` → 2052 passed / 0 failed / 10 ignored, matching the doc.
+Status flipped to `in-progress` here and in the README row. Beginning Task 1
+(the BatchMode argv and the ghost spawn).
+
+### Update — 2026-09-28 13:50 (progress)
+
+Tasks 1–6 implemented. The BatchMode argv (`ghost_ssh_argv`) splices
+`-o BatchMode=yes` before the destination; `spawn_ghost_ssh_host` resolves the
+host **strictly** (a ghost's `remote_host` is always a configured host) and is
+exported from `shell/mod.rs`. The new `daemon/executor/ghost_remote.rs` holds
+the pure routing truth table (`ghost_remote_host`) and the synchronous run
+(`run_ghost_remote`, 300 s cap, its own sink/EOF transport so a ghost never
+answers a prompt); `run_background` branches onto it after the remote-script
+build and before the tmux wrap, so both 08a gates, `resolve_command`, the
+approval and the script build are unchanged, and an unresolved `ssh_target`,
+a local ghost and `backend = "tmux"` still take the 1.x wrap. `close_owner_shells`
+(kind `knowledge/shell.rs`, re-exported `pub(crate)` from `knowledge/mod.rs`)
+closes only the owner's records; `trigger_ghost_turn` calls it after the
+container teardown and logs one `ghost_shells_closed` event when any closed.
+The leftovers are done: `ghost_host_refusal` is private, `refusal_gate_tests`
+uses `test_home()` over the leaking `HomeGuard`, the `run_in_shell_with_prompts`
+doc comment opens correctly, and `ghost.rs` says row 08d. README's `ssh_target`
+row describes the PTY path. Test 6 needed two fixes while writing: the status
+poll matches `ShellResponse::Status { state: Exited }` (the wire's Exited
+frame arrives only from a finished run) and `await_ready` takes a
+`std::time::Instant` deadline. `cargo test --lib` → 2058 passed / 0 failed /
+11 ignored. One environment note: the first run of tests 3–5 failed with
+`No space left on device` — a 33 GB `/tmp/fakeout.txt` from an unrelated
+shell process of 2026-09-27 was filling `/tmp`; killed the process and
+removed the file, after which all three passed.
+
+### Update — 2026-09-28 13:55 (end-to-end verification)
+
+The § End-to-end verification block, run verbatim as its own capture:
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2058p-0f-11i
+new_tests=6p-0f
+argv_pins=5p-0f
+refusal_tests=2p-0f
+ghost_argv=1
+ghost_spawn=1
+timeout=1
+routed=1
+tmux_wrap=1
+closed_at_end=1
+leftovers=1-0-0-0
+readme=1
+ignore_total=11
+```
+
+PASTE MATCH
+
+**Mutations** (each applied with the patch tool, run once, restored;
+`git diff --stat` confirmed back to its pre-mutation state after each):
+
+**Mutation A — never route** (`ghost_remote_host` returned `None`
+unconditionally, ran test 2):
+
+```
+assertion `left == right` failed: a ghost with the PTY backend and a resolved
+host takes the branch
+  left: None
+ right: Some(Named("db01"))
+test result: FAILED. 0 passed; 1 failed
+```
+
+Red on its first row, as reasoned. Restored.
+
+**Mutation B — BatchMode after the destination** (`push` instead of
+`splice`, ran test 1):
+
+```
+assertion `left == right` failed: the destination is still the last element:
+["-tt", "-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/cp/%C", "-o",
+"ControlPersist=10m", "db01", "-o", "BatchMode=yes"]
+  left: Some("BatchMode=yes")
+ right: Some("db01")
+test result: FAILED. 0 passed; 1 failed
+```
+
+Red, as reasoned: the `-o` pair after the destination would become the
+remote command. Restored.
+
+**Mutation C — close everyone's shells** (dropped the owner filter in
+`close_owner_shells`, ran test 6):
+
+```
+assertion failed: b's shell must not be touched by a's teardown
+test result: FAILED. 0 passed; 1 failed
+```
+
+Red exactly on the owner scoping the phase pins. Restored.
+
+**Task 8 live check** (`pinky` reachable over ssh, BatchMode):
+
+```
+pinky `hostname`: 285.592748ms (exit 0)
+pinky `sudo -k`: 20.048249ms (exit 0)
+pinky close: 1.503587002s ([("s0", "Sent TERM to shell s0, but its host is still holding its lock — the shell may still be finishing (there is no kill frame on this wire, so escalation is not possible). list_shells still shows it; check again before assuming it is closed.")])
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2068 filtered out; finished in 1.81s
+```
+
+`hostname` answered `pinky` in 286 ms and `sudo -k` in 20 ms on the
+ghost-owned BatchMode shell, and the closed shell reported `Exited` within
+2 s. The close sentence says the lock is still held — § Current state 3
+names that: an in-process host never releases its lock, so the assert is on
+`crate::shell::status` (which read `Exited`), not on the sentence.

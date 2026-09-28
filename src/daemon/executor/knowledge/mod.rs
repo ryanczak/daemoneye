@@ -29,6 +29,11 @@ pub use shell::{ContextBreadth, resolve_context_scope, shell_context_block, shel
 #[cfg(test)]
 pub(crate) use shell::close_shell_with;
 
+/// The 08c ghost teardown: close a ghost's shells when its turn ends. Only
+/// the owner's records are touched (test 6 pins that); wired `pub(crate)`
+/// because `daemon/ghost.rs` sits outside this module tree.
+pub(crate) use shell::close_owner_shells;
+
 /// The live check's ssh spawn fixture, re-exported for `file_ops/read.rs`'s
 /// ignored pinky test — same reason as `close_shell_with` above.
 #[cfg(test)]

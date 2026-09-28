@@ -2,6 +2,7 @@ mod bg_shell;
 pub(crate) mod container;
 mod file_ops;
 mod foreground;
+mod ghost_remote;
 pub(crate) mod knowledge;
 mod schedule;
 mod shell_exec;
@@ -177,7 +178,7 @@ fn resolve_foreground_host(host: Option<&str>) -> Result<crate::host::HostId, St
 /// The sentence a ghost reads when it asks for a host its runbook did not
 /// grant: the refused host **and** the allowed set, so the model can correct
 /// itself rather than retrying blindly.
-pub(super) fn ghost_host_refusal(policy: &GhostPolicy, host: &crate::host::HostId) -> String {
+fn ghost_host_refusal(policy: &GhostPolicy, host: &crate::host::HostId) -> String {
     let allowed = if policy.hosts.is_empty() {
         "the runbook grants every host (its `hosts:` list is empty, which is \
          unrestricted), so this refusal should not have happened"

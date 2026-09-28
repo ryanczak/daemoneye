@@ -73,10 +73,9 @@ fn applied_timeout_secs(timeout_secs: Option<u64>) -> Duration {
     Duration::from_secs(secs)
 }
 
-/// The non-chat entry point: the entry point `executor/mod.rs` calls with a
-/// pub/sub transport. `cmd` is the plain command: whether it needs a sudo
-/// prompt and which sentinel it gets
-/// is decided here, and the non-sudo result is byte-identical to the
+/// The entry point `executor/mod.rs` calls with a pub/sub transport. `cmd` is
+/// the plain command: whether it needs a sudo prompt and which sentinel it
+/// gets is decided here, and the non-sudo result is byte-identical to the
 /// historical no-transport run (`prompts: None`).
 ///
 /// The prompt round-trips `Response::CredentialPrompt` →

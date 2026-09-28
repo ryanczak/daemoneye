@@ -131,6 +131,18 @@ pub fn ssh_argv(entry: &HostEntry, control_path: &std::path::Path) -> Vec<String
     ]
 }
 
+/// `ssh_argv` for a ghost's shell: the same argv with `-o BatchMode=yes`
+/// inserted **before the destination**, so ssh never prompts — a host that
+/// wants a password or an unknown key fails at once instead of waiting for
+/// an answer nobody can give. Options after the destination would become
+/// the remote command, so the insertion point is load-bearing.
+pub fn ghost_ssh_argv(entry: &HostEntry, control_path: &std::path::Path) -> Vec<String> {
+    let mut argv = ssh_argv(entry, control_path);
+    let dest = argv.len() - 1;
+    argv.splice(dest..dest, ["-o".to_string(), "BatchMode=yes".to_string()]);
+    argv
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,6 +367,32 @@ mod tests {
             argv.iter()
                 .all(|a| !a.contains("Batch''Mode".replace("''", "").as_str())),
             "prompts must reach the user; suppressing them would defeat the credential mechanism: {argv:?}"
+        );
+    }
+
+    #[test]
+    fn ghost_ssh_argv_sets_batch_mode_before_the_destination() {
+        let argv = ghost_ssh_argv(&entry("db01"), std::path::Path::new("/tmp/cp"));
+        assert_eq!(
+            argv.last().map(String::as_str),
+            Some("db01"),
+            "the destination is still the last element: {argv:?}"
+        );
+        assert_eq!(
+            &argv[argv.len() - 3..argv.len() - 1],
+            &["-o".to_string(), "BatchMode=yes".to_string()],
+            "the BatchMode pair sits immediately before the destination: {argv:?}"
+        );
+        let base = ssh_argv(&entry("db01"), std::path::Path::new("/tmp/cp"));
+        let without: Vec<String> = argv
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !(argv.len() - 3..argv.len() - 1).contains(i))
+            .map(|(_, a)| a.clone())
+            .collect();
+        assert_eq!(
+            without, base,
+            "removing the inserted pair must restore the plain argv: {argv:?} vs {base:?}"
         );
     }
 }

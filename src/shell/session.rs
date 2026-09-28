@@ -152,6 +152,30 @@ pub async fn spawn_ssh_host(id: ShellId, name: &str, rows: u16, cols: u16) -> an
     launch::spawn_detached(id.as_str(), &program, &argv, rows, cols).await
 }
 
+/// Spawn a detached `daemoneye shell-host` for `id` that opens a ghost's shell
+/// on the named host `name`, over SSH, with [`ghost_ssh_argv`]: the same argv
+/// `spawn_ssh_host` uses plus `-o BatchMode=yes` before the destination, so a
+/// host that wants a password or an unknown key fails at once instead of
+/// waiting for an answer nobody can give (08f's probe measured 17 ms).
+///
+/// The entry is resolved with the **strict** [`host_entry`], not the
+/// permissive `host_entry_or_bare`: 08a stamps `remote_host` only for a
+/// **configured** host, so a ghost's spawn must refuse a name `[hosts]` does
+/// not configure rather than reach for it as its own destination.
+pub async fn spawn_ghost_ssh_host(
+    id: ShellId,
+    name: &str,
+    rows: u16,
+    cols: u16,
+) -> anyhow::Result<()> {
+    let entry = host_entry(name)?;
+    let control = crate::config::ssh_dir();
+    std::fs::create_dir_all(&control).with_context(|| format!("creating {}", control.display()))?;
+    let argv = crate::host::ghost_ssh_argv(&entry, &control);
+    let program = which_ssh()?;
+    launch::spawn_detached(id.as_str(), &program, &argv, rows, cols).await
+}
+
 /// Turn a named host into the `HostEntry` whose `ssh` destination it carries.
 /// Refuses `HostId::Local` and any name `[hosts]` does not configure; a host
 /// with an empty destination is its own refusal.

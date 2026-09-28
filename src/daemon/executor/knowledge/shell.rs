@@ -1909,6 +1909,35 @@ pub async fn close_shell(shell: &str, caller: &Owner) -> String {
     close_shell_with(crate::shell::registry(), shell, caller, SIGNAL_TIMEOUT).await
 }
 
+/// Close every shell `owner` holds and return `(id, sentence)` per shell.
+///
+/// 08c: a ghost's shells are closed when the ghost ends, so a scheduled
+/// remote ghost does not leave one idle ssh shell host per run. Only
+/// records whose `owner.key()` matches are touched — a chat session's
+/// shells are never closed by a ghost's teardown.
+pub(crate) async fn close_owner_shells(
+    reg: &ShellRegistry,
+    owner: &Owner,
+    signal_timeout: Duration,
+) -> Vec<(String, String)> {
+    let key = owner.key();
+    let ids = with_shells(reg, |store| {
+        let mut ids: Vec<String> = store
+            .values()
+            .filter(|record| record.owner.key() == key)
+            .map(|record| record.id.as_str().to_string())
+            .collect();
+        ids.sort_by_key(|id| ShellId::parse(id).map(|s| s.index()).unwrap_or(u32::MAX));
+        ids
+    });
+    let mut closed = Vec::new();
+    for id in ids {
+        let sentence = close_shell_with(reg, &id, owner, signal_timeout).await;
+        closed.push((id, sentence));
+    }
+    closed
+}
+
 /// `close_shell` with the registry and the signal timeout injected.
 pub(crate) async fn close_shell_with(
     reg: &ShellRegistry,
@@ -2038,7 +2067,10 @@ pub(crate) mod lifecycle_test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shell::{marker_shell_name, run_command};
+    use crate::shell::{
+        ShellResponse, ShellState, bind, marker_shell_name, run_command, serve, socket_path, status,
+    };
+    use anyhow::Context as _;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
@@ -3829,6 +3861,103 @@ mod tests {
             out.contains("list_shells"),
             "the model is told the way to get a fresh id: {out}"
         );
+    }
+
+    /// 08c Task 4.1: closing an owner's shells ends **only** that owner's
+    /// shells. The hosts run `sh -c 'sleep 1000'`, not bash — an interactive
+    /// bash ignores TERM (measured at drafting, § Current state 3), so a
+    /// bash host would not report `Exited` on either side and the test would
+    /// pin nothing.
+    #[tokio::test]
+    async fn closing_an_owners_shells_ends_only_that_owners_shells() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let spawn_sleeping_host = |id: ShellId| async move {
+            let dir = tempfile::tempdir().context("tempdir for cast")?;
+            let cast = dir.path().join(format!("{}.cast", id.as_str()));
+            let backend = crate::shell::PtyBackend::spawn(
+                "sh",
+                &["-c".to_string(), "sleep 1000".to_string()],
+                TEST_ROWS,
+                TEST_COLS,
+                100,
+                &cast,
+                0,
+            )
+            .context("spawning sh -c 'sleep 1000'")?;
+            let lock = crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(
+                id.as_str(),
+            ))
+            .context("holding the per-id instance lock")?;
+            let socket = socket_path(id.as_str());
+            let listener = bind(&socket).await.context("binding the host's socket")?;
+            tokio::spawn(serve(listener, std::sync::Arc::clone(&backend)));
+            std::mem::forget(lock);
+            std::mem::forget(dir);
+            Ok(())
+        };
+        let owner_a = Owner::Ghost("a".into());
+        let owner_b = Owner::Ghost("b".into());
+        let id_a = spawn_for_on_host(
+            &reg,
+            owner_a.clone(),
+            5,
+            crate::host::HostId::Local,
+            false,
+            spawn_sleeping_host,
+        )
+        .await
+        .expect("a's shell spawns");
+        let id_b = spawn_for_on_host(
+            &reg,
+            owner_b.clone(),
+            5,
+            crate::host::HostId::Local,
+            false,
+            spawn_sleeping_host,
+        )
+        .await
+        .expect("b's shell spawns");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        await_ready(&socket_path(id_a.as_str()), deadline)
+            .await
+            .expect("a's host is ready");
+        await_ready(&socket_path(id_b.as_str()), deadline)
+            .await
+            .expect("b's host is ready");
+
+        let closed = close_owner_shells(&reg, &owner_a, Duration::from_secs(3)).await;
+        assert_eq!(
+            closed.len(),
+            1,
+            "exactly one shell belongs to ghost:a: {closed:?}"
+        );
+        assert_eq!(
+            closed[0].0,
+            id_a.as_str(),
+            "the closed shell is a's, not b's: {closed:?}"
+        );
+
+        let mut a_exited = false;
+        let mut b_exited = false;
+        for _ in 0..40 {
+            let state_a = status(&socket_path(id_a.as_str()), Duration::from_millis(100)).await;
+            let state_b = status(&socket_path(id_b.as_str()), Duration::from_millis(100)).await;
+            a_exited = a_exited
+                || matches!(state_a, Ok(ShellResponse::Exited { .. }))
+                || matches!(&state_a,
+                    Ok(ShellResponse::Status { state, .. }) if *state == ShellState::Exited);
+            b_exited = b_exited
+                || matches!(state_b, Ok(ShellResponse::Exited { .. }))
+                || matches!(&state_b,
+                    Ok(ShellResponse::Status { state, .. }) if *state == ShellState::Exited);
+            if a_exited {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(a_exited, "a's shell reports Exited within 2 s of the close");
+        assert!(!b_exited, "b's shell must not be touched by a's teardown");
     }
 
     // ── watch_shell (phase-04b) ──────────────────────────────────────────

@@ -1100,6 +1100,43 @@ where
         cmd
     };
 
+    // 08c: a ghost whose `ssh_target` resolved to a configured host runs the
+    // approved command in a PTY shell **on that host** — the same substrate
+    // chat uses — synchronously, capped at the ghost turn budget, instead of
+    // wrapping it in `ssh <target> <cmd>` in a tmux window. Everything above
+    // (the two 08a gates, resolve_command, the approval, the remote-script
+    // build) already ran; everything below serves an unresolved ssh_target,
+    // a local ghost, and `backend = "tmux"`.
+    let uses_pty = crate::config::Config::load()
+        .unwrap_or_default()
+        .execution
+        .uses_pty();
+    if let Some(host) = super::ghost_remote::ghost_remote_host(is_ghost, uses_pty, ghost_policy)
+        && let crate::host::HostId::Named(name) = &host
+    {
+        let owner = crate::shell::Owner::Ghost(session_id.unwrap_or_default().to_string());
+        let (output, exit_code) = super::ghost_remote::run_ghost_remote(
+            crate::shell::registry(),
+            owner,
+            host.clone(),
+            cmd,
+            id,
+            |shell_id| crate::shell::spawn_ghost_ssh_host(shell_id, name, 24, 80),
+        )
+        .await;
+        crate::daemon::stats::finish_command(cmd_id, exit_code);
+        send_response_split(
+            tx,
+            Response::ToolResult {
+                tool_call_id: id.to_string(),
+                output: output.clone(),
+            },
+        )
+        .await?;
+        log_command(session_id, "background", name, cmd, "approved", &output);
+        return Ok(ToolCallOutcome::Result(output));
+    }
+
     // Ghost shells: wrap the approved command in `ssh <target> <cmd>` when configured.
     let ssh_wrapped_cmd;
     let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
@@ -1533,7 +1570,6 @@ fn run_background_resolves_ghost_script_paths() {
 #[cfg(test)]
 mod refusal_gate_tests {
     use super::run_background;
-    use crate::TEST_HOME_LOCK;
     use crate::daemon::executor::{GhostCtx, SessionCtx, ToolCallOutcome};
     use crate::daemon::session::SessionStore;
 
@@ -1580,39 +1616,17 @@ mod refusal_gate_tests {
         }
     }
 
-    /// Isolate `HOME` for a test that writes to the event segment. Holds the
-    /// suite-wide `HOME` lock while the guard lives, points `HOME` at a
-    /// tempdir whose directories are pre-created, and restores `HOME` on
-    /// drop. The lock is held for the guard's whole life so two refusal
-    /// tests can never interleave their `HOME` writes.
-    struct HomeGuard {
-        saved: Option<String>,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl HomeGuard {
-        fn new() -> Self {
-            let lock = TEST_HOME_LOCK
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let saved = std::env::var("HOME").ok();
-            unsafe { std::env::set_var("HOME", tmp.path()) };
-            crate::config::Config::ensure_dirs().expect("ensure dirs");
-            std::mem::forget(tmp);
-            Self { saved, _lock: lock }
+    /// Point `HOME` at a fresh temp dir for the duration of the test and
+    /// serialise against other HOME-mutating tests (bug-05c-1). The temp dir
+    /// is dropped with the returned guard pair, so nothing leaks.
+    fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
+        let guard = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe {
+            std::env::set_var("HOME", dir.path());
         }
-    }
-
-    impl Drop for HomeGuard {
-        fn drop(&mut self) {
-            unsafe {
-                match &self.saved {
-                    Some(v) => std::env::set_var("HOME", v),
-                    None => std::env::remove_var("HOME"),
-                }
-            }
-        }
+        crate::config::Config::ensure_dirs().ok();
+        (guard, dir)
     }
 
     /// A ghost on a configured host whose elevated-permission whitelist names
@@ -1624,7 +1638,7 @@ mod refusal_gate_tests {
     /// go red when the gate is removed.
     #[test]
     fn an_unlisted_elevated_script_is_refused_on_a_configured_host() {
-        let _home = HomeGuard::new();
+        let (_home, _dir) = test_home();
 
         let sessions = SessionStore::new();
         let session_id = "ghost-elevation-refused";
@@ -1682,7 +1696,7 @@ mod refusal_gate_tests {
     /// set, and is recorded with the raw value as `requested_host`.
     #[test]
     fn an_unconfigured_ssh_target_is_outside_a_nonempty_hosts_list() {
-        let _home = HomeGuard::new();
+        let (_home, _dir) = test_home();
 
         let sessions = SessionStore::new();
         let session_id = "ghost-unconfigured-target";

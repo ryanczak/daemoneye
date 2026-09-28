@@ -549,6 +549,25 @@ pub async fn trigger_ghost_turn(
         crate::daemon::executor::container::teardown_ghost_containers(&sbx, &sid)
     })
     .await;
+    // 08c: the ghost's shells die with the ghost — every run's commands share
+    // one `Owner::Ghost(session)` shell per host, and a scheduled ghost would
+    // otherwise leave an idle ssh shell host behind per run.
+    let owner = crate::shell::Owner::Ghost(session_id.to_string());
+    let closed = crate::daemon::executor::knowledge::close_owner_shells(
+        crate::shell::registry(),
+        &owner,
+        Duration::from_secs(5),
+    )
+    .await;
+    if !closed.is_empty() {
+        crate::daemon::utils::log_event(
+            "ghost_shells_closed",
+            serde_json::json!({
+                "session": session_id,
+                "shells": closed.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+            }),
+        );
+    }
     result
 }
 
@@ -896,7 +915,7 @@ async fn do_ghost_turn(
                         wait: _wait,
                         thought_signature,
                         shell: _shell,
-                        // Ghost Shell host routing is row 08b, not this row;
+                        // Ghost Shell host routing is row 08d, not this row;
                         // every ghost command stays on the daemon host.
                         host: _host,
                         timeout_secs: _timeout_secs,
