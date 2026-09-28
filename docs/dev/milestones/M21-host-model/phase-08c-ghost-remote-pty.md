@@ -1,7 +1,7 @@
 # Phase 08c: ghost-remote-pty — a ghost's command on a resolved host runs in a PTY shell there, and its shells close when it ends
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-08a (a runbook's `ssh_target` resolved against
 `[hosts]`), phase-08b (a dead shell fails fast), phase-08f (a password prompt
 nobody can answer is cancelled and leaves the shell usable)
@@ -721,3 +721,180 @@ ghost-owned BatchMode shell, and the closed shell reported `Exited` within
 2 s. The close sentence says the lock is still held — § Current state 3
 names that: an in-process host never releases its lock, so the assert is on
 `crate::shell::status` (which read `Exited`), not on the sentence.
+
+### Update — 2026-09-28 22:58 (complete, server-authored)
+
+**Summary:** </think>The working tree is clean and everything is committed. Let me do a final review of the completion checklist:
+
+1. ✅ Phase doc Status: `in-progress` (server flips to review)
+2. ✅ README row: `in-progress`
+3. ✅ No `(complete)` entry written by me
+4. ✅ `cargo fmt --all` run before `git add`
+5. ✅ All verification commands ran clean
+6. ✅ Final message: Summary + Notes for review
+7. ✅ `git status --short` — clean
+8. ✅ `git log -1 --stat` shows all files
+
+Wait — one thing to double check: the acceptance criterion says "cargo test --lib → at least 2058 passed / 0 failed / 11 ignored, on three consecutive runs". I ran it more than three times, all green. The e2e block had lib1..3=ok and lib_counts=2058p-0f-11i. Good.
+
+Also the "cargo test" criterion — "every other target unmoved: bug_tracker 6, doc_truth 14, integration 32, isolation 10". My last runs: 6, 14, 32, 10 — all match.
+
+The mutations were recorded. The live check was recorded. All done.
+
+One caveat: the `git log -1 --stat` shows 13 files including the docs changes (README row flip, phase doc status flip, started entries) — the contract said stage everything including the start-of-phase flip. Good.
+
+Everything is complete. Now the final message.</think>
+All done. Final state verified: working tree clean, one commit containing all 13 touched files.
+
+**Summary**
+
+08c is implemented end to end. `ghost_ssh_argv` (`src/host.rs`) splices `-o BatchMode=yes` before the destination; `spawn_ghost_ssh_host` (`shell/session.rs`, exported from `shell/mod.rs`) resolves the host **strictly** and launches through the shared detached launch. New `daemon/executor/ghost_remote.rs` holds the pure routing truth table `ghost_remote_host` (ghost + PTY backend + a resolved host) and `run_ghost_remote` — synchronous, capped at `GHOST_REMOTE_TIMEOUT_SECS = 300` (the ghost turn budget), with its own sink/EOF transport so a ghost never answers a prompt. `run_background` branches onto it after the remote-script build and before the tmux wrap: both 08a gates, `resolve_command`, the approval and the script build are untouched, and an unresolved `ssh_target`, a local ghost and `backend = "tmux"` still take the 1.x wrap (pinned: `ssh_wrapped_cmd` still present). `close_owner_shells` (`knowledge/shell.rs`, re-exported `pub(crate)`) closes only its owner's records; `trigger_ghost_turn` calls it after the container teardown and logs one `ghost_shells_closed` event when anything closed. Leftovers done: `ghost_host_refusal` private, `refusal_gate_tests`'s leaking `HomeGuard` replaced with `test_home()`, the `run_in_shell_with_prompts` doc comment opens correctly, `ghost.rs` says row 08d, and README's `ssh_target` row describes the PTY path.
+
+**End-to-end verification** — the § block ran verbatim and pasted as the first fenced block of `### Update — 2026-09-28 13:55 (end-to-end verification)` with `PASTE MATCH` confirmed: `lib1..3=ok` (no FAILED names), `lib_counts=2058p-0f-11i` (2052 + 6 new + the new ignored live test), `new_tests=6p-0f`, `argv_pins=5p-0f`, `refusal_tests=2p-0f`, `ghost_argv=1`, `ghost_spawn=1`, `timeout=1`, `routed=1`, `tmux_wrap=1`, `closed_at_end=1`, `leftovers=1-0-0-0`, `readme=1`, `ignore_total=11`. Full `cargo test` unmoved elsewhere: bug_tracker 6, doc_truth 14, integration 32, isolation 10.
+
+**Mutations** — A (never route): test 2 red on its first row (`left: None / right: Some(Named("db01"))`). B (BatchMode after the destination): test 1 red, the pair lands after `db01`. C (close everyone): test 6 red, b's shell exits too. Each restored; `git diff --stat` matched its pre-mutation state every time.
+
+**Task 8 live check** on `pinky` (reachable): `hostname` 286 ms exit 0, `sudo -k` 20 ms exit 0, close 1.50 s with the shell reporting `Exited` within the 2 s poll — output pasted into the entry. The close *sentence* says the lock is still held, as § Current state 3 predicts for in-process hosts; the assert is on `status`, not the sentence.
+
+**Notes for review**
+
+- **Environment event, not a defect:** the first run of tests 3–5 failed with `No space left on device` — a 33 GB `/tmp/fakeout.txt` from a stray shell process left running on 2026-09-27 (an old `sudo > /tmp/fakeout.txt` probe) was filling `/tmp`. Killed the process, removed the file; tests then passed repeatedly. Noted in the 13:50 progress entry.
+- Test 6's exit poll matches both `ShellResponse::Exited` and `Status { state: Exited }` — the wire's Exited frame arrives only from a *finished run*, while a TERM'd idle host answers `Status` with `state: Exited`; matching both is what the observation needs.
+- The live check's spawn closure is bound once per `run_ghost_remote` call, so the three pinky probes share one shell via `FnOnce` per call — same shape as the local tests.
+- Adjacent, not touched: `lifecycle_test_support`'s comment says a fourth caller lifts the three `spawn_with_cast` copies — `ghost_remote.rs` is now that fourth caller (its own copy, as the phase doc directed); the lift is a follow-up.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+der_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_counts_are_accurate ... ok
+test docs_document_the_reindex_command ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 11 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 10 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +1 -1
+- `docs/dev/milestones/M21-host-model/README.md` — +1 -1
+- `docs/dev/milestones/M21-host-model/phase-08c-ghost-remote-pty.md` — +117 -1
+- `src/daemon/executor/foreground.rs` — +49 -35
+- `src/daemon/executor/ghost_remote.rs` — +411 -0
+- `src/daemon/executor/knowledge/mod.rs` — +5 -0
+- `src/daemon/executor/knowledge/shell.rs` — +130 -1
+- `src/daemon/executor/mod.rs` — +2 -1
+- `src/daemon/executor/shell_exec.rs` — +3 -4
+- `src/daemon/ghost.rs` — +20 -1
+- `src/host.rs` — +38 -0
+- `src/shell/mod.rs` — +1 -1
+- `src/shell/session.rs` — +24 -0
+
+**Commit:** a1cefa13b1b0219de877cb5bc870398ae16b251d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
