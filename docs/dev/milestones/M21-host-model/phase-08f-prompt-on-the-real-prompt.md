@@ -1,7 +1,7 @@
 # Phase 08f: prompt-on-the-real-prompt — a PTY password prompt is answered once, only when it is really on screen
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** in-progress — bounced 2026-09-28, see `bugs/bug-08f-1.md`
 **Depends on:** phase-01a (the PTY credential round trip), phase-01b (the
 host-side input scrub), phase-08b (the `read_to_marker` slice structure)
 **Dispatched ahead of:** 08c (ghost-remote-pty), which runs ghost commands —
@@ -517,6 +517,18 @@ tree**. Every non-preservation line fails today — checked at drafting.
 - [ ] The Task 8 live check was run and its output pasted into the same
       entry, or reported unmet with the reason.
 
+- [ ] **(bug-08f-1)** Test 11's first probe is the privileged clear command,
+      not `true`:
+      ``grep -c '"su[d]o -k",' src/daemon/executor/shell_exec.rs`` → **1**
+      (current: 0).
+- [ ] **(bug-08f-1)** `run_in_shell_with_prompts` derives no sentinel:
+      ``grep -c '_sentinel_value' src/daemon/executor/shell_exec.rs`` → **0**
+      (current: 1).
+- [ ] **(bug-08f-1)** Test 11 re-run live after the fix and pasted into a new
+      Update Log entry titled `### Update — <date> (bug-08f-1 live re-run)`;
+      its first line reports the privileged clear command with exit 0 — or
+      the entry reports it unmet with the reason.
+
 ## Mutations
 
 Apply each with the `patch` tool (the executor contract forbids `sed -i`,
@@ -634,6 +646,35 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-09-28 (bounce, bug-08f-1)
+
+**Green gates and a clean tree are EXPECTED here and are NOT evidence the
+phase is done.** Everything else in 08f is approved: Tasks 1–5, tests 1–10,
+the E2E capture and Mutations A–D (the reviewer re-applied A and B and each
+turned exactly its witnesses red). **Do not touch any of it.**
+
+There are exactly two edits left, both in
+`src/daemon/executor/shell_exec.rs`:
+
+1. **Test 11** (`an_unanswerable_password_prompt_on_pinky_leaves_the_shell_usable`,
+   first `run_in_shell_with_prompts` call, ~line 2500): the command argument
+   is `"true"` — the **seed** the old `run_with_transport` helper took, not
+   the command under test. Make it the privileged clear command the spec
+   pins (the same text the `println!` two statements below already names).
+   Reviewer-verified: the test then passes live on `pinky`, first line
+   `(exit 0)` in ~0.5 s.
+2. **`run_in_shell_with_prompts`** (~lines 105-107): delete the
+   `PTY_SENTINEL_COUNTER.fetch_add` and the unused `_sentinel_value` binding
+   — the only wrap now lives in `run_sudo_command`.
+
+Then run test 11 live (§ Task 8's command) and paste its output into a new
+entry titled `### Update — <date> (bug-08f-1 live re-run)`. **Finish
+condition:** `cargo test --lib` still reports **2052 passed / 10 ignored —
+not 2053**: this fix adds no test, so a rising count means scope creep. The
+earlier Task 8 entry claimed a `sudo -k` result for a command that ran
+`true`; the new entry supersedes it — say so in one line.
+
 
 ### Notes for executor — 2026-09-28
 
