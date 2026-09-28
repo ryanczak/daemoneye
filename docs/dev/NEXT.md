@@ -1,36 +1,38 @@
 # NEXT
 
-**Active phase:** **M21 phase-08b — shell-exit-detection**, drafted
-2026-09-27, status `todo`. Dispatch with `/rexymcp:dispatch phase-08b`.
+**Active phase:** **M21 phase-08f — prompt-on-the-real-prompt**, drafted
+2026-09-27, status `todo`. Dispatch with `/rexymcp:dispatch phase-08f`.
 
-**What it does.** A command sent to a shell whose program has exited fails
-in seconds, saying the shell exited — instead of waiting out its whole
-timeout, being reported as a timeout, and telling the model it "may still be
-running". One shared loop (`read_to_marker`) gains a 500 ms `Status` poll; a
-typed `ShellExited` error carries the fact to both model-facing texts.
+**What it does.** A PTY password prompt is recognised only when the program
+is really prompting, answered exactly once, and — when nobody can answer — cancelled
+with `^C` so the shell stays usable. Six files: a split, exported sentinel
+(one wrap, not two); the callback sees only output after the last answer; a
+`^C` give-up with a 300 ms settle wait and a typed `PromptGivenUp`; honest
+error text; the host scrub ends on `^C`.
 
-**Why it jumped the queue.** Drafting the ghost PTY move (now 08c) meant
-measuring what happens when a ghost's ssh cannot connect. A throwaway test
-drove a real `ssh -o BatchMode=yes` through the daemon's real `run_command`:
-ssh died in 17 ms, the client waited the full 20 s. The same probe, without
-`BatchMode`, showed a second defect — a plain command's bytes typed into
-ssh's `password:` prompt — which became row 08e. PE decisions (2026-09-27):
-exit detection first, ghosts use `BatchMode=yes`, the connection-time
-handshake gets its own probed row.
+**Why it jumped the queue.** Drafting 08c (ghost commands on a remote PTY
+shell) probed a ghost's elevated command through the real run path on
+`pinky`. It found the sentinel matched on the shell's echo (double
+`SUDO_PROMPT` wrap), a correct password **re-sent into the shell as a
+command** after it was accepted (13 plaintext copies in one cast — a
+shipped chat defect, not ghost-only), and a `\n` give-up that re-prompts on
+both sudo versions and eats the next command. PE decision 2026-09-27: new
+row ahead of 08c. The fix was prototyped and measured on pinky and locally
+before drafting; the prototype diff is quoted in the spec.
 
-**Pre-dispatch check run.** Every grep criterion matches its stated current
-value; the six pinned tests filter to 0 (2045 filtered out); two cited line
-numbers were wrong and are fixed. The lib count is pinned as a **floor**
-(≥ 2043) and the ignored count exactly (9) — the 08a calibration. The E2E
-block now records **the names** of any failing test, and says to run with no
-other `cargo test` in parallel — both from the 08a review.
+**Pre-dispatch check run.** The § End-to-end block was run verbatim against
+`873187e0`: every non-preservation line reads its stated current value
+(`new_tests=0p-0f`, `pty_sentinel=0`, `old_wrap_sites=2`, `gaveup_type=0`,
+`false_comments=2`, `scrub_helper=0`, `ignore_total=9`); both preservation
+lines hold (`tmux_untouched=0`, `client_tests=25p-0f`). Mutations A–C were
+measured against the prototype with the spec's own fake program; D (settle
+wait) is live-only, measured on pinky. **The backend redaction-marker flake
+hit 2 of 3 lib runs on the untouched tree** during this check — the doc
+tells the executor to report its name, not edit it.
 
-**Renumbering.** 08a's doc says "08b" for the ghost PTY move and "08c" for
-spawn-ghost-host; those are now **08c** and **08d**. 08c carries two 08a
-review residuals.
-
-**Next after 08b:** 08c (ghost-remote-pty), 08d (spawn-ghost-host), 08e
+**Next after 08f:** 08c (ghost-remote-pty — PE: sync, 300 s cap; close a
+ghost's shells at exit), 08d (spawn-ghost-host), 08e
 (remote-connect-handshake, probe first), 09 (live close).
 
-Twenty-two rows in M21; live host `pinky` (sudo requires a password since
-2026-09-22; ssh is key-auth); `max_turns` 1000.
+Twenty-three rows in M21; live host `pinky` (sudo-rs 0.2.13, password
+required; ssh is key-auth); `max_turns` 1000.
