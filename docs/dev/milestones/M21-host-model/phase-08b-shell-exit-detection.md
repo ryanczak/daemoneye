@@ -1,7 +1,7 @@
 # Phase 08b: shell-exit-detection — a command sent to a dead shell fails in seconds, not at its timeout
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-04a (SSH shells), the M20 shell substrate
 **Estimated diff:** ~200 lines across 4 files, plus 7 tests
 **Tags:** language=rust, kind=bugfix, size=s
@@ -829,3 +829,56 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 74741ecb149f56a28d42148901d63c14b09b72bb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark — two runs, one
+  logical dispatch: the first (session `6ab991d4`) was killed at turn 311 by a
+  host reboot; the re-dispatch (run `c8f9a1b0`, session `6ab9a00b`) resumed
+  the on-disk work and returned `complete` at turn 326. Code committed as
+  `74741ecb`.
+- **Verified independently at review:** fmt, build, clippy clean;
+  `cargo test --lib` **2043/0/9 on three consecutive runs**, no failing names
+  (the criterion the executor could not bank); bug_tracker 6, doc_truth 14,
+  integration 32, isolation 10 unmoved; the six pinned tests pass (2.82 s);
+  `shell::client::tests` 25/0/1; every grep criterion at its pinned value
+  (`exited_type=1 loop_polls=1 deadline=1 orphan=0 helper=1 caveat=1
+  ignores=9`). **Mutation A re-applied by the reviewer** (`Exited` →
+  `Paused` in the probe): the witness went red at 20.0 s, tree restored
+  clean. **Live check re-run by the reviewer:** `elapsed=771.223948ms`, pass.
+  Read-check of § Current state 4: `line.clear()` now runs only after a
+  complete frame parses; the slice-timeout path `continue`s without clearing.
+  Production-region additions carry no `unwrap`/`expect`/`panic!`, debug
+  print, `unsafe` or lint allow (the `println!` is in the spec-authorized
+  ignored live test; the `#[allow(clippy::too_many_arguments)]` predates this
+  phase).
+- **Scope deviations:** (1) **Task 2's orphan was merged, not deleted.** The
+  spec said to delete the half-sentence at `shell_exec.rs:76`. It was instead
+  spliced into the next line, giving *"The non-chat entry point: the entry
+  point `executor/mod.rs` calls with a pub/sub transport"*: a
+  self-contradictory doc comment on `run_in_shell_with_prompts`, with a
+  ragged re-wrap. The grep criterion passes because it pins the absence of
+  the old words, not the deletion. Minor (doc comment only), so it is
+  **carried to 08c**: the comment should open "The entry point
+  `executor/mod.rs` calls with a pub/sub transport." (2) Two
+  bounds overrun the deadline slightly: the drain window can end up to 250 ms
+  past the command's deadline, and a status probe can take up to 1 s after it.
+  Both are bounded and within the spec's shape. Accepted.
+- **Observation — pre-existing flake, now named:** the executor identified
+  `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`
+  (`src/shell/backend.rs:542`) as a load-dependent race. It measured 3/6
+  failures on the pristine `801bbbd8` tree against 3/6 on this tree, and 0/30
+  solo. The mechanism: bash's echo of the credential lands as an `o` event
+  0.1–3 ms after the scrubbed `i` event, and the test asserts on the first
+  read that shows `[redacted]`. This is plausibly the unnamed `lib2=FAILED`
+  recorded in 08a's verdict. The reviewer did not reproduce it in three
+  sequential runs. It is not caused by this phase and was not fixed here;
+  the PE decides whether it gets a row of its own.
+- **Calibration:** a grep criterion that pins the *absence* of a string
+  passes for any edit that removes those exact words, including one that
+  keeps the defect. For a deletion task, pin the property: the line that
+  should follow sits directly under the preceding `}`, or the doc comment's
+  first line matches a pinned string. Same class as M22 04b (a
+  criterion pinning a proxy for the property).
