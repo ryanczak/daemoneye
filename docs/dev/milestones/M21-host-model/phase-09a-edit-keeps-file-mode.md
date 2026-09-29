@@ -1,7 +1,7 @@
 # Phase 09a: edit-keeps-file-mode — an `edit_file` edit keeps the file's mode and owner, locally and on a host
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-07b (`edit_file { host }` through `run_in_host_shell`)
 **Estimated diff:** ~60 lines of production code across 2 files, plus 5 tests and 1 ignored live test
 **Tags:** language=rust, kind=bugfix, size=s
@@ -449,3 +449,173 @@ implementation is complete and correct. The gate kept failing because test 2
 leaked a shell and made other tests flake, which the architect measured and
 fixed in the spec. Resume via `continue_phase` was passed over because it
 blocks and cannot be stopped.
+
+### Update — 2026-09-29 22:52 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Resumed phase 09a from the escalated re-dispatch and closed out the four remaining items.
+
+**What was already on disk** (the prior run's work, verified by reading it): Task 1's local `set_permissions` + best-effort `chown` in `ops.rs`, Task 2's two payload changes in `write.rs`, and all six Task 3 tests — five non-ignored passing, `cargo test --lib` at 2078 passed / 0 failed / 13 ignored.
+
+**What I did this run:**
+1. **`cargo fmt --all`** — formatted the tree (the `set_permissions` multi-line calls collapsed, plus a few test-body lines).
+2. **Test 2's shell close** — added the spec-quoted block after `a_remote_edit_keeps_the_files_mode`'s `for` loop: `Owner::Chat(owner_key())` + `crate::shell::registry_lookup` + `crate::daemon::executor::knowledge::close_shell_with(registry, &id, &owner, 3000ms)`. The test still passes; the leak that made unrelated PTY tests flake is gone.
+3. **Mutations A–C** — Mutation A (Python `os.chmod(t,st.st_mode&0o7777)` deleted) → test 2 `a_remote_edit_keeps_the_files_mode` **FAILED** (`six.txt must keep its mode across a host edit: "…Edited…"; left: 600 ≠ right: 511`), test 3 `the_python_branch_keeps_the_files_mode` **FAILED** (`six.txt must keep its mode through the python branch: …; left: 384 ≠ right: 511`). Mutation B (Perl `chmod($st[2]&07777,$t);` deleted) → test 4 `the_perl_branch_keeps_the_files_mode` **FAILED** (`six.txt must keep its mode through the perl branch: …; left: 384 ≠ right: 511`). Mutation C (local `set_permissions` deleted) → test 1 `a_local_edit_keeps_the_files_mode` **FAILED** (`six.txt must keep its mode across a local edit: …; left: 420 ≠ right: 384`). Each restored and confirmed by `git diff --stat`.
+4. **End-to-end capture** — the § block ran verbatim into `/tmp/e2e-09a.txt` on the first pass, no re-runs needed; the paste check printed **PASTE MATCH**. Full text:
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2078p-0f-13i
+new_tests=5p-0f
+neighbours=1 passed/1 passed/0 failed
+create_untouched=1
+ignore_total=13
+```
+
+`ignore_total=13` confirms the pinky live test's `#[ignore]` is the only new one on top of the prior 12.
+
+**Live check** — `a_remote_edit_keeps_mode_on_pinky -- --ignored --nocapture`:
+
+```
+before=600 (stat -c before=%a /tmp/de-09a-mode-probe)
+after: "after=600\r\n"
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2090 filtered out; finished in 0.54s
+```
+
+`pinky` reachable, the edit ran through the real ssh transport, and the file's `0600` mode survived (before=600, after=600), matching the phase's measurement that the shell's umask is `0002` there.
+
+**Gates:** `cargo fmt --all` clean, `cargo build` clean (zero warnings), `cargo clippy --all-targets --all-features -- -D warnings` exit 0, `cargo test` full suite — lib 2078 passed / 0 failed / 13 ignored, bug_tracker 6, doc_truth 14, integration 32, isolation 10 (*preservation*). `grep -c 'Error committing new file'` → **1** (create path untouched). Committed as `6bf4d828` (feat: edit_file keeps the file's mode and owner on every path), `git status --short` empty.
+
+**Status remains `in-progress`**, no `(complete)` entry written — the server authors that.
+
+**Notes for review**
+- Adapted one thing from the spec's exact wording: the spec's Task-2 patch text says to insert `st=os.stat(p)` **before** `t=p+'.de_tmp'`, but also says the chown must come **after the write and before the rename** — the payload on disk has `st=os.stat(p)` before `t=p+'.de_tmp'`, then `open(t,'w')…`, then `os.chmod`, then the two-line `try:` / `except OSError: pass` chown, then `os.rename`, which is the only ordering that satisfies both constraints at once; the test pins the resulting payload, and it is the form § Current state 4 measured.
+- `a_remote_edit_keeps_the_files_mode`'s close block is the only addition this run made to test code; everything else on disk is the prior run's, unchanged.
+- The pinky live test cleans up after itself (`close_shell_with` then `ssh -O exit`), same seam as `edit_file_on_pinky_end_to_end`; it does **not** need the registry leak workaround test 2 needed because test 2's leak was the in-process fixture, not the ssh host.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+der_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 11 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+test webhook_ghost_e2e_deterministic ... ok
+
+test result: ok. 10 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/daemon/executor/file_ops/ops.rs` — +35 -69
+
+**Commit:** 6bf4d82887ab7a5a1446ee0177010336d195095a
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
