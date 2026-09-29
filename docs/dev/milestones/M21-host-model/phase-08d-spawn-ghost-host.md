@@ -1,7 +1,7 @@
 # Phase 08d: spawn-ghost-host — a coordinator names the host a specialist runs on, and a ghost's own command honours `host`
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-08a (`ssh_target` resolution + the `hosts:` fence),
 phase-08c (a resolved host runs on a ghost-owned PTY shell)
 **Estimated diff:** ~350 lines across ~12 files, plus 6 tests
@@ -519,3 +519,156 @@ dropped_host=0
 docs=1-1-1-1
 ignore_total=11
 ```
+
+### Update — 2026-09-29 00:17 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 08d is implemented on the tree at commit `b0437454` (17 files, +627/−27). `spawn_ghost_shell` gained an optional `host` parameter threaded through defs → args → `AiEvent::SpawnGhost` → `PendingCall::SpawnGhost` → both conversions → the executor arm, refused before any ghost starts by `spawn_host_target` unless the name parses, is a configured `[hosts]` entry (or `"local"`), and both the child runbook's and — for a ghost caller — the caller's `hosts:` list grant it; a ghost's own `run_terminal_command { host }` is no longer dropped — `PendingCall::Background` carries `host`, and `run_background` (new `host: Option<&str>` parameter) rebinds the policy through `GhostPolicy::for_host` before the existing fence and 08c's PTY route, and the 08a fence defect is fixed (`may_use_ssh_target` returns true when `ssh_target` is `None`, so a daemon-host ghost with a `hosts:` list is no longer refused). Six new tests (2 pure fence, 2 pure spawn decision, 2 `run_background` door tests, one of them the no-session-started door test) plus docs in `sre.toml`, `CLAUDE.md`, `README.md`; end-to-end capture pasted into the phase doc's Update Log as the first fenced block of `### Update — 2026-09-29 00:05 (end-to-end verification)` and the diff printed `PASTE MATCH`.
+
+**Notes for review:**
+- E2E (captured verbatim, three runs): `lib1..3=ok`, `lib_counts=2064p-0f-11i`, `new_tests=6p-0f`, `refusal_tests=4p-0f`, `ghost_remote_tests=4p-0f`, `spawn_host_param=1`, `for_host=1`, `spawn_target=2`, `dropped_host=0`, `docs=1-1-1-1`, `ignore_total=11`. The `spawn_target=2` (spec expected 1) is the definition plus the `spawn_host_target(` call inside `spawn_ghost` — the grep counts both; the acceptance criterion's intent (the function exists) is met.
+- **The known pre-existing flake fired twice** during captures (`shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`, runs 2/first attempt and the next capture's lib3) — reported by name, not edited, per the phase doc; the final pasted capture is all-green on the restored tree.
+- The three mutations (A/B/C) were **not** applied — the run budget for this dispatch was consumed getting the phase green after repeated mid-run verifier reds (field-plumbing on `PendingCall`/`AiEvent`, `run_background` arity), and each extra mutation/test cycle risked the same. The spec's mutation section expects all three applied, run, and recorded; **this box is unmet and I did not fake it** — the phase doc's Update Log says so plainly next to the e2e entry.
+- `spawn_ghost` needed an `#[allow(clippy::too_many_arguments)]` (8 params, same pattern already used in `ghost.rs:581` and `file_ops/ops.rs`); a small `start_spawn_session` helper split the refusal path from the session start so the runbook/guard locals stayed in scope.
+- The spec's `spawn_ghost("rb08d", "task", None, Some("db02"), None, &sessions, 0, None)` positional sketch matched the implemented signature; `SessionStore` has no `list()` in this tree (used `with_sessions` + `is_empty`), and `HostId::parse`'s sentence about "the daemon host" wording was reused verbatim where the spec pinned it.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.82s
+
+
+LINT
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.91s
+
+
+TEST
+t header_status_strips_trailing_prose ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 11 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 10 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +1 -1
+- `assets/prompts/sre.toml` — +7 -2
+- `docs/dev/milestones/M21-host-model/README.md` — +1 -1
+- `docs/dev/milestones/M21-host-model/phase-08d-spawn-ghost-host.md` — +28 -1
+- `src/ai/tools/args.rs` — +3 -0
+- `src/ai/tools/defs.rs` — +11 -0
+- `src/ai/types/events.rs` — +1 -0
+- `src/ai/types/pending.rs` — +23 -6
+- `src/daemon/executor/foreground.rs` — +147 -0
+- `src/daemon/executor/knowledge/ghost.rs` — +249 -4
+- `src/daemon/executor/mod.rs` — +5 -1
+- `src/daemon/ghost.rs` — +4 -3
+- `src/daemon/policy.rs` — +62 -7
+- `src/daemon/policy_tests.rs` — +79 -0
+- `src/daemon/stream.rs` — +3 -0
+- `tests/integration.rs` — +2 -0
+
+**Commit:** b04374545177b057d13f9e05ecc8534259809d56
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
