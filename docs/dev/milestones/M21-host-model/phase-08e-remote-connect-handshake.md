@@ -844,3 +844,91 @@ bug-08e-1 (the connect timeout never restarts after an answer),
 bug-08e-2 (a ghost's `edit_file` connects before its refusal) and
 bug-08e-3 (test 3's fake now stays alive after the right answer, so
 Mutation A is observable). Working through the bounce criteria in order.
+
+### Update — 2026-09-29 04:14 UTC (end-to-end verification, bounce fixes)
+
+The bounce capture, run with nothing else running `cargo test`:
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2073p-0f-12i
+new_tests=6p-0f
+neighbours=0 failed/0 failed/0 failed
+pieces=1-1-1-1
+callers=1-3-2-1
+read_comment=0
+double_error=0
+readme=1
+ignore_total=12
+bounce_tests=2p-0f
+```
+
+**PASTE MATCH** — the diff snippet below printed the literal `PASTE MATCH`
+into this entry (the block above is this entry's first fenced block; the
+paste was re-verified after the last capture re-run).
+
+Bounce criteria, each against its defect:
+
+- **bug-08e-1** — `cargo test --lib an_answered_prompt_restarts_the_connect_timeout`
+  → **1 passed; 0 failed** (was `0 passed; … filtered out`). The fix:
+  `started` is reset to `last_answer` on every send, so the deadline is
+  measured from the later of spawn and the last answer, exactly what the
+  doc comment and Task 2.1 already promised. The never-answered half is
+  pinned in the same test: a fake that prints nothing times out from spawn
+  with the `did not connect within 300ms` wording, and is killed at the
+  deadline, not later.
+- **bug-08e-2** — `cargo test --lib a_ghost_edit_file_never_connects`
+  → **1 passed; 0 failed** (was `0 passed; … filtered out`). The fix: the
+  `EditFile` arm's connect step is gated behind `edit_file_connects_first`
+  (`executor/mod.rs`), false for every ghost — a ghost's `edit_file`
+  reaches `run_edit_file`'s own `cannot run in a Ghost Shell` refusal
+  **without** any ssh process. A companion test pins the chat side: chat
+  connects first for a well-formed name, and passes through for `None`,
+  `"local"` and a malformed name. `file_ops/write.rs` needed no change.
+- **bug-08e-3** — test 3's fake now sleeps 0.3 s after the read (ssh's
+  post-answer auth latency), so the answered-once window is observable.
+  **Mutation A re-applied → RED 3/3**, recorded below; unmutated → green
+  3/3. `cargo test --lib` → **2073 passed / 0 failed / 12 ignored**
+  (bounce floor 2072; ignored count exact).
+
+Neighbours unmoved: `ssh_argv` 0 failed, `ghost_remote` 0 failed,
+`file_ops` 0 failed. The known pre-existing flake
+`shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`
+did not appear in the four full-suite runs captured here.
+
+### Mutation A re-run (bug-08e-3)
+
+Mutation A (classify `&buf` instead of `&buf[answered_at..]`) was applied
+with the `patch` tool, run once, restored:
+
+```
+test a_password_prompt_is_answered_once_and_the_host_connects ... FAILED
+the fake connects: Err("a password prompt appeared and nobody is attached to answer it …")
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2084 filtered out
+```
+
+Red 3/3 on repeated runs — the stale prompt is re-classified, the second
+round trip hits the exhausted transport, the give-up sentence comes back.
+Restored; `git diff --stat` back to its pre-mutation state and the test
+green 3/3 on the unmutated tree. The 08f window is now pinned by a test
+that fails without it.
+
+### Notes for review (bounce fixes)
+
+- **bug-08e-1's shape.** The reviewer's probe measured "connects ~0.5 s
+  after the answer, timeout 700 ms" — the test uses prompt-at-0.4 s /
+  connect-0.5-s-after-answer / 700 ms and asserts `Ok(())` plus the flag,
+  so the old spawn-only deadline cannot pass it (it fires at 0.7 s, before
+  the 0.9 s connect).
+- **bug-08e-2's chosen fix.** A pure decision function
+  (`edit_file_connects_first(is_ghost, host)`) consulted by the `EditFile`
+  arm, unit-tested for all four ghost host shapes and the chat side's
+  pass-throughs — no change to `file_ops/write.rs` needed. The three
+  `connect_named_host(` call sites remain (read_file, open_shell, and now
+  edit_file behind the gate), so the `callers=` criterion is unchanged:
+  `1-3-2-1` in the capture above.
+- **bug-08e-3's test shape.** The reviewer's measured recipe (sleep 0.3
+  after test 3's read) is applied verbatim; the comment in the test names
+  the mechanism and the mutation that pins it.
