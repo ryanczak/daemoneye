@@ -1,7 +1,7 @@
 # Bug 1 on phase-08e: the connect timeout never restarts after an answer, so a slow login is killed after the password was typed
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-09-29 — verified fixed at review. `an_answered_prompt_restarts_the_connect_timeout` passes; the reviewer removed the fix (`started = last_answer;`) and it went red with `did not connect within 700ms`. The never-answered deadline is pinned in the same test. Lib 2073/0/12 on three runs.
 **Filed:** 2026-09-28
 
 ## What's wrong

@@ -1,7 +1,7 @@
 # Bug 2 on phase-08e: a ghost's edit_file connects to any host before edit_file refuses ghosts
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-09-29 — verified fixed at review. The `EditFile` arm connects only when `edit_file_connects_first(is_ghost, host)` is true, and that is false for every ghost. `a_ghost_edit_file_never_connects` passes, and dropping `!is_ghost` from the gate turns it red. Chat still connects first (`callers=1-3-2-1` unchanged).
 **Filed:** 2026-09-28
 
 ## What's wrong

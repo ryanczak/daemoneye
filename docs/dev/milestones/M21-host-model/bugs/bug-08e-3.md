@@ -1,7 +1,7 @@
 # Bug 3 on phase-08e: no test pins the answer-once window — Mutation A survives
 
 **Severity:** minor
-**Status:** open
+**Status:** closed 2026-09-29 — verified fixed at review. Test 3's fake now sleeps 0.3 s after the answer; the reviewer re-applied Mutation A and it went red 2/2, and the unmutated tree is green.
 **Filed:** 2026-09-28
 
 ## What's wrong

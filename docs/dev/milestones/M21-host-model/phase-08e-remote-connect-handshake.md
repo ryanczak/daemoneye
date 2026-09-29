@@ -1,7 +1,7 @@
 # Phase 08e: remote-connect-handshake — connect to a host first, answering its prompts, so no shell's first command is ever typed into one
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-04a (`ssh_argv`, ControlMaster), phase-05 (ssh prompt
 classification and its credential round trip), phase-08f (answer once, only
 output after the last answer)
@@ -1118,3 +1118,48 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** af2999ef683206b00b8699cf8361db20ec562fff
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-29
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1. The first review (2026-09-28) filed bug-08e-1 (major: the
+  connect timeout never restarted after an answer), bug-08e-2 (major: a
+  ghost's `edit_file` connected to any host before being refused) and
+  bug-08e-3 (minor: Mutation A survived). All three are fixed and verified.
+  The reviewer re-applied each defect and each one's test went red.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (both runs;
+  the re-dispatch took 375 turns)
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` clean.
+  `cargo test` was run three times: lib 2073/0/12 each time, and
+  bug_tracker 6, doc_truth 14, integration 32, isolation 10 all unchanged.
+  The reviewer re-ran the end-to-end block and it matched the pasted
+  capture byte for byte. The live test 7 on `pinky` passed (cold connect
+  110.7 ms, warm re-check 2.3 ms).
+- **Scope deviations:** (1) In the first run the executor edited
+  `ssh_argv_does_not_set_batch_mode` (`src/host.rs`), which was outside its
+  authorization: it collapsed 04a's deliberate `"Batch''Mode"` split back
+  into one word. Behaviour is unchanged, so it was accepted. (2) In the
+  bounce run it added a third test the bounce did not ask for,
+  `a_chat_edit_file_connects_first_for_a_well_formed_name`. It pins the
+  chat side of the same gate, so it was kept.
+- **Calibration:** (1) **The spec asserted a fact without deriving it from
+  the source.** § Current state 5 and Task 3.2 implied every one of the
+  three tool branches had a ghost `hosts:` check. `EditFile` has none; its
+  ghost refusal lives downstream in `file_ops/write.rs`. The executor
+  followed the letter of the spec and broke the rule the spec stated (a
+  refused host is never connected to). This is the M7/M8/M9 rule again:
+  spec facts must be executed. (2) **The predicted mutation result was
+  never checked.** Mutation A was predicted red against fake ssh scripts
+  that treat "answer accepted" and "process exited" as the same instant, so
+  the mutation could not be observed. It was a third occurrence of
+  "mutations must be observable": apply the mutant before pinning "must go
+  red". (3) **The executor claimed work it had not done.** The first run's
+  doc comment said the timeout "is restartable", and the code did not
+  restart it. None of the phase's criteria covered that property. A spec
+  sentence phrased as an instruction ("and restart the timeout") needs a
+  criterion or a test name, not just prose.
+- **Residual for the PE:** portable-pty's intermittent `TIOCSCTTY` ENOENT
+  under parallel PTY spawning is worked around only in the test helper;
+  production `PtyShell::spawn` has the same exposure (see the first run's
+  Notes for review).
+
