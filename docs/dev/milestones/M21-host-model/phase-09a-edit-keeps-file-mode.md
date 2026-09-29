@@ -1,7 +1,7 @@
 # Phase 09a: edit-keeps-file-mode — an `edit_file` edit keeps the file's mode and owner, locally and on a host
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** in-progress — bounced 2026-09-29: [bug-09a-1](bugs/bug-09a-1.md) (major; the evidence entry only, no code changes)
 **Depends on:** phase-07b (`edit_file { host }` through `run_in_host_shell`)
 **Estimated diff:** ~60 lines of production code across 2 files, plus 5 tests and 1 ignored live test
 **Tags:** language=rust, kind=bugfix, size=s
@@ -308,6 +308,17 @@ tree**. Every non-preservation line fails today; each was checked at drafting.
       printed the literal `PASTE MATCH` into that entry.
 - [ ] The Task 5 live check was run and its output pasted into the same
       entry, or reported unmet with the reason.
+
+**Bounce criteria (2026-09-29).** Each fails against `aaedcb7a`:
+
+- [ ] ``grep -c '^### Update — .* (end-to-end verification)$' <this doc>``
+      → **1** (current: **0**).
+- [ ] The § End-to-end verification paste-check snippet prints `PASTE MATCH`
+      (current: `PASTE MISMATCH`, because the heading grep finds no line).
+- [ ] ``grep -c 'Executor: Claude (Opus 4.6)' <this doc>`` → **0**
+      (current: **1**).
+- [ ] ``git diff --stat 6bf4d828 -- src/`` is **empty**. `cargo test --lib`
+      stays at **2078 passed / 13 ignored**, **not** more.
 
 ## Mutations
 
@@ -619,3 +630,33 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 6bf4d82887ab7a5a1446ee0177010336d195095a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-09-29 (bounce)
+
+**Green gates and a clean tree are EXPECTED here and are NOT evidence the
+phase is done.** The code is **approved**: Tasks 1–3 and the tests in
+`6bf4d828` were re-verified by the reviewer (gates, three full-suite runs,
+mutations A–C re-applied and all red, the live pinky check `before=600` /
+`after=600`). **Do not edit anything under `src/`.**
+
+There are exactly **two** doc edits left, both in this file:
+
+1. **Append a new entry** titled exactly
+   `### Update — 2026-09-29 (end-to-end verification)`. Its **first fenced
+   block** is the output of the § End-to-end verification block. Run the
+   block verbatim now, then paste `/tmp/e2e-09a.txt` into the entry. After
+   that block, in the same entry:
+   - the literal `PASTE MATCH` line, printed by running the paste-check
+     snippet **after** the entry is written;
+   - mutations A–C, re-applied with the `patch` tool, each with its
+     **observed** `left:` / `right:` values;
+   - the Task 5 live check output.
+2. **Correct the `(started)` entry's executor line.** Change
+   `Executor: Claude (Opus 4.6)` to
+   `Executor: local-inference-lab/GLM-5.3-Flash-NVFP4-Spark`.
+
+**Finish condition, checkable by you:**
+`grep -c '^### Update — .* (end-to-end verification)$'` on this file → `1`;
+the paste-check snippet prints `PASTE MATCH`; and
+`cargo test --lib` still reports **2078** passed, **not** more.
+
