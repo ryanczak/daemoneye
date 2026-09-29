@@ -932,3 +932,18 @@ that fails without it.
 - **bug-08e-3's test shape.** The reviewer's measured recipe (sleep 0.3
   after test 3's read) is applied verbatim; the comment in the test names
   the mechanism and the mutation that pins it.
+
+### Task 7 — the live check, re-run after the bounce fixes
+
+```sh
+$ cargo test --lib a_cold_host_connects_first_and_a_warm_one_is_reused_on_pinky -- --ignored --nocapture 2>&1 | grep -E 'elapsed|^test |test result'
+cold connect elapsed: 111.182882ms
+warm check elapsed: 1.795484ms
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2084 filtered out; finished in 0.12s
+```
+
+The criterion still holds on the fixed tree: cold connect succeeds with no
+credential asked (pinky is key-auth), the master is found running
+afterwards, and the warm re-check is **1.8 ms** — under the 100 ms line,
+so the `master_running` early return survives bug-08e-1's change
+untouched. The test's cleanup ran `ssh -O exit` afterwards.
