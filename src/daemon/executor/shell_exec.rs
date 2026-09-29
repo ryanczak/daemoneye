@@ -2983,8 +2983,13 @@ mod connect_tests {
         let _pty = PTY_TEST_LOCK.lock().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let flag = tmp.path().join("connected");
+        // The `sleep 0.3` after the read keeps the child alive once the
+        // answer is in — ssh's post-answer authentication latency — so the
+        // classify-only-after-the-last-answer window (08f) is observable:
+        // bug-08e-3's Mutation A re-applied turns this red (the stale prompt
+        // is re-answered against the exhausted transport).
         let script = format!(
-            "sleep 0.2; printf \"u@h's password: \"; read -r pw; \
+            "sleep 0.2; printf \"u@h's password: \"; read -r pw; sleep 0.3; \
              [ \"$pw\" = {CREDENTIAL} ] && touch {} && exit 0; exit 255",
             flag.display()
         );
