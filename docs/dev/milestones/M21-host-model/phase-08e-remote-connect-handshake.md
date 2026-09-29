@@ -1,7 +1,7 @@
 # Phase 08e: remote-connect-handshake — connect to a host first, answering its prompts, so no shell's first command is ever typed into one
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** in-progress — bounced 2026-09-28: [bug-08e-1](bugs/bug-08e-1.md) (major), [bug-08e-2](bugs/bug-08e-2.md) (major), [bug-08e-3](bugs/bug-08e-3.md) (minor)
 **Depends on:** phase-04a (`ssh_argv`, ControlMaster), phase-05 (ssh prompt
 classification and its credential round trip), phase-08f (answer once, only
 output after the last answer)
@@ -440,6 +440,21 @@ tree**. Every non-preservation line fails today — checked at drafting.
 - [ ] The Task 7 live check was run and its output pasted into the same
       entry, or reported unmet with the reason.
 
+**Bounce criteria (2026-09-28)** — each fails against the tree at `885963b1`:
+
+- [ ] bug-08e-1 — the connect timeout restarts after an answer:
+      ``cargo test --lib an_answered_prompt_restarts_the_connect_timeout``
+      → **1 passed** (current: `0 passed; … filtered out`).
+- [ ] bug-08e-2 — a ghost's `edit_file` never connects:
+      ``cargo test --lib a_ghost_edit_file_never_connects`` → **1 passed**
+      (current: `0 passed; … filtered out`). The test asserts the ghost
+      refusal text and that `ensure_connected` is not reached.
+- [ ] bug-08e-3 — Mutation A is observable: test 3's fake stays alive after
+      the correct answer; Mutation A re-applied turns it **red**, recorded in
+      the new end-to-end entry (current: recorded green).
+- [ ] `cargo test --lib` → **at least 2072 passed / 0 failed / 12 ignored**
+      (two new tests; the ignored count is exact).
+
 ## Mutations
 
 Apply each with the `patch` tool (the executor contract forbids `sed -i`,
@@ -487,6 +502,7 @@ cd /home/matt/src/daemoneye
   printf 'double_error=%s\n' "$(grep -c "\"Error: '{key}' is not a configured host" src/daemon/policy.rs)"
   printf 'readme=%s\n' "$(grep -c 'Remote hosts — first connection' README.md)"
   printf 'ignore_total=%s\n' "$(grep -rc '#\[ignore' --include=*.rs src/ | grep -v ':0' | awk -F: '{s+=$2} END {print s}')"
+  printf 'bounce_tests=%s\n' "$(cargo test --lib -- an_answered_prompt_restarts_the_connect_timeout a_ghost_edit_file_never_connects 2>&1 | grep -E '^test result' | tail -1 | sed -E 's/.*ok\. ([0-9]+) passed; ([0-9]+) failed.*/\1p-\2f/')"
 } > /tmp/e2e-08e.txt
 cat /tmp/e2e-08e.txt
 ```
@@ -494,7 +510,9 @@ cat /tmp/e2e-08e.txt
 Expected: `lib1..3=ok` with **nothing after `ok`**, `lib_counts=` at least
 `2070p-0f-12i`, `new_tests=6p-0f`, `neighbours=0 failed/0 failed/0 failed`,
 `pieces=1-1-1-1`, `callers=1-3-` then at least `2`, then `-1`,
-`read_comment=0`, `double_error=0`, `readme=1`, `ignore_total=12`.
+`read_comment=0`, `double_error=0`, `readme=1`, `ignore_total=12`,
+`bounce_tests=2p-0f` (added at the 2026-09-28 bounce; `lib_counts=` now at
+least `2072p-0f-12i`).
 
 **Known pre-existing flake.** `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`
 fails intermittently under full-suite load. If it fails, report its name —
@@ -529,6 +547,10 @@ You may edit, and nothing else:
 - `src/daemon/policy.rs` — Task 4.2 (one message).
 - `README.md` — Task 4.3 only.
 - This phase doc's Update Log.
+- **Bounce (2026-09-28):** `src/daemon/executor/shell_exec.rs` (bug-08e-1's
+  fix and test, bug-08e-3's test change); `src/daemon/executor/mod.rs`
+  (bug-08e-2's fix and test); `src/daemon/executor/file_ops/write.rs` only if
+  bug-08e-2's chosen fix needs it.
 
 ## Out of scope
 
@@ -776,3 +798,38 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 885963b11ae2accee44e55f22c384545a877460c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-09-28 (bounced)
+
+Reviewer re-ran the gates independently: `cargo fmt --all -- --check` clean,
+`cargo build` clean, clippy `-D warnings` clean, `cargo test` →
+lib 2070/0/12, bug_tracker 6, doc_truth 14, integration 32 (+2 ignored),
+isolation 10 (+1 ignored). The E2E capture and the live pinky check stand.
+
+Bounced on three defects, each reproduced by the reviewer:
+
+- [bug-08e-1](bugs/bug-08e-1.md) (major) — the connect timeout is measured
+  from spawn only (`shell_exec.rs:580`); an answer never restarts it,
+  contradicting Task 2.1 and the code's own doc comment. Throwaway probe:
+  `Err("ssh to host pinky did not connect within 700ms")` for a login that
+  finished 500 ms after its answer.
+- [bug-08e-2](bugs/bug-08e-2.md) (major) — the `EditFile` arm connects before
+  `edit_file`'s ghost refusal (which lives in `file_ops/write.rs:89`), so a
+  ghost's `edit_file { host }` opens a BatchMode ControlMaster to any host,
+  listed or not.
+- [bug-08e-3](bugs/bug-08e-3.md) (minor) — Mutation A survives (the executor
+  recorded it honestly); `sleep 0.3` after test 3's `read` makes it red 3/3
+  and leaves the unmutated tree green 3/3.
+
+Accepted, noted for the verdict:
+
+- `#[allow(clippy::too_many_arguments)]` on `drive_connect` — forced by the
+  spec's pinned 8-parameter signature; four precedents in the same file.
+- **Out-of-authorization edit:** `ssh_argv_does_not_set_batch_mode`
+  (`src/host.rs`) had 04a's deliberate `"Batch''Mode"` split collapsed back
+  to `"BatchMode"`. Behaviour-equivalent; not required to revert, but
+  counted as a scope deviation.
+- The test-only PTY spawn retry and `PTY_TEST_LOCK`, with the flagged
+  production exposure of `PtyShell::spawn` to the same transient ENOENT — for
+  the PE.
+
