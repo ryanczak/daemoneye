@@ -238,6 +238,7 @@ pub enum AiEvent {
         runbook: String,
         message: String,
         agent: Option<String>,
+        host: Option<String>,
         thought_signature: Option<String>,
     },
     /// Create or update a named agent config.

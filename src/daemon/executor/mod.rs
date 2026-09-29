@@ -667,7 +667,7 @@ where
             .await
         }
 
-        PendingCall::Background { id, cmd, .. } => {
+        PendingCall::Background { id, cmd, host, .. } => {
             // The PTY shell substrate, the default, for a **chat**
             // session's plain background command. A ghost session (no
             // substrate shell of its own and sandboxed away from the host)
@@ -782,6 +782,7 @@ where
             foreground::run_background(
                 id,
                 cmd,
+                host.as_deref(),
                 ctx,
                 GhostCtx {
                     policy: ghost_policy.as_ref(),
@@ -1279,6 +1280,7 @@ where
             runbook,
             message,
             agent,
+            host,
             ..
         } => {
             if spawn_depth >= 2 {
@@ -1291,6 +1293,8 @@ where
                 runbook,
                 message,
                 agent.as_deref(),
+                host.as_deref(),
+                ghost_policy.as_ref(),
                 sessions,
                 spawn_depth,
                 effective_parent_job_id.as_deref(),

@@ -177,7 +177,7 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `list_schedules` | core | List jobs with status and next fire time |
 | `cancel_schedule` | core | Cancel a job by UUID (kept in the store) |
 | `delete_schedule` | core | Permanently delete a job by UUID |
-| `spawn_ghost_shell` | core | Delegate a task to an autonomous background Ghost Shell that follows a named runbook |
+| `spawn_ghost_shell` | core | Delegate a task to an autonomous background Ghost Shell that follows a named runbook; `host?` runs the specialist on a configured host or "local", fenced by both the runbook's and your own `hosts:` lists |
 | `await_agent_result` | core | Block on a spawned agent's mailbox for the `job_id` returned by `spawn_ghost_shell`, until the result lands or the timeout expires |
 | `create_agent` | **agents** | Create/update `~/.daemoneye/agents/<name>/config.toml`; approval-gated |
 | `read_agent` | **agents** | Read a named agent's full config |

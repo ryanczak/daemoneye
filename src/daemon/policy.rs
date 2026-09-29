@@ -56,14 +56,20 @@ impl GhostPolicy {
     }
 
     /// May this ghost reach its `ssh_target` at all? The runbook's `hosts:`
-    /// list is the fence (06d's rule): empty is unrestricted; non-empty must
-    /// grant the resolved host; an `ssh_target` that resolved to no
-    /// configured host cannot be granted by a non-empty list.
+    /// list is the fence (06d's rule), but only when there is a resolved
+    /// host to fence: with `ssh_target` unset or resolving to no configured
+    /// host (`remote_host: None`), a ghost with no `ssh_target` runs on the
+    /// daemon host and its list says nothing about that — it is permitted
+    /// regardless of the list; an `ssh_target` that names no configured host
+    /// keeps 08a's unresolved rule (empty list grants it, non-empty refuses
+    /// it). A resolved host must be granted by the list: empty is
+    /// unrestricted; non-empty must name it.
     pub fn may_use_ssh_target(&self) -> bool {
-        let Some(host) = self.remote_host.as_ref() else {
-            return self.hosts.is_empty();
-        };
-        self.may_use_host(host)
+        match (&self.ssh_target, &self.remote_host) {
+            (None, _) => true,
+            (Some(_), None) => self.hosts.is_empty(),
+            (Some(_), Some(host)) => self.may_use_host(host),
+        }
     }
 
     /// May this whitelisted script run under elevated permissions here? Only
@@ -133,6 +139,55 @@ impl GhostPolicy {
                 self.hosts.is_empty() || self.hosts.iter().any(|h| h == name)
             }
         }
+    }
+
+    /// This policy with its remote binding replaced by `host`, as if the
+    /// runbook's `ssh_target` had named it. Every other field is kept.
+    ///
+    /// `Local` clears the remote binding (the ghost runs on the daemon
+    /// host); a named host must be a configured `[hosts]` entry, whose
+    /// `sudo_scripts` become the elevation whitelist. It does **not** check
+    /// the `hosts:` list — the caller's fence does that next, with its own
+    /// wording and event.
+    pub fn for_host(
+        &self,
+        host: &crate::host::HostId,
+        hosts: &std::collections::HashMap<String, crate::config::HostEntry>,
+    ) -> Result<GhostPolicy, String> {
+        let mut rebound = self.clone();
+        match host {
+            crate::host::HostId::Local => {
+                rebound.ssh_target = None;
+                rebound.remote_host = None;
+                rebound.remote_sudo_scripts = Vec::new();
+            }
+            crate::host::HostId::Named(key) => {
+                let Some(entry) = hosts.get(key) else {
+                    let configured = if hosts.is_empty() {
+                        "no hosts are configured".to_string()
+                    } else {
+                        let mut names: Vec<&String> = hosts.keys().collect();
+                        names.sort();
+                        let joined = names
+                            .iter()
+                            .map(|n| n.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("configured hosts: {joined}")
+                    };
+                    return Err(format!(
+                        "Error: '{key}' is not a configured host ({joined}). \
+                         Add a [hosts.{key}] entry, or use \"local\" for the \
+                         daemon host.",
+                        joined = configured
+                    ));
+                };
+                rebound.ssh_target = Some(key.clone());
+                rebound.remote_host = Some(host.clone());
+                rebound.remote_sudo_scripts = entry.sudo_scripts.clone();
+            }
+        }
+        Ok(rebound)
     }
 
     /// Rewrite a whitelisted script reference to its absolute (local) or

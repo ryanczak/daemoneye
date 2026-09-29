@@ -1,7 +1,7 @@
 # Phase 08d: spawn-ghost-host — a coordinator names the host a specialist runs on, and a ghost's own command honours `host`
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-08a (`ssh_target` resolution + the `hosts:` fence),
 phase-08c (a resolved host runs on a ghost-owned PTY shell)
 **Estimated diff:** ~350 lines across ~12 files, plus 6 tests
@@ -492,3 +492,30 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-28 23:46 (started)
+
+**Executor:** executor LLM, phase 08d (spawn-ghost-host), dispatch 1.
+
+Status flipped to `in-progress`; README phase-table row matches. Baseline
+confirmed on a clean tree at `70e9258d`: 6 pre-existing tests filtered for the
+phase's grep; plan is Tasks 1–7 in order, six new tests, then the §
+End-to-end verification capture as the last thing before committing.
+
+### Update — 2026-09-29 00:05 (end-to-end verification)
+
+```sh
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2064p-0f-11i
+new_tests=6p-0f
+refusal_tests=4p-0f
+ghost_remote_tests=4p-0f
+spawn_host_param=1
+for_host=1
+spawn_target=2
+dropped_host=0
+docs=1-1-1-1
+ignore_total=11
+```

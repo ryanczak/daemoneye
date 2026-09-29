@@ -915,9 +915,7 @@ async fn do_ghost_turn(
                         wait: _wait,
                         thought_signature,
                         shell: _shell,
-                        // Ghost Shell host routing is row 08d, not this row;
-                        // every ghost command stays on the daemon host.
-                        host: _host,
+                        host,
                         timeout_secs: _timeout_secs,
                     } => {
                         pending_calls.push(PendingCall::Background {
@@ -925,6 +923,7 @@ async fn do_ghost_turn(
                             cmd: command,
                             thought_signature,
                             _credential: None,
+                            host,
                         });
                     }
                     AiEvent::ListRunbooks {
@@ -1149,6 +1148,7 @@ async fn do_ghost_turn(
                         runbook,
                         message,
                         agent,
+                        host,
                         thought_signature,
                     } => {
                         pending_calls.push(PendingCall::SpawnGhost {
@@ -1157,6 +1157,7 @@ async fn do_ghost_turn(
                             runbook,
                             message,
                             agent,
+                            host,
                         });
                     }
                     AiEvent::AwaitAgentResult {

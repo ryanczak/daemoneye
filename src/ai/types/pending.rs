@@ -15,6 +15,7 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         cmd: String,
         _credential: Option<String>,
+        host: Option<String>,
     },
     ScheduleCommand {
         id: String,
@@ -181,6 +182,9 @@ pub enum PendingCall {
         message: String,
         /// Optional named agent to use as the executor identity.
         agent: Option<String>,
+        /// Host the specialist's commands run on, overriding the runbook's
+        /// `ssh_target`: a configured `[hosts]` key or `"local"`.
+        host: Option<String>,
     },
     /// Create or update a named agent config.
     CreateAgent {
@@ -360,14 +364,17 @@ impl PendingCall {
                 id,
                 thought_signature,
                 cmd,
+                host,
                 ..
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "run_terminal_command".to_string(),
-                arguments: args_to_string(
-                    serde_json::json!({ "command": cmd, "background": true }),
-                ),
+                arguments: args_to_string(serde_json::json!({
+                    "command": cmd,
+                    "background": true,
+                    "host": host
+                })),
             },
             PendingCall::ScheduleCommand {
                 id,
@@ -764,13 +771,17 @@ impl PendingCall {
                 runbook,
                 message,
                 agent,
+                host,
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "spawn_ghost_shell".to_string(),
-                arguments: args_to_string(
-                    serde_json::json!({"runbook": runbook, "message": message, "agent": agent}),
-                ),
+                arguments: args_to_string(serde_json::json!({
+                    "runbook": runbook,
+                    "message": message,
+                    "agent": agent,
+                    "host": host
+                })),
             },
             PendingCall::CreateAgent {
                 id,
@@ -1302,6 +1313,7 @@ mod tests {
                 runbook: "disk-alert".to_string(),
                 message: "investigate".to_string(),
                 agent: None,
+                host: None,
             },
         ];
         for call in cases {
@@ -1324,6 +1336,7 @@ mod tests {
                 thought_signature: None,
                 cmd: "cargo build".to_string(),
                 _credential: None,
+                host: None,
             },
             PendingCall::WriteScript {
                 id: "x".to_string(),
@@ -1442,6 +1455,7 @@ mod tests {
             runbook: "disk-alert".to_string(),
             message: "check disk usage".to_string(),
             agent: None,
+            host: None,
         };
         assert_eq!(call.summary(), "disk-alert");
     }
@@ -1537,6 +1551,7 @@ mod tests {
             thought_signature: None,
             cmd: "ls".to_string(),
             _credential: None,
+            host: None,
         };
         let args = parsed_args(&mk());
         assert!(!args.as_object().unwrap().contains_key("credential"));
@@ -1562,6 +1577,7 @@ mod tests {
                 thought_signature: None,
                 cmd: "ls".to_string(),
                 _credential: None,
+                host: None,
             },
             PendingCall::ScheduleCommand {
                 id: x(),
@@ -1712,6 +1728,7 @@ mod tests {
                 runbook: "rb".to_string(),
                 message: "m".to_string(),
                 agent: None,
+                host: None,
             },
             PendingCall::CreateAgent {
                 id: x(),

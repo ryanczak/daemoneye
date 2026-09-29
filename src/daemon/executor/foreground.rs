@@ -918,6 +918,7 @@ where
 pub(super) async fn run_background<W, R>(
     id: &str,
     cmd: &str,
+    host: Option<&str>,
     ctx: SessionCtx<'_>,
     ghost_ctx: GhostCtx<'_>,
     tx: &mut W,
@@ -938,6 +939,49 @@ where
         is_ghost,
         ..
     } = ghost_ctx;
+    // A ghost may name the host a command runs on (`host`), overriding the
+    // runbook's `ssh_target` binding: rebind the policy to it, so every
+    // gate and route below works as if the runbook had named that host.
+    // The `hosts:` fence that follows still applies — now to the named
+    // host — with its existing wording and event.
+    let rebound;
+    let ghost_policy = match (is_ghost, host, ghost_policy) {
+        (true, Some(name), Some(policy)) => {
+            let refusal = match crate::host::HostId::parse(name) {
+                Err(e) => Err(format!("Error: {e}")),
+                Ok(h) => policy
+                    .for_host(&h, &crate::config::Config::load().unwrap_or_default().hosts)
+                    .map_err(|e| format!("Error: {e}")),
+            };
+            match refusal {
+                Ok(p) => {
+                    rebound = p;
+                    Some(&rebound)
+                }
+                Err(msg) => {
+                    crate::daemon::utils::log_event(
+                        "ghost_host_refused",
+                        serde_json::json!({
+                            "session": session_id.unwrap_or("-"),
+                            "tool": "run_terminal_command",
+                            "requested_host": name,
+                            "allowed_hosts": policy.hosts,
+                        }),
+                    );
+                    send_response_split(
+                        tx,
+                        Response::ToolResult {
+                            tool_call_id: id.to_string(),
+                            output: msg.clone(),
+                        },
+                    )
+                    .await?;
+                    return Ok(ToolCallOutcome::Result(msg));
+                }
+            }
+        }
+        _ => ghost_policy,
+    };
     // § 2.4 remote execution: a ghost ssh_target whitelisted-script invocation ships to
     // the remote either by streaming (default, no remote disk) or — under sudo — by a
     // persistent materialize to the sudoers-authorized path.
@@ -1454,6 +1498,7 @@ fn run_background_resolves_ghost_script_paths() {
         let outcome = run_background(
             "rb_resolve_check",
             script_name,
+            None,
             ctx,
             ghost_ctx,
             &mut daemon_tx,
@@ -1526,6 +1571,7 @@ fn run_background_resolves_ghost_script_paths() {
         let outcome = run_background(
             "rb_resolve_check_sudo",
             &format!("sudo {script_name} extra-arg"),
+            None,
             ctx,
             ghost_ctx,
             &mut daemon_tx,
@@ -1585,6 +1631,7 @@ mod refusal_gate_tests {
         sessions: &SessionStore,
         policy: &crate::daemon::policy::GhostPolicy,
         cmd: &str,
+        host: Option<&str>,
     ) -> String {
         let ctx = SessionCtx {
             session_id: Some(session_id),
@@ -1602,6 +1649,7 @@ mod refusal_gate_tests {
         match run_background(
             session_id,
             cmd,
+            host,
             ctx,
             ghost_ctx,
             &mut daemon_tx,
@@ -1662,6 +1710,7 @@ mod refusal_gate_tests {
                 &sessions,
                 &policy,
                 "sudo other.sh",
+                None,
             )
             .await
         });
@@ -1719,6 +1768,7 @@ mod refusal_gate_tests {
                 &sessions,
                 &policy,
                 "uptime",
+                None,
             )
             .await
         });
@@ -1748,5 +1798,102 @@ mod refusal_gate_tests {
             Some("user@far"),
             "an unresolved ssh_target is recorded under its own value, not a host key"
         );
+    }
+
+    /// A ghost command naming a host outside its runbook's `hosts:` list is
+    /// refused with the same sentence the `ssh_target` fence uses: it names
+    /// the refused host and the allowed set.
+    #[test]
+    fn a_ghost_command_host_outside_its_hosts_list_is_refused() {
+        let guard = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+        crate::config::Config::ensure_dirs().ok();
+        std::fs::write(
+            crate::config::etc_dir().join("config.toml"),
+            "[hosts.db01]\nssh = \"db01\"\n\n[hosts.db02]\nssh = \"db02\"\n",
+        )
+        .expect("write config");
+
+        let sessions = SessionStore::new();
+        let session_id = "ghost-command-host-unlisted";
+        let policy = crate::daemon::policy::GhostPolicy::from_config(&crate::ipc::GhostConfig {
+            hosts: vec!["db01".to_string()],
+            ..Default::default()
+        });
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let text = rt.block_on(async {
+            drive_run_background_refusal(
+                session_id,
+                "de-command-host-unlisted",
+                &sessions,
+                &policy,
+                "echo hi",
+                Some("db02"),
+            )
+            .await
+        });
+
+        assert!(
+            text.contains("db02"),
+            "the refusal must name the refused host: {text}"
+        );
+        assert!(
+            text.contains("db01"),
+            "the refusal must name the allowed set: {text}"
+        );
+        drop(guard);
+    }
+
+    /// A ghost command naming a host that is not configured at all is
+    /// refused before the fence: there is nothing to rebind to.
+    #[test]
+    fn a_ghost_command_host_that_is_not_configured_is_refused() {
+        let guard = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+        crate::config::Config::ensure_dirs().ok();
+        std::fs::write(
+            crate::config::etc_dir().join("config.toml"),
+            "[hosts.db01]\nssh = \"db01\"\n",
+        )
+        .expect("write config");
+
+        let sessions = SessionStore::new();
+        let session_id = "ghost-command-host-unconfigured";
+        let policy = crate::daemon::policy::GhostPolicy::from_config(&crate::ipc::GhostConfig {
+            hosts: vec!["db01".to_string()],
+            ..Default::default()
+        });
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let text = rt.block_on(async {
+            drive_run_background_refusal(
+                session_id,
+                "de-command-host-unconfigured",
+                &sessions,
+                &policy,
+                "echo hi",
+                Some("nope"),
+            )
+            .await
+        });
+
+        assert!(
+            text.contains("nope"),
+            "the refusal must name the unknown host: {text}"
+        );
+        drop(guard);
     }
 }

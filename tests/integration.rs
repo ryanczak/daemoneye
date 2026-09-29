@@ -1513,6 +1513,7 @@ fn g5_depth_limit_enforced() {
         runbook: "disk-alert".to_string(),
         message: "check disk".to_string(),
         agent: None,
+        host: None,
     };
     // The executor check happens before dispatch — simulate the gate:
     if gc2.spawn_depth >= 2 {
@@ -1717,6 +1718,7 @@ fn g6_tool_policy_enforced_in_ghost() {
         runbook: "test".to_string(),
         message: "test".to_string(),
         agent: None,
+        host: None,
     };
     assert_eq!(call.tool_name(), "spawn_ghost_shell");
     assert!(!policy.permits(call.tool_name()));

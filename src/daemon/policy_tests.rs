@@ -685,3 +685,82 @@ fn no_resolved_host_keeps_todays_elevation_behaviour() {
         "no resolved host means the host-side whitelist cannot apply"
     );
 }
+
+/// A ghost that works on the daemon host (no `ssh_target`) is not fenced by
+/// its `hosts:` list — the list narrows *remote* reach, and there is nothing
+/// remote to reach. An `ssh_target` that names no configured host keeps 08a's
+/// rule: a non-empty list refuses it, an empty one grants it.
+#[test]
+fn a_ghost_without_an_ssh_target_is_not_fenced_by_its_hosts_list() {
+    let no_target = remote_host_policy(None, &["db01"], None, &[]);
+    assert!(
+        no_target.may_use_ssh_target(),
+        "no ssh_target means the ghost runs on the daemon host; its hosts: \
+         list must not refuse that"
+    );
+
+    let unconfigured = remote_host_policy(Some("user@far"), &["db01"], None, &[]);
+    assert!(
+        !unconfigured.may_use_ssh_target(),
+        "an ssh_target that names no configured host stays refused by a \
+         non-empty hosts: list (08a's rule, unchanged)"
+    );
+
+    let empty_list = remote_host_policy(Some("user@far"), &[], None, &[]);
+    assert!(
+        empty_list.may_use_ssh_target(),
+        "an ssh_target that names no configured host with an empty hosts: \
+         list stays permitted (08a's rule, unchanged)"
+    );
+}
+
+/// `for_host` rebinds a policy's remote fields as if the runbook's
+/// `ssh_target` had named the host; `hosts:` is untouched (the fence that
+/// consumes the rebound policy decides with it). An unknown name is an
+/// error naming it.
+#[test]
+fn for_host_rebinds_a_ghost_policy_to_the_named_host() {
+    let mut hosts = std::collections::HashMap::new();
+    hosts.insert(
+        "db01".to_string(),
+        crate::config::HostEntry {
+            ssh: "db01".to_string(),
+            sudo_scripts: vec!["a.sh".to_string()],
+            ..Default::default()
+        },
+    );
+    let policy = remote_host_policy(None, &["db01"], None, &[]);
+    let policy = GhostPolicy {
+        ssh_target: Some("old".to_string()),
+        remote_sudo_scripts: vec!["stale.sh".to_string()],
+        ..policy
+    };
+
+    let named = policy
+        .for_host(
+            &crate::host::HostId::parse("db01").expect("well-formed host"),
+            &hosts,
+        )
+        .expect("a configured host rebinds");
+    assert_eq!(named.ssh_target.as_deref(), Some("db01"));
+    assert_eq!(
+        named.remote_host,
+        Some(crate::host::HostId::Named("db01".to_string()))
+    );
+    assert_eq!(named.remote_sudo_scripts, vec!["a.sh".to_string()]);
+    assert_eq!(named.hosts, vec!["db01".to_string()], "hosts: is untouched");
+
+    let local = policy
+        .for_host(&crate::host::HostId::Local, &hosts)
+        .expect("local always rebinds");
+    assert_eq!(local.ssh_target, None, "local clears the target");
+    assert_eq!(local.remote_host, None);
+    assert!(local.remote_sudo_scripts.is_empty());
+
+    let unknown = policy.for_host(
+        &crate::host::HostId::parse("nope").expect("well-formed host"),
+        &hosts,
+    );
+    let err = unknown.expect_err("an unconfigured host is refused");
+    assert!(err.contains("nope"), "the error must name the host: {err}");
+}

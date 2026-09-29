@@ -250,6 +250,8 @@ pub(super) struct SpawnGhostArgs {
     runbook: String,
     message: String,
     agent: Option<String>,
+    #[serde(default)]
+    host: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -823,6 +825,7 @@ impl ToolArgs for SpawnGhostArgs {
             runbook: self.runbook,
             message: self.message,
             agent: self.agent,
+            host: self.host,
             thought_signature: ts,
         }
     }

@@ -335,6 +335,7 @@ where
                             cmd,
                             _credential: None,
                             thought_signature: thought_signature.clone(),
+                            host: None,
                         });
                     } else {
                         pending_calls.push(PendingCall::Foreground {
@@ -790,6 +791,7 @@ where
                     runbook,
                     message,
                     agent,
+                    host,
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::SpawnGhost {
@@ -798,6 +800,7 @@ where
                         runbook,
                         message,
                         agent,
+                        host,
                     });
                 }
                 AiEvent::CreateAgent {

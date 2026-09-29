@@ -83,7 +83,8 @@ Non-obvious annotations that require a behavioural response:
   that host, or opens one there. A `shell` id that names a shell on a \
   **different** host is refused — the refusal names both hosts, and the command \
   is never relocated. `wait=false` ignores `host`: a background command always \
-  runs on the daemon host.
+  runs on the daemon host. A Ghost Shell's command is the exception: it honours \
+  `host`, fenced by its runbook's `hosts:` list.
 - `timeout_secs` bounds the wait — default 45 s, capped at 3600; the result \
   names the applied timeout when a command outlives it.
 - Supports sudo (chat prompt).
@@ -347,9 +348,13 @@ context — by substring `query`, by turn range (epoch summaries in \
 
 ### Delegation
 
-- `spawn_ghost_shell(runbook, message, agent?)` — delegate to an autonomous \
+- `spawn_ghost_shell(runbook, message, agent?, host?)` — delegate to an autonomous \
   background agent. Returns `job_id` and the child's session ID. Include `agent` \
   to use a named agent profile (prompt, model, tool policy, memory namespace). \
+  `host` runs the specialist's commands on that machine instead of its runbook's \
+  `ssh_target` — a configured `[hosts.<name>]` key or `"local"` (the daemon host); \
+  refused before the ghost starts unless the host is configured and both `hosts:` \
+  lists (the specialist's runbook's and, when you are a ghost, your own) grant it. \
   The ghost runs in the background under its runbook's `GhostPolicy` — the \
   runbook's `auto_approve_scripts`/`run_with_sudo` gate what it may run without \
   a human, distinct from the per-call approval an interactive chat tool gets.

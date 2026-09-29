@@ -1098,6 +1098,17 @@ pub static TOOLS: &[ToolDef] = &[
                               Inherits prompt, model, and memory namespace from the agent config. \
                               Omit to use the default ghost shell identity.",
             },
+            ParamDef {
+                name: "host",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Run the specialist's commands on this configured \
+                              [hosts.<name>] host instead of its runbook's ssh_target; \
+                              \"local\" means the daemon host. Refused before the ghost \
+                              starts unless the host is configured and the specialist's \
+                              runbook hosts: list grants it — and, when you are a ghost, \
+                              your own hosts: list too.",
+            },
         ],
         deferred_group: None,
         category: Category::Run,
