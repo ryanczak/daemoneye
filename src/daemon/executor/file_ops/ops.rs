@@ -217,6 +217,21 @@ where
     }
 
     let cmd_id = crate::daemon::stats::start_command(&format!("edit_file {}", path), "foreground");
+    use std::os::unix::fs::MetadataExt as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    let original_mode = match std::fs::metadata(&std_path) {
+        Ok(md) => md.permissions().mode(),
+        Err(e) => {
+            crate::daemon::stats::finish_command(cmd_id, 1);
+            return Ok(ToolCallOutcome::Result(format!(
+                "Error reading {}: {}",
+                path, e
+            )));
+        }
+    };
+    let original_owner = std::fs::metadata(&std_path)
+        .map(|md| (md.uid(), md.gid()))
+        .unwrap_or((u32::MAX, u32::MAX));
     let tmp_path = std_path.with_extension("de_tmp");
     if let Err(e) = std::fs::write(&tmp_path, &updated) {
         crate::daemon::stats::finish_command(cmd_id, 1);
@@ -225,6 +240,19 @@ where
             e
         )));
     }
+    if let Err(e) =
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(original_mode))
+    {
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error preserving the file's permissions: {}",
+            e
+        )));
+    }
+    // A non-root daemon may not change a file's owner; mode is the guarantee,
+    // the owner is restored only where the writer is permitted to.
+    let _ = std::os::unix::fs::chown(&tmp_path, Some(original_owner.0), Some(original_owner.1));
     if let Err(e) = std::fs::rename(&tmp_path, &std_path) {
         let _ = std::fs::remove_file(&tmp_path);
         crate::daemon::stats::finish_command(cmd_id, 1);
@@ -891,6 +919,7 @@ mod tests {
     use crate::daemon::executor::ToolCallOutcome;
     use crate::daemon::executor::file_ops::run_in_host_shell;
     use crate::ipc::Request;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::sync::Arc;
 
     // ── Shared fixtures ───────────────────────────────────────────────────
@@ -1114,6 +1143,243 @@ mod tests {
                 "{label} branch must still emit both sentinels: {payload:?}"
             );
         }
+    }
+
+    /// A mode a file carried before an edit must still be on it after one,
+    /// on the local path: the temp file is chmod'd to the original's mode
+    /// before the rename, so a `0600` file does not come back `0644` and a
+    /// `0750` file keeps its execute bits under any umask.
+    #[tokio::test]
+    async fn a_local_edit_keeps_the_files_mode() {
+        let (_home, dir) = remote_write_test_home();
+        for (name, mode) in [("six.txt", 0o600), ("sevenfifty.txt", 0o750)] {
+            let file = dir.path().join(name);
+            std::fs::write(&file, "a\nold-line\nb\n").unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+            let (mut tx, mut rx, _prompts) = auto_approve_channel().await.unwrap();
+            let outcome = run_edit_with_spawn(
+                RunEditArgs {
+                    id: "t09a",
+                    path: file.to_str().unwrap(),
+                    old_string: "old-line",
+                    new_string: "new-line",
+                    host: &crate::host::HostId::Local,
+                },
+                Some("sess-09a"),
+                &mut tx,
+                &mut rx,
+                Box::new(|_id| Box::pin(async { Ok(()) })),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("run_edit must not error: {e}"));
+            let ToolCallOutcome::Result(s) = outcome else {
+                panic!("expected a Result outcome")
+            };
+            assert!(s.contains("Edited"), "the local edit really ran: {s:?}");
+            let edited = std::fs::read_to_string(&file).unwrap_or_default();
+            assert!(
+                edited.contains("new-line"),
+                "the edit landed on the file: {edited:?}"
+            );
+            let got = std::fs::metadata(&file).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(got, mode, "{name} must keep its mode across an edit: {s:?}");
+        }
+    }
+
+    /// The same preservation on the remote path: the op builds its own
+    /// command and the in-process host shell runs the payload, so the chmod
+    /// the payload carries is what the file's mode reflects afterwards.
+    #[tokio::test]
+    async fn a_remote_edit_keeps_the_files_mode() {
+        let (_home, dir) = remote_write_test_home();
+        for (name, mode) in [("six.txt", 0o600), ("sevenfifty.txt", 0o750)] {
+            let file = dir.path().join(name);
+            std::fs::write(&file, "a\nold-line\nb\n").unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+            let (mut tx, mut rx, _prompts) = auto_approve_channel().await.unwrap();
+            let outcome = run_edit_with_spawn(
+                RunEditArgs {
+                    id: "t09a",
+                    path: file.to_str().unwrap(),
+                    old_string: "old-line",
+                    new_string: "new-line",
+                    host: &crate::host::HostId::Named("web01".to_string()),
+                },
+                Some("sess-09a"),
+                &mut tx,
+                &mut rx,
+                Box::new(|id| Box::pin(spawn_in_process_host(id))),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("run_edit must not error: {e}"));
+            let ToolCallOutcome::Result(s) = outcome else {
+                panic!("expected a Result outcome")
+            };
+            assert!(
+                s.contains(&format!("Edited {} on host web01.", file.display())),
+                "the approved host edit really ran: {s:?}"
+            );
+            let edited = std::fs::read_to_string(&file).unwrap_or_default();
+            assert!(
+                edited.contains("new-line"),
+                "the edit landed on the host filesystem: {edited:?}"
+            );
+            let got = std::fs::metadata(&file).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(
+                got, mode,
+                "{name} must keep its mode across a host edit: {s:?}"
+            );
+        }
+        let owner = Owner::Chat(owner_key());
+        if let Some(id) = crate::shell::registry_lookup(&owner, |id| id.to_string()) {
+            let _ = crate::daemon::executor::knowledge::close_shell_with(
+                crate::shell::registry(),
+                &id,
+                &owner,
+                std::time::Duration::from_millis(3000),
+            )
+            .await;
+        }
+    }
+
+    /// The Python branch alone: the builder's payload is driven by a real
+    /// `python3`, with `PATH` narrowed so only that interpreter resolves —
+    /// the fallback would never be reached, so the assertion is about the
+    /// branch itself.
+    #[test]
+    fn the_python_branch_keeps_the_files_mode() {
+        let which = |prog: &str| -> String {
+            let out = std::process::Command::new("sh")
+                .args(["-c", &format!("command -v {prog}")])
+                .output()
+                .unwrap_or_else(|e| panic!("resolving {prog}: {e}"));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let bash = which("bash");
+        let python3 = which("python3");
+        assert!(
+            !bash.is_empty() && !python3.is_empty(),
+            "bash and python3 must resolve"
+        );
+        let bin = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(&python3, bin.path().join("python3")).unwrap();
+        for (name, mode) in [("six.txt", 0o600), ("sevenfifty.txt", 0o750)] {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join(name);
+            std::fs::write(&file, "a\nold-line\nb\n").unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+            let cmd = super::super::write::build_remote_edit_cmd(
+                file.to_str().unwrap(),
+                "old-line",
+                "new-line",
+            );
+            let out = std::process::Command::new(&bash)
+                .arg("-c")
+                .arg(&cmd)
+                .env("PATH", bin.path())
+                .output()
+                .unwrap_or_else(|e| panic!("running the python branch: {e}"));
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                stdout.contains("DE_OK:"),
+                "the python branch edited the file: {stdout:?}"
+            );
+            let edited = std::fs::read_to_string(&file).unwrap_or_default();
+            assert!(edited.contains("new-line"), "the edit landed: {edited:?}");
+            let got = std::fs::metadata(&file).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(
+                got, mode,
+                "{name} must keep its mode through the python branch: {stdout:?}"
+            );
+        }
+    }
+
+    /// The Perl branch alone: the same narrowed `PATH`, this time with only
+    /// a `perl` symlink, so `command -v python3` fails and the fallback runs.
+    #[test]
+    fn the_perl_branch_keeps_the_files_mode() {
+        let which = |prog: &str| -> String {
+            let out = std::process::Command::new("sh")
+                .args(["-c", &format!("command -v {prog}")])
+                .output()
+                .unwrap_or_else(|e| panic!("resolving {prog}: {e}"));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let bash = which("bash");
+        let perl = which("perl");
+        assert!(
+            !bash.is_empty() && !perl.is_empty(),
+            "bash and perl must resolve"
+        );
+        let bin = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(&perl, bin.path().join("perl")).unwrap();
+        for (name, mode) in [("six.txt", 0o600), ("sevenfifty.txt", 0o750)] {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join(name);
+            std::fs::write(&file, "a\nold-line\nb\n").unwrap();
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+            let cmd = super::super::write::build_remote_edit_cmd(
+                file.to_str().unwrap(),
+                "old-line",
+                "new-line",
+            );
+            let out = std::process::Command::new(&bash)
+                .arg("-c")
+                .arg(&cmd)
+                .env("PATH", bin.path())
+                .output()
+                .unwrap_or_else(|e| panic!("running the perl branch: {e}"));
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                stdout.contains("DE_OK:"),
+                "the perl branch edited the file: {stdout:?}"
+            );
+            let edited = std::fs::read_to_string(&file).unwrap_or_default();
+            assert!(edited.contains("new-line"), "the edit landed: {edited:?}");
+            let got = std::fs::metadata(&file).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(
+                got, mode,
+                "{name} must keep its mode through the perl branch: {stdout:?}"
+            );
+        }
+    }
+
+    /// Owner restoration cannot be exercised without root (a non-root
+    /// writer's chown is a no-op by kernel rule), so the payload that does it
+    /// is pinned by decoding both hex payloads out of the builder, the way
+    /// `the_write_sentinels_are_unchanged` does. The mode tests above pin the
+    /// observable half.
+    #[test]
+    fn the_edit_payloads_restore_ownership() {
+        let edit_cmd = super::super::write::build_remote_edit_cmd("/tmp/x", "a", "b");
+        let decode_hex_from = |cmd: &str, what: &str| -> Option<String> {
+            let start = cmd.find(what)? + what.len();
+            let hex: String = cmd[start..]
+                .chars()
+                .take_while(|c| c.is_ascii_hexdigit())
+                .collect();
+            (hex.len().is_multiple_of(2) && !hex.is_empty())
+                .then(|| {
+                    (0..hex.len())
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(b'?'))
+                        .collect::<Vec<u8>>()
+                })
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        };
+        let python = decode_hex_from(&edit_cmd, "fromhex('")
+            .unwrap_or_else(|| panic!("the python branch's hex payload decoded"));
+        assert!(
+            python.contains("os.chmod(t,st.st_mode&0o7777)")
+                && python.contains("os.chown(t,st.st_uid,st.st_gid)"),
+            "the python branch must chmod the temp file to the original's mode and chown it: {python:?}"
+        );
+        let perl = decode_hex_from(&edit_cmd, "pack(\"H*\",\"")
+            .unwrap_or_else(|| panic!("the perl branch's hex payload decoded"));
+        assert!(
+            perl.contains("chmod($st[2]&07777,$t)") && perl.contains("chown($st[4],$st[5],$t)"),
+            "the perl branch must chmod the temp file to the original's mode and chown it: {perl:?}"
+        );
     }
 
     /// Test 10, the security preservation: a **host** write is still gated by
@@ -1568,6 +1834,105 @@ mod tests {
             "the file on pinky carries the content: {readback:?}"
         );
         println!("PASTE MATCH >>>\nedit_file_on_pinky readback={readback:?}\n<<<");
+
+        let _ = crate::daemon::executor::knowledge::close_shell_with(
+            &reg,
+            crate::shell::registry_lookup(&owner, |id| id.to_string())
+                .unwrap_or_default()
+                .as_str(),
+            &owner,
+            std::time::Duration::from_millis(3000),
+        )
+        .await;
+        let cp = crate::config::ssh_dir();
+        let _ = std::process::Command::new("ssh")
+            .args([
+                "-O",
+                "exit",
+                "-o",
+                &format!("ControlPath={}/%C", cp.display()),
+                "pinky",
+            ])
+            .status();
+        let _ = dir;
+    }
+
+    /// The live, mode-checking variant: a `0600` probe on the real host
+    /// `pinky` — whose PTY shell's umask is `0002` — must still be `0600`
+    /// after an edit, not `0664`. Run with
+    /// `cargo test --lib a_remote_edit_keeps_mode_on_pinky -- --ignored`.
+    #[tokio::test]
+    #[ignore = "requires the configured host `pinky` reachable over ssh"]
+    async fn a_remote_edit_keeps_mode_on_pinky() {
+        let (_home, dir) = {
+            let g = crate::test_home_guard();
+            let dir = tempfile::tempdir().unwrap();
+            unsafe { std::env::set_var("HOME", dir.path()) }
+            crate::config::Config::ensure_dirs().ok();
+            (g, dir)
+        };
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\nssh = \"pinky\"\n",
+        )
+        .expect("write config");
+        crate::config::ssh_dir();
+
+        let reg = crate::shell::ShellRegistry::default();
+        let owner = Owner::Chat(owner_key());
+        let probe = "/tmp/de-09a-mode-probe";
+
+        let _ = run_in_host_shell(
+            crate::shell::registry(),
+            owner.clone(),
+            crate::host::HostId::Named("pinky".to_string()),
+            "printf 'a\\nold-line\\nb\\n' > /tmp/de-09a-mode-probe && chmod 600 /tmp/de-09a-mode-probe && stat -c before=%a /tmp/de-09a-mode-probe",
+            REMOTE_WRITE_TIMEOUT_SECS,
+            |id| std::boxed::Box::pin(crate::daemon::executor::knowledge::spawn_pinky_ssh(id)),
+        )
+        .await
+        .expect("the pinky probe setup resolves");
+
+        let (mut tx, mut rx, _prompts) = auto_approve_channel().await.unwrap();
+        let outcome = run_edit_with_spawn(
+            RunEditArgs {
+                id: "t09a-live",
+                path: probe,
+                old_string: "old-line",
+                new_string: "new-line",
+                host: &crate::host::HostId::Named("pinky".to_string()),
+            },
+            Some("live09a"),
+            &mut tx,
+            &mut rx,
+            Box::new(|id| Box::pin(crate::daemon::executor::knowledge::spawn_pinky_ssh(id))),
+        )
+        .await
+        .expect("the pinky edit resolves");
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.contains(&format!("Edited {probe} on host pinky.")),
+            "the approved host edit really ran: {s:?}"
+        );
+
+        let readback = run_in_host_shell(
+            crate::shell::registry(),
+            owner.clone(),
+            crate::host::HostId::Named("pinky".to_string()),
+            "stat -c after=%a /tmp/de-09a-mode-probe; rm -f /tmp/de-09a-mode-probe",
+            REMOTE_WRITE_TIMEOUT_SECS,
+            |id| std::boxed::Box::pin(crate::daemon::executor::knowledge::spawn_pinky_ssh(id)),
+        )
+        .await
+        .expect("the pinky readback resolves");
+        println!("before=600 (stat -c before=%a /tmp/de-09a-mode-probe)");
+        println!("after: {readback:?}");
+        assert!(
+            readback.contains("after=600"),
+            "the edited file keeps its mode on pinky: {readback:?}"
+        );
 
         let _ = crate::daemon::executor::knowledge::close_shell_with(
             &reg,

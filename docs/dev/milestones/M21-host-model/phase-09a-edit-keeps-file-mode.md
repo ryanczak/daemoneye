@@ -1,7 +1,7 @@
 # Phase 09a: edit-keeps-file-mode — an `edit_file` edit keeps the file's mode and owner, locally and on a host
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07b (`edit_file { host }` through `run_in_host_shell`)
 **Estimated diff:** ~60 lines of production code across 2 files, plus 5 tests and 1 ignored live test
 **Tags:** language=rust, kind=bugfix, size=s
@@ -190,7 +190,24 @@ comes back without its `x` bits.
    `HostId::Named("web01".to_string())` with
    `Box::new(|id| Box::pin(spawn_in_process_host(id)))`, as
    `edit_on_a_named_host_runs_through_the_shell` does. Assert
-   `Edited … on host web01.`, the content, and both modes.
+   `Edited … on host web01.`, the content, and both modes. **After the
+   loop, close the shell the test opened**. `spawn_in_process_host` leaks its
+   bash on purpose, and a leaked shell here made unrelated PTY tests flake
+   (measured at escalation: 5 red runs out of 17 without the close, 7 green
+   out of 8 with it; the one red was the known flake):
+
+   ```rust
+        let owner = Owner::Chat(owner_key());
+        if let Some(id) = crate::shell::registry_lookup(&owner, |id| id.to_string()) {
+            let _ = crate::daemon::executor::knowledge::close_shell_with(
+                crate::shell::registry(),
+                &id,
+                &owner,
+                std::time::Duration::from_millis(3000),
+            )
+            .await;
+        }
+   ```
 3. `the_python_branch_keeps_the_files_mode`: pure, with no HOME guard.
    Build the command with `build_remote_edit_cmd` for each file and run it
    with `std::process::Command::new(<bash's absolute path>).arg("-c").arg(&cmd)`,
@@ -342,7 +359,12 @@ Expected: `lib1..3=ok` with **nothing after `ok`**, `lib_counts=2078p-0f-13i`,
 
 **Known pre-existing flake.** `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`
 fails intermittently under full-suite load. If it fails, report its name. Do
-not edit it; re-run.
+not edit it; re-run the **whole block**. **Re-run budget: three.** If the
+block has not come back with `lib1..3=ok` after three re-runs, stop
+re-running. Paste the last capture as it is, and name every failing test in
+the Update Log. Do **not** loop on `cargo test`: the prior run spent hundreds
+of turns doing exactly that. A failing test **other** than this one is a real
+finding; report it by name, do not re-run it away.
 
 **Run this block with nothing else running `cargo test`.**
 
@@ -380,4 +402,50 @@ You may edit these files, and nothing else:
 
 ## Update Log
 
+### Update — 2026-09-29 13:35 (started)
+
+Executor: Claude (Opus 4.6). Status flipped `todo → in-progress` (phase doc and
+milestone README row). Beginning Task 1 (the local edit keeps mode and owner).
+
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-09-29
+
+**The uncommitted diff in the working tree is your own prior run's work. Keep
+it; do not redo it.** The prior run hard-failed on a network outage
+(`BackendError`, after a firewall reboot). The architect ran the gates on the
+partial tree. What is already done and correct:
+- Task 1 (the local `set_permissions` + best-effort `chown` in `ops.rs`).
+- Task 2 (both payloads in `write.rs`).
+- All six Task 3 tests. The five non-ignored ones pass, and
+  `cargo test --lib` counts **2078 passed / 13 ignored** exactly.
+
+There are exactly four things left, in this order:
+
+1. **`cargo fmt --all`.** The tree is not formatted (`cargo fmt --all -- --check`
+   fails).
+2. **Test 2's shell close.** Add the block now quoted in Task 3, test 2,
+   after the `for` loop in `a_remote_edit_keeps_the_files_mode`. The architect
+   measured that without it, the leaked in-process shell makes unrelated PTY
+   tests fail at random (`pty_stop_with_no_foreground_job_remembers_nothing`,
+   `an_answered_prompt_restarts_the_connect_timeout`,
+   `for_each_streams_across_segments_in_order`). That is why the prior run
+   could never get three green runs in a row. The test count does not change.
+3. **Mutations A–C**, one run each, observed results recorded.
+4. **The end-to-end capture and the Task 5 live check.** Follow the new
+   re-run budget in § End-to-end verification: at most three re-runs of the
+   block, then record what you saw.
+
+Also correct the `(started)` entry's `Executor:` line: this phase runs on
+`local-inference-lab/GLM-5.3-Flash-NVFP4-Spark`, not "Claude (Opus 4.6)".
+
+### Update — 2026-09-29 (escalation)
+
+**Chosen lever:** refined re-dispatch, via `execute_phase` on the in-progress
+doc, continuing from the dirty tree.
+**Rationale:** The run ended on an infrastructure fault (the firewall
+rebooted, per the PE) after a verify loop on a gate it could not pass. The
+implementation is complete and correct. The gate kept failing because test 2
+leaked a shell and made other tests flake, which the architect measured and
+fixed in the spec. Resume via `continue_phase` was passed over because it
+blocks and cannot be stopped.

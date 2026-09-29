@@ -198,8 +198,12 @@ pub(super) fn build_remote_edit_cmd(path: &str, old_string: &str, new_string: &s
          cnt=c.count(o)\n\
          if cnt==0: print('DE_ERROR: old_string not found in '+p); sys.exit(1)\n\
          if cnt>1: print('DE_ERROR: old_string appears '+str(cnt)+' times in '+p); sys.exit(1)\n\
+         st=os.stat(p)\n\
          t=p+'.de_tmp'\n\
          open(t,'w').write(c.replace(o,n,1))\n\
+         os.chmod(t,st.st_mode&0o7777)\n\
+         try: os.chown(t,st.st_uid,st.st_gid)\n\
+         except OSError: pass\n\
          os.rename(t,p)\n\
          print('DE_OK: Edited '+p)\n"
     );
@@ -214,10 +218,13 @@ pub(super) fn build_remote_edit_cmd(path: &str, old_string: &str, new_string: &s
          my @m=($c=~/\\Q$o\\E/g);\n\
          if(!@m){{print \"DE_ERROR: not found\\n\";exit 1}}\n\
          if(@m>1){{print \"DE_ERROR: \".scalar(@m).\" matches\\n\";exit 1}}\n\
+         my @st=stat($p);\n\
          $c=~s/\\Q$o\\E/$n/;\n\
          my $t=\"$p.de_tmp\";\n\
          open(my $g,'>',$t) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
          print $g $c;close $g;\n\
+         chmod($st[2]&07777,$t);\n\
+         chown($st[4],$st[5],$t);\n\
          rename($t,$p) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
          print \"DE_OK: Edited $p\\n\";\n"
     );
