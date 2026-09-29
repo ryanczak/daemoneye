@@ -1,36 +1,26 @@
 # NEXT
 
-**Active phase:** **M21 phase-08e — remote-connect-handshake**, drafted
-2026-09-29, status `todo`. Dispatch with `/rexymcp:dispatch phase-08e`.
+**Active phase:** **M21 phase-09a — edit-keeps-file-mode**, drafted
+2026-09-29, status `todo`. Dispatch with `/rexymcp:dispatch phase-09a`.
 
-**What it does.** Before the first shell to a configured host spawns, the
-daemon connects first: if `ssh -O check` finds no ControlMaster, it runs
-`ssh -M -N -f` in a PTY it drives, answers a password / passphrase prompt
-through the caller's transport, refuses an unknown host key, and only then
-lets the shell spawn as a multiplexed client that can never prompt. All four
-remote callers do it — `run_terminal_command`, `read_file`, `edit_file`,
-`open_shell` — reversing 07a's "a read must not prompt" rule (PE,
-2026-09-29); a ghost connects with `BatchMode=yes`. Also fixes 08d's doubled
-`Error: Error:` prefix.
+**What it does.** `edit_file`'s `edit` writes a `.de_tmp` file and renames it
+over the original, so the file takes the writer's umask instead of its own
+mode. After this phase an edit keeps the file's permission bits on the local
+path and on both remote interpreter branches (Python, Perl), and keeps its
+owner and group wherever the writer is allowed to set them.
 
-**Measured at drafting (pinky).** `-M -N -f` key auth: child exits in 81 ms,
-the master survives the PTY being dropped, a later shell muxes in 6 ms;
-`ssh -O check` 2–3 ms (0 warm / 255 cold); a `LocalCommand` marker was
-tried and rejected — it never fires through a warm master. Password retries
-arrive as one chunk `Permission denied, please try again.` + a fresh prompt,
-so failure is decided by the process exiting, never by that text. A fake-ssh
-`sh -c` fixture driven by `PtyShell` works 3/3.
+**Measured at drafting.** `0600` → `0644` on the local path and on both
+remote branches run locally; the real built command on pinky (the daemon's
+PTY shell has umask `0002`) turned `600:matt` into **`664:matt`**, so the
+file became group-writable. The fix (stat → write → chmod → best-effort chown
+→ rename) was run in both interpreters and on pinky, and kept the mode.
 
-**Pre-dispatch check run.** The § End-to-end block was run verbatim against
-`66bb7e50`: every non-preservation line reads its current value
-(`new_tests=0p-0f`, `pieces=0-0-0-0`, `callers=0-0-0-0`, `read_comment=1`,
-`double_error=1`, `readme=0`, `ignore_total=11`); neighbours hold
-(`0 failed` ×3); lib green on all three runs. One criterion was wrong at first
-draft (the helper's definition does not match `connect_named_host(`) and now
-pins the definition separately.
+**Why it comes before the sudo edit.** Row 09 split three ways at drafting.
+`edit_file` has no sudo path, so the milestone's exit ("a remote `sudo` edit
+via `edit_file { host }`") could not be met. The PE chose to add one (09b)
+before the live close (09c). A sudo edit through today's rename would also
+reset the file's owner to root, so 09a goes first.
 
-**Next after 08e:** 09 (live close) — the milestone's exit criterion end to
-end.
-
-Twenty-three rows in M21; live host `pinky` (sudo-rs 0.2.13, password
-required; ssh is key-auth, password auth also accepted); `max_turns` 1000.
+**After 09a:** `/rexymcp:architect next` drafts 09b (remote-sudo-edit). The
+facts it needs, measured at 09 drafting, are in the milestone README's Notes
+under "Measured at 09 drafting".

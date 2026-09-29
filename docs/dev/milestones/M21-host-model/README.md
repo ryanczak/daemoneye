@@ -18,7 +18,7 @@ drafting** (2026-09-23) — it was four features in one row. **06a is `done`** (
 (`approved_first_try`), so the approval and ghost-boundary half of the
 milestone is complete. **07 split into 07a/07b at drafting** — the read path is one
 `target_pane` branch, the write path is four. **07a is `done`** (2026-09-26,
-`approved_first_try`) and **07b is `done`** (2026-09-27, `approved_after_1`) — `target_pane` is gone from the tool surface. **08 split into 08a/08b/08c at drafting** (2026-09-27, PE decisions in Notes); **08a is `done`** (2026-09-27, `approved_first_try`). **Two substrate defects surfaced at the next drafting** and got rows of their own ahead of the ghost move (PE 2026-09-27): **08b is `done`** (2026-09-27, `approved_first_try`; shell exit detection). **08f inserted ahead of 08c at 08c drafting** (2026-09-27, PE): the PTY password-prompt path matches its sentinel on the command's echo and re-sends a correct password into the shell — see Notes. **08f is `done`** (2026-09-28, `approved_after_1`). **08c is `done`** (2026-09-28, `approved_first_try`). **08d is `done`** (2026-09-29, `approved_first_try`; PE: both `hosts:` lists fence a spawn host, refused at spawn if unlisted or unconfigured, and a ghost's own command `host` is routed in the same row); **08e is `done`** (2026-09-29, `approved_after_1`); 09 remains. *Numbering note:* 08a's phase doc and review verdict say "08b" for the ghost PTY move and "08c" for spawn-ghost-host — those are now **08c** and **08d**. 06c owns making an unconfigured host allowed-but-gated;
+`approved_first_try`) and **07b is `done`** (2026-09-27, `approved_after_1`) — `target_pane` is gone from the tool surface. **08 split into 08a/08b/08c at drafting** (2026-09-27, PE decisions in Notes); **08a is `done`** (2026-09-27, `approved_first_try`). **Two substrate defects surfaced at the next drafting** and got rows of their own ahead of the ghost move (PE 2026-09-27): **08b is `done`** (2026-09-27, `approved_first_try`; shell exit detection). **08f inserted ahead of 08c at 08c drafting** (2026-09-27, PE): the PTY password-prompt path matches its sentinel on the command's echo and re-sends a correct password into the shell — see Notes. **08f is `done`** (2026-09-28, `approved_after_1`). **08c is `done`** (2026-09-28, `approved_first_try`). **08d is `done`** (2026-09-29, `approved_first_try`; PE: both `hosts:` lists fence a spawn host, refused at spawn if unlisted or unconfigured, and a ghost's own command `host` is routed in the same row); **08e is `done`** (2026-09-29, `approved_after_1`). **09 split into 09a/09b/09c at drafting** (2026-09-29): `edit_file` has no sudo path, so the README's exit wording ("a remote `sudo` edit via `edit_file { host }`") could not be met. **PE: add sudo to `edit_file` first** (09b), then the live close (09c). Drafting also measured that **every edit widens the file's mode** (`0600` → `0644` locally, `0664` on pinky), which a sudo edit would make worse, so that fix is 09a. **09a is drafted** (2026-09-29). *Numbering note:* 08a's phase doc and review verdict say "08b" for the ghost PTY move and "08c" for spawn-ghost-host — those are now **08c** and **08d**. 06c owns making an unconfigured host allowed-but-gated;
 06d owns ghost `hosts:` enforcement.
 
 **Depends on:** M20 (the PTY shell substrate every remote shell is), M22
@@ -73,9 +73,9 @@ deferrals this milestone closes). Not on M23 or M25.
 ## Phases
 
 Proposed, pre-measurement — **each will be re-derived and may split at
-drafting on a measured seam**, as every M20 and M22 row did. **Twenty-three rows**
+drafting on a measured seam**, as every M20 and M22 row did. **Twenty-five rows**
 (01a, 01b, 01c, 02, 03, 04a, 04b, 04c, 04d, 05, 06a, 06b, 06c, 06d, 07a,
-07b, 08a, 08b, 08f, 08c, 08d, 08e, 09) — 04 has split **three times** at drafting, 06 once and 08 twice, every time on a
+07b, 08a, 08b, 08f, 08c, 08d, 08e, 09a, 09b, 09c) — 04 has split **three times** at drafting, 06 once, 08 twice and 09 once, every time on a
 measured seam, and 01c was inserted when the test gate went deterministically
 red. Ordering: the
 credential mechanism the PTY path lacks comes first because remote sudo, host
@@ -107,7 +107,9 @@ the live close is last.
 | 08c | ghost-remote-pty ([phase-08c-ghost-remote-pty.md](phase-08c-ghost-remote-pty.md)) — a ghost command whose `ssh_target` resolved (08a) runs in a **PTY shell on that host** instead of `ssh <target> '<cmd>'` in a tmux window: the first production `Owner::Ghost`, ControlMaster, the entry's own `ssh` destination, and ghost SSH shells opened with **`-o BatchMode=yes`** so ssh never prompts (PE 2026-09-27; measured on pinky: key auth 378 ms, unknown key fails in 17 ms, password-only in 59 ms) — chat keeps prompting and `ssh_argv_does_not_set_batch_mode` stays pinned. Rides 08b's exit detection so a refused connection fails fast, and **08f's prompt fix** so a ghost's unanswerable password prompt fails fast and leaves its shell usable. **PE 2026-09-27:** a remote ghost command is synchronous with a **300 s** cap (`GHOST_TURN_TIMEOUT_SECS`), and a ghost's shells are **closed at ghost exit** (TERM ends an idle ssh shell host in ~100 ms, measured). `resolve_command` / `remote_stream_cmd` / `remote_materialize_cmd` keep their semantics. An unresolved `ssh_target` keeps the 1.x wrap. **Sandbox:** a remote ghost command is allowed while `[sandbox] enabled` — `hosts:` is the fence (PE 2026-09-27). **Carries two 08a review residuals:** revert `ghost_host_refusal` to private, and replace `refusal_gate_tests`' `HomeGuard` (leaks a tempdir per run) with `test_home_guard()`. **Carries one 08b review residual:** the `run_in_shell_with_prompts` doc comment (`shell_exec.rs:76`) still opens with the self-contradictory *"The non-chat entry point: the entry point …"* — make it open "The entry point `executor/mod.rs` calls with a pub/sub transport." | done |
 | 08d | spawn-ghost-host ([phase-08d-spawn-ghost-host.md](phase-08d-spawn-ghost-host.md)) — `spawn_ghost_shell { host? }` (§ 2.5): a coordinator names the host a specialist's shells open on; the value must be in the runbook's `hosts:` list (row 06's enforcement) or it is refused as an unlisted host. Rides 08a/08c's mapping; also closes the ghost's dropped `host` argument (`ghost.rs:829-845`); **PE added at sign-off** | done |
 | 08e | remote-connect-handshake ([phase-08e-remote-connect-handshake.md](phase-08e-remote-connect-handshake.md)) — a **fresh** remote shell's connection-time prompt (password, passphrase, unknown host key) is handled **before** the first command is written. **Measured at 08c drafting:** a plain command's marker-wrapped bytes are typed straight into ssh's `password:` prompt and the run waits out its timeout; routing through the classifier cannot fix it, because the command is written before any prompt is classified. **Reopens phase-05:** its password/passphrase round trip was verified only by running `ssh` directly under `script`, never through a daemon shell. Needs a live-probed readiness handshake before drafting **Carries one 08d review residual:** an unconfigured ghost command host reads `Error: Error: …` — `for_host`'s message already carries the prefix and `run_background` adds another **Drafted 2026-09-29 on live probes (PE):** connect first — `ssh -M -N -f` in a daemon-driven PTY before any shell spawns (81 ms key-auth; `ssh -O check` 2–3 ms decides warm), prompts answered via the caller's transport; all four callers may prompt, reversing 07a's no-prompt read rule **Bounced 2026-09-28:** bug-08e-1 (connect timeout never restarts), bug-08e-2 (ghost edit_file connects before refusal), bug-08e-3 (Mutation A unpinned). **Done 2026-09-29** (`approved_after_1`) | done        |
-| 09 | live-close — the exit criterion end to end: a remote sudo edit from chat on the configured host; cast log shows the edit, no `"i"` event carries the password; ControlMaster reuse timed. Architect-run; the phase exists so the obligation is a tracked `## Spec` task, not a close-out promise | todo (not drafted) |
+| 09a | edit-keeps-file-mode ([phase-09a-edit-keeps-file-mode.md](phase-09a-edit-keeps-file-mode.md)) — an `edit_file` edit keeps the file's **mode** (and its owner where the writer may set it) on the local path and both remote interpreter branches. **Measured at 09 drafting:** `0600` → `0644` locally, `0600` → **`0664`** on pinky (PTY shell umask `0002`, so group-writable); the stat→chmod→chown→rename fix run on both interpreters and on pinky | todo |
+| 09b | remote-sudo-edit — `edit_file { host, sudo: true }` edits a root-owned file through the PTY sudo path (`run_in_shell_with_prompts`), the password answered via `CredentialPrompt`; the approval panel says "as root", and a sudo edit is **never** auto-approved or session-approved. **PE 2026-09-29:** add sudo to `edit_file` before the live close. Facts measured at 09 drafting are in Notes | todo (not drafted) |
+| 09c | live-close — the exit criterion end to end: a remote sudo edit via `edit_file { host }` from chat on pinky; the cast log shows the edit, and no `"i"` event carries the password; ControlMaster reuse timed. Architect-run; the phase exists so the obligation is a tracked `## Spec` task, not a close-out promise | todo (not drafted) |
 
 ## Notes
 
@@ -337,6 +339,37 @@ Every row above was shaped by one of these. Each was read from the tree on
   Also measured for 08c: BatchMode+ControlMaster to pinky 470 ms cold / 12 ms
   on reuse; a 25 KB `remote_stream_cmd` typed into the interactive remote
   shell runs with the right exit code.
+
+### Measured at 09 drafting (2026-09-29) — for 09b
+
+- **`edit_file` has no sudo path.** Every remote write runs through
+  `run_in_host_shell`'s plain `run_command`, which never prompts. A root-owned
+  file cannot be edited with it, which is why row 09 split.
+- **`command_has_sudo` misses a `sudo` inside `if … then …`.** Its regex is
+  `(?:^|[;&|])\s*sudo\b`. The built edit command is
+  `if command -v python3 …; then python3 …; else perl …; fi`, so putting
+  `sudo` inside the branches is **not** detected (measured: `false`). A sudo
+  edit line must **start** with `sudo` (measured: `true`), so the interpreter
+  has to be chosen before the line is built.
+- **The line shape works on pinky through the daemon's own path.**
+  `sudo python3 -c "…" 2>&1; echo '__DE_DONE__'` through
+  `run_in_shell_with_prompts` with nobody attached was classified on
+  sudo-rs's real prompt and gave up in **315 ms** with the "nobody is
+  attached" sentence. The next command in the same shell ran in 17 ms.
+  pinky has `/usr/bin/python3` and `/usr/bin/perl`.
+- **The client auto-approves `EditFilePrompt`** by exact `path` string or by
+  the session-wide `approval.file_edits_all` flag (`src/cli/commands/stream.rs`,
+  `prompt_edit_file_ratatui`). A sudo edit needs a signal on the prompt
+  (an IPC field) so neither shortcut applies. `Response::EditFilePrompt` is
+  built at **9** sites in `file_ops/ops.rs`, 1 in `ipc.rs`, and matched in
+  `cli/commands/{stream,ask}.rs`.
+- **Adding a field to `edit_file` touches 11 variant sites:** `ai/types/pending.rs`
+  (enum `:84`, `to_tool_call` `:556`, two test literals `:1347`, `:1634`),
+  `ai/types/events.rs:75`, `ai/tools/args.rs` (`EditFileArgs` `:157`,
+  `to_event` `:587`), `daemon/stream.rs:481`, `daemon/ghost.rs:1123`,
+  `daemon/executor/mod.rs:1019`, `file_ops/write.rs` `EditArgs`. The tree
+  does not compile until the last site is done (M22 03a's lesson: batch the
+  sites, and expect the verifier to fail until then).
 
 ### Not in this milestone
 
