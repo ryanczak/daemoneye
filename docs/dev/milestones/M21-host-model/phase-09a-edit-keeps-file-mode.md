@@ -315,7 +315,7 @@ tree**. Every non-preservation line fails today; each was checked at drafting.
       → **1** (current: **0**).
 - [ ] The § End-to-end verification paste-check snippet prints `PASTE MATCH`
       (current: `PASTE MISMATCH`, because the heading grep finds no line).
-- [ ] ``grep -c 'Executor: Claude (Opus 4.6)' <this doc>`` → **0**
+- [ ] ``grep -c '^Executor: Claude (Opus 4.6)' <this doc>`` → **0**
       (current: **1**).
 - [ ] ``git diff --stat 6bf4d828 -- src/`` is **empty**. `cargo test --lib`
       stays at **2078 passed / 13 ignored**, **not** more.

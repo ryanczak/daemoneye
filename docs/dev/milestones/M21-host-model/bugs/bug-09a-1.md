@@ -59,6 +59,6 @@ specified.
 - [ ] That entry contains, **after** its first fenced block: the literal
       `PASTE MATCH` line, mutations A–C with their **observed** assertion
       values, and the Task 5 live check output.
-- [ ] `grep -c 'Executor: Claude (Opus 4.6)' docs/dev/milestones/M21-host-model/phase-09a-edit-keeps-file-mode.md`
+- [ ] `grep -c '^Executor: Claude (Opus 4.6)' docs/dev/milestones/M21-host-model/phase-09a-edit-keeps-file-mode.md`
       → **0** (currently **1**).
 - [ ] `git diff --stat 6bf4d828 -- src/` is **empty**. No code changes.
