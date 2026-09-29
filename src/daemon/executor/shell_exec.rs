@@ -550,7 +550,7 @@ where
     // 08f's rule: only output after the last answer may be classified — a
     // prompt that appeared before it has already been answered.
     let mut answered_at: usize = 0;
-    let started = Instant::now();
+    let mut started = Instant::now();
     let mut last_answer = started;
     loop {
         tokio::time::sleep(CONNECT_POLL).await;
@@ -610,6 +610,7 @@ where
                 }
                 answered_at = buf.len();
                 last_answer = Instant::now();
+                started = last_answer;
             }
             PromptReply::GiveUp(reason) => {
                 let _ = child.kill();
@@ -2793,7 +2794,7 @@ mod connect_tests {
         }
     }
 
-    /// An "attached" read half: `answers` `CredentialResponse` lines over a
+    /// The "attached" read half: `answers` `CredentialResponse` lines over a
     /// `Cursor`, answered in order. Distinct credentials per test pass a
     /// custom list.
     fn answered_reader(credentials: &[&str]) -> impl tokio::io::AsyncBufRead + Unpin {
@@ -2881,6 +2882,76 @@ mod connect_tests {
         }
         Config::ensure_dirs().ok();
         (guard, dir)
+    }
+
+    /// bug-08e-1's regression: the deadline is measured from the **last
+    /// answer**, not from spawn — a prompt answered after ~0.4 s that
+    /// connects ~0.5 s later is inside a 700 ms window of the answer, so a
+    /// user who took their time typing the credential still connects. The
+    /// never-answered half is pinned in the same test: a fake that says
+    /// nothing fails with the `did not connect within` wording.
+    #[tokio::test]
+    async fn an_answered_prompt_restarts_the_connect_timeout() {
+        let _pty = PTY_TEST_LOCK.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let flag = tmp.path().join("connected");
+        let script = format!(
+            "sleep 0.4; printf \"u@h's password: \"; read -r pw; sleep 0.5; \
+             [ \"$pw\" = {CREDENTIAL} ] && touch {} && exit 0; exit 255",
+            flag.display()
+        );
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut writer = RecordingWriter {
+            writes: Arc::clone(&writes),
+        };
+        let mut reader = answered_reader(&[CREDENTIAL]);
+        let flag_path = flag.to_path_buf();
+        let argv = vec!["-c".to_string(), script.clone()];
+        let outcome = drive_connect(
+            "/bin/sh",
+            &argv,
+            || flag_path.exists(),
+            "pinky",
+            PROMPT_ID,
+            &mut writer,
+            &mut reader,
+            Duration::from_millis(700),
+        )
+        .await;
+        assert_eq!(
+            outcome,
+            Ok(()),
+            "a login that finishes within the timeout of its answer succeeds: {outcome:?}"
+        );
+        assert!(flag.exists(), "the fake connected: {outcome:?}");
+
+        // The never-answered half: no prompt, no answer, only sleep — the
+        // deadline measured from spawn still fires with the pinned wording.
+        let flag2 = tmp.path().join("never");
+        let script2 = format!("sleep 2; touch {}; exit 0", flag2.display());
+        let flag2_path = flag2.to_path_buf();
+        let argv2 = vec!["-c".to_string(), script2];
+        let started = std::time::Instant::now();
+        let silent = drive_connect(
+            "/bin/sh",
+            &argv2,
+            || flag2_path.exists(),
+            "pinky",
+            PROMPT_ID,
+            &mut writer,
+            &mut reader,
+            Duration::from_millis(300),
+        )
+        .await;
+        let msg = silent.expect_err("the silent fake must time out: {silent:?}");
+        assert!(
+            msg.contains("did not connect within 300ms"),
+            "the never-answered deadline still fires from spawn: {msg:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the timeout kills the child at the deadline, not later: {msg:?}"
+        );
     }
 
     /// Test 2: a host whose ssh asks nothing connects with no prompt round

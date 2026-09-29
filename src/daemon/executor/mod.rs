@@ -218,6 +218,21 @@ where
     shell_exec::ensure_connected(&name, batch, id, tx, rx).await
 }
 
+/// Does the `edit_file` arm run its connect step? `edit_file` refuses every
+/// ghost **inside** the operation ("cannot run in a Ghost Shell"), so a
+/// ghost's call must never reach the connect step — it would open a
+/// BatchMode ControlMaster to a host its runbook never named before being
+/// refused. Chat (`is_ghost = false`) with a well-formed name connects
+/// first; `None`, `"local"` and a malformed name pass through (the
+/// operation refuses a malformed one with its own wording).
+fn edit_file_connects_first(is_ghost: bool, host: Option<&str>) -> bool {
+    !is_ghost
+        && matches!(
+            host.map(crate::host::HostId::parse),
+            Some(Ok(crate::host::HostId::Named(_)))
+        )
+}
+
 /// What a shell-command failure tells the model. Both PTY arms render the
 /// run error through this one helper so they cannot diverge.
 ///
@@ -1012,8 +1027,15 @@ where
             host,
             ..
         } => {
-            if let Err(msg) =
-                connect_named_host(host.as_deref(), is_ghost, id.as_str(), tx, rx).await
+            // The ghost refusal lives inside `run_edit_file`, so the connect
+            // step must not run ahead of it: a ghost's `edit_file` would
+            // otherwise open a BatchMode ControlMaster to any host, listed
+            // or not, before being told file operations are refused (08d's
+            // fence must not be tunnelled through a tool the ghost cannot
+            // even use). Only a chat session connects first.
+            if edit_file_connects_first(is_ghost, host.as_deref())
+                && let Err(msg) =
+                    connect_named_host(host.as_deref(), false, id.as_str(), tx, rx).await
             {
                 let outcome = format!("Error: {msg}");
                 send_response_split(
@@ -1972,7 +1994,7 @@ mod host_gate_tests {
 
 #[cfg(test)]
 mod ghost_host_gate_tests {
-    use super::{ghost_host_refusal, resolve_foreground_host};
+    use super::{edit_file_connects_first, ghost_host_refusal, resolve_foreground_host};
     use crate::daemon::policy::GhostPolicy;
 
     fn ghost_with_hosts(hosts: &[&str]) -> GhostPolicy {
@@ -2092,6 +2114,35 @@ mod ghost_host_gate_tests {
             Some(v) => unsafe { std::env::set_var("HOME", v) },
             None => unsafe { std::env::remove_var("HOME") },
         }
+    }
+
+    // ── bug-08e-2: a ghost's edit_file never connects ───────────────────────
+
+    /// The decision the EditFile arm consults: a ghost is refused inside
+    /// `run_edit_file`, so its call must never reach the connect step for
+    /// any host argument at all — including a name that is not configured
+    /// (the BatchMode ControlMaster bug-08e-2 describes) and including a
+    /// well-formed one. Chat connects first for every well-formed name.
+    #[test]
+    fn a_ghost_edit_file_never_connects() {
+        for host in [None, Some("nope"), Some("pinky"), Some("local")] {
+            assert!(
+                !edit_file_connects_first(true, host),
+                "a ghost's edit_file never connects: host = {host:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chat_edit_file_connects_first_for_a_well_formed_name() {
+        assert!(edit_file_connects_first(false, Some("pinky")));
+        assert!(edit_file_connects_first(false, Some("not-configured")));
+        // `None` and `"local"` are the daemon host — nothing to connect to.
+        assert!(!edit_file_connects_first(false, None));
+        assert!(!edit_file_connects_first(false, Some("local")));
+        // A malformed name passes through; the operation refuses it with
+        // HostId::parse's own wording.
+        assert!(!edit_file_connects_first(false, Some("../etc")));
     }
 }
 

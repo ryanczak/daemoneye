@@ -833,3 +833,14 @@ Accepted, noted for the verdict:
   production exposure of `PtyShell::spawn` to the same transient ENOENT — for
   the PE.
 
+
+### Update — 2026-09-29 04:14 UTC (started, bounce fixes)
+
+Executor session (Claude) re-opened on the 2026-09-28 bounce. Status stays
+`in-progress`; the milestone README's phase-table row already reads
+`in-progress`, so nothing to flip. Baseline confirmed at commit `808ff7c6`:
+`cargo test --lib` → 2070 passed / 0 failed / 12 ignored. Fixing
+bug-08e-1 (the connect timeout never restarts after an answer),
+bug-08e-2 (a ghost's `edit_file` connects before its refusal) and
+bug-08e-3 (test 3's fake now stays alive after the right answer, so
+Mutation A is observable). Working through the bounce criteria in order.
