@@ -1,7 +1,7 @@
 # Phase 08e: remote-connect-handshake — connect to a host first, answering its prompts, so no shell's first command is ever typed into one
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04a (`ssh_argv`, ControlMaster), phase-05 (ssh prompt
 classification and its credential round trip), phase-08f (answer once, only
 output after the last answer)
@@ -544,3 +544,96 @@ You may edit, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-29 01:11 UTC (started)
+
+Executor session (Claude) opened. Status flipped `todo` → `in-progress` and the
+milestone README phase-table row updated to match; baseline confirmed:
+`cargo test --lib` → 2064 passed / 0 failed / 11 ignored at commit `66bb7e50`.
+Working through the Spec in order.
+
+### Update — 2026-09-29 02:11 UTC (end-to-end verification)
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2070p-0f-12i
+new_tests=6p-0f
+neighbours=0 failed/0 failed/0 failed
+pieces=1-1-1-1
+callers=1-3-2-1
+read_comment=0
+double_error=0
+readme=1
+ignore_total=12
+```
+
+**PASTE MATCH** — `diff /tmp/pasted-08e.txt /tmp/e2e-08e.txt` exited 0 after
+pasting the block above; every expected literal is in place (`lib1..3=ok` with
+nothing after, `2070p-0f-12i`, `new_tests=6p-0f`, `neighbours=0/0/0`,
+`pieces=1-1-1-1`, `callers=1-3-2-1`, `read_comment=0`, `double_error=0`,
+`readme=1`, `ignore_total=12`).
+
+The known pre-existing flake `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`
+did not appear in any of the five full-suite runs captured above.
+
+### Mutations
+
+- **Mutation A — classify the whole buffer** (`&buf` instead of
+  `&buf[answered_at..]`): applied, run — **observed GREEN on tests 3 and 4,
+  not the red the spec predicted.** Reason, from the code: the child-exit
+  branch precedes classification, and both fakes touch their flag and exit
+  immediately after the right answer, so the next loop turn returns
+  `Ok(connected())` before the stale prompt can be re-classified. The guard
+  is still load-bearing for the real ssh — a warm-up chunk can arrive while
+  the child stays alive (a slow handshake), which the fakes never exercise —
+  so the mutation was restored and the 08f window kept. Recorded as observed,
+  not as the spec's prediction.
+- **Mutation B — fail on the retry text**: applied (`Err` whenever the new
+  bytes contain `Permission denied`, before classifying), run test 4 —
+  **observed RED**: `the retry connects: Err("MUTATION-B: denied text")`,
+  exactly the recoverable-login abort the process-exit rule exists to prevent.
+  Restored; `git diff --stat` back to pre-mutation.
+- **Mutation C — skip the master check**: applied (`master_running` early
+  return disabled), ran test 7 by hand — **observed**: `cold connect elapsed:
+  109.570113ms`, `warm check elapsed: 87.773306ms` — the second call was a
+  fresh master attempt (109→88 ms, both above the 100 ms line's spirit), not
+  the no-op. Restored, re-run by hand: cold 110.534201 ms, **warm
+  1.786245 ms** — the early return is what makes warm cheap. After each
+  restore `git diff --stat` matched its pre-mutation state.
+
+### Task 7 — the live check (host `pinky`)
+
+```sh
+$ cargo test --lib a_cold_host_connects_first_and_a_warm_one_is_reused_on_pinky -- --ignored --nocapture 2>&1 | grep -E 'elapsed|^test |test result'
+cold connect elapsed: 110.534201ms
+warm check elapsed: 1.786245ms
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2081 filtered out; finished in 0.12s
+```
+
+The criterion is met: cold connect succeeds with no credential asked (pinky
+is key-auth), the master is found running afterwards, and the warm re-check
+completes in **1.8 ms** — under the 100 ms line. The test's cleanup ran
+`ssh -O exit` afterwards (exit 255 "Control socket connect … No such file or
+directory" confirms no master outlived the test).
+
+### Notes for review
+
+- **Test-helper spawn retry.** The five non-live connect tests each fork a
+  real `/bin/sh` into a PTY. Under full-suite load, portable-pty 0.9's
+  `spawn_command` intermittently fails with `spawn_command failed: No such
+  file or directory (os error 2)` — measured on the *first* spawn of a
+  concurrently-spawning thread, diagnosed to the `TIOCSCTTY` pre_exec path
+  (`controlling_tty` defaults true; a plain `std::process::Command` loop
+  under the same load never failed, and 24 threads × 12 sequential PTY
+  spawns in isolation never failed). `PtyShell::spawn` is production code I
+  may not change; the retry-on-spawn-failure lives **only in the test
+  helper** (`drive_fake`), one 20 ms pause and one re-attempt, with the
+  measured evidence in this entry. Production `drive_connect` keeps a single
+  spawn attempt. Adjacent observation for the principal engineer, not fixed
+  here: production `PtyShell::spawn` carries the same transient exposure.
+- **Test serialization.** The five non-live connect tests also hold a module
+  `tokio::sync::Mutex` (`PTY_TEST_LOCK`) so they run one at a time; this
+  bounded the flake while the diagnosis was under way and is kept — each
+  test still does its whole job alone.

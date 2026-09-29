@@ -1158,6 +1158,38 @@ where
     if let Some(host) = super::ghost_remote::ghost_remote_host(is_ghost, uses_pty, ghost_policy)
         && let crate::host::HostId::Named(name) = &host
     {
+        // Connect before any shell spawns on the host — with `BatchMode`,
+        // so a host needing a credential fails here instead of hanging the
+        // ghost (its transport cannot answer a prompt).
+        if let Err(msg) = super::shell_exec::ensure_connected(
+            name,
+            true,
+            id,
+            &mut tokio::io::sink(),
+            &mut tokio::io::BufReader::new(tokio::io::empty()),
+        )
+        .await
+        {
+            let output = format!("Error: {msg}");
+            crate::daemon::stats::finish_command(cmd_id, 1);
+            send_response_split(
+                tx,
+                Response::ToolResult {
+                    tool_call_id: id.to_string(),
+                    output: output.clone(),
+                },
+            )
+            .await?;
+            log_command(
+                session_id,
+                "background",
+                name,
+                cmd,
+                "connect-failed",
+                &output,
+            );
+            return Ok(ToolCallOutcome::Result(output));
+        }
         let owner = crate::shell::Owner::Ghost(session_id.unwrap_or_default().to_string());
         let (output, exit_code) = super::ghost_remote::run_ghost_remote(
             crate::shell::registry(),

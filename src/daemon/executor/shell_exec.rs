@@ -14,15 +14,17 @@ use super::foreground;
 use super::send_response_split;
 use crate::ai::mask_sensitive;
 use crate::daemon::utils::{
-    PromptKind, classify_prompt, command_has_sudo, is_ssh_permission_denied, normalize_output,
-    sudo_password_prompt, sudo_sentinel, with_pty_prompt_sentinel,
+    PromptKind, classify_prompt, classify_ssh_prompt, command_has_sudo, is_ssh_permission_denied,
+    normalize_output, sudo_password_prompt, sudo_sentinel, with_pty_prompt_sentinel,
 };
+use crate::host::connect_argv;
 use crate::ipc::{Request, Response};
 use crate::shell::PromptReply;
 use crate::shell::{
-    CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, await_ready, mark_interactive,
-    marker_shell_name, meta_path_for, run_command, run_command_with_prompts, shell_for_owner,
-    socket_path, spawn_for_on_host, with_shells,
+    CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, await_ready, host_entry_or_bare,
+    mark_interactive, marker_shell_name, master_running, meta_path_for, run_command,
+    run_command_with_prompts, shell_for_owner, socket_path, spawn_for_on_host, which_ssh,
+    with_shells,
 };
 use crate::shell::{CommandRecord, marked_inner_range};
 use std::sync::atomic::AtomicUsize;
@@ -496,6 +498,169 @@ where
     };
     zeroize::Zeroize::zeroize(&mut cred_line);
     answer
+}
+
+/// How long a cold host's connect step may take overall, and since the last
+/// answer given (a prompt answered and then silence means ssh is working — or
+/// stuck). 30 s covers a slow DNS lookup plus a live user thinking; the
+/// timeout is restartable so an answered prompt does not eat the budget.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How often [`drive_connect`]'s loop wakes to drain the PTY's broadcast and
+/// re-check the child.
+const CONNECT_POLL: Duration = Duration::from_millis(20);
+
+/// The connect step, testable: spawn `program` with `argv` in a PTY, answer
+/// its credential prompts through `tx`/`rx`, and return once `connected()`
+/// holds (checked after the child exits, per the measured rule). The flag
+/// closure is what makes it testable — a fake ssh sets a temp file, the
+/// production closure runs `master_running`.
+///
+/// Failing is the child's exit, never a text match: ssh's retry line carries
+/// both `Permission denied` and a fresh prompt, so "denied before prompt"
+/// would abort a recoverable login.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn drive_connect<W, R, C>(
+    program: &str,
+    argv: &[String],
+    connected: C,
+    host_name: &str,
+    prompt_id: &str,
+    tx: &mut W,
+    rx: &mut R,
+    timeout: Duration,
+) -> Result<(), String>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+    C: Fn() -> bool,
+{
+    let mut child = match crate::shell::PtyShell::spawn(program, argv, (24, 80)) {
+        Ok(c) => c,
+        Err(e) => {
+            return Err(format!(
+                "ssh to host {host_name} could not be spawned: {e:#}"
+            ));
+        }
+    };
+    // A chunk published before the first subscribe is dropped; ssh's prompts
+    // arrive well after spawn, so subscribing here loses nothing.
+    let mut stream = child.subscribe();
+    let mut buf: Vec<u8> = Vec::new();
+    // 08f's rule: only output after the last answer may be classified — a
+    // prompt that appeared before it has already been answered.
+    let mut answered_at: usize = 0;
+    let started = Instant::now();
+    let mut last_answer = started;
+    loop {
+        tokio::time::sleep(CONNECT_POLL).await;
+        loop {
+            match stream.try_recv() {
+                Ok(chunk) => buf.extend_from_slice(&chunk),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+            }
+        }
+        if !child.is_alive().map_err(|e| e.to_string())? {
+            if connected() {
+                return Ok(());
+            }
+            let last_line = String::from_utf8_lossy(&buf)
+                .lines()
+                .rev()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .map(mask_sensitive)
+                .unwrap_or_default();
+            return Err(format!(
+                "ssh could not connect to host {host_name}: {last_line}"
+            ));
+        }
+        if Instant::now().duration_since(started) > timeout
+            || Instant::now().duration_since(last_answer) > timeout
+        {
+            let _ = child.kill();
+            return Err(format!(
+                "ssh to host {host_name} did not connect within {timeout:?}"
+            ));
+        }
+        let fresh = String::from_utf8_lossy(&buf[answered_at..]).into_owned();
+        let reply = match classify_ssh_prompt(&fresh) {
+            Some(kind @ (PromptKind::SshPassword | PromptKind::SshPassphrase)) => {
+                credential_round_trip(prompt_id, tx, rx, ssh_credential_prompt(kind)).await
+            }
+            Some(PromptKind::SshHostKey) => {
+                let _ = child.kill();
+                return Err(format!(
+                    "ssh is asking whether to trust host {host_name}'s unknown host key, \
+                     which cannot be answered here — accept the fingerprint once from \
+                     your own terminal, or wait for the new-host approval flow"
+                ));
+            }
+            _ => PromptReply::Wait,
+        };
+        match reply {
+            PromptReply::Send(bytes) => {
+                if let Err(e) = child.write_input(&bytes) {
+                    let _ = child.kill();
+                    return Err(format!(
+                        "ssh to host {host_name} could not be answered: {e}"
+                    ));
+                }
+                answered_at = buf.len();
+                last_answer = Instant::now();
+            }
+            PromptReply::GiveUp(reason) => {
+                let _ = child.kill();
+                return Err(reason);
+            }
+            PromptReply::Wait => {}
+        }
+    }
+}
+
+/// Connect to named host `name` before any shell there is spawned: a no-op
+/// when its ControlMaster already runs, otherwise `ssh -M -N -f` driven
+/// through [`drive_connect`]. `batch` = a ghost (never prompt).
+pub(super) async fn ensure_connected<W, R>(
+    name: &str,
+    batch: bool,
+    prompt_id: &str,
+    tx: &mut W,
+    rx: &mut R,
+) -> Result<(), String>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    let entry = host_entry_or_bare(name).map_err(|e| e.to_string())?;
+    let control = crate::config::ssh_dir();
+    if let Err(e) = std::fs::create_dir_all(&control) {
+        return Err(format!(
+            "ssh control directory {} could not be created: {e}",
+            control.display()
+        ));
+    }
+    if master_running(&entry, &control) {
+        return Ok(());
+    }
+    let program = match which_ssh() {
+        Ok(p) => p,
+        Err(e) => return Err(format!("ssh could not be found for host {name}: {e}")),
+    };
+    let argv = connect_argv(&entry, &control, batch);
+    drive_connect(
+        &program,
+        &argv,
+        || master_running(&entry, &control),
+        name,
+        prompt_id,
+        tx,
+        rx,
+        CONNECT_TIMEOUT,
+    )
+    .await
 }
 
 /// Run one sudo command under [`run_command_with_prompts`], classified by
@@ -2572,5 +2737,347 @@ mod tests {
             after_elapsed < Duration::from_secs(5),
             "the next command must not wait out its timeout: {after_elapsed:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod connect_tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::test_home_guard;
+    use std::sync::Arc;
+
+    /// Serialises this module's PTY-spawning tests: each forks a real `sh`
+    /// into a PTY, and under full-suite load concurrent forks intermittently
+    /// fail (`spawn_command failed`). One at a time keeps the gate green
+    /// without hiding anything — each test still does its whole job alone.
+    static PTY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// The credential the "attached" transport answers with; the fake ssh
+    /// checks for exactly this before declaring the login good.
+    const CREDENTIAL: &str = "right-pw";
+    /// The prompt id the round trip echoes; the fake never sees it.
+    const PROMPT_ID: &str = "c";
+
+    /// The "attached" write half: records every write (the credential prompt
+    /// goes here, not the PTY) so a test can count prompts.
+    struct RecordingWriter {
+        writes: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl tokio::io::AsyncWrite for RecordingWriter {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            self.writes
+                .lock()
+                .expect("write log lock")
+                .push(buf.to_vec());
+            std::task::Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// An "attached" read half: `answers` `CredentialResponse` lines over a
+    /// `Cursor`, answered in order. Distinct credentials per test pass a
+    /// custom list.
+    fn answered_reader(credentials: &[&str]) -> impl tokio::io::AsyncBufRead + Unpin {
+        let lines = credentials
+            .iter()
+            .map(|c| {
+                let mut line = serde_json::to_string(&Request::CredentialResponse {
+                    id: PROMPT_ID.to_string(),
+                    credential: (*c).to_string(),
+                })
+                .expect("CredentialResponse serialises");
+                line.push('\n');
+                line
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        std::io::Cursor::new(lines.into_bytes())
+    }
+
+    /// Count the credential prompts the transport saw.
+    fn prompt_count(writes: &Arc<std::sync::Mutex<Vec<Vec<u8>>>>) -> usize {
+        writes
+            .lock()
+            .expect("write log lock")
+            .iter()
+            .filter(|w| {
+                serde_json::from_slice::<Response>(w)
+                    .is_ok_and(|r| matches!(r, Response::CredentialPrompt { .. }))
+            })
+            .count()
+    }
+
+    /// Spawn the fake ssh (`sh -c script`) in a PTY through [`drive_connect`]
+    /// with the given transport halves, and time it. `connected` = the flag
+    /// file exists. The PTY spawn is retried once on the transient
+    /// `spawn_command failed: ENOENT` portable-pty's `TIOCSCTTY` pre_exec
+    /// returns under heavy parallel PTY churn — measured at `iter 0` of a
+    /// concurrently-spawning thread, gone on the next attempt. Production
+    /// keeps its single attempt; the retry lives only in the test helper.
+    async fn drive_fake(
+        script: &str,
+        flag: &std::path::Path,
+        tx: &mut (impl tokio::io::AsyncWriteExt + Unpin),
+        rx: &mut (impl tokio::io::AsyncBufReadExt + Unpin),
+    ) -> Result<(), String> {
+        let flag_path = flag.to_path_buf();
+        let argv = vec!["-c".to_string(), script.to_string()];
+        let outcome = drive_connect(
+            "/bin/sh",
+            &argv,
+            || flag_path.exists(),
+            "pinky",
+            PROMPT_ID,
+            tx,
+            rx,
+            Duration::from_secs(10),
+        )
+        .await;
+        match outcome {
+            Err(msg) if msg.contains("could not be spawned") => {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                drive_connect(
+                    "/bin/sh",
+                    &argv,
+                    || flag_path.exists(),
+                    "pinky",
+                    PROMPT_ID,
+                    tx,
+                    rx,
+                    Duration::from_secs(10),
+                )
+                .await
+            }
+            other => other,
+        }
+    }
+
+    /// Hold `HOME` at a fresh temp dir (so config and `ssh_dir()` are cold)
+    /// for one test, serialised against the other HOME-mutating tests.
+    fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
+        let guard = test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+        Config::ensure_dirs().ok();
+        (guard, dir)
+    }
+
+    /// Test 2: a host whose ssh asks nothing connects with no prompt round
+    /// trip at all — the connect step is transparent on key auth.
+    #[tokio::test]
+    async fn a_host_that_needs_no_credential_connects_without_a_prompt() {
+        let _pty = PTY_TEST_LOCK.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let flag = tmp.path().join("connected");
+        let script = format!("sleep 0.2; touch {}; exit 0", flag.display());
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut writer = RecordingWriter {
+            writes: Arc::clone(&writes),
+        };
+        let mut reader = answered_reader(&[CREDENTIAL]);
+        let outcome = drive_fake(&script, &flag, &mut writer, &mut reader).await;
+        assert_eq!(outcome, Ok(()), "the fake connects: {outcome:?}");
+        assert_eq!(
+            prompt_count(&writes),
+            0,
+            "no prompt is asked when ssh connects without one"
+        );
+    }
+
+    /// Test 3: the password prompt is answered once and the host connects —
+    /// the credential reaches the child's PTY and never the transport log.
+    #[tokio::test]
+    async fn a_password_prompt_is_answered_once_and_the_host_connects() {
+        let _pty = PTY_TEST_LOCK.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let flag = tmp.path().join("connected");
+        let script = format!(
+            "sleep 0.2; printf \"u@h's password: \"; read -r pw; \
+             [ \"$pw\" = {CREDENTIAL} ] && touch {} && exit 0; exit 255",
+            flag.display()
+        );
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut writer = RecordingWriter {
+            writes: Arc::clone(&writes),
+        };
+        let mut reader = answered_reader(&[CREDENTIAL]);
+        let outcome = drive_fake(&script, &flag, &mut writer, &mut reader).await;
+        assert_eq!(outcome, Ok(()), "the fake connects: {outcome:?}");
+        assert_eq!(
+            prompt_count(&writes),
+            1,
+            "exactly one credential prompt was written: {:?}",
+            writes.lock().expect("write log lock")
+        );
+    }
+
+    /// Test 4: a wrong password is asked again, and the retry chunk — which
+    /// carries both `Permission denied` **and** a fresh prompt — does not
+    /// abort the login (the process-exit rule, not a text match).
+    #[tokio::test]
+    async fn a_wrong_password_is_asked_again_and_the_retry_line_does_not_abort() {
+        let _pty = PTY_TEST_LOCK.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let flag = tmp.path().join("connected");
+        let script = format!(
+            "sleep 0.2; printf \"u@h's password: \"; read -r pw; \
+             if [ \"$pw\" = {CREDENTIAL} ]; then touch {}; exit 0; fi; \
+             printf \"Permission denied, please try again.\\r\\nu@h2's password: \"; \
+             read -r pw; \
+             if [ \"$pw\" = {CREDENTIAL} ]; then touch {}; exit 0; fi; exit 255",
+            flag.display(),
+            flag.display()
+        );
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut writer = RecordingWriter {
+            writes: Arc::clone(&writes),
+        };
+        let mut reader = answered_reader(&["wrong-pw", CREDENTIAL]);
+        let outcome = drive_fake(&script, &flag, &mut writer, &mut reader).await;
+        assert_eq!(outcome, Ok(()), "the retry connects: {outcome:?}");
+        assert_eq!(
+            prompt_count(&writes),
+            2,
+            "the wrong answer was asked again: {:?}",
+            writes.lock().expect("write log lock")
+        );
+    }
+
+    /// Test 5: nobody attached — the round trip gives up at once with 08f's
+    /// sentence, well inside any plausible timeout, and nothing is left
+    /// running.
+    #[tokio::test]
+    async fn an_unanswerable_connection_prompt_fails_fast_and_leaves_nothing_running() {
+        let _pty = PTY_TEST_LOCK.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let flag = tmp.path().join("connected");
+        let script = format!(
+            "sleep 0.2; printf \"u@h's password: \"; read -r pw; \
+             [ \"$pw\" = {CREDENTIAL} ] && touch {} && exit 0; exit 255",
+            flag.display()
+        );
+        let started = std::time::Instant::now();
+        let outcome = drive_fake(
+            &script,
+            &flag,
+            &mut tokio::io::sink(),
+            &mut tokio::io::BufReader::new(tokio::io::empty()),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        let msg = outcome.expect_err("the unanswerable prompt must fail: {outcome:?}");
+        assert!(
+            msg.contains("nobody is attached"),
+            "the give-up names the missing reader: {msg:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the failure is fast, not a timeout: {elapsed:?}"
+        );
+        assert!(
+            !flag.exists(),
+            "the fake never reached its connected state: {msg:?}"
+        );
+    }
+
+    /// Test 6: ssh's unknown-host-key question is refused — never answered
+    /// with a credential, and the error names the host.
+    #[tokio::test]
+    async fn an_unknown_host_key_is_refused() {
+        let _pty = PTY_TEST_LOCK.lock().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let flag = tmp.path().join("connected");
+        let script = "sleep 0.2; printf \"Are you sure you want to continue connecting \
+                      (yes/no/[fingerprint])? \"; read -r a; exit 255"
+            .to_string();
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut writer = RecordingWriter {
+            writes: Arc::clone(&writes),
+        };
+        let mut reader = answered_reader(&[CREDENTIAL]);
+        let outcome = drive_fake(&script, &flag, &mut writer, &mut reader).await;
+        let msg = outcome.expect_err("the host-key question must refuse: {outcome:?}");
+        assert!(
+            msg.contains("unknown host key") && msg.contains("pinky"),
+            "the refusal names the host and the question: {msg:?}"
+        );
+        assert_eq!(
+            prompt_count(&writes),
+            0,
+            "the host-key question is never answered with a credential"
+        );
+        assert!(!flag.exists(), "the fake never connected");
+    }
+
+    /// Live test 7: the configured host `pinky` — cold, the connect step
+    /// answers nothing and still connects; warm, the second call is a no-op
+    /// in milliseconds. Requires `pinky` reachable over ssh; ignored by
+    /// default, run with `-- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "requires the configured host `pinky` reachable over ssh"]
+    async fn a_cold_host_connects_first_and_a_warm_one_is_reused_on_pinky() {
+        let (_home, dir) = test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\nssh = \"pinky\"\n",
+        )
+        .expect("write config");
+        let control = crate::config::ssh_dir();
+        std::fs::create_dir_all(&control).expect("ssh dir");
+        let entry = crate::shell::host_entry("pinky").expect("pinky is configured");
+        let mut sink = tokio::io::sink();
+        let mut eof = tokio::io::BufReader::new(tokio::io::empty());
+
+        let cold_started = std::time::Instant::now();
+        let cold = ensure_connected("pinky", false, PROMPT_ID, &mut sink, &mut eof).await;
+        let cold_elapsed = cold_started.elapsed();
+        println!("cold connect elapsed: {cold_elapsed:?}");
+        assert_eq!(cold, Ok(()), "the cold connect succeeds: {cold:?}");
+
+        let warm = master_running(&entry, &control);
+        assert!(warm, "the master survives the connect step");
+
+        let warm_started = std::time::Instant::now();
+        let second = ensure_connected("pinky", false, PROMPT_ID, &mut sink, &mut eof).await;
+        let warm_elapsed = warm_started.elapsed();
+        println!("warm check elapsed: {warm_elapsed:?}");
+        assert_eq!(second, Ok(()), "the warm check succeeds: {second:?}");
+        assert!(
+            warm_elapsed < Duration::from_millis(100),
+            "the warm check is a no-op, not a fresh connect: {warm_elapsed:?}"
+        );
+
+        let _ = std::process::Command::new("ssh")
+            .args([
+                "-O",
+                "exit",
+                "-o",
+                &format!("ControlPath={}/%C", control.display()),
+                "pinky",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 }

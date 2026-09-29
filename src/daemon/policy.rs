@@ -176,7 +176,7 @@ impl GhostPolicy {
                         format!("configured hosts: {joined}")
                     };
                     return Err(format!(
-                        "Error: '{key}' is not a configured host ({joined}). \
+                        "'{key}' is not a configured host ({joined}). \
                          Add a [hosts.{key}] entry, or use \"local\" for the \
                          daemon host.",
                         joined = configured

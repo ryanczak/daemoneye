@@ -131,6 +131,28 @@ pub fn ssh_argv(entry: &HostEntry, control_path: &std::path::Path) -> Vec<String
     ]
 }
 
+/// The argv that establishes (and backgrounds) this host's ControlMaster
+/// without a remote command: `-M -N -f`, the same `ControlPath` and
+/// `ControlPersist` as [`ssh_argv`] so every later shell multiplexes
+/// through it, and `-o BatchMode=yes` when `batch` (a ghost: never prompt).
+/// The destination is last — options after it become the remote command.
+pub fn connect_argv(entry: &HostEntry, control_path: &std::path::Path, batch: bool) -> Vec<String> {
+    let mut argv = vec![
+        "-M".to_string(),
+        "-N".to_string(),
+        "-f".to_string(),
+        "-o".to_string(),
+        format!("ControlPath={}/%C", control_path.display()),
+        "-o".to_string(),
+        "ControlPersist=10m".to_string(),
+    ];
+    if batch {
+        argv.extend(["-o".to_string(), "BatchMode=yes".to_string()]);
+    }
+    argv.push(entry.ssh.clone());
+    argv
+}
+
 /// `ssh_argv` for a ghost's shell: the same argv with `-o BatchMode=yes`
 /// inserted **before the destination**, so ssh never prompts — a host that
 /// wants a password or an unknown key fails at once instead of waiting for
@@ -364,9 +386,58 @@ mod tests {
     fn ssh_argv_does_not_set_batch_mode() {
         let argv = ssh_argv(&entry("db01"), std::path::Path::new("/tmp/cp"));
         assert!(
-            argv.iter()
-                .all(|a| !a.contains("Batch''Mode".replace("''", "").as_str())),
+            argv.iter().all(|a| !a.contains("BatchMode")),
             "prompts must reach the user; suppressing them would defeat the credential mechanism: {argv:?}"
+        );
+    }
+
+    /// Task 1's acceptance: the connect argv establishes the master every
+    /// later shell multiplexes through — the same ControlPath element
+    /// `ssh_argv` emits, the destination last, no `-tt`, and `BatchMode=yes`
+    /// only when the caller asks for it.
+    #[test]
+    fn connect_argv_establishes_the_master_the_shells_reuse() {
+        let cp = std::path::Path::new("/tmp/cp");
+        let warm = connect_argv(&entry("db01"), cp, false);
+        assert_eq!(
+            &warm[..3],
+            ["-M", "-N", "-f"],
+            "the master-establishing flags come first: {warm:?}"
+        );
+        assert!(
+            warm.iter().any(|a| a.as_str() == "ControlPersist=10m"),
+            "the master must persist for the shells to reuse: {warm:?}"
+        );
+        assert_eq!(
+            warm.iter().find(|a| a.starts_with("ControlPath=")),
+            ssh_argv(&entry("db01"), cp)
+                .iter()
+                .find(|a| a.starts_with("ControlPath=")),
+            "the ControlPath element must equal ssh_argv's, so both reach the \
+             same socket: {warm:?}"
+        );
+        assert_eq!(
+            warm.last().map(String::as_str),
+            Some("db01"),
+            "the destination is last — options after it become the remote command: {warm:?}"
+        );
+        assert!(
+            !warm.iter().any(|a| a.as_str() == "-tt"),
+            "a master carries no remote command, so no PTY: {warm:?}"
+        );
+        assert!(
+            !warm.iter().any(|a| a.contains("BatchMode")),
+            "without batch the master may prompt, so a password is answerable: {warm:?}"
+        );
+        let batched = connect_argv(&entry("db01"), cp, true);
+        assert!(
+            batched.iter().any(|a| a.as_str() == "BatchMode=yes"),
+            "batch adds BatchMode=yes before the destination: {batched:?}"
+        );
+        assert_eq!(
+            batched.last().map(String::as_str),
+            Some("db01"),
+            "BatchMode sits before the destination in the batched argv: {batched:?}"
         );
     }
 

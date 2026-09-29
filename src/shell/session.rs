@@ -152,6 +152,29 @@ pub async fn spawn_ssh_host(id: ShellId, name: &str, rows: u16, cols: u16) -> an
     launch::spawn_detached(id.as_str(), &program, &argv, rows, cols).await
 }
 
+/// True when a ControlMaster is already running for `entry` under
+/// `control_path`: `ssh -O check` exits 0 (measured 2–3 ms). Any error —
+/// `ssh` missing, the check timing out, a spawn failure — reads as "no
+/// master", the safe answer: the caller then tries to establish one.
+pub fn master_running(entry: &crate::config::HostEntry, control_path: &std::path::Path) -> bool {
+    let Ok(program) = which_ssh() else {
+        return false;
+    };
+    std::process::Command::new(program)
+        .args([
+            "-O".to_string(),
+            "check".to_string(),
+            "-o".to_string(),
+            format!("ControlPath={}/%C", control_path.display()),
+            entry.ssh.clone(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Spawn a detached `daemoneye shell-host` for `id` that opens a ghost's shell
 /// on the named host `name`, over SSH, with [`ghost_ssh_argv`]: the same argv
 /// `spawn_ssh_host` uses plus `-o BatchMode=yes` before the destination, so a

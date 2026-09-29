@@ -195,6 +195,29 @@ fn ghost_host_refusal(policy: &GhostPolicy, host: &crate::host::HostId) -> Strin
     )
 }
 
+/// Connect first for a named host; `None`, `"local"` and a malformed name
+/// pass through untouched — the tool itself refuses a malformed one with
+/// its existing wording.
+async fn connect_named_host<W, R>(
+    host: Option<&str>,
+    batch: bool,
+    id: &str,
+    tx: &mut W,
+    rx: &mut R,
+) -> Result<(), String>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    let Ok(crate::host::HostId::Named(name)) = host
+        .map(crate::host::HostId::parse)
+        .unwrap_or(Ok(crate::host::HostId::Local))
+    else {
+        return Ok(());
+    };
+    shell_exec::ensure_connected(&name, batch, id, tx, rx).await
+}
+
 /// What a shell-command failure tells the model. Both PTY arms render the
 /// run error through this one helper so they cannot diverge.
 ///
@@ -581,6 +604,30 @@ where
                                     );
                                     return Ok(ToolCallOutcome::Result(msg));
                                 }
+                                if let Err(msg) =
+                                    shell_exec::ensure_connected(name, false, id.as_str(), tx, rx)
+                                        .await
+                                {
+                                    let msg = format!("Error: {msg}");
+                                    send_response_split(
+                                        tx,
+                                        Response::ToolResult {
+                                            tool_call_id: id.to_string(),
+                                            output: msg.clone(),
+                                        },
+                                    )
+                                    .await?;
+                                    crate::daemon::stats::finish_command(cmd_id, 1);
+                                    crate::daemon::utils::log_shell_command(
+                                        session_id,
+                                        "s?",
+                                        cmd,
+                                        "host-error",
+                                        -1,
+                                        &msg,
+                                    );
+                                    return Ok(ToolCallOutcome::Result(msg));
+                                }
                                 match shell_exec::run_in_shell_with_prompts(
                                     crate::shell::registry(),
                                     owner.clone(),
@@ -928,6 +975,28 @@ where
                 );
                 return Ok(ToolCallOutcome::Result(msg));
             }
+            if let Err(msg) = connect_named_host(host.as_deref(), is_ghost, call.id(), tx, rx).await
+            {
+                crate::daemon::utils::log_event(
+                    "ssh_connect_failed",
+                    serde_json::json!({
+                        "session": session_id.unwrap_or("-"),
+                        "tool": "read_file",
+                        "requested_host": host_id.as_str(),
+                        "error": msg,
+                    }),
+                );
+                let outcome = format!("Error: {msg}");
+                send_response_split(
+                    tx,
+                    Response::ToolResult {
+                        tool_call_id: call.id().to_string(),
+                        output: outcome.clone(),
+                    },
+                )
+                .await?;
+                return Ok(ToolCallOutcome::Result(outcome));
+            }
             file_ops::run_read_file(path, *offset, *limit, pattern.as_deref(), host.as_deref())
                 .await
         }
@@ -943,6 +1012,20 @@ where
             host,
             ..
         } => {
+            if let Err(msg) =
+                connect_named_host(host.as_deref(), is_ghost, id.as_str(), tx, rx).await
+            {
+                let outcome = format!("Error: {msg}");
+                send_response_split(
+                    tx,
+                    Response::ToolResult {
+                        tool_call_id: id.to_string(),
+                        output: outcome.clone(),
+                    },
+                )
+                .await?;
+                return Ok(ToolCallOutcome::Result(outcome));
+            }
             file_ops::run_edit_file(
                 file_ops::EditArgs {
                     id,
@@ -1151,6 +1234,19 @@ where
                     );
                     return Ok(ToolCallOutcome::Result(msg));
                 }
+            }
+            if let Err(msg) = connect_named_host(host.as_deref(), is_ghost, call.id(), tx, rx).await
+            {
+                crate::daemon::utils::log_event(
+                    "ssh_connect_failed",
+                    serde_json::json!({
+                        "session": session_id.unwrap_or("-"),
+                        "tool": "open_shell",
+                        "requested_host": host.as_deref().unwrap_or("local"),
+                        "error": msg,
+                    }),
+                );
+                return Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
             }
             Ok(ToolCallOutcome::Result(
                 knowledge::open_shell(

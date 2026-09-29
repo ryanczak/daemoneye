@@ -98,11 +98,11 @@ fn resolve_path_for_guard(path: &str) -> std::path::PathBuf {
 /// [`run_command`], which returns the bytes between this command's nonce
 /// markers and its real exit code — what `extract_marked` then cuts.
 ///
-/// A file read must **not** prompt: this calls the plain [`run_command`], not
-/// `run_command_with_prompts`, so no `CredentialPrompt` round-trip is ever
-/// opened from a read. A remote shell whose ssh handshake needs a credential
-/// fails here with the connection error instead — that is a finding to report,
-/// not a feature to add on a silent read.
+/// The read's own command still runs through the plain [`run_command`], so
+/// nothing mid-command ever prompts. The **connection** to a cold host is a
+/// different story: the executor arm calls `ensure_connected` before this
+/// operation, and that may open a credential round trip — by design, 08e
+/// reversed the old rule. This function itself remains prompt-free.
 pub(super) async fn run_in_host_shell<F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
