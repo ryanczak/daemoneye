@@ -1,7 +1,7 @@
 # Phase 08d: spawn-ghost-host — a coordinator names the host a specialist runs on, and a ghost's own command honours `host`
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-08a (`ssh_target` resolution + the `hosts:` fence),
 phase-08c (a resolved host runs on a ghost-owned PTY shell)
 **Estimated diff:** ~350 lines across ~12 files, plus 6 tests
@@ -672,3 +672,44 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b04374545177b057d13f9e05ecc8534259809d56
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark — `complete` in
+  253 turns, one dispatch.
+- **Verified independently at review:** fmt, build (zero warnings), clippy
+  clean; `cargo test --lib` **2064/0/11 on three consecutive runs**, no failing
+  names; other targets unmoved (6/14/32/10); the E2E values as pasted. The
+  production diff matches the spec: `may_use_ssh_target` fences only an
+  `ssh_target`; `for_host` rebinds `ssh_target` / `remote_host` /
+  `remote_sudo_scripts`; `run_background` rebinds before `remote_script`, so
+  08a's fence and 08c's route apply unchanged; `spawn_host_target` checks
+  parse → configured → child `hosts:` → caller `hosts:`, and a refused spawn
+  returns before `start_spawn_session`.
+- **Mutations — run by the reviewer, not the executor.** The executor did not
+  apply A–C (disclosed plainly: budget spent on mid-run verifier reds). The
+  reviewer applied all three against production code, one at a time, tree
+  restored after each: **A** (fence with no `ssh_target`) turned test 1 red;
+  **B** (caller check skipped) turned test 3 red; **C** (`for_host` keeps
+  `ssh_target`) turned test 2 red. The property the criterion protects is
+  therefore established; the criterion's letter (executor-recorded) is not.
+- **Scope deviations:** (1) `#[allow(clippy::too_many_arguments)]` on
+  `spawn_ghost` (8 parameters) — accepted: the same allow already sits on
+  `run_in_shell_with_prompts` and others in this tree. (2) **Doubled prefix:**
+  `for_host`'s `Err` already begins `Error: `, and `run_background` wraps it in
+  `format!("Error: {e}")`, so an unconfigured command host reads
+  `Error: Error: 'nope' is not a configured host …`. Cosmetic; the spec's
+  snippet invited it. **Carried to 08e** (or whichever row next edits
+  `foreground.rs`). (3) `spawn_target=2`, not 1 — an architect criterion flaw:
+  `grep 'fn spawn_host_target'` also matches the test
+  `fn spawn_host_target_is_granted_…`.
+- **Calibration:** (a) a criterion grepping `fn <name>` must anchor the name
+  (`fn <name>(`) — a test named with that prefix satisfies it too; same class
+  as [criteria must pin the property, not a proxy]. (b) A worked snippet that
+  wraps an error must say whether the callee's message already carries the
+  prefix. (c) The executor skipped mutations under budget pressure and said
+  so — the honest path; the reviewer re-running mutations is what made it
+  approvable.
+
