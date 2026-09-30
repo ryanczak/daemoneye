@@ -998,6 +998,26 @@ log_retention_days   = 7
 scrollback_lines     = 5000
 ```
 
+### `[hosts.<name>]` sections
+
+Named remote hosts the AI may run on. Each entry makes `host: "<name>"` valid on `run_terminal_command`, `read_file`, `edit_file`, `open_shell` and `spawn_ghost_shell`. The daemon host is implicit and never configured here; `local` is a reserved name. Names match `[A-Za-z0-9._-]`, 1–64 characters.
+
+```toml
+[hosts.pinky]
+ssh = "pinky"          # any ssh(1) destination; ~/.ssh/config is honoured
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `ssh` | string | *(required)* | The `ssh` destination. An entry without it is a config error. |
+| `tags` | list of strings | `[]` | Free-form labels for grouping; not interpreted by the daemon. |
+| `sudo_scripts` | list of strings | `[]` | Scripts a Ghost Shell may run under sudo on this host (the remote-sudoers model), enforced when a runbook's `ssh_target` resolves here. An empty list restricts nothing. |
+| `sandbox_profile` | string | *(none)* | Container profile for this host's commands. Parsed, **not yet enforced**. |
+
+**How a remote host is reached.** A remote shell is a PTY on the daemon host running your own `ssh`, with your keys and agent; nothing is installed on the remote. The first connection opens a ControlMaster under `~/.daemoneye/var/run/ssh/` (kept for 10 minutes), and later shells to the same host reuse it without authenticating again. A password, key passphrase or remote `sudo` password is asked **in the chat** and never reaches a shell log: the answer is recorded as `[redacted]`. An unknown host key is refused; accept it once from your own terminal. Ghost Shells connect with `BatchMode=yes` and may only use hosts their runbook's `hosts:` list names.
+
+A host name that is **not** configured is still usable from chat (it is passed to `ssh` as-is), but its approval panel is classified as a **new host** and is never covered by a session approval.
+
 ### `[daemon]` section
 
 Controls daemon startup and session ownership. Use this when running DaemonEye as a systemd user service so ghost shells, scheduled jobs, and webhook-triggered automation work without any `daemoneye chat` client connected.

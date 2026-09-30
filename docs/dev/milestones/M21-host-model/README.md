@@ -7,19 +7,11 @@ using the user's own keys and agent, with every credential prompt (host key,
 password, passphrase, **remote sudo**) surfacing through the approval client
 and never reaching the shell log.
 
-**Status:** in-progress — scoped 2026-09-18, **PE sign-off on the breakdown
-2026-09-18** with two decisions: the live-verification host is **`pinky`**, and
-`host?` on `spawn_ghost_shell` is in scope as row 08b. Rows 01a–01c and 04c–05 are `done`. **06 split into 06a/06b/06c at
-drafting** (2026-09-23) — it was four features in one row. **06a is `done`** (2026-09-23,
-`approved_first_try`): the approval panel names the host. **06b is `done`** (2026-09-23,
-`approved_first_try`) — per-host session scope. **06c is `done`** (2026-09-25,
-`approved_first_try`) — unconfigured hosts are gated rather than refused.
-**All four 06 rows are `done`** — 06d closed 2026-09-26
-(`approved_first_try`), so the approval and ghost-boundary half of the
-milestone is complete. **07 split into 07a/07b at drafting** — the read path is one
-`target_pane` branch, the write path is four. **07a is `done`** (2026-09-26,
-`approved_first_try`) and **07b is `done`** (2026-09-27, `approved_after_1`) — `target_pane` is gone from the tool surface. **08 split into 08a/08b/08c at drafting** (2026-09-27, PE decisions in Notes); **08a is `done`** (2026-09-27, `approved_first_try`). **Two substrate defects surfaced at the next drafting** and got rows of their own ahead of the ghost move (PE 2026-09-27): **08b is `done`** (2026-09-27, `approved_first_try`; shell exit detection). **08f inserted ahead of 08c at 08c drafting** (2026-09-27, PE): the PTY password-prompt path matches its sentinel on the command's echo and re-sends a correct password into the shell — see Notes. **08f is `done`** (2026-09-28, `approved_after_1`). **08c is `done`** (2026-09-28, `approved_first_try`). **08d is `done`** (2026-09-29, `approved_first_try`; PE: both `hosts:` lists fence a spawn host, refused at spawn if unlisted or unconfigured, and a ghost's own command `host` is routed in the same row); **08e is `done`** (2026-09-29, `approved_after_1`). **09 split into 09a/09b/09c at drafting** (2026-09-29): `edit_file` has no sudo path, so the README's exit wording ("a remote `sudo` edit via `edit_file { host }`") could not be met. **PE: add sudo to `edit_file` first** (09b), then the live close (09c). Drafting also measured that **every edit widens the file's mode** (`0600` → `0644` locally, `0664` on pinky), which a sudo edit would make worse, so that fix is 09a. **09a is `done`** (2026-09-30, `approved_after_1`). **09b is `done`** (2026-09-30, `approved_first_try`); **09c is `done`** (2026-09-30, `approved_first_try`, architect-run) — **every M21 row is `done`**; the milestone awaits its close. *Numbering note:* 08a's phase doc and review verdict say "08b" for the ghost PTY move and "08c" for spawn-ghost-host — those are now **08c** and **08d**. 06c owns making an unconfigured host allowed-but-gated;
-06d owns ghost `hosts:` enforcement.
+**Status:** complete — all 25 rows `done` (closed 2026-09-30); **awaiting PE
+sign-off** on the retrospective below and its fold candidates. Scoped
+2026-09-18 with the live-verification host `pinky`; the design's exit, a
+remote `sudo` edit from chat with the password in no log, was run live in
+09c.
 
 **Depends on:** M20 (the PTY shell substrate every remote shell is), M22
 (`open_shell` / `list_shells` / the `[SHELLS]` block, and the two `host?`
@@ -112,6 +104,102 @@ the live close is last.
 | 09c | live-close ([phase-09c-live-close.md](phase-09c-live-close.md)) — the exit criterion end to end: a remote sudo edit via `edit_file { host: "pinky", sudo: true }` from a `daemoneye chat` turn; the cast log shows the marker-delimited edit, at least one `"i"` event is `[redacted]`, and a grep for the PE-typed password over the cast, the session JSONL and `daemon.log` finds nothing; the file stays `root:640`; ControlMaster reuse timed with `ssh -O check`. **Architect-run** with the PE present (the password is theirs). Drafted 2026-09-30: the live config had no `[hosts.pinky]` and the installed binary was from Sep 18, so S0/S1 fix both first **Done 2026-09-30** (`approved_first_try`, live: `[redacted]` in the cast, password in no log, `root:640` kept, master reused in 2 ms) | done |
 
 ## Notes
+
+### Retrospective (2026-09-30)
+
+**Outcome.** A configured host is an execution target the AI names with
+`host:` on five tools (`run_terminal_command`, `read_file`, `edit_file`,
+`open_shell`, `spawn_ghost_shell`). It is reached over the user's own `ssh`
+from a local PTY. Every credential prompt (host key, password, passphrase,
+remote sudo) surfaces through the chat and is scrubbed from the cast log.
+All exit criteria hold:
+- 09c ran the headline live: `[redacted]` in the cast, the password in no
+  log, `root:640` kept, and the master reused in 2 ms.
+- `target_pane` is gone and the tools stay at 42 / 28 / 14.
+- `[hosts]` is parsed, validated and documented.
+- ControlMaster reuse is measured.
+- The approval panel names the host, and a new host is classified as one.
+- Local sudo on the `pty` backend prompts.
+- Ghost `hosts:` lists are enforced.
+- `[SHELLS]` and `list_shells` name each shell's host.
+
+**By the numbers.** 25 rows (planned as 10; 04 split three times, 06 and 08
+twice, and 01c, 08f, 09a were inserted on measured defects).
+
+| Verdict | Rows |
+|---|---|
+| `approved_first_try` | 14 — 03, 04a, 04d, 06a, 06b, 06c, 06d, 07a, 08a, 08b, 08c, 08d, 09b, 09c |
+| `approved_after_1` | 9 — 01b, 02, 04b, 04c, 05, 07b, 08e, 08f, 09a |
+| `approved_after_2` | 1 — 01c |
+| `escalated` (takeover) | 1 — 01a |
+
+There are 9 bug docs, all closed (08e alone filed three). Three bounces
+were `hard_fail`s with no bug filed (02 stall, 04b and 05 verifier
+persistence) and were handled by refined re-dispatch or resume. The
+executor was GLM-5.3-Flash throughout; 09c was architect-run by design.
+
+**Headline: measuring through the daemon's own run path found defects no
+green suite could.** The probe shape was an in-process shell host, real
+`ssh` and real `run_command`. It found the defects that became rows:
+- 08b: a dead shell waits out its full timeout.
+- 08e: the first command is typed into ssh's `password:` prompt.
+- 08f: the sudo classifier fires on the command's echo.
+- 09a: every edit widens a file's mode — `0600` → `0664` on pinky.
+- 09b: `sudo` inside `if/then` is never detected.
+
+None of these was reachable from the unit suites, which were green
+throughout.
+
+**What cost the most.**
+1. **Spec facts that were not executed** — and this despite the
+   existing "derive every spec fact from its source" fold:
+   - 08e asserted every tool arm had a ghost `hosts:` gate; `EditFile` did
+     not (bug-08e-2).
+   - 08e's Mutation A was predicted red without being run.
+   - 09b wrote `{e}` where the probe had printed `{e:#}`.
+   - 09c's evidence block read a file it had just made root-only.
+
+   Each was caught at review or run time, not at drafting.
+2. **One flaky gate became an 800-turn verify loop** (09a). A test leaked
+   an in-process shell, unrelated PTY tests flaked, and a "three
+   consecutive green runs" gate with no re-run budget could never pass. The
+   run ended only when the firewall reboot dropped the backend.
+3. **Evidence written to the final message, not the Update Log** (09a).
+   The summary claimed `PASTE MATCH` for an entry that did not exist. This
+   is the M12 pattern, recurring even though the capture was a seeded
+   `## Spec` task.
+
+**Fold candidates — proposed, not landed (PE decides).**
+- **(A) Every full-suite gate carries a re-run budget** (three), plus the
+  rule that a newly failing test is a finding, not something to re-run
+  away. One occurrence here; together with the recorded Qwen verify-loop
+  pathology it is the second of its class. **Recommend folding.**
+- **(B) Evidence blocks are dry-run at drafting against a fixture of the
+  real shape and permissions.** This is new wording for the existing
+  "spec facts must be executed" rule, with four occurrences this milestone
+  (item 1). **Recommend folding** as a pre-dispatch-check line, since the
+  prose rule alone did not prevent them.
+- **(C) The executor's self-reported model name is never trusted.** Two
+  occurrences (09a, 09b). **Hold** for a third.
+
+WORKFLOW.md is unchanged pending sign-off.
+
+**Carried forward (not M21 scope):**
+- The 09b residual: the `shell_run_error_text` label.
+- `PtyShell::spawn`'s transient ENOENT under parallel PTY churn, seen in
+  production code during 08e and worked around only in tests.
+- `run_terminal_command`'s deadline includes the user's password-typing
+  time (09b § Current state 4).
+- Per-session JSONL logs have no retention setting.
+- `[HOSTS]` context block → M23.
+
+**Close-out actions taken:**
+- README.md gained the missing `[hosts.<name>]` configuration section (the
+  PE's keep-README-current rule).
+- On scrappy: the live config has `[hosts.pinky]`; the seeded prompt and
+  memories were refreshed; `archive_retention_days = 90`.
+
+
 
 ### Measured before scoping — the facts the breakdown rests on
 
