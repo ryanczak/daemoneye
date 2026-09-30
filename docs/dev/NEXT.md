@@ -1,27 +1,26 @@
 # NEXT
 
-**Active phase:** **M21 phase-09b — remote-sudo-edit**, drafted 2026-09-30,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-09b`.
+**Active phase:** **M21 phase-09c — live-close**, drafted 2026-09-30, status
+`todo`. **Architect-run, not dispatched**: tell the architect to run it with
+the PE at the keyboard (pinky's sudo password is typed twice: once to create
+the root-owned fixture over `ssh -t`, once in the chat's credential prompt),
+plus once more for the S5 cleanup.
 
-**What it does.** `edit_file` gains `sudo?: boolean`. With `sudo: true`, an
-`operation: "edit"` on a named host runs as root. The line typed into the
-host's shell starts sudo (`… set -- python3 …; sudo "$@"`), and sudo's
-password prompt is answered through the chat's `CredentialPrompt`. The
-file's mode and owner are kept (09a). A sudo edit is refused off-host and
-for any other operation, is never auto-approved or session-approved, and
-reports an `Error:` when it did not run.
+**What it does.** The milestone's exit criterion for real: from a
+`daemoneye chat` turn, `edit_file { host: "pinky", sudo: true }` edits a
+root-owned file on pinky. Evidence is read where it lives — the shell's
+cast log (the marker-delimited sudo edit, `DE_OK: Edited`, and `[redacted]`
+`"i"` events), the session JSONL (the call with `sudo: true` and its
+result), the file on pinky (`root:640`, new content), and `ssh -O check`
+timing the reused ControlMaster. The PE types the password into a shell
+variable for a grep that must find it in no log.
 
-**Measured at drafting.** The `set --` line is detected as sudo. Through the
-daemon's run path, a fake privilege tool gave exactly one prompt and the edit
-landed with its `0640` mode kept. With nobody attached, the run gave up
-cleanly and left the file unedited, both locally (305 ms) and on pinky's real
-sudo-rs (323 ms). A refused password leaves no sentinel line, so the result
-needs an explicit error.
+**Measured at drafting.** The installed `~/.cargo/bin/daemoneye` is from
+Sep 18 and the daemon is not running; the live config has no
+`[hosts.pinky]`. S0 adds the entry (kept) and S1 rebuilds, reinstalls and
+restarts with M14's sha256 identity check. pinky's sudo-rs tickets are
+per-tty, so the fixture `sudo` over `ssh -t` does not warm the daemon's
+shell: the chat run will prompt, and `cast-redacted-i ≥ 1` proves it did.
 
-**Shell-gate reminder.** The executor cannot type the privilege tool's name.
-Every test is named `…root_edit…` / `…root_flag…`, and the criteria spell it
-`su[d]o`.
-
-**After 09b:** `/rexymcp:architect next` drafts 09c, the live close: a sudo
-edit from chat on pinky, with the password absent from every cast-log `"i"`
-event. It is architect-run.
+**After 09c:** all M21 rows are `done`. `/rexymcp:architect` closes the
+milestone (retrospective, folds, `NEXT.md` → none), gated on the PE.
