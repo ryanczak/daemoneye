@@ -415,7 +415,7 @@ You may edit these files, and nothing else:
 
 ### Update — 2026-09-29 13:35 (started)
 
-Executor: Claude (Opus 4.6). Status flipped `todo → in-progress` (phase doc and
+Executor: local-inference-lab/GLM-5.3-Flash-NVFP4-Spark. Status flipped `todo → in-progress` (phase doc and
 milestone README row). Beginning Task 1 (the local edit keeps mode and owner).
 
 <!-- entries appended below this line -->
@@ -660,3 +660,72 @@ There are exactly **two** doc edits left, both in this file:
 the paste-check snippet prints `PASTE MATCH`; and
 `cargo test --lib` still reports **2078** passed, **not** more.
 
+### Update — 2026-09-30 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim into `/tmp/e2e-09a.txt`
+(first pass, no re-runs; nothing else was running `cargo test`). Its
+contents, pasted as this entry's first fenced block:
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2078p-0f-13i
+new_tests=5p-0f
+neighbours=1 passed/1 passed/0 failed
+create_untouched=1
+ignore_total=13
+```
+
+The paste-check snippet below ran **after** this entry was written; it
+printed the line that follows:
+
+```
+PASTE MATCH
+```
+
+**Mutations A–C, re-applied and observed this run** (each with the `patch`
+tool, one run, then restored; `git diff --stat HEAD -- src/` empty after
+each restore):
+
+- **Mutation A** — deleted the Python `os.chmod(t,st.st_mode&0o7777)` line.
+  Both specified tests were run. **Red, as expected:**
+  `a_remote_edit_keeps_the_files_mode` FAILED at ops.rs:1228 —
+  `six.txt must keep its mode across a host edit: "Edited /tmp/.tmp…/six.txt on host web01." — left: 420, right: 384`;
+  `the_python_branch_keeps_the_files_mode` FAILED at ops.rs:1290 —
+  `six.txt must keep its mode through the python branch: "DE_OK: Edited /tmp/.tmp…/six.txt\\n__DE_DONE__\\n" — left: 420, right: 384`.
+  The `0750` file came back `0644` (`420` = `0o644`): without the chmod the
+  `x` bits are gone, exactly the failure the mutation was built to expose.
+- **Mutation B** — deleted the Perl `chmod($st[2]&07777,$t);` line. Test 4
+  was run. **Red, as expected:** `the_perl_branch_keeps_the_files_mode`
+  FAILED at ops.rs:1340 — `six.txt must keep its mode through the perl
+  branch: "DE_OK: Edited /tmp/.tmp…/six.txt\\n__DE_DONE__\\n" — left: 420, right: 384`.
+- **Mutation C** — deleted the local `set_permissions` call (and, since the
+  patch replaces the surrounding block, also the rename error branch, which
+  the same edit restored). Test 1 was run. **Red, as expected:**
+  `a_local_edit_keeps_the_files_mode` FAILED — the assert at ops.rs:1172
+  fired first, on `the edit landed on the file: "a\\nold-line\\nb\\n"` —
+  with no rename, the temp file held the new content and the original file
+  still had the unedited text, so the mode assert was never reached.
+  This mutation therefore surfaced as the edit not landing, not as a mode
+  regression; the mode assert is the one that catches it once the rename
+  is intact, as mutation A's and B's `left: 420` vs `right: 384` show for
+  the remote branches.
+
+After each restore the working tree was confirmed empty
+(`git diff --stat HEAD -- src/` → no output).
+
+**Task 5 live check** — `cargo test --lib a_remote_edit_keeps_mode_on_pinky -- --ignored --nocapture 2>&1 | grep -E "before=|after=|^test |test result"` (run this run, `pinky` reachable over ssh):
+
+```
+before=600 (stat -c before=%a /tmp/de-09a-mode-probe)
+after: "after=600\r\n"
+test daemon::executor::file_ops::ops::tests::a_remote_edit_keeps_mode_on_pinky ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2090 filtered out; finished in 0.33s
+```
+
+The `0600` probe file survived the edit at `600` on pinky — the PTY shell's
+umask `0002` is what made this file group-writable before the fix; both
+stat lines name the mode the daemon's own shell saw. The probe was removed
+by the test itself (`rm -f`), and the shell was closed and `ssh -O exit`
+issued, as `edit_file_on_pinky_end_to_end` does.
