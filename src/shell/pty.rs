@@ -219,6 +219,13 @@ impl PtyShell {
         let mut cmd = CommandBuilder::new(shell);
         cmd.args(args);
         cmd.env("TERM", "xterm-256color");
+        // portable-pty starts the child in $HOME when no cwd is set; a HOME
+        // that is not a directory makes the child's chdir fail and the whole
+        // spawn return ENOENT. Start in HOME when it exists, else in `/`.
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|h| h.is_dir());
+        cmd.cwd(home.unwrap_or_else(|| std::path::PathBuf::from("/")));
         let child = pair
             .slave
             .spawn_command(cmd)
@@ -885,7 +892,13 @@ mod pause_resume_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use std::time::Duration;
+
+    /// Serialises the tests in this module that spawn a PTY, so their forks
+    /// never overlap. The HOME guard each of them also holds is what keeps a
+    /// HOME-mutating test from deleting `HOME` under one of these spawns.
+    static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn nonce(s: &str) -> Nonce {
         Nonce(s.to_string())
@@ -1064,6 +1077,48 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[test]
+    fn a_missing_home_still_opens_a_shell() {
+        let _pty = PTY_TEST_LOCK.lock().unwrap();
+        let _home = crate::test_home_guard();
+        let missing =
+            std::env::temp_dir().join(format!("daemoneye-pty-missing-home-{}", std::process::id()));
+        if missing.exists() {
+            std::fs::remove_dir_all(&missing).unwrap();
+        }
+        unsafe {
+            std::env::set_var("HOME", &missing);
+        }
+        let mut shell =
+            PtyShell::spawn("bash", &[], (24, 80)).expect("spawn must succeed with no HOME");
+        let out = shell
+            .run("pwd", Duration::from_secs(10))
+            .expect("pwd must run");
+        let text = String::from_utf8_lossy(&out.output);
+        assert_eq!(text.trim(), "/", "missing HOME must fall back to /");
+    }
+
+    #[test]
+    fn a_shell_still_starts_in_home() {
+        let _pty = PTY_TEST_LOCK.lock().unwrap();
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+        let mut shell =
+            PtyShell::spawn("bash", &[], (24, 80)).expect("spawn must succeed with a temp HOME");
+        let out = shell
+            .run("pwd", Duration::from_secs(10))
+            .expect("pwd must run");
+        let text = String::from_utf8_lossy(&out.output);
+        assert_eq!(
+            text.trim(),
+            dir.path().to_string_lossy(),
+            "an existing HOME must be the child's cwd"
+        );
     }
 
     #[test]

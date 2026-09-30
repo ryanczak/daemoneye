@@ -314,3 +314,42 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-30 18:20 (started)
+
+Started phase 01a (pty-spawn-transient) — executor run at HEAD `57a71924` on a
+clean `master`. Plan: Task 1 sets an explicit cwd (`$HOME` or `/`) in
+`PtyShell::spawn`; Task 2 has the six PTY-locked connect tests take
+`test_home_guard()`; Task 3 deletes `drive_fake`'s test-only retry and both
+wrong-diagnosis comments; Task 4 adds the two pinned tests; Task 5 captures the
+end-to-end block into this log.
+
+### Update — 2026-09-30 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim, redirecting to
+`/tmp/e2e-m23-01a.txt`; the file's contents follow, unedited.
+
+```sh
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2090p-0f-14i
+new_tests=2p-0f
+pty_module=21 passed
+retry_strings=1
+guarded=6
+tiocsctty=0
+```
+
+Literal check output: `PASTE MATCH` (the block above diffs clean against
+`/tmp/e2e-m23-01a.txt`).
+
+Mutation A — the `unwrap_or_else(|| PathBuf::from("/"))` fallback removed
+(`if let Some(h) = home { cmd.cwd(h); }`), test 1 run once, then restored and
+`git diff --stat` confirmed back to its pre-mutation state:
+
+```
+test a_missing_home_still_opens_a_shell ... FAILED
+panicked at src/shell/pty.rs:1101:
+spawn must succeed with no HOME: spawn_command failed: No such file or directory (os error 2)
+```

@@ -2748,10 +2748,11 @@ mod connect_tests {
     use crate::test_home_guard;
     use std::sync::Arc;
 
-    /// Serialises this module's PTY-spawning tests: each forks a real `sh`
-    /// into a PTY, and under full-suite load concurrent forks intermittently
-    /// fail (`spawn_command failed`). One at a time keeps the gate green
-    /// without hiding anything — each test still does its whole job alone.
+    /// Serialises this module's PTY-spawning tests against each other: each
+    /// forks a real `sh` into a PTY, and under full-suite load concurrent
+    /// forks intermittently fail (`spawn_command failed`). Each test also
+    /// holds `test_home_guard()` next to this lock, so a HOME-mutating test
+    /// cannot delete `HOME` out from under one of these spawns.
     static PTY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     /// The credential the "attached" transport answers with; the fake ssh
@@ -2829,11 +2830,7 @@ mod connect_tests {
 
     /// Spawn the fake ssh (`sh -c script`) in a PTY through [`drive_connect`]
     /// with the given transport halves, and time it. `connected` = the flag
-    /// file exists. The PTY spawn is retried once on the transient
-    /// `spawn_command failed: ENOENT` portable-pty's `TIOCSCTTY` pre_exec
-    /// returns under heavy parallel PTY churn — measured at `iter 0` of a
-    /// concurrently-spawning thread, gone on the next attempt. Production
-    /// keeps its single attempt; the retry lives only in the test helper.
+    /// file exists.
     async fn drive_fake(
         script: &str,
         flag: &std::path::Path,
@@ -2842,7 +2839,7 @@ mod connect_tests {
     ) -> Result<(), String> {
         let flag_path = flag.to_path_buf();
         let argv = vec!["-c".to_string(), script.to_string()];
-        let outcome = drive_connect(
+        drive_connect(
             "/bin/sh",
             &argv,
             || flag_path.exists(),
@@ -2852,24 +2849,7 @@ mod connect_tests {
             rx,
             Duration::from_secs(10),
         )
-        .await;
-        match outcome {
-            Err(msg) if msg.contains("could not be spawned") => {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-                drive_connect(
-                    "/bin/sh",
-                    &argv,
-                    || flag_path.exists(),
-                    "pinky",
-                    PROMPT_ID,
-                    tx,
-                    rx,
-                    Duration::from_secs(10),
-                )
-                .await
-            }
-            other => other,
-        }
+        .await
     }
 
     /// Hold `HOME` at a fresh temp dir (so config and `ssh_dir()` are cold)
@@ -2893,6 +2873,7 @@ mod connect_tests {
     #[tokio::test]
     async fn an_answered_prompt_restarts_the_connect_timeout() {
         let _pty = PTY_TEST_LOCK.lock().await;
+        let _home = crate::test_home_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let flag = tmp.path().join("connected");
         let script = format!(
@@ -2959,6 +2940,7 @@ mod connect_tests {
     #[tokio::test]
     async fn a_host_that_needs_no_credential_connects_without_a_prompt() {
         let _pty = PTY_TEST_LOCK.lock().await;
+        let _home = crate::test_home_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let flag = tmp.path().join("connected");
         let script = format!("sleep 0.2; touch {}; exit 0", flag.display());
@@ -2981,6 +2963,7 @@ mod connect_tests {
     #[tokio::test]
     async fn a_password_prompt_is_answered_once_and_the_host_connects() {
         let _pty = PTY_TEST_LOCK.lock().await;
+        let _home = crate::test_home_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let flag = tmp.path().join("connected");
         // The `sleep 0.3` after the read keeps the child alive once the
@@ -3014,6 +2997,7 @@ mod connect_tests {
     #[tokio::test]
     async fn a_wrong_password_is_asked_again_and_the_retry_line_does_not_abort() {
         let _pty = PTY_TEST_LOCK.lock().await;
+        let _home = crate::test_home_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let flag = tmp.path().join("connected");
         let script = format!(
@@ -3046,6 +3030,7 @@ mod connect_tests {
     #[tokio::test]
     async fn an_unanswerable_connection_prompt_fails_fast_and_leaves_nothing_running() {
         let _pty = PTY_TEST_LOCK.lock().await;
+        let _home = crate::test_home_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let flag = tmp.path().join("connected");
         let script = format!(
@@ -3082,6 +3067,7 @@ mod connect_tests {
     #[tokio::test]
     async fn an_unknown_host_key_is_refused() {
         let _pty = PTY_TEST_LOCK.lock().await;
+        let _home = crate::test_home_guard();
         let tmp = tempfile::tempdir().expect("tempdir");
         let flag = tmp.path().join("connected");
         let script = "sleep 0.2; printf \"Are you sure you want to continue connecting \
