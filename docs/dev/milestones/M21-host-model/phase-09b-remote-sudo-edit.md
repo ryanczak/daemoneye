@@ -1,7 +1,7 @@
 # Phase 09b: remote-sudo-edit — `edit_file { host, sudo: true }` edits a root-owned file on a host, answering sudo's prompt through the chat
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-09a (an edit keeps the file's mode and owner), phase-08f
 (PTY password prompts answered once, on the real prompt)
 **Estimated diff:** ~180 lines of production code across ~12 files, plus 10 tests and 1 ignored live test
@@ -845,3 +845,39 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 4402864d5c5b8952780a78bf1956c26edbafd951
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (398 turns;
+  the `(start)` entry mislabels itself "claude (sonnet-4.5, headless)")
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` clean.
+  `cargo test` gave lib **2088/0/14** on three runs, with bug_tracker 6,
+  doc_truth 14, integration 32 and isolation 10 unchanged. The reviewer
+  re-applied mutations A–C and all three went red. The live pinky test gave
+  up in 325 ms with the file unedited. The reviewer's re-run of the
+  end-to-end block matched the pasted capture byte for byte. The new
+  `unwrap` / `expect` / `panic!` calls are all in test code.
+- **Scope deviations:** one, and it was justified. Task 3 said a run error
+  becomes `format!("Error: {e}")`. The executor rendered it through
+  `shell_run_error_text` instead, so the full error chain is shown. The spec
+  was self-contradictory there: `{e}` shows only the top-level context
+  ("the password prompt in shell s0 was cancelled"), which drops the
+  "nobody is attached" reason that test 2 asserts. The executor recorded
+  this in its progress entry, and the test asserts `Error` plus that reason.
+- **Residual:** `shell_run_error_text` takes a **shell id**, and the edit
+  branch passes the owner key `"edit_file"`. The text reads "Error running
+  command in shell edit_file: …", which is not a shell id a model could use.
+  Its `ShellExited` branch would also advise "Omit `shell`", a parameter
+  `edit_file` does not have. This is cosmetic and rare, so it is recorded
+  in the milestone README's Notes rather than bounced.
+- **Calibration:** (1) **Spec facts about rendering must be executed too.**
+  The `{e}` vs `{e:#}` mistake is the "spec facts must be executed" rule
+  applied to an error format. The drafting probe printed `{e:#}` (and saw
+  the reason), but the spec wrote `{e}`. (2) **The executor names the wrong
+  model in its own Update Log again** (09a: "Claude (Opus 4.6)"; 09b:
+  "claude (sonnet-4.5, headless)"). This is the second occurrence. The
+  server-authored completion entry carries the true name, so the executor's
+  self-report should never be trusted for this field.
+
