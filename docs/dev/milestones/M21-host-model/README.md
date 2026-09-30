@@ -7,8 +7,8 @@ using the user's own keys and agent, with every credential prompt (host key,
 password, passphrase, **remote sudo**) surfacing through the approval client
 and never reaching the shell log.
 
-**Status:** complete — all 25 rows `done` (closed 2026-09-30); **awaiting PE
-sign-off** on the retrospective below and its fold candidates. Scoped
+**Status:** complete — all 25 rows `done` (closed 2026-09-30); **PE signed
+off 2026-09-30**: folds A and B landed in WORKFLOW.md, C held. Scoped
 2026-09-18 with the live-verification host `pinky`; the design's exit, a
 remote `sudo` edit from chat with the password in no log, was run live in
 09c.
@@ -173,16 +173,16 @@ throughout.
 - **(A) Every full-suite gate carries a re-run budget** (three), plus the
   rule that a newly failing test is a finding, not something to re-run
   away. One occurrence here; together with the recorded Qwen verify-loop
-  pathology it is the second of its class. **Recommend folding.**
+  pathology it is the second of its class. **Landed 2026-09-30** (WORKFLOW.md § End-to-end verification).
 - **(B) Evidence blocks are dry-run at drafting against a fixture of the
   real shape and permissions.** This is new wording for the existing
   "spec facts must be executed" rule, with four occurrences this milestone
   (item 1). **Recommend folding** as a pre-dispatch-check line, since the
-  prose rule alone did not prevent them.
+  prose rule alone did not prevent them. **Landed 2026-09-30** (pre-dispatch check rule 4).
 - **(C) The executor's self-reported model name is never trusted.** Two
   occurrences (09a, 09b). **Hold** for a third.
 
-WORKFLOW.md is unchanged pending sign-off.
+A and B landed in WORKFLOW.md on 2026-09-30 sign-off; C is held (local-only, on the upstream push backlog with the rest).
 
 **Carried forward (not M21 scope):**
 - The 09b residual: the `shell_run_error_text` label.

@@ -205,6 +205,17 @@ Before dispatch, with the finished Spec in front of you:
    § "Specs pin behavior, not rendering" and § "Run every count criterion;
    never derive it" (table row 4, prod-scoping an identifier the phase itself
    introduces).
+4. **Dry-run every evidence block against a fixture of the real shape and
+   permissions.** Build the file, the config entry or the log line the block
+   will read — with the owner and mode it will really have — and run the
+   block's commands against it before dispatch. A block written from memory
+   reads the wrong field, greps the wrong escaping, or reads as the wrong
+   user. Four M21 phases did this: 08e asserted a ghost gate on an arm that
+   had none, and predicted a mutation red without applying it; 09b wrote
+   `{e}` where its own probe had printed `{e:#}`; 09c's block read a
+   `root:640` file as the daemon user. Every one was caught at review or
+   run time, never at drafting. This is § "Spec facts must be executed"
+   applied to the evidence block itself.
 
 *(Rules 1 and 2 folded 2026-09-18 at M22 close, on PE sign-off. Neither is new;
 this is a trigger for two that already existed. Rule 1 was folded 2026-07-27 and
@@ -217,6 +228,10 @@ class after M13 phases 05 and 06. The meta-pattern is the reason this lands
 here rather than as new content: at both the M24 and M22 closes, the
 "new" folds turned out to already exist and not be followed. The content was
 right; the trigger at drafting time was missing.)*
+
+*(Rule 4 added 2026-09-30 at M21 close, on PE sign-off — fold B of that
+retrospective. The prose rule it restates already existed; this is the
+drafting-time trigger for it.)*
 
 *(Rule 3 added 2026-09-20 at M21 phase-04a review, on PE sign-off. It is the
 same meta-pattern a third time — row 4 of § "Run every count criterion" already
@@ -264,6 +279,19 @@ automatically, and it proves the gates ran, not that the phase's acceptance
 criteria were exercised against real artifacts. If the only new content in the
 Update Log is that block, the requirement is unmet no matter how accurately the
 completion summary describes what was run.
+
+**Every full-suite gate carries a re-run budget, and a new failure is a
+finding.** A criterion of the form "three consecutive green runs" with no
+cap is a loop with no exit when one test is flaky: the executor re-runs
+until the budget or the backend dies. Spec the cap in the block itself —
+three re-runs, then stop, paste the last capture as it is, and name every
+failing test. A test that fails and is **not** the named pre-existing flake
+is a real finding to report by name, never something to re-run away; a
+test the phase itself added is the first suspect (a leaked in-process
+shell made unrelated PTY tests fail at random in M21 09a). *(Folded
+2026-09-30 at M21 close, fold A, on PE sign-off: the 09a run spent ~800
+turns re-running `cargo test` and ended only when the backend dropped;
+the Qwen verify-loop pathology recorded 2026-09 is the same class.)*
 
 **One entry per dispatch, not per phase.** A phase that bounces and is
 re-dispatched needs a **new** end-to-end entry for the round that changed the
