@@ -1,21 +1,19 @@
 # NEXT
 
-**Active phase:** **M23 phase-01a — pty-spawn-transient**, drafted
-2026-09-30, status `todo`. Dispatch with `/rexymcp:dispatch phase-01a`.
+**Active phase:** **M23 phase-01b — prompt-wait-outside-deadline**, drafted
+2026-09-30, status `todo`. Dispatch with `/rexymcp:dispatch phase-01b`.
 
-**What it does.** A PTY shell starts in `$HOME` if it exists and in `/`
-otherwise, so it never fails to spawn because `HOME` is gone. The six
-connect tests in `shell_exec.rs` take `test_home_guard()` so no
-HOME-mutating test can delete `HOME` under a spawn. The test-only retry M21
-08e added is deleted, along with its wrong `TIOCSCTTY` diagnosis. Two new
-tests: 2090 / 14.
+**What it does.** `read_to_marker` adds the time spent inside the prompt
+callback (where the password round trip blocks) back to the command's
+deadline. A slow typist is no longer killed after their password was already
+sent, and a command that hangs after being answered still times out on
+schedule. It also deletes 09b's `SUDO_EDIT_TIMEOUT_SECS` workaround (now
+false) and corrects 01a's residual comment. Two new tests: 2092 / 14.
 
-**Re-diagnosed at drafting.** The exact 08e error
-(`spawn_command failed: No such file or directory (os error 2)`) reproduces
-deterministically by pointing `HOME` at a missing directory: portable-pty
-chdirs the child into `$HOME` when no cwd is set. The fix alone still failed
-the suite 2 runs in 3 (a check-then-use race with tests deleting `HOME`);
-with the guard added it was 5 of 5 green.
+**Measured at drafting.** Today, a 2 s command answered at 3 s fails "did not
+complete within the 2s limit" after the answer was written. With the fix it
+returns exit 0 (`GOT_15`). An instantly answered prompt followed by
+`sleep 30` still times out at 2.00 s. The client and shell_exec suites pass
+with the fix.
 
-**After 01a:** `/rexymcp:architect next` drafts 01b
-(prompt-wait-outside-deadline).
+**After 01b:** `/rexymcp:architect next` drafts 01c (file-op-error-label).
