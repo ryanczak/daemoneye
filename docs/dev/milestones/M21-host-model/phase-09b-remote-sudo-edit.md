@@ -602,3 +602,98 @@ You may edit these files, and nothing else:
 
 **Executor:** claude (sonnet-4.5, headless). Status flipped `todo` →
 `in-progress`; README phase-table row updated to match. Beginning Task 1.
+
+### Update — 2026-09-30 02:20 (progress)
+
+Tasks 1–6 implemented in one pass. `Option<bool>` on `EditFileArgs` /
+`AiEvent::EditFile` / `PendingCall::EditFile`, plain `bool` from `EditArgs`
+inward; `Response::EditFilePrompt` gains `#[serde(default)] sudo: bool`, set
+`false` at the other eight construction sites and `sudo` in the edit branch.
+`build_remote_edit_cmd` factored to share `remote_edit_payload_hex`; the
+root line is the `set --` shape, detected by `command_has_sudo`. The root run
+goes through `run_in_shell_with_prompts` with `SUDO_EDIT_TIMEOUT_SECS = 150`,
+and its **error** half is surfaced through `shell_run_error_text` — a bare
+`format!("Error: {e}")` would have dropped the give-up reason's context the
+model is meant to read; § Current state 3's row 2 (the "nobody is attached"
+sentence in the `Err`) is what `shell_run_error_text` renders. Ten new tests
+plus one ignored live test, names as pinned; `FAKE_ROOT` spelled
+`f=su; f+=do; eval` (the `PROMPTING` trick); `approve_and_answer_channel`
+records `edit:<path>:sudo=<bool>` then `cred`. Neighbour tests green before
+any new run: `the_write_sentinels_are_unchanged` 1, `keeps_the_files_mode` 4,
+`edit_on_a_named_host_runs_through_the_shell` 1, `file_ops` 0 failed.
+
+**Surprise worth recording:** the run path's cancelled-prompt reason only
+carries "nobody is attached to answer it" **after** `shell_run_error_text`
+formats it — the raw anyhow error reads "the password prompt in shell s0 was
+cancelled: …", so the first assertion on the outcome string failed on
+`starts_with("Error:")` (the formatted text opens "Error running command in
+shell …"). The assertions read the formatted outcome, which is what the
+model actually receives.
+
+### Update — 2026-09-30 02:30 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim (`/tmp/e2e-09b.txt`,
+143.3 s wall, nothing else running `cargo test`):
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2088p-0f-14i
+new_tests=10p-0f
+neighbours=1 passed/4 passed/1 passed/0 failed
+docs=1
+ignore_total=14
+```
+
+Every expected value matched: `lib1..3=ok` with nothing after `ok`,
+`lib_counts=2088p-0f-14i`, `new_tests=10p-0f`,
+`neighbours=1 passed/4 passed/1 passed/0 failed`, `docs=1`,
+`ignore_total=14`. No flake appeared, so no re-run was needed.
+
+Paste check:
+
+```
+PASTE MATCH
+```
+
+`grep -c '^### Update — .* (end-to-end verification)$' <this doc>` → **1**.
+
+**Mutations** (one run each, applied with `patch`, run, restored; after each
+restore `git diff --stat` matched its pre-mutation state):
+
+- **Mutation A** — `edit_file_auto_approved` ignores the root flag (returns
+  `approval.file_edits_all || approval.file_edits.contains(path)`):
+  `cargo test --lib a_root_edit_is_never_auto_approved` → **red**, as
+  expected. Observed: the assertion
+  `"the session-wide approval must not cover a root edit"` failed with
+  `left: false`, `right: true` — the session-wide flag wrongly approved the
+  root edit.
+- **Mutation B** — the root branch drops the "did not run" error so a
+  missing sentinel falls through to the "result was unclear" sentence:
+  `cargo test --lib a_wrong_password_root_edit_leaves_the_file_unedited` →
+  **red**, as expected. Observed: the assertion
+  `"a refused password says the edit did not run"` failed — the string came
+  back containing `result was unclear` (and no `did not run`) for a refused
+  password, with the file unedited and no sentinel line.
+- **Mutation C** — the line built with the word inside the `then` branch
+  (`then sudo python3 -c …`, no `set --`):
+  `cargo test --lib the_root_edit_line_is_detected_and_reuses_the_payloads`
+  → **red**, as expected. Observed:
+  `"the run path must classify the line as a privilege-tool command"` failed
+  with the built line — `command_has_sudo` returned **false** for the
+  in-branch shape, exactly the measured § Current state 2 miss.
+
+### Task 8 — the live check
+
+```
+root-edit-on-pinky result: "Error running command in shell edit_file: the password prompt in shell s0 was cancelled: a password prompt appeared and nobody is attached to answer it — the prompt was cancelled and the command did not run with elevated privileges. Give this command passwordless access on that host, or run it from a chat session.. The password prompt was cancelled with Ctrl-C, so the command did not run with elevated privileges. Fix what the error names before retrying."
+root-edit-on-pinky elapsed: 324.755862ms
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2101 filtered out; finished in 0.81s
+```
+
+`pinky` was reachable; the real privilege tool's prompt was classified, the
+give-up was fast (325 ms, cf. the drafting-measured 323 ms), the probe file
+still held `old-line` on readback, the shell was closed and the master
+exited. The criterion is met. The **answered** path against real sudo-rs is
+09c's live close, as scoped.
