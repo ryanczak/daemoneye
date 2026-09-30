@@ -1,7 +1,7 @@
 # Phase 09c: live-close — a remote sudo edit from chat on `pinky`, with the password in no log
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** done
 **Depends on:** phase-09b (`edit_file { host, sudo: true }`), phase-09a
 (mode and owner kept), phase-08e (connect first), phase-01b (`"i"` events
 scrubbed at a secret prompt)
@@ -194,15 +194,18 @@ CP=~/.daemoneye/var/run/ssh
 S=$(date +%s%N); ssh -o ControlPath="$CP/%C" -O check pinky >/dev/null 2>&1; RC=$?; E=$(( ($(date +%s%N)-S)/1000000 ))
 printf 'master-check=rc%s %sms\n' "$RC" "$E"
 ls "$CP" | wc -l | sed 's/^/masters-after=/'
-ssh -o BatchMode=yes pinky 'stat -c "after=%U:%a" /tmp/de-09c-root.txt; tr "\n" " " < /tmp/de-09c-root.txt; echo'
+ssh -o BatchMode=yes pinky 'stat -c "after=%U:%a" /tmp/de-09c-root.txt'
 } >> "$A" 2>&1
-tail -n 14 "$A"
+tail -n 13 "$A"
 ```
 
 Expected: `cast-sudo-line=1`, `cast-de-ok=1`, `cast-redacted-i` **≥ 1**,
 `cast-prompt-o` ≥ 1, `jsonl-edit-call=1`, `jsonl-sudo-arg` ≥ 1,
 `jsonl-edited=1`, `master-check=rc0 <N>ms` with N under 50,
-`masters-after=1`, `after=root:640`, and the content `a new-line b`.
+`masters-after=1`, `after=root:640`. The file is `root:640`, so `matt`
+cannot read it: its **content** is read under sudo in S5 (`content=a new-line b`).
+*(Amended at run time — the draft read it here without sudo and got
+`Permission denied`; a spec defect, not a product one.)*
 
 ### S4 — the password is in no log
 
@@ -236,7 +239,7 @@ Expected: `pw-len` > 0 (the check is not vacuous), every `pw-in-*=0`,
 A=/tmp/e2e-09c.txt
 {
 echo "== S5 CLEANUP =="
-ssh -t pinky "sudo rm -f /tmp/de-09c-root.txt; ls /tmp/de-09c-root.txt 2>&1 | sed 's/^/gone: /'"
+ssh -t pinky "sudo sh -c 'printf content=; tr \"\\n\" \" \" < /tmp/de-09c-root.txt; echo; rm -f /tmp/de-09c-root.txt'; ls /tmp/de-09c-root.txt 2>&1 | sed 's/^/gone: /'"
 tmux kill-window -t "0:live09c" 2>/dev/null; echo "live09c windows left: $(tmux list-windows -a -F '#W' | grep -c live09c)"
 } >> "$A" 2>&1
 cat "$A"
@@ -271,8 +274,8 @@ fixture exists), so each fails today.
 - [ ] `jsonl-edit-call=1`, `jsonl-sudo-arg` ≥ 1, `jsonl-edited=1` — the
       session JSONL records the `edit_file` call with `sudo: true` and its
       result.
-- [ ] `after=root:640` and content `a new-line b` — the edit landed and the
-      file kept its owner and mode.
+- [ ] `after=root:640` (S3) and `content=a new-line b` (S5, under sudo) —
+      the edit landed and the file kept its owner and mode.
 - [ ] `masters-before=0`, `masters-after=1`, `master-check=rc0` under 50 ms
       — the ControlMaster was established by this run and is reused.
 - [ ] The `(end-to-end verification)` entry holds the file as its first
@@ -321,3 +324,104 @@ criterion unmet.** Do not describe what it would have printed.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-30 (started)
+
+Architect-run with the PE present. Status flipped `todo` → `in-progress`; README row to match. Running S0.
+
+### Update — 2026-09-30 (end-to-end verification)
+
+Run by the architect with the PE at the keyboard, in tmux session `0`. The
+capture, `/tmp/e2e-09c.txt`, pasted whole:
+
+```
+== S1 REBUILD-RESTART ==
+03570db7
+    Finished `release` profile [optimized] target(s) in 52.53s
+build exit=0
+Daemon is not running (stale PID file names PID 603681).
+install: done
+daemoneye daemon started (PID 2495120)
+daemon-start exit=0
+Daemon is running.
+CHECK-S1 binary-identity: OK
+masters-before=0
+== S3 EVIDENCE ==
+cast=s0-1790788328.cast
+session=8cdda87a4120b4ae.jsonl
+cast-sudo-line=1
+cast-de-ok=1
+cast-redacted-i=1
+cast-prompt-o=1
+jsonl-edit-call=1
+jsonl-sudo-arg=1
+jsonl-edited=1
+master-check=rc0 2ms
+masters-after=1
+after=root:640
+bash: line 1: /tmp/de-09c-root.txt: Permission denied
+
+== S4 PASSWORD-ABSENCE ==
+pw-len=8
+pw-in-cast=0
+pw-in-session=0
+pw-in-daemon-log=0
+pw-in-events=0
+CHECK-S4 password-absent: OK
+== S5 CONTENT-AND-CLEANUP ==
+[sudo: authenticate] Password: ********        
+content=a new-line b 
+gone: ls: cannot access '/tmp/de-09c-root.txt': No such file or directory
+live09c windows left: 0
+```
+
+The paste-check snippet printed:
+
+```
+PASTE MATCH
+```
+
+**What the cast shows.** `s0-1790788328.cast` has exactly two `"i"` events:
+the marker-wrapped sudo edit line at `t=0.02` (2697 bytes, opening with the
+`export SUDO_PROMPT` sentinel), and `[redacted]` at `t=4.34` — the
+password, 4.3 s after pinky's prompt `[sudo: [de-sudo-prompt-0]] Password:`
+appeared in the output. The `DE_OK: Edited /tmp/de-09c-root.txt` line
+follows. The 8-character password appears in no log (`pw-in-*=0`).
+
+**Chat side.** The panel read `/tmp/de-09c-root.txt (remote via host pinky,
+as root via sudo)` with the `⚠ runs as root (sudo) on the host` line and a
+`-old-line` / `+new-line` diff; the PE pressed `y`, then answered
+`[sudo] password required`. The tool result was `Edited … on host pinky.`
+The AI did not read the file first.
+
+**Two run-time notes.** (1) The first `tmux send-keys` of the turn was
+dropped: the client was still streaming its opening greeting and does not
+accept input while streaming. Re-sent once idle, it went through. (2) The
+draft's S3 read the file's content as `matt`, which a `root:640` file
+refuses; the content read moved into S5 under sudo (`content=a new-line b`).
+Spec defect, amended in place; no product finding.
+
+**S0.2 and S4 ran in a tmux window** (`fixture09c`), not through the
+`!` runner: that runner has no terminal, so neither `sudo` nor `read -rs`
+can prompt there.
+
+### Review verdict — 2026-09-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Claude Code (direct) — architect-run with the PE present
+- **Reviewer re-run:** the evidence *is* the run; every acceptance line is
+  read from the pasted capture. `CHECK-S1 binary-identity: OK`;
+  `cast-sudo-line=1`, `cast-de-ok=1`, `cast-redacted-i=1`;
+  `CHECK-S4 password-absent: OK` with `pw-len=8`; `jsonl-edit-call=1`,
+  `jsonl-sudo-arg=1`, `jsonl-edited=1`; `after=root:640` and
+  `content=a new-line b`; `masters-before=0`, `masters-after=1`,
+  `master-check=rc0 2ms`. `git diff --stat HEAD -- src/` is empty.
+- **Scope deviations:** none in code. One live-config change kept:
+  `[hosts.pinky]` in `~/.daemoneye/etc/config.toml`; the installed binary
+  is now HEAD.
+- **Calibration:** (1) A spec that reads a file it just made root-only
+  must say who reads it — "spec facts must be executed" applies to the
+  evidence block too. (2) The `!` runner is not a terminal; anything that
+  prompts (sudo, `read -rs`) needs a tmux window. (3) The chat client drops
+  input while streaming; scripted turns must wait for idle.
