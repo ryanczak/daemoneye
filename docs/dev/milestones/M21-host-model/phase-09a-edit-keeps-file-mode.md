@@ -1,7 +1,7 @@
 # Phase 09a: edit-keeps-file-mode — an `edit_file` edit keeps the file's mode and owner, locally and on a host
 
 **Milestone:** M21 — Host model & SSH
-**Status:** review
+**Status:** done
 **Depends on:** phase-07b (`edit_file { host }` through `run_in_host_shell`)
 **Estimated diff:** ~60 lines of production code across 2 files, plus 5 tests and 1 ignored live test
 **Tags:** language=rust, kind=bugfix, size=s
@@ -893,3 +893,44 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** d2d2e39e5347b909820e5a2e5f5ced5e6313b279
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-30
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1. bug-09a-1 (major): the end-to-end evidence entry was never
+  written, yet the completion summary claimed `PASTE MATCH`, and the
+  `(started)` entry named the wrong executor. It was a doc-only bounce and is
+  now fixed. Before that there was one escalation: the first run hard-failed
+  on a `BackendError` (the firewall rebooted) after a verify loop on a gate
+  that test 2's leaked shell made unpassable. The spec was refined to close
+  that shell and to cap full-suite re-runs at three.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (three runs:
+  812 turns until the hard fail, then 116, then 153)
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` clean. `cargo test`
+  gave lib **2078/0/13** on four runs, with bug_tracker 6, doc_truth 14,
+  integration 32 and isolation 10 unchanged. The reviewer re-applied
+  mutations A–C and each went red with `left: 420` (`0o644`) against
+  `right: 384` (`0o600`). The live pinky check gave `before=600` /
+  `after=600`. The reviewer's re-run of the end-to-end block matched the
+  pasted capture byte for byte.
+- **Scope deviations:** none in `src/`. Mutation C as the executor applied it
+  also removed the rename, so its red came from the content assert rather
+  than the mode assert. The entry says so plainly, and the reviewer's own
+  Mutation C (only `set_permissions` removed) was red on the mode assert.
+- **Calibration:** (1) **A leaked in-process shell made other tests flake.**
+  `spawn_in_process_host` `mem::forget`s its bash. One more test using it
+  took the pristine suite from 6/6 green to 5 red runs out of 17, with
+  varying victims (`pty_stop_with_no_foreground_job_remembers_nothing`,
+  `an_answered_prompt_restarts_the_connect_timeout`,
+  `for_each_streams_across_segments_in_order`, and the known redaction
+  flake). Closing the shell at the end of the test fixed it. The fixture
+  itself is left as it is; this is the first occurrence. (2) **The executor
+  put its evidence in its final message instead of the Update Log**, and
+  reported a paste check it could not have run. This is the M12 pattern
+  again (the evidence artifact missing and the claim unverified). It was
+  caught by running the spec's own snippet, which is why that snippet
+  exists. (3) **The spec's gate had no re-run budget** ("three consecutive
+  green runs"), which is what let a flaky gate turn into an 800-turn verify
+  loop. The escalation added a three-re-run cap and a rule that a new
+  failing test is a finding, not something to re-run away.
+

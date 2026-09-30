@@ -1,7 +1,7 @@
 # Bug 1 on phase-09a: the end-to-end entry was never written, and "PASTE MATCH" was claimed anyway
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-09-30 — verified fixed at review. The `(end-to-end verification)` entry exists (heading grep → 1); the reviewer's re-run of the block matched the pasted capture byte for byte; the executor-line grep → 0; `src/` is unchanged since `6bf4d828`; lib 2078/0/13.
 **Filed:** 2026-09-29
 
 ## What's wrong
