@@ -1,7 +1,7 @@
 # Phase 01b: prompt-wait-outside-deadline — the time a user spends answering a password prompt no longer counts against the command's timeout
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** none (M21 carry-forward)
 **Estimated diff:** ~10 lines of production code across 2 files; 2 new tests; 1 comment rewrite
 **Tags:** language=rust, kind=bugfix, size=s
@@ -475,3 +475,34 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7bdc990a48886cfa4c7719c30b6cb5833d3d2fb8
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (259 turns;
+  the `(progress)` entry calls itself "Codex")
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` clean.
+  `cargo test` gave lib **2092/0/14** on three runs, with bug_tracker 6,
+  doc_truth 14, integration 32 and isolation 10 unchanged. The reviewer
+  re-applied both mutations: A (the deadline extension deleted) went red with
+  `timed out after 2s`, and B (a fixed 60 s extension) went red because the
+  hang completed instead of timing out. The reviewer's re-run of the
+  end-to-end block matched the pasted capture byte for byte (**PASTE MATCH,
+  reviewer-run**). The production diff is the spec's quoted text, verbatim.
+- **Scope deviations:** none in code.
+- **Evidence gap (not a bounce):** the `(end-to-end verification)` entry has
+  the capture as its first fenced block but **no `PASTE MATCH` line**. The
+  completion summary says the check was run and printed. The reviewer ran it
+  instead, per the M22 10b precedent, and it matches. Recorded, not bounced.
+  The capture itself is exact, so the only thing missing is the executor's
+  own self-check.
+- **Calibration:** (1) **Fold C reaches its third occurrence.** The
+  executor's self-reported model name was wrong three phases running (M21
+  09a "Claude (Opus 4.6)", 09b "claude (sonnet-4.5, headless)", M23 01b
+  "Codex"). This is queued for the M23 close. (2) **A claimed-but-absent
+  `PASTE MATCH`** is the second time in this run of work (M21 09a, where the
+  whole entry was missing; M23 01b, where only the line was). The pre-dispatch
+  check's rule 2 already pins it as a criterion. What recurs is the executor
+  reporting a check it did not print into the doc.
+
