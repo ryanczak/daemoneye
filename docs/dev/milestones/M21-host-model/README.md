@@ -187,7 +187,10 @@ A and B landed in WORKFLOW.md on 2026-09-30 sign-off; C is held (local-only, on 
 **Carried forward (not M21 scope):**
 - The 09b residual: the `shell_run_error_text` label.
 - `PtyShell::spawn`'s transient ENOENT under parallel PTY churn, seen in
-  production code during 08e and worked around only in tests.
+  production code during 08e and worked around only in tests. *(Corrected
+  2026-09-30 at M23 01a drafting: the cause is portable-pty defaulting the
+  child's cwd to a `$HOME` the tests had deleted, not `TIOCSCTTY`, and
+  production is exposed only when `HOME` is not a directory.)*
 - `run_terminal_command`'s deadline includes the user's password-typing
   time (09b § Current state 4).
 - Per-session JSONL logs have no retention setting.

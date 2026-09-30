@@ -64,7 +64,7 @@ last.
 
 | # | Phase | Status |
 |---|---|---|
-| 01a | pty-spawn-transient — `PtyShell::spawn` fails intermittently with `ENOENT` under parallel PTY churn (portable-pty's `TIOCSCTTY` pre_exec, measured in M21 08e). Production has one attempt; the tests retry. Re-measure first, then fix it or retry it where production spawns | todo (not drafted) |
+| 01a | pty-spawn-transient ([phase-01a-pty-spawn-transient.md](phase-01a-pty-spawn-transient.md)) — **re-diagnosed at drafting:** not a `TIOCSCTTY` race. portable-pty starts every child in `$HOME` when no cwd is set, and the tests delete temp `HOME`s, so a spawn's `chdir` hits `ENOENT` (reproduced deterministically with the exact 08e string). Fix: an explicit cwd, `$HOME` or `/`; the connect tests take the HOME guard; the test-only retry and the wrong comments go. Measured: the fix alone still failed 2 runs in 3; with the guard, 5 of 5 green. Production exposure is only a daemon whose `HOME` is not a directory | todo |
 | 01b | prompt-wait-outside-deadline — a command's deadline (`read_to_marker`) counts the time the user spends typing a password, so a slow typist times out `run_terminal_command`. The credential wait must not consume the command's budget. (M21 09b gave only the sudo edit a longer timeout) | todo (not drafted) |
 | 01c | file-op-error-label — the 09b residual: a sudo edit's error reads "in shell edit_file" (an owner key, not a shell id), and its `ShellExited` branch advises an `edit_file` parameter that does not exist | todo (not drafted) |
 | 01d | session-log-retention — per-session `var/log/sessions/<id>.jsonl` logs have no retention setting at all; only `.archive.jsonl` does (`archive_retention_days`). Add one, default off | todo (not drafted) |
