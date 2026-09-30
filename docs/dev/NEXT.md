@@ -1,10 +1,12 @@
 # NEXT
 
-**Active phase:** none — **M21 (Host model & SSH) is complete**, closed and
-**PE signed off 2026-09-30** (folds A and B landed in WORKFLOW.md) (`docs/dev/milestones/M21-host-model/README.md` § Notes →
-Retrospective).
+**Active phase:** none — **M23 (Client decoupling & shell UX) is scoped**
+(2026-09-30) and **awaiting PE sign-off on the breakdown**
+(`docs/dev/milestones/M23-client-decoupling/README.md`), including three open
+questions: the `daemon.tmux_session` default, where the live close runs, and
+when `/panes` retires.
 
-**Next:** `/rexymcp:architect` scopes the next milestone.
-Per the 2.0 roadmap (`docs/design/daemoneye-2.0.md`), M23 (client
-decoupling & shell UX, which also owns the `[HOSTS]` context block) and M25
-(governor & guards) remain before M26's tmux removal.
+**After sign-off:** `/rexymcp:architect next` drafts row 01a
+(pty-spawn-transient), the first of M21's four carry-forwards.
+
+M21 is closed and signed off (2026-09-30).

@@ -1,0 +1,130 @@
+# M23 — Client decoupling & shell UX
+
+**Goal:** `daemoneye chat` runs in any terminal with no tmux server anywhere,
+and the user can see, follow, attach to, pause, resume and replay the PTY
+shells the daemon and its agents run: `/shells`, `/tail`, `/agents` with
+attached mode, `/logs`, `/log`, `/hosts` and `/shell`.
+
+**Status:** planning — scoped 2026-09-30 on live measurements (below),
+**awaiting PE sign-off on the breakdown**.
+
+**Depends on:** M20 (the PTY shell substrate and its host protocol), M21 (hosts,
+per-host shells, credential prompts), M22 (`list_shells` / `[SHELLS]`), M24
+(runs, `/runs`, `/stop`, cooperative cancel). Blocks M26 (tmux removal):
+tmux cannot be deleted while chat still needs it.
+
+**Exit criteria:**
+
+- **The design's exit, live:** from a terminal with **no tmux server
+  running**, pick a running ghost from `/agents`, attach, pause it (`Ctrl-p`),
+  resume it, detach (`Ctrl-d`), then `/log` replay of a finished shell.
+  Architect-run per the M14 convention, with the PE at the keyboard. "No tmux
+  server" is checked, not assumed: `tmux ls` under the client's and the
+  daemon's `TMUX_TMPDIR` must report no server before, during and after the
+  run.
+- **Nothing starts tmux.** Launched outside tmux, neither `daemoneye daemon`
+  nor `daemoneye chat` creates, attaches to or execs a tmux session. Inside
+  tmux, today's behaviour is unchanged until M26 deletes it.
+- **The design's IPC additions exist and are tested:** `ShellList`,
+  `ShellTail { id, follow }` → `ShellChunk` / `ShellExited`, `ShellInput`,
+  `ShellResize`, `ShellLogList`, `ShellLogRead`, with the 1 MiB payload cap
+  and chunked tails.
+- **Every attached keystroke is accountable:** typed input lands in the shell's
+  `"i"` log and in `events.jsonl` as a user-authored input event, and the
+  owning agent is told on its next turn. A password typed while attached is
+  scrubbed, as 01b does for daemon-answered prompts.
+- **`[HOSTS]` context block** renders configured hosts and ControlMaster
+  state (M21 and M22 deferred it here).
+- **M21's carry-forwards are closed** (rows 01a–01d).
+- **42 tools, 28 core + 14 deferred, unchanged** — every M23 feature is client
+  and IPC surface, not a model tool. `tests/doc_truth.rs` stays green.
+- README.md documents every new slash command (PE rule: README is current at
+  every 2.0 milestone close).
+- All four gates green.
+
+## Architecture references
+
+- `docs/design/daemoneye-2.0.md` § 2.6 "Chat client" — the slash-command
+  table, attached mode and its three chords (PE decision), and the IPC
+  additions. § 2.1 — the shell host protocol these relay to.
+- `docs/design/transcript-view.md` — the M17 alt-screen viewer that `/tail`
+  and `/log` extend.
+- `docs/dev/milestones/M21-host-model/README.md` § Retrospective → "Carried
+  forward" — rows 01a–01d.
+
+## Phases
+
+Proposed, pre-measurement per row — **each is re-derived at drafting and may
+split on a measured seam**, as M20–M22 and M24 rows did. Order: M21's
+carry-forwards first (two of them sit on the PTY run path everything here
+builds on); then the no-tmux startup, because every later live check needs
+it; then the IPC the UX consumes; then the UX, cheapest first; the live close
+last.
+
+| # | Phase | Status |
+|---|---|---|
+| 01a | pty-spawn-transient — `PtyShell::spawn` fails intermittently with `ENOENT` under parallel PTY churn (portable-pty's `TIOCSCTTY` pre_exec, measured in M21 08e). Production has one attempt; the tests retry. Re-measure first, then fix it or retry it where production spawns | todo (not drafted) |
+| 01b | prompt-wait-outside-deadline — a command's deadline (`read_to_marker`) counts the time the user spends typing a password, so a slow typist times out `run_terminal_command`. The credential wait must not consume the command's budget. (M21 09b gave only the sudo edit a longer timeout) | todo (not drafted) |
+| 01c | file-op-error-label — the 09b residual: a sudo edit's error reads "in shell edit_file" (an owner key, not a shell id), and its `ShellExited` branch advises an `edit_file` parameter that does not exist | todo (not drafted) |
+| 01d | session-log-retention — per-session `var/log/sessions/<id>.jsonl` logs have no retention setting at all; only `.archive.jsonl` does (`archive_retention_days`). Add one, default off | todo (not drafted) |
+| 02 | no-tmux-startup — outside tmux, `chat` must not auto-attach and the daemon must not create a managed session. **Measured:** with the default `tmux_session = "daemoneye"`, `chat` bails ("Managed tmux session 'daemoneye' does not exist yet"); with `tmux_session = ""` the daemon still runs `tmux new-session -d -s ''` and **starts a tmux server**. With both suppressed, a full tool-calling chat turn already works on the PTY path | todo (not drafted) |
+| 03 | shell-ipc — `Request::{ShellList, ShellTail{id,follow}, ShellInput, ShellResize}` and `Response::{ShellList, ShellChunk, ShellExited}`, the daemon relaying to the host socket (the host already speaks `Subscribe` / `Input` / `Resize` / `Signal` / `Status`). No client UI | todo (not drafted) |
+| 04 | shells-and-hosts — `/shells` (id, host, owner, state, last command, age) and `/hosts` (configured hosts, ControlMaster state, shells per host); the `[HOSTS]` context block. `/panes` stays until M26 | todo (not drafted) |
+| 05 | tail — `/tail <sN>` (alias `/watch`): live tail in the M17 alt-screen viewer through the vt100 grid, `f` toggles follow, `/` searches, `Esc` returns. Read-only | todo (not drafted) |
+| 06 | logs-and-replay — `ShellLogList` / `ShellLogRead`; `/logs [host] [--owner] [--since]` and `/log <id>` with marker navigation (`n` / `p`) and asciicast-timed replay (`space`) | todo (not drafted) |
+| 07 | agents-and-attach — the `/agents` picker (alias `/attach`, and `/attach <sN>`) and attached mode: full-screen pass-through via `ShellInput` / `ShellResize`, the grid rendered locally, `Ctrl-d` detaches, `Ctrl-d Ctrl-d` sends EOF | todo (not drafted) |
+| 08 | attach-chords — `Ctrl-p` pause/resume (`SIGSTOP` / `SIGCONT` to the foreground group; the owning run parks `Paused` and is told how long) and `Ctrl-c` cancel (cooperative run cancel + `SIGINT`, `Cancelled{stage: "user_attached"}`); attached input logged as user-authored and reported to the agent; scrubbed at a secret prompt | todo (not drafted) |
+| 09 | user-shell — `/shell [host]` opens a user-owned shell (owner `User`) agents can see but drive only through approval; useful to pre-authenticate to a host | todo (not drafted) |
+| 10 | live-close — the exit criterion end to end, with no tmux server. Architect-run; the phase exists so the obligation is a tracked `## Spec` task, not a close-out promise | todo (not drafted) |
+
+## Notes
+
+### Measured before scoping (2026-09-30, HEAD `f872adaa`)
+
+Each fact was run, not read. Probes used a separate tmux server on its own
+socket **only as the terminal emulator**, with the client's `TMUX` and
+`TMUX_PANE` unset and `TMUX_TMPDIR` pointed at an empty directory, so the
+client could reach no tmux server. (`script` alone is not enough: with no
+real terminal on its far side, the ratatui renderer's cursor-position query
+times out and the client exits before doing anything.) The throwaway daemon
+ran in its own `HOME` with the webhook disabled, so its port could not collide
+with the real one.
+
+- **None of the seven new slash commands exists** (`/shells`, `/tail`,
+  `/agents`, `/logs`, `/log`, `/hosts`, `/shell`), and there is **no
+  shell-facing IPC**. `/runs`, `/run` and `/stop` exist (M24).
+- **The host protocol is ready.** `ShellRequest` already carries `Subscribe`,
+  `Input`, `Resize`, `Signal { INT | TERM | STOP | CONT }` and `Status`
+  (`src/shell/proto.rs`). Row 03 is a relay, not a new protocol.
+- **`chat` outside tmux bails by default.** `run_chat_inner`
+  (`src/cli/commands/chat.rs:42`) execs `tmux attach-session` into the managed
+  session when `TMUX_PANE` is unset; `daemon.tmux_session` defaults to
+  `"daemoneye"` (`src/config/types.rs:366`), and with no such session the
+  client prints "Managed tmux session 'daemoneye' does not exist yet" and
+  exits.
+- **With `tmux_session = ""`, the client works without tmux.** Banner, status
+  bar, the opening greeting and a full tool-calling turn
+  (`echo M23-PROBE $(tty)` → `M23-PROBE /dev/pts/10` in a PTY shell, output
+  returned and reported) all completed with no tmux reachable from the client.
+- **The daemon starts a tmux server when launched outside tmux**, even with
+  `tmux_session = ""`: it runs `tmux new-session -d -s ''`
+  (`src/daemon/mod.rs:626`) and logs "Created managed tmux session ''." A
+  session literally named empty appeared on a fresh server. An empty name is
+  not treated as "off".
+- **Gotcha for every live check here:** the client drops input sent while it
+  is streaming (the opening greeting included). A scripted turn must wait for
+  idle, then confirm the text landed in the transcript before waiting on
+  anything else.
+
+### Open questions for the PE (to settle at sign-off)
+
+1. **Default for `daemon.tmux_session`.** Keep `"daemoneye"` (users who launch
+   outside tmux keep today's managed session until M26) and make only `""`
+   mean off? Or change the default to off now, since nothing in 2.0 needs the
+   managed session?
+2. **Where the live close runs.** The design says a plain `alacritty` window;
+   that needs the PE at the machine. The alternative is the measured
+   substitute above: a private tmux server used only as the emulator, with
+   `TMUX_TMPDIR` isolated and checked empty.
+3. **`/panes`.** Keep it until M26 deletes tmux (proposed), or retire it in
+   row 04 when `/shells` replaces it?
