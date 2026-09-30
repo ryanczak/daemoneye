@@ -5,8 +5,9 @@ and the user can see, follow, attach to, pause, resume and replay the PTY
 shells the daemon and its agents run: `/shells`, `/tail`, `/agents` with
 attached mode, `/logs`, `/log`, `/hosts` and `/shell`.
 
-**Status:** planning — scoped 2026-09-30 on live measurements (below),
-**awaiting PE sign-off on the breakdown**.
+**Status:** in-progress — scoped 2026-09-30 on live measurements (below);
+**PE signed off on the breakdown 2026-09-30** with three decisions (§ Notes →
+"PE decisions at sign-off"). Next: `/rexymcp:architect next` → 01a.
 
 **Depends on:** M20 (the PTY shell substrate and its host protocol), M21 (hosts,
 per-host shells, credential prompts), M22 (`list_shells` / `[SHELLS]`), M24
@@ -115,6 +116,23 @@ with the real one.
   is streaming (the opening greeting included). A scripted turn must wait for
   idle, then confirm the text landed in the transcript before waiting on
   anything else.
+
+### PE decisions at sign-off (2026-09-30)
+
+1. **`daemon.tmux_session` keeps its `"daemoneye"` default.** Only `""` means
+   off. Users who launch outside tmux keep today's managed session until M26
+   deletes it; row 02 makes `""` really mean off on both the client and the
+   daemon side, and changes nothing inside tmux.
+2. **The live close runs in the measured substitute:** a private tmux server
+   on its own socket, used only as the terminal emulator, with the client's
+   `TMUX` / `TMUX_PANE` unset and `TMUX_TMPDIR` pointed at an isolated
+   directory that `tmux ls` reports empty before, during and after. A real
+   alacritty window is not required.
+3. **`/panes` stays until M26.** Row 04 adds `/shells` beside it and does not
+   retire it.
+
+*(The three questions below were settled by these decisions; kept for the
+record.)*
 
 ### Open questions for the PE (to settle at sign-off)
 
