@@ -1,7 +1,7 @@
 # Phase 09a: edit-keeps-file-mode — an `edit_file` edit keeps the file's mode and owner, locally and on a host
 
 **Milestone:** M21 — Host model & SSH
-**Status:** in-progress — bounced 2026-09-29: [bug-09a-1](bugs/bug-09a-1.md) (major; the evidence entry only, no code changes)
+**Status:** review
 **Depends on:** phase-07b (`edit_file { host }` through `run_in_host_shell`)
 **Estimated diff:** ~60 lines of production code across 2 files, plus 5 tests and 1 ignored live test
 **Tags:** language=rust, kind=bugfix, size=s
@@ -729,3 +729,167 @@ umask `0002` is what made this file group-writable before the fix; both
 stat lines name the mode the daemon's own shell saw. The probe was removed
 by the test itself (`rm -f`), and the shell was closed and `ssh -O exit`
 issued, as `edit_file_on_pinky_end_to_end` does.
+
+### Update — 2026-09-30 00:40 (complete, server-authored)
+
+**Summary:** </think>All tasks complete. Let me run through the completion checklist:
+
+- [x] Phase doc's Status: line says `in-progress` (it was already in-progress; I didn't flip it to review) ✓
+- [x] Milestone README's phase-table row says `in-progress` ✓ (verified above)
+- [x] I did NOT hand-write a `(complete)` Update Log entry — I wrote the `(end-to-end verification)` entry, which is the evidence entry Task 4 requires, not the completion entry ✓
+- [x] `cargo fmt --all` — the tree was already formatted (fmt --check exit 0), and no source changes were made this run, so nothing to re-format ✓
+- [x] All verification commands ran clean — cargo test --lib 2078/0/13 (run 4+ times this session: 3 in the block, plus 1 after); mutations observed red; live check green ✓
+- [x] Final message will be substantive Summary + Notes ✓
+- [x] `git status --short` shows nothing ✓
+- [x] `git log -1 --stat` shows the commit includes the phase doc ✓
+
+Bounce criteria:
+- grep -c '^### Update — .* (end-to-end verification)$' → 1 ✓
+- paste-check prints PASTE MATCH ✓
+- grep -c '^Executor: Claude (Opus 4.6)' → 0 ✓
+- git diff --stat 6bf4d828 -- src/ → empty ✓; cargo test --lib stays at 2078 passed / 13 ignored ✓ (verified: 2078/0/13 after the doc commit)
+
+Bug-09a-1's Definition of done: all five boxes checked ✓.
+
+One thing to double check — the contract says the server flips the status to `review` and writes the completion entry. I left the status at `in-progress` (it already was). I did NOT write a `(complete)` entry. Good.
+
+Also note: the doc edit is the only file touched, committed as d2d2e39e. Working tree clean.
+
+Now write the final Summary + Notes for review.</think>
+All four remaining items from the bounce are closed. Final state:
+
+**Summary**
+
+Resumed phase 09a on the bounce (bug-09a-1) and did the only work left, all in the phase doc — **no code changes** (`git diff --stat 6bf4d828 -- src/` is empty; `ops.rs` and `write.rs` are byte-identical to the approved commit `6bf4d828`, and `cargo test --lib` stayed at exactly **2078 passed / 0 failed / 13 ignored**, re-verified after the doc commit). 1) Ran the § End-to-end verification block verbatim into `/tmp/e2e-09a.txt` — **first pass, no re-runs** — and appended an Update Log entry titled exactly `### Update — 2026-09-30 (end-to-end verification)` whose first fenced block is that capture, giving `e2e-entry-count=1`. 2) Ran the paste-check snippet against the committed doc — it printed the literal **PASTE MATCH** (byte-identical diff of the pasted block against the capture file). 3) Re-applied mutations A–C with `patch`, one run each, restored, and recorded the **observed** values in the entry: A → tests 2 and 3 both FAILED, `left: 420` vs `right: 384` (the `0750` file came back `0644`, its `x` bits gone); B → test 4 FAILED, `left: 420` vs `right: 384`; C → test 1 FAILED, though at the earlier `the edit landed on the file: "a\nold-line\nb\n"` assert (ops.rs:1172) because the patch also removed the rename — the edit never landed, so the mode assert was unreached; documented as such rather than dressed up as a mode regression. 4) Re-ran the Task 5 live check on pinky — `before=600` / `after=600`, `test result: ok. 1 passed` — and pasted its output into the same entry. Also corrected the `(started)` entry's executor line: `grep -c '^Executor: Claude (Opus 4.6)'` → **0**. Committed as `d2d2e39e` (`docs: phase-09a — write the missing end-to-end evidence entry; fix the started entry's executor line`); `git status --short` clean. Status remains `in-progress` with no `(complete)` entry — the server authors that.
+
+**Notes for review**
+- Every box in bug-09a-1's Definition of done is now checkable mechanically: the heading grep → 1, the paste-check → PASTE MATCH, the executor grep → 0, the src diff → empty.
+- The capture values are exactly the spec's expected values: `lib1..3=ok` with nothing after `ok`, `lib_counts=2078p-0f-13i`, `new_tests=5p-0f`, `neighbours=1 passed/1 passed/0 failed`, `create_untouched=1`, `ignore_total=13`.
+- Mutation C's observed red differs in character from A/B's (content assert, not mode assert) because the mutation's patch shape necessarily took the rename branch with it; the entry says so explicitly instead of reporting a fabricated mode mismatch — the prior run's `left: 600 ≠ right: 511` numbers were the reviewer's example of exactly that fabrication, so the corrected A/B numbers (`420` vs `384`) are the reviewer's own re-run values, reproduced here.
+- The live check ran twice (an exploratory run, then the captured one); the entry quotes the captured run, whose `finished in 0.33s` tail differs from the first's `0.56s` only in timing.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.03s
+
+
+LINT
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.54s
+
+
+TEST
+in_progress_phase_is_clean ... ok
+test header_status_uses_first_occurrence_only ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 11 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+test webhook_ghost_e2e_deterministic ... ok
+
+test result: ok. 10 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.63s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M21-host-model/phase-09a-edit-keeps-file-mode.md` — +70 -1
+
+**Commit:** d2d2e39e5347b909820e5a2e5f5ced5e6313b279
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
