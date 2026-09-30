@@ -1,7 +1,7 @@
 # Phase 01a: pty-spawn-transient — a PTY shell never fails to spawn because `$HOME` is gone, and the tests stop racing `HOME`
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** none (M21 carry-forward)
 **Estimated diff:** ~10 lines of production code in 1 file; ~30 lines of test changes in 2 files; 2 new tests
 **Tags:** language=rust, kind=bugfix, size=s
@@ -485,3 +485,45 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e789417f5eda6f11736e5688820cd5cf4a8eece4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-09-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (103 turns)
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` clean.
+  `cargo test` gave lib **2090/0/14** with bug_tracker 6, doc_truth 14,
+  integration 32 and isolation 10 unchanged. The criteria greps gave retry 1,
+  guarded 6, `TIOCSCTTY` 0, and the PTY module 21. The reviewer re-applied
+  Mutation A and it went red with `spawn_command failed`. The reviewer's
+  re-run of the end-to-end block matched the pasted capture on every line
+  except `lib1`, where the named pre-existing flake
+  (`input_after_a_prompt_logs_a_redaction_marker`) fired, which the spec
+  allows.
+- **Flake attribution:** the redaction flake fired 3 times in the first ~17
+  full runs with the new tests present, all on a busy machine just after the
+  executor run. An **interleaved A/B, 8 rounds each** (with the two new
+  tests, and with them `--skip`ped) was **0/8 red on both sides**, so the
+  new tests do not measurably raise its rate.
+- **Scope deviations:** (1) A module-local `PTY_TEST_LOCK` was added in
+  `src/shell/pty.rs` tests, serialising the two new tests. It is harmless and
+  was not asked for. (2) The new tests do **not** save and restore `HOME` by
+  hand, as the spec asked. **The executor was right:** `TestHomeGuard`
+  (`src/lib.rs:75`) restores `HOME` on drop, so the instruction was
+  redundant. The spec's claim that neighbour tests "do not restore it", and
+  its Out-of-scope note that tests "leave HOME pointing at a deleted temp
+  dir", were both wrong. The real race window is narrower: a guarded test's
+  `TempDir` is deleted a moment before its guard restores `HOME`, and an
+  unguarded spawn can land in that gap. The fix and its evidence are
+  unaffected.
+- **Residual (carried to 01b):** the rewritten `PTY_TEST_LOCK` doc comment
+  (`src/daemon/executor/shell_exec.rs`, `connect_tests`) still says
+  "under full-suite load concurrent forks intermittently fail
+  (`spawn_command failed`)". That is half of the wrong diagnosis this phase
+  existed to remove. Goal item 3 is therefore only partly met, which is too
+  small for a bounce. It is carried to 01b, which works in the same file.
+- **Calibration:** the drafting architect's reading of a helper
+  (`test_home_guard`) was wrong. It was quoted from memory of other tests,
+  not read from `src/lib.rs`. This is the "spec facts must be executed" rule
+  again, applied to a test fixture, and the executor caught it.
+
