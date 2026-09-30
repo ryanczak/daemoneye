@@ -105,8 +105,8 @@ pub fn dispatch_tool_event(
 mod tests {
     use super::super::defs::{APPROVAL_GATED_TOOLS, TOOLS};
     use super::super::schema::{
-        Category, ToolDef, category_of, enum_values, get_tool_definition, render_anthropic,
-        render_gemini, select_tools, tools_in_group,
+        Category, ParamTy, ToolDef, category_of, enum_values, get_tool_definition,
+        render_anthropic, render_gemini, select_tools, tools_in_group,
     };
     use super::*;
     use serde_json::json;
@@ -957,5 +957,47 @@ mod tests {
             Some(33),
             "the timeout lands in `timeout_secs`"
         );
+    }
+
+    /// The root-edit flag on the tool surface: the schema carries it, and a
+    /// dispatch carries it through to the event — present as `Some(true)`,
+    /// absent as `None`, never a silent default.
+    #[test]
+    fn edit_file_takes_a_root_flag() {
+        let def = TOOLS
+            .iter()
+            .find(|t| t.name == "edit_file")
+            .unwrap_or_else(|| panic!("edit_file is in TOOLS"));
+        let param = def
+            .params
+            .iter()
+            .find(|p| p.name == "sudo")
+            .unwrap_or_else(|| panic!("edit_file carries a root-edit param"));
+        assert!(matches!(param.ty, ParamTy::Bool), "the param is a bool");
+        assert!(!param.required, "the param is optional");
+
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "edit_file",
+            &json!({"path": "/tmp/f", "host": "pinky", "sudo": true}),
+            None,
+        )
+        .expect("the args dispatch");
+        match ev {
+            AiEvent::EditFile { sudo, host, .. } => {
+                assert_eq!(sudo, Some(true), "the flag lands in the event");
+                assert_eq!(host.as_deref(), Some("pinky"), "the host lands too");
+            }
+            other => panic!("expected AiEvent::EditFile, got {other:?}"),
+        }
+
+        let ev = dispatch_tool_event("tc_1", "edit_file", &json!({"path": "/tmp/f"}), None)
+            .expect("the args dispatch");
+        match ev {
+            AiEvent::EditFile { sudo, .. } => {
+                assert_eq!(sudo, None, "absent is None, never a silent default");
+            }
+            other => panic!("expected AiEvent::EditFile, got {other:?}"),
+        }
     }
 }

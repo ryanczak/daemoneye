@@ -10,6 +10,7 @@ pub struct EditArgs<'a> {
     pub content: Option<&'a str>,
     pub dest_path: Option<&'a str>,
     pub host: Option<&'a str>,
+    pub sudo: bool,
 }
 
 /// Resolve an `edit_file` host argument the way `read_file` does: `None` /
@@ -48,6 +49,7 @@ where
         content,
         dest_path,
         host,
+        sudo,
     } = args;
     let GhostCtx { is_ghost, .. } = ghost_ctx;
 
@@ -99,6 +101,22 @@ where
         Err(msg) => return Ok(ToolCallOutcome::Result(format!("Error: {msg}"))),
     };
 
+    // ── sudo scoping refusals, before any prompt ──────────────────────────
+    if sudo {
+        if operation != "edit" {
+            return Ok(ToolCallOutcome::Result(
+                "Error: sudo is supported for operation=\"edit\" only.".to_string(),
+            ));
+        }
+        if host_id == crate::host::HostId::Local {
+            return Ok(ToolCallOutcome::Result(
+                "Error: a sudo edit runs on a configured host — name it with host. \
+                 A sudo edit on the daemon host is not supported."
+                    .to_string(),
+            ));
+        }
+    }
+
     match operation {
         "create" => super::ops::run_create(id, path, content, &host_id, session_id, tx, rx).await,
         "delete" => super::ops::run_delete(id, path, &host_id, session_id, tx, rx).await,
@@ -121,6 +139,7 @@ where
                     old_string: old,
                     new_string: new,
                     host: &host_id,
+                    sudo,
                 },
                 session_id,
                 tx,
@@ -185,6 +204,25 @@ where
 
 /// Build the shell command that runs a Python3-then-Perl atomic replacement in a remote pane.
 pub(super) fn build_remote_edit_cmd(path: &str, old_string: &str, new_string: &str) -> String {
+    let (py_hex, pl_hex) = remote_edit_payload_hex(path, old_string, new_string);
+
+    format!(
+        "if command -v python3 >/dev/null 2>&1; then \
+            python3 -c \"exec(bytes.fromhex('{py_hex}').decode())\" 2>&1; \
+         else \
+            perl -e 'eval(pack(\"H*\",\"{pl_hex}\"))' 2>&1; \
+         fi; echo '__DE_DONE__'"
+    )
+}
+
+/// The two interpreter payloads a remote edit runs, hex-encoded. Shared by the
+/// plain remote edit and the sudo edit so neither copy can drift: a fix to the
+/// mode/owner preservation lands in both with one change.
+pub(super) fn remote_edit_payload_hex(
+    path: &str,
+    old_string: &str,
+    new_string: &str,
+) -> (String, String) {
     let path_hex = super::to_hex(path);
     let old_hex = super::to_hex(old_string);
     let new_hex = super::to_hex(new_string);
@@ -230,11 +268,20 @@ pub(super) fn build_remote_edit_cmd(path: &str, old_string: &str, new_string: &s
     );
     let pl_hex = super::to_hex(&pl);
 
+    (py_hex, pl_hex)
+}
+
+/// The sudo edit's line. `command_has_sudo`'s regex is `(?:^|[;&|])\s*sudo\b`,
+/// so the word must sit **after** a `;` — inside the `if`'s branches it is
+/// never seen and the run would never prompt. The interpreter is chosen with
+/// `set --`, then run under the privilege tool once.
+pub(super) fn build_remote_sudo_edit_cmd(path: &str, old_string: &str, new_string: &str) -> String {
+    let (py_hex, pl_hex) = remote_edit_payload_hex(path, old_string, new_string);
     format!(
         "if command -v python3 >/dev/null 2>&1; then \
-            python3 -c \"exec(bytes.fromhex('{py_hex}').decode())\" 2>&1; \
+            set -- python3 -c \"exec(bytes.fromhex('{py_hex}').decode())\"; \
          else \
-            perl -e 'eval(pack(\"H*\",\"{pl_hex}\"))' 2>&1; \
-         fi; echo '__DE_DONE__'"
+            set -- perl -e 'eval(pack(\"H*\",\"{pl_hex}\"))'; \
+         fi; sudo \"$@\" 2>&1; echo '__DE_DONE__'"
     )
 }

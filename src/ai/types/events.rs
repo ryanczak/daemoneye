@@ -81,6 +81,7 @@ pub enum AiEvent {
         content: Option<String>,
         dest_path: Option<String>,
         host: Option<String>,
+        sudo: Option<bool>,
         thought_signature: Option<String>,
     },
     WriteRunbook {

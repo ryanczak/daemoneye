@@ -280,12 +280,15 @@ daemoneye-managed artifacts.
   daemon-host filesystem. A configured host: the read runs in this session's \
   lowest-numbered open shell on that host (or opens one there) and the result \
   names the host it came from.
-- `edit_file(path, operation, …, host?)` — atomic, with colour-diff approval. \
+- `edit_file(path, operation, …, host?, sudo?)` — atomic, with colour-diff approval. \
   Operations: `"edit"` (replace unique `old_string`), `"create"`, `"delete"`, \
   `"copy"`. Omitted or `"local"` `host`: the daemon-host filesystem. A \
   configured host: the write runs in this session's lowest-numbered open shell \
   on that host (or opens one there) after the same approval prompt — a remote \
-  write is gated exactly as a local one is, and the result names the host.
+  write is gated exactly as a local one is, and the result names the host. \
+  `sudo: true` edits a root-owned file on a configured host (`operation="edit"` \
+  only); the user types the password in the chat, and a sudo edit is always \
+  asked for, never approved for the session.
 
 ### Knowledge artifacts
 

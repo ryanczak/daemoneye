@@ -27,6 +27,11 @@ pub(super) fn production_spawn(name: &str) -> WriteSpawn {
 /// value, carried over unchanged.
 const REMOTE_WRITE_TIMEOUT_SECS: u64 = 30;
 
+/// A sudo edit's timeout, in seconds. The run's deadline includes the user
+/// typing the password, and the client waits up to 120 s for it
+/// (`USER_PROMPT_TIMEOUT`), so 30 s would cut a slow typist off mid-prompt.
+const SUDO_EDIT_TIMEOUT_SECS: u64 = 150;
+
 /// The owner key a remote `edit_file` run claims its shell under, the same
 /// tool-keyed shape `read_file` uses (`chat:read_file`): shells a write
 /// claims are keyed to the tool, not the session id, so reuse on a host is
@@ -45,6 +50,7 @@ pub(super) struct RunEditArgs<'a> {
     pub old_string: &'a str,
     pub new_string: &'a str,
     pub host: &'a crate::host::HostId,
+    pub sudo: bool,
 }
 
 /// The production spawn for `host`: `Named(name)` spawns ssh to it, `Local`
@@ -90,22 +96,29 @@ where
         old_string,
         new_string,
         host,
+        sudo,
     } = args;
     // ── Host resolution: `Local` is the daemon host, `Named` a remote ──────
     match host {
         crate::host::HostId::Local => {}
         crate::host::HostId::Named(name) => {
+            let prompt_path = if sudo {
+                format!("{} (remote via host {}, as root via sudo)", path, name)
+            } else {
+                format!("{} (remote via host {})", path, name)
+            };
             send_response_split(
                 tx,
                 Response::EditFilePrompt {
                     id: id.to_string(),
-                    path: format!("{} (remote via host {})", path, name),
+                    path: prompt_path,
                     operation: "edit".to_string(),
                     // For remote files we can't read the full file locally, so show
                     // the old_string → new_string substitution as the diff context.
                     existing_content: Some(old_string.to_string()),
                     new_content: Some(new_string.to_string()),
                     dest_path: None,
+                    sudo,
                 },
             )
             .await?;
@@ -115,6 +128,68 @@ where
             }
             let cmd_id =
                 crate::daemon::stats::start_command(&format!("edit_file {}", path), "foreground");
+
+            if sudo {
+                let cmd = super::write::build_remote_sudo_edit_cmd(path, old_string, new_string);
+                let max_per_owner = crate::config::Config::load()
+                    .unwrap_or_default()
+                    .shells
+                    .max_per_owner;
+                let run = super::super::shell_exec::run_in_shell_with_prompts(
+                    crate::shell::registry(),
+                    Owner::Chat(owner_key()),
+                    &cmd,
+                    max_per_owner,
+                    None,
+                    Some(SUDO_EDIT_TIMEOUT_SECS),
+                    id,
+                    tx,
+                    rx,
+                    host.clone(),
+                    spawn,
+                )
+                .await;
+                let text = match run {
+                    Ok((_, result)) => result.text,
+                    Err(e) => {
+                        crate::daemon::stats::finish_command(cmd_id, 1);
+                        return Ok(ToolCallOutcome::Result(super::super::shell_run_error_text(
+                            "edit_file",
+                            &e,
+                        )));
+                    }
+                };
+                for line in text.lines().rev() {
+                    if line.contains("DE_OK:") {
+                        crate::daemon::stats::finish_command(cmd_id, 0);
+                        crate::daemon::utils::log_event(
+                            "file_edit",
+                            serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_host": name, "sudo": true }),
+                        );
+                        return Ok(ToolCallOutcome::Result(format!(
+                            "Edited {} on host {}.",
+                            path, name
+                        )));
+                    }
+                    if line.contains("DE_ERROR:") {
+                        crate::daemon::stats::finish_command(cmd_id, 1);
+                        return Ok(ToolCallOutcome::Result(format!(
+                            "Error editing {}: {}",
+                            path,
+                            line.trim()
+                        )));
+                    }
+                }
+                // No sentinel line at all: the password was refused or the
+                // privilege tool never ran the payload. Loud, never "unclear".
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                let tail = text.lines().rev().find(|l| !l.trim().is_empty());
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: the sudo edit of {path} on host {name} did not run — the password \
+                     was not accepted or sudo refused it. Output: {}",
+                    tail.unwrap_or("(no output)")
+                )));
+            }
 
             let cmd = super::write::build_remote_edit_cmd(path, old_string, new_string);
             let snap = match super::run_in_host_shell(
@@ -208,6 +283,7 @@ where
             existing_content: Some(original.clone()),
             new_content: Some(updated.clone()),
             dest_path: None,
+            sudo: false,
         },
     )
     .await?;
@@ -377,6 +453,7 @@ where
                     existing_content: None,
                     new_content: Some(content.to_string()),
                     dest_path: None,
+                    sudo: false,
                 },
             )
             .await?;
@@ -452,6 +529,7 @@ where
             existing_content: None,
             new_content: Some(content.to_string()),
             dest_path: None,
+            sudo: false,
         },
     )
     .await?;
@@ -553,6 +631,7 @@ where
                     existing_content: None,
                     new_content: None,
                     dest_path: None,
+                    sudo: false,
                 },
             )
             .await?;
@@ -642,6 +721,7 @@ where
             existing_content: Some(existing.clone()),
             new_content: None,
             dest_path: None,
+            sudo: false,
         },
     )
     .await?;
@@ -750,6 +830,7 @@ where
                     existing_content: None,
                     new_content: None,
                     dest_path: Some(format!("{} (remote via host {})", dest, name)),
+                    sudo: false,
                 },
             )
             .await?;
@@ -856,6 +937,7 @@ where
             existing_content: None,
             new_content: Some(source_content.clone()),
             dest_path: Some(dest.to_string()),
+            sudo: false,
         },
     )
     .await?;
@@ -1000,6 +1082,71 @@ mod tests {
                                     user_message: None,
                                 };
                                 prompt_ref.lock().unwrap().push(path);
+                                let mut wire = serde_json::to_string(&reply).unwrap();
+                                wire.push('\n');
+                                let _ = pump_out.write_all(wire.as_bytes()).await;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        Ok((daemon_tx, tokio::io::BufReader::new(daemon_rx), prompts))
+    }
+
+    /// `approve_and_answer_channel`: the same two-pipe pump, but the client
+    /// also handles a `CredentialPrompt` — it records `"cred"` and then either
+    /// writes the credential back or, with `None`, drops its write half so the
+    /// daemon reads EOF (the "nobody is attached" case).
+    async fn approve_and_answer_channel(
+        credential: Option<&'static str>,
+    ) -> anyhow::Result<(
+        tokio::io::DuplexStream,
+        tokio::io::BufReader<tokio::io::DuplexStream>,
+        Arc<std::sync::Mutex<Vec<String>>>,
+    )> {
+        let (mut to_pump, daemon_tx) = tokio::io::duplex(64 * 1024);
+        let (pump_out, daemon_rx) = tokio::io::duplex(64 * 1024);
+        let prompts: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let prompt_ref = Arc::clone(&prompts);
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut pump_out = pump_out;
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                match tokio::io::AsyncReadExt::read(&mut to_pump, &mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                        for line in text.lines() {
+                            if let Ok(Response::EditFilePrompt { id, path, sudo, .. }) =
+                                serde_json::from_str::<Response>(line)
+                            {
+                                let reply = Request::EditFileResponse {
+                                    id,
+                                    approved: true,
+                                    user_message: None,
+                                };
+                                prompt_ref
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("edit:{path}:sudo={sudo}"));
+                                let mut wire = serde_json::to_string(&reply).unwrap();
+                                wire.push('\n');
+                                let _ = pump_out.write_all(wire.as_bytes()).await;
+                                continue;
+                            }
+                            if let Ok(Response::CredentialPrompt { id, .. }) =
+                                serde_json::from_str::<Response>(line)
+                            {
+                                prompt_ref.lock().unwrap().push("cred".to_string());
+                                let Some(c) = credential else {
+                                    return;
+                                };
+                                let reply = Request::CredentialResponse {
+                                    id,
+                                    credential: c.to_string(),
+                                };
                                 let mut wire = serde_json::to_string(&reply).unwrap();
                                 wire.push('\n');
                                 let _ = pump_out.write_all(wire.as_bytes()).await;
@@ -1164,6 +1311,7 @@ mod tests {
                     old_string: "old-line",
                     new_string: "new-line",
                     host: &crate::host::HostId::Local,
+                    sudo: false,
                 },
                 Some("sess-09a"),
                 &mut tx,
@@ -1204,6 +1352,7 @@ mod tests {
                     old_string: "old-line",
                     new_string: "new-line",
                     host: &crate::host::HostId::Named("web01".to_string()),
+                    sudo: false,
                 },
                 Some("sess-09a"),
                 &mut tx,
@@ -1616,6 +1765,7 @@ mod tests {
                 old_string: "the old string",
                 new_string: "the new string",
                 host: &crate::host::HostId::Named("web01".to_string()),
+                sudo: false,
             },
             Some("sess-1"),
             &mut tx,
@@ -1705,6 +1855,7 @@ mod tests {
                 content: Some("must not land\n"),
                 dest_path: None,
                 host: Some("../etc"),
+                sudo: false,
             },
             Some("sess-1"),
             super::super::super::GhostCtx {
@@ -1901,6 +2052,7 @@ mod tests {
                 old_string: "old-line",
                 new_string: "new-line",
                 host: &crate::host::HostId::Named("pinky".to_string()),
+                sudo: false,
             },
             Some("live09a"),
             &mut tx,
@@ -1932,6 +2084,479 @@ mod tests {
         assert!(
             readback.contains("after=600"),
             "the edited file keeps its mode on pinky: {readback:?}"
+        );
+
+        let _ = crate::daemon::executor::knowledge::close_shell_with(
+            &reg,
+            crate::shell::registry_lookup(&owner, |id| id.to_string())
+                .unwrap_or_default()
+                .as_str(),
+            &owner,
+            std::time::Duration::from_millis(3000),
+        )
+        .await;
+        let cp = crate::config::ssh_dir();
+        let _ = std::process::Command::new("ssh")
+            .args([
+                "-O",
+                "exit",
+                "-o",
+                &format!("ControlPath={}/%C", cp.display()),
+                "pinky",
+            ])
+            .status();
+        let _ = dir;
+    }
+
+    // ── 09b: the root edit ─────────────────────────────────────────────────
+
+    /// A fake privilege tool the shell defines before the edit runs: it
+    /// prompts with `$SUDO_PROMPT`, accepts only `pw-xyz`, and then runs its
+    /// arguments. Spelled `f=su; f+=do; eval …` so the defining command does
+    /// not itself name the privilege tool and is not routed through the
+    /// prompt path — the same trick `shell_exec.rs`'s `PROMPTING` uses.
+    const FAKE_ROOT: &str = r#"f=su; f+=do; eval "$f() { local pw=; read -rs -p \"\$SUDO_PROMPT\" pw || return 1; echo; [ \"\$pw\" = pw-xyz ] || return 1; \"\$@\"; }""#;
+
+    /// Seed `FAKE_ROOT` into the shell the edit will reuse, so the spawned
+    /// in-process host's bash already holds the fake and the spawn closure is
+    /// never called again.
+    async fn seed_fake_root(host: &str) {
+        run_in_host_shell(
+            crate::shell::registry(),
+            Owner::Chat(owner_key()),
+            crate::host::HostId::Named(host.to_string()),
+            FAKE_ROOT,
+            REMOTE_WRITE_TIMEOUT_SECS,
+            Box::new(|id| Box::pin(spawn_in_process_host(id))),
+        )
+        .await
+        .expect("seed the fake privilege tool");
+    }
+
+    /// Close every shell the tool-keyed owner holds, so a leaked host does
+    /// not make unrelated PTY tests fail at random (09a's lesson).
+    async fn close_tool_shells() {
+        let owner = Owner::Chat(owner_key());
+        if let Some(id) = crate::shell::registry_lookup(&owner, |id| id.to_string()) {
+            let _ = crate::daemon::executor::knowledge::close_shell_with(
+                crate::shell::registry(),
+                &id,
+                &owner,
+                std::time::Duration::from_millis(3000),
+            )
+            .await;
+        }
+    }
+
+    /// The answered path: the password is typed in the chat, the edit runs as
+    /// root, and the file's mode survives — the whole point of 09b.
+    #[tokio::test]
+    async fn a_root_edit_on_a_host_answers_the_password_prompt() {
+        let (_home, dir) = remote_write_test_home();
+        let probe = dir.path().join("probe-root.txt");
+        std::fs::write(&probe, "a\nold-line\nb\n").unwrap();
+        std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o640)).unwrap();
+        seed_fake_root("web01").await;
+        let (mut tx, mut rx, prompts) = approve_and_answer_channel(Some("pw-xyz")).await.unwrap();
+        let outcome = run_edit_with_spawn(
+            RunEditArgs {
+                id: "t09b-1",
+                path: probe.to_str().unwrap(),
+                old_string: "old-line",
+                new_string: "new-line",
+                host: &crate::host::HostId::Named("web01".to_string()),
+                sudo: true,
+            },
+            Some("sess-09b"),
+            &mut tx,
+            &mut rx,
+            Box::new(|_id| Box::pin(async { Ok(()) })),
+        )
+        .await
+        .expect("the root edit resolves");
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.contains(&format!("Edited {} on host web01.", probe.display())),
+            "the approved root edit really ran: {s:?}"
+        );
+        let edited = std::fs::read_to_string(&probe).unwrap_or_default();
+        assert!(
+            edited.contains("new-line"),
+            "the edit landed on the file: {edited:?}"
+        );
+        let got = std::fs::metadata(&probe).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(got, 0o640, "the root edit keeps the file's mode: {s:?}");
+        let got = prompts.lock().unwrap().clone();
+        let edits: Vec<_> = got.iter().filter(|l| l.starts_with("edit:")).collect();
+        let creds: Vec<_> = got.iter().filter(|l| l == &"cred").collect();
+        assert_eq!(edits.len(), 1, "exactly one edit prompt fired: {got:?}");
+        assert!(
+            edits[0].contains("sudo=true") && edits[0].contains("as root via sudo"),
+            "the prompt carries the root signal: {:?}",
+            edits[0]
+        );
+        assert_eq!(
+            creds.len(),
+            1,
+            "exactly one credential round trip fired: {got:?}"
+        );
+        close_tool_shells().await;
+    }
+
+    /// The give-up: nobody is attached, so the prompt is cancelled and the
+    /// file is untouched — the failure is loud, not "result was unclear".
+    #[tokio::test]
+    async fn an_unanswered_root_edit_leaves_the_file_unedited() {
+        let (_home, dir) = remote_write_test_home();
+        let probe = dir.path().join("probe-nobody.txt");
+        std::fs::write(&probe, "a\nold-line\nb\n").unwrap();
+        std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o640)).unwrap();
+        seed_fake_root("web01").await;
+        let (mut tx, mut rx, _prompts) = approve_and_answer_channel(None).await.unwrap();
+        let started = std::time::Instant::now();
+        let outcome = run_edit_with_spawn(
+            RunEditArgs {
+                id: "t09b-2",
+                path: probe.to_str().unwrap(),
+                old_string: "old-line",
+                new_string: "new-line",
+                host: &crate::host::HostId::Named("web01".to_string()),
+                sudo: true,
+            },
+            Some("sess-09b"),
+            &mut tx,
+            &mut rx,
+            Box::new(|_id| Box::pin(async { Ok(()) })),
+        )
+        .await
+        .expect("the root edit resolves");
+        let elapsed = started.elapsed();
+        println!("root-edit give-up elapsed: {elapsed:?}");
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.contains("Error") && s.contains("nobody is attached to answer it"),
+            "the failure is loud, naming why: {s:?}"
+        );
+        assert!(
+            !s.contains("result was unclear"),
+            "a cancelled prompt is never \"result was unclear\": {s:?}"
+        );
+        let edited = std::fs::read_to_string(&probe).unwrap_or_default();
+        assert!(
+            edited.contains("old-line"),
+            "the file is untouched: {edited:?}"
+        );
+        close_tool_shells().await;
+    }
+
+    /// A wrong password leaves no sentinel line at all — today's scan calls
+    /// that "result was unclear"; for a root edit it must be an `Error:`
+    /// saying the edit did not run.
+    #[tokio::test]
+    async fn a_wrong_password_root_edit_leaves_the_file_unedited() {
+        let (_home, dir) = remote_write_test_home();
+        let probe = dir.path().join("probe-wrong.txt");
+        std::fs::write(&probe, "a\nold-line\nb\n").unwrap();
+        std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o640)).unwrap();
+        seed_fake_root("web01").await;
+        let (mut tx, mut rx, _prompts) = approve_and_answer_channel(Some("wrong")).await.unwrap();
+        let outcome = run_edit_with_spawn(
+            RunEditArgs {
+                id: "t09b-3",
+                path: probe.to_str().unwrap(),
+                old_string: "old-line",
+                new_string: "new-line",
+                host: &crate::host::HostId::Named("web01".to_string()),
+                sudo: true,
+            },
+            Some("sess-09b"),
+            &mut tx,
+            &mut rx,
+            Box::new(|_id| Box::pin(async { Ok(()) })),
+        )
+        .await
+        .expect("the root edit resolves");
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.starts_with("Error:") && s.contains("did not run"),
+            "a refused password says the edit did not run: {s:?}"
+        );
+        assert!(
+            !s.contains("unclear"),
+            "never \"result was unclear\" on a root edit: {s:?}"
+        );
+        let edited = std::fs::read_to_string(&probe).unwrap_or_default();
+        assert!(
+            edited.contains("old-line"),
+            "the file is untouched: {edited:?}"
+        );
+        close_tool_shells().await;
+    }
+
+    /// The scoping refusals, before any prompt: the root edit needs a
+    /// configured host and the `edit` operation, and nothing is offered for
+    /// approval in either refusal.
+    #[tokio::test]
+    async fn a_root_edit_needs_a_host_and_the_edit_operation() {
+        let (_home, dir) = remote_write_test_home();
+        let probe = dir.path().join("never-edited.txt");
+        let mut out: Vec<u8> = Vec::new();
+        let outcome = super::super::run_edit_file(
+            super::super::EditArgs {
+                id: "t09b-4",
+                path: probe.to_str().unwrap(),
+                operation: "edit",
+                old_string: Some("old-line"),
+                new_string: Some("new-line"),
+                content: None,
+                dest_path: None,
+                host: None,
+                sudo: true,
+            },
+            Some("sess-09b"),
+            super::super::super::GhostCtx {
+                policy: None,
+                is_ghost: false,
+            },
+            &mut out,
+            &mut tokio::io::BufReader::new(tokio::io::empty()),
+        )
+        .await
+        .expect("the local root edit is refused");
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.contains("runs on a configured host"),
+            "the refusal names the missing host: {s:?}"
+        );
+        let outcome = super::super::run_edit_file(
+            super::super::EditArgs {
+                id: "t09b-4",
+                path: probe.to_str().unwrap(),
+                operation: "create",
+                old_string: None,
+                new_string: None,
+                content: Some("nope\n"),
+                dest_path: None,
+                host: Some("web01"),
+                sudo: true,
+            },
+            Some("sess-09b"),
+            super::super::super::GhostCtx {
+                policy: None,
+                is_ghost: false,
+            },
+            &mut out,
+            &mut tokio::io::BufReader::new(tokio::io::empty()),
+        )
+        .await
+        .expect("the create root op is refused");
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.contains("operation=\"edit\" only"),
+            "the refusal names the only operation: {s:?}"
+        );
+        assert!(
+            out.is_empty(),
+            "no prompt reached the client before either refusal: {} bytes",
+            out.len()
+        );
+    }
+
+    /// The line is detected as a privilege-tool command (so the run path
+    /// turns the prompt handling on) and its payloads are the same bytes the
+    /// plain edit's builder produces — shared, not copied.
+    #[test]
+    fn the_root_edit_line_is_detected_and_reuses_the_payloads() {
+        let cmd = super::super::write::build_remote_sudo_edit_cmd("/tmp/x", "a", "b");
+        assert!(
+            crate::daemon::utils::command_has_sudo(&cmd),
+            "the run path must classify the line as a privilege-tool command: {cmd:?}"
+        );
+        assert!(
+            cmd.contains("set -- python3 -c") && cmd.contains("set -- perl -e"),
+            "the interpreter is chosen with set --, not inside the branch: {cmd:?}"
+        );
+        let decode_hex_from = |cmd: &str, what: &str| -> Option<String> {
+            let start = cmd.find(what)? + what.len();
+            let hex: String = cmd[start..]
+                .chars()
+                .take_while(|c| c.is_ascii_hexdigit())
+                .collect();
+            (hex.len().is_multiple_of(2) && !hex.is_empty())
+                .then(|| {
+                    (0..hex.len())
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(b'?'))
+                        .collect::<Vec<u8>>()
+                })
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        };
+        let plain = super::super::write::build_remote_edit_cmd("/tmp/x", "a", "b");
+        for (what, label) in [("fromhex('", "python"), ("pack(\"H*\",\"", "perl")] {
+            let a = decode_hex_from(&cmd, what)
+                .unwrap_or_else(|| panic!("the root line's {label} payload decoded"));
+            let b = decode_hex_from(&plain, what)
+                .unwrap_or_else(|| panic!("the plain line's {label} payload decoded"));
+            assert_eq!(
+                a, b,
+                "the root line's {label} payload is the plain edit's payload"
+            );
+            assert!(
+                a.contains("DE_OK: Edited") && a.contains("DE_ERROR:"),
+                "the {label} payload still carries the sentinel contract"
+            );
+        }
+    }
+
+    /// Both interpreter branches of the root line run a real edit: with
+    /// `PATH` narrowed to a `bin` dir holding only the interpreter and an
+    /// executable pass-through named for the privilege tool, the line's own
+    /// mechanics are pinned — the `set --` selection, the `"$@"` run, the
+    /// sentinels.
+    #[test]
+    fn the_root_edit_line_runs_under_both_interpreters() {
+        let which = |prog: &str| -> String {
+            let out = std::process::Command::new("sh")
+                .args(["-c", &format!("command -v {prog}")])
+                .output()
+                .unwrap_or_else(|e| panic!("resolving {prog}: {e}"));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let bash = which("bash");
+        assert!(!bash.is_empty(), "bash must resolve");
+        for prog in ["python3", "perl"] {
+            let interp = which(prog);
+            assert!(!interp.is_empty(), "{prog} must resolve");
+            let bin = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(&interp, bin.path().join(prog)).unwrap();
+            let fake = bin.path().join("sudo");
+            std::fs::write(&fake, "#!/bin/sh\nexec \"$@\"\n").unwrap();
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+            for (name, mode) in [("six.txt", 0o600), ("sevenfifty.txt", 0o750)] {
+                let dir = tempfile::tempdir().unwrap();
+                let file = dir.path().join(name);
+                std::fs::write(&file, "a\nold-line\nb\n").unwrap();
+                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+                let cmd = super::super::write::build_remote_sudo_edit_cmd(
+                    file.to_str().unwrap(),
+                    "old-line",
+                    "new-line",
+                );
+                assert!(
+                    cmd.contains(&format!("set -- {prog}")),
+                    "the {prog} branch was selected: {cmd:?}"
+                );
+                let out = std::process::Command::new(&bash)
+                    .arg("-c")
+                    .arg(&cmd)
+                    .env("PATH", bin.path())
+                    .output()
+                    .unwrap_or_else(|e| panic!("running the {prog} branch: {e}"));
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                assert!(
+                    stdout.contains("DE_OK:"),
+                    "the {prog} branch edited the file: {stdout:?}"
+                );
+                let edited = std::fs::read_to_string(&file).unwrap_or_default();
+                assert!(edited.contains("new-line"), "the edit landed: {edited:?}");
+                let got = std::fs::metadata(&file).unwrap().permissions().mode() & 0o7777;
+                assert_eq!(
+                    got, mode,
+                    "{name} must keep its mode through the {prog} branch: {stdout:?}"
+                );
+            }
+        }
+    }
+
+    /// The § Live verification, in the seam `edit_file_on_pinky_end_to_end`
+    /// established: the real privilege tool (sudo-rs 0.2.13) on the live host
+    /// `pinky`, nobody attached. The **answered** path needs the real
+    /// password, so it is 09c's live close, not this test. Run with
+    /// `cargo test --lib a_root_edit_on_pinky_with_nobody_attached_fails_cleanly -- --ignored`.
+    #[tokio::test]
+    #[ignore = "requires the configured host `pinky` reachable over ssh"]
+    async fn a_root_edit_on_pinky_with_nobody_attached_fails_cleanly() {
+        let (_home, dir) = {
+            let g = crate::test_home_guard();
+            let dir = tempfile::tempdir().unwrap();
+            unsafe { std::env::set_var("HOME", dir.path()) }
+            crate::config::Config::ensure_dirs().ok();
+            (g, dir)
+        };
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\nssh = \"pinky\"\n",
+        )
+        .expect("write config");
+        crate::config::ssh_dir();
+
+        let reg = crate::shell::ShellRegistry::default();
+        let owner = Owner::Chat(owner_key());
+        let probe = "/tmp/de-09b-probe";
+
+        let _ = run_in_host_shell(
+            crate::shell::registry(),
+            owner.clone(),
+            crate::host::HostId::Named("pinky".to_string()),
+            "printf 'a\\nold-line\\nb\\n' > /tmp/de-09b-probe && chmod 640 /tmp/de-09b-probe",
+            REMOTE_WRITE_TIMEOUT_SECS,
+            |id| std::boxed::Box::pin(crate::daemon::executor::knowledge::spawn_pinky_ssh(id)),
+        )
+        .await
+        .expect("the pinky probe setup resolves");
+
+        let (mut tx, mut rx, _prompts) = approve_and_answer_channel(None).await.unwrap();
+        let started = std::time::Instant::now();
+        let outcome = run_edit_with_spawn(
+            RunEditArgs {
+                id: "t09b-live",
+                path: probe,
+                old_string: "old-line",
+                new_string: "new-line",
+                host: &crate::host::HostId::Named("pinky".to_string()),
+                sudo: true,
+            },
+            Some("live09b"),
+            &mut tx,
+            &mut rx,
+            Box::new(|id| Box::pin(crate::daemon::executor::knowledge::spawn_pinky_ssh(id))),
+        )
+        .await
+        .expect("the pinky root edit resolves");
+        let elapsed = started.elapsed();
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        println!("root-edit-on-pinky result: {s:?}");
+        println!("root-edit-on-pinky elapsed: {elapsed:?}");
+        assert!(
+            s.contains("nobody is attached to answer it"),
+            "the give-up names the real problem: {s:?}"
+        );
+
+        let readback = run_in_host_shell(
+            crate::shell::registry(),
+            owner.clone(),
+            crate::host::HostId::Named("pinky".to_string()),
+            "cat /tmp/de-09b-probe; rm -f /tmp/de-09b-probe",
+            REMOTE_WRITE_TIMEOUT_SECS,
+            |id| std::boxed::Box::pin(crate::daemon::executor::knowledge::spawn_pinky_ssh(id)),
+        )
+        .await
+        .expect("the pinky readback resolves");
+        assert!(
+            readback.contains("old-line"),
+            "the file is untouched: {readback:?}"
         );
 
         let _ = crate::daemon::executor::knowledge::close_shell_with(

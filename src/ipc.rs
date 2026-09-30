@@ -611,6 +611,10 @@ pub enum Response {
         new_content: Option<String>,
         #[serde(default)]
         dest_path: Option<String>,
+        /// true = the edit runs as root via the privilege tool; the client
+        /// never auto-approves such an edit and says so in the panel.
+        #[serde(default)]
+        sudo: bool,
     },
 
     /// Sent after each AI turn completes, carrying the prompt token count from

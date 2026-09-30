@@ -503,7 +503,7 @@ Tools marked **⚠** require explicit user approval before they execute.
 | Tool | What it does |
 |---|---|
 | `run_terminal_command` **⚠** | Run a bash command — foreground in your pane, or background in a dedicated tmux window. `wait?` picks the mode: omitted or `true` waits (the default, foreground); `wait: false` is what `background: true` was — it returns immediately with the shell id, which you then follow with `watch_shell` or `read_shell`. `shell?` targets a PTY shell (`"s3"` from `list_shells`, or `"new"` for one fresh shell; omitted, the command reuses this session's lowest-numbered open shell and another session's shell is refused); `host?` runs it on a configured `[hosts.<name>]` host (omitted or `"local"` = the daemon host; a shell id on a different host is refused, never relocated); `timeout_secs?` bounds the wait (default 45 s, capped 3600) |
-| `edit_file` **⚠** | Create, edit, delete, or copy a file; shows a coloured unified diff before approval. `host?` writes on a configured `[hosts.<name>]` host — omitted or `"local"` = the daemon host; the operation runs in a shell there after the same approval prompt |
+| `edit_file` **⚠** | Create, edit, delete, or copy a file; shows a coloured unified diff before approval. `host?` writes on a configured `[hosts.<name>]` host — omitted or `"local"` = the daemon host; the operation runs in a shell there after the same approval prompt; `sudo: true` edits a root-owned file on that host (`edit` only), with the password asked in the chat and no session approval |
 | `write_script` **⚠** | Create or update a script in `~/.daemoneye/scripts/` (written `chmod 700`) |
 | `delete_script` **⚠** | Delete a script |
 | `write_runbook` **⚠** | Create or update a runbook in `~/.daemoneye/runbooks/` |

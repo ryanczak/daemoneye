@@ -1,7 +1,7 @@
 # Phase 09b: remote-sudo-edit — `edit_file { host, sudo: true }` edits a root-owned file on a host, answering sudo's prompt through the chat
 
 **Milestone:** M21 — Host model & SSH
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-09a (an edit keeps the file's mode and owner), phase-08f
 (PTY password prompts answered once, on the real prompt)
 **Estimated diff:** ~180 lines of production code across ~12 files, plus 10 tests and 1 ignored live test
@@ -597,3 +597,8 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-30 01:50 (start)
+
+**Executor:** claude (sonnet-4.5, headless). Status flipped `todo` →
+`in-progress`; README phase-table row updated to match. Beginning Task 1.

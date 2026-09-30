@@ -1130,6 +1130,7 @@ async fn do_ghost_turn(
                         content,
                         dest_path,
                         host,
+                        sudo,
                     } => {
                         pending_calls.push(PendingCall::EditFile {
                             id,
@@ -1141,6 +1142,7 @@ async fn do_ghost_turn(
                             content,
                             dest_path,
                             host,
+                            sudo,
                         });
                     }
                     AiEvent::SpawnGhost {

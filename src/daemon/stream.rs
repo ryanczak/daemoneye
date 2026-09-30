@@ -487,6 +487,7 @@ where
                     content,
                     dest_path,
                     host,
+                    sudo,
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::EditFile {
@@ -499,6 +500,7 @@ where
                         content,
                         dest_path,
                         host,
+                        sudo,
                     });
                 }
                 AiEvent::WriteRunbook {

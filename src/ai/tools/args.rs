@@ -163,6 +163,8 @@ pub(super) struct EditFileArgs {
     content: Option<String>,
     dest_path: Option<String>,
     host: Option<String>,
+    #[serde(default)]
+    sudo: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -593,6 +595,7 @@ impl ToolArgs for EditFileArgs {
             content: self.content,
             dest_path: self.dest_path,
             host: self.host,
+            sudo: self.sudo,
             thought_signature: ts,
         }
     }

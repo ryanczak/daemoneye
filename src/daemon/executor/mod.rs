@@ -1025,6 +1025,7 @@ where
             content,
             dest_path,
             host,
+            sudo,
             ..
         } => {
             // The ghost refusal lives inside `run_edit_file`, so the connect
@@ -1058,6 +1059,7 @@ where
                     content: content.as_deref(),
                     dest_path: dest_path.as_deref(),
                     host: host.as_deref(),
+                    sudo: sudo.unwrap_or(false),
                 },
                 session_id,
                 GhostCtx {

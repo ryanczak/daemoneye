@@ -392,6 +392,15 @@ pub static TOOLS: &[ToolDef] = &[
                               approval prompt — a write is gated on a remote exactly as it \
                               is locally.",
             },
+            ParamDef {
+                name: "sudo",
+                ty: ParamTy::Bool,
+                required: false,
+                description: "Optional. true runs an operation=\"edit\" as root on the \
+                              configured host named by host, answering the password prompt \
+                              through the user. Only for operation=\"edit\" with a host; \
+                              always asks for approval, never approved for the session.",
+            },
         ],
         deferred_group: None,
         category: Category::Write,

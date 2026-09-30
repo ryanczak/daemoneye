@@ -648,6 +648,7 @@ pub(super) async fn ask_with_session_ratatui(
                 existing_content,
                 new_content,
                 dest_path,
+                sudo,
             } => {
                 let sb = crate::cli::render::StatusBarState {
                     session_id: "",
@@ -670,6 +671,7 @@ pub(super) async fn ask_with_session_ratatui(
                     existing_content.as_deref(),
                     new_content.as_deref(),
                     dest_path.as_deref(),
+                    sudo,
                 )
                 .await;
                 send_request(
@@ -1366,6 +1368,21 @@ pub(super) async fn prompt_schedule_write_ratatui(
     prompt_yes_no_ratatui(renderer, stdin, status, "", "Approve?").await
 }
 
+/// A sudo edit is never auto-approved: neither the session-wide file-edit
+/// approval nor a per-path one covers an edit that runs as root.
+fn edit_file_auto_approved(
+    approval: &super::approval::SessionApproval,
+    path: &str,
+    sudo: bool,
+) -> bool {
+    !sudo && (approval.file_edits_all || approval.file_edits.contains(path))
+}
+
+/// `[A]pprove for session` on a sudo edit approves this edit only.
+fn edit_file_grants_session(is_session: bool, all_approved: bool, sudo: bool) -> bool {
+    is_session && !all_approved && !sudo
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn prompt_edit_file_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
@@ -1377,6 +1394,7 @@ pub(super) async fn prompt_edit_file_ratatui(
     existing_content: Option<&str>,
     new_content: Option<&str>,
     dest_path: Option<&str>,
+    sudo: bool,
 ) -> (bool, Option<String>) {
     let op_label = match operation {
         "create" => "create file",
@@ -1385,6 +1403,9 @@ pub(super) async fn prompt_edit_file_ratatui(
         _ => "edit file",
     };
     let _ = renderer.commit(&format!("\n  ⚙ AI wants to {}: {}\n", op_label, path));
+    if sudo {
+        let _ = renderer.commit("  ⚠ runs as root (sudo) on the host\n");
+    }
     if operation == "copy"
         && let Some(dst) = dest_path
     {
@@ -1406,9 +1427,9 @@ pub(super) async fn prompt_edit_file_ratatui(
     }
 
     let all_approved = approval.file_edits_all;
-    let path_approved = approval.file_edits.contains(path);
+    let _path_approved = approval.file_edits.contains(path);
 
-    if all_approved || path_approved {
+    if edit_file_auto_approved(approval, path, sudo) {
         let _ = renderer.commit("  ✓ auto-approved (session)\n");
         return (true, None);
     }
@@ -1418,12 +1439,15 @@ pub(super) async fn prompt_edit_file_ratatui(
         prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
 
     if approved {
-        if is_session && !all_approved {
+        if edit_file_grants_session(is_session, all_approved, sudo) {
             approval.file_edits.insert(path.to_string());
             let _ = renderer.commit(&format!(
                 "  ✓ approved — edits to '{}' auto-approved for this session\n",
                 path
             ));
+        } else if sudo {
+            let _ =
+                renderer.commit("  ✓ approved — sudo edits are never approved for the session\n");
         } else {
             let _ = renderer.commit("  ✓ approved\n");
         }
@@ -1481,6 +1505,35 @@ mod tests {
         assert!(!approved);
         assert!(!is_session);
         assert!(msg.is_none());
+    }
+
+    #[test]
+    fn a_root_edit_is_never_auto_approved() {
+        let mut a = super::super::approval::SessionApproval {
+            file_edits_all: true,
+            ..super::super::approval::SessionApproval::default()
+        };
+        a.file_edits.insert("/etc/x".to_string());
+        assert!(
+            !edit_file_auto_approved(&a, "/etc/x", true),
+            "the session-wide approval must not cover a root edit"
+        );
+        assert!(
+            edit_file_auto_approved(&a, "/etc/x", false),
+            "without the root flag the session approval covers the path as before"
+        );
+    }
+
+    #[test]
+    fn a_root_edit_never_grants_a_session_approval() {
+        assert!(
+            !edit_file_grants_session(true, false, true),
+            "an approved-for-session answer on a root edit approves only this edit"
+        );
+        assert!(
+            edit_file_grants_session(true, false, false),
+            "an ordinary edit still grants its session approval"
+        );
     }
 
     #[test]
