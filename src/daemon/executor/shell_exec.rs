@@ -2611,6 +2611,158 @@ mod tests {
         );
     }
 
+    /// M23 01b test 9: a user who answers **after** the command's timeout has
+    /// elapsed must not have the command killed as timed out — the wait for
+    /// the answer is added back to the deadline, so the command still gets
+    /// its own budget after the password was sent. The transport's answer
+    /// arrives 3 s after the prompt, past a 2 s timeout, and the run must
+    /// still complete with the fake's `GOT_15`.
+    /// Mutation A guard: with `deadline += asked.elapsed();` deleted in
+    /// `read_to_marker` this fails at "timed out after 2s".
+    #[tokio::test]
+    async fn an_answer_after_the_timeout_still_completes_the_command() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("late-answer".into());
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut writer = RecordingWriter::new(Arc::clone(&writes));
+        // The "attached" read half whose answer is late: nothing for 3 s,
+        // then one `CredentialResponse` for prompt id "p", then 30 s of
+        // silence with the stream still open (the run must be answered, not
+        // EOF'd).
+        let (late_tx, late_rx) = tokio::io::duplex(4096);
+        let mut reader = tokio::io::BufReader::new(late_rx);
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut late_tx = late_tx;
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            let mut line = serde_json::to_string(&Request::CredentialResponse {
+                id: "p".to_string(),
+                credential: CREDENTIAL.to_string(),
+            })
+            .expect("CredentialResponse serialises");
+            line.push('\n');
+            late_tx
+                .write_all(line.as_bytes())
+                .await
+                .expect("the late answer writes");
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let mut write_sink = tokio::io::sink();
+        let (id, _seed) = run_in_shell_with_prompts(
+            &reg,
+            owner.clone(),
+            PROMPTING,
+            5,
+            None,
+            Some(20),
+            "",
+            &mut write_sink,
+            &mut tokio::io::empty(),
+            crate::host::HostId::Local,
+            |id| async move { spawn_with_cast(id).await.map(|_cast| ()) },
+        )
+        .await
+        .context("the seed command runs")
+        .expect("the seed command defines the fake");
+        let outcome = run_in_shell_with_prompts(
+            &reg,
+            owner,
+            "sudo true",
+            5,
+            Some(id.as_str()),
+            Some(2),
+            "p",
+            &mut writer,
+            &mut reader,
+            crate::host::HostId::Local,
+            move |_id: ShellId| async move { Ok(()) },
+        )
+        .await;
+        if let Err(ref e) = outcome {
+            let seen = writes.lock().expect("write log lock");
+            panic!(
+                "a late answer must still complete the command: {e:#} — the transport saw \
+                 {} writes: {:?}",
+                seen.len(),
+                *seen
+            );
+        }
+        let (_, result) = outcome.expect("checked above");
+        assert_eq!(
+            result.exit_code, 0,
+            "the answered command ran cleanly: {result:?}"
+        );
+        assert!(
+            result.text.contains("GOT_15"),
+            "the fake reports the answered length after the late answer: {:?}",
+            result.text
+        );
+    }
+
+    /// M23 01b test 10: only the answer's wait is excluded — a command that
+    /// hangs **after** an instant answer still times out on schedule, so the
+    /// deadline extension cannot be read as an open-ended extension.
+    /// Mutation B guard: with `asked.elapsed()` replaced by
+    /// `Duration::from_secs(60)` the hang survives to its 30 s sleep instead
+    /// of timing out at 2 s, and the under-5-s assertion fails.
+    #[tokio::test]
+    async fn a_hang_after_an_answer_still_times_out() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("hang-after-answer".into());
+        let (writes, mut reader) = answered_transport();
+        let mut writer = RecordingWriter::new(Arc::clone(&writes));
+        let (id, _) = run_in_shell_with_prompts(
+            &reg,
+            owner.clone(),
+            PROMPTING,
+            5,
+            None,
+            Some(20),
+            "",
+            &mut tokio::io::sink(),
+            &mut tokio::io::empty(),
+            crate::host::HostId::Local,
+            |id| async move { spawn_with_cast(id).await.map(|_cast| ()) },
+        )
+        .await
+        .context("the seed command runs")
+        .expect("the seed command defines the fake");
+        let started = std::time::Instant::now();
+        let outcome = run_in_shell_with_prompts(
+            &reg,
+            owner,
+            "sudo true; sleep 30",
+            5,
+            Some(id.as_str()),
+            Some(2),
+            "p",
+            &mut writer,
+            &mut reader,
+            crate::host::HostId::Local,
+            move |_id: ShellId| async move { Ok(()) },
+        )
+        .await;
+        let elapsed = started.elapsed();
+        let err = match outcome {
+            Ok((_, result)) => panic!(
+                "a hang after an answer must time out, not complete: exit {} {:?}",
+                result.exit_code, result.text
+            ),
+            Err(e) => e,
+        };
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the timeout must fire on the command's own budget: {elapsed:?}"
+        );
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("timed out after 2s"),
+            "the failure is the command's own 2 s limit, not the answer's wait: {msg}"
+        );
+    }
+
     /// Live test 11: the real privilege tool on `pinky` (sudo-rs 0.2.13) —
     /// the only witness for the settle wait (Mutation D is green locally).
     #[tokio::test]
@@ -2748,11 +2900,10 @@ mod connect_tests {
     use crate::test_home_guard;
     use std::sync::Arc;
 
-    /// Serialises this module's PTY-spawning tests against each other: each
-    /// forks a real `sh` into a PTY, and under full-suite load concurrent
-    /// forks intermittently fail (`spawn_command failed`). Each test also
-    /// holds `test_home_guard()` next to this lock, so a HOME-mutating test
-    /// cannot delete `HOME` out from under one of these spawns.
+    /// Serialises this module's PTY-spawning tests against each other. Each
+    /// test also holds `test_home_guard()` next to this lock, so a
+    /// HOME-mutating test cannot delete `HOME` out from under one of these
+    /// spawns (a spawn into a deleted `HOME` fails with `ENOENT`).
     static PTY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     /// The credential the "attached" transport answers with; the fake ssh

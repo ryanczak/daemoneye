@@ -364,7 +364,7 @@ where
     // arrived **after** the last `Send`/`GiveUp` — so a prompt already
     // answered cannot re-trigger its own answer.
     let mut offered_at: usize = 0;
-    let deadline = tokio::time::Instant::now() + timeout;
+    let mut deadline = tokio::time::Instant::now() + timeout;
     // A slice that elapses may leave a half frame in `line`: `read_until` is
     // not cancellation-safe, and tokio keeps whatever it had appended. So
     // `line` is cleared only after a *complete* frame has been parsed — after
@@ -440,7 +440,14 @@ where
                 }
                 if buf.len() > offered_at {
                     let seen = String::from_utf8_lossy(&buf[offered_at..]).into_owned();
-                    match on_chunk(&seen).await {
+                    // The callback blocks while a prompt waits for the user's
+                    // answer. That wait is not the command's run time, so it is
+                    // added back to the deadline: a slow typist is not cut off
+                    // after their password was already sent.
+                    let asked = tokio::time::Instant::now();
+                    let reply = on_chunk(&seen).await;
+                    deadline += asked.elapsed();
+                    match reply {
                         PromptReply::Wait => {}
                         PromptReply::Send(answer) => {
                             write_answer(writer, &answer).await?;

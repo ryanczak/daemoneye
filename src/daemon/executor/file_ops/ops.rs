@@ -27,11 +27,6 @@ pub(super) fn production_spawn(name: &str) -> WriteSpawn {
 /// value, carried over unchanged.
 const REMOTE_WRITE_TIMEOUT_SECS: u64 = 30;
 
-/// A sudo edit's timeout, in seconds. The run's deadline includes the user
-/// typing the password, and the client waits up to 120 s for it
-/// (`USER_PROMPT_TIMEOUT`), so 30 s would cut a slow typist off mid-prompt.
-const SUDO_EDIT_TIMEOUT_SECS: u64 = 150;
-
 /// The owner key a remote `edit_file` run claims its shell under, the same
 /// tool-keyed shape `read_file` uses (`chat:read_file`): shells a write
 /// claims are keyed to the tool, not the session id, so reuse on a host is
@@ -141,7 +136,7 @@ where
                     &cmd,
                     max_per_owner,
                     None,
-                    Some(SUDO_EDIT_TIMEOUT_SECS),
+                    Some(REMOTE_WRITE_TIMEOUT_SECS),
                     id,
                     tx,
                     rx,

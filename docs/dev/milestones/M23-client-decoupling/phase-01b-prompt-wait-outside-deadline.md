@@ -1,7 +1,7 @@
 # Phase 01b: prompt-wait-outside-deadline — the time a user spends answering a password prompt no longer counts against the command's timeout
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (M21 carry-forward)
 **Estimated diff:** ~10 lines of production code across 2 files; 2 new tests; 1 comment rewrite
 **Tags:** language=rust, kind=bugfix, size=s
@@ -298,3 +298,43 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-30 12:46 (progress)
+
+Started phase 01b (executor: Codex). Status flipped to `in-progress` here and in
+the milestone README. Plan: Task 1 (deadline extension in `read_to_marker`),
+Task 2 (retire `SUDO_EDIT_TIMEOUT_SECS`), Task 3 (`PTY_TEST_LOCK` comment),
+Tasks 4–5 (two tests, then the mechanical E2E capture).
+
+### Update — 2026-09-30 13:02 (end-to-end verification)
+
+```sh
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2092p-0f-14i
+new_tests=2p-0f
+silent_timeout=1 passed
+workaround=0
+wrong_diagnosis=0
+```
+
+### Update — 2026-09-30 13:20 (progress)
+
+Mutations A and B applied with `patch`, run once each, and restored; every
+restore left `git diff --stat` at its pre-mutation state.
+
+- **Mutation A** (delete `deadline += asked.elapsed();`): test 1
+  (`an_answer_after_the_timeout_still_completes_the_command`) went **red** —
+  `sudo in shell s0 did not complete within the 2s limit: timed out after 2s
+  waiting for command output` after 3.00 s, with the answer already written
+  (the transport saw the one `CredentialPrompt` write). Restored; test 1 green
+  again (3.01 s).
+- **Mutation B** (`asked.elapsed()` → `Duration::from_secs(60)`): test 2
+  (`a_hang_after_an_answer_still_times_out`) went **red** as predicted — the
+  hang completed at 30.02 s instead of timing out at 2 s, so the under-5-s
+  assertion failed (`panicked at shell_exec.rs:2747`). Restored; test 2 green
+  again (2.02 s).
+
+Both guard comments name their mutation in the test doc comments, so the
+mutation pairs are pinned in code as well as here.
