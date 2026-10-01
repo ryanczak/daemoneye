@@ -18,34 +18,23 @@ pub(super) async fn handle_shell_list<W>(tx: &mut W, reg: &ShellRegistry) -> Res
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    // Collected under the lock — no I/O in the closure — then the per-shell
-    // log reads happen outside it.
-    let collected: Vec<(String, String, String, u64)> = with_shells(reg, |store| {
+    // Collected under the lock — no I/O in the closure, only field copies —
+    // then the per-shell log reads happen outside it.
+    let mut infos: Vec<ShellInfo> = with_shells(reg, |store| {
         store
             .values()
-            .map(|record| {
-                (
-                    record.id.as_str().to_string(),
-                    record.host.as_str().to_string(),
-                    record.owner.key(),
-                    record.started_unix,
-                )
+            .map(|record| ShellInfo {
+                id: record.id.as_str().to_string(),
+                host: record.host.as_str().to_string(),
+                owner: record.owner.key(),
+                started_unix: record.started_unix,
+                interactive: record.interactive,
+                dedicated: record.dedicated,
+                exited_unix: record.exited_unix,
+                last_command: None,
             })
             .collect()
     });
-    let mut infos: Vec<ShellInfo> = collected
-        .into_iter()
-        .map(|(id, host, owner, started_unix)| ShellInfo {
-            id,
-            host,
-            owner,
-            started_unix,
-            interactive: false,
-            dedicated: false,
-            exited_unix: None,
-            last_command: None,
-        })
-        .collect();
     infos.sort_by_key(|info| shell_index(&info.id));
     let shells = infos
         .into_iter()
@@ -362,5 +351,48 @@ mod tests {
             "an id outside the grammar is refused too: {tx2:?}"
         );
         assert!(reg.try_lock().is_ok(), "the registry lock was released");
+    }
+
+    #[tokio::test]
+    async fn shell_list_carries_each_shells_flags() {
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("t".into());
+        let id_a = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |_id| async { Ok(()) })
+            .await
+            .unwrap();
+        let id_b = crate::shell::spawn_for(&reg, owner.clone(), 5, true, |_id| async { Ok(()) })
+            .await
+            .unwrap();
+        crate::shell::mark_interactive(&reg, &id_a);
+        with_shells(&reg, |store| {
+            store.get_mut(id_b.as_str()).unwrap().exited_unix = Some(42);
+        });
+
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_list(&mut tx, &reg).await.unwrap();
+        let Response::ShellList { shells } = parse_response(&tx) else {
+            panic!("expected a ShellList response, got {tx:?}");
+        };
+        let (first, second) = if shells[0].id == id_a.as_str() {
+            (&shells[0], &shells[1])
+        } else {
+            (&shells[1], &shells[0])
+        };
+        assert_eq!(first.id, id_a.as_str());
+        assert!(
+            first.interactive,
+            "the record's interactive flag rides the wire, not a hardcoded false"
+        );
+        assert!(!first.dedicated);
+        assert_eq!(first.exited_unix, None);
+        assert_eq!(second.id, id_b.as_str());
+        assert!(!second.interactive);
+        assert!(second.dedicated, "the spawn's dedicated flag rides");
+        assert_eq!(
+            second.exited_unix,
+            Some(42),
+            "an exited shell's stamp rides the wire"
+        );
     }
 }

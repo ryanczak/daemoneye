@@ -725,3 +725,60 @@ There is **exactly one code fix left**, plus one test and the evidence:
 
 **Finish condition:** `cargo test --lib` reports **2105**, not 2104.
 
+
+### Update — 2026-10-01 19:24 (progress)
+
+Bounce work on bug-03a-1. The one code fix is in `handle_shell_list`
+(`src/daemon/server/shells.rs`): the `with_shells` closure now carries each
+record's `interactive`, `dedicated` and `exited_unix` into the `ShellInfo` it
+builds, instead of hardcoded `false` / `false` / `None` (the meta-index read
+stays outside the lock). Added test `shell_list_carries_each_shells_flags`
+beside test 2 with the same fixtures: two no-op spawns under one owner (the
+second `dedicated: true`), `mark_interactive` on the first, and an
+`exited_unix = Some(42)` stamp on the second; it asserts every flag arrives on
+the wire for both shells. Mutation C was applied, ran red, was restored, and
+its observed result is recorded in the end-to-end entry below. Everything else
+from the first run is untouched.
+
+Executor: local-inference-lab/GLM-5.3-Flash-NVFP4-Spark.
+
+### Update — 2026-10-01 19:24 (end-to-end verification)
+
+The § End-to-end verification block re-ran verbatim with nothing else running
+`cargo test` (re-run budget unused, no flake; all three lib runs green). Its
+capture file, `/tmp/e2e-m23-03a.txt`, contents:
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2105p-0f-14i
+new_tests=6p-0f
+isolation=11 passed; 0 failed
+wired=3/1
+```
+
+Paste check (the line the snippet printed, on its own line):
+
+```
+PASTE MATCH
+```
+
+**Mutation C (bug-03a-1)** — `handle_shell_list` set `interactive: false`,
+`dedicated: false` and `exited_unix: None` for every shell (applied with the
+`patch` tool, run once, restored):
+
+```
+cargo test --lib -- shell_list_carries_each_shells_flags
+test daemon::server::shells::tests::shell_list_carries_each_shells_flags ... FAILED
+assertion `left == right` failed: the record's interactive flag rides the
+wire, not a hardcoded false (left: false, right: true)
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2118 filtered out
+```
+
+Restored with the exact reverse patch; the same filter run printed
+`1 passed; 0 failed`. The closure was then refactored (the 7-tuple folded
+into building `ShellInfo` directly) to clear a clippy `type_complexity` error
+the tuple introduced — that refactor is the only post-restore change to the
+function, and the restored test stayed green through it and through the
+end-to-end capture above.
