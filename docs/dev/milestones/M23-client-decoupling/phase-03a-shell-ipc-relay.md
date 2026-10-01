@@ -1,7 +1,7 @@
 # Phase 03a: shell-ipc-relay — the client can list shells, type into one and resize it over IPC
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** review
 **Depends on:** M20 (shell host protocol), M22 (`list_shells`' row collector)
 **Estimated diff:** ~150 lines of production code across 4 files (1 new); 5 new tests
 **Tags:** language=rust, kind=feature, size=m
@@ -510,3 +510,163 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2117 filtered ou
 
 Restored; `git diff --stat` back to its pre-mutation state, and the same filter
 run printed `1 passed; 0 failed`.
+
+### Update — 2026-10-01 18:51 (complete, server-authored)
+
+**Summary:** </think>All tasks done. Let me verify the completion checklist:
+
+- Phase doc Status: in-progress ✓ (server flips to review)
+- Milestone README row: in-progress ✓
+- No hand-written (complete) entry ✓
+- cargo fmt --all run before git add ✓
+- All verification commands ran clean ✓
+- Final message = Summary + Notes for review — writing now
+- git status clean ✓
+- git log -1 --stat includes all files ✓
+
+Let me write the final summary.</think>
+**Summary**
+
+Phase 03a is implemented and committed (`d3688fc5`, one `feat:` commit, tree clean): `ShellInfo` plus `Request::{ShellList, ShellInput, ShellResize}` and `Response::ShellList { shells }` in `src/ipc.rs` (with the `kind()` arm and the two streaming clients' ignore-arm lines the compiler demanded), `pub async fn send_resize` in `src/shell/client.rs` re-exported from `src/shell/mod.rs`, the three handlers in a new `src/daemon/server/shells.rs` (list built inside `with_shells` with the meta-index read after the lock is released, unknown/exited ids answered `no live shell {id}`, relay errors as `shell {id}: {e:#}`), the three dispatch arms in `server/mod.rs` over `crate::shell::registry()`, and the CLAUDE.md Key-files row. E2E: the § End-to-end block ran verbatim and is pasted byte-identically in a `(end-to-end verification)` entry — `lib1..3=ok` with nothing after, `lib_counts=2104p-0f-14i`, `new_tests=5p-0f`, `isolation=11 passed; 0 failed`, `wired=3/1`; the paste self-check prints **PASTE MATCH** and both mutations (A: `last_command: None`, B: input acks without `send_input`) were applied, ran **red** as predicted, were restored, and their observed results are recorded in the doc. Gates: fmt/build/clippy `-D warnings`/test all clean; preservation targets unmoved (bug_tracker 6, doc_truth 14, integration 32/2i, isolation 11/1i).
+
+**Notes for review**
+
+- The spec's handler signatures name `handle_shell_input/resize` to call `crate::shell::client::send_input` — the module `client` is **private** (`mod client;`), so I call through the module's existing `pub use` re-exports (`crate::shell::send_input`/`send_resize`); the functions and behaviour are exactly the specced ones.
+- The spec's `ShellInfo.host` sketch says `"local" or HostId::as_str()`, but its `Current state 3` quote of `collect_row` shows a registry **already carrying** `host: HostId` (M21) — I map `record.host.as_str()` like every other reader rather than hardcoding `"local"`, so a future remote shell lists correctly; both behaviours coincide for every shell this tree can create, and test 2 pins `host == "local"`.
+- A **third** non-exhaustive `Response` match exists beyond the two the M19 phase documented: `Response::kind()` in `src/ipc.rs` itself (`&Response`), so three ignore-arm/label lines were added, not two.
+- The phase's own `Cargo.toml`-implied build produced 2104/0/14 (2099 + 5) as the criteria pin; the three-run proof is in the pasted capture, and the one flake window I hit mid-work (a `1 failed` run) cleared on the next run and never reappeared across the six subsequent full runs.
+- Status left at `in-progress` per the split; no `(complete)` entry written — the server authors that from this summary.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+pen_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `docs/dev/milestones/M23-client-decoupling/README.md` — +1 -1
+- `docs/dev/milestones/M23-client-decoupling/phase-03a-shell-ipc-relay.md` — +63 -1
+- `src/cli/commands/ask.rs` — +1 -0
+- `src/cli/commands/stream.rs` — +1 -0
+- `src/daemon/server/mod.rs` — +10 -0
+- `src/daemon/server/shells.rs` — +366 -0
+- `src/ipc.rs` — +35 -0
+- `src/ipc_tests.rs` — +53 -0
+- `src/shell/client.rs` — +25 -0
+- `src/shell/mod.rs` — +1 -1
+
+**Commit:** d3688fc58217aa7aef955fed8188855037338730
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
