@@ -1,7 +1,7 @@
 # Phase 03b: shell-screen-snapshot — a shell host can hand a new subscriber its current screen, then the live stream
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** review
 **Depends on:** 03a (done)
 **Estimated diff:** ~60 lines of production code across 4 files; 5 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -483,3 +483,162 @@ Mutations (each applied with the `patch` tool, run once, restored; `git diff
 - **Mutation C** — made the `SubscribeScreen` arm answer `ShellResponse::Ok`,
   ran test 4 (`host_answers_subscribe_screen_with_the_screen_first`) → **red**
   (`FAILED. 0 passed; 1 failed`). Restored, test 4 → 1 passed.
+
+### Update — 2026-10-01 22:25 (complete, server-authored)
+
+**Summary:** </think>All tasks complete, tree clean. Now the final Summary + Notes for review message.
+
+Let me double check the completion checklist:
+- [x] Phase doc Status: in-progress (server flips to review)
+- [x] Milestone README row: in-progress (I caught this late — after the main commit; committed as separate docs commit 298505c0)
+- [x] No (complete) entry written by me
+- [x] cargo fmt --all run before git add
+- [x] All verification commands ran clean
+- [x] Final message substantive
+- [x] git status clean
+- [x] git log -1 --stat shows everything touched — well, the last commit only has the README; the feature commit has all 5 files. Both present.
+
+E2E: lib1..3=ok, lib_counts=2110p-0f-14i, new_tests=5p-0f, isolation=11 passed; 0 failed, fed_once=1 — all expected values matched. PASTE MATCH. Mutations A/B/C all observed red and recorded. No re-runs needed (total_re_runs=0).
+
+Write the final summary.</think>
+**Summary**
+
+Phase 03b (shell-screen-snapshot) is implemented and committed. `ShellRequest::SubscribeScreen` is now answered first with `ShellResponse::Screen { bytes }` — `ShellScreen::snapshot()` emits `state_formatted` escape codes (plus a `?1049h` re-enter for an alt-screen app) — with every later chunk following as `Chunk`; `PtyBackend::subscribe_with_screen` takes the snapshot and subscribes under one screen lock, and the pump now feeds-then-sends each chunk inside that same lock so no byte is lost or doubled. All five pinned tests were added and the end-to-end block was captured verbatim to `/tmp/e2e-m23-03b.txt` and pasted into a dedicated `(end-to-end verification)` Update Log entry.
+
+**End-to-end verification:** `lib1..3=ok` (no failures after `ok`), `lib_counts=2110p-0f-14i`, `new_tests=5p-0f`, `isolation=11 passed; 0 failed`, `fed_once=1` — every expected value matched on the first run; the paste check printed `PASTE MATCH`; `grep -c '^### Update — .* (end-to-end verification)$'` = 1 and `grep -cx 'PASTE MATCH'` = 1. Gates: `cargo fmt --all -- --check`, `cargo build` (no new warnings), `cargo clippy --all-targets --all-features -- -D warnings` (exit 0), full `cargo test` → lib 2110/0/14, bug_tracker 6, doc_truth 14, integration 32, isolation 11 — all unmoved as pinned. Mutations A, B and C were each applied, observed **red**, restored, and recorded in the phase doc with `git diff --stat` confirmed unchanged after each restore.
+
+**Notes for review**
+
+- Two small deviations, both covered by the spec's escape hatches: (1) the three pinned-test parsers needed `let mut p` (E0596 — the spec sketch omitted `mut` on the receiving `vt100::Parser`); (2) the milestone README phase-table row was left `todo` after the feature commit, so I flipped it to `in-progress` and committed it separately (`298505c0`) — the README row is bookkeeping I own at start but noticed late, not a scope change.
+- The no-lost-byte ordering (feed under the screen lock before `out_tx.send`, with the old trailing `feed` deleted) is exactly as §3 prescribes but is, as the doc measured, **not** observable by test — it needs review by reading: `src/shell/backend.rs` pump arm now reads secret-prompt → lock/feed/send → log.
+- `grep -c 'feed(&chunk)' src/shell/backend.rs` = 1 (exactly-once feed confirmed by grep, not just tests).
+- Phase doc status remains `in-progress`; I wrote no `(complete)` entry — the server authors the completion tail. No blockers; nothing outside the authorized files was touched.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+pen_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test cancel_request_roundtrip ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M23-client-decoupling/README.md` — +1 -1
+- `docs/dev/milestones/M23-client-decoupling/phase-03b-shell-screen-snapshot.md` — +36 -1
+- `src/shell/backend.rs` — +65 -2
+- `src/shell/host.rs` — +36 -0
+- `src/shell/proto.rs` — +34 -3
+- `src/shell/screen.rs` — +47 -0
+
+**Commit:** 298505c0bba40b2ea44fa0d19bdd2d2e0fc1101d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
