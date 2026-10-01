@@ -1,7 +1,7 @@
 # Bug 1 on phase-03a: `ShellList` drops every shell's `interactive`, `dedicated` and `exited_unix`
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-10-01 — fixed in `f308a8bc`; the new test passes and Mutation C reproduced red at review
 **Filed:** 2026-10-01
 
 ## What's wrong
@@ -45,11 +45,11 @@ hardcoded values.
 
 ## Definition of done
 
-- [ ] A new test `shell_list_carries_each_shells_flags` passes. It sets up
+- [x] A new test `shell_list_carries_each_shells_flags` passes. It sets up
       `s0` interactive (via `crate::shell::mark_interactive`), and `s1`
       spawned with `dedicated = true` and `exited_unix` set to `Some(42)`
       through `with_shells(&reg, |store| …get_mut…)`. It asserts all six
       values on the wire. Against the current tree that test does not exist
       (`0 passed`).
-- [ ] Mutation C (put the three hardcoded values back) turns that test red.
-- [ ] `cargo test --lib` → 2105 passed / 0 failed / 14 ignored on three runs.
+- [x] Mutation C (put the three hardcoded values back) turns that test red.
+- [x] `cargo test --lib` → 2105 passed / 0 failed / 14 ignored on three runs.

@@ -1,7 +1,7 @@
 # Phase 03a: shell-ipc-relay — the client can list shells, type into one and resize it over IPC
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** M20 (shell host protocol), M22 (`list_shells`' row collector)
 **Estimated diff:** ~150 lines of production code across 4 files (1 new); 5 new tests
 **Tags:** language=rust, kind=feature, size=m
@@ -922,3 +922,34 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f308a8bc2a84e78e8e7f8b09e2aa84ef41d3067f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-01
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-03a-1](bugs/bug-03a-1.md), closed): `ShellList`
+  hardcoded `interactive`, `dedicated` and `exited_unix`. Fixed in
+  `f308a8bc` by building each `ShellInfo` from its record inside the lock.
+  `last_command` is still read outside the lock.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (219 + 73 turns)
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` were clean. Lib was
+  **2105/0/14** on three runs; the other targets were unmoved (bug_tracker 6,
+  doc_truth 14, integration 32/2, isolation 11/1). The second end-to-end
+  entry matched a solo reviewer re-run byte for byte. Mutations A and B were
+  red at the first review. Mutation C (the three hardcoded values restored)
+  was red on `the record's interactive flag rides the wire`.
+- **Flake check:** one reviewer re-run failed
+  `pty_stop_with_no_foreground_job_remembers_nothing`. That run overlapped a
+  concurrent mutation build, which the block itself forbids, so it is not
+  evidence. A/B with nothing else running: 0/6 failing runs at HEAD, 0/6
+  with this phase's tests skipped. Not attributable.
+- **Scope deviations:** a third non-exhaustive `Response` match
+  (`Response::kind()` in `src/ipc.rs`) needed an arm, within Task 4's last
+  paragraph. `ShellInfo.host` is `record.host.as_str()` rather than a
+  hardcoded `"local"`, which is correct for remote shells.
+- **Calibration:** (1) **Test 2 pinned a proxy.** Its shells already held the
+  values the bug hardcoded, so a wrong mapping passed. When a spec maps a
+  record to a wire struct, the test fixture should give every field a
+  non-default value. Logged under the existing
+  `criteria-must-pin-the-property-not-a-proxy` lesson. (2) The new paste
+  wording, "contents of … never the script", worked first time on both runs.
+
