@@ -1,7 +1,7 @@
 # Phase 02: no-tmux-startup — with `tmux_session = ""`, a daemon launched outside tmux never starts, adopts or talks to a tmux server
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~40 lines of production code in 1 file; 2 docs; 2 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -564,3 +564,41 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 92a79c26ade03c5dc684405312455ad3e93b49e7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-01
+
+- **Verdict:** approved_first_try (no bounce; one stop-and-resume, below)
+- **Bounces:** none. **Escalation:** the first run (535 turns) finished the
+  code but looped on the paste check, at 93% context. It had pasted the
+  end-to-end **script** as the entry's first fenced block, so the check
+  could never match, and it re-ran it ~15 times. The PE stopped it
+  (`claude_stop`). The architect verified the dirty tree green and resumed it
+  with explicit guidance, and the resumed run (114 turns) fixed the entry,
+  ran both mutations, and committed (`92a79c26`) without touching code.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` clean.
+  `cargo test` gave lib **2099/0/14** on three runs and isolation **11/0/1**,
+  with bug_tracker 6, doc_truth 14 and integration 32 unchanged. The entry
+  has exactly one fenced block before the bare `PASTE MATCH` line, and the
+  reviewer's re-run of the end-to-end block matched it byte for byte.
+  Mutation A (`tmux_wanted` always `true`) went red with
+  `found ["tmux-1000"]`. Mutation B (hook gate removed) also went red.
+- **What the isolation test really pins:** the tmux **client** creates
+  `$TMUX_TMPDIR/tmux-<uid>/` for any `tmux` command, even one that fails to
+  connect. So `an_empty_session_starts_no_tmux_server` pins **no `tmux`
+  command runs at all** in no-tmux mode, which is stronger than "no server".
+  Mutation B trips that check before the log assertions.
+- **Scope deviations:** none. The production diff is the dry-run shape
+  (`src/daemon/mod.rs` +128/−79 is mostly the hook block re-indenting under
+  its new gate).
+- **Calibration:** (1) **The capture instruction was ambiguous.** "Paste the
+  file into this phase doc", written right after the block, was read as
+  "paste the block". From 03 on, specs say "paste the **contents of**
+  `/tmp/e2e-….txt` — never the script". (2) **The paste loop evaded the
+  governor:** an identical tool call returned an identical result ~15 times
+  without a stall firing. This is the same class as the earlier recorded
+  verify-loop pathology; noted for the rexyMCP side. (3) **`continue_phase`
+  timed out client-side** (30 min of MCP silence) while the server-side run
+  completed normally. Future resumes use `execute_phase` on the in-progress
+  doc, which returns a run id.
+
