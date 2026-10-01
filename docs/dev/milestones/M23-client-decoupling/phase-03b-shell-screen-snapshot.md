@@ -1,7 +1,7 @@
 # Phase 03b: shell-screen-snapshot — a shell host can hand a new subscriber its current screen, then the live stream
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 03a (done)
 **Estimated diff:** ~60 lines of production code across 4 files; 5 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -642,3 +642,34 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 298505c0bba40b2ea44fa0d19bdd2d2e0fc1101d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-01
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (115 turns).
+  The executor's own progress entry names itself "Codex (gpt-5-codex)";
+  `executor_health` reports GLM. Fold C, fifth occurrence.
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` were clean. Lib was
+  **2110/0/14** on three runs; the other targets were unmoved (bug_tracker 6,
+  doc_truth 14, integration 32/2, isolation 11/1). A solo re-run of the
+  end-to-end block matched the pasted capture byte for byte. Mutations A, B
+  and C were each re-applied by the reviewer and went red.
+- **Read-at-review check (§ Current state 3):** the pump arm now reads
+  secret-prompt → `{ lock; feed; send }` → log write, and the trailing feed
+  is gone (`grep -c 'feed(&chunk)'` = 1). `subscribe_with_screen` takes the
+  snapshot and subscribes under the same lock. The atomicity the phase exists
+  for holds by construction.
+- **Flake check:** one reviewer re-run failed
+  `input_after_a_prompt_logs_a_redaction_marker`, the flake the spec names.
+  A/B of 10 full lib runs each: 0/10 at HEAD, 0/10 at the pre-phase commit.
+  Not attributable.
+- **Scope deviations:** none. The receiving parsers needed `let mut p`, which
+  the spec's sketches omitted; a second commit (`298505c0`) flipped the README
+  row the executor had missed at start.
+- **Calibration:** (1) **Dry-running the whole change before dispatch paid
+  off:** the spec's quoted code compiled as written apart from one `mut`, and
+  the phase landed first try in 115 turns. (2) **Fold C** (executor
+  self-reported model name is unreliable) is at five occurrences; propose at
+  the M23 close.
+
