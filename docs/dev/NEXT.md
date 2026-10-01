@@ -1,21 +1,24 @@
 # NEXT
 
-**Active phase:** **M23 phase-03b — shell-screen-snapshot**, drafted
-2026-10-01, status `todo`. Dispatch with `/rexymcp:dispatch phase-03b`.
+**Active phase:** **M23 phase-03c — host-exits-with-its-shell**, drafted
+2026-10-01, status `todo`. Dispatch with `/rexymcp:dispatch phase-03c`.
 
-**What it does.** A new host request, `SubscribeScreen`, is answered first
-with `Screen { bytes }`: escape codes that redraw the host's current screen
-exactly. Live `Chunk`s follow. The snapshot and the subscription are taken
-under one screen lock, and the pump now feeds and sends each chunk under that
-lock, so no byte is lost or duplicated between them. Host side only. Five
-tests; lib 2105 → 2110.
+**Why it was inserted (PE decision 2026-10-01).** Measuring for the
+`ShellTail` relay found two pre-existing defects on a real detached shell
+host:
+- after `exit` the host stays alive and keeps its lock, so the shell is
+  never marked exited and a subscriber never sees EOF;
+- `close_shell`'s TERM goes to the foreground group, which an idle
+  interactive bash ignores.
 
-**Measured at drafting.** vt100 0.16.2's `state_formatted` reproduces text,
-colour and cursor exactly. Alt-screen mode needs a `?1049h` prefix. The
-whole change was dry-run: tests 6/6, lib 2110 ×3, clippy clean, three
-mutations red 6/6. The race the lock closes cannot be shown by a test (12/12
-green on the old order), so review checks it by reading the code.
+**What it does.** A host serves only until its shell has exited, then stops.
+A new host `Close` request sends SIGHUP to the shell's pid, which ends bash
+and its foreground job. `close_shell` uses it, falling back to TERM for old
+hosts. Four new tests plus one tightened; lib 2110 → 2114; four
+`close_shell` doc texts reworded.
 
-**Split.** The daemon `ShellTail` relay is now row 03c.
+**Measured at drafting.** The whole change was dry-run: 6/6 per test, lib
+2114 ×3, clippy clean, three mutations red 6/6. Through the real binary a
+host now exits by itself (live check: exit code 124 → 0).
 
-**After 03b:** `/rexymcp:architect next` drafts 03c (shell-tail-relay).
+**After 03c:** `/rexymcp:architect next` drafts 03d (shell-tail-relay).
