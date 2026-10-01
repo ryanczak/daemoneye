@@ -324,6 +324,9 @@ prompt = "sre"
 # load_recent_turns = 10           # messages loaded when resuming (0 = all; default: 10)
 # archive_retention_days = 0       # delete archived session data older than this
 #                                  # (0 = keep forever; default: 0)
+# log_retention_days = 0           # delete an inactive session's chat log
+#                                  # (<id>.jsonl + <id>.meta.json) older than this
+#                                  # (0 = keep forever; default: 0)
 
 # ── Approvals ────────────────────────────────────────────────────────────────
 

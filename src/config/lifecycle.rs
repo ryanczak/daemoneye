@@ -85,7 +85,7 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         },
         config_key: Some("sessions.archive_retention_days"),
         implemented: ImplementationStatus::Implemented,
-        note: "swept but default is 0 (keep forever) — 141 archives back to May 8; fix in phase-09",
+        note: "two keys: sessions.archive_retention_days sweeps <id>.archive.jsonl; sessions.log_retention_days sweeps <id>.jsonl + <id>.meta.json; both default 0 (keep forever)",
         lazy: false,
     },
     LifecycleEntry {

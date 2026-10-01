@@ -359,7 +359,7 @@ Long sessions don't get truncated at an arbitrary message count — DaemonEye ma
 
 **Optional memory extraction.** Set `extract_memories = true` in `[compaction]` and each epoch build additionally asks the digest model to propose up to three durable facts, written to persistent memory as `knowledge` entries stamped `source: compaction`. Off by default — it costs a small model call per epoch and writes to shared memory.
 
-**Retention.** Session archives are kept forever unless you set `[sessions] archive_retention_days`. The event log rotates into dated segments (`var/log/events/events-YYYYMMDD.jsonl`) with a 90-day default retention.
+**Retention.** Session archives are kept forever unless you set `[sessions] archive_retention_days`. Per-session chat logs are kept forever unless you set `[sessions] log_retention_days`. The event log rotates into dated segments (`var/log/events/events-YYYYMMDD.jsonl`) with a 90-day default retention.
 
 ---
 
@@ -1038,6 +1038,7 @@ Controls named session persistence — saving and resuming conversation history 
 | `auto_name_turn_threshold` | integer | `10` | Number of user turns before an auto-name suggestion is offered. |
 | `load_recent_turns` | integer | `10` | Number of most-recent turns loaded when resuming a saved session with `/session load`. `0` loads the complete history (may exceed the context window). |
 | `archive_retention_days` | integer | `0` | Delete session archive files (`<id>.archive.jsonl`) whose mtime is older than this many days. `0` = keep forever. Archives belonging to active sessions are never swept. |
+| `log_retention_days` | integer | `0` | Delete an inactive session's chat log (`<id>.jsonl`) and its resume state (`<id>.meta.json`) once the log is older than this many days. `0` = keep forever. Archives and epoch files are never touched. |
 
 **In-chat session commands:**
 

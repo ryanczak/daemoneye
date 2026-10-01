@@ -1,7 +1,7 @@
 # Phase 01d: session-log-retention — per-session logs get an opt-in retention setting
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (M21 carry-forward)
 **Estimated diff:** ~60 lines of production code across 3 files; 3 docs; 3 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -331,3 +331,26 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-09-30 18:36 (started)
+
+**Executor:** headless executor (M23 phase-01d).
+Flipped Status todo → in-progress in this doc and in the milestone README's
+phase table. Beginning Task 1 (config field), then the sweep, docs, tests,
+mutations and end-to-end capture per the Spec.
+
+### Update — 2026-09-30 19:10 (end-to-end verification)
+
+```sh
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2098p-0f-14i
+new_tests=3p-0f
+archive_sweep=1 passed
+doc_truth=14 passed; 0 failed
+docs=2/4
+wired=1
+```
+
+PASTE MATCH

@@ -964,6 +964,10 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                             startup_config.sessions.archive_retention_days,
                             &active_ids,
                         );
+                        crate::daemon::utils::sweep_session_logs(
+                            startup_config.sessions.log_retention_days,
+                            &active_ids,
+                        );
                         crate::daemon::utils::sweep_pane_logs(
                             startup_config.retention.pane_log_retention_days,
                         );

@@ -81,6 +81,71 @@ pub fn sweep_session_archives(
     }
 }
 
+/// Delete an inactive session's chat log (`<id>.jsonl`) and its resume state
+/// (`<id>.meta.json`) when the log's mtime is older than `retention_days`
+/// days. 0 = keep forever (no-op). Archives (`<id>.archive.jsonl`) and epoch
+/// files (`<id>.epochs.jsonl`) are never touched: they also end in `.jsonl`,
+/// and they feed the memory index.
+pub fn sweep_session_logs(
+    retention_days: u32,
+    active_sessions: &std::collections::HashSet<String>,
+) {
+    if retention_days == 0 {
+        return;
+    }
+
+    let sessions_dir = crate::config::sessions_dir();
+    let Ok(entries) = std::fs::read_dir(&sessions_dir) else {
+        return;
+    };
+
+    let now = std::time::SystemTime::now();
+    let cutoff = now - std::time::Duration::from_secs(retention_days as u64 * 86_400);
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(".jsonl")
+            || name.ends_with(".archive.jsonl")
+            || name.ends_with(".epochs.jsonl")
+        {
+            continue;
+        }
+
+        let Ok(meta) = path.metadata() else { continue };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if modified >= cutoff {
+            continue;
+        }
+
+        // Extract session id from `<id>.jsonl`
+        let session_id = name.trim_end_matches(".jsonl");
+        if active_sessions.contains(session_id) {
+            continue;
+        }
+
+        log::info!("sessions: deleting expired chat log {}", path.display());
+        if let Err(e) = std::fs::remove_file(&path) {
+            log::warn!("sessions: failed to delete log {}: {}", path.display(), e);
+            continue;
+        }
+        let meta_path = sessions_dir.join(format!("{}.meta.json", session_id));
+        if meta_path.exists()
+            && let Err(e) = std::fs::remove_file(&meta_path)
+        {
+            log::warn!(
+                "sessions: failed to delete resume state {}: {}",
+                meta_path.display(),
+                e
+            );
+        }
+    }
+}
+
 /// Delete pane log files (`*.log`) in `var/log/panes/` whose mtime is older
 /// than `retention_days` days. 0 = keep forever (no-op).
 pub fn sweep_pane_logs(retention_days: u32) {
@@ -321,6 +386,111 @@ mod sweep_tests {
         );
 
         // Restore HOME so ambient readers in other tests are not poisoned.
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn sweep_logs_deletes_expired_inactive_logs_and_their_meta() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let log = sessions_dir.join("old.jsonl");
+        let meta = sessions_dir.join("old.meta.json");
+        std::fs::write(&log, "{\"turn\":1}\n").unwrap();
+        std::fs::write(&meta, "{\"started_at\":0}\n").unwrap();
+        set_file_mtime(&log, 30);
+        set_file_mtime(&meta, 30);
+
+        let empty: HashSet<String> = HashSet::new();
+        sweep_session_logs(14, &empty);
+
+        assert!(!log.exists(), "expired inactive chat log should be deleted");
+        assert!(
+            !meta.exists(),
+            "expired session's resume state should go with the log"
+        );
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn sweep_logs_never_touches_archives_or_epochs() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let archive = sessions_dir.join("old.archive.jsonl");
+        let epochs = sessions_dir.join("old.epochs.jsonl");
+        std::fs::write(&archive, "{\"turn\":1}\n").unwrap();
+        std::fs::write(&epochs, "{\"epoch\":1}\n").unwrap();
+        set_file_mtime(&archive, 30);
+        set_file_mtime(&epochs, 30);
+
+        let empty: HashSet<String> = HashSet::new();
+        sweep_session_logs(14, &empty);
+
+        assert!(
+            archive.exists(),
+            "indexed archive file must never be swept by the log sweep"
+        );
+        assert!(
+            epochs.exists(),
+            "indexed epochs file must never be swept by the log sweep"
+        );
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn sweep_logs_respects_active_recent_and_zero() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let active = sessions_dir.join("active.jsonl");
+        let recent = sessions_dir.join("recent.jsonl");
+        std::fs::write(&active, "{\"turn\":1}\n").unwrap();
+        std::fs::write(&recent, "{\"turn\":1}\n").unwrap();
+        set_file_mtime(&active, 30);
+
+        let mut active_ids: HashSet<String> = HashSet::new();
+        active_ids.insert("active".to_string());
+
+        sweep_session_logs(14, &active_ids);
+        assert!(
+            active.exists(),
+            "an active session's log survives even when expired"
+        );
+        assert!(recent.exists(), "a recent log survives");
+
+        let stale = sessions_dir.join("stale.jsonl");
+        std::fs::write(&stale, "{\"turn\":1}\n").unwrap();
+        set_file_mtime(&stale, 30);
+        sweep_session_logs(0, &active_ids);
+        assert!(stale.exists(), "retention_days=0 should be a no-op");
+
         match old_home {
             Some(v) => unsafe { std::env::set_var("HOME", v) },
             None => unsafe { std::env::remove_var("HOME") },

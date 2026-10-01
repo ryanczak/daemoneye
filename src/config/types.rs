@@ -96,6 +96,12 @@ pub struct SessionsConfig {
     /// days. 0 = keep forever (default).
     #[serde(default)]
     pub archive_retention_days: u32,
+    /// Delete an inactive session's chat log (`<id>.jsonl`) and its resume
+    /// state (`<id>.meta.json`) once the log has not been written for this
+    /// many days. 0 = keep forever (default). Archives and epoch files are
+    /// never touched: they have their own lifecycle and feed the index.
+    #[serde(default)]
+    pub log_retention_days: u32,
 }
 
 fn default_auto_name_turn_threshold() -> usize {
@@ -134,6 +140,7 @@ impl Default for SessionsConfig {
             auto_name_enabled: true,
             load_recent_turns: default_load_recent_turns(),
             archive_retention_days: 0,
+            log_retention_days: 0,
         }
     }
 }

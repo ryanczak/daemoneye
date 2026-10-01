@@ -438,6 +438,7 @@ fn auto_name_enabled_flag_respected() {
         auto_name_turn_threshold: 10,
         load_recent_turns: 10,
         archive_retention_days: 0,
+        log_retention_days: 0,
     };
     assert!(!cfg.auto_name_enabled);
 }
