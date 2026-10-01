@@ -1,7 +1,7 @@
 # Phase 01c: file-op-error-label — a failed sudo edit names its file and host, and no run error doubles its full stop
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** none (M21 09b review residual)
 **Estimated diff:** ~40 lines of production code across 2 files; 3 new tests
 **Tags:** language=rust, kind=bugfix, size=s
@@ -512,3 +512,31 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** bc2ec0990e2bb7270e3e7b457839a85c2b24f4c3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-01
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (61 turns; the
+  `(started)` entry says "Claude")
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` clean.
+  `cargo test` gave lib **2095/0/14** on three runs, with bug_tracker 6,
+  doc_truth 14, integration 32 and isolation 10 unchanged. The reviewer
+  re-applied both mutations: A (untrimmed `error_chain`) and B (`{e:#}` in the
+  give-up branch) both went red. The reviewer's re-run of the end-to-end block
+  matched the pasted capture on every line except `lib1`, where the named
+  pre-existing flake (`input_after_a_prompt_logs_a_redaction_marker`) fired,
+  which the spec allows. The production code is the spec's dry-run text,
+  verbatim.
+- **Scope deviations:** none.
+- **Evidence:** **the bare `PASTE MATCH` line is in the doc**
+  (`grep -cx 'PASTE MATCH'` → 1). It was a counted criterion for the first
+  time, after two phases reported the check without printing it, and it
+  worked first try.
+- **Calibration:** (1) **Fold C, fourth occurrence** of a wrong
+  self-reported executor name ("Claude"). (2) **Making the self-check a
+  `grep -cx` criterion worked** where prose had not: two misses, then a hit
+  first time once it was counted. This matches the M12 lesson that the
+  executor responds to conditions it can evaluate. Candidate for the M23
+  close, alongside fold C.
+
