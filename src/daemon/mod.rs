@@ -602,7 +602,8 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     //      > default "daemoneye").  If the session already exists, adopt it; if not,
     //      create it with `tmux new-session -d -s <name>` and bail on failure.
     //
-    // A tmux session is always required — there is no degraded "no session" mode.
+    // An empty session name means no tmux at all: no session, no global hooks,
+    // no background-window GC.
     let inside_session = crate::tmux::off_runtime("detect-session", detect_session)
         .await
         .flatten();
@@ -611,6 +612,14 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     {
         log::info!("Launched inside tmux — adopting session '{}'.", name);
         (Some(name), None)
+    } else if !tmux_wanted(
+        session_override.as_deref(),
+        &startup_config.daemon.tmux_session,
+    ) {
+        log::info!(
+            "tmux_session is empty: no managed tmux session, tmux hooks or background-window GC."
+        );
+        (None, None)
     } else {
         let name = session_override.unwrap_or_else(|| startup_config.daemon.tmux_session.clone());
         let n = name.clone();
@@ -669,67 +678,72 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // hooks, so it cannot be pre-escaped in Rust. Do NOT wrap the placeholder
     // in extra quotes: nested quotes are a tmux syntax error that makes
     // set-hook fail and leaves the hook unset.
-    let global_notify_cmd = format!(
-        "run-shell -b '{} notify activity #{{pane_id}} 0 #{{q:session_name}}'",
-        hook_exe_path,
-    );
-    let c = global_notify_cmd.clone();
-    let res = crate::tmux::off_runtime("set-hook-pane-died", move || {
-        std::process::Command::new("tmux")
-            .args(["set-hook", "-g", "pane-died", &c])
-            .output()
-    })
-    .await
-    .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
-    log_hook_install_result("pane-died", res);
+    //
+    // All four global installs assume a tmux server exists; with no managed
+    // session (empty name, outside tmux) there is none, so skip them.
+    if initial_session.is_some() {
+        let global_notify_cmd = format!(
+            "run-shell -b '{} notify activity #{{pane_id}} 0 #{{q:session_name}}'",
+            hook_exe_path,
+        );
+        let c = global_notify_cmd.clone();
+        let res = crate::tmux::off_runtime("set-hook-pane-died", move || {
+            std::process::Command::new("tmux")
+                .args(["set-hook", "-g", "pane-died", &c])
+                .output()
+        })
+        .await
+        .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
+        log_hook_install_result("pane-died", res);
 
-    // after-new-session (N14): auto-install per-session hooks for any new tmux session,
-    // so monitoring works immediately without requiring a first `daemoneye chat` invocation.
-    let session_created_cmd = format!(
-        "run-shell -b '{} notify session-created #{{q:session_name}}'",
-        hook_exe_path,
-    );
-    let c = session_created_cmd.clone();
-    let res = crate::tmux::off_runtime("set-hook-after-new-session", move || {
-        std::process::Command::new("tmux")
-            .args(["set-hook", "-g", "after-new-session", &c])
-            .output()
-    })
-    .await
-    .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
-    log_hook_install_result("after-new-session", res);
+        // after-new-session (N14): auto-install per-session hooks for any new tmux session,
+        // so monitoring works immediately without requiring a first `daemoneye chat` invocation.
+        let session_created_cmd = format!(
+            "run-shell -b '{} notify session-created #{{q:session_name}}'",
+            hook_exe_path,
+        );
+        let c = session_created_cmd.clone();
+        let res = crate::tmux::off_runtime("set-hook-after-new-session", move || {
+            std::process::Command::new("tmux")
+                .args(["set-hook", "-g", "after-new-session", &c])
+                .output()
+        })
+        .await
+        .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
+        log_hook_install_result("after-new-session", res);
 
-    // client-attached (N15): notify daemon when a terminal client re-attaches so it
-    // can clear pending detach state and suppress the catch-up brief.
-    let client_attached_cmd = format!(
-        "run-shell -b '{} notify client-attached #{{q:session_name}}'",
-        hook_exe_path,
-    );
-    let c = client_attached_cmd.clone();
-    let res = crate::tmux::off_runtime("set-hook-client-attached", move || {
-        std::process::Command::new("tmux")
-            .args(["set-hook", "-g", "client-attached", &c])
-            .output()
-    })
-    .await
-    .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
-    log_hook_install_result("client-attached", res);
+        // client-attached (N15): notify daemon when a terminal client re-attaches so it
+        // can clear pending detach state and suppress the catch-up brief.
+        let client_attached_cmd = format!(
+            "run-shell -b '{} notify client-attached #{{q:session_name}}'",
+            hook_exe_path,
+        );
+        let c = client_attached_cmd.clone();
+        let res = crate::tmux::off_runtime("set-hook-client-attached", move || {
+            std::process::Command::new("tmux")
+                .args(["set-hook", "-g", "client-attached", &c])
+                .output()
+        })
+        .await
+        .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
+        log_hook_install_result("client-attached", res);
 
-    // client-detached (N15): notify daemon when the terminal client detaches so it
-    // can record the time and generate a catch-up brief on the next Ask.
-    let client_detached_cmd = format!(
-        "run-shell -b '{} notify client-detached #{{q:session_name}}'",
-        hook_exe_path,
-    );
-    let c = client_detached_cmd.clone();
-    let res = crate::tmux::off_runtime("set-hook-client-detached", move || {
-        std::process::Command::new("tmux")
-            .args(["set-hook", "-g", "client-detached", &c])
-            .output()
-    })
-    .await
-    .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
-    log_hook_install_result("client-detached", res);
+        // client-detached (N15): notify daemon when the terminal client detaches so it
+        // can record the time and generate a catch-up brief on the next Ask.
+        let client_detached_cmd = format!(
+            "run-shell -b '{} notify client-detached #{{q:session_name}}'",
+            hook_exe_path,
+        );
+        let c = client_detached_cmd.clone();
+        let res = crate::tmux::off_runtime("set-hook-client-detached", move || {
+            std::process::Command::new("tmux")
+                .args(["set-hook", "-g", "client-detached", &c])
+                .output()
+        })
+        .await
+        .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
+        log_hook_install_result("client-detached", res);
+    }
 
     // Install per-session hooks if we already know the session.
     if let Some(ref sn) = initial_session {
@@ -1008,24 +1022,28 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     ));
 
     // Periodic GC of background windows: kills dead, idle-completed, and orphaned windows.
-    let sessions_gc_sup = sessions.clone();
-    tokio::spawn(supervise(
-        "bg-window-gc",
-        Arc::clone(&shutdown),
-        move || {
-            let sessions_gc = sessions_gc_sup.clone();
-            async move {
-                loop {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
-                    let s = sessions_gc.clone();
-                    let _ = crate::tmux::off_runtime("gc-bg-windows", move || {
-                        crate::daemon::background::gc_bg_windows(&s)
-                    })
-                    .await;
+    // With no managed session (empty name, outside tmux) there are no `de-bg-*`
+    // windows, so skip the GC entirely rather than WARN every 60 s.
+    if initial_session.is_some() {
+        let sessions_gc_sup = sessions.clone();
+        tokio::spawn(supervise(
+            "bg-window-gc",
+            Arc::clone(&shutdown),
+            move || {
+                let sessions_gc = sessions_gc_sup.clone();
+                async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+                        let s = sessions_gc.clone();
+                        let _ = crate::tmux::off_runtime("gc-bg-windows", move || {
+                            crate::daemon::background::gc_bg_windows(&s)
+                        })
+                        .await;
+                    }
                 }
-            }
-        },
-    ));
+            },
+        ));
+    }
 
     let socket_path: PathBuf = default_socket_path();
 
@@ -1161,6 +1179,13 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     Ok(())
 }
 
+/// Whether the daemon should use tmux when launched outside it: an empty
+/// (or all-whitespace) session name, from `--session` or `[daemon]
+/// tmux_session`, means no tmux at all.
+fn tmux_wanted(session_override: Option<&str>, configured: &str) -> bool {
+    !session_override.unwrap_or(configured).trim().is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1169,6 +1194,30 @@ mod tests {
     // ---------------------------------------------------------------------------
     // D6 predicate tests — pure, no tmux or cache
     // ---------------------------------------------------------------------------
+
+    #[test]
+    fn an_empty_session_name_means_no_tmux() {
+        assert!(
+            !tmux_wanted(None, ""),
+            "an empty configured session name means no tmux"
+        );
+        assert!(
+            !tmux_wanted(None, "   "),
+            "an all-whitespace configured session name means no tmux"
+        );
+        assert!(
+            !tmux_wanted(Some(""), "daemoneye"),
+            "an empty --session override wins over a non-empty configured name"
+        );
+        assert!(
+            tmux_wanted(None, "daemoneye"),
+            "the configured default session name still wants tmux"
+        );
+        assert!(
+            tmux_wanted(Some("work"), ""),
+            "a non-empty --session override wants tmux even with an empty config"
+        );
+    }
 
     #[test]
     fn is_daemon_window_matches_all_five_prefixes() {

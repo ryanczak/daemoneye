@@ -1,7 +1,7 @@
 # Phase 02: no-tmux-startup — with `tmux_session = ""`, a daemon launched outside tmux never starts, adopts or talks to a tmux server
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~40 lines of production code in 1 file; 2 docs; 2 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -309,3 +309,128 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-01 02:10 (progress)
+
+Started Phase 02 (executor dispatch, status flipped to in-progress). Reading done; the
+startup decision, the four global hook installs and the bg-window GC are where the
+drafting put them. Implementing Task 1 next.
+
+### Update — 2026-10-01 02:20 (end-to-end verification)
+
+Captured mechanically to `/tmp/e2e-m23-02.txt` (block run verbatim from this
+phase doc, nothing else running `cargo test`); contents pasted below by tool,
+never retyped.
+
+```sh
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2099p-0f-14i
+isolation_counts=11p-0f-1i
+predicate_test=1 passed
+no_tmux_test=1 passed
+boot_test=1 passed
+docs=1/1
+```
+
+PASTE MATCH
+
+PASTE-CHECK RUNS USED: 2 of 3. Run 1 (after the entry was rewritten) printed
+PASTE MISMATCH — the paste had lost the trailing spaces on the three `libN=ok `
+lines; fixed from the diff, run 2 (the check above) printed `PASTE MATCH`.
+
+### Mutation A observed result
+
+**Applied:** `tmux_wanted` made unconditional-true via `patch`:
+
+```rust
+fn tmux_wanted(session_override: Option<&str>, configured: &str) -> bool {
+    let _ = (session_override, configured);
+    true
+}
+```
+
+**Run:** `cargo test --test isolation an_empty_session_starts_no_tmux_server`.
+**Result: RED, as expected.** The daemon ran `tmux new-session -d -s ''`, so a
+tmux server **did** start: the test failed on the tmux-directory assertion
+exactly as drafted.
+
+```
+test an_empty_session_starts_no_tmux_server failed at tests/isolation.rs:835:5
+  — an empty session name must not start a tmux server, found ["tmux-1000"], (x2)
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out
+```
+
+**Restored:** the original body via `patch`; `git diff --stat` matches its
+pre-mutation state (diff of the two stat outputs is empty).
+
+### Mutation B observed result
+
+**Applied:** the `if initial_session.is_some()` gate around the four global
+hook installs was removed via `patch` (the Task-1 branch stayed in place;
+`sed -i` and `perl -i` were not used). **Run:**
+`cargo test --test isolation an_empty_session_starts_no_tmux_server`.
+**Result: RED, as expected.** The daemon ran all four `tmux set-hook -g`
+installs with no server; each tmux client attempt created an empty
+`tmux-1000/` directory under the throwaway `TMUX_TMPDIR` and logged its
+connect failure. The test failed on the tmux-directory assertion (first one
+to fire), and a probe of the same boot's `daemon.log` showed exactly the four
+`Failed to register global tmux … (exit status: 1): error connecting to
+…/tmux-1000/default (No such file or directory)` lines the drafting measured:
+
+```
+ERROR Failed to register global tmux pane-died hook (exit status: 1): error connecting to …/tmux-1000/default (No such file or directory)
+ERROR Failed to register global tmux after-new-session hook (exit status: 1): error connecting to …/tmux-1000/default (No such file or directory)
+ERROR Failed to register global tmux client-attached hook (exit status: 1): error connecting to …/tmux-1000/default (No such file or directory)
+ERROR Failed to register global tmux client-detached hook (exit status: 1): error connecting to …/tmux-1000/default (No such file or directory)
+```
+
+(Paths elided to `…` — each was the throwaway root's `tmux-1000/default`.)
+
+**Restored:** the gate re-added via `patch`, `cargo fmt` run,
+`git diff --stat` back to its pre-mutation state (207 changed lines in
+`src/daemon/mod.rs`, same as before the mutation), and the isolation test
+passes again (`1 passed; 0 failed`).
+
+### Update — 2026-10-01 (escalation)
+
+**Chosen lever:** resume (`continue_phase`), on the PE's instruction after a
+`stop_phase`.
+**Rationale:** the code is finished and the architect ran the gates on the
+dirty tree (fmt and clippy clean, the new predicate test green, isolation
+11/0/1, docs 1/1). The run was stuck only on evidence formatting: it pasted
+the **script** as the entry's first fenced block and a retyped copy of the
+results as a second block, then re-ran the paste check ~15 times with the
+identical `PASTE MISMATCH`, at 93% context. A fresh context with the fix
+spelled out is a few turns.
+
+### Notes for executor — 2026-10-01
+
+**Green gates and a clean-looking diff are EXPECTED here and are NOT evidence
+the phase is done.** The code in the working tree is **finished and
+approved by the architect**. Do not edit `src/daemon/mod.rs`, `tests/isolation.rs`,
+`assets/etc/config.toml` or `README.md`. Everything left is in **this doc**:
+
+1. **Fix the end-to-end entry.** Under `### Update — 2026-10-01 02:20
+   (end-to-end verification)` there are two fenced blocks. **Delete both.**
+   In their place put **one** fenced block whose contents are exactly the
+   file `/tmp/e2e-m23-02.txt` (it already exists; do not re-run the block).
+   Produce it with a tool that copies the file, never by typing: the real
+   lines end `lib1=ok ` **with a trailing space**, which retyping loses. The
+   paste check compares the entry's **first** fenced block to that file, which
+   is why the script block made it fail.
+2. **Run the paste check once** (the snippet in § End-to-end verification).
+   It prints one line. Put that line in the entry **on its own line**, bare.
+   If it prints `PASTE MISMATCH`, run `diff /tmp/pasted-m23-02.txt /tmp/e2e-m23-02.txt`
+   once, fix the entry from what the diff shows, and check once more. **Never
+   run the check more than three times**: after three, stop and report what
+   the diff showed.
+3. **Mutations A and B** (§ Mutations), one run each with `patch`, restore,
+   and record each observed result in the same entry after the paste line.
+4. Commit everything as one `feat:` commit. Leave `Status:` as it is.
+
+**Finish condition you can check yourself:**
+`grep -cx 'PASTE MATCH' <this doc>` → `1`, and the entry has exactly one
+fenced block before that line.
+

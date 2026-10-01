@@ -797,3 +797,58 @@ fn held_port_cannot_be_rebound() {
         "expected AddrInUse, got {err:?}"
     );
 }
+
+/// An empty `--session` starts no tmux server at all.
+///
+/// `--session ""` means no tmux: no managed session is created or adopted, so
+/// no tmux server is started under the private `TMUX_TMPDIR`, the four global
+/// hooks are never installed (no "Failed to register" errors) and the
+/// background-window GC never runs (no `gc_bg_windows` warnings). The daemon
+/// itself still boots and answers `ping`.
+///
+/// Deliberately has **no** `tmux_available()` guard: with no tmux installed
+/// there is trivially no server, and the daemon must still boot and answer.
+#[test]
+fn an_empty_session_starts_no_tmux_server() {
+    let mut env = IsolatedEnv::new();
+    env.start_daemon("");
+
+    // The daemon is up and answering through the isolated socket.
+    let ping_out = env
+        .daemoneye(&["ping"])
+        .output()
+        .expect("run daemoneye ping");
+    assert!(
+        ping_out.status.success(),
+        "daemoneye ping failed with an empty session: {}",
+        String::from_utf8_lossy(&ping_out.stderr)
+    );
+
+    // No tmux server was started: a server creates `tmux-<uid>/` directly
+    // under the throwaway root (the env's TMUX_TMPDIR).
+    let tmux_dirs: Vec<String> = std::fs::read_dir(env.root())
+        .expect("read throwaway root")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("tmux-"))
+        .collect();
+    assert!(
+        tmux_dirs.is_empty(),
+        "an empty session name must not start a tmux server, found {tmux_dirs:?}"
+    );
+
+    // No hook-install noise and no GC noise in the daemon log.
+    let log = env.daemon_log();
+    assert!(
+        log.contains("tmux_session is empty"),
+        "daemon.log should say tmux_session is empty:\n{log}"
+    );
+    assert!(
+        !log.contains("Failed to register global tmux"),
+        "daemon.log must not contain hook-install failures:\n{log}"
+    );
+    assert!(
+        !log.contains("gc_bg_windows"),
+        "daemon.log must not contain background-window GC noise:\n{log}"
+    );
+}

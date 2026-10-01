@@ -1024,7 +1024,7 @@ Controls daemon startup and session ownership. Use this when running DaemonEye a
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `tmux_session` | string | `"daemoneye"` | Name of the tmux session the daemon creates (or adopts, if it already exists) when launched **outside** tmux — e.g. as a systemd service — so ghost shells, scheduled jobs and webhook automation are available immediately. When the daemon is launched from *inside* an active tmux session it adopts that session and this setting is ignored. |
+| `tmux_session` | string | `"daemoneye"` | Name of the tmux session the daemon creates (or adopts, if it already exists) when launched **outside** tmux — e.g. as a systemd service — so ghost shells, scheduled jobs and webhook automation are available immediately. When the daemon is launched from *inside* an active tmux session it adopts that session and this setting is ignored. Set it to `""` for no tmux at all: launched outside tmux, the daemon then creates no session and registers no tmux hooks, and `daemoneye chat` does not attach. |
 
 When `tmux_session` is set, `daemoneye chat` invoked **outside** of tmux will open a new chat window inside the managed session and exec-attach to it, dropping the user straight into the right place.
 
