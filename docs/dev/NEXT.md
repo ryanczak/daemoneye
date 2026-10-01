@@ -1,24 +1,21 @@
 # NEXT
 
-**Active phase:** **M23 phase-03a — shell-ipc-relay**, drafted 2026-10-01,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-03a`.
+**Active phase:** **M23 phase-03b — shell-screen-snapshot**, drafted
+2026-10-01, status `todo`. Dispatch with `/rexymcp:dispatch phase-03b`.
 
-**What it does.** Three request/response IPC messages let a client see and
-touch the daemon's PTY shells: `ShellList` (every shell, with host, owner,
-state and last recorded command), `ShellInput { id, bytes }` and
-`ShellResize { id, rows, cols }`. Unknown or exited ids get a `Response::Error`
-naming them. The handlers are in a new `src/daemon/server/shells.rs` and take an
-injected registry. Five tests: a wire round trip, the list, input reaching a
-real in-process shell, resize changing a real shell's size, and refusal.
-Lib 2099 → 2104.
+**What it does.** A new host request, `SubscribeScreen`, is answered first
+with `Screen { bytes }`: escape codes that redraw the host's current screen
+exactly. Live `Chunk`s follow. The snapshot and the subscription are taken
+under one screen lock, and the pump now feeds and sends each chunk under that
+lock, so no byte is lost or duplicated between them. Host side only. Five
+tests; lib 2105 → 2110.
 
-**Measured at drafting.** A raw `Resize { rows: 30, cols: 100 }` frame against
-an in-process host was acked, and `status()` then said 30×100 (it had been
-24×80). No resize client function exists; `send_input` does. Every symbol the
-spec names was checked against the tree.
+**Measured at drafting.** vt100 0.16.2's `state_formatted` reproduces text,
+colour and cursor exactly. Alt-screen mode needs a `?1049h` prefix. The
+whole change was dry-run: tests 6/6, lib 2110 ×3, clippy clean, three
+mutations red 6/6. The race the lock closes cannot be shown by a test (12/12
+green on the old order), so review checks it by reading the code.
 
-**Split.** `ShellTail` (live streaming) became row 03b. The host streams only
-from `Subscribe` and has no backlog, so a correct starting screen needs its
-own design.
+**Split.** The daemon `ShellTail` relay is now row 03c.
 
-**After 03a:** `/rexymcp:architect next` drafts 03b (shell-tail).
+**After 03b:** `/rexymcp:architect next` drafts 03c (shell-tail-relay).
