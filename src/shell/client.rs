@@ -100,6 +100,31 @@ pub async fn send_input(sock: &Path, bytes: &[u8], timeout: Duration) -> anyhow:
     read_ack(sock, &mut reader, timeout).await
 }
 
+/// Resize the shell hosted at `sock` to `rows` × `cols`. Returns when the host
+/// has acknowledged, which is not the same as the program having reflowed —
+/// reading what happened is `read_shell`'s or `watch_shell`'s job.
+pub async fn send_resize(
+    sock: &Path,
+    rows: u16,
+    cols: u16,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let stream = UnixStream::connect(sock)
+        .await
+        .with_context(|| format!("connecting to shell socket at {}", sock.display()))?;
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+
+    let wire = encode(ShellRequest::Resize { rows, cols }).context("encoding Resize frame")?;
+    writer
+        .write_all(wire.as_bytes())
+        .await
+        .context("sending Resize frame")?;
+    writer.flush().await.context("flushing Resize frame")?;
+
+    read_ack(sock, &mut reader, timeout).await
+}
+
 /// The shell's current state, rows, cols and pid.
 pub async fn status(sock: &Path, timeout: Duration) -> anyhow::Result<ShellResponse> {
     let stream = UnixStream::connect(sock)

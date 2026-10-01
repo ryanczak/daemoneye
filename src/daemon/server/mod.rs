@@ -5,6 +5,7 @@
 mod ask;
 mod catchup;
 mod handlers;
+mod shells;
 
 pub(crate) use catchup::is_valid_pane_id;
 
@@ -171,6 +172,15 @@ pub async fn handle_client(
     match request {
         Request::Ping => {
             handle_ping(&mut tx).await?;
+        }
+        Request::ShellList => {
+            shells::handle_shell_list(&mut tx, crate::shell::registry()).await?;
+        }
+        Request::ShellInput { id, bytes } => {
+            shells::handle_shell_input(&mut tx, crate::shell::registry(), &id, &bytes).await?;
+        }
+        Request::ShellResize { id, rows, cols } => {
+            shells::handle_shell_resize(&mut tx, crate::shell::registry(), &id, rows, cols).await?;
         }
         Request::Cancel { session_id } => {
             let found = crate::daemon::run::cancel_session(

@@ -1,7 +1,7 @@
 # Phase 03a: shell-ipc-relay — the client can list shells, type into one and resize it over IPC
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** M20 (shell host protocol), M22 (`list_shells`' row collector)
 **Estimated diff:** ~150 lines of production code across 4 files (1 new); 5 new tests
 **Tags:** language=rust, kind=feature, size=m
@@ -448,3 +448,65 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-01 18:15 (progress)
+
+Starting phase 03a. Status flipped `todo → in-progress`, milestone README row
+updated. Work: `ShellInfo` + the three `Request` variants and `Response::ShellList`
+(Task 1), `send_resize` on the shell client (Task 2), the three handlers in a new
+`src/daemon/server/shells.rs` (Task 3), dispatch arms (Task 4), the CLAUDE.md
+Key-files row (Task 5), the five tests (Task 6), and the end-to-end capture
+(Task 7). Two exhaustive `Response` matches exist outside this doc's own files
+(`src/cli/commands/ask.rs:~216`, `src/cli/commands/stream.rs:~760`) and are
+pre-measured to need one ignore-arm line each under Task 4's last paragraph.
+
+Executor: model run for the rexyMCP server.
+
+### Update — 2026-10-01 18:47 (end-to-end verification)
+
+The § End-to-end verification block ran verbatim with nothing else running `cargo test` (re-run budget unused, no flake). Its capture file, `/tmp/e2e-m23-03a.txt`, contents:
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2104p-0f-14i
+new_tests=5p-0f
+isolation=11 passed; 0 failed
+wired=3/1
+```
+
+Paste check (the line the snippet printed, on its own line):
+
+```
+PASTE MATCH
+```
+
+## Mutations — observed results
+
+**Mutation A** — `handle_shell_list` answered `last_command: None` for every
+shell (applied with the `patch` tool, run once, restored):
+
+```
+cargo test --lib -- shell_list_reports_every_shell_with_its_last_command
+test daemon::server::shells::tests::shell_list_reports_every_shell_with_its_last_command ... FAILED
+panicked at src/daemon/server/shells.rs:250:9: the first shell's recorded last
+command is on the wire (left: None, right: Some("echo hi"))
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2117 filtered out
+```
+
+Restored; `git diff --stat` back to its pre-mutation state (10 files, +142/-4),
+and the same filter run printed `1 passed; 0 failed`.
+
+**Mutation B** — `handle_shell_input` answered `Response::Ok` without calling
+`send_input` (applied with the `patch` tool, run once, restored):
+
+```
+cargo test --lib -- shell_input_reaches_the_shell
+test daemon::server::shells::tests::shell_input_reaches_the_shell ... FAILED
+(the <tempfile> never appeared; the 5 s existence poll expired)
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2117 filtered out
+```
+
+Restored; `git diff --stat` back to its pre-mutation state, and the same filter
+run printed `1 passed; 0 failed`.

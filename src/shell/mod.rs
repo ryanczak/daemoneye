@@ -19,7 +19,7 @@ pub use crate::daemon::utils::PromptKind;
 pub use backend::PtyBackend;
 pub use client::{
     CommandHandle, PromptGivenUp, PromptReply, ShellExited, run_command, run_command_with_prompts,
-    send_input, send_signal, spawn_command, status,
+    send_input, send_resize, send_signal, spawn_command, status,
 };
 pub use host::{ShellBackend, bind, serve};
 pub use launch::{

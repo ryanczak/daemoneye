@@ -753,6 +753,7 @@ pub(super) async fn ask_with_session_ratatui(
             | Response::ModelList { .. }
             | Response::PaneChanged { .. }
             | Response::PaneList { .. }
+            | Response::ShellList { .. }
             | Response::ContainerStatus { .. }
             | Response::LimitsInfo { .. }
             | Response::SessionSaved { .. }

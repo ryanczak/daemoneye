@@ -42,7 +42,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/instance.rs` | `InstanceLock` — flock-based single-instance enforcement + PID payload |
 | `src/daemon/mod.rs` | Window-prefix constants + D6 predicates (`is_daemon_window`, `is_ghost_window`, `is_targetable_pane`) |
 | `src/daemon/ready.rs` | Fork readiness handshake — child reports `READY` / `ERR <msg>` to the parent over a pipe |
-| `src/daemon/server/` | IPC server, split by concern: `mod.rs` client dispatch (`handle_client`), `ask.rs` the `handle_ask` orchestrator, `handlers.rs` the simple request handlers (`handle_ping`, `handle_shutdown`, `handle_refresh`, `handle_set_model`), `catchup.rs` the catch-up brief (`build_catchup_brief`, `is_valid_pane_id`) |
+| `src/daemon/server/` | IPC server, split by concern: `mod.rs` client dispatch (`handle_client`), `ask.rs` the `handle_ask` orchestrator, `handlers.rs` the simple request handlers (`handle_ping`, `handle_shutdown`, `handle_refresh`, `handle_set_model`), `shells.rs` the shell IPC relay (`handle_shell_list`, `handle_shell_input`, `handle_shell_resize`), `catchup.rs` the catch-up brief (`build_catchup_brief`, `is_valid_pane_id`) |
 | `src/daemon/hook.rs` | 9 IPC hook notification handlers (`NotifyActivity`, `NotifyComplete`, `NotifyFocus`, etc.) |
 | `src/daemon/auto_name.rs` | Session auto-naming (`suggest_session_name`, `diff_sessions_summary`) |
 | `src/daemon/prompt.rs` | Prompt assembly via `PromptCtx` (`build_first_turn_prompt`, `build_subsequent_turn_prompt`) |

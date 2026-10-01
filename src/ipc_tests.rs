@@ -1032,6 +1032,59 @@ fn response_container_status_roundtrip() {
     }
 }
 
+#[test]
+fn shell_ipc_messages_round_trip() {
+    // Every Request variant this phase adds, serialized then read back.
+    let requests: Vec<Request> = vec![
+        Request::ShellList,
+        Request::ShellInput {
+            id: "s3".to_string(),
+            bytes: b"ls\n".to_vec(),
+        },
+        Request::ShellResize {
+            id: "s3".to_string(),
+            rows: 30,
+            cols: 100,
+        },
+    ];
+    for req in requests {
+        let json = serde_json::to_string(&req).unwrap();
+        match serde_json::from_str::<Request>(&json).unwrap() {
+            got @ (Request::ShellList
+            | Request::ShellInput { .. }
+            | Request::ShellResize { .. }) => {
+                assert_eq!(
+                    format!("{got:?}"),
+                    format!("{req:?}"),
+                    "round trip of {req:?}"
+                );
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    // The response variant, with one ShellInfo that has every field set.
+    let shells = vec![ShellInfo {
+        id: "s3".to_string(),
+        host: "web01".to_string(),
+        owner: "chat:deadbeef".to_string(),
+        started_unix: 1_788_470_000,
+        interactive: true,
+        dedicated: false,
+        exited_unix: Some(1_788_470_050),
+        last_command: Some("echo hi".to_string()),
+    }];
+    let resp = Response::ShellList {
+        shells: shells.clone(),
+    };
+    match roundtrip_resp(&resp) {
+        Response::ShellList { shells: got } => {
+            assert_eq!(got, shells, "every field of the row survives the wire")
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+}
+
 // ── Classification (M21 phase-06a) ────────────────────────────────────────
 
 #[test]

@@ -76,6 +76,24 @@ pub struct ScriptListItem {
     pub size: u64,
 }
 
+/// One PTY shell the daemon runs, as the client sees it (M23).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ShellInfo {
+    /// `s3`.
+    pub id: String,
+    /// `"local"` or the configured host name (`HostId::as_str()`).
+    pub host: String,
+    /// The owner's key (`Owner::key()`), e.g. `chat:<session>` or `ghost:<job>`.
+    pub owner: String,
+    pub started_unix: u64,
+    pub interactive: bool,
+    pub dedicated: bool,
+    /// `Some` once the shell's host has been seen dead.
+    pub exited_unix: Option<u64>,
+    /// The most recent command recorded in the shell's index, if any.
+    pub last_command: Option<String>,
+}
+
 /// Configuration for autonomous Ghost Shells triggered by a runbook.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GhostConfig {
@@ -182,6 +200,20 @@ pub struct SessionSummary {
 pub enum Request {
     /// A simple ping to check if the daemon is alive.
     Ping,
+    /// Every PTY shell the daemon runs, with its state and last command (M23).
+    ShellList,
+    /// Write raw bytes into one PTY shell (M23) — typing at it, or answering a
+    /// program's stdin prompt.
+    ShellInput {
+        id: String,
+        bytes: Vec<u8>,
+    },
+    /// Resize one PTY shell's terminal (M23).
+    ShellResize {
+        id: String,
+        rows: u16,
+        cols: u16,
+    },
     /// Ask the daemon to shut down cleanly.
     Shutdown,
     /// Send an ask request with the invoking tmux pane (if in tmux).
@@ -475,6 +507,8 @@ pub fn classify(host: Option<&str>, is_ghost: bool, known_hosts: &[String]) -> C
 pub enum Response {
     /// Acknowledgment of a successful request.
     Ok,
+    /// Every PTY shell the daemon runs, with its state and last command (M23).
+    ShellList { shells: Vec<ShellInfo> },
     /// An error occurred on the daemon side.
     Error(String),
     /// Sent once before streaming begins; carries session state so the client
@@ -779,6 +813,7 @@ impl Response {
     pub fn kind(&self) -> &'static str {
         match self {
             Response::Ok => "Ok",
+            Response::ShellList { .. } => "ShellList",
             Response::Error(_) => "Error",
             Response::SessionInfo { .. } => "SessionInfo",
             Response::Token(_) => "Token",
