@@ -1,20 +1,20 @@
 # NEXT
 
-**Active phase:** **M23 phase-01c — file-op-error-label**, drafted
-2026-09-30, status `todo`. Dispatch with `/rexymcp:dispatch phase-01c`.
+**Active phase:** **M23 phase-01d — session-log-retention**, drafted
+2026-10-01, status `todo`. Dispatch with `/rexymcp:dispatch phase-01d`.
 
-**What it does.** A sudo edit that fails to run gets its own error wording,
-naming the file and host and what to do next. It no longer says "in shell
-edit_file" or advises a `shell` parameter `edit_file` doesn't take. The shared
-`shell_run_error_text` stops doubling its full stop (`…chat session.. The`),
-which affected `run_terminal_command` too. Three new tests: 2095 / 14.
+**What it does.** Adds `[sessions] log_retention_days` (default `0`, keep
+forever). Once a session has been inactive for that many days, it deletes the
+session's chat log (`<id>.jsonl`) and resume state (`<id>.meta.json`). It
+never touches archives or epoch files, which feed the memory index, and never
+an active session. Swept every 60th cleanup tick, beside the archive sweep.
+Three new tests: 2098 / 14.
 
-**Measured at drafting.** All three error branches were rendered as the sudo
-edit sees them. The spec's exact helper code and every test assertion were
-compiled and run against the three error shapes before writing.
+**Measured at drafting.** `var/log/sessions/` holds four kinds of file per
+session. The index reads only `.archive.jsonl` and `.epochs.jsonl`, so
+deleting the plain log and its meta strands no index rows. The key name
+already exists under `[shells]`, so the doc criteria use whole-word counts
+against that baseline (dry-run: template 1→2, README 2→4).
 
-**New criterion this time:** the paste-check line must be in the doc on a line
-of its own (`grep -cx 'PASTE MATCH'` → 1). The last two phases reported the
-check without printing it into the doc.
-
-**After 01c:** `/rexymcp:architect next` drafts 01d (session-log-retention).
+**After 01d:** M21's carry-forwards are done; `/rexymcp:architect next`
+drafts row 02 (no-tmux-startup).
