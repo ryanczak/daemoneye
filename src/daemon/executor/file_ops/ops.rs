@@ -58,6 +58,32 @@ pub(super) fn production_spawn_for(host: &crate::host::HostId) -> WriteSpawn {
     }
 }
 
+/// What a sudo edit that failed to run tells the model. Worded for a file
+/// operation: it names the file and the host, never a shell id (the edit
+/// claims its shell under an owner key, not an id the model could use), and
+/// never advises a `shell` parameter `edit_file` does not have.
+fn root_edit_error_text(path: &str, host: &str, e: &anyhow::Error) -> String {
+    let chain = super::super::error_chain(e);
+    if e.chain().any(|c| c.is::<crate::shell::PromptGivenUp>()) {
+        format!(
+            "Error: the sudo edit of {path} on host {host} did not run: {chain}. \
+             The password prompt was cancelled, so {path} was not changed."
+        )
+    } else if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
+        format!(
+            "Error: the sudo edit of {path} on host {host} did not run: {chain}. \
+             The shell on host {host} exited before the edit ran, so {path} was \
+             not changed; retrying the edit opens a new shell there."
+        )
+    } else {
+        format!(
+            "Error: the sudo edit of {path} on host {host} did not finish: {chain}. \
+             It may still complete on the host — read {path} before retrying, or a \
+             retry could apply the edit twice."
+        )
+    }
+}
+
 pub(super) async fn run_edit<W, R>(
     args: RunEditArgs<'_>,
     session_id: Option<&str>,
@@ -148,9 +174,8 @@ where
                     Ok((_, result)) => result.text,
                     Err(e) => {
                         crate::daemon::stats::finish_command(cmd_id, 1);
-                        return Ok(ToolCallOutcome::Result(super::super::shell_run_error_text(
-                            "edit_file",
-                            &e,
+                        return Ok(ToolCallOutcome::Result(root_edit_error_text(
+                            path, name, &e,
                         )));
                     }
                 };
@@ -2574,5 +2599,75 @@ mod tests {
             ])
             .status();
         let _ = dir;
+    }
+
+    fn gave_up_error() -> anyhow::Error {
+        anyhow::Error::new(crate::shell::PromptGivenUp {
+            reason: "nobody is attached to answer it — run it from a chat session.".to_string(),
+        })
+        .context("the password prompt in shell s7 was cancelled")
+    }
+
+    fn exited_error() -> anyhow::Error {
+        anyhow::Error::new(crate::shell::ShellExited {
+            cmd: "echo hi".to_string(),
+        })
+    }
+
+    fn timeout_error() -> anyhow::Error {
+        anyhow::anyhow!("timed out after 45s waiting for command output: \"sleep 60\"")
+    }
+
+    /// A failed sudo edit is worded for a file operation: it names the file
+    /// and the host, never the terminal helper's pseudo shell id, never a
+    /// `shell` parameter, and never a doubled full stop.
+    #[test]
+    fn a_root_edit_error_names_the_file_and_host() {
+        for e in [gave_up_error(), exited_error(), timeout_error()] {
+            let text = root_edit_error_text("/etc/x.conf", "pinky", &e);
+            assert!(text.starts_with("Error: "), "it is an error report: {text}");
+            assert!(text.contains("/etc/x.conf"), "it names the file: {text}");
+            assert!(text.contains("pinky"), "it names the host: {text}");
+            assert!(
+                !text.contains("in shell edit_file"),
+                "no pseudo shell id: {text}"
+            );
+            assert!(
+                !text.contains("Omit `shell`"),
+                "edit_file has no `shell` parameter: {text}"
+            );
+            assert!(!text.contains(".."), "no doubled full stop: {text}");
+        }
+    }
+
+    /// Each branch keeps its meaning: give-up and exited are done — the file
+    /// was not changed; timeout is indeterminate — the edit may still land.
+    #[test]
+    fn a_root_edit_error_keeps_each_branch_meaning() {
+        let give_up = root_edit_error_text("/etc/x.conf", "pinky", &gave_up_error());
+        assert!(
+            give_up.contains("nobody is attached") && give_up.contains("was not changed"),
+            "give-up: done, not changed: {give_up}"
+        );
+        assert!(
+            !give_up.contains("may still"),
+            "give-up does not hedge: {give_up}"
+        );
+
+        let exited = root_edit_error_text("/etc/x.conf", "pinky", &exited_error());
+        assert!(
+            exited.contains("exited") && exited.contains("was not changed"),
+            "exited: done, not changed: {exited}"
+        );
+        assert!(
+            !exited.contains("may still"),
+            "exited does not hedge: {exited}"
+        );
+
+        let timeout = root_edit_error_text("/etc/x.conf", "pinky", &timeout_error());
+        assert!(
+            timeout.contains("may still complete") && !timeout.contains("was not changed"),
+            "timeout: indeterminate: {timeout}"
+        );
     }
 }

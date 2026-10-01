@@ -1,7 +1,7 @@
 # Phase 01c: file-op-error-label — a failed sudo edit names its file and host, and no run error doubles its full stop
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (M21 09b review residual)
 **Estimated diff:** ~40 lines of production code across 2 files; 3 new tests
 **Tags:** language=rust, kind=bugfix, size=s
@@ -337,3 +337,45 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-01 01:07 (started)
+
+**Started by:** Claude (executor, phase 01c file-op-error-label)
+
+Status flipped to `in-progress`; README phase-table row updated to match.
+Baseline confirmed: clean tree on `master` at `9835064e`. Working through the
+spec in order: Task 1 (`error_chain` + the helper's three branches), Task 2
+(`root_edit_error_text` in `file_ops/ops.rs`), then the three pinned tests,
+the two mutations, and the end-to-end capture.
+
+### Update — 2026-10-01 01:30 (end-to-end verification)
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2095p-0f-14i
+new_tests=3p-0f
+helper_tests=2 passed
+root_edit_suite=0 failed
+ops_terminal_helper=0
+```
+
+PASTE MATCH
+
+Mutation A — `error_chain` returns `format!("{e:#}")` unchanged (no
+trimming), test `a_run_error_never_doubles_its_full_stop`: **red** as
+expected —
+`no run error doubles its full stop: Error running command in shell s7: the
+password prompt in shell s7 was cancelled: nobody is attached to answer it —
+run it from a chat session.. The password prompt was cancelled with Ctrl-C, …`
+Restored; `git diff --stat` back to its pre-mutation state.
+
+Mutation B — `root_edit_error_text`'s give-up branch interpolates `{e:#}`
+instead of `{chain}`, test `a_root_edit_error_names_the_file_and_host`:
+**red** as expected —
+`no doubled full stop: Error: the sudo edit of /etc/x.conf on host pinky did
+not run: the password prompt in shell s7 was cancelled: nobody is attached to
+answer it — run it from a chat session.. The password prompt was cancelled,
+so /etc/x.conf was not changed.`
+Restored; `git diff --stat` back to its pre-mutation state.

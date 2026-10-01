@@ -241,26 +241,35 @@ fn edit_file_connects_first(is_ghost: bool, host: Option<&str>) -> bool {
 /// retry must aim at a live shell — `shell: "new"` or no `shell` at all —
 /// rather than into the same dead one.
 fn shell_run_error_text(shell_id: &str, e: &anyhow::Error) -> String {
+    let chain = error_chain(e);
     if e.chain().any(|c| c.is::<crate::shell::PromptGivenUp>()) {
         format!(
-            "Error running command in shell {shell_id}: {e:#}. The password prompt \
+            "Error running command in shell {shell_id}: {chain}. The password prompt \
              was cancelled with Ctrl-C, so the command did not run with elevated \
              privileges. Fix what the error names before retrying."
         )
     } else if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
         format!(
-            "Error running command in shell {shell_id}: {e:#}. That shell has \
+            "Error running command in shell {shell_id}: {chain}. That shell has \
              exited, so the command is not running there. Omit `shell` (or pass \
              \"new\") to run it in a live shell."
         )
     } else {
         format!(
-            "Error running command in shell {shell_id}: {e:#}. \
+            "Error running command in shell {shell_id}: {chain}. \
              The command may still be running in that shell — \
              do not assume it failed outright; retrying could \
              double-apply its effect."
         )
     }
+}
+
+/// An error chain as one sentence fragment: `{e:#}` with any trailing full
+/// stop (and whitespace) removed, so a caller can append `. <guidance>`
+/// without printing `..` when the innermost reason already ended a sentence.
+fn error_chain(e: &anyhow::Error) -> String {
+    let chain = format!("{e:#}");
+    chain.trim_end().trim_end_matches('.').to_string()
 }
 
 pub async fn execute_tool_call<W, R>(
@@ -2559,6 +2568,35 @@ mod tests {
         assert!(
             !text.contains("may still be running"),
             "a cancelled prompt runs nothing; the caveat must be gone: {text}"
+        );
+    }
+
+    /// A give-up reason that itself ends with a full stop must not come out
+    /// doubled (`..`) when the guidance follows it — in any of the three
+    /// branches.
+    #[test]
+    fn a_run_error_never_doubles_its_full_stop() {
+        let exited = anyhow::Error::new(crate::shell::ShellExited {
+            cmd: "echo hi".to_string(),
+        });
+        let timeout =
+            anyhow::anyhow!("timed out after 45s waiting for command output: \"sleep 60\"");
+        let gave_up = anyhow::Error::new(crate::shell::PromptGivenUp {
+            reason: "nobody is attached to answer it — run it from a chat session.".to_string(),
+        })
+        .context("the password prompt in shell s7 was cancelled");
+
+        for e in [&exited, &timeout, &gave_up] {
+            let text = shell_run_error_text("s7", e);
+            assert!(
+                !text.contains(".."),
+                "no run error doubles its full stop: {text}"
+            );
+        }
+        let text = shell_run_error_text("s7", &gave_up);
+        assert!(
+            text.contains("chat session. The password prompt"),
+            "the reason's sentence survives once and the guidance follows it: {text}"
         );
     }
 }
