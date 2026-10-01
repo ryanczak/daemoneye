@@ -121,7 +121,11 @@ impl PtyBackend {
                         if looks_like_secret_prompt(&String::from_utf8_lossy(&chunk)) {
                             pump_this.awaiting_secret.store(true, Ordering::SeqCst);
                         }
-                        let _ = pump_this.out_tx.send(chunk.clone());
+                        {
+                            let mut screen = pump_this.screen.lock().unwrap_or_log();
+                            screen.feed(&chunk);
+                            let _ = pump_this.out_tx.send(chunk.clone());
+                        }
                         let log_res = pump_this
                             .log
                             .lock()
@@ -130,7 +134,6 @@ impl PtyBackend {
                         if let Err(e) = log_res {
                             log::error!("shell host: writing cast log: {e:#}");
                         }
-                        pump_this.screen.lock().unwrap_or_log().feed(&chunk);
                     }
                     Err(RecvError::Lagged(_)) => continue,
                     Err(RecvError::Closed) => break,
@@ -240,6 +243,11 @@ impl ShellBackend for PtyBackend {
     /// A receiver of output chunks for one subscriber.
     fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
         self.out_tx.subscribe()
+    }
+
+    fn subscribe_with_screen(&self) -> (Vec<u8>, broadcast::Receiver<Vec<u8>>) {
+        let screen = self.screen.lock().unwrap_or_log();
+        (screen.snapshot(), self.out_tx.subscribe())
     }
 }
 
@@ -849,6 +857,61 @@ mod tests {
             }
             other => panic!("expected status, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn subscribe_with_screen_then_live_chunks_rebuild_the_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+
+        rt.block_on(backend.input(b"printf 'marker-one\\nmarker-two\\n'\n"))
+            .expect("input ok");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !backend.screen_contents().contains("marker-two\n") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "screen never showed marker-two: {:?}",
+                backend.screen_contents()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        let (snap, mut rx) = backend.subscribe_with_screen();
+        let mut p = vt100::Parser::new(24, 80, 0);
+        p.process(&snap);
+
+        rt.block_on(backend.input(b"printf 'marker-three\\n'\n"))
+            .expect("input ok");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            while let Ok(chunk) = rx.try_recv() {
+                p.process(&chunk);
+            }
+            let rebuilt = p.screen().contents();
+            if backend.screen_contents().contains("marker-three\n")
+                && rebuilt == backend.screen_contents()
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "rebuilt screen never matched\n--- rebuilt ---\n{rebuilt}\n--- host ---\n{}",
+                backend.screen_contents()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            p.screen().contents(),
+            backend.screen_contents(),
+            "snapshot + live chunks rebuild the host's screen exactly"
+        );
+        assert!(
+            p.screen().contents().contains("marker-one\n"),
+            "the snapshot carried the pre-subscription screen"
+        );
+
+        rt.block_on(backend.signal(ShellSignal::Term)).ok();
     }
 
     #[test]

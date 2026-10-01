@@ -64,6 +64,21 @@ impl ShellScreen {
         self.parser.screen().contents()
     }
 
+    /// Escape codes that redraw this screen exactly on a fresh terminal of
+    /// the same size: contents, colours, cursor and input modes
+    /// (`vt100::Screen::state_formatted`). An alt-screen app is re-entered
+    /// first, since `state_formatted` does not carry that mode; the primary
+    /// screen underneath it is not sent, so a client sees a blank screen if
+    /// the app later exits.
+    pub fn snapshot(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        if self.parser.screen().alternate_screen() {
+            out.extend_from_slice(b"\x1b[?1049h");
+        }
+        out.extend(self.parser.screen().state_formatted());
+        out
+    }
+
     /// `(rows, cols)` of the terminal.
     pub fn size(&self) -> (u16, u16) {
         self.parser.screen().size()
@@ -166,6 +181,38 @@ mod tests {
 
     fn screen(rows: u16, cols: u16) -> ShellScreen {
         ShellScreen::new(rows, cols, 100)
+    }
+
+    #[test]
+    fn snapshot_reproduces_the_screen() {
+        let mut s = ShellScreen::new(24, 80, 100);
+        s.feed(b"user@host:~$ ls\r\n\x1b[1;34mdir\x1b[0m  file.txt\r\nuser@host:~$ ");
+        let mut p = vt100::Parser::new(24, 80, 100);
+        p.process(&s.snapshot());
+        assert_eq!(
+            p.screen().contents_formatted(),
+            s.parser.screen().contents_formatted(),
+            "contents_formatted must round-trip"
+        );
+        assert_eq!(
+            p.screen().cursor_position(),
+            s.parser.screen().cursor_position(),
+            "cursor position must round-trip"
+        );
+    }
+
+    #[test]
+    fn snapshot_keeps_an_alt_screen_app_in_alt_mode() {
+        let mut s = ShellScreen::new(24, 80, 100);
+        s.feed(b"before\r\n\x1b[?1049h\x1b[H\x1b[2J\x1b[7m top bar \x1b[0m\x1b[5;10Hin vim");
+        assert!(s.parser.screen().alternate_screen());
+        let mut p = vt100::Parser::new(24, 80, 100);
+        p.process(&s.snapshot());
+        assert!(
+            p.screen().alternate_screen(),
+            "snapshot must re-enter the alt screen"
+        );
+        assert_eq!(p.screen().contents(), s.parser.screen().contents());
     }
 
     #[test]

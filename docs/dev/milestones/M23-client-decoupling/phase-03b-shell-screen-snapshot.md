@@ -1,7 +1,7 @@
 # Phase 03b: shell-screen-snapshot — a shell host can hand a new subscriber its current screen, then the live stream
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03a (done)
 **Estimated diff:** ~60 lines of production code across 4 files; 5 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -448,3 +448,38 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-01 22:12 (started)
+
+Executing phase 03b (shell-screen-snapshot). Executor: Codex (gpt-5-codex via rexyMCP). Flipping status `todo` → `in-progress`; beginning Task 1 (protocol), then Task 2 (snapshot), Task 3 (backend + host arm), Task 4 (five pinned tests).
+
+### Update — 2026-10-01 22:12 (end-to-end verification)
+
+```text
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2110p-0f-14i
+new_tests=5p-0f
+isolation=11 passed; 0 failed
+fed_once=1
+```
+
+PASTE MATCH
+
+**total_re_runs=0**
+
+Mutations (each applied with the `patch` tool, run once, restored; `git diff
+--stat` matched its pre-mutation state after each restore):
+
+- **Mutation A** — deleted `out.extend_from_slice(b"\x1b[?1049h");` from
+  `ShellScreen::snapshot`, ran test 2
+  (`snapshot_keeps_an_alt_screen_app_in_alt_mode`) → **red**
+  (`FAILED. 0 passed; 1 failed`). Restored, test 2 → 1 passed.
+- **Mutation B** — made `PtyBackend::subscribe_with_screen` return
+  `(Vec::new(), self.out_tx.subscribe())`, ran test 5
+  (`subscribe_with_screen_then_live_chunks_rebuild_the_screen`) → **red**
+  (`FAILED. 0 passed; 1 failed`). Restored, test 5 → 1 passed.
+- **Mutation C** — made the `SubscribeScreen` arm answer `ShellResponse::Ok`,
+  ran test 4 (`host_answers_subscribe_screen_with_the_screen_first`) → **red**
+  (`FAILED. 0 passed; 1 failed`). Restored, test 4 → 1 passed.

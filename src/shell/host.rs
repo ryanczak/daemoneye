@@ -24,6 +24,11 @@ pub trait ShellBackend: Send + Sync + 'static {
     async fn status(&self) -> ShellResponse;
     /// A receiver of output chunks for one subscriber.
     fn subscribe(&self) -> broadcast::Receiver<Vec<u8>>;
+    /// The current screen as `ShellScreen::snapshot` bytes, plus a receiver
+    /// of every chunk after it. A backend with no screen returns empty bytes.
+    fn subscribe_with_screen(&self) -> (Vec<u8>, broadcast::Receiver<Vec<u8>>) {
+        (Vec::new(), self.subscribe())
+    }
 }
 
 /// Bind `path`, removing whatever already occupies it first. The caller owns
@@ -149,6 +154,11 @@ async fn handle_line<B: ShellBackend>(
         ShellRequest::Subscribe => {
             *chunks = Some(backend.subscribe());
             ShellResponse::Ok
+        }
+        ShellRequest::SubscribeScreen => {
+            let (bytes, rx) = backend.subscribe_with_screen();
+            *chunks = Some(rx);
+            ShellResponse::Screen { bytes }
         }
         ShellRequest::Input { bytes } => match backend.input(&bytes).await {
             Ok(()) => ShellResponse::Ok,
@@ -382,6 +392,32 @@ mod tests {
             second,
             ShellResponse::Chunk {
                 bytes: b"second".to_vec()
+            }
+        );
+
+        drop(writer);
+        tokio::task::yield_now().await;
+    }
+
+    #[tokio::test]
+    async fn host_answers_subscribe_screen_with_the_screen_first() {
+        let server = start_server().await;
+        let client = UnixStream::connect(&server.path).await.unwrap();
+        let (reader, mut writer) = client.into_split();
+        let mut reader = BufReader::new(reader);
+
+        write_request(&mut writer, &ShellRequest::SubscribeScreen).await;
+        assert_eq!(
+            read_response(&mut reader).await,
+            ShellResponse::Screen { bytes: vec![] },
+            "FakeBackend uses the trait's default: empty screen bytes"
+        );
+
+        server.backend.push(b"live".to_vec());
+        assert_eq!(
+            read_response(&mut reader).await,
+            ShellResponse::Chunk {
+                bytes: b"live".to_vec()
             }
         );
 

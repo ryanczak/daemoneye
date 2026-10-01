@@ -29,10 +29,21 @@ pub enum ShellState {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum ShellRequest {
+    /// Start receiving every future output chunk.
     Subscribe,
-    Input { bytes: Vec<u8> },
-    Resize { rows: u16, cols: u16 },
-    Signal { signal: ShellSignal },
+    /// Answer with the current screen (`ShellResponse::Screen`) and stream
+    /// every later chunk.
+    SubscribeScreen,
+    Input {
+        bytes: Vec<u8>,
+    },
+    Resize {
+        rows: u16,
+        cols: u16,
+    },
+    Signal {
+        signal: ShellSignal,
+    },
     Status,
 }
 
@@ -44,6 +55,11 @@ pub enum ShellResponse {
         message: String,
     },
     Chunk {
+        bytes: Vec<u8>,
+    },
+    /// The starting screen for a `SubscribeScreen` subscriber: escape codes
+    /// that redraw the host's current terminal, followed later by `Chunk`s.
+    Screen {
         bytes: Vec<u8>,
     },
     Status {
@@ -194,6 +210,21 @@ mod tests {
             ShellResponse::Chunk { bytes } => assert_eq!(bytes, payload),
             other => panic!("unexpected variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn proto_screen_frames_round_trip() {
+        assert_eq!(
+            encode(&ShellRequest::SubscribeScreen).unwrap(),
+            "{\"type\":\"SubscribeScreen\"}\n",
+            "request frame is the pinned wire form"
+        );
+        let frame = ShellResponse::Screen {
+            bytes: vec![0x1b, b'[', b'H', 0xff],
+        };
+        let wire = encode(&frame).unwrap();
+        let decoded: ShellResponse = serde_json::from_str(wire.trim_end()).unwrap();
+        assert_eq!(decoded, frame, "byte-exact Screen round trip");
     }
 
     #[test]
