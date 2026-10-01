@@ -1,7 +1,7 @@
 # Phase 01c: file-op-error-label — a failed sudo edit names its file and host, and no run error doubles its full stop
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** review
 **Depends on:** none (M21 09b review residual)
 **Estimated diff:** ~40 lines of production code across 2 files; 3 new tests
 **Tags:** language=rust, kind=bugfix, size=s
@@ -379,3 +379,136 @@ not run: the password prompt in shell s7 was cancelled: nobody is attached to
 answer it — run it from a chat session.. The password prompt was cancelled,
 so /etc/x.conf was not changed.`
 Restored; `git diff --stat` back to its pre-mutation state.
+
+### Update — 2026-10-01 01:18 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Implemented phase 01c: added `error_chain` beside `shell_run_error_text` and made all three of its branches interpolate the trimmed chain instead of `{e:#}` (terminal wording and shell ids untouched), and gave the sudo edit its own `root_edit_error_text(path, host, e)` in `file_ops/ops.rs` — give-up and exited branches say "did not run … was not changed", the timeout branch says "did not finish … may still complete" — replacing the `shell_run_error_text("edit_file", &e)` call at the edit's error site. Added the three pinned tests (`a_run_error_never_doubles_its_full_stop`, `a_root_edit_error_names_the_file_and_host`, `a_root_edit_error_keeps_each_branch_meaning`); all existing tests are untouched and green. End-to-end block ran verbatim and pasted clean: `lib1..3=ok` with no failures, `lib_counts=2095p-0f-14i` on three consecutive runs, `new_tests=3p-0f`, `helper_tests=2 passed`, `root_edit_suite=0 failed`, `ops_terminal_helper=0`; both mutations were applied, ran red with the expected `..` text, and were restored (`git diff --stat` confirmed each restore); `cargo fmt --all`, `cargo build`, and clippy `-D warnings` are clean. **Notes for review:** (1) the spec's `grep -c` paste-check criterion counts `^### Update — .* (end-to-end verification)$` — my entry's heading matches that pattern, and `grep -cx 'PASTE MATCH'` returns 1, so both doc greps hold; the first paste attempt failed only because the entry was not yet written (the check was re-run after writing and printed the required line). (2) Committed as `fix:` `bc2ec099` including the README status flip and phase-doc updates; the tree is clean and the phase doc's status remains `in-progress` for the server to flip.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+der_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 11 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+test webhook_ghost_e2e_deterministic ... ok
+
+test result: ok. 10 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M23-client-decoupling/README.md` — +1 -1
+- `docs/dev/milestones/M23-client-decoupling/phase-01c-file-op-error-label.md` — +43 -1
+- `src/daemon/executor/file_ops/ops.rs` — +98 -3
+- `src/daemon/executor/mod.rs` — +41 -3
+
+**Commit:** bc2ec0990e2bb7270e3e7b457839a85c2b24f4c3
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
