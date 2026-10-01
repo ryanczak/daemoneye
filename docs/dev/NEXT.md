@@ -1,20 +1,20 @@
 # NEXT
 
-**Active phase:** **M23 phase-01d — session-log-retention**, drafted
-2026-10-01, status `todo`. Dispatch with `/rexymcp:dispatch phase-01d`.
+**Active phase:** **M23 phase-02 — no-tmux-startup**, drafted 2026-10-01,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-02`.
 
-**What it does.** Adds `[sessions] log_retention_days` (default `0`, keep
-forever). Once a session has been inactive for that many days, it deletes the
-session's chat log (`<id>.jsonl`) and resume state (`<id>.meta.json`). It
-never touches archives or epoch files, which feed the memory index, and never
-an active session. Swept every 60th cleanup tick, beside the archive sweep.
-Three new tests: 2098 / 14.
+**What it does.** With `[daemon] tmux_session = ""` (or `--session ""`), a
+daemon launched outside tmux no longer runs `tmux new-session -d -s ''`
+(which started a tmux server), registers no global tmux hooks, and does not
+spawn the 60-second background-window GC. One info line says so. Inside tmux,
+and for any non-empty name, nothing changes; the `"daemoneye"` default stays
+(PE). A pure test pins the predicate, and an `isolation.rs` test boots a real
+daemon with `--session ""` and proves no tmux server. Lib 2099 / 14,
+isolation 11 / 1.
 
-**Measured at drafting.** `var/log/sessions/` holds four kinds of file per
-session. The index reads only `.archive.jsonl` and `.epochs.jsonl`, so
-deleting the plain log and its meta strands no index rows. The key name
-already exists under `[shells]`, so the doc criteria use whole-word counts
-against that baseline (dry-run: template 1→2, README 2→4).
+**Measured at drafting.** The branch alone: no server, and a full chat turn
+worked, but 4 hook `ERROR`s plus a GC `WARN` every minute. The whole change,
+dry-run with the isolation test: no `tmux-*` dir, 0 errors, 0 warnings, and
+all existing isolation tests green.
 
-**After 01d:** M21's carry-forwards are done; `/rexymcp:architect next`
-drafts row 02 (no-tmux-startup).
+**After 02:** `/rexymcp:architect next` drafts 03 (shell-ipc).
