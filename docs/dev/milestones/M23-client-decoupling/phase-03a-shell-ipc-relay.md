@@ -1,7 +1,7 @@
 # Phase 03a: shell-ipc-relay — the client can list shells, type into one and resize it over IPC
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** in-progress (bounced — bug-03a-1)
 **Depends on:** M20 (shell host protocol), M22 (`list_shells`' row collector)
 **Estimated diff:** ~150 lines of production code across 4 files (1 new); 5 new tests
 **Tags:** language=rust, kind=feature, size=m
@@ -333,26 +333,30 @@ entry **on its own line**.
 Parenthesised values are what each line produces **against the current
 tree**. Every non-preservation line fails today; each was run at drafting.
 
-- [ ] `cargo test --lib` → **2104 passed / 0 failed / 14 ignored** on three
-      consecutive runs (current: 2099/0/14). Both counts are exact.
+- [ ] `cargo test --lib` → **2105 passed / 0 failed / 14 ignored** on three
+      consecutive runs (current: 2104/0/14). Both counts are exact.
 - [ ] `cargo fmt --all` clean; `cargo build` clean;
       `cargo clippy --all-targets --all-features -- -D warnings` exits 0.
 - [ ] `cargo test` → other targets unmoved: bug_tracker 6, doc_truth 14,
       integration 32, isolation 11 (*preservation*).
-- [ ] The five new tests pass:
-      ``cargo test --lib -- shell_ipc_messages_round_trip shell_list_reports_every_shell_with_its_last_command shell_input_reaches_the_shell shell_resize_changes_the_shells_size shell_ipc_refuses_an_unknown_shell``
-      → **5 passed** (current: `0 passed; … filtered out`).
+- [ ] The six new tests pass:
+      ``cargo test --lib -- shell_ipc_messages_round_trip shell_list_reports_every_shell_with_its_last_command shell_input_reaches_the_shell shell_resize_changes_the_shells_size shell_ipc_refuses_an_unknown_shell shell_list_carries_each_shells_flags``
+      → **6 passed** (current: 5 passed).
+- [ ] **bug-03a-1:** ``cargo test --lib -- shell_list_carries_each_shells_flags``
+      → **1 passed** (current: `0 passed`), and Mutation C was applied, ran
+      red, and its observed result is recorded in the second end-to-end entry.
 - [ ] The relay is wired: ``grep -c 'shells::handle_shell_' src/daemon/server/mod.rs``
       → **3** (current: 0), and
       ``grep -c 'pub async fn send_resize' src/shell/client.rs`` → **1**
       (current: 0).
 - [ ] Mutations A and B were applied, run, and their observed results recorded
       **in this doc**.
-- [ ] The end-to-end entry exists:
+- [ ] A **second** end-to-end entry exists (the first one, from before the
+      bounce, stays as it is):
       ``grep -c '^### Update — .* (end-to-end verification)$' <this doc>`` →
-      **1** (current: 0), its first fenced block is the capture file's
-      contents, and the paste-check line is in the doc on its own line:
-      ``grep -cx 'PASTE MATCH' <this doc>`` → **1** (current: 0).
+      **2** (current: 1). Its first fenced block is the capture file's contents,
+      and its paste-check line is on its own line:
+      ``grep -cx 'PASTE MATCH' <this doc>`` → **2** (current: 1).
 
 ## Mutations
 
@@ -365,6 +369,10 @@ result in this doc's end-to-end entry**.
 - **Mutation B:** make `handle_shell_input` answer `Response::Ok` **without**
   calling `send_input`. Run test 3. Expected **red** (the file never
   appears).
+
+- **Mutation C (bug-03a-1):** in `handle_shell_list`, set `interactive: false`,
+  `dedicated: false` and `exited_unix: None` for every shell. Run
+  `shell_list_carries_each_shells_flags`. Expected **red**.
 
 After each restore, confirm `git diff --stat` matches its pre-mutation state.
 
@@ -387,15 +395,15 @@ cd /home/matt/src/daemoneye
     printf 'lib%d=%s %s\n' "$i" "$(printf '%s\n' "$out" | grep -E '^test result' | tail -1 | grep -oE 'ok|FAILED')" "$(printf '%s\n' "$out" | grep -E '^test .* FAILED$' | sed -E 's/^test (.*) \.\.\. FAILED$/\1/' | tr '\n' ' ')"
   done
   printf 'lib_counts=%s\n' "$(cargo test --lib 2>&1 | grep -E '^test result' | tail -1 | sed -E 's/.*ok\. ([0-9]+) passed; ([0-9]+) failed; ([0-9]+) ignored.*/\1p-\2f-\3i/')"
-  printf 'new_tests=%s\n' "$(cargo test --lib -- shell_ipc_messages_round_trip shell_list_reports_every_shell_with_its_last_command shell_input_reaches_the_shell shell_resize_changes_the_shells_size shell_ipc_refuses_an_unknown_shell 2>&1 | grep -E '^test result' | tail -1 | sed -E 's/.*ok\. ([0-9]+) passed; ([0-9]+) failed.*/\1p-\2f/')"
+  printf 'new_tests=%s\n' "$(cargo test --lib -- shell_ipc_messages_round_trip shell_list_reports_every_shell_with_its_last_command shell_input_reaches_the_shell shell_resize_changes_the_shells_size shell_ipc_refuses_an_unknown_shell shell_list_carries_each_shells_flags 2>&1 | grep -E '^test result' | tail -1 | sed -E 's/.*ok\. ([0-9]+) passed; ([0-9]+) failed.*/\1p-\2f/')"
   printf 'isolation=%s\n' "$(cargo test --test isolation 2>&1 | grep -E '^test result' | tail -1 | grep -oE '[0-9]+ passed; [0-9]+ failed')"
   printf 'wired=%s/%s\n' "$(grep -c 'shells::handle_shell_' src/daemon/server/mod.rs)" "$(grep -c 'pub async fn send_resize' src/shell/client.rs)"
 } > /tmp/e2e-m23-03a.txt
 cat /tmp/e2e-m23-03a.txt
 ```
 
-Expected: `lib1..3=ok` with **nothing after `ok`**, `lib_counts=2104p-0f-14i`,
-`new_tests=5p-0f`, `isolation=11 passed; 0 failed`, `wired=3/1`.
+Expected: `lib1..3=ok` with **nothing after `ok`**, `lib_counts=2105p-0f-14i`,
+`new_tests=6p-0f`, `isolation=11 passed; 0 failed`, `wired=3/1`.
 
 **Re-run budget: three** (WORKFLOW.md § End-to-end verification). The known
 pre-existing flake is `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`.
@@ -670,3 +678,50 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** d3688fc58217aa7aef955fed8188855037338730
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-01 (bounce)
+
+Bounced on **bug-03a-1**: `handle_shell_list` hardcodes `interactive: false`,
+`dedicated: false` and `exited_unix: None` instead of copying them from each
+record. Gates, end-to-end paste and Mutations A/B all verified green at review.
+
+### Notes for executor — 2026-10-01
+
+**Green gates and a clean tree are expected here. They are NOT evidence the
+phase is done.** Everything else in this phase is approved and must not be
+redone: the wire types, `send_resize`, input/resize handlers, dispatch arms,
+the CLAUDE.md row and tests 1–5.
+
+There is **exactly one code fix left**, plus one test and the evidence:
+
+1. In `handle_shell_list` (`src/daemon/server/shells.rs:23-47`), carry
+   `record.interactive`, `record.dedicated` and `record.exited_unix` out of
+   the `with_shells` closure with the other fields. Build each `ShellInfo`
+   from them. Keep the meta-index read **outside** the lock, as it is now.
+2. Add test `shell_list_carries_each_shells_flags` beside test 2, using the
+   same fixtures (`shell_test_home()`, a fresh `ShellRegistry::default()`,
+   no-op spawns):
+
+   ```rust
+   let a = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |_id| async { Ok(()) }).await.unwrap();
+   let b = crate::shell::spawn_for(&reg, owner.clone(), 5, true, |_id| async { Ok(()) }).await.unwrap();
+   crate::shell::mark_interactive(&reg, &a);
+   with_shells(&reg, |store| {
+       store.get_mut(b.as_str()).unwrap().exited_unix = Some(42);
+   });
+   ```
+
+   Then call `handle_shell_list`. Assert `shells[0]` is `interactive == true`,
+   `dedicated == false`, `exited_unix == None`, and `shells[1]` is
+   `interactive == false`, `dedicated == true`, `exited_unix == Some(42)`.
+3. Apply **Mutation C** with the `patch` tool, run the new test once (it must
+   go red), restore it, and record what you observed.
+4. Run the § End-to-end verification block again. It now expects
+   `lib_counts=2105p-0f-14i` and `new_tests=6p-0f`. Write a **new**
+   `### Update — <date> (end-to-end verification)` entry whose first fenced
+   block is the **contents of** `/tmp/e2e-m23-03a.txt`, never the script.
+   Run the paste check (it reads the **last** such entry), put its line on
+   its own line, then record Mutation C.
+
+**Finish condition:** `cargo test --lib` reports **2105**, not 2104.
+
