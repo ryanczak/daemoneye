@@ -122,7 +122,8 @@ with the real one.
 ### Calibration queue (for the M23 close)
 
 - **Fold C — never trust the executor's self-reported model name — is at
-  three occurrences** (M21 09a, M21 09b, M23 01b "Codex"). Propose it at the
+  five occurrences** (M21 09a, M21 09b, M23 01b "Codex", M23 02 and 03b
+  "Codex (gpt-5-codex)" while `executor_health` reported GLM). Propose it at the
   close: the review verdict's `Executor:` line comes from the server-authored
   completion entry or `rexymcp.toml`, never from the executor's own Update
   Log entries. *(Fourth occurrence at 01c: "Claude".)*
