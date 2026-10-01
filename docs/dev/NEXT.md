@@ -1,20 +1,24 @@
 # NEXT
 
-**Active phase:** **M23 phase-02 — no-tmux-startup**, drafted 2026-10-01,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-02`.
+**Active phase:** **M23 phase-03a — shell-ipc-relay**, drafted 2026-10-01,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-03a`.
 
-**What it does.** With `[daemon] tmux_session = ""` (or `--session ""`), a
-daemon launched outside tmux no longer runs `tmux new-session -d -s ''`
-(which started a tmux server), registers no global tmux hooks, and does not
-spawn the 60-second background-window GC. One info line says so. Inside tmux,
-and for any non-empty name, nothing changes; the `"daemoneye"` default stays
-(PE). A pure test pins the predicate, and an `isolation.rs` test boots a real
-daemon with `--session ""` and proves no tmux server. Lib 2099 / 14,
-isolation 11 / 1.
+**What it does.** Three request/response IPC messages let a client see and
+touch the daemon's PTY shells: `ShellList` (every shell, with host, owner,
+state and last recorded command), `ShellInput { id, bytes }` and
+`ShellResize { id, rows, cols }`. Unknown or exited ids get a `Response::Error`
+naming them. The handlers are in a new `src/daemon/server/shells.rs` and take an
+injected registry. Five tests: a wire round trip, the list, input reaching a
+real in-process shell, resize changing a real shell's size, and refusal.
+Lib 2099 → 2104.
 
-**Measured at drafting.** The branch alone: no server, and a full chat turn
-worked, but 4 hook `ERROR`s plus a GC `WARN` every minute. The whole change,
-dry-run with the isolation test: no `tmux-*` dir, 0 errors, 0 warnings, and
-all existing isolation tests green.
+**Measured at drafting.** A raw `Resize { rows: 30, cols: 100 }` frame against
+an in-process host was acked, and `status()` then said 30×100 (it had been
+24×80). No resize client function exists; `send_input` does. Every symbol the
+spec names was checked against the tree.
 
-**After 02:** `/rexymcp:architect next` drafts 03 (shell-ipc).
+**Split.** `ShellTail` (live streaming) became row 03b. The host streams only
+from `Subscribe` and has no backlog, so a correct starting screen needs its
+own design.
+
+**After 03a:** `/rexymcp:architect next` drafts 03b (shell-tail).
