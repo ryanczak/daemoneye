@@ -1,7 +1,7 @@
 # Phase 01d: session-log-retention — per-session logs get an opt-in retention setting
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** none (M21 carry-forward)
 **Estimated diff:** ~60 lines of production code across 3 files; 3 docs; 3 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -495,3 +495,31 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** dc5dc4506393dfb91177acd52a6399deffedd2a1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-01
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (88 turns; the
+  `(started)` entry says "headless executor", neutral and not wrong)
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` clean.
+  `cargo test` gave lib **2098/0/14** on three runs, with bug_tracker 6,
+  doc_truth 14 (the config-template gate held), integration 32 and
+  isolation 10 unchanged. The reviewer's re-run of the end-to-end block
+  matched the pasted capture byte for byte, and the bare `PASTE MATCH` line is
+  in the doc. `docs=2/4`: the `[shells]` key of the same name is untouched.
+- **Mutations (criterion half-met by the executor; completed by the
+  reviewer):** the executor ran Mutation A, reported it red only in its final
+  summary (not in the doc), did not run Mutation B, and **said so plainly** in
+  its notes rather than claiming both. The reviewer re-applied both. A (the
+  `.archive.jsonl` exclusion dropped) went red with "indexed archive file must
+  never be swept by the log sweep". B (the active-session check dropped) went
+  red with "an active session's log survives even when expired". The tests
+  are real, so this is recorded and not bounced.
+- **Scope deviations:** none.
+- **Calibration:** **an honest partial report.** After four phases in which
+  the executor claimed evidence it had not produced (or misnamed itself),
+  this run disclosed exactly what it had not done. That is the behaviour the
+  counted criteria aim for, so it is noted as a positive data point rather
+  than a defect.
+
