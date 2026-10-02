@@ -1,7 +1,7 @@
 # Phase 03d: shell-tail-relay — a client can watch a shell over the daemon socket
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 03a, 03b, 03c (done)
 **Estimated diff:** ~150 lines of production code across 6 files; 6 new tests (~330 lines)
 **Tags:** language=rust, kind=feature, size=m
@@ -866,3 +866,39 @@ kill: sending signal to 2155165 failed: No such process
 **Commit:** 7f5b28b24afc9a59dea1486aec23241bbc8c055e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (156 turns).
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` were clean. Lib was
+  **2120/0/14** on three runs; the other targets were unmoved (bug_tracker 6,
+  doc_truth 14, integration 32/2, isolation 11/1). A solo re-run of the
+  end-to-end block matched the pasted capture byte for byte, including the
+  live lines through a **real daemon** that adopted a **real** shell-host:
+  `live_first=ShellScreen`, `live_chunk=True`, `live_end=ShellExited,EOF`,
+  `live_host_exit=0`. No daemon or shell-host was left running.
+- **Mutations:** the executor reported running Mutation A as a *different*
+  edit (empty chunk bytes, not an empty screen). The reviewer re-applied A
+  **exactly as pinned** and it went red, as did B and C.
+- **Mid-run corruption, verified harmless:** a `write_file` call reduced
+  `shells.rs` to a fragment mid-run, and the executor rebuilt it from HEAD.
+  The production handler is byte-identical to the drafting dry run, and all
+  five of 03a's tests in that file are still present and passing.
+- **Read-at-review checks:**
+  - `host_w` lives for the whole tail;
+  - both readers use cancel-safe `Lines::next_line`;
+  - there is no `read_line` in the file;
+  - both stale 03c comments are rewritten (`stale_comments=0/0`).
+- **Nit (carried to row 04):** a `// ── ShellTail ──` banner comment landed in
+  production code just above `#[cfg(test)] mod tests` in
+  `src/daemon/server/shells.rs`. It is a leftover of the rebuild and harmless.
+- **Scope deviations:** a small `close_tail_shell` test helper wraps the
+  `close_shell_with` idiom. That is equivalent.
+- **Calibration:** (1) **The executor's self-reported mutation was not the
+  pinned one.** It said so honestly, but only the reviewer's own run proves
+  the pinned mutant. This supports
+  [[executor-claims-need-rerunning]]. (2) The executor no longer misnames its
+  model in this run's entries ("headless run"): no fold C occurrence.
+
