@@ -1,7 +1,7 @@
 # Phase 05a: tail-model — the `/tail` core: the shell's size on the wire, a follow/scroll model, and a grid painter
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 03d (`ShellTail`), 04c (done)
 **Estimated diff:** ~200 lines of production code across 4 files (1 new); 7 new tests
 **Tags:** language=rust, kind=feature, size=m
@@ -921,3 +921,32 @@ kill: sending signal to 3984095 failed: No such process
 **Commit:** 5e2db21a5b12ba3fa4b3e13009fa3fb5f9586a27
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (142 turns).
+  Its entry says "executor (rexyMCP headless run)": no model misname.
+- **Source diff vs the drafting dry run, tests included:** identical. The
+  executor split it across three commits (`feat`, a `style` rustfmt wrap,
+  `docs`), with the same content.
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` were clean. Lib was
+  **2140/0/14** on three runs; other targets unmoved. The end-to-end re-run
+  matched the pasted capture byte for byte. Mutations A–F, re-applied exactly
+  as pinned, each went red (F: 2 failed).
+- **Architect error, caught and reported by the executor:** the criteria and
+  expected capture said `new_tests=7p-0f`, but the pinned filter
+  (`tail_model render_tail shell_tail_reports_the_shells_size shell_tail_messages_round_trip`)
+  also matches the **updated** round-trip test, so it counts **8**. Seven
+  tests are new; the filter counts matches. The executor ran the block as
+  written, reported 8, and explained why. That is the correct behaviour, and
+  not a deviation.
+- **Scope deviations:** none.
+- **Calibration:** (1) **Pinned test counts drifted from the pinned filter
+  again.** I derived "7" from the list of new tests, not by running the
+  filter against the dry-run tree, which was in hand. Fix at drafting: pin
+  the count the filter actually prints on the dry run. Another occurrence
+  of [[criteria-must-pin-the-command-behind-a-count]]. (2) Third phase in a
+  row with a diff identical to the dry run.
+
