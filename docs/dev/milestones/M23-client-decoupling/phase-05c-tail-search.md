@@ -1,7 +1,7 @@
 # Phase 05c: tail-search — `/` searches the tail view; `n`/`N` step through matches; `Ctrl-C` closes it
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 05b (done)
 **Estimated diff:** ~190 lines of production code, one file; 5 new tests, 1 updated
 **Tags:** language=rust, kind=feature, size=m
@@ -1221,3 +1221,47 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-02 16:47 (started, executor)
+
+**Executor:** executor (headless run, M23 05c).
+Flipped `Status:` to `in-progress` here and in the milestone README, then began
+Task 1: replacing `src/cli/tail.rs` with the phase doc's whole-file content.
+
+### Update — 2026-10-02 16:56 (end-to-end verification)
+
+**Executor:** executor (headless run, M23 05c). The block in § End-to-end
+verification was run verbatim, its output redirected to `/tmp/e2e-m23-05c.txt`;
+the first fenced block below is that file's contents, copied by a tool.
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2150p-0f-14i
+search_tests=6p-0f
+isolation=11 passed; 0 failed
+keys=2/1
+```
+
+Paste check:
+
+PASTE MATCH
+
+Mutations applied with the `patch` tool, run once each, then restored
+(`git diff --stat` matched its pre-mutation state after every restore):
+
+- **A** — `find` used `s.query.clone()` instead of `s.query.to_lowercase()`:
+  `tail_search_is_case_insensitive_and_reaches_the_live_screen` **red**
+  (`0 passed; 1 failed`).
+- **B** — `SearchCommit` used `let from = 0;` instead of
+  `self.bottom_in_view()`: `tail_search_finds_the_newest_match_then_older_and_newer`
+  **red** (`0 passed; 1 failed`).
+- **C** — `MatchOlder` used `self.find(at, true)` instead of
+  `self.find(at - 1, true)`: `tail_search_finds_the_newest_match_then_older_and_newer`
+  **red** (`0 passed; 1 failed`).
+- **D** — deleted `show_line`'s `self.follow = false;`:
+  `tail_search_finds_the_newest_match_then_older_and_newer` **red**
+  (`0 passed; 1 failed`).
+- **E** — deleted the typing-mode `Key::CtrlC => TailAction::Quit,` arm:
+  `tail_key_action_in_search_mode_types_text` **red** (`0 passed; 1 failed`).

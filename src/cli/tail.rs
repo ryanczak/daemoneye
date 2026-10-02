@@ -16,6 +16,19 @@ pub struct TailModel {
     parser: vt100::Parser,
     pub follow: bool,
     pub exited: bool,
+    /// The search in progress, if any.
+    pub search: Option<TailSearch>,
+    /// A one-off message for the status line, cleared by the next key.
+    pub note: Option<String>,
+}
+
+/// A `/` search in the tail view. `typing` is true while the query is being
+/// entered; `at` is the line index of the current match, oldest line = 0.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TailSearch {
+    pub query: String,
+    pub typing: bool,
+    pub at: Option<usize>,
 }
 
 impl TailModel {
@@ -29,6 +42,8 @@ impl TailModel {
             parser,
             follow: true,
             exited: false,
+            search: None,
+            note: None,
         }
     }
 
@@ -87,6 +102,92 @@ impl TailModel {
     pub fn screen(&self) -> &vt100::Screen {
         self.parser.screen()
     }
+
+    /// True while a search query is being typed: keys are then text.
+    pub fn typing(&self) -> bool {
+        self.search.as_ref().is_some_and(|s| s.typing)
+    }
+
+    /// Every line the model holds, oldest first: the scrollback, then the
+    /// live screen's rows. Steps the view through the scrollback (vt100 has no
+    /// line index) and puts it back where it was.
+    fn all_lines(&mut self) -> Vec<String> {
+        let keep = self.offset();
+        let (_, cols) = self.parser.screen().size();
+        self.parser.screen_mut().set_scrollback(usize::MAX);
+        let max = self.offset();
+        let mut out = Vec::with_capacity(max + 64);
+        for k in (1..=max).rev() {
+            self.parser.screen_mut().set_scrollback(k);
+            out.push(
+                self.parser
+                    .screen()
+                    .rows(0, cols)
+                    .next()
+                    .unwrap_or_default(),
+            );
+        }
+        self.parser.screen_mut().set_scrollback(0);
+        out.extend(self.parser.screen().rows(0, cols));
+        self.parser.screen_mut().set_scrollback(keep);
+        out
+    }
+
+    /// Scroll so line `idx` (oldest = 0) is in view: on the live screen it
+    /// shows at offset 0, otherwise at the top. Pauses follow.
+    fn show_line(&mut self, idx: usize, total: usize) {
+        let rows = self.parser.screen().size().0 as usize;
+        let max = total.saturating_sub(rows);
+        let to = max.saturating_sub(idx);
+        self.parser.screen_mut().set_scrollback(to);
+        self.follow = false;
+    }
+
+    /// Find `query` (case-insensitive) starting at line `from` and moving
+    /// toward older lines (`older`) or newer ones, bring the match into view
+    /// and remember it. Returns `false` and leaves the view alone on no match.
+    fn find(&mut self, from: usize, older: bool) -> bool {
+        let Some(query) = self.search.as_ref().map(|s| s.query.to_lowercase()) else {
+            return false;
+        };
+        let lines = self.all_lines();
+        let total = lines.len();
+        if total == 0 || query.is_empty() {
+            return false;
+        }
+        let hit = if older {
+            let from = from.min(total - 1);
+            (0..=from)
+                .rev()
+                .find(|&i| lines[i].to_lowercase().contains(&query))
+        } else {
+            (from..total).find(|&i| lines[i].to_lowercase().contains(&query))
+        };
+        match hit {
+            Some(i) => {
+                self.show_line(i, total);
+                if let Some(s) = self.search.as_mut() {
+                    s.at = Some(i);
+                }
+                self.note = Some(format!("match at line {} of {total}", i + 1));
+                true
+            }
+            None => {
+                self.note = Some(format!("\"{query}\" not found"));
+                false
+            }
+        }
+    }
+
+    /// Index of the bottom line in view, oldest = 0.
+    fn bottom_in_view(&mut self) -> usize {
+        let rows = self.parser.screen().size().0 as usize;
+        let offset = self.offset();
+        self.parser.screen_mut().set_scrollback(usize::MAX);
+        let max = self.offset();
+        self.parser.screen_mut().set_scrollback(offset);
+        (max - offset.min(max)) + rows.saturating_sub(1)
+    }
 }
 
 /// What a keypress means to the tail viewer.
@@ -99,15 +200,38 @@ pub enum TailAction {
     Top,
     Bottom,
     ToggleFollow,
+    SearchOpen,
+    SearchType(char),
+    SearchBackspace,
+    SearchCommit,
+    SearchCancel,
+    MatchOlder,
+    MatchNewer,
     Quit,
     Ignore,
 }
 
-/// Decode one key for the tail viewer. `Esc`, `q` and `Ctrl-O` close it, as
-/// they close the transcript viewer.
-pub fn tail_key_action(key: &crate::cli::input::Key) -> TailAction {
+/// Decode one key for the tail viewer. `typing` is true while a search query
+/// is being entered: printable keys are then text, `Enter` searches and `Esc`
+/// cancels. Otherwise `Esc`, `q` and `Ctrl-O` close the view, as they close
+/// the transcript viewer. `Ctrl-C` closes it in both modes.
+pub fn tail_key_action(key: &crate::cli::input::Key, typing: bool) -> TailAction {
     use crate::cli::input::Key;
+    if typing {
+        return match key {
+            Key::Char('\x1b') => TailAction::SearchCancel,
+            Key::Enter => TailAction::SearchCommit,
+            Key::Backspace => TailAction::SearchBackspace,
+            Key::CtrlC => TailAction::Quit,
+            Key::Char(c) if !c.is_control() => TailAction::SearchType(*c),
+            _ => TailAction::Ignore,
+        };
+    }
     match key {
+        Key::Char('/') => TailAction::SearchOpen,
+        Key::Char('n') => TailAction::MatchOlder,
+        Key::Char('N') => TailAction::MatchNewer,
+        Key::CtrlC => TailAction::Quit,
         Key::Up => TailAction::ScrollUp,
         Key::Down => TailAction::ScrollDown,
         Key::PageUp => TailAction::PageUp,
@@ -132,6 +256,50 @@ impl TailModel {
             TailAction::Top => self.scroll_up(usize::MAX),
             TailAction::Bottom => self.scroll_down(usize::MAX),
             TailAction::ToggleFollow => self.toggle_follow(),
+            TailAction::SearchOpen => {
+                self.search = Some(TailSearch {
+                    query: String::new(),
+                    typing: true,
+                    at: None,
+                });
+            }
+            TailAction::SearchType(c) => {
+                if let Some(s) = self.search.as_mut() {
+                    s.query.push(c);
+                }
+            }
+            TailAction::SearchBackspace => {
+                if let Some(s) = self.search.as_mut() {
+                    s.query.pop();
+                }
+            }
+            TailAction::SearchCancel => self.search = None,
+            TailAction::SearchCommit => {
+                let empty = self.search.as_ref().is_none_or(|s| s.query.is_empty());
+                if empty {
+                    self.search = None;
+                } else {
+                    if let Some(s) = self.search.as_mut() {
+                        s.typing = false;
+                    }
+                    let from = self.bottom_in_view();
+                    self.find(from, true);
+                }
+            }
+            TailAction::MatchOlder => match self.search.as_ref().and_then(|s| s.at) {
+                Some(0) => self.note = Some("no older match".to_string()),
+                Some(at) if !self.find(at - 1, true) => {
+                    self.note = Some("no older match".to_string());
+                }
+                _ => {}
+            },
+            TailAction::MatchNewer => {
+                if let Some(at) = self.search.as_ref().and_then(|s| s.at)
+                    && !self.find(at + 1, false)
+                {
+                    self.note = Some("no newer match".to_string());
+                }
+            }
             TailAction::Quit => return false,
             TailAction::Ignore => {}
         }
@@ -254,7 +422,8 @@ where
             key = keys.next() => {
                 let Some(key) = key else { break };
                 let page = terminal.size()?.height.saturating_sub(1) as usize;
-                if !model.act(tail_key_action(&key), page) {
+                model.note = None;
+                if !model.act(tail_key_action(&key, model.typing()), page) {
                     break;
                 }
             }
@@ -317,10 +486,17 @@ pub fn render_tail(f: &mut ratatui::Frame, model: &TailModel) {
     } else {
         format!("paused · {} lines back", model.offset())
     };
-    let status = format!(
-        "tail {} · {rows}×{cols} · {mode} · f follow · ↑↓ PgUp/PgDn · esc to close",
-        model.id
-    );
+    let status = match (&model.search, &model.note) {
+        (Some(s), _) if s.typing => format!("/{}▏ · enter to search · esc to cancel", s.query),
+        (_, Some(note)) => format!(
+            "tail {} · {rows}×{cols} · {mode} · {note} · n/N older/newer · esc to close",
+            model.id
+        ),
+        _ => format!(
+            "tail {} · {rows}×{cols} · {mode} · f follow · / search · ↑↓ PgUp/PgDn · esc to close",
+            model.id
+        ),
+    };
     f.render_widget(
         Line::from(Span::styled(
             status,
@@ -364,19 +540,158 @@ mod tests {
     #[test]
     fn tail_key_action_maps_the_viewer_keys() {
         use crate::cli::input::Key;
-        assert_eq!(tail_key_action(&Key::Up), TailAction::ScrollUp);
-        assert_eq!(tail_key_action(&Key::Down), TailAction::ScrollDown);
-        assert_eq!(tail_key_action(&Key::PageUp), TailAction::PageUp);
-        assert_eq!(tail_key_action(&Key::PageDown), TailAction::PageDown);
-        assert_eq!(tail_key_action(&Key::Home), TailAction::Top);
-        assert_eq!(tail_key_action(&Key::End), TailAction::Bottom);
-        assert_eq!(tail_key_action(&Key::Char('f')), TailAction::ToggleFollow);
-        for quit in [Key::Char('\x1b'), Key::Char('q'), Key::CtrlO] {
-            assert_eq!(tail_key_action(&quit), TailAction::Quit, "{quit:?}");
+        assert_eq!(tail_key_action(&Key::Up, false), TailAction::ScrollUp);
+        assert_eq!(tail_key_action(&Key::Down, false), TailAction::ScrollDown);
+        assert_eq!(tail_key_action(&Key::PageUp, false), TailAction::PageUp);
+        assert_eq!(tail_key_action(&Key::PageDown, false), TailAction::PageDown);
+        assert_eq!(tail_key_action(&Key::Home, false), TailAction::Top);
+        assert_eq!(tail_key_action(&Key::End, false), TailAction::Bottom);
+        assert_eq!(
+            tail_key_action(&Key::Char('f'), false),
+            TailAction::ToggleFollow
+        );
+        for quit in [Key::Char('\x1b'), Key::Char('q'), Key::CtrlO, Key::CtrlC] {
+            assert_eq!(tail_key_action(&quit, false), TailAction::Quit, "{quit:?}");
         }
-        for other in [Key::Char('x'), Key::Enter, Key::CtrlC] {
-            assert_eq!(tail_key_action(&other), TailAction::Ignore, "{other:?}");
+        assert_eq!(
+            tail_key_action(&Key::Char('/'), false),
+            TailAction::SearchOpen
+        );
+        assert_eq!(
+            tail_key_action(&Key::Char('n'), false),
+            TailAction::MatchOlder
+        );
+        assert_eq!(
+            tail_key_action(&Key::Char('N'), false),
+            TailAction::MatchNewer
+        );
+        for other in [Key::Char('x'), Key::Enter] {
+            assert_eq!(
+                tail_key_action(&other, false),
+                TailAction::Ignore,
+                "{other:?}"
+            );
         }
+    }
+
+    #[test]
+    fn tail_key_action_in_search_mode_types_text() {
+        use crate::cli::input::Key;
+        assert_eq!(
+            tail_key_action(&Key::Char('q'), true),
+            TailAction::SearchType('q')
+        );
+        assert_eq!(
+            tail_key_action(&Key::Char('f'), true),
+            TailAction::SearchType('f')
+        );
+        assert_eq!(tail_key_action(&Key::Enter, true), TailAction::SearchCommit);
+        assert_eq!(
+            tail_key_action(&Key::Char('\x1b'), true),
+            TailAction::SearchCancel
+        );
+        assert_eq!(
+            tail_key_action(&Key::Backspace, true),
+            TailAction::SearchBackspace
+        );
+        assert_eq!(
+            tail_key_action(&Key::CtrlC, true),
+            TailAction::Quit,
+            "Ctrl-C closes in both modes"
+        );
+    }
+
+    fn search(m: &mut TailModel, query: &str) {
+        m.act(TailAction::SearchOpen, 4);
+        for c in query.chars() {
+            m.act(TailAction::SearchType(c), 4);
+        }
+        m.act(TailAction::SearchCommit, 4);
+    }
+
+    #[test]
+    fn tail_search_finds_the_newest_match_then_older_and_newer() {
+        let mut m = TailModel::new("s3", 5, 20, b"");
+        m.apply(&chunk(lines(30)));
+        search(&mut m, "line 1");
+        assert_eq!(
+            top_line(&m),
+            "line 19",
+            "the newest match at or above the bottom"
+        );
+        assert!(!m.follow, "a search jump pauses follow");
+        m.act(TailAction::MatchOlder, 4);
+        assert_eq!(top_line(&m), "line 18", "n moves to the next older match");
+        m.act(TailAction::MatchNewer, 4);
+        assert_eq!(top_line(&m), "line 19", "N moves back to the newer one");
+        m.act(TailAction::MatchNewer, 4);
+        assert_eq!(m.note.as_deref(), Some("no newer match"));
+    }
+
+    #[test]
+    fn tail_search_is_case_insensitive_and_reaches_the_live_screen() {
+        let mut m = TailModel::new("s3", 5, 30, b"");
+        m.apply(&chunk(lines(30)));
+        m.apply(&chunk(b"ERROR disk full\r\n".to_vec()));
+        search(&mut m, "Error");
+        assert_eq!(
+            m.offset(),
+            0,
+            "a match on the live screen shows at offset 0"
+        );
+        assert!(m.screen().contents().contains("ERROR disk full"));
+        assert!(
+            m.note
+                .as_deref()
+                .is_some_and(|n| n.starts_with("match at line")),
+            "{:?}",
+            m.note
+        );
+    }
+
+    #[test]
+    fn tail_search_without_a_match_keeps_the_view() {
+        let mut m = TailModel::new("s3", 5, 20, b"");
+        m.apply(&chunk(lines(30)));
+        m.scroll_up(3);
+        let before = top_line(&m);
+        search(&mut m, "zzz");
+        assert_eq!(
+            top_line(&m),
+            before,
+            "no match leaves the view where it was"
+        );
+        assert!(
+            m.note.as_deref().is_some_and(|n| n.contains("not found")),
+            "{:?}",
+            m.note
+        );
+        m.act(TailAction::SearchOpen, 4);
+        m.act(TailAction::SearchCommit, 4);
+        assert!(m.search.is_none(), "an empty query cancels the search");
+    }
+
+    #[test]
+    fn render_tail_shows_the_search_prompt_while_typing() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut m = TailModel::new("s3", 5, 20, b"");
+        m.act(TailAction::SearchOpen, 4);
+        for c in "err".chars() {
+            m.act(TailAction::SearchType(c), 4);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        terminal.draw(|f| render_tail(f, &m)).unwrap();
+        let bottom: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .skip(7 * 60)
+            .take(60)
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(bottom.starts_with("/err"), "{bottom:?}");
     }
 
     #[test]
