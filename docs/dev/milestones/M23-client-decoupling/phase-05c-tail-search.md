@@ -1,7 +1,7 @@
 # Phase 05c: tail-search — `/` searches the tail view; `n`/`N` step through matches; `Ctrl-C` closes it
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** review
 **Depends on:** 05b (done)
 **Estimated diff:** ~190 lines of production code, one file; 5 new tests, 1 updated
 **Tags:** language=rust, kind=feature, size=m
@@ -1265,3 +1265,137 @@ Mutations applied with the `patch` tool, run once each, then restored
   (`0 passed; 1 failed`).
 - **E** — deleted the typing-mode `Key::CtrlC => TailAction::Quit,` arm:
   `tail_key_action_in_search_mode_types_text` **red** (`0 passed; 1 failed`).
+
+### Update — 2026-10-02 23:58 (complete, server-authored)
+
+**Summary:** **Summary:** M23 phase-05c is implemented as specified: `src/cli/tail.rs` replaced whole with the phase doc's dry-run file — `/` opens a typing-mode search prompt in the status line (printable keys are text, Backspace deletes, Esc cancels, Enter commits), Enter/`n`/`N` search case-insensitively across scrollback and the live screen by rebuilding the line list per keypress (stepping the vt100 view through each scrollback offset, restoring it after), a match is brought into view (offset 0 for live-screen hits, top of view otherwise) and pauses follow, the status line reports `match at line N of M` / `"query" not found` / `no older match` / `no newer match`, no match leaves the view put, an empty query cancels, and `Ctrl-C` closes the view in both modes (the 05b nit). No deviations from the spec; the doc's file content was applied verbatim, and grep confirms the pinned literals landed (`Key::CtrlC => TailAction::Quit` ×2, `Key::Char('/') => TailAction::SearchOpen` ×1, `s.query.to_lowercase()` present).
+
+**End-to-end verification** (block run verbatim, output captured to `/tmp/e2e-m23-05c.txt` and pasted by tool into the phase doc's new `### Update — 2026-10-02 16:56 (end-to-end verification)` entry): `lib1/2/3=ok` (no failing names), `lib_counts=2150p-0f-14i`, `search_tests=6p-0f`, `isolation=11 passed; 0 failed`, `keys=2/1`; the paste check printed `PASTE MATCH` (on its own line in the entry, first try). Other targets confirmed unmoved (bug_tracker 6, doc_truth 14, integration 32). Mutations A–E were each applied via `patch`, run once, and observed **red** as expected (A: case-insensitivity; B: commit-from-bottom; C: `n` stepping; D: follow-pause on jump; E: typing-mode Ctrl-C), with `git diff --stat` verified back to its pre-mutation state after every restore.
+
+**Notes for review:** `cargo fmt --all` ran immediately before staging; build, clippy `-D warnings` and the full suite are clean with zero new warnings. Phase doc `Status:` remains `in-progress` and no `(complete)` entry was written, per the lifecycle split — the server authors the completion tail from this message. Working tree is clean at commit `dfb35fff`; the only files touched are `src/cli/tail.rs`, the phase doc, and the milestone README's phase-table row, all within the Authorizations.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+kill: sending signal to 411405 failed: No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M23-client-decoupling/README.md` — +1 -1
+- `docs/dev/milestones/M23-client-decoupling/phase-05c-tail-search.md` — +45 -1
+- `src/cli/tail.rs` — +334 -19
+
+**Commit:** dfb35fff2e6517c0418d1039e0d40803f8ad81ed
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
