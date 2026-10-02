@@ -1,7 +1,7 @@
 # Phase 04c: hosts-context-block — the model sees a `[HOSTS]` line naming the configured hosts
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 04b (done)
 **Estimated diff:** ~55 lines of production code across 3 files; 3 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -597,3 +597,24 @@ kill: sending signal to 3168730 failed: No such process
 **Commit:** f1dae34af0e32cc89d63e2a1024e8a2bf6901614
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (74 turns).
+  Its own entry says "headless run 04c": no model misname this time.
+- **Source diff vs the drafting dry run, tests included:** byte-identical.
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` were clean. Lib was
+  **2133/0/14** on two of three full-suite runs; the third failed
+  `shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`,
+  a pre-existing rare flake (it also flaked once at the 03a review). A/B of
+  8 full lib runs each: 0/8 at HEAD, 0/8 at the pre-phase commit. Not
+  attributable. The end-to-end re-run matched the pasted capture byte for
+  byte. Mutations A–D, re-applied exactly as pinned, each went red.
+- **Scope deviations:** none. The executor's note about "adapting the
+  insertion point" describes the spec's own code; nothing differs.
+- **Calibration:** none. Second phase in a row where the executor's diff
+  equalled the dry run (04b differed by one comment line). Quoting the
+  dry-run code, tests included, is doing its job.
+
