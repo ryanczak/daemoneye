@@ -599,12 +599,12 @@ fn style_for_focused(kind: RowKind, palette: crate::cli::palette::Palette) -> St
 /// the terminal on the alternate screen with the inline viewport unpinned.
 /// The teardown action is injectable so tests can count how often it runs
 /// without a real terminal.
-struct AltScreenGuard<'a> {
+pub(crate) struct AltScreenGuard<'a> {
     teardown: Box<dyn FnMut() + 'a>,
 }
 
 impl<'a> AltScreenGuard<'a> {
-    fn new(teardown: impl FnMut() + 'a) -> Self {
+    pub(crate) fn new(teardown: impl FnMut() + 'a) -> Self {
         Self {
             teardown: Box::new(teardown),
         }

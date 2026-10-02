@@ -21,6 +21,7 @@ Commands:
   /approvals list/on/off/revoke       /prompt    list or switch system prompt
   /limits    show active limits       /session   save/load/list/delete/rename
   /shells    list the agent's shells  /hosts     configured hosts and ssh state
+  /tail      live view of a shell     (alias /watch; f follow, esc to close)
 
 Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
 
@@ -429,6 +430,37 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         if query == "/help" || query == "help" || query == "?" || query == "/?" {
             let _ = renderer.commit(help_text);
             let _ = renderer.commit("\n");
+            redraw(
+                &mut renderer,
+                input_state,
+                &session_id,
+                approval,
+                &model,
+                prompt_tokens,
+                context_window,
+                daemon_up,
+                cost_usd,
+                has_untracked,
+            );
+            continue;
+        }
+        if query == "/tail"
+            || query == "/watch"
+            || query.starts_with("/tail ")
+            || query.starts_with("/watch ")
+        {
+            match query.split_whitespace().nth(1) {
+                Some(id) => {
+                    if let Err(e) =
+                        crate::cli::tail::run_tail_viewer(stdin, sigwinch, &mut renderer, id).await
+                    {
+                        let _ = renderer.commit(&format!("  ✗ tail {id}: {e}\n"));
+                    }
+                }
+                None => {
+                    let _ = renderer.commit("  usage: /tail <shell id>  (see /shells)\n");
+                }
+            }
             redraw(
                 &mut renderer,
                 input_state,
@@ -951,6 +983,15 @@ mod tests {
         assert!(
             HELP_TEXT.contains("/shells"),
             "HELP_TEXT must list '/shells'"
+        );
+    }
+
+    #[test]
+    fn help_text_lists_tail() {
+        assert!(HELP_TEXT.contains("/tail"), "HELP_TEXT must list '/tail'");
+        assert!(
+            HELP_TEXT.contains("/watch"),
+            "HELP_TEXT must name the /watch alias"
         );
     }
 

@@ -6,7 +6,7 @@ mod audit_prompts;
 mod chat;
 mod costs;
 mod interrupt;
-mod ipc_client;
+pub(crate) mod ipc_client;
 mod lifecycle;
 mod pane;
 mod reindex;

@@ -1,7 +1,7 @@
 # Phase 05b: tail-viewer — `/tail <sN>` (alias `/watch`) opens a live, scrollable view of a shell
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 05a (done)
 **Estimated diff:** ~180 lines of production code across 4 files; 5 new tests
 **Tags:** language=rust, kind=feature, size=m
@@ -642,3 +642,41 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-02 12:01 (started)
+
+**Executor:** Codex (headless run).
+Flipped 05b's status to `in-progress` here and in the README's row. Starting
+with Task 1 (the two `pub(crate)` widenings), then the viewer, then chat
+dispatch, then the tests.
+
+### Update — 2026-10-02 12:20 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim, redirected to
+`/tmp/e2e-m23-05b.txt` (one run; nothing else was running `cargo test`). No
+flake appeared in this run, so no re-run was needed. First fenced block is the
+capture file's contents, copied by `cp` from the file, not retyped:
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2145p-0f-14i
+new_tests=5p-0f
+isolation=11 passed; 0 failed
+wired=1/1
+```
+
+Paste check (phase doc's paste script, first run):
+PASTE MATCH
+
+Mutations (each applied with `patch`, run once, restored, tree confirmed
+back at its pre-mutation `git diff --stat`):
+
+| Mutation | Test run | Observed |
+|---|---|---|
+| A — `Ok(None) \| Err(_)` arm drops `model.exited = true` | `cargo test --lib -- tail_loop` | **red** — `tail_loop_shows_frames_marks_exit_and_closes_on_esc` panicked at `a closed stream marks the shell exited` (0 passed, 1 failed) |
+| B — `let _ = model.act(tail_key_action(&key), page);` replaces the break | `cargo test --lib -- tail_loop` | **red** — the loop never ends, the 5 s timeout fired, `Esc closes the loop within 5 s` (0 passed, 1 failed, 5.00 s) |
+| C — `Key::Char('f')` → `TailAction::Ignore` | `cargo test --lib -- tail_key_action` | **red** — `tail_key_action_maps_the_viewer_keys` (0 passed, 1 failed) |
+| D — `PageUp => self.scroll_up(1)` | `cargo test --lib -- tail_model_act` | **red** — `tail_model_act_pages_jumps_and_quits` (0 passed, 1 failed) |
+
