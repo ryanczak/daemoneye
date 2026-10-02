@@ -12,7 +12,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 
 use crate::daemon::server::check_peer_identity;
-use crate::shell::proto::{ShellRequest, ShellResponse, ShellSignal, encode};
+use crate::shell::proto::{ShellRequest, ShellResponse, ShellSignal, ShellState, encode};
 
 /// What a shell-host must be able to do. Phase-05b implements this over a
 /// real PTY; the tests implement it over a fake.
@@ -28,6 +28,12 @@ pub trait ShellBackend: Send + Sync + 'static {
     /// of every chunk after it. A backend with no screen returns empty bytes.
     fn subscribe_with_screen(&self) -> (Vec<u8>, broadcast::Receiver<Vec<u8>>) {
         (Vec::new(), self.subscribe())
+    }
+
+    /// End the shell itself. A backend that cannot answers an error, which
+    /// the host relays as an `Error` frame.
+    async fn close(&self) -> anyhow::Result<()> {
+        anyhow::bail!("this shell host cannot close its shell")
     }
 }
 
@@ -49,6 +55,31 @@ pub async fn bind(path: &Path) -> anyhow::Result<UnixListener> {
     std::fs::set_permissions(path, PermissionsExt::from_mode(0o700))
         .with_context(|| format!("chmod 0700 on socket at {}", path.display()))?;
     Ok(listener)
+}
+
+/// `serve`, but return once the shell has exited: every `poll`, ask the
+/// backend's status and stop when it reads `Exited`. A host process that
+/// returns from this exits, which releases its instance lock.
+pub async fn serve_until_exit<B: ShellBackend>(
+    listener: UnixListener,
+    backend: Arc<B>,
+    poll: std::time::Duration,
+) -> anyhow::Result<()> {
+    let watched = Arc::clone(&backend);
+    tokio::select! {
+        res = serve(listener, backend) => res,
+        () = async move {
+            loop {
+                tokio::time::sleep(poll).await;
+                if matches!(
+                    watched.status().await,
+                    ShellResponse::Status { state: ShellState::Exited, .. }
+                ) {
+                    break;
+                }
+            }
+        } => Ok(()),
+    }
 }
 
 /// Accept on `listener` forever, spawning one task per connection.
@@ -179,6 +210,12 @@ async fn handle_line<B: ShellBackend>(
             },
         },
         ShellRequest::Status => backend.status().await,
+        ShellRequest::Close => match backend.close().await {
+            Ok(()) => ShellResponse::Ok,
+            Err(e) => ShellResponse::Error {
+                message: e.to_string(),
+            },
+        },
     };
     write_frame(writer, &response).await
 }
@@ -419,6 +456,40 @@ mod tests {
             ShellResponse::Chunk {
                 bytes: b"live".to_vec()
             }
+        );
+
+        drop(writer);
+        tokio::task::yield_now().await;
+    }
+
+    #[tokio::test]
+    async fn host_answers_close_with_an_error_when_the_backend_cannot() {
+        // FakeBackend has no `close` override, so the trait's default refusal
+        // is relayed as an `Error` frame and the connection stays open.
+        let server = start_server().await;
+        let client = UnixStream::connect(&server.path).await.unwrap();
+        let (reader, mut writer) = client.into_split();
+        let mut reader = BufReader::new(reader);
+
+        write_request(&mut writer, &ShellRequest::Close).await;
+        match read_response(&mut reader).await {
+            ShellResponse::Error { message } => {
+                assert!(
+                    message.contains("cannot close"),
+                    "the refusal must name the failure: {message}"
+                );
+            }
+            other => panic!("expected an Error frame, got {other:?}"),
+        }
+
+        // The connection is still usable: a Status round-trips.
+        write_request(&mut writer, &ShellRequest::Status).await;
+        assert!(
+            matches!(
+                read_response(&mut reader).await,
+                ShellResponse::Status { .. }
+            ),
+            "the connection must stay open after a refused Close"
         );
 
         drop(writer);

@@ -187,10 +187,10 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 
 - `close_shell(shell)` — end one of **this session's** shells by id (the ids \
   `list_shells` shows; another session's or a ghost job's shell is refused). \
-  The tool sends a terminate signal and then reports what it actually \
-  observed: the shell's host gone, or the host still holding its lock and \
-  possibly still finishing. Use it to free a per-owner shell slot, or to end \
-  a shell you no longer read.
+  The tool hangs the shell up (ending any command running in it) and then \
+  reports what it actually observed: the shell's host gone, or the host still \
+  holding its lock and possibly still finishing. Use it to free a per-owner \
+  shell slot, or to end a shell you no longer read.
 
 ### `watch_shell`
 

@@ -125,6 +125,27 @@ pub async fn send_resize(
     read_ack(sock, &mut reader, timeout).await
 }
 
+/// Ask the host to end its shell (`ShellRequest::Close`). A host from before
+/// `Close` refuses the frame, so fall back to `Signal { TERM }`, the only
+/// closure it understands.
+pub async fn close_or_term(sock: &Path, timeout: Duration) -> anyhow::Result<()> {
+    let stream = UnixStream::connect(sock)
+        .await
+        .with_context(|| format!("connecting to shell socket at {}", sock.display()))?;
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+    let wire = encode(ShellRequest::Close).context("encoding Close frame")?;
+    writer
+        .write_all(wire.as_bytes())
+        .await
+        .context("sending Close frame")?;
+    writer.flush().await.context("flushing Close frame")?;
+    match read_ack(sock, &mut reader, timeout).await {
+        Ok(()) => Ok(()),
+        Err(_) => send_signal(sock, ShellSignal::Term, timeout).await,
+    }
+}
+
 /// The shell's current state, rows, cols and pid.
 pub async fn status(sock: &Path, timeout: Duration) -> anyhow::Result<ShellResponse> {
     let stream = UnixStream::connect(sock)
@@ -1038,6 +1059,21 @@ mod tests {
                     Call::Signal(ShellSignal::Cont)
                 ],
                 "both signals must reach the backend in order"
+            );
+        }
+
+        #[tokio::test]
+        async fn close_falls_back_to_term_on_a_host_without_close() {
+            // SignalBackend has no `close` override, so it uses the trait's
+            // default refusal: the frame must fall back to a TERM signal.
+            let server = start_server(ShellResponse::Ok).await;
+            close_or_term(&server.path, Duration::from_secs(5))
+                .await
+                .expect("the fallback must close");
+            assert_eq!(
+                server.backend.calls(),
+                vec![Call::Signal(ShellSignal::Term)],
+                "the refusal must fall back to a TERM signal"
             );
         }
 

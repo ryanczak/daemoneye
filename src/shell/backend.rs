@@ -249,6 +249,10 @@ impl ShellBackend for PtyBackend {
         let screen = self.screen.lock().unwrap_or_log();
         (screen.snapshot(), self.out_tx.subscribe())
     }
+
+    async fn close(&self) -> anyhow::Result<()> {
+        self.shell.lock().unwrap_or_log().hangup()
+    }
 }
 
 impl PtyBackend {
@@ -1274,6 +1278,61 @@ mod tests {
                     std::thread::sleep(Duration::from_millis(20));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn close_hangs_up_a_shell_and_its_foreground_job() {
+        // SIGHUP goes to the shell's pid, so it ends an idle shell *and* a
+        // shell with a foreground job: the shell hangs its job up too.
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let _guard = JobGuard {
+            backend: Arc::clone(&backend),
+        };
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(backend.input(b"sleep 300\n"))
+            .expect("start the foreground job");
+        assert_eq!(
+            status_until(&backend, ShellState::Running),
+            ShellState::Running,
+            "the foreground job must be Running before the hangup"
+        );
+        rt.block_on(backend.close())
+            .expect("the hangup must succeed");
+        assert_eq!(
+            status_until(&backend, ShellState::Exited),
+            ShellState::Exited,
+            "the hangup must end the shell and its foreground job"
+        );
+    }
+
+    /// The test runtime drives `input` itself: `block_on` inside a
+    /// `#[tokio::test]` would panic ("Cannot start a runtime from within a
+    /// runtime"), so the write must be awaited inline.
+    async fn handle_input(backend: &Arc<PtyBackend>, bytes: &[u8]) {
+        backend.input(bytes).await.expect("writing into the shell");
+    }
+
+    #[tokio::test]
+    async fn serve_until_exit_returns_when_the_shell_exits() {
+        // The host must return once the shell exits, so the process drops its
+        // instance lock; against `serve` this handle never resolves.
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let sock = dir.path().join("s.sock");
+        let listener = crate::shell::bind(&sock).await.expect("bind");
+        let handle = tokio::spawn(crate::shell::serve_until_exit(
+            listener,
+            Arc::clone(&backend),
+            Duration::from_millis(50),
+        ));
+        handle_input(&backend, b"exit\n").await;
+        match tokio::time::timeout(Duration::from_secs(10), handle).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(e))) => panic!("serve_until_exit must end cleanly: {e}"),
+            Ok(Err(e)) => panic!("serve_until_exit task panicked: {e}"),
+            Err(_) => panic!("serve_until_exit must return once the shell exits"),
         }
     }
 }

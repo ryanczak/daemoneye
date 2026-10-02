@@ -883,15 +883,13 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "close_shell",
-        description: "End one of your PTY shells by id: send it a terminate signal and \
-                      report whether its host actually went away. Uses the shell id \
-                      from list_shells (e.g. \"s3\"). Refuses a shell this session does \
-                      not own — another session's or a ghost job's shell is not yours \
-                      to end. There is no escalation path, so a host that survives the \
-                      signal is reported as still finishing. Use close_shell to free a \
-                      per-owner shell slot, not to stop a command you regret — an \
-                      already-running command is interrupted only if the signal \
-                      reaches it.",
+        description: "End one of your PTY shells by id: hang it up (SIGHUP, which also \
+                      ends a command running in it) and report whether its host actually \
+                      went away. Uses the shell id from list_shells (e.g. \"s3\"). Refuses \
+                      a shell this session does not own — another session's or a ghost \
+                      job's shell is not yours to end. A host that has not gone away \
+                      within a moment is reported as still finishing. Use close_shell to \
+                      free a per-owner shell slot or end a shell you no longer need.",
         params: &[ParamDef {
             name: "shell",
             ty: ParamTy::Str,

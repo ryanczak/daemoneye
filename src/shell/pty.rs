@@ -438,6 +438,25 @@ impl PtyShell {
         self.master.process_group_leader().map(|pgid| pgid as i64)
     }
 
+    /// Hang up the shell itself: SIGHUP to its pid, not to the foreground
+    /// group. An interactive bash exits on it and hangs up its own jobs.
+    pub fn hangup(&self) -> anyhow::Result<()> {
+        let pid = self
+            .pid()
+            .ok_or_else(|| anyhow::anyhow!("the shell has no pid to hang up"))?;
+        let status = std::process::Command::new("kill")
+            .arg("-s")
+            .arg("HUP")
+            .arg("--")
+            .arg(pid.to_string())
+            .status()
+            .context("running kill -s HUP")?;
+        if !status.success() {
+            anyhow::bail!("kill -s HUP -- {pid} failed: {status}");
+        }
+        Ok(())
+    }
+
     fn signal_group(&self, pgid: i64, sig: &str) -> anyhow::Result<()> {
         if pgid > 0 {
             std::process::Command::new("kill")

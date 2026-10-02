@@ -1979,9 +1979,7 @@ pub(crate) async fn close_shell_with(
     // afterwards, not assumed; a host that lingers still holds the lock, so
     // the tool says so instead of claiming success.
     let socket = socket_path(shell);
-    if let Err(e) =
-        crate::shell::send_signal(&socket, crate::shell::ShellSignal::Term, signal_timeout).await
-    {
+    if let Err(e) = crate::shell::close_or_term(&socket, signal_timeout).await {
         return format!(
             "Error: shell {shell} could not be signalled, so it is still open: \
              {}. The shell is unchanged; list_shells shows its state, and a \
@@ -1994,7 +1992,7 @@ pub(crate) async fn close_shell_with(
     // The signal is one-way; what closes the shell is the host's PTY ending.
     // Give it a bounded moment and observe, rather than asserting either way.
     let lock = crate::shell::lock_path(shell);
-    closed_by_observed_end(shell, &lock)
+    closed_by_observed_end(shell, &lock).await
 }
 
 /// The observable outcome of one close: poll the lock up to 1.5s from now
@@ -2003,7 +2001,7 @@ pub(crate) async fn close_shell_with(
 /// fixture's host task never exits — so this observe-poll genuinely produces
 /// "still alive" in tests and "gone" in production, and the tool's sentence
 /// must not claim a closure it did not see.
-fn closed_by_observed_end(shell: &str, lock: &std::path::Path) -> String {
+async fn closed_by_observed_end(shell: &str, lock: &std::path::Path) -> String {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
     loop {
         if !host_is_alive(lock) {
@@ -2013,13 +2011,12 @@ fn closed_by_observed_end(shell: &str, lock: &std::path::Path) -> String {
         }
         if std::time::Instant::now() >= deadline {
             return format!(
-                "Sent TERM to shell {shell}, but its host is still holding its lock — \
-                 the shell may still be finishing (there is no kill frame on this \
-                 wire, so escalation is not possible). list_shells still shows it; \
-                 check again before assuming it is closed."
+                "Asked shell {shell} to close, but its host is still holding its \
+                 lock — the shell may still be finishing. list_shells still shows \
+                 it; check again before assuming it is closed."
             );
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 }
 
@@ -2032,7 +2029,6 @@ pub(crate) mod lifecycle_test_support {
 
     use anyhow::Context;
     use std::path::PathBuf;
-    use std::sync::Arc;
 
     /// The PTY geometry the in-process test host uses — the same 24×80 the
     /// daemon's real spawn uses.
@@ -2057,8 +2053,16 @@ pub(crate) mod lifecycle_test_support {
         let listener = crate::shell::bind(&socket)
             .await
             .context("binding the in-process host's socket")?;
-        tokio::spawn(crate::shell::serve(listener, Arc::clone(&backend)));
-        std::mem::forget(lock);
+        // Like a real host: serve until the shell exits, then release the lock.
+        tokio::spawn(async move {
+            let _ = crate::shell::serve_until_exit(
+                listener,
+                backend,
+                std::time::Duration::from_millis(100),
+            )
+            .await;
+            drop(lock);
+        });
         std::mem::forget(dir);
         Ok(cast)
     }

@@ -1,7 +1,7 @@
 # Phase 03c: host-exits-with-its-shell — a shell host stops when its shell ends, and `close_shell` really closes
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03b (done)
 **Estimated diff:** ~110 lines of production code across 7 files, plus 4 doc lines; 4 new tests and 1 tightened
 **Tags:** language=rust, kind=bugfix, size=m
@@ -555,3 +555,36 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-01 23:55 (started)
+
+Executor: Claude (Opus 4.5, headless run). Status `todo` → `in-progress` in
+this doc and in the milestone README's phase-table row. Baseline confirmed:
+`master` clean at `fbdaa6b6`, `cargo test --lib` → 2110 passed / 0 failed /
+14 ignored. Executing Spec tasks 1–8 in order.
+
+### Update — 2026-10-01 23:55 (end-to-end verification)
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2114p-0f-14i
+new_tests=5p-0f
+isolation=11 passed; 0 failed
+terminate_signal_docs=0
+live_host_exit=0
+```
+
+PASTE MATCH
+
+Mutations (each applied with the patch tool, run once, restored; `git diff
+--stat` re-checked after each restore):
+- **Mutation A** — delete `break;` in `serve_until_exit` → test 4 red, the
+  10 s timeout fires (`serve_until_exit must return once the shell exits`).
+- **Mutation B** — `PtyBackend::close` returns `Ok(())` without `hangup()` →
+  test 3 red (`status_until(… Exited)` never settled).
+- **Mutation C** — `close_or_term`'s fallback arm becomes `Err(e) => Err(e)`
+  → test 1 red (`the fallback must close`).
+All three observed red, each on the pinned run.
+

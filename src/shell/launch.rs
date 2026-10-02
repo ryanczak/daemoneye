@@ -100,8 +100,13 @@ pub async fn run_host(id: &str, shell: &str, args: &[String], rows: u16, cols: u
         now,
     )?;
     let listener = crate::shell::host::bind(&socket_path(id)).await?;
-    crate::shell::host::serve(listener, backend).await
+    crate::shell::host::serve_until_exit(listener, backend, SHELL_EXIT_POLL).await?;
+    log::info!("shell host {id}: the shell exited; stopping");
+    Ok(())
 }
+
+/// How often a host checks whether its shell has exited.
+const SHELL_EXIT_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Poll `sock` until the host answers a full `Status` round-trip. A successful
 /// `connect()` alone is not readiness (F3): a bound-but-unserved socket still

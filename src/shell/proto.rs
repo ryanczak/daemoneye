@@ -45,6 +45,8 @@ pub enum ShellRequest {
         signal: ShellSignal,
     },
     Status,
+    /// Hang up the shell itself (SIGHUP to its pid), ending it and its jobs.
+    Close,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
