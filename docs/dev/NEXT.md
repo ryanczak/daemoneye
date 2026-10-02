@@ -1,19 +1,19 @@
 # NEXT
 
-**Active phase:** **M23 phase-05b — tail-viewer**, drafted 2026-10-02, status
-`todo`. Dispatch with `/rexymcp:dispatch phase-05b`.
+**Active phase:** **M23 phase-05c — tail-search**, drafted 2026-10-02, status
+`todo`. Dispatch with `/rexymcp:dispatch phase-05c`.
 
-**What it does.** `/tail s3` (alias `/watch`) in chat opens a live, full-screen
-view of a shell on 05a's model: `f` follow, ↑↓ PgUp/PgDn Home/End scroll, and
-`Esc`/`q`/`Ctrl-O` close. An unknown id prints the daemon's error without
-entering the alt screen; a closed stream shows `exited` and keeps the view.
-The help lists `/tail` and `/watch`. Five tests; lib 2140 → 2145.
+**What it does.** In `/tail`'s view, `/` opens a search prompt and `Enter`
+finds the newest case-insensitive match across scrollback and the live
+screen. `n` steps to older matches and `N` to newer ones. No match keeps the
+view, and a jump pauses follow. `Ctrl-C` now closes the view (the 05b nit).
+One file, `src/cli/tail.rs`, given whole in the spec. Five new tests, one
+updated; lib 2145 → 2150.
 
-**Split.** Search (`/`, `n`/`N`) is row 05c.
+**Measured at drafting.** Rebuilding every line through vt100's scrollback
+offsets takes 1.6 ms at 5 000 lines, so search needs no index. A
+case-insensitivity mutant survived a lowercase-only test query, and the test
+now uses `"Error"` vs `ERROR`. Dry-run green: filter printed 6, lib 2150 ×3,
+mutations A–E red.
 
-**Measured at drafting.** The loop is generic over backend, frames, keys and
-resizes, so a test drives the real loop with a `TestBackend`, a duplex daemon
-and a key channel. The whole change was dry-run green: the test filter
-printed 5 on the dry run, lib 2145 ×3, mutations A–D red.
-
-**After 05b:** `/rexymcp:architect next` drafts 05c (tail-search).
+**After 05c:** `/rexymcp:architect next` drafts 06 (logs-and-replay).
