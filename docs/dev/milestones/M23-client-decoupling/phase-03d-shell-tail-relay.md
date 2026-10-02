@@ -707,13 +707,18 @@ PASTE MATCH
   `0 passed; 1 failed` (`shell_tail_reports_exited_when_the_shell_ends`).
   Restored → `git diff --stat` matches.
 
-### Update — 2026-10-02 02:10 (started) — executor run
+### Update — 2026-10-02 02:10 (started)
 
-**Executor:** headless run. Implemented Tasks 1–6: `ShellTail`/`ShellScreen`/
-`ShellChunk`/`ShellExited` wire types and dispatch; `handle_shell_tail` in
-`server/shells.rs` (screen via `SubscribeScreen` with a `Subscribe` fallback,
-chunk relay under `select!`, 500 ms `Status` poll, client-EOF hang-up); the two
-stale 03c comments rewritten; six new tests; end-to-end capture in the entry
-above. `git checkout` of one mid-edit file recovery: the `write_file` mangled
-`shells.rs`, it was rebuilt from HEAD plus re-applied Tasks 2 and 5 content
-before continuing (verified by diff against HEAD, then by the test run).
+**Executor:** headless run on `ff047879..`. Implemented Tasks 1–6: the
+`ShellTail` request and `ShellScreen`/`ShellChunk`/`ShellExited` responses
+(Task 1, plus the three exhaustive matches in `kind()`, `ask.rs`, `stream.rs`);
+`handle_shell_tail` in `server/shells.rs` — `SubscribeScreen` with a
+`Subscribe` fallback for an old host, chunk relay under `select!` with the
+cancel-safe `Lines::next_line`, a 500 ms `Status` poll for hosts that never
+close their connection, and client-EOF hang-up (Task 2); dispatch after
+`ShellResize` (Task 3); the two stale 03c comments rewritten (Task 4); six new
+tests, all passing (Task 5); the end-to-end capture and its verification in
+the entry above (Task 6). One mid-run file corruption in `shells.rs`
+(`write_file` overwrote it with a fragment) was rebuilt from HEAD plus the
+re-applied Task 2 handler block and Task 5 test module, verified by a clean
+build and the full suite before continuing; no prior accepted work was lost.
