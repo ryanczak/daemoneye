@@ -153,6 +153,12 @@ where
         return Ok(());
     }
     let sock = crate::shell::socket_path(id);
+    // The screen bytes assume the shell's own terminal size; the client needs
+    // it to draw them. A host that cannot answer reads as the spawn default.
+    let (rows, cols) = match crate::shell::status(&sock, RELAY_TIMEOUT).await {
+        Ok(crate::shell::ShellResponse::Status { rows, cols, .. }) => (rows, cols),
+        _ => (24, 80),
+    };
     let stream = match tokio::net::UnixStream::connect(&sock).await {
         Ok(s) => s,
         Err(e) => {
@@ -174,9 +180,16 @@ where
     };
     // From here on a failed write means the client hung up: that ends the
     // tail normally, it is not an error.
-    if send_response_split(tx, Response::ShellScreen { bytes: screen })
-        .await
-        .is_err()
+    if send_response_split(
+        tx,
+        Response::ShellScreen {
+            bytes: screen,
+            rows,
+            cols,
+        },
+    )
+    .await
+    .is_err()
     {
         return Ok(());
     }
@@ -665,7 +678,7 @@ mod tests {
             handle_shell_tail(&mut rx, &mut tx, &reg, id.as_str(), false)
                 .await
                 .unwrap();
-            if let [Response::ShellScreen { bytes }] = &parse_all(&tx)[..]
+            if let [Response::ShellScreen { bytes, .. }] = &parse_all(&tx)[..]
                 && rendered(bytes).contains("marker-tail-a")
             {
                 break;
@@ -684,6 +697,38 @@ mod tests {
             1,
             "without follow exactly one frame is sent, got {frames:?}"
         );
+        close_tail_shell(&reg, id.as_str(), &owner).await;
+    }
+
+    #[tokio::test]
+    async fn shell_tail_reports_the_shells_size() {
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("t".into());
+        let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+            Box::pin(spawn_in_process_host(id))
+        })
+        .await
+        .unwrap();
+        crate::shell::send_resize(
+            &crate::shell::socket_path(id.as_str()),
+            30,
+            100,
+            RELAY_TIMEOUT,
+        )
+        .await
+        .unwrap();
+        let mut rx = tokio::io::BufReader::new(tokio::io::empty());
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_tail(&mut rx, &mut tx, &reg, id.as_str(), false)
+            .await
+            .unwrap();
+        match parse_all(&tx).as_slice() {
+            [Response::ShellScreen { rows, cols, .. }] => {
+                assert_eq!((*rows, *cols), (30, 100), "the shell's own size, not a default")
+            }
+            other => panic!("expected one ShellScreen, got {other:?}"),
+        }
         close_tail_shell(&reg, id.as_str(), &owner).await;
     }
 
@@ -876,7 +921,7 @@ mod tests {
         let (mut lines, client_w, task) = spawn_tail(reg.clone(), id.as_str().to_string());
 
         match next_response(&mut lines).await {
-            Response::ShellScreen { bytes } => assert!(
+            Response::ShellScreen { bytes, .. } => assert!(
                 bytes.is_empty(),
                 "an old host's screen is empty, got {} bytes",
                 bytes.len()

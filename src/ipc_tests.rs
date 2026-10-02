@@ -1101,13 +1101,18 @@ fn shell_tail_messages_round_trip() {
 
     let screen = Response::ShellScreen {
         bytes: vec![0x1b, b'[', b'H', 0xff],
+        rows: 30,
+        cols: 100,
     };
     match roundtrip_resp(&screen) {
-        Response::ShellScreen { bytes } => assert_eq!(
-            bytes,
-            vec![0x1b, b'[', b'H', 0xff],
-            "screen bytes survive the wire"
-        ),
+        Response::ShellScreen { bytes, rows, cols } => {
+            assert_eq!(
+                bytes,
+                vec![0x1b, b'[', b'H', 0xff],
+                "screen bytes survive the wire"
+            );
+            assert_eq!((rows, cols), (30, 100), "the size survives the wire");
+        }
         other => panic!("wrong variant: {other:?}"),
     }
 

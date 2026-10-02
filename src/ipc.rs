@@ -516,8 +516,13 @@ pub enum Response {
     /// Every PTY shell the daemon runs, with its state and last command (M23).
     ShellList { shells: Vec<ShellInfo> },
     /// The first frame of a `ShellTail`: escape codes that redraw the shell's
-    /// current screen. Empty when the shell's host is too old to provide one.
-    ShellScreen { bytes: Vec<u8> },
+    /// current screen, and the shell's terminal size, which those codes assume.
+    /// `bytes` is empty when the shell's host is too old to provide a screen.
+    ShellScreen {
+        bytes: Vec<u8>,
+        rows: u16,
+        cols: u16,
+    },
     /// Live output from a followed shell, after its `ShellScreen`.
     ShellChunk { bytes: Vec<u8> },
     /// The followed shell has exited; no more frames follow.

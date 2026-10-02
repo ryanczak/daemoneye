@@ -1,7 +1,7 @@
 # Phase 05a: tail-model — the `/tail` core: the shell's size on the wire, a follow/scroll model, and a grid painter
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03d (`ShellTail`), 04c (done)
 **Estimated diff:** ~200 lines of production code across 4 files (1 new); 7 new tests
 **Tags:** language=rust, kind=feature, size=m
@@ -740,3 +740,10 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-02 16:05 (started)
+
+**By:** executor (rexyMCP headless run)
+
+Status flipped to `in-progress`; README row 05a matches. Beginning Task 1 (the
+`ShellScreen { bytes, rows, cols }` variant) per the spec.

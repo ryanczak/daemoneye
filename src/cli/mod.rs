@@ -10,6 +10,7 @@ pub mod palette;
 pub mod render;
 pub mod render_ratatui;
 pub mod status;
+pub mod tail;
 pub mod transcript;
 pub mod viewer;
 
