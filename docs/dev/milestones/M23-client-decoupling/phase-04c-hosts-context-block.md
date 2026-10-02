@@ -1,7 +1,7 @@
 # Phase 04c: hosts-context-block — the model sees a `[HOSTS]` line naming the configured hosts
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 04b (done)
 **Estimated diff:** ~55 lines of production code across 3 files; 3 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -418,3 +418,48 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-10-01 21:45 (started)
+
+Executor: headless run 04c. Status flipped `todo → in-progress` here and in the
+milestone README row 04c. Working from the dry-run-verified sketch in this doc:
+`format_hosts_context` + `hosts_context_block` in `shell.rs` above
+`ContextBreadth`, the one re-export in `knowledge/mod.rs`, two splices in
+`prompt.rs`, three pinned tests, then the end-to-end capture.
+### Update — 2026-10-02 04:45 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim against the real
+tree (commit base 76628b4b + this phase's changes). Its output was redirected
+to `/tmp/e2e-m23-04c.txt`; the fenced block below is that file's contents,
+copied by tool — never the script, never retyped.
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2133p-0f-14i
+new_tests=3p-0f
+isolation=11 passed; 0 failed
+splices=3
+```
+
+PASTE MATCH
+
+Mutation results, each applied with the `patch` tool, run once, then restored
+(`git diff --stat` confirmed the pre-mutation state after each restore):
+
+- **A** — dropped `row.exited_unix.is_none()` from the filter in
+  `format_hosts_context`: `hosts_context_lists_local_then_each_host_with_live_shells`
+  red (web01 counted 3 shells; the exited `s4` leaked in). Restored.
+- **B** — removed `{hosts_block}` from the first-turn format string:
+  `prompts_carry_the_hosts_block` red ("`pinky (ssh pinky, `" absent from the
+  first-turn prompt). Restored.
+- **C** — removed `{hosts_block}` from the later-turn `…User: {}` format
+  string (the `inject_snapshot=false` branch): same test red (the later-turn
+  prompt lost the line). Restored.
+- **D** — deleted the `if hosts.is_empty()` guard:
+  `hosts_context_is_empty_without_configured_hosts` red (an orphan
+  `[HOSTS] local (1 shell)` line was emitted instead of `""`). Restored.
+
+Also confirmed on the full `cargo test` run after the capture: lib 2133/0/14,
+bug_tracker 6, doc_truth 14, integration 32 (2 ignored), isolation 11 (1
+ignored) — other targets unmoved.

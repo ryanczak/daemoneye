@@ -296,6 +296,58 @@ pub fn shell_context_block(caller: &Owner) -> String {
     shell_context_block_in(crate::shell::registry(), caller, now_unix())
 }
 
+/// Format the ambient hosts block: the implicit `local` host, then each
+/// configured `[hosts.<name>]` entry by name, with its ssh destination and how
+/// many **live** shells run on it, across every owner. Pure: tests hand-build
+/// the hosts and the rows.
+///
+/// Returns the **empty string** when no hosts are configured: a lone
+/// `local` says nothing the model does not already know, and costs tokens on
+/// every turn. No ssh probe here either: this runs on every prompt assembly,
+/// and ControlMaster state is `/hosts`' job.
+fn format_hosts_context(
+    hosts: &std::collections::HashMap<String, crate::config::HostEntry>,
+    rows: &[ShellRow],
+) -> String {
+    if hosts.is_empty() {
+        return String::new();
+    }
+    let shells_on = |host: &crate::host::HostId| match rows
+        .iter()
+        .filter(|row| &row.host == host && row.exited_unix.is_none())
+        .count()
+    {
+        0 => "no shells".to_string(),
+        1 => "1 shell".to_string(),
+        n => format!("{n} shells"),
+    };
+    let mut names: Vec<&String> = hosts.keys().collect();
+    names.sort();
+    let mut parts = vec![format!(
+        "local ({})",
+        shells_on(&crate::host::HostId::Local)
+    )];
+    for name in names {
+        let host = crate::host::HostId::Named(name.clone());
+        parts.push(format!(
+            "{name} (ssh {}, {})",
+            hosts[name].ssh,
+            shells_on(&host)
+        ));
+    }
+    format!("[HOSTS] {}\n", parts.join(" · "))
+}
+
+/// The ambient `[HOSTS]` block for a prompt, or the empty string when
+/// `config` has no `[hosts]` entries. Counts come from every shell in the
+/// registry, whoever owns it.
+pub fn hosts_context_block(config: &crate::config::Config) -> String {
+    let rows = with_shells(crate::shell::registry(), |store| {
+        store.values().map(collect_row).collect::<Vec<_>>()
+    });
+    format_hosts_context(&config.hosts, &rows)
+}
+
 /// The breadth a `get_shell_context` call asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextBreadth {
@@ -2148,6 +2200,42 @@ mod tests {
             dedicated: false,
             exited_unix: None,
         }
+    }
+
+    fn host_entry(ssh: &str) -> crate::config::HostEntry {
+        crate::config::HostEntry {
+            ssh: ssh.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn hosts_context_lists_local_then_each_host_with_live_shells() {
+        let mut hosts = std::collections::HashMap::new();
+        hosts.insert("web01".to_string(), host_entry("matt@web01.lan"));
+        hosts.insert("db01".to_string(), host_entry("admin@db01"));
+        let web = crate::host::HostId::Named("web01".to_string());
+        let mut gone = row_on("s4", "chat:a", web.clone(), NOW);
+        gone.exited_unix = Some(NOW);
+        let rows = vec![
+            row("s0", "chat:a", NOW, false, false, None),
+            row_on("s2", "chat:a", web.clone(), NOW),
+            row_on("s3", "ghost:job", web, NOW),
+            gone,
+        ];
+        assert_eq!(
+            format_hosts_context(&hosts, &rows),
+            "[HOSTS] local (1 shell) · db01 (ssh admin@db01, no shells) · web01 (ssh matt@web01.lan, 2 shells)\n"
+        );
+    }
+
+    #[test]
+    fn hosts_context_is_empty_without_configured_hosts() {
+        let rows = vec![row("s0", "chat:a", NOW, false, false, None)];
+        assert_eq!(
+            format_hosts_context(&std::collections::HashMap::new(), &rows),
+            ""
+        );
     }
 
     #[test]

@@ -137,6 +137,7 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
     let shell_block = crate::daemon::executor::knowledge::shell_context_block(
         &crate::shell::Owner::Chat(ctx.session_id.unwrap_or_default().to_string()),
     );
+    let hosts_block = crate::daemon::executor::knowledge::hosts_context_block(ctx.config);
 
     format!(
         "## Host Context\n```\n{sys_ctx}\n```\n\n\
@@ -152,7 +153,7 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
          {memory_block}\
          {manifest_block}\
          {auto_search_block}\
-         {shell_block}\
+         {hosts_block}{shell_block}\
          ## Terminal Session\n```\n{session_summary}\n```\n\n\
          {pane_map}{current_time_line}User: {}",
         ctx.safe_query
@@ -219,6 +220,7 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
     let shell_block = crate::daemon::executor::knowledge::shell_context_block(
         &crate::shell::Owner::Chat(ctx.session_id.unwrap_or_default().to_string()),
     );
+    let hosts_block = crate::daemon::executor::knowledge::hosts_context_block(ctx.config);
 
     // Build session tags for dynamic memory retrieval.
     let recent_keywords: Vec<String> = ctx
@@ -259,15 +261,74 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         let session_summary =
             prepend_foreground_target(&session_summary, ctx.default_target_pane, ctx.cache);
         format!(
-            "{budget_note}{fg_target_line}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}\
+            "{budget_note}{fg_target_line}{hosts_block}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}\
              [Terminal snapshot — auto-refreshed (pane activity detected)]\n\
              ```\n{session_summary}\n```\n\nUser: {}",
             ctx.safe_query
         )
     } else {
         format!(
-            "{budget_note}{fg_target_line}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}User: {}",
+            "{budget_note}{fg_target_line}{hosts_block}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}User: {}",
             ctx.safe_query
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx<'a>(cache: &'a SessionCache, config: &'a crate::config::Config) -> PromptCtx<'a> {
+        PromptCtx {
+            client_pane: None,
+            chat_pane: None,
+            default_target_pane: None,
+            cache,
+            config,
+            chat_width: None,
+            safe_query: "hello",
+            last_prompt_tokens: 0,
+            history_count: 0,
+            this_turn_count: 0,
+            ghost_turn_limit: None,
+            inject_snapshot: false,
+            memory_namespaces: &["global"],
+            session_id: None,
+            tool_policy: None,
+            agent_name: None,
+        }
+    }
+
+    #[test]
+    fn prompts_carry_the_hosts_block() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        let cache = SessionCache::new("t");
+        let mut config = crate::config::Config::default();
+        config.hosts.insert(
+            "pinky".to_string(),
+            crate::config::HostEntry {
+                ssh: "pinky".to_string(),
+                ..Default::default()
+            },
+        );
+        let prompt = build_subsequent_turn_prompt(&ctx(&cache, &config));
+        assert!(prompt.contains("[HOSTS] local ("), "{prompt}");
+        assert!(prompt.contains("pinky (ssh pinky, "), "{prompt}");
+        assert!(
+            prompt.find("[HOSTS]") < prompt.find("User: hello"),
+            "the block is in the context, ahead of the user's text: {prompt}"
+        );
+
+        let first = build_first_turn_prompt(&ctx(&cache, &config));
+        assert!(first.contains("pinky (ssh pinky, "), "{first}");
+
+        let plain = crate::config::Config::default();
+        let without = build_subsequent_turn_prompt(&ctx(&cache, &plain));
+        assert!(
+            !without.contains("[HOSTS]"),
+            "no hosts, no block: {without}"
+        );
     }
 }

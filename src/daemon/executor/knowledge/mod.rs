@@ -22,7 +22,10 @@ pub(super) use shell::{
 };
 // Wider than the group above on purpose: the prompt builders reach it from
 // `daemon`, and a `pub(super)` binding cannot be widened on re-export.
-pub use shell::{ContextBreadth, resolve_context_scope, shell_context_block, shells_only_context};
+pub use shell::{
+    ContextBreadth, hosts_context_block, resolve_context_scope, shell_context_block,
+    shells_only_context,
+};
 
 /// `close_shell_with` is `pub(super)`-wired inside `shell.rs`; the read-file
 /// live test (07a) reaches it through this re-export.
