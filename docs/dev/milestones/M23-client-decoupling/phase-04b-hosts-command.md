@@ -1,7 +1,7 @@
 # Phase 04b: hosts-command — `/hosts`, and two shell-tail defects found at the 04a review
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 04a, 03d (done)
 **Estimated diff:** ~90 lines of production code across 3 files; 5 new tests, 2 fixed
 **Tags:** language=rust, kind=feature, size=m
@@ -570,3 +570,42 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-10-01 20:54 (started)
+
+**Executor:** opus (claude) — phase 04b run.
+**Doing:** Task 1 `/hosts` in slash.rs, Task 2 help line, Task 3 tail hang-up → Ok, Task 4 03d test fixes, Task 5 new tests, Task 6 end-to-end capture.
+### Update — 2026-10-01 21:06 (end-to-end verification)
+
+Captured by the phase doc's § End-to-end verification block, redirected to
+`/tmp/e2e-m23-04b.txt`; its contents follow, copied by a tool:
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib4=ok 
+lib5=ok 
+lib_counts=2130p-0f-14i
+new_tests=5p-0f
+isolation=11 passed; 0 failed
+wired=1/1
+markers=0/3
+```
+
+PASTE MATCH
+
+**Mutations observed (each applied with `patch`, run, restored; `git diff
+--stat` back to its 231-insertion pre-mutation state after each):**
+
+- **A** (`h.master || true`): `render_host_list_lists_local_first_then_configured_hosts`
+  → **red** — `row 2 has "master:down": db  ssh:admin@db  master:up  shells:0`.
+- **B** (drop the `exited_unix.is_none()` filter): same test → **red** —
+  `row 1 has "shells:1": pinky  ssh:pinky  master:up  shells:2`.
+- **C** (typed bytes `sleep 0.3; printf 'marker-%s\\n' tail-a`, must stay
+  green): `shell_tail_without_follow_sends_only_the_screen` **green 3/3**.
+- **D** (old `?` chunk send back):
+  `shell_tail_ends_quietly_when_the_client_hangs_up_mid_stream` → **red 3/3** —
+  `got Ok(Err(broken pipe))` each run.
+
+Other targets, one full `cargo test`: bug_tracker **6** passed, doc_truth **14**,
+integration **32** (2 ignored), isolation **11** (1 ignored) — unmoved.

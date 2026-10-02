@@ -20,7 +20,7 @@ Commands:
   /model     list or switch model     /pane      list or pin target pane
   /approvals list/on/off/revoke       /prompt    list or switch system prompt
   /limits    show active limits       /session   save/load/list/delete/rename
-  /shells    list the agent's shells
+  /shells    list the agent's shells  /hosts     configured hosts and ssh state
 
 Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
 
@@ -952,6 +952,11 @@ mod tests {
             HELP_TEXT.contains("/shells"),
             "HELP_TEXT must list '/shells'"
         );
+    }
+
+    #[test]
+    fn help_text_lists_hosts() {
+        assert!(HELP_TEXT.contains("/hosts"), "HELP_TEXT must list '/hosts'");
     }
 
     #[test]

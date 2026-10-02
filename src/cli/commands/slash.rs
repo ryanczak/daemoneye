@@ -60,6 +60,7 @@ pub(super) async fn handle_slash(ctx: SlashCtx<'_>, query: &str) -> SlashOutcome
         "/model" | "/models" => cmd_model(ctx, rest).await,
         "/pane" | "/panes" => cmd_pane(ctx, rest).await,
         "/shells" => cmd_shells(ctx).await,
+        "/hosts" => cmd_hosts(ctx).await,
         "/approvals" | "/approval" => cmd_approvals(ctx, rest),
         "/prompt" => cmd_prompt(ctx, rest),
         "/limits" => cmd_limits(ctx.renderer, ctx.session_id).await,
@@ -286,6 +287,83 @@ async fn cmd_shells(ctx: SlashCtx<'_>) {
         Ok(other) => render_error(ctx.renderer, other),
         Err(e) => note(ctx.renderer, &format!("✗ {e}")),
     }
+}
+
+// ── /hosts ───────────────────────────────────────────────────────────────────
+
+/// One configured `[hosts.<name>]` entry as `/hosts` shows it.
+struct HostView {
+    name: String,
+    ssh: String,
+    /// Whether an ssh ControlMaster is running for it (`ssh -O check`).
+    master: bool,
+}
+
+/// Render the `/hosts` panel body: the implicit `local` host first, then each
+/// configured host in `hosts` order, with its live-shell count. `shells` is
+/// `None` when the daemon could not be asked, and the counts read `?`. Pure
+/// so it can be tested without a daemon or ssh.
+fn render_host_list(hosts: &[HostView], shells: Option<&[crate::ipc::ShellInfo]>) -> Vec<String> {
+    let live_on = |name: &str| match shells {
+        Some(list) => list
+            .iter()
+            .filter(|s| s.host == name && s.exited_unix.is_none())
+            .count()
+            .to_string(),
+        None => "?".to_string(),
+    };
+    let mut body = vec![format!(
+        "local  (this machine)  shells:{}",
+        live_on("local")
+    )];
+    for h in hosts {
+        let master = if h.master { "up" } else { "down" };
+        body.push(format!(
+            "{}  ssh:{}  master:{}  shells:{}",
+            h.name,
+            h.ssh,
+            master,
+            live_on(&h.name)
+        ));
+    }
+    if hosts.is_empty() {
+        body.push(
+            "no remote hosts configured — add [hosts.<name>] with ssh = \"user@host\" to config.toml"
+                .to_string(),
+        );
+    }
+    body
+}
+
+async fn cmd_hosts(ctx: SlashCtx<'_>) {
+    let cfg = crate::config::Config::load().unwrap_or_default();
+    let control = crate::config::ssh_dir();
+    let mut names: Vec<&String> = cfg.hosts.keys().collect();
+    names.sort();
+    let hosts: Vec<HostView> = names
+        .into_iter()
+        .map(|name| {
+            let entry = &cfg.hosts[name];
+            HostView {
+                name: name.clone(),
+                ssh: entry.ssh.clone(),
+                master: crate::shell::master_running(entry, &control),
+            }
+        })
+        .collect();
+    let shells = match request_once(Request::ShellList).await {
+        Ok(Response::ShellList { shells }) => Some(shells),
+        Ok(other) => {
+            render_error(ctx.renderer, other);
+            None
+        }
+        Err(e) => {
+            note(ctx.renderer, &format!("✗ {e}"));
+            None
+        }
+    };
+    let body = render_host_list(&hosts, shells.as_deref());
+    let _ = ctx.renderer.commit_panel("hosts", &body, false);
 }
 
 async fn cmd_pane(ctx: SlashCtx<'_>, rest: &str) {
@@ -756,6 +834,52 @@ mod tests {
     }
 
     const NOW: u64 = 1_790_000_000;
+
+    fn host(name: &str, ssh: &str, master: bool) -> HostView {
+        HostView {
+            name: name.to_string(),
+            ssh: ssh.to_string(),
+            master,
+        }
+    }
+
+    #[test]
+    fn render_host_list_lists_local_first_then_configured_hosts() {
+        let mut gone = shell("s3", "pinky", "chat:x", NOW);
+        gone.exited_unix = Some(NOW);
+        let shells = vec![
+            shell("s0", "local", "chat:x", NOW),
+            shell("s1", "local", "chat:x", NOW),
+            shell("s2", "pinky", "chat:x", NOW),
+            gone,
+        ];
+        let hosts = [host("pinky", "pinky", true), host("db", "admin@db", false)];
+        let rows = render_host_list(&hosts, Some(&shells));
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        assert!(rows[0].starts_with("local"), "{}", rows[0]);
+        assert!(rows[0].contains("shells:2"), "{}", rows[0]);
+        for want in ["pinky", "ssh:pinky", "master:up", "shells:1"] {
+            assert!(rows[1].contains(want), "row 1 has {want:?}: {}", rows[1]);
+        }
+        for want in ["db", "ssh:admin@db", "master:down", "shells:0"] {
+            assert!(rows[2].contains(want), "row 2 has {want:?}: {}", rows[2]);
+        }
+    }
+
+    #[test]
+    fn render_host_list_without_the_daemon_shows_unknown_counts() {
+        let rows = render_host_list(&[host("pinky", "pinky", false)], None);
+        assert!(rows[0].contains("shells:?"), "{}", rows[0]);
+        assert!(rows[1].contains("shells:?"), "{}", rows[1]);
+    }
+
+    #[test]
+    fn render_host_list_explains_when_no_hosts_are_configured() {
+        let rows = render_host_list(&[], Some(&[]));
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(rows[0].contains("shells:0"), "{}", rows[0]);
+        assert!(rows[1].contains("[hosts."), "{}", rows[1]);
+    }
 
     #[test]
     fn render_shell_list_shows_each_shells_fields() {

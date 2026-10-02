@@ -172,7 +172,14 @@ where
             return Ok(());
         }
     };
-    send_response_split(tx, Response::ShellScreen { bytes: screen }).await?;
+    // From here on a failed write means the client hung up: that ends the
+    // tail normally, it is not an error.
+    if send_response_split(tx, Response::ShellScreen { bytes: screen })
+        .await
+        .is_err()
+    {
+        return Ok(());
+    }
     if !follow {
         return Ok(());
     }
@@ -185,14 +192,17 @@ where
                 Ok(Some(line)) => {
                     if let Ok(crate::shell::ShellResponse::Chunk { bytes }) =
                         serde_json::from_str(&line)
+                        && send_response_split(tx, Response::ShellChunk { bytes })
+                            .await
+                            .is_err()
                     {
-                        send_response_split(tx, Response::ShellChunk { bytes }).await?;
+                        return Ok(());
                     }
                 }
                 // The host closed the connection: a current host does that
                 // when its shell exits.
                 Ok(None) | Err(_) => {
-                    send_response_split(tx, Response::ShellExited).await?;
+                    let _ = send_response_split(tx, Response::ShellExited).await;
                     return Ok(());
                 }
             },
@@ -203,7 +213,7 @@ where
             },
             _ = tick.tick() => {
                 if shell_has_exited(&sock).await {
-                    send_response_split(tx, Response::ShellExited).await?;
+                    let _ = send_response_split(tx, Response::ShellExited).await;
                     return Ok(());
                 }
             }
@@ -643,7 +653,7 @@ mod tests {
         .unwrap();
         crate::shell::send_input(
             &crate::shell::socket_path(id.as_str()),
-            b"printf 'marker-tail-a\\n'\n",
+            b"printf 'marker-%s\\n' tail-a\n",
             RELAY_TIMEOUT,
         )
         .await
@@ -655,12 +665,9 @@ mod tests {
             handle_shell_tail(&mut rx, &mut tx, &reg, id.as_str(), false)
                 .await
                 .unwrap();
-            if let [Response::ShellScreen { bytes }] = &parse_all(&tx)[..] {
-                assert!(
-                    rendered(bytes).contains("marker-tail-a"),
-                    "the screen must show what was typed, got {:?}",
-                    rendered(bytes)
-                );
+            if let [Response::ShellScreen { bytes }] = &parse_all(&tx)[..]
+                && rendered(bytes).contains("marker-tail-a")
+            {
                 break;
             }
             tx.clear();
@@ -699,7 +706,7 @@ mod tests {
 
         crate::shell::send_input(
             &crate::shell::socket_path(id.as_str()),
-            b"printf 'marker-tail-b\\n'\n",
+            b"printf 'marker-%s\\n' tail-b\n",
             RELAY_TIMEOUT,
         )
         .await
@@ -731,6 +738,79 @@ mod tests {
         assert!(
             matches!(&outcome, Ok(Ok(()))),
             "the tail returns Ok after a hang-up, got {outcome:?}"
+        );
+        close_tail_shell(&reg, id.as_str(), &owner).await;
+    }
+
+    /// A client connection that takes the first frame and then hangs up:
+    /// every later write fails with `BrokenPipe`.
+    struct HangsUpAfterFirstFrame {
+        done: bool,
+    }
+
+    impl tokio::io::AsyncWrite for HangsUpAfterFirstFrame {
+        fn poll_write(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            if self.done {
+                return std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+            }
+            if buf.contains(&b'\n') {
+                self.done = true;
+            }
+            std::task::Poll::Ready(Ok(buf.len()))
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn shell_tail_ends_quietly_when_the_client_hangs_up_mid_stream() {
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("t".into());
+        let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+            Box::pin(spawn_in_process_host(id))
+        })
+        .await
+        .unwrap();
+        // The client's reading side never reaches EOF (its other end is kept
+        // open), so the tail can only learn of the hang-up from a failed write.
+        let (_keep_open, client_side) = tokio::io::duplex(64);
+        let task_reg = reg.clone();
+        let task_id = id.as_str().to_string();
+        let task = tokio::spawn(async move {
+            let mut rx = tokio::io::BufReader::new(client_side);
+            let mut tx = HangsUpAfterFirstFrame { done: false };
+            handle_shell_tail(&mut rx, &mut tx, &task_reg, &task_id, true).await
+        });
+        // Give the tail time to send its screen, then make the shell print.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        crate::shell::send_input(
+            &crate::shell::socket_path(id.as_str()),
+            b"printf 'marker-%s\\n' tail-c\n",
+            RELAY_TIMEOUT,
+        )
+        .await
+        .unwrap();
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("the tail ends within 5 s of the failed write");
+        assert!(
+            matches!(&outcome, Ok(Ok(()))),
+            "a client that hung up ends the tail without an error, got {outcome:?}"
         );
         close_tail_shell(&reg, id.as_str(), &owner).await;
     }
