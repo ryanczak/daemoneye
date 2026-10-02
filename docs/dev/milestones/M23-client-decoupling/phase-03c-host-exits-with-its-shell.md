@@ -1,7 +1,7 @@
 # Phase 03c: host-exits-with-its-shell — a shell host stops when its shell ends, and `close_shell` really closes
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** review
 **Depends on:** 03b (done)
 **Estimated diff:** ~110 lines of production code across 7 files, plus 4 doc lines; 4 new tests and 1 tightened
 **Tags:** language=rust, kind=bugfix, size=m
@@ -588,3 +588,147 @@ Mutations (each applied with the patch tool, run once, restored; `git diff
   → test 1 red (`the fallback must close`).
 All three observed red, each on the pinned run.
 
+### Update — 2026-10-02 00:14 (complete, server-authored)
+
+**Summary:** Working tree is clean, commit `aabd07ae` includes all 14 touched files.
+
+**Summary:** Implemented M23 phase-03c exactly per spec: `ShellRequest::Close` in `proto.rs`; `PtyShell::hangup()` (SIGHUP to the shell's own pid) in `pty.rs`; `serve_until_exit` in `host.rs` with the `ShellBackend::close` default-refusal trait method plus the `Close` arm in `handle_line`, wired into `launch.rs` (`run_host` now returns once the shell exits, 250 ms poll, logging "the shell exited; stopping") and exported from `mod.rs`; `close_or_term` in `client.rs` (Close, falling back to `Signal { TERM }` on any failure); `close_shell` now calls `close_or_term`, `closed_by_observed_end` is an `async fn` on `tokio::time::sleep` with the new still-finishing wording, and the in-process test host serves with `serve_until_exit` and drops its lock on exit; the four `terminate signal` doc texts reworded to "hangs the shell up". Four new tests plus the tightened `close_shell_ends_the_callers_shell` all pass.
+
+**Notes for review:** End-to-end verification ran the spec's block verbatim, captured to `/tmp/e2e-m23-03c.txt` and pasted into the phase doc's `### Update — 2026-10-01 23:55 (end-to-end verification)` entry: `lib1..3=ok`, `lib_counts=2114p-0f-14i`, `new_tests=5p-0f`, `isolation=11 passed; 0 failed`, `terminate_signal_docs=0`, **`live_host_exit=0`** (was 124) — a real detached host typed `exit` into returned on its own. The paste check printed `PASTE MATCH` on the first run. Mutations A, B and C were each applied, run red, restored, and recorded in the entry. Two adaptations worth noting: (1) the spec's `run_host` sketch left the `Ok(())` after the new `serve_until_exit` line implicit — I added `?` + a log line + `Ok(())` matching the sketch's intent; (2) `serve_until_exit_returns_when_the_shell_exits` drives `input` via a small awaited helper rather than `block_on`, because `block_on` inside `#[tokio::test]` panics ("Cannot start a runtime from within a runtime"); the backend tests that use a manual `Runtime` keep `block_on`. Also `host_answers_close_with_an_error_when_the_backend_cannot` asserts a subsequent `Status` round-trip still works (the spec's "the connection stays open" fact) with a `matches!` rather than a fixed status, since the fake's status is `Running` 24×80. One cosmetic non-finding: the SIGHUP test can print `kill: sending signal to … failed: No such process` on stderr from `JobGuard`'s cleanup when the shell is already gone — expected, not a failure. Phase doc and README row still read `in-progress`; status flip to `review` and the completion entry are yours.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+ug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+kill: sending signal to 1859759 failed: No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +1 -1
+- `assets/prompts/sre.toml` — +4 -4
+- `docs/dev/milestones/M23-client-decoupling/README.md` — +1 -1
+- `docs/dev/milestones/M23-client-decoupling/phase-03c-host-exits-with-its-shell.md` — +34 -1
+- `src/ai/tools/defs.rs` — +7 -9
+- `src/daemon/executor/knowledge/shell.rs` — +17 -13
+- `src/shell/backend.rs` — +59 -0
+- `src/shell/client.rs` — +36 -0
+- `src/shell/host.rs` — +72 -1
+- `src/shell/launch.rs` — +6 -1
+- `src/shell/mod.rs` — +3 -3
+- `src/shell/proto.rs` — +2 -0
+- `src/shell/pty.rs` — +19 -0
+
+**Commit:** aabd07ae9bbc742da77855c62e82adfc2cad8d66
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
