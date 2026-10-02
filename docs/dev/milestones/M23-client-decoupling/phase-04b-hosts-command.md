@@ -1,7 +1,7 @@
 # Phase 04b: hosts-command — `/hosts`, and two shell-tail defects found at the 04a review
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** review
 **Depends on:** 04a, 03d (done)
 **Estimated diff:** ~90 lines of production code across 3 files; 5 new tests, 2 fixed
 **Tags:** language=rust, kind=feature, size=m
@@ -609,3 +609,151 @@ PASTE MATCH
 
 Other targets, one full `cargo test`: bug_tracker **6** passed, doc_truth **14**,
 integration **32** (2 ignored), isolation **11** (1 ignored) — unmoved.
+
+### Update — 2026-10-02 04:07 (complete, server-authored)
+
+**Summary:** </think>The commit went through and `git status --short` printed nothing (clean). The commit includes all 5 files. Let me verify the status output was empty — the output shows only the log tail, meaning git status --short was empty. Good.
+
+One check: the phase doc Status line is still `in-progress` (I only flipped to in-progress at start; the server flips to review). Confirmed — I haven't touched it since.
+
+Completion checklist:
+- Status: in-progress ✓ (not flipped to review)
+- README row: in-progress ✓
+- No hand-written (complete) entry ✓ (only started + e2e entries)
+- cargo fmt run before git add ✓
+- All verification commands ran clean ✓
+- git status clean ✓
+- Final message: Summary + Notes for review — now.</think>
+**Summary:** Implemented phase 04b exactly per spec: `/hosts` in `daemoneye chat` (local host first, then each `[hosts.<name>]` with ssh destination, ControlMaster state via the existing `shell::master_running` probe, live-shell counts that read `shells:?` when the daemon can't be asked), the `HELP_TEXT` line, the shell-tail fix that ends the tail `Ok(())` on a failed client write from the `ShellScreen` send onward (let-chain chunk send, both `ShellExited` sends now `let _ =`), the two 03d tests converted to output-only `printf 'marker-%s'` markers with the no-follow test now polling, and the five new tests.
+
+**End-to-end verification:** The phase doc's capture block ran verbatim; `lib1..5=ok` (nothing after ok), `lib_counts=2130p-0f-14i`, `new_tests=5p-0f`, `isolation=11 passed; 0 failed`, `wired=1/1`, `markers=0/3` — all as expected on the first run, no flakes. The paste check printed `PASTE MATCH` on its first run. All four mutations were applied with `patch`, run, and restored (`git diff --stat` back to its 231-insertion state after each): A red, B red, C green 3/3, D red 3/3 with `got Ok(Err(broken pipe))`.
+
+**Notes for review:** No deviations from the spec. `cargo fmt --all`, `cargo build`, `clippy -D warnings` clean; other targets unmoved (bug_tracker 6, doc_truth 14, integration 32, isolation 11). Phase doc status left at `in-progress` for the server's review flip; no `(complete)` entry written. Working tree is clean and everything (including the start-of-phase status flip and started entry) is in the single `feat:` commit.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+kill: sending signal to 2931797 failed: No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M23-client-decoupling/README.md` — +1 -1
+- `docs/dev/milestones/M23-client-decoupling/phase-04b-hosts-command.md` — +40 -1
+- `src/cli/commands/chat.rs` — +6 -1
+- `src/cli/commands/slash.rs` — +124 -0
+- `src/daemon/server/shells.rs` — +92 -12
+
+**Commit:** 5ed7de8a15aee5503dd7a72fe36be20a39127cce
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
