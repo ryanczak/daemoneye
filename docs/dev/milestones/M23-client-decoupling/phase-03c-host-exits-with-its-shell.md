@@ -1,7 +1,7 @@
 # Phase 03c: host-exits-with-its-shell — a shell host stops when its shell ends, and `close_shell` really closes
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 03b (done)
 **Estimated diff:** ~110 lines of production code across 7 files, plus 4 doc lines; 4 new tests and 1 tightened
 **Tags:** language=rust, kind=bugfix, size=m
@@ -732,3 +732,41 @@ kill: sending signal to 1859759 failed: No such process
 **Commit:** aabd07ae9bbc742da77855c62e82adfc2cad8d66
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-01
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (149 turns).
+  Its own progress entry names it "Claude (Opus 4.5, headless run)";
+  `executor_health` reports GLM. Fold C, sixth occurrence.
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` were clean. Lib was
+  **2114/0/14** on three runs; the other targets were unmoved (bug_tracker 6,
+  doc_truth 14, integration 32/2, isolation 11/1). A solo re-run of the
+  end-to-end block matched the pasted capture byte for byte, including
+  **`live_host_exit=0`**: a real detached `daemoneye shell-host` now stops by
+  itself after `exit` (it was 124 at drafting). Mutations A, B and C were
+  re-applied by the reviewer and went red. No test-built `shell-host` was
+  left running.
+- **Scope deviations:** `serve_until_exit_returns_when_the_shell_exits` is a
+  `#[tokio::test]` rather than `block_on`, which is equivalent.
+  `host_answers_close_with_an_error_when_the_backend_cannot` also checks that
+  the connection still answers a `Status`, which is stronger than specced.
+- **Residual (architect's spec gap, carried to 03d):** two comments in
+  `src/daemon/executor/knowledge/shell.rs` now state falsehoods the spec never
+  named for an update:
+  - `close_shell_with`'s "The wire carries only Int | Term | Stop | Cont —
+    there is no SIGHUP and no kill frame, so Term is the strongest closure";
+  - `closed_by_observed_end`'s doc comment, which says the observe-poll
+    "genuinely produces 'still alive' in tests". The tightened test proves
+    the opposite.
+
+  Code behaviour is correct; the prose is stale. Following the 01a→01b
+  precedent, this is carried rather than bounced.
+- **Calibration:** (1) **When a spec changes behaviour, it must name every
+  comment that describes the old behaviour.** The spec's Current state quoted
+  both comments as context but did not list them as edits. One occurrence;
+  watch. (2) Dry-running before dispatch again caught a test-harness trap
+  (the blocking sleep starving the in-process host) that would otherwise have
+  looked like a broken fix.
+
