@@ -1,7 +1,7 @@
 # Phase 03d: shell-tail-relay — a client can watch a shell over the daemon socket
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03a, 03b, 03c (done)
 **Estimated diff:** ~150 lines of production code across 6 files; 6 new tests (~330 lines)
 **Tags:** language=rust, kind=feature, size=m
