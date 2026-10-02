@@ -1,0 +1,462 @@
+# Phase 04a: shells-command — `/shells` lists the daemon's PTY shells in the chat client
+
+**Milestone:** M23 — Client decoupling & shell UX
+**Status:** todo
+**Depends on:** 03a (`Request::ShellList`), 03d (done)
+**Estimated diff:** ~80 lines of production code across 2 files; 5 new tests
+**Tags:** language=rust, kind=feature, size=s
+
+## Goal
+
+A user in `daemoneye chat` types `/shells` and gets a panel listing every
+PTY shell the daemon runs. Each row shows:
+- id and host;
+- owner (`this session` for the chat's own shells);
+- state: `live`, or `exited N ago`, plus `interactive` / `dedicated` flags;
+- age;
+- last recorded command, elided to 40 characters.
+
+It is the first client UI on the row-03 shell IPC: one `Request::ShellList`,
+rendered by a pure function.
+
+This phase also removes the stray `// ── ShellTail ──` banner that 03d left
+in production code (carried nit).
+
+**Split at drafting.** Row 04 also named `/hosts` and the `[HOSTS]` context
+block. `/hosts` needs ControlMaster probing over ssh, and `[HOSTS]` lives on
+the daemon's prompt path. They are rows 04b and 04c.
+
+## Architecture references
+
+- `docs/design/daemoneye-2.0.md` § 2.6 — the client shell commands.
+- `docs/dev/milestones/M23-client-decoupling/README.md` — rows 04a/04b/04c.
+
+## Pre-flight
+
+1. Read `docs/dev/STANDARDS.md` top to bottom.
+2. Read this entire phase doc before touching any code.
+3. Confirm the repo is on a clean branch with no uncommitted changes.
+
+## Current state
+
+Measured on **2026-10-02** at commit `2cf05fc6`. Baseline:
+`cargo test --lib` → **2120 passed / 0 failed / 14 ignored**.
+
+**The whole change below was dry-run in this tree, then reverted.** Results
+on the dry run:
+- the five tests passed;
+- the full suite gave lib **2125**/0/14 with every other target unmoved;
+- clippy `-D warnings` was clean;
+- Mutations A, B and C each went red.
+
+### The analogue: `/panes` (`src/cli/commands/slash.rs`)
+
+Dispatch is a `match cmd` in `handle_slash` (`:58`). The `/panes` arm is at
+`:61`:
+
+```rust
+        "/pane" | "/panes" => cmd_pane(ctx, rest).await,
+```
+
+`cmd_pane` (`:207`) asks the daemon once and renders through a **pure**
+function, which is all its tests exercise:
+
+```rust
+        match request_once(Request::ListPanesForSession {
+            session_id: ctx.session_id.to_string(),
+        })
+        .await
+        {
+            Ok(Response::PaneList { panes }) => {
+                let body = render_pane_inspector(&panes);
+                let _ = ctx.renderer.commit_panel("panes", &body, false);
+            }
+            Ok(other) => render_error(ctx.renderer, other),
+            Err(e) => note(ctx.renderer, &format!("✗ {e}")),
+        }
+```
+
+`SlashCtx` carries `session_id: &str`. A chat's own shells have the owner key
+`format!("chat:{session_id}")`, from `Owner::key()`.
+
+`crate::tmux::status::format_age(secs)` is public and gives `45s` / `3m` /
+`2h5m`. Reuse it; do not write another.
+
+### The help text (`src/cli/commands/chat.rs:16-30`)
+
+`HELP_TEXT` is a two-column grid. Its last command line is:
+
+```text
+  /limits    show active limits       /session   save/load/list/delete/rename
+```
+
+### Why the end-to-end check stops at the renderer
+
+`daemoneye chat` run inside a tmux session with no attached client hangs
+before drawing its UI. This was measured again at drafting with a private
+tmux server: the chat answered its startup prompt, then drew nothing. So
+this phase's evidence is:
+- the pure renderer's tests;
+- the wiring greps;
+- the daemon side of `ShellList`, already proven live through a real daemon
+  in 03d.
+
+The live check of the chat UI is row 10's architect-run close, as the PE
+decided at M23 sign-off.
+
+## Spec
+
+### Task 1 — the command (`src/cli/commands/slash.rs`)
+
+1. Add the dispatch arm right after the `/panes` arm (`:61`):
+
+   ```rust
+        "/shells" => cmd_shells(ctx).await,
+   ```
+
+2. Insert this block **above** `async fn cmd_pane` (`:207`). It is the
+   dry-run code, already formatted and clippy-clean:
+
+```rust
+// ── /shells ──────────────────────────────────────────────────────────────────
+
+/// The longest last command a `/shells` row shows before eliding it.
+const SHELL_COMMAND_WIDTH: usize = 40;
+
+/// Render the `/shells` panel body: one row per shell, in the order the
+/// daemon sent them (shell index order). `session_id` marks this chat's own
+/// shells. Pure so it can be tested without a daemon.
+fn render_shell_list(
+    shells: &[crate::ipc::ShellInfo],
+    session_id: &str,
+    now_unix: u64,
+) -> Vec<String> {
+    if shells.is_empty() {
+        return vec!["no shells yet — the agent opens them when it runs a command".to_string()];
+    }
+    let mine = format!("chat:{session_id}");
+    shells
+        .iter()
+        .map(|s| {
+            let owner = if s.owner == mine {
+                "this session".to_string()
+            } else {
+                s.owner.clone()
+            };
+            let mut state = match s.exited_unix {
+                Some(t) if now_unix >= t => format!(
+                    "exited {} ago",
+                    crate::tmux::status::format_age(now_unix - t)
+                ),
+                Some(_) => "exited".to_string(),
+                None => "live".to_string(),
+            };
+            if s.interactive {
+                state.push_str(", interactive");
+            }
+            if s.dedicated {
+                state.push_str(", dedicated");
+            }
+            let age = if s.started_unix > 0 && now_unix >= s.started_unix {
+                crate::tmux::status::format_age(now_unix - s.started_unix)
+            } else {
+                "?".to_string()
+            };
+            let last = match &s.last_command {
+                Some(c) => elide(c, SHELL_COMMAND_WIDTH),
+                None => "—".to_string(),
+            };
+            format!(
+                "{}  host:{}  owner:{}  {}  age:{}  last:{}",
+                s.id, s.host, owner, state, age, last
+            )
+        })
+        .collect()
+}
+
+/// The first line of `s`, cut to at most `max` characters; `…` marks a cut
+/// or a dropped second line.
+fn elide(s: &str, max: usize) -> String {
+    let line = s.lines().next().unwrap_or("");
+    let cut = line.chars().count() > max || s.lines().nth(1).is_some();
+    if !cut {
+        return line.to_string();
+    }
+    let kept: String = line.chars().take(max.saturating_sub(1)).collect();
+    format!("{kept}…")
+}
+
+async fn cmd_shells(ctx: SlashCtx<'_>) {
+    match request_once(Request::ShellList).await {
+        Ok(Response::ShellList { shells }) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let body = render_shell_list(&shells, ctx.session_id, now);
+            let _ = ctx.renderer.commit_panel("shells", &body, false);
+        }
+        Ok(other) => render_error(ctx.renderer, other),
+        Err(e) => note(ctx.renderer, &format!("✗ {e}")),
+    }
+}
+```
+
+### Task 2 — help (`src/cli/commands/chat.rs`)
+
+Add one line to `HELP_TEXT`, right after the `/limits … /session …` line:
+
+```text
+  /shells    list the agent's shells
+```
+
+### Task 3 — the carried nit (`src/daemon/server/shells.rs`)
+
+Delete the line `// ── ShellTail ─────────────────────────────────────────────────────────`
+that sits just above `#[cfg(test)]` (and the blank line after it). It is the
+only such line **outside** the test module.
+
+### Task 4 — tests
+
+Five tests, names pinned.
+
+In `src/cli/commands/slash.rs`, at the top of `mod tests` (right after
+`use super::*;`), add this dry-run code:
+
+```rust
+fn shell(id: &str, host: &str, owner: &str, started_unix: u64) -> crate::ipc::ShellInfo {
+    crate::ipc::ShellInfo {
+        id: id.to_string(),
+        host: host.to_string(),
+        owner: owner.to_string(),
+        started_unix,
+        interactive: false,
+        dedicated: false,
+        exited_unix: None,
+        last_command: None,
+    }
+}
+
+const NOW: u64 = 1_790_000_000;
+
+#[test]
+fn render_shell_list_shows_each_shells_fields() {
+    let mut live = shell("s0", "local", "chat:other", NOW - 300);
+    live.last_command = Some("cargo build".to_string());
+    let mut gone = shell("s2", "pinky", "ghost:job7", NOW - 7200);
+    gone.exited_unix = Some(NOW - 120);
+    gone.interactive = true;
+    let rows = render_shell_list(&[live, gone], "mine", NOW);
+    assert_eq!(rows.len(), 2, "one row per shell: {rows:?}");
+    for want in [
+        "s0",
+        "host:local",
+        "owner:chat:other",
+        "live",
+        "age:5m",
+        "last:cargo build",
+    ] {
+        assert!(rows[0].contains(want), "row 0 has {want:?}: {}", rows[0]);
+    }
+    for want in [
+        "s2",
+        "host:pinky",
+        "owner:ghost:job7",
+        "exited 2m ago",
+        "interactive",
+        "age:2h0m",
+        "last:—",
+    ] {
+        assert!(rows[1].contains(want), "row 1 has {want:?}: {}", rows[1]);
+    }
+    assert!(
+        !rows[0].contains("exited"),
+        "a live shell is not exited: {}",
+        rows[0]
+    );
+}
+
+#[test]
+fn render_shell_list_marks_this_sessions_shells() {
+    let rows = render_shell_list(
+        &[shell("s1", "local", "chat:sess-1", NOW - 5)],
+        "sess-1",
+        NOW,
+    );
+    assert!(rows[0].contains("owner:this session"), "{}", rows[0]);
+    assert!(
+        !rows[0].contains("chat:sess-1"),
+        "the raw key is replaced: {}",
+        rows[0]
+    );
+    let others = render_shell_list(
+        &[shell("s1", "local", "chat:sess-1", NOW - 5)],
+        "sess-2",
+        NOW,
+    );
+    assert!(others[0].contains("owner:chat:sess-1"), "{}", others[0]);
+}
+
+#[test]
+fn render_shell_list_says_when_there_are_none() {
+    let rows = render_shell_list(&[], "mine", NOW);
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].contains("no shells"), "{}", rows[0]);
+}
+
+#[test]
+fn render_shell_list_elides_a_long_last_command() {
+    let mut wide = shell("s0", "local", "chat:x", NOW);
+    wide.last_command = Some("é".repeat(60));
+    let mut two = shell("s1", "local", "chat:x", NOW);
+    two.last_command = Some("echo a\necho b".to_string());
+    let rows = render_shell_list(&[wide, two], "mine", NOW);
+    let shown = rows[0].split("last:").nth(1).unwrap_or_default();
+    assert_eq!(shown.chars().count(), 40, "cut to 40 characters: {shown:?}");
+    assert!(shown.ends_with('…'), "{shown:?}");
+    assert!(
+        rows[1].ends_with("last:echo a…"),
+        "only the first line shows: {}",
+        rows[1]
+    );
+}
+```
+
+In `src/cli/commands/chat.rs`'s `mod tests`, add **`help_text_lists_shells`**,
+which asserts that `HELP_TEXT` contains `"/shells"`.
+
+**Test count:** five new, so **2125 passed / 14 ignored**.
+
+### Task 5 — capture the end-to-end evidence
+
+Run the block in § End-to-end verification verbatim. Then create a new Update
+Log entry titled exactly `### Update — <date> (end-to-end verification)`.
+**Its first fenced block is the contents of `/tmp/e2e-m23-04a.txt`**: the
+file's lines, copied by a tool. **Never paste the script itself**, and never
+retype the lines (the real lines end `lib1=ok ` **with a trailing space**).
+Then run the paste check once, put the line it prints into the entry **on its
+own line**, and record the three mutations after it.
+
+## Acceptance criteria
+
+Parenthesised values are what each line produces against the current tree.
+Every non-preservation line fails today, and each was run at drafting.
+
+- [ ] `cargo test --lib` → **2125 passed / 0 failed / 14 ignored** on three
+      consecutive runs (current: 2120/0/14). Both counts are exact.
+- [ ] `cargo fmt --all` clean; `cargo build` clean;
+      `cargo clippy --all-targets --all-features -- -D warnings` exits 0.
+- [ ] `cargo test` → other targets unmoved: bug_tracker 6, doc_truth 14,
+      integration 32, isolation 11 (*preservation*).
+- [ ] The five new tests pass:
+      ``cargo test --lib -- render_shell_list help_text_lists_shells`` →
+      **5 passed** (current: `0 passed`).
+- [ ] Wired: ``grep -c '"/shells" => cmd_shells' src/cli/commands/slash.rs``
+      → **1** (current: 0), and the help line exists:
+      ``grep -c '^  /shells ' src/cli/commands/chat.rs`` → **1** (current: 0).
+- [ ] The carried nit is gone:
+      ``grep -c '^// ── ShellTail' src/daemon/server/shells.rs`` → **0**
+      (current: 1).
+- [ ] Mutations A, B and C were applied, run, and their observed results
+      recorded **in this doc**.
+- [ ] The end-to-end entry exists:
+      ``grep -c '^### Update — .* (end-to-end verification)$' <this doc>`` →
+      **1** (current: 0). Its first fenced block is the capture file's contents,
+      and the paste-check line is on its own line:
+      ``grep -cx 'PASTE MATCH' <this doc>`` → **1** (current: 0).
+
+## Mutations
+
+Apply each with the `patch` tool (the executor contract forbids `sed -i`,
+`perl -i`, `> file` and `rm -rf`). Run once, restore, and **record the
+observed result**. Each was measured red at drafting.
+
+- **Mutation A:** change `let owner = if s.owner == mine {` to
+  `let owner = if s.owner == mine && false {`. Run
+  `render_shell_list_marks_this_sessions_shells`. Expected **red**.
+- **Mutation B:** change `let mut state = match s.exited_unix {` to
+  `let mut state = match None::<u64> {`. Run
+  `render_shell_list_shows_each_shells_fields`. Expected **red**.
+- **Mutation C:** in `elide`, change `if !cut {` to `if !cut || true {`.
+  Run `render_shell_list_elides_a_long_last_command`. Expected **red**.
+
+After each restore, confirm `git diff --stat` matches its pre-mutation state.
+
+## Test plan
+
+Five tests:
+- each shell's fields;
+- this session's shells marked as `this session`;
+- the empty list;
+- long and multi-line commands elided, character-safe on multibyte text;
+- `/shells` in the help text.
+
+## End-to-end verification
+
+```sh
+cd /home/matt/src/daemoneye
+{
+  for i in 1 2 3; do
+    out=$(cargo test --lib 2>&1)
+    printf 'lib%d=%s %s\n' "$i" "$(printf '%s\n' "$out" | grep -E '^test result' | tail -1 | grep -oE 'ok|FAILED')" "$(printf '%s\n' "$out" | grep -E '^test .* FAILED$' | sed -E 's/^test (.*) \.\.\. FAILED$/\1/' | tr '\n' ' ')"
+  done
+  printf 'lib_counts=%s\n' "$(cargo test --lib 2>&1 | grep -E '^test result' | tail -1 | sed -E 's/.*ok\. ([0-9]+) passed; ([0-9]+) failed; ([0-9]+) ignored.*/\1p-\2f-\3i/')"
+  printf 'new_tests=%s\n' "$(cargo test --lib -- render_shell_list help_text_lists_shells 2>&1 | grep -E '^test result' | tail -1 | sed -E 's/.*ok\. ([0-9]+) passed; ([0-9]+) failed.*/\1p-\2f/')"
+  printf 'isolation=%s\n' "$(cargo test --test isolation 2>&1 | grep -E '^test result' | tail -1 | grep -oE '[0-9]+ passed; [0-9]+ failed')"
+  printf 'wired=%s/%s\n' "$(grep -c '"/shells" => cmd_shells' src/cli/commands/slash.rs)" "$(grep -c '^  /shells ' src/cli/commands/chat.rs)"
+  printf 'banner=%s\n' "$(grep -c '^// ── ShellTail' src/daemon/server/shells.rs)"
+} > /tmp/e2e-m23-04a.txt
+cat /tmp/e2e-m23-04a.txt
+```
+
+Expected:
+- `lib1..3=ok` with **nothing after `ok`**;
+- `lib_counts=2125p-0f-14i`;
+- `new_tests=5p-0f`;
+- `isolation=11 passed; 0 failed`;
+- `wired=1/1`;
+- `banner=0`.
+
+**Re-run budget: three** (WORKFLOW.md § End-to-end verification). The known
+pre-existing flake is `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`.
+If it fails, name it and re-run the whole block. After three re-runs, stop,
+paste the last capture as it is, and name every failing test. Any other
+failing test is a finding: report it by name.
+
+**Run this block with nothing else running `cargo test`.** Then make the
+entry's first fenced block the **contents of** `/tmp/e2e-m23-04a.txt`
+(copied, not retyped; **never the script above**), and run:
+
+```sh
+D=docs/dev/milestones/M23-client-decoupling/phase-04a-shells-command.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m23-04a.txt
+diff /tmp/pasted-m23-04a.txt /tmp/e2e-m23-04a.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+If it prints `PASTE MISMATCH`, run
+`diff /tmp/pasted-m23-04a.txt /tmp/e2e-m23-04a.txt` once and fix what it
+shows. **Run the check at most three times.** Put the line it prints into the
+entry on its own line.
+
+## Authorizations
+
+You may edit these files, and nothing else:
+
+- `src/cli/commands/slash.rs`: Task 1 and its tests.
+- `src/cli/commands/chat.rs`: the one `HELP_TEXT` line and its test.
+- `src/daemon/server/shells.rs`: the one banner line (Task 3).
+- This phase doc's Update Log.
+
+## Out of scope
+
+- **`/hosts`** (row 04b) and **the `[HOSTS]` context block** (row 04c).
+- **Idle/Running state per shell.** `ShellInfo` carries only the registry's
+  flags. Probing each host's `Status` belongs with a later phase if the live
+  close shows it is needed.
+- **Listing `/runs` and `/stop` in `HELP_TEXT`**: a pre-existing gap, out of
+  this phase.
+
+## Update Log
+
+<!-- entries appended below this line -->

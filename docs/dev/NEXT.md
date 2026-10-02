@@ -1,25 +1,19 @@
 # NEXT
 
-**Active phase:** **M23 phase-03d — shell-tail-relay**, drafted 2026-10-02,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-03d`.
+**Active phase:** **M23 phase-04a — shells-command**, drafted 2026-10-02,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-04a`.
 
-**What it does.** `Request::ShellTail { id, follow }` over the daemon socket
-answers in three stages:
-- `ShellScreen` first (the host's exact screen, or empty for an old host,
-  using a `Subscribe` fallback);
-- with `follow`, live `ShellChunk`s;
-- `ShellExited` when the shell ends, seen on host EOF or a `Status` poll.
+**What it does.** `/shells` in `daemoneye chat` lists every PTY shell the
+daemon runs: id, host, owner (`this session` for the chat's own), state
+(`live` or `exited N ago`, plus `interactive` / `dedicated`), age and last
+command. It is built on one `ShellList` request and a pure renderer. It also
+adds a help line and clears 03d's stray banner. Five tests; lib 2120 → 2125.
 
-The tail stops when the client hangs up. It also clears the two stale
-comments carried from 03c. Six tests; lib 2114 → 2120.
+**Split.** Row 04 became 04a `/shells`, 04b `/hosts` (needs a ControlMaster
+probe) and 04c the `[HOSTS]` context block.
 
-**Measured at drafting.** The whole change was dry-run: tests 6/6, lib 2120
-×3, clippy clean, three mutations red 6/6. The end-to-end block's live part
-runs a real daemon that adopts a real shell-host, tails it, types into it
-and exits it. On the dry run it printed `ShellScreen` → output chunks →
-`ShellExited,EOF`, host exit 0; on the current tree, `live_first=Error`.
+**Measured at drafting.** The whole change was dry-run green, with three
+mutations red. Chat in a clientless private tmux hangs before drawing, so the
+chat-UI live check stays with row 10's architect-run close, as the PE decided.
 
-**Lag** is decided, not built: a viewer re-issues `ShellTail`; row 05 owns
-resync.
-
-**After 03d:** `/rexymcp:architect next` drafts 04 (shells-and-hosts).
+**After 04a:** `/rexymcp:architect next` drafts 04b (hosts-command).
