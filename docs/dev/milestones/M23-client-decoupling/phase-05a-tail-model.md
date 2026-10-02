@@ -1,7 +1,7 @@
 # Phase 05a: tail-model — the `/tail` core: the shell's size on the wire, a follow/scroll model, and a grid painter
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** review
 **Depends on:** 03d (`ShellTail`), 04c (done)
 **Estimated diff:** ~200 lines of production code across 4 files (1 new); 7 new tests
 **Tags:** language=rust, kind=feature, size=m
@@ -773,3 +773,151 @@ Mutations A–F, each applied with `patch`, run once, restored
 | D | `scroll_down`: drop the resume | `tail_model_follows_new_output_until_scrolled_back` | red |
 | E | `Idx(1) => R::Reset` | `render_tail_paints_the_grid_with_colours_and_a_status_line` | red |
 | F | `render_tail`: drop the symbol write | `render_tail` | red, 2 failed |
+
+### Update — 2026-10-02 16:17 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 05a is implemented and committed on `master` (commits `662e4e80`, `0e08d9fb`, `5e2db21a`):
+
+- **Task 1** — `Response::ShellScreen` now carries `bytes, rows, cols` (`src/ipc.rs`), with the wire round trip asserting `rows: 30, cols: 100` survive (`src/ipc_tests.rs`).
+- **Task 2** — the relay asks the host's `Status` before tailing and falls back to `(24, 80)`, sends the size with the screen, the two destructuring tests gained `, ..`, and a new `shell_tail_reports_the_shells_size` test asserts a resized shell's real size through `handle_shell_tail`.
+- **Task 3/4** — `src/cli/tail.rs` (new, wired after `pub mod status;` in `src/cli/mod.rs`) holds `TAIL_SCROLLBACK = 5_000`, `TailModel` (follow pins via `set_scrollback(0)`, scroll-up pauses, bottom/`f` resumes, `ShellExited` recorded) and `render_tail` (cell-by-cell painter, 16 ANSI colours by name, 256/RGB through, bold/italic/underline/inverse, dim status line, top-left clipping), with the six pinned tests.
+
+**Deviations:** two, both mechanical. (1) The spec's Task-2.4 test body had `assert_eq!((*rows, *cols), (30, 100), …)` on one line; `cargo fmt` wrapped it — I committed the formatted form. (2) `new_tests=8p-0f` rather than the expected `7p-0f`: the spec's own filter `tail_model render_tail shell_tail_reports_the_shells_size shell_tail_messages_round_trip` matches 6 `tail.rs` tests + the relay test + the round trip = 8; the "7 new tests" count is right (the round trip is updated, not new), but the filter's arithmetic is 8. Everything else is verbatim.
+
+**End-to-end verification:** the § block ran verbatim — `lib1..3=ok` with no failures, `lib_counts=2140p-0f-14i`, `new_tests=8p-0f`, `isolation=11 passed; 0 failed`, `wired=1/1`. Its capture (`/tmp/e2e-m23-05a.txt`) is pasted in the `### Update — 2026-10-02 16:40 (end-to-end verification)` entry inside a fenced block (raw lines would have been swallowed by the doc's own paste-extraction `awk`, which selects only fenced content — the fenced form makes the spec's paste check agree with the entry), the check printed `PASTE MATCH`, and the mutations table records A–F red. The no-fence draft of the entry was the one intermediate state that failed the spec's own check; it was fixed and re-checked before commit. No re-runs were needed: the named flake `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker` never appeared, and no other test failed.
+
+**Also verified:** `cargo fmt --all` clean, `cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings` exits 0, `cargo test` → lib 2140/0/14 on three consecutive runs, bug_tracker 6, doc_truth 14, integration 32 (2 ignored), isolation 11, doc-tests 0; and `grep -c '^pub mod tail;' src/cli/mod.rs` → 1 with `src/cli/tail.rs` present.
+
+**Notes for review:** the doc's `Status:` is still `in-progress` and the README row matches, per the lifecycle split — the completion flip is yours. The spec's mutation table says "red" per mutation as the phase requires; I did not paste per-mutation diffs. Next phase (05b) can take `TailModel`/`render_tail` as-is; its viewer loop only needs to feed frames into `apply` and translate keys to `toggle_follow`/`scroll_up`/`scroll_down`.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+_status_strips_trailing_prose ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+kill: sending signal to 3984095 failed: No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M23-client-decoupling/README.md` — +1 -1
+- `docs/dev/milestones/M23-client-decoupling/phase-05a-tail-model.md` — +34 -1
+- `src/cli/mod.rs` — +1 -0
+- `src/cli/tail.rs` — +346 -0
+- `src/daemon/server/shells.rs` — +54 -5
+- `src/ipc.rs` — +7 -2
+- `src/ipc_tests.rs` — +10 -5
+
+**Commit:** 5e2db21a5b12ba3fa4b3e13009fa3fb5f9586a27
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
