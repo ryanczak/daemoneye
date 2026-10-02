@@ -1,7 +1,7 @@
 # Phase 04a: shells-command — `/shells` lists the daemon's PTY shells in the chat client
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 03a (`Request::ShellList`), 03d (done)
 **Estimated diff:** ~80 lines of production code across 2 files; 5 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -460,3 +460,88 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-02 02:42 (started, executor@gpt-5.1-codex-max)
+
+Read `STANDARDS.md` top to bottom and this phase doc in full; confirmed the repo
+is clean on `master` at `192e1ee4` with no uncommitted changes. Flipped this
+doc's and the M23 README's 04a rows to `in-progress`. Starting Task 1 (the
+command in `src/cli/commands/slash.rs`), which the pre-flight greps confirm is
+still unimplemented (`"/shells"` has zero hits in `src/`).
+
+### Update — 2026-10-02 02:57 (end-to-end verification)
+
+All five spec tasks are on disk. `/tmp/e2e-m23-04a.txt` is the capture file the
+spec's § End-to-end verification block wrote (three `cargo test --lib` runs plus
+the single-run gates); the block below is its contents, copied — not retyped.
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2125p-0f-14i
+new_tests=5p-0f
+isolation=11 passed; 0 failed
+wired=1/1
+banner=0
+```
+
+PASTE MATCH
+
+Expected vs observed: `lib1..3=ok` with nothing after `ok` ✓;
+`lib_counts=2125p-0f-14i` ✓; `new_tests=5p-0f` ✓; `isolation=11 passed; 0
+failed` ✓; `wired=1/1` ✓; `banner=0` ✓. The pre-existing flake
+`shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker` did not
+fire on any of the three runs, so no re-run was spent. The other targets were
+checked once, out of band, and are unmoved: integration 32 passed / 2 ignored,
+doc_truth 14 passed, bug_tracker 6 passed, isolation 11 passed / 1 ignored —
+all matching the acceptance criteria's preservation line (its isolation count
+`11` refers to the pass count; its ignored shell differs from that target's
+pre-existing 1 ignored, which this phase did not touch).
+
+`cargo fmt --all` exits 0, `cargo build` clean, `cargo clippy --all-targets
+--all-features -- -D warnings` exits 0.
+
+### Mutations
+
+Applied each with the `patch` tool, ran the named test, restored, and confirmed
+`git diff --stat` matched the pre-mutation state after each restore.
+
+- **Mutation A** (`s.owner == mine` → `s.owner == mine && false`) —
+  `render_shell_list_marks_this_sessions_shells`:
+  ```
+  test render_shell_list_marks_this_sessions_shells ... FAILED
+  thread 'render_shell_list_marks_this_sessions_shells' panicked at src/cli/commands/slash.rs:804:9:
+  s1  host:local  owner:chat:sess-1  live  age:5s  last:—
+  test result: FAILED. 0 passed; 1 failed
+  ```
+  Red as expected: the row kept the raw `owner:chat:sess-1` instead of
+  `owner:this session`.
+- **Mutation B** (`match s.exited_unix` → `match None::<u64>`) —
+  `render_shell_list_shows_each_shells_fields`:
+  ```
+  test render_shell_list_shows_each_shells_fields ... FAILED
+  thread 'render_shell_list_shows_each_shells_fields' panicked at src/cli/commands/slash.rs:788:13:
+  row 1 has "exited 2m ago": s2  host:pinky  owner:ghost:job7  live, interactive  age:2h0m  last:—
+  test result: FAILED. 0 passed; 1 failed
+  ```
+  Red as expected: the exited shell was rendered `live, interactive`.
+- **Mutation C** (`if !cut` → `if !cut || true`) —
+  `render_shell_list_elides_a_long_last_command`:
+  ```
+  test render_shell_list_elides_a_long_last_command ... FAILED
+  thread 'render_shell_list_elides_a_long_last_command' panicked at src/cli/commands/slash.rs:833:9:
+  assertion `left == right` failed: cut to 40 characters: "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+    left: 60
+   right: 40
+  test result: FAILED. 0 passed; 1 failed
+  ```
+  Red as expected: the uncut `s0` row now holds all 60 `é` characters, so the
+  length assertion sees 60 vs 40 (the mutant's row is the full string without
+  the `…`, cut to no characters).
+
+After each restore: `git diff --stat` returned to the pre-mutation state (the
+working tree holds only the five files this phase authorizes, and nothing
+else), the residue grep for each mutant's marker (`&& false`, `None::<u64>`,
+`| true`) came back 0, and the named test was back to 1 passed / 0 failed
+before the next mutation was applied.

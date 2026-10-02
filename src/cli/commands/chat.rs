@@ -20,6 +20,7 @@ Commands:
   /model     list or switch model     /pane      list or pin target pane
   /approvals list/on/off/revoke       /prompt    list or switch system prompt
   /limits    show active limits       /session   save/load/list/delete/rename
+  /shells    list the agent's shells
 
 Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
 
@@ -944,6 +945,14 @@ fn turn_budget_label(turn: usize, prompt_tokens: u32, context_window: u32) -> St
 #[cfg(test)]
 mod tests {
     use super::HELP_TEXT;
+
+    #[test]
+    fn help_text_lists_shells() {
+        assert!(
+            HELP_TEXT.contains("/shells"),
+            "HELP_TEXT must list '/shells'"
+        );
+    }
 
     #[test]
     fn help_text_documents_aliases_and_behaviors() {

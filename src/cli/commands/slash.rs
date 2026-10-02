@@ -59,6 +59,7 @@ pub(super) async fn handle_slash(ctx: SlashCtx<'_>, query: &str) -> SlashOutcome
         "/refresh" => cmd_refresh(ctx.renderer).await,
         "/model" | "/models" => cmd_model(ctx, rest).await,
         "/pane" | "/panes" => cmd_pane(ctx, rest).await,
+        "/shells" => cmd_shells(ctx).await,
         "/approvals" | "/approval" => cmd_approvals(ctx, rest),
         "/prompt" => cmd_prompt(ctx, rest),
         "/limits" => cmd_limits(ctx.renderer, ctx.session_id).await,
@@ -202,6 +203,89 @@ fn render_pane_inspector(panes: &[crate::ipc::PaneInfo]) -> Vec<String> {
     body.push(String::new());
     body.push("pin with: /pane <number|%id>".to_string());
     body
+}
+
+// ── /shells ──────────────────────────────────────────────────────────────────
+
+/// The longest last command a `/shells` row shows before eliding it.
+const SHELL_COMMAND_WIDTH: usize = 40;
+
+/// Render the `/shells` panel body: one row per shell, in the order the
+/// daemon sent them (shell index order). `session_id` marks this chat's own
+/// shells. Pure so it can be tested without a daemon.
+fn render_shell_list(
+    shells: &[crate::ipc::ShellInfo],
+    session_id: &str,
+    now_unix: u64,
+) -> Vec<String> {
+    if shells.is_empty() {
+        return vec!["no shells yet — the agent opens them when it runs a command".to_string()];
+    }
+    let mine = format!("chat:{session_id}");
+    shells
+        .iter()
+        .map(|s| {
+            let owner = if s.owner == mine {
+                "this session".to_string()
+            } else {
+                s.owner.clone()
+            };
+            let mut state = match s.exited_unix {
+                Some(t) if now_unix >= t => format!(
+                    "exited {} ago",
+                    crate::tmux::status::format_age(now_unix - t)
+                ),
+                Some(_) => "exited".to_string(),
+                None => "live".to_string(),
+            };
+            if s.interactive {
+                state.push_str(", interactive");
+            }
+            if s.dedicated {
+                state.push_str(", dedicated");
+            }
+            let age = if s.started_unix > 0 && now_unix >= s.started_unix {
+                crate::tmux::status::format_age(now_unix - s.started_unix)
+            } else {
+                "?".to_string()
+            };
+            let last = match &s.last_command {
+                Some(c) => elide(c, SHELL_COMMAND_WIDTH),
+                None => "—".to_string(),
+            };
+            format!(
+                "{}  host:{}  owner:{}  {}  age:{}  last:{}",
+                s.id, s.host, owner, state, age, last
+            )
+        })
+        .collect()
+}
+
+/// The first line of `s`, cut to at most `max` characters; `…` marks a cut
+/// or a dropped second line.
+fn elide(s: &str, max: usize) -> String {
+    let line = s.lines().next().unwrap_or("");
+    let cut = line.chars().count() > max || s.lines().nth(1).is_some();
+    if !cut {
+        return line.to_string();
+    }
+    let kept: String = line.chars().take(max.saturating_sub(1)).collect();
+    format!("{kept}…")
+}
+
+async fn cmd_shells(ctx: SlashCtx<'_>) {
+    match request_once(Request::ShellList).await {
+        Ok(Response::ShellList { shells }) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let body = render_shell_list(&shells, ctx.session_id, now);
+            let _ = ctx.renderer.commit_panel("shells", &body, false);
+        }
+        Ok(other) => render_error(ctx.renderer, other),
+        Err(e) => note(ctx.renderer, &format!("✗ {e}")),
+    }
 }
 
 async fn cmd_pane(ctx: SlashCtx<'_>, rest: &str) {
@@ -657,6 +741,103 @@ fn cmd_stop(r: &mut RatatuiRendererStdout, rest: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shell(id: &str, host: &str, owner: &str, started_unix: u64) -> crate::ipc::ShellInfo {
+        crate::ipc::ShellInfo {
+            id: id.to_string(),
+            host: host.to_string(),
+            owner: owner.to_string(),
+            started_unix,
+            interactive: false,
+            dedicated: false,
+            exited_unix: None,
+            last_command: None,
+        }
+    }
+
+    const NOW: u64 = 1_790_000_000;
+
+    #[test]
+    fn render_shell_list_shows_each_shells_fields() {
+        let mut live = shell("s0", "local", "chat:other", NOW - 300);
+        live.last_command = Some("cargo build".to_string());
+        let mut gone = shell("s2", "pinky", "ghost:job7", NOW - 7200);
+        gone.exited_unix = Some(NOW - 120);
+        gone.interactive = true;
+        let rows = render_shell_list(&[live, gone], "mine", NOW);
+        assert_eq!(rows.len(), 2, "one row per shell: {rows:?}");
+        for want in [
+            "s0",
+            "host:local",
+            "owner:chat:other",
+            "live",
+            "age:5m",
+            "last:cargo build",
+        ] {
+            assert!(rows[0].contains(want), "row 0 has {want:?}: {}", rows[0]);
+        }
+        for want in [
+            "s2",
+            "host:pinky",
+            "owner:ghost:job7",
+            "exited 2m ago",
+            "interactive",
+            "age:2h0m",
+            "last:—",
+        ] {
+            assert!(rows[1].contains(want), "row 1 has {want:?}: {}", rows[1]);
+        }
+        assert!(
+            !rows[0].contains("exited"),
+            "a live shell is not exited: {}",
+            rows[0]
+        );
+    }
+
+    #[test]
+    fn render_shell_list_marks_this_sessions_shells() {
+        let rows = render_shell_list(
+            &[shell("s1", "local", "chat:sess-1", NOW - 5)],
+            "sess-1",
+            NOW,
+        );
+        assert!(rows[0].contains("owner:this session"), "{}", rows[0]);
+        assert!(
+            !rows[0].contains("chat:sess-1"),
+            "the raw key is replaced: {}",
+            rows[0]
+        );
+        let others = render_shell_list(
+            &[shell("s1", "local", "chat:sess-1", NOW - 5)],
+            "sess-2",
+            NOW,
+        );
+        assert!(others[0].contains("owner:chat:sess-1"), "{}", others[0]);
+    }
+
+    #[test]
+    fn render_shell_list_says_when_there_are_none() {
+        let rows = render_shell_list(&[], "mine", NOW);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].contains("no shells"), "{}", rows[0]);
+    }
+
+    #[test]
+    fn render_shell_list_elides_a_long_last_command() {
+        let mut wide = shell("s0", "local", "chat:x", NOW);
+        wide.last_command = Some("é".repeat(60));
+        let mut two = shell("s1", "local", "chat:x", NOW);
+        two.last_command = Some("echo a\necho b".to_string());
+        let rows = render_shell_list(&[wide, two], "mine", NOW);
+        let shown = rows[0].split("last:").nth(1).unwrap_or_default();
+        assert_eq!(shown.chars().count(), 40, "cut to 40 characters: {shown:?}");
+        assert!(shown.ends_with('…'), "{shown:?}");
+        assert!(
+            rows[1].ends_with("last:echo a…"),
+            "only the first line shows: {}",
+            rows[1]
+        );
+    }
 
     #[test]
     fn command_shaped_accepts_plain_commands() {

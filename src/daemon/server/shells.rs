@@ -263,8 +263,6 @@ async fn shell_has_exited(sock: &std::path::Path) -> bool {
     )
 }
 
-// ── ShellTail ─────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
