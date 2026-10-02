@@ -725,7 +725,11 @@ mod tests {
             .unwrap();
         match parse_all(&tx).as_slice() {
             [Response::ShellScreen { rows, cols, .. }] => {
-                assert_eq!((*rows, *cols), (30, 100), "the shell's own size, not a default")
+                assert_eq!(
+                    (*rows, *cols),
+                    (30, 100),
+                    "the shell's own size, not a default"
+                )
             }
             other => panic!("expected one ShellScreen, got {other:?}"),
         }
