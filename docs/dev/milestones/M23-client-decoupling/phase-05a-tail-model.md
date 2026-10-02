@@ -747,3 +747,29 @@ You may edit these files, and nothing else:
 
 Status flipped to `in-progress`; README row 05a matches. Beginning Task 1 (the
 `ShellScreen { bytes, rows, cols }` variant) per the spec.
+
+### Update — 2026-10-02 16:40 (end-to-end verification)
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2140p-0f-14i
+new_tests=8p-0f
+isolation=11 passed; 0 failed
+wired=1/1
+```
+
+PASTE MATCH
+
+Mutations A–F, each applied with `patch`, run once, restored
+(`git diff --stat` back to its pre-mutation state):
+
+| mut | change | test | result |
+|---|---|---|---|
+| A | relay `Status` arm → `(24, 80)` | `shell_tail_reports_the_shells_size` | red |
+| B | `scroll_up`: drop the pause | `tail_model_follows_new_output_until_scrolled_back` | red |
+| C | `toggle_follow`: drop the jump to 0 | `tail_model_toggle_follow_jumps_to_the_newest_output` | red |
+| D | `scroll_down`: drop the resume | `tail_model_follows_new_output_until_scrolled_back` | red |
+| E | `Idx(1) => R::Reset` | `render_tail_paints_the_grid_with_colours_and_a_status_line` | red |
+| F | `render_tail`: drop the symbol write | `render_tail` | red, 2 failed |
