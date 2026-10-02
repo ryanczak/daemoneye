@@ -1,17 +1,21 @@
 # NEXT
 
-**Active phase:** **M23 phase-04c — hosts-context-block**, drafted
-2026-10-02, status `todo`. Dispatch with `/rexymcp:dispatch phase-04c`.
+**Active phase:** **M23 phase-05a — tail-model**, drafted 2026-10-02, status
+`todo`. Dispatch with `/rexymcp:dispatch phase-05a`.
 
-**What it does.** Every chat prompt gains one ambient line before `[SHELLS]`:
-`[HOSTS] local (1 shell) · db01 (ssh admin@db01, no shells) · web01 (ssh matt@web01.lan, 2 shells)`.
-It lists `local`, then each configured host sorted by name, with its live
-shells counted across owners. The line is empty when no hosts are configured,
-and it does no I/O. This is the 2.0 design's `[HOSTS]` block: it was assigned
-to M22 and never built. Three tests; lib 2130 → 2133.
+**What it does.** The testable core of `/tail`: `ShellScreen` now carries the
+shell's `rows`/`cols` (a client cannot draw the screen bytes without them);
+`cli::tail::TailModel` rebuilds the shell's terminal from the `ShellTail`
+stream with follow/pause/resume rules; `render_tail` paints the grid into a
+ratatui frame with colours, modifiers, a status line and top-left clipping.
+Seven tests; lib 2133 → 2140.
 
-**Measured at drafting.** The whole change was dry-run green: lib 2133 ×3,
-clippy clean, mutations A–D red. One test builds both real prompts in about
-0.02 s.
+**Split.** Row 05 became 05a (this core) and 05b (the viewer loop, `/tail`,
+search, help).
 
-**After 04c:** `/rexymcp:architect next` drafts 05 (`/tail`).
+**Measured at drafting.** vt100 0.16.2's `set_scrollback` holds the view
+while new output arrives, so follow is only "when to jump back to 0". The
+whole change was dry-run green: lib 2140 ×3, clippy clean, six mutations
+red. One `event_log` test failed once in 19 runs; A/B 0/8 vs 0/8.
+
+**After 05a:** `/rexymcp:architect next` drafts 05b (tail-viewer).
