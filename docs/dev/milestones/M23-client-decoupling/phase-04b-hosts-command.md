@@ -1,7 +1,7 @@
 # Phase 04b: hosts-command — `/hosts`, and two shell-tail defects found at the 04a review
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 04a, 03d (done)
 **Estimated diff:** ~90 lines of production code across 3 files; 5 new tests, 2 fixed
 **Tags:** language=rust, kind=feature, size=m
@@ -757,3 +757,32 @@ kill: sending signal to 2931797 failed: No such process
 **Commit:** 5ed7de8a15aee5503dd7a72fe36be20a39127cce
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (85 turns).
+  Its own entry names it "opus (claude)"; `executor_health` reports GLM.
+  Fold C, eighth occurrence.
+- **Source diff vs the drafting dry run, tests included** (the 04a-review
+  lesson, applied): identical except for one omitted comment line
+  (`// Poll: the first screen may predate the command's output.`). Behaviour
+  is unchanged, so this is not carried.
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` were clean. Lib was
+  **2130/0/14 on ten consecutive full runs**: five full-suite runs, plus five
+  in the end-to-end re-run. The relay defect this phase fixes showed in
+  **3 of 8** runs before the fix. The end-to-end re-run matched the pasted
+  capture byte for byte. Mutations, re-applied exactly as pinned:
+  - A: red;
+  - B: red;
+  - C (delayed output-only marker): **green 3/3**, so the test polls;
+  - D: red 3/3 with `got Ok(Err(broken pipe))`, the production failure.
+- **Scope deviations:** none.
+- **Calibration:** (1) Comparing the executor's whole source diff
+  (tests included) against the dry-run diff took one command and settled
+  correctness at once. Keep it as a standard review step when the spec
+  quotes dry-run code. (2) Two defects reached this phase from a review
+  (03d) that compared only production code; both were proved and fixed
+  here.
+
