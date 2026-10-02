@@ -182,6 +182,10 @@ pub async fn handle_client(
         Request::ShellResize { id, rows, cols } => {
             shells::handle_shell_resize(&mut tx, crate::shell::registry(), &id, rows, cols).await?;
         }
+        Request::ShellTail { id, follow } => {
+            shells::handle_shell_tail(&mut rx, &mut tx, crate::shell::registry(), &id, follow)
+                .await?;
+        }
         Request::Cancel { session_id } => {
             let found = crate::daemon::run::cancel_session(
                 &session_id,

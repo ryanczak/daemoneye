@@ -1973,9 +1973,9 @@ pub(crate) async fn close_shell_with(
              it does that; list_shells shows which shells are whose."
         );
     }
-    // The wire carries only Int | Term | Stop | Cont — there is no SIGHUP and
-    // no kill frame, so Term is the strongest closure this tool can send, and
-    // it is sent exactly once. Whether the shell actually leaves is observed
+    // `Close` hangs the shell up (SIGHUP to its pid), which also ends a job
+    // running in it; a host too old to know `Close` gets TERM instead. Either
+    // is sent exactly once. Whether the shell actually leaves is observed
     // afterwards, not assumed; a host that lingers still holds the lock, so
     // the tool says so instead of claiming success.
     let socket = socket_path(shell);
@@ -1996,11 +1996,10 @@ pub(crate) async fn close_shell_with(
 }
 
 /// The observable outcome of one close: poll the lock up to 1.5s from now
-/// and report what is actually seen. **`host_is_alive` can never turn false
-/// while the still-bound socket holds the host's task alive in-process** — the
-/// fixture's host task never exits — so this observe-poll genuinely produces
-/// "still alive" in tests and "gone" in production, and the tool's sentence
-/// must not claim a closure it did not see.
+/// and report what is actually seen. A host releases its lock when its shell
+/// exits (`serve_until_exit`), so a hung-up shell normally reads as gone well
+/// inside the window; one that has not, is reported as still finishing, and
+/// the tool's sentence never claims a closure it did not see.
 async fn closed_by_observed_end(shell: &str, lock: &std::path::Path) -> String {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
     loop {

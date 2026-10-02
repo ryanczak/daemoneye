@@ -673,3 +673,36 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-02 (end-to-end verification)
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2120p-0f-14i
+new_tests=6p-0f
+isolation=11 passed; 0 failed
+stale_comments=0/0
+live_list=s1:adopted
+live_first=ShellScreen
+live_chunk=True
+live_end=ShellExited,EOF
+live_host_exit=0
+```
+
+PASTE MATCH
+
+**Mutations** (each applied, run, restored; `git diff --stat` re-checked after every restore):
+
+- **Mutation A** — `ShellScreen { bytes: Vec::new() }` instead of the host's
+  screen: test 1 red, `0 passed; 1 failed`
+  (`shell_tail_without_follow_sends_only_the_screen`). Restored → `git diff
+  --stat` matches its pre-mutation state.
+- **Mutation B** — `ShellResponse::Error { .. } if false` in `subscribe`:
+  test 4 red, `0 passed; 1 failed`
+  (`shell_tail_falls_back_to_subscribe_on_an_old_host`). Restored →
+  `git diff --stat` matches.
+- **Mutation C** — `shell_has_exited` returns `false` always: test 3 red,
+  `0 passed; 1 failed` (`shell_tail_reports_exited_when_the_shell_ends`).
+  Restored → `git diff --stat` matches.

@@ -123,6 +123,148 @@ fn last_command(id: &str, started_unix: u64) -> Option<String> {
         .and_then(|meta| meta.commands.last().map(|c| c.command.clone()))
 }
 
+/// The shell host's answers, one JSON frame per line.
+type HostLines = tokio::io::Lines<tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>>;
+
+/// How often a followed tail asks the host whether its shell has exited. A
+/// current host closes the connection when its shell ends, but a host from
+/// an older binary never does, so the tail also asks.
+const TAIL_STATUS_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Relay one shell to the client: its current screen as `ShellScreen`, then,
+/// with `follow`, each output chunk as `ShellChunk` until the shell exits
+/// (`ShellExited`) or the client goes away. `rx` is the client's half of the
+/// connection; the tail ends when it reaches EOF.
+pub(super) async fn handle_shell_tail<R, W>(
+    rx: &mut R,
+    tx: &mut W,
+    reg: &ShellRegistry,
+    id: &str,
+    follow: bool,
+) -> Result<()>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    use tokio::io::AsyncBufReadExt;
+
+    if let Err(msg) = live_shell(reg, id) {
+        send_response_split(tx, Response::Error(msg)).await?;
+        return Ok(());
+    }
+    let sock = crate::shell::socket_path(id);
+    let stream = match tokio::net::UnixStream::connect(&sock).await {
+        Ok(s) => s,
+        Err(e) => {
+            send_response_split(tx, Response::Error(format!("shell {id}: {e}"))).await?;
+            return Ok(());
+        }
+    };
+    // `host_w` must stay alive for the whole tail: the host ends a connection
+    // whose write side reaches EOF, which would end the subscription.
+    let (host_r, mut host_w) = stream.into_split();
+    let mut host = tokio::io::BufReader::new(host_r).lines();
+
+    let screen = match subscribe(&mut host_w, &mut host).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            send_response_split(tx, Response::Error(format!("shell {id}: {e:#}"))).await?;
+            return Ok(());
+        }
+    };
+    send_response_split(tx, Response::ShellScreen { bytes: screen }).await?;
+    if !follow {
+        return Ok(());
+    }
+
+    let mut client = rx.lines();
+    let mut tick = tokio::time::interval(TAIL_STATUS_POLL);
+    loop {
+        tokio::select! {
+            line = host.next_line() => match line {
+                Ok(Some(line)) => {
+                    if let Ok(crate::shell::ShellResponse::Chunk { bytes }) =
+                        serde_json::from_str(&line)
+                    {
+                        send_response_split(tx, Response::ShellChunk { bytes }).await?;
+                    }
+                }
+                // The host closed the connection: a current host does that
+                // when its shell exits.
+                Ok(None) | Err(_) => {
+                    send_response_split(tx, Response::ShellExited).await?;
+                    return Ok(());
+                }
+            },
+            line = client.next_line() => match line {
+                Ok(Some(_)) => {}
+                // The client hung up; stop relaying.
+                Ok(None) | Err(_) => return Ok(()),
+            },
+            _ = tick.tick() => {
+                if shell_has_exited(&sock).await {
+                    send_response_split(tx, Response::ShellExited).await?;
+                    return Ok(());
+                }
+            }
+        }
+    }
+}
+
+/// Ask the host for its screen (`SubscribeScreen`). A host from before that
+/// request answers `Error`; fall back to `Subscribe` and an empty screen.
+async fn subscribe(
+    host_w: &mut tokio::net::unix::OwnedWriteHalf,
+    host: &mut HostLines,
+) -> anyhow::Result<Vec<u8>> {
+    use crate::shell::{ShellRequest, ShellResponse, encode};
+    use anyhow::Context as _;
+    use tokio::io::AsyncWriteExt;
+
+    host_w
+        .write_all(encode(ShellRequest::SubscribeScreen)?.as_bytes())
+        .await
+        .context("sending SubscribeScreen")?;
+    match next_frame(host).await? {
+        ShellResponse::Screen { bytes } => Ok(bytes),
+        ShellResponse::Error { .. } => {
+            host_w
+                .write_all(encode(ShellRequest::Subscribe)?.as_bytes())
+                .await
+                .context("sending Subscribe")?;
+            match next_frame(host).await? {
+                ShellResponse::Ok => Ok(Vec::new()),
+                other => anyhow::bail!("unexpected answer to Subscribe: {other:?}"),
+            }
+        }
+        other => anyhow::bail!("unexpected answer to SubscribeScreen: {other:?}"),
+    }
+}
+
+/// The host's next frame, within the relay timeout.
+async fn next_frame(host: &mut HostLines) -> anyhow::Result<crate::shell::ShellResponse> {
+    use anyhow::Context as _;
+    let line = tokio::time::timeout(RELAY_TIMEOUT, host.next_line())
+        .await
+        .context("timed out waiting for the shell host")?
+        .context("reading from the shell host")?
+        .context("the shell host closed the connection")?;
+    serde_json::from_str(&line).context("parsing the shell host's frame")
+}
+
+/// Whether the host says its shell has exited, or no longer answers at all.
+async fn shell_has_exited(sock: &std::path::Path) -> bool {
+    matches!(
+        crate::shell::status(sock, RELAY_TIMEOUT).await,
+        Ok(crate::shell::ShellResponse::Status {
+            state: crate::shell::ShellState::Exited,
+            ..
+        }) | Err(_)
+    )
+}
+
+// ── ShellTail ─────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,6 +535,307 @@ mod tests {
             second.exited_unix,
             Some(42),
             "an exited shell's stamp rides the wire"
+        );
+    }
+
+    // ── ShellTail ─────────────────────────────────────────────────────────
+
+    /// The client's end of a tail: the response lines it reads.
+    type ClientLines =
+        tokio::io::Lines<tokio::io::BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>>;
+
+    /// Every response line `buf` holds, parsed.
+    fn parse_all(buf: &[u8]) -> Vec<Response> {
+        String::from_utf8_lossy(buf)
+            .lines()
+            .map(|l| serde_json::from_str::<Response>(l).expect("a response line parses"))
+            .collect()
+    }
+
+    /// The next response the tail wrote to the client, within 10 s.
+    async fn next_response(lines: &mut ClientLines) -> Response {
+        let line = tokio::time::timeout(std::time::Duration::from_secs(10), lines.next_line())
+            .await
+            .expect("a response within 10 s")
+            .expect("reading the client side")
+            .expect("the tail is still writing");
+        serde_json::from_str(&line).expect("a response line parses")
+    }
+
+    /// Render escape-code bytes on a fresh 24×80 terminal and return the text.
+    fn rendered(bytes: &[u8]) -> String {
+        let mut p = vt100::Parser::new(24, 80, 0);
+        p.process(bytes);
+        p.screen().contents()
+    }
+
+    /// Run `handle_shell_tail` against `reg` in a task with a duplex standing
+    /// in for the client connection. Returns the client's line reader, its
+    /// write half (drop it to hang up), and the task.
+    fn spawn_tail(
+        reg: ShellRegistry,
+        id: String,
+    ) -> (
+        ClientLines,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<anyhow::Result<()>>,
+    ) {
+        use tokio::io::AsyncBufReadExt;
+        let (client, server) = tokio::io::duplex(1 << 20);
+        let (server_r, mut server_w) = tokio::io::split(server);
+        let task = tokio::spawn(async move {
+            let mut rx = tokio::io::BufReader::new(server_r);
+            handle_shell_tail(&mut rx, &mut server_w, &reg, &id, true).await
+        });
+        let (client_r, client_w) = tokio::io::split(client);
+        (tokio::io::BufReader::new(client_r).lines(), client_w, task)
+    }
+
+    /// A host that predates `SubscribeScreen`: it refuses that frame the way
+    /// an older binary does, accepts `Subscribe` and sends one chunk, and
+    /// answers `Status` as idle.
+    async fn spawn_old_host(id: crate::shell::ShellId) -> anyhow::Result<()> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        let listener = crate::shell::bind(&crate::shell::socket_path(id.as_str())).await?;
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let (r, mut w) = stream.into_split();
+                    let mut lines = tokio::io::BufReader::new(r).lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let reply: &[u8] = if line.contains("SubscribeScreen") {
+                            b"{\"type\":\"Error\",\"message\":\"malformed frame: unknown variant `SubscribeScreen`\"}\n"
+                        } else if line.contains("Subscribe") {
+                            b"{\"type\":\"Ok\"}\n{\"type\":\"Chunk\",\"bytes\":[111,108,100]}\n"
+                        } else {
+                            b"{\"type\":\"Status\",\"state\":\"Idle\",\"rows\":24,\"cols\":80,\"pid\":0}\n"
+                        };
+                        if w.write_all(reply).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        Ok(())
+    }
+
+    /// Close an in-process shell through the executor's close path, waiting
+    /// up to 3 s for it to end. The last statement of every test that leaves
+    /// a shell behind, so the suite never strands one.
+    async fn close_tail_shell(reg: &ShellRegistry, id: &str, owner: &Owner) {
+        let _ = crate::daemon::executor::knowledge::close_shell_with(
+            reg,
+            id,
+            owner,
+            std::time::Duration::from_millis(3000),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn shell_tail_without_follow_sends_only_the_screen() {
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("t".into());
+        let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+            Box::pin(spawn_in_process_host(id))
+        })
+        .await
+        .unwrap();
+        crate::shell::send_input(
+            &crate::shell::socket_path(id.as_str()),
+            b"printf 'marker-tail-a\\n'\n",
+            RELAY_TIMEOUT,
+        )
+        .await
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut tx: Vec<u8> = Vec::new();
+        loop {
+            let mut rx = tokio::io::BufReader::new(tokio::io::empty());
+            handle_shell_tail(&mut rx, &mut tx, &reg, id.as_str(), false)
+                .await
+                .unwrap();
+            if let [Response::ShellScreen { bytes }] = &parse_all(&tx)[..] {
+                assert!(
+                    rendered(bytes).contains("marker-tail-a"),
+                    "the screen must show what was typed, got {:?}",
+                    rendered(bytes)
+                );
+                break;
+            }
+            tx.clear();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no screen with marker-tail-a within 10 s: {:?}",
+                parse_all(&tx)
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let frames = parse_all(&tx);
+        assert_eq!(
+            frames.len(),
+            1,
+            "without follow exactly one frame is sent, got {frames:?}"
+        );
+        close_tail_shell(&reg, id.as_str(), &owner).await;
+    }
+
+    #[tokio::test]
+    async fn shell_tail_follow_streams_live_chunks_until_the_client_disconnects() {
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("t".into());
+        let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+            Box::pin(spawn_in_process_host(id))
+        })
+        .await
+        .unwrap();
+        let (mut lines, client_w, task) = spawn_tail(reg.clone(), id.as_str().to_string());
+
+        match next_response(&mut lines).await {
+            Response::ShellScreen { .. } => {}
+            other => panic!("the tail's first frame is the screen, got {other:?}"),
+        }
+
+        crate::shell::send_input(
+            &crate::shell::socket_path(id.as_str()),
+            b"printf 'marker-tail-b\\n'\n",
+            RELAY_TIMEOUT,
+        )
+        .await
+        .unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut seen = Vec::new();
+        loop {
+            let bytes = match next_response(&mut lines).await {
+                Response::ShellChunk { bytes } => bytes,
+                other => panic!("only chunks after the screen, got {other:?}"),
+            };
+            seen.extend_from_slice(&bytes);
+            if String::from_utf8_lossy(&seen).contains("marker-tail-b") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "marker-tail-b never arrived: {:?}",
+                String::from_utf8_lossy(&seen)
+            );
+        }
+
+        drop(client_w);
+        drop(lines);
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("the tail ends within 5 s of the client hanging up");
+        assert!(
+            matches!(&outcome, Ok(Ok(()))),
+            "the tail returns Ok after a hang-up, got {outcome:?}"
+        );
+        close_tail_shell(&reg, id.as_str(), &owner).await;
+    }
+
+    #[tokio::test]
+    async fn shell_tail_reports_exited_when_the_shell_ends() {
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("t".into());
+        let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+            Box::pin(spawn_in_process_host(id))
+        })
+        .await
+        .unwrap();
+        let (mut lines, _client_w, task) = spawn_tail(reg.clone(), id.as_str().to_string());
+
+        match next_response(&mut lines).await {
+            Response::ShellScreen { .. } => {}
+            other => panic!("the tail's first frame is the screen, got {other:?}"),
+        }
+
+        crate::shell::send_input(
+            &crate::shell::socket_path(id.as_str()),
+            b"exit\n",
+            RELAY_TIMEOUT,
+        )
+        .await
+        .unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match next_response(&mut lines).await {
+                Response::ShellChunk { .. } => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "ShellExited never arrived within 10 s"
+                    );
+                }
+                Response::ShellExited => break,
+                other => panic!("the tail relays chunks then ShellExited, got {other:?}"),
+            }
+        }
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("the tail ends within 5 s of the shell exiting");
+        assert!(
+            matches!(&outcome, Ok(Ok(()))),
+            "the tail returns Ok after the shell ends, got {outcome:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn shell_tail_falls_back_to_subscribe_on_an_old_host() {
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("t".into());
+        let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+            Box::pin(spawn_old_host(id))
+        })
+        .await
+        .unwrap();
+        let (mut lines, client_w, task) = spawn_tail(reg.clone(), id.as_str().to_string());
+
+        match next_response(&mut lines).await {
+            Response::ShellScreen { bytes } => assert!(
+                bytes.is_empty(),
+                "an old host's screen is empty, got {} bytes",
+                bytes.len()
+            ),
+            other => panic!("the tail's first frame is the screen, got {other:?}"),
+        }
+        match next_response(&mut lines).await {
+            Response::ShellChunk { bytes } => {
+                assert_eq!(bytes, b"old", "the old host's one chunk rides through")
+            }
+            other => panic!("the chunk after the empty screen, got {other:?}"),
+        }
+
+        drop(client_w);
+        drop(lines);
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("the tail ends within 5 s of the client hanging up");
+        assert!(
+            matches!(&outcome, Ok(Ok(()))),
+            "the tail returns Ok after a hang-up, got {outcome:?}"
+        );
+        close_tail_shell(&reg, id.as_str(), &owner).await;
+    }
+
+    #[tokio::test]
+    async fn shell_tail_refuses_an_unknown_shell() {
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let mut rx = tokio::io::BufReader::new(tokio::io::empty());
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_tail(&mut rx, &mut tx, &reg, "s99", true)
+            .await
+            .unwrap();
+        assert!(
+            matches!(parse_response(&tx), Response::Error(ref msg) if msg.contains("s99")),
+            "an unknown id is refused with the id named: {tx:?}"
         );
     }
 }

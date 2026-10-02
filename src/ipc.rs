@@ -214,6 +214,12 @@ pub enum Request {
         rows: u16,
         cols: u16,
     },
+    /// Watch one PTY shell (M23): its current screen, then — with `follow` —
+    /// its live output until the shell exits or the client disconnects.
+    ShellTail {
+        id: String,
+        follow: bool,
+    },
     /// Ask the daemon to shut down cleanly.
     Shutdown,
     /// Send an ask request with the invoking tmux pane (if in tmux).
@@ -509,6 +515,13 @@ pub enum Response {
     Ok,
     /// Every PTY shell the daemon runs, with its state and last command (M23).
     ShellList { shells: Vec<ShellInfo> },
+    /// The first frame of a `ShellTail`: escape codes that redraw the shell's
+    /// current screen. Empty when the shell's host is too old to provide one.
+    ShellScreen { bytes: Vec<u8> },
+    /// Live output from a followed shell, after its `ShellScreen`.
+    ShellChunk { bytes: Vec<u8> },
+    /// The followed shell has exited; no more frames follow.
+    ShellExited,
     /// An error occurred on the daemon side.
     Error(String),
     /// Sent once before streaming begins; carries session state so the client
@@ -814,6 +827,9 @@ impl Response {
         match self {
             Response::Ok => "Ok",
             Response::ShellList { .. } => "ShellList",
+            Response::ShellScreen { .. } => "ShellScreen",
+            Response::ShellChunk { .. } => "ShellChunk",
+            Response::ShellExited => "ShellExited",
             Response::Error(_) => "Error",
             Response::SessionInfo { .. } => "SessionInfo",
             Response::Token(_) => "Token",

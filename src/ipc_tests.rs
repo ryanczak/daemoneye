@@ -1085,6 +1085,48 @@ fn shell_ipc_messages_round_trip() {
     }
 }
 
+#[test]
+fn shell_tail_messages_round_trip() {
+    let req = Request::ShellTail {
+        id: "s3".to_string(),
+        follow: true,
+    };
+    match roundtrip_req(&req) {
+        Request::ShellTail { id, follow } => {
+            assert_eq!(id, "s3", "the id survives the wire");
+            assert!(follow, "follow survives the wire");
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+
+    let screen = Response::ShellScreen {
+        bytes: vec![0x1b, b'[', b'H', 0xff],
+    };
+    match roundtrip_resp(&screen) {
+        Response::ShellScreen { bytes } => assert_eq!(
+            bytes,
+            vec![0x1b, b'[', b'H', 0xff],
+            "screen bytes survive the wire"
+        ),
+        other => panic!("wrong variant: {other:?}"),
+    }
+
+    let chunk = Response::ShellChunk {
+        bytes: b"out".to_vec(),
+    };
+    match roundtrip_resp(&chunk) {
+        Response::ShellChunk { bytes } => {
+            assert_eq!(bytes, b"out", "chunk bytes survive the wire")
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+
+    match roundtrip_resp(&Response::ShellExited) {
+        Response::ShellExited => {}
+        other => panic!("wrong variant: {other:?}"),
+    }
+}
+
 // ── Classification (M21 phase-06a) ────────────────────────────────────────
 
 #[test]
