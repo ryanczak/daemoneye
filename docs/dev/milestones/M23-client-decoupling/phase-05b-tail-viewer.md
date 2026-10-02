@@ -1,7 +1,7 @@
 # Phase 05b: tail-viewer — `/tail <sN>` (alias `/watch`) opens a live, scrollable view of a shell
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 05a (done)
 **Estimated diff:** ~180 lines of production code across 4 files; 5 new tests
 **Tags:** language=rust, kind=feature, size=m
@@ -835,3 +835,35 @@ kill: sending signal to 100079 failed: No such process
 **Commit:** 6ac60ccc0002d49016cca5c48e0b40583698177a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (103 turns).
+  Its own entry names it "Codex (headless run)"; `executor_health` reports
+  GLM. Fold C, ninth occurrence.
+- **Source diff vs the drafting dry run, tests included:** identical.
+- **Read-at-review checks:**
+  - frames are read with cancel-safe `Lines::next_line` (the only `read_line`
+    in `tail.rs` is the comment explaining why not);
+  - `/tail` is dispatched in `chat.rs`'s loop beside `/clear`, where
+    `stdin`/`sigwinch` are in scope;
+  - the alt screen is entered only after `open_tail` accepts the first frame.
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` were clean. Lib was
+  **2145/0/14** on three runs plus three more in the end-to-end re-run;
+  other targets unmoved. The end-to-end re-run matched the pasted capture
+  byte for byte. Mutations A–D, re-applied exactly as pinned, each went red.
+- **Executor note checked:** it reported mutation A "initially appeared to
+  still pass" the unfiltered `cargo test --lib`. That cannot be: A deletes
+  the `exited = true` the test asserts, and its own filtered run (and the
+  reviewer's) is red. I also checked whether `tail_loop`'s test races under
+  load. It does not: the loop and the delayed Esc share one current-thread
+  runtime, and the loop drains both buffered frames before it can yield.
+- **Nit carried to 05c:** `Ctrl-C` inside the tail view is ignored (only
+  `Esc`/`q`/`Ctrl-O` close it, as the spec pinned). Mapping `CtrlC` to Quit
+  is a one-line, user-facing improvement worth folding into 05c.
+- **Scope deviations:** none.
+- **Calibration:** none new. The test count came from running the exact
+  filter on the dry run, and it matched.
+
