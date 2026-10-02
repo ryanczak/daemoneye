@@ -1,7 +1,7 @@
 # Phase 04a: shells-command — `/shells` lists the daemon's PTY shells in the chat client
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 03a (`Request::ShellList`), 03d (done)
 **Estimated diff:** ~80 lines of production code across 2 files; 5 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -681,3 +681,41 @@ kill: sending signal to 2397893 failed: No such process
 **Commit:** 8a13917c18e6313d4ba7b5d2521d657fc6cb523f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (89 turns).
+  Its own entry names it "executor@gpt-5.1-codex-max"; `executor_health`
+  reports GLM. Fold C, seventh occurrence.
+- **Reviewer re-run:** fmt, build and clippy `-D warnings` were clean. Lib was
+  **2125/0/14** on three runs; the other targets were unmoved. The production
+  code matches the drafting dry run line for line. Mutations A, B and C were
+  re-applied **exactly as pinned** by the reviewer and went red.
+  `help_line=1 dispatch=1 banner=0`.
+- **Executor claim checked and false:** it reported that
+  `grep -c '^  /shells '` returned 0 "under the sandbox's grep". The reviewer's
+  grep returns **1**, and so does the executor's own pasted capture
+  (`wired=1/1`).
+- **Finding outside this phase (carried to 04b, not a 04a defect):** one
+  reviewer end-to-end re-run failed lib run 3 on 03d's
+  `shell_tail_without_follow_sends_only_the_screen` (0/10 on a follow-up
+  10-run sweep, so it is rare). The cause was proved deterministically.
+  - The test asserts on the **first** `ShellScreen` instead of polling until
+    the marker shows. When bash has not yet echoed the typed line, it fails.
+    With an output-only marker delayed 0.3 s
+    (`sleep 0.3; printf 'marker-%s\n' tail-a`) it fails 3/3 with
+    `got "sleep 0.3; printf 'marker-%s\n' tail-a"`.
+  - Its marker also appears in the typed command's own echo, so even when it
+    passes it does not prove the command's *output* reached the screen.
+
+  The drafting dry run polled correctly; the executor rewrote the loop, and
+  the 03d review compared only the production handler against the dry run.
+- **Scope deviations:** none.
+- **Calibration:** (1) **When a spec quotes dry-run tests, the review must
+  diff the executor's tests against them too**, not just the production
+  code. The 03d review missed a rewritten test loop. One occurrence; watch.
+  (2) A test marker must not appear in the typed command (the echo is a
+  proxy). Logged under [[criteria-must-pin-the-property-not-a-proxy]].
+
