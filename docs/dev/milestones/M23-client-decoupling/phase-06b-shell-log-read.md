@@ -1,7 +1,7 @@
 # Phase 06b: shell-log-read — the daemon returns one recording's output events and where each command begins
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 06a (done)
 **Estimated diff:** ~130 lines of production code across 5 files; 4 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -878,3 +878,42 @@ kill: sending signal to 1057344 failed: No such process
 **Commit:** 9247b7d9a06629be86fc35698e31266b350d552d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-03
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (200 turns).
+  Its entry says "Executor: Claude (this run)", so fold C has another
+  occurrence (11th).
+- **Source diff vs the drafting dry run, tests included:** identical except
+  one line pair. The `ShellLogRead` variant is
+  `#[rustfmt::skip] ShellLogRead { id: String },` where the dry run had it
+  exploded over three lines.
+- **The deviation is an architect spec defect, not an executor one.** My
+  wired criterion `grep -c 'ShellLogRead { id: String }' src/ipc.rs` → 1
+  could never be met by the dry-run tree. rustfmt splits that variant over
+  three lines because its neighbour `ShellLogList { … }` is multi-line. I
+  ran the criterion against the clean tree (0) but **never against the
+  dry-run tree**. The executor measured it (`wired=1/0` twice), found that
+  only `#[rustfmt::skip]` keeps the one-line form fmt-clean, used that, and
+  disclosed it, proposing the right fix: relax the grep and drop the
+  attribute. This is the earlier rule ("re-derive each pinned value against
+  the tree the Spec's tasks produce") broken again, for a grep this time
+  rather than a test count.
+- **Carried to 06c:** remove the `#[rustfmt::skip]` above `ShellLogRead`
+  (`cargo fmt` then explodes the variant), with a corrected criterion.
+  `#[rustfmt::skip]` silences the formatter, not a lint, so it does not
+  block approval, but it is cruft that exists only to satisfy a bad grep.
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean;
+  - lib was **2161/0/14** on five runs, and the other targets were unmoved;
+  - the end-to-end re-run printed `PASTE MATCH` against the pasted capture;
+  - mutations A–D, re-applied exactly as pinned, each went red, and the tree
+    restored clean.
+- **Scope deviations:** the one attribute, above, caused by the spec.
+- **Calibration:** **run the end-to-end block itself on the dry-run tree
+  before reverting.** That catches every pinned value (counts and greps) at
+  once. 05a's count and this grep are the same class: a value pinned without
+  being read from the tree it describes.
+
