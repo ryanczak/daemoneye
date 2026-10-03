@@ -1141,3 +1141,25 @@ here is in-process.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-03 (end-to-end verification)
+
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2186p-0f-14i
+phase_tests=9p-0f
+isolation=11 passed; 0 failed
+wired=1/1/1
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2186p-0f-14i
+phase_tests=9p-0f
+isolation=11 passed; 0 failed
+wired=1/1/1
+```
+
+PASTE MATCH

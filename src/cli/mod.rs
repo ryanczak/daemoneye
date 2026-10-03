@@ -1,5 +1,6 @@
 // CLI Module
 
+pub mod attach;
 pub mod commands;
 pub(crate) mod diff;
 pub mod input;

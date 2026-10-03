@@ -23,6 +23,16 @@ fn log_command(query: &str) -> Option<Option<&str>> {
     Some(words.next())
 }
 
+/// `/attach` and its shell id: `Some(Some(id))` for `/attach <id>`,
+/// `Some(None)` for a bare `/attach`, `None` for anything else.
+fn attach_command(query: &str) -> Option<Option<&str>> {
+    let mut words = query.split_whitespace();
+    if words.next() != Some("/attach") {
+        return None;
+    }
+    Some(words.next())
+}
+
 const HELP_TEXT: &str = "\
 Commands:
   /help      show this list           /exit      quit
@@ -34,6 +44,7 @@ Commands:
   /tail      live view of a shell     (alias /watch; f follow, esc to close)
   /logs      past shell recordings    [host] [--owner chat|ghost] [--since 2h]
   /log       open one recording       (/log <id>; n/p commands, space replays)
+  /attach    type into a live shell   (/attach <id>; ctrl-d detach, twice for EOF)
 
 Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
 
@@ -442,6 +453,33 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         if query == "/help" || query == "help" || query == "?" || query == "/?" {
             let _ = renderer.commit(help_text);
             let _ = renderer.commit("\n");
+            redraw(
+                &mut renderer,
+                input_state,
+                &session_id,
+                approval,
+                &model,
+                prompt_tokens,
+                context_window,
+                daemon_up,
+                cost_usd,
+                has_untracked,
+            );
+            continue;
+        }
+        if let Some(id) = attach_command(&query) {
+            match id {
+                Some(id) => {
+                    if let Err(e) =
+                        crate::cli::attach::run_attach(stdin, sigwinch, &mut renderer, id).await
+                    {
+                        let _ = renderer.commit(&format!("  ✗ attach {id}: {e}\n"));
+                    }
+                }
+                None => {
+                    let _ = renderer.commit("  usage: /attach <shell id>  (see /shells)\n");
+                }
+            }
             redraw(
                 &mut renderer,
                 input_state,
@@ -1015,7 +1053,7 @@ fn turn_budget_label(turn: usize, prompt_tokens: u32, context_window: u32) -> St
 
 #[cfg(test)]
 mod tests {
-    use super::{HELP_TEXT, log_command};
+    use super::{HELP_TEXT, attach_command, log_command};
 
     #[test]
     fn help_text_lists_shells() {
@@ -1037,6 +1075,30 @@ mod tests {
     #[test]
     fn help_text_lists_hosts() {
         assert!(HELP_TEXT.contains("/hosts"), "HELP_TEXT must list '/hosts'");
+    }
+
+    #[test]
+    fn attach_command_matches_attach_only() {
+        assert_eq!(
+            attach_command("/attach"),
+            Some(None),
+            "bare /attach asks for usage"
+        );
+        assert_eq!(attach_command("/attach s3"), Some(Some("s3")));
+        assert_eq!(attach_command("  /attach   s12 "), Some(Some("s12")));
+        for other in [
+            "/attachx s3",
+            "/attach-s3",
+            "attach s3",
+            "/agents",
+            "/tail s3",
+        ] {
+            assert_eq!(attach_command(other), None, "{other:?} is not /attach");
+        }
+        assert!(
+            HELP_TEXT.contains("/attach "),
+            "HELP_TEXT must list '/attach'"
+        );
     }
 
     #[test]

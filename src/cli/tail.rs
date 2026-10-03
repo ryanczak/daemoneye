@@ -45,6 +45,10 @@ pub struct TailModel {
     events: Vec<LogEvent>,
     /// The replay in progress, if any.
     pub replay: Option<Replay>,
+    /// True while the user is attached: keys go to the shell, not the view.
+    pub attached: bool,
+    /// While attached, true after one `Ctrl-d` while a second one is awaited.
+    pub ctrl_d_pending: bool,
 }
 
 /// A replay of a log at its recorded timing. `due[i]` is when event `i` is
@@ -110,7 +114,15 @@ impl TailModel {
             truncated: false,
             events: Vec::new(),
             replay: None,
+            attached: false,
+            ctrl_d_pending: false,
         }
+    }
+
+    /// Resize the grid, as the shell's own terminal is resized. Clamped to
+    /// one row and one column, as `new` does.
+    pub fn resize(&mut self, rows: u16, cols: u16) {
+        self.parser.screen_mut().set_size(rows.max(1), cols.max(1));
     }
 
     /// The model for a recording: every output event fed through a grid of
@@ -802,6 +814,24 @@ where
     Ok(())
 }
 
+/// The status line while attached: how to leave, how to send EOF, and
+/// whether a first `Ctrl-d` is waiting for a second.
+fn attached_status(model: &TailModel, rows: u16, cols: u16) -> String {
+    if model.exited {
+        format!("attached {} · exited · any key returns to chat", model.id)
+    } else if model.ctrl_d_pending {
+        format!(
+            "attached {} · ctrl-d again sends EOF to the shell, or wait to detach",
+            model.id
+        )
+    } else {
+        format!(
+            "attached {} · {rows}×{cols} · ctrl-d detach · ctrl-d ctrl-d EOF",
+            model.id
+        )
+    }
+}
+
 /// The status line while a replay is on screen: how far it has got of how
 /// long, and whether it is paused.
 fn replay_status(model: &TailModel, rows: u16, cols: u16) -> String {
@@ -874,7 +904,14 @@ pub fn render_tail(f: &mut ratatui::Frame, model: &TailModel) {
     } else {
         format!("paused · {} lines back", model.offset())
     };
+    if model.attached && !model.exited && !screen.hide_cursor() {
+        let (row, col) = screen.cursor_position();
+        if row < body_height && col < area.width {
+            f.set_cursor_position((area.x + col, area.y + row));
+        }
+    }
     let status = match (&model.search, &model.note) {
+        _ if model.attached => attached_status(model, rows, cols),
         _ if model.replay.is_some() => replay_status(model, rows, cols),
         _ if model.log => {
             let at = match &model.note {
