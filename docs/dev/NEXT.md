@@ -1,19 +1,18 @@
 # NEXT
 
-**Active phase:** **M23 phase-06a — shell-log-list**, drafted 2026-10-02,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-06a`.
+**Active phase:** **M23 phase-06b — shell-log-read**, drafted 2026-10-03,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-06b`.
 
-**What it does.** `/logs [host] [--owner chat|ghost|adopted] [--since 2h]`
-lists past shell recordings, newest first. To filter on owner and host, the
-command index now records both. They are written with the first command, and
-older indexes still load. Row 06 is split: 06a lists, 06b opens a recording
-with `n`/`p` command navigation, and 06c replays it.
+**What it does.** The daemon answers `ShellLogRead{id}` with one recording:
+its size, every output event with its time, and where each indexed command
+begins. A command begins at the first output after its typed line, so the
+prompt and the command are in view. This is the data the `/log` viewer
+(06c, `n`/`p`) and replay (06d) consume. Daemon side only, 5 files, 4 new
+tests; lib 2157 → 2161.
 
-**Measured at drafting.** Nothing on disk recorded a finished shell's owner
-or host. There is no `sched` owner kind (scheduled ghosts are ghost-owned),
-so `--owner sched` is refused. `CommandRecord.started/ended` are byte
-offsets, not times. Dry-run green: filter printed 9, lib 2150 → 2157 ×3,
-mutations A–F red. The spec quotes the per-file dry-run diffs, which were
-verified to reproduce the dry run exactly.
+**Measured at drafting.** Probed on three real recordings: every mark landed
+on the typed command's echo. One mutant was unobservable and was dropped.
+Every pinned mutant was checked clippy-clean (the 06a lesson). The spec's
+per-file diffs were verified to reproduce the dry run.
 
-**After 06a:** `/rexymcp:architect next` drafts 06b (log-viewer).
+**After 06b:** `/rexymcp:architect next` drafts 06c (log-viewer).
