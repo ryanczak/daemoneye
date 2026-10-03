@@ -191,6 +191,9 @@ pub async fn handle_client(
             shells::handle_shell_log_list(&mut tx, since, host.as_deref(), owner.as_deref(), limit)
                 .await?;
         }
+        Request::ShellLogRead { id } => {
+            shells::handle_shell_log_read(&mut tx, &id).await?;
+        }
         Request::ShellTail { id, follow } => {
             shells::handle_shell_tail(&mut rx, &mut tx, crate::shell::registry(), &id, follow)
                 .await?;

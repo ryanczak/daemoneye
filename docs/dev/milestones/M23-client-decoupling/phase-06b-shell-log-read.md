@@ -1,7 +1,7 @@
 # Phase 06b: shell-log-read — the daemon returns one recording's output events and where each command begins
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 06a (done)
 **Estimated diff:** ~130 lines of production code across 5 files; 4 new tests
 **Tags:** language=rust, kind=feature, size=s
@@ -696,3 +696,46 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-02 20:45 (started)
+
+**Executor:** Claude (this run).
+
+Status flipped `todo → in-progress` (README row too). All five files edited to
+the spec's diffs; `cargo build --tests` clean; the phase filter
+`cargo test --lib -- shells::tests::shell_log_read` prints **4 passed**;
+`cargo test --lib` → **2161 passed / 0 failed / 14 ignored** on three
+consecutive runs; mutations A–D each went red and were restored.
+
+### Update — 2026-10-02 20:55 (end-to-end verification)
+
+Captured with the phase doc's § End-to-end verification block, redirected
+verbatim to `/tmp/e2e-m23-06b.txt`; its contents follow, copied by tool.
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2161p-0f-14i
+phase_tests=4p-0f
+isolation=11 passed; 0 failed
+wired=1/1
+```
+
+PASTE MATCH
+
+Mutations, each applied with the patch tool, run once, then restored
+(`git diff --stat` confirmed the pre-mutation state after each):
+
+- **A** — `starts[k] = Some(typed_at[k].unwrap_or(events.len()))` →
+  `Some(events.len())`: `shell_log_read_returns_events_and_where_each_command_begins`
+  FAILED (observed red; marks move to the marker lines 2 and 5, as pinned).
+- **B** — deleted `commands.retain(|c| c.event >= dropped);`:
+  `shell_log_read_drops_the_oldest_events_past_the_cap` FAILED (observed red;
+  the shift underflows, as pinned).
+- **C** — deleted `events.drain(..dropped);`:
+  `shell_log_read_drops_the_oldest_events_past_the_cap` FAILED (observed red;
+  the old events stay, as pinned).
+- **D** — `if code == "o" { events.push(..); }` → bare `events.push(..);`:
+  `shell_log_read_returns_events_and_where_each_command_begins` FAILED
+  (observed red; input events leak into the output, as pinned).

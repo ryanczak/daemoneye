@@ -112,6 +112,24 @@ pub struct ShellLogInfo {
     pub first_command: Option<String>,
 }
 
+/// One output event of a shell recording: its time since the recording
+/// started, in seconds, and the text the shell wrote (M23).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct LogEvent {
+    pub t: f64,
+    pub data: String,
+}
+
+/// One recorded command in a shell recording (M23): `event` is the index in
+/// `ShellLog.events` where the command begins — the output event right after
+/// it was typed, so the prompt and the command line are in view.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct LogCommand {
+    pub event: usize,
+    pub command: String,
+    pub exit_code: i32,
+}
+
 /// Configuration for autonomous Ghost Shells triggered by a runbook.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GhostConfig {
@@ -248,6 +266,9 @@ pub enum Request {
         owner: Option<String>,
         limit: Option<usize>,
     },
+    /// One shell recording by its log id (`s3-1788470000`), for `/log` (M23).
+    #[rustfmt::skip]
+    ShellLogRead { id: String },
     /// Ask the daemon to shut down cleanly.
     Shutdown,
     /// Send an ask request with the invoking tmux pane (if in tmux).
@@ -548,6 +569,17 @@ pub enum Response {
     ShellLogList {
         logs: Vec<ShellLogInfo>,
         total: usize,
+    },
+    /// The recording `ShellLogRead` named: the terminal size it was recorded
+    /// at, its output events in order, and its indexed commands. `truncated`
+    /// is true when the oldest events were dropped to fit the size cap.
+    ShellLog {
+        id: String,
+        rows: u16,
+        cols: u16,
+        events: Vec<LogEvent>,
+        commands: Vec<LogCommand>,
+        truncated: bool,
     },
     /// The first frame of a `ShellTail`: escape codes that redraw the shell's
     /// current screen, and the shell's terminal size, which those codes assume.
@@ -867,6 +899,7 @@ impl Response {
             Response::Ok => "Ok",
             Response::ShellList { .. } => "ShellList",
             Response::ShellLogList { .. } => "ShellLogList",
+            Response::ShellLog { .. } => "ShellLog",
             Response::ShellScreen { .. } => "ShellScreen",
             Response::ShellChunk { .. } => "ShellChunk",
             Response::ShellExited => "ShellExited",

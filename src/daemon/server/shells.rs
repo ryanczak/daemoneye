@@ -6,7 +6,7 @@
 use anyhow::Result;
 
 use crate::daemon::utils::send_response_split;
-use crate::ipc::{Response, ShellInfo, ShellLogInfo};
+use crate::ipc::{LogCommand, LogEvent, Response, ShellInfo, ShellLogInfo};
 use crate::shell::{ShellId, ShellRegistry, meta_path_for, with_shells};
 
 /// The socket round-trip budget for one relay call. The ack is the write, not
@@ -208,6 +208,132 @@ fn log_matches(
         }
     }
     true
+}
+
+/// The most output text one `ShellLogRead` sends. A larger recording loses
+/// its oldest events, and the reply says so.
+const LOG_READ_CAP: usize = 4 << 20;
+
+pub(super) async fn handle_shell_log_read<W>(tx: &mut W, id: &str) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let response = match read_shell_log(&crate::config::shell_logs_dir(), id, LOG_READ_CAP) {
+        Ok(log) => Response::ShellLog {
+            id: id.to_string(),
+            rows: log.rows,
+            cols: log.cols,
+            events: log.events,
+            commands: log.commands,
+            truncated: log.truncated,
+        },
+        Err(e) => Response::Error(e),
+    };
+    send_response_split(tx, response).await?;
+    Ok(())
+}
+
+/// A recording as `ShellLogRead` returns it.
+struct ShellLogData {
+    rows: u16,
+    cols: u16,
+    events: Vec<LogEvent>,
+    commands: Vec<LogCommand>,
+    truncated: bool,
+}
+
+/// The cast header fields the viewer needs.
+#[derive(serde::Deserialize)]
+struct CastHeader {
+    width: u16,
+    height: u16,
+}
+
+/// Read recording `id` from `dir`: its `"o"` events in order and, from its
+/// index, where each command begins. A command begins at the first output
+/// event after the last `"i"` event before its `first_byte` (the typed
+/// command line), or at its `first_byte` when nothing was typed. A line that
+/// does not parse — the unfinished last line of a live recording — is
+/// skipped. Past `cap` bytes of output the oldest events are dropped, and
+/// commands that began in them with them.
+fn read_shell_log(dir: &std::path::Path, id: &str, cap: usize) -> Result<ShellLogData, String> {
+    if crate::shell::parse_cast_name(&format!("{id}.cast")).is_none() {
+        return Err(format!(
+            "{id:?} is not a log id: a log id is a shell id plus its start time, \
+             like s3-1788470000 (see /logs)"
+        ));
+    }
+    let cast = dir.join(format!("{id}.cast"));
+    let text = std::fs::read_to_string(&cast)
+        .map_err(|e| format!("no recording named {id} ({e}); /logs lists them"))?;
+    let mut lines = text.split_inclusive('\n');
+    let header: CastHeader = lines
+        .next()
+        .and_then(|l| serde_json::from_str(l).ok())
+        .ok_or_else(|| format!("recording {id} has no readable header"))?;
+    let records = crate::shell::MetaIndex::load(&meta_path_for(&cast))
+        .map(|m| m.commands)
+        .unwrap_or_default();
+
+    let mut events: Vec<LogEvent> = Vec::new();
+    // For each record, the output-event count at the last "i" line in its
+    // window, if one was typed there.
+    let mut typed_at: Vec<Option<usize>> = vec![None; records.len()];
+    let mut starts: Vec<Option<usize>> = vec![None; records.len()];
+    let mut offset = text.find('\n').map_or(text.len(), |n| n + 1) as u64;
+    for line in lines {
+        let line_start = offset;
+        offset += line.len() as u64;
+        let Ok((t, code, data)) = serde_json::from_str::<(f64, String, String)>(line) else {
+            continue;
+        };
+        for (k, record) in records.iter().enumerate() {
+            let window_start = if k == 0 { 0 } else { records[k - 1].end_byte };
+            if starts[k].is_none() && line_start >= record.first_byte {
+                starts[k] = Some(typed_at[k].unwrap_or(events.len()));
+            }
+            if code == "i" && line_start >= window_start && line_start < record.first_byte {
+                typed_at[k] = Some(events.len());
+            }
+        }
+        if code == "o" {
+            events.push(LogEvent { t, data });
+        }
+    }
+
+    let mut commands: Vec<LogCommand> = records
+        .iter()
+        .zip(&starts)
+        .filter_map(|(record, start)| {
+            start.map(|event| LogCommand {
+                event,
+                command: record.command.clone(),
+                exit_code: record.exit_code,
+            })
+        })
+        .collect();
+
+    let total: usize = events.iter().map(|e| e.data.len()).sum();
+    let mut dropped = 0;
+    let mut kept = total;
+    while kept > cap && dropped < events.len() {
+        kept -= events[dropped].data.len();
+        dropped += 1;
+    }
+    if dropped > 0 {
+        events.drain(..dropped);
+        commands.retain(|c| c.event >= dropped);
+        for c in &mut commands {
+            c.event -= dropped;
+        }
+    }
+    Ok(ShellLogData {
+        rows: header.height,
+        cols: header.width,
+        events,
+        commands,
+        truncated: dropped > 0,
+    })
 }
 
 /// The shell host's answers, one JSON frame per line.
@@ -461,6 +587,177 @@ mod tests {
             panic!("expected a ShellLogList response, got {tx:?}");
         };
         (logs.iter().map(|l| l.id.clone()).collect(), total, logs)
+    }
+
+    /// A recording written through the real `CastWriter`: a prompt, two
+    /// typed commands with their echo and output, and (with `indexed`) the
+    /// index naming both commands at their output lines. Returns the dir.
+    fn two_command_recording(id: &str, indexed: bool) -> std::path::PathBuf {
+        use crate::shell::{CastWriter, CommandRecord, MetaIndex};
+        use std::time::Duration;
+        let dir = crate::config::shell_logs_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let cast = dir.join(format!("{id}.cast"));
+        let at = Duration::from_secs_f64;
+        let mut w = CastWriter::create(&cast, 100, 30, 17).unwrap();
+        w.write_output(at(0.1), b"$ ").unwrap(); // event 0
+        w.write_input(at(1.0), b"echo one\n").unwrap();
+        w.write_output(at(1.1), b"echo one\r\n").unwrap(); // event 1
+        let first0 = w.byte_len();
+        w.write_output(at(1.2), b"one\r\n").unwrap(); // event 2
+        let end0 = w.byte_len();
+        w.write_output(at(1.3), b"$ ").unwrap(); // event 3
+        w.write_input(at(2.0), b"echo two\n").unwrap();
+        w.write_output(at(2.1), b"echo two\r\n").unwrap(); // event 4
+        let first1 = w.byte_len();
+        w.write_output(at(2.2), b"two\r\n").unwrap(); // event 5
+        let end1 = w.byte_len();
+        drop(w);
+        if indexed {
+            let record = |command: &str, exit_code, first_byte, end_byte| CommandRecord {
+                index: 0,
+                command: command.to_string(),
+                started: 0.0,
+                ended: 0.0,
+                exit_code,
+                first_byte,
+                end_byte,
+            };
+            let meta = MetaIndex {
+                shell_id: "s4".into(),
+                cast: format!("{id}.cast"),
+                started_unix: 17,
+                commands: vec![
+                    record("echo one", 0, first0, end0),
+                    record("echo two", 3, first1, end1),
+                ],
+                owner: None,
+                host: None,
+            };
+            meta.save(&meta_path_for(&cast)).unwrap();
+        }
+        dir
+    }
+
+    #[tokio::test]
+    async fn shell_log_read_returns_events_and_where_each_command_begins() {
+        let (_guard, _dir) = shell_test_home();
+        two_command_recording("s4-17", true);
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_log_read(&mut tx, "s4-17").await.unwrap();
+        let Response::ShellLog {
+            id,
+            rows,
+            cols,
+            events,
+            commands,
+            truncated,
+        } = parse_response(&tx)
+        else {
+            panic!("expected a ShellLog response, got {tx:?}");
+        };
+        assert_eq!(
+            (id.as_str(), rows, cols),
+            ("s4-17", 30, 100),
+            "the header's size"
+        );
+        let data: Vec<&str> = events.iter().map(|e| e.data.as_str()).collect();
+        assert_eq!(
+            data,
+            [
+                "$ ",
+                "echo one\r\n",
+                "one\r\n",
+                "$ ",
+                "echo two\r\n",
+                "two\r\n"
+            ],
+            "every output event in order; input events are not output"
+        );
+        assert_eq!(events[4].t, 2.1, "each event keeps its time");
+        let marks: Vec<(usize, &str, i32)> = commands
+            .iter()
+            .map(|c| (c.event, c.command.as_str(), c.exit_code))
+            .collect();
+        assert_eq!(
+            marks,
+            [(1, "echo one", 0), (4, "echo two", 3)],
+            "a command begins at the output after it was typed"
+        );
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn shell_log_read_marks_at_the_output_when_nothing_was_typed() {
+        let (_guard, _dir) = shell_test_home();
+        let dir = two_command_recording("s4-17", true);
+        let cast = dir.join("s4-17.cast");
+        let text = std::fs::read_to_string(&cast).unwrap();
+        let no_input: String = text
+            .split_inclusive('\n')
+            .map(|l| if l.contains(", \"i\", ") { " \n" } else { l })
+            .collect();
+        // Blanking the "i" lines moves no other line, but re-derive the
+        // offsets from the new text anyway rather than trust that.
+        std::fs::write(&cast, &no_input).unwrap();
+        let mut meta = crate::shell::MetaIndex::load(&meta_path_for(&cast)).unwrap();
+        let line_start = |needle: &str| no_input.find(needle).unwrap() as u64;
+        meta.commands[0].first_byte = line_start("[1.2,");
+        meta.commands[0].end_byte = line_start("[1.3,");
+        meta.commands[1].first_byte = line_start("[2.2,");
+        meta.commands[1].end_byte = no_input.len() as u64;
+        meta.save(&meta_path_for(&cast)).unwrap();
+        let log = read_shell_log(&dir, "s4-17", LOG_READ_CAP).unwrap();
+        let marks: Vec<usize> = log.commands.iter().map(|c| c.event).collect();
+        assert_eq!(
+            marks,
+            [2, 5],
+            "with no typed line, the command's own output"
+        );
+    }
+
+    #[test]
+    fn shell_log_read_refuses_what_it_cannot_read() {
+        let (_guard, _dir) = shell_test_home();
+        let dir = two_command_recording("s4-17", false);
+        let bare = read_shell_log(&dir, "s4", LOG_READ_CAP).err().unwrap();
+        assert!(bare.contains("not a log id"), "{bare}");
+        let missing = read_shell_log(&dir, "s9-99", LOG_READ_CAP).err().unwrap();
+        assert!(missing.contains("no recording named s9-99"), "{missing}");
+        let unindexed = read_shell_log(&dir, "s4-17", LOG_READ_CAP).unwrap();
+        assert_eq!(
+            unindexed.events.len(),
+            6,
+            "an unindexed recording still reads"
+        );
+        assert!(unindexed.commands.is_empty(), "but has no command marks");
+        let cast = dir.join("s4-17.cast");
+        let mut text = std::fs::read_to_string(&cast).unwrap();
+        text.push_str("[3.0, \"o\", \"unfinish");
+        std::fs::write(&cast, text).unwrap();
+        let live = read_shell_log(&dir, "s4-17", LOG_READ_CAP).unwrap();
+        assert_eq!(live.events.len(), 6, "a partial last line is skipped");
+    }
+
+    #[test]
+    fn shell_log_read_drops_the_oldest_events_past_the_cap() {
+        let (_guard, _dir) = shell_test_home();
+        let dir = two_command_recording("s4-17", true);
+        // The last three events ("$ ", "echo two\r\n", "two\r\n") are 17 bytes.
+        let log = read_shell_log(&dir, "s4-17", 17).unwrap();
+        assert!(log.truncated);
+        let data: Vec<&str> = log.events.iter().map(|e| e.data.as_str()).collect();
+        assert_eq!(data, ["$ ", "echo two\r\n", "two\r\n"]);
+        let marks: Vec<(usize, &str)> = log
+            .commands
+            .iter()
+            .map(|c| (c.event, c.command.as_str()))
+            .collect();
+        assert_eq!(
+            marks,
+            [(1, "echo two")],
+            "a dropped command goes; the rest shift"
+        );
     }
 
     #[tokio::test]
