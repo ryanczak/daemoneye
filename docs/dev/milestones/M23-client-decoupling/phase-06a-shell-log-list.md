@@ -1,7 +1,7 @@
 # Phase 06a: shell-log-list — `/logs` lists past shell recordings, filtered by host, owner and age
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 05c (done)
 **Estimated diff:** ~250 lines of production code across 10 files; 7 new tests, 1 updated
 **Tags:** language=rust, kind=feature, size=m
@@ -1394,3 +1394,35 @@ kill: sending signal to 704680 failed: No such process
 **Commit:** 6fe2fc1e9cd90593d26b66f27e839d951512585e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-03
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (178 turns).
+  Its started entry says "Executor: claude", while `executor_health`
+  reports GLM. That is fold C's tenth occurrence.
+- **Source diff vs the drafting dry run, tests included:** identical, line
+  for line, across all ten files.
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean;
+  - every new `unwrap`/`panic!` is in a test;
+  - lib was **2157/0/14** on five runs (three in the end-to-end re-run, two
+    full `cargo test` runs), and the other targets were unmoved;
+  - the end-to-end re-run printed `PASTE MATCH` against the pasted capture;
+  - mutations A–F, re-applied exactly as pinned, each went red, and the tree
+    restored clean.
+- **Scope deviations:** none.
+- **Calibration (data, held):**
+  - **A mutation that leaves a binding unused trips the executor's
+    verifier.** Mutations C and E each leave a variable (`limit`, `owner`)
+    unused. My harness only runs the test, so I measured them red without
+    seeing that; the executor's build verifier rejected them, and it
+    temporarily renamed the bindings to `_limit`/`_owner` to run them,
+    then restored them. A spec'd mutation should compile warning-free, or
+    the spec should say how to keep it compiling. One occurrence.
+  - **Spec shape vs turns.** Per-file diffs across ten files took 178 turns;
+    05c's single whole-file spec took 53. Both landed first try with source
+    identical to the dry run. Held for the M23 close alongside 05c's data
+    point.
+
