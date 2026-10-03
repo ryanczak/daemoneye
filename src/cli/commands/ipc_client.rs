@@ -64,8 +64,9 @@ pub async fn recv(rx: &mut BufReader<OwnedReadHalf>) -> Result<Response> {
 ///
 /// Used by the synchronous slash commands (`/refresh`, `/model`, `/pane`,
 /// `/limits`, `/session …`) which each map to one request/response round-trip
-/// — unlike `Request::Ask`, which streams many responses on one connection.
-pub(super) async fn request_once(req: Request) -> Result<Response> {
+/// — unlike `Request::Ask`, which streams many responses on one connection —
+/// and by `cli::tail`'s `/log` viewer, hence `pub(crate)`.
+pub(crate) async fn request_once(req: Request) -> Result<Response> {
     let stream = connect().await?;
     let (rx, mut tx) = stream.into_split();
     let mut rx = BufReader::new(rx);

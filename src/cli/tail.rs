@@ -3,11 +3,17 @@
 //! Pure state, no terminal I/O, so every rule here is tested without a
 //! daemon or a screen.
 
-use crate::ipc::Response;
+use crate::ipc::{LogCommand, LogEvent, Response};
 
 /// Lines of history the client keeps for scrolling back. The shell's own
 /// history before the tail started is not sent; this holds what arrives.
 pub const TAIL_SCROLLBACK: usize = 5_000;
+
+/// The most bytes fed to the grid between two scroll counts while a log is
+/// loaded. The count reads how far the grid moved a parked view, and the grid
+/// stops moving it at `TAIL_SCROLLBACK`; ordinary output scrolls at most one
+/// line per newline byte, so a piece this size stays far inside that limit.
+const LOG_FEED_PIECE: usize = 1024;
 
 /// One tailed shell. `follow` keeps the view pinned to the newest output;
 /// scrolling up pauses it, and the view then stays put while output arrives.
@@ -20,6 +26,23 @@ pub struct TailModel {
     pub search: Option<TailSearch>,
     /// A one-off message for the status line, cleared by the next key.
     pub note: Option<String>,
+    /// True for a `/log` view of a recording rather than a live `/tail`.
+    pub log: bool,
+    /// For a log, where each recorded command begins, oldest first.
+    pub marks: Vec<LogMark>,
+    /// The mark `n`/`p` last moved to.
+    pub at_mark: Option<usize>,
+    /// For a log, true when the daemon dropped the oldest output to fit.
+    pub truncated: bool,
+}
+
+/// Where one recorded command begins in a log view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogMark {
+    /// Its first line, oldest line held = 0 (the same numbering as search).
+    pub line: usize,
+    pub command: String,
+    pub exit_code: i32,
 }
 
 /// A `/` search in the tail view. `typing` is true while the query is being
@@ -44,7 +67,122 @@ impl TailModel {
             exited: false,
             search: None,
             note: None,
+            log: false,
+            marks: Vec::new(),
+            at_mark: None,
+            truncated: false,
         }
+    }
+
+    /// The model for a recording: every output event fed through a grid of
+    /// the recorded size, each command's mark placed on the line it began on,
+    /// and the view opened at the oldest line. A mark whose line has scrolled
+    /// out of the kept history is dropped.
+    ///
+    /// vt100 numbers nothing, so the lines are counted while feeding: with the
+    /// view parked one line back, the grid moves the view back by one for every
+    /// line that scrolls off the screen.
+    pub fn from_log(
+        id: &str,
+        rows: u16,
+        cols: u16,
+        events: &[LogEvent],
+        commands: &[LogCommand],
+        truncated: bool,
+    ) -> Self {
+        let mut model = TailModel::new(id, rows, cols, b"");
+        model.follow = false;
+        model.exited = true;
+        model.log = true;
+        model.truncated = truncated;
+        // Lines that have scrolled off the top of the screen so far.
+        let mut scrolled = 0usize;
+        let mut starts: Vec<usize> = Vec::with_capacity(commands.len());
+        let mut next = 0;
+        for (i, event) in events.iter().enumerate() {
+            while next < commands.len() && commands[next].event == i {
+                starts.push(scrolled + model.parser.screen().cursor_position().0 as usize);
+                next += 1;
+            }
+            for piece in event.data.as_bytes().chunks(LOG_FEED_PIECE) {
+                scrolled += model.feed_counting(piece);
+            }
+        }
+        let first_held = scrolled.saturating_sub(model.history_len());
+        model.marks = commands
+            .iter()
+            .zip(starts)
+            .filter_map(|(c, start)| {
+                start.checked_sub(first_held).map(|line| LogMark {
+                    line,
+                    command: c.command.clone(),
+                    exit_code: c.exit_code,
+                })
+            })
+            .collect();
+        model.parser.screen_mut().set_scrollback(usize::MAX);
+        model
+    }
+
+    /// Lines of history behind the screen. Leaves the view where it was.
+    fn history_len(&mut self) -> usize {
+        let keep = self.offset();
+        self.parser.screen_mut().set_scrollback(usize::MAX);
+        let held = self.offset();
+        self.parser.screen_mut().set_scrollback(keep);
+        held
+    }
+
+    /// Feed `bytes` and return how many lines scrolled off the screen. With
+    /// history to stand in, the view is parked one line back, and the grid
+    /// moves it one further back per scrolled line; with no history yet,
+    /// every new history line is a scrolled one. Leaves the view at 0.
+    fn feed_counting(&mut self, bytes: &[u8]) -> usize {
+        let had = self.history_len();
+        self.parser.screen_mut().set_scrollback(1);
+        self.parser.process(bytes);
+        let moved_back = self.offset();
+        let now = self.history_len();
+        self.parser.screen_mut().set_scrollback(0);
+        if had == 0 { now } else { moved_back - 1 }
+    }
+
+    /// Move to the next (`forward`) or previous recorded command, bring its
+    /// first line to the top of the view, and name it in the status line.
+    fn step_mark(&mut self, forward: bool) {
+        if self.marks.is_empty() {
+            self.note = Some("no commands recorded in this log".to_string());
+            return;
+        }
+        let to = match (self.at_mark, forward) {
+            (None, true) => Some(0),
+            (None, false) => None,
+            (Some(at), true) => (at + 1 < self.marks.len()).then_some(at + 1),
+            (Some(at), false) => at.checked_sub(1),
+        };
+        let Some(to) = to else {
+            self.note = Some(
+                if forward {
+                    "no next command"
+                } else {
+                    "no previous command"
+                }
+                .to_string(),
+            );
+            return;
+        };
+        let rows = self.parser.screen().size().0 as usize;
+        let total = self.history_len() + rows;
+        self.show_line(self.marks[to].line, total);
+        self.at_mark = Some(to);
+        let mark = &self.marks[to];
+        let command = mark.command.lines().next().unwrap_or("");
+        self.note = Some(format!(
+            "command {}/{} · exit {} · {command}",
+            to + 1,
+            self.marks.len(),
+            mark.exit_code
+        ));
     }
 
     /// Apply one later frame of the stream. Returns `true` when the view may
@@ -207,6 +345,8 @@ pub enum TailAction {
     SearchCancel,
     MatchOlder,
     MatchNewer,
+    NextCommand,
+    PrevCommand,
     Quit,
     Ignore,
 }
@@ -241,6 +381,19 @@ pub fn tail_key_action(key: &crate::cli::input::Key, typing: bool) -> TailAction
         Key::Char('f') => TailAction::ToggleFollow,
         Key::Char('\x1b') | Key::Char('q') | Key::CtrlO => TailAction::Quit,
         _ => TailAction::Ignore,
+    }
+}
+
+/// Decode one key for a `/log` view: `n` and `p` move between recorded
+/// commands. There is no live output to follow and no search, so `f`, `/` and
+/// `N` do nothing; every other key means what it means in `/tail`.
+pub fn log_key_action(key: &crate::cli::input::Key) -> TailAction {
+    use crate::cli::input::Key;
+    match key {
+        Key::Char('n') => TailAction::NextCommand,
+        Key::Char('p') => TailAction::PrevCommand,
+        Key::Char('f') | Key::Char('/') | Key::Char('N') => TailAction::Ignore,
+        other => tail_key_action(other, false),
     }
 }
 
@@ -300,6 +453,8 @@ impl TailModel {
                     self.note = Some("no newer match".to_string());
                 }
             }
+            TailAction::NextCommand => self.step_mark(true),
+            TailAction::PrevCommand => self.step_mark(false),
             TailAction::Quit => return false,
             TailAction::Ignore => {}
         }
@@ -316,6 +471,75 @@ pub fn open_tail(id: &str, first: Response) -> Result<TailModel, String> {
         Response::Error(msg) => Err(msg),
         other => Err(format!("unexpected reply to ShellTail: {}", other.kind())),
     }
+}
+
+/// The model for `/log <id>` from the daemon's reply to `ShellLogRead`, or
+/// the message to print when there is none.
+pub fn open_log(id: &str, reply: Response) -> Result<TailModel, String> {
+    match reply {
+        Response::ShellLog {
+            rows,
+            cols,
+            events,
+            commands,
+            truncated,
+            ..
+        } => Ok(TailModel::from_log(
+            id, rows, cols, &events, &commands, truncated,
+        )),
+        Response::Error(msg) => Err(msg),
+        other => Err(format!(
+            "unexpected reply to ShellLogRead: {}",
+            other.kind()
+        )),
+    }
+}
+
+/// Run `/log <id>`: read the recording from the daemon, and only if it is
+/// there, show it in the alternate screen until the user closes the view.
+/// Nothing streams into a log, so the viewer runs with no frame source.
+pub async fn run_log_viewer(
+    stdin: &crate::cli::input::AsyncStdin,
+    sigwinch: &mut tokio::signal::unix::Signal,
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    id: &str,
+) -> anyhow::Result<()> {
+    use crossterm::cursor::Show;
+    use crossterm::execute;
+    use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+    use tokio::io::AsyncBufReadExt;
+
+    let reply = crate::cli::commands::ipc_client::request_once(crate::ipc::Request::ShellLogRead {
+        id: id.to_string(),
+    })
+    .await?;
+    let mut model = open_log(id, reply).map_err(|msg| anyhow::anyhow!(msg))?;
+
+    execute!(std::io::stdout(), EnterAlternateScreen)?;
+    let _guard = crate::cli::viewer::AltScreenGuard::new(|| {
+        let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(std::io::stdout(), Show);
+        renderer.reanchor();
+    });
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))?;
+    let mut keys = Box::pin(futures_util::stream::unfold(stdin, |stdin| async move {
+        crate::cli::input::read_key(stdin)
+            .await
+            .map(|key| (key, stdin))
+    }));
+    let mut resizes = Box::pin(futures_util::stream::unfold(sigwinch, |sig| async move {
+        sig.recv().await.map(|()| ((), sig))
+    }));
+    let mut frames = tokio::io::BufReader::new(tokio::io::empty()).lines();
+    tail_loop(
+        &mut terminal,
+        &mut model,
+        &mut frames,
+        &mut keys,
+        &mut resizes,
+    )
+    .await
 }
 
 /// Run `/tail <id>`: open a `ShellTail` on the daemon, and only if it answers
@@ -423,7 +647,12 @@ where
                 let Some(key) = key else { break };
                 let page = terminal.size()?.height.saturating_sub(1) as usize;
                 model.note = None;
-                if !model.act(tail_key_action(&key, model.typing()), page) {
+                let action = if model.log {
+                    log_key_action(&key)
+                } else {
+                    tail_key_action(&key, model.typing())
+                };
+                if !model.act(action, page) {
                     break;
                 }
             }
@@ -487,6 +716,21 @@ pub fn render_tail(f: &mut ratatui::Frame, model: &TailModel) {
         format!("paused · {} lines back", model.offset())
     };
     let status = match (&model.search, &model.note) {
+        _ if model.log => {
+            let at = match &model.note {
+                Some(note) => note.clone(),
+                None => format!("{} commands", model.marks.len()),
+            };
+            let cut = if model.truncated {
+                " · oldest output dropped"
+            } else {
+                ""
+            };
+            format!(
+                "log {} · {rows}×{cols} · {at}{cut} · n/p commands · ↑↓ PgUp/PgDn · esc to close",
+                model.id
+            )
+        }
         (Some(s), _) if s.typing => format!("/{}▏ · enter to search · esc to cancel", s.query),
         (_, Some(note)) => format!(
             "tail {} · {rows}×{cols} · {mode} · {note} · n/N older/newer · esc to close",
@@ -873,6 +1117,211 @@ mod tests {
             .flat_map(|c| c.symbol().chars())
             .collect();
         assert!(bottom.starts_with("tail s3"), "{bottom:?}");
+    }
+
+    fn ev(data: &str) -> crate::ipc::LogEvent {
+        crate::ipc::LogEvent {
+            t: 0.0,
+            data: data.to_string(),
+        }
+    }
+
+    fn cmd(event: usize, command: &str, exit_code: i32) -> crate::ipc::LogCommand {
+        crate::ipc::LogCommand {
+            event,
+            command: command.to_string(),
+            exit_code,
+        }
+    }
+
+    /// `n` commands, each its typed line then `out` lines of output: the
+    /// events and the commands marked at each typed line.
+    fn session(n: usize, out: usize) -> (Vec<crate::ipc::LogEvent>, Vec<crate::ipc::LogCommand>) {
+        let mut events = Vec::new();
+        let mut commands = Vec::new();
+        for k in 0..n {
+            commands.push(cmd(events.len(), &format!("cmd-{k}"), (k % 3) as i32));
+            events.push(ev(&format!("$ cmd-{k}\r\n")));
+            events.push(ev(&(0..out)
+                .map(|j| format!("out {k}.{j}\r\n"))
+                .collect::<String>()));
+        }
+        (events, commands)
+    }
+
+    /// Every kept mark is on the line that shows its command.
+    fn assert_marks_on_their_lines(m: &mut TailModel) {
+        let marks = m.marks.clone();
+        let all = m.all_lines();
+        for mark in &marks {
+            assert!(
+                all[mark.line].starts_with(&format!("$ {}", mark.command)),
+                "mark {mark:?} is on {:?}",
+                all[mark.line]
+            );
+        }
+    }
+
+    #[test]
+    fn log_model_marks_each_command_on_its_line() {
+        let (events, commands) = session(20, 3);
+        let mut m = TailModel::from_log("s3-17", 24, 80, &events, &commands, false);
+        assert!(m.log && m.exited && !m.follow, "a log is static");
+        assert_eq!(m.marks.len(), 20);
+        assert_marks_on_their_lines(&mut m);
+        assert_eq!(top_line(&m), "$ cmd-0", "a log opens at its oldest line");
+    }
+
+    #[test]
+    fn log_model_counts_lines_past_the_scrollback_cap() {
+        // 300 commands of 26 lines each scroll ~7 800 lines past a 5 000 cap.
+        let (events, commands) = session(300, 25);
+        let mut m = TailModel::from_log("s3-17", 24, 80, &events, &commands, false);
+        assert_eq!(
+            m.marks.len(),
+            193,
+            "marks whose lines scrolled away are dropped"
+        );
+        assert_eq!(m.marks[0].command, "cmd-107", "the oldest kept mark");
+        assert_marks_on_their_lines(&mut m);
+    }
+
+    #[test]
+    fn log_model_counts_one_event_longer_than_the_scrollback() {
+        // History already held, then one event of 6 000 lines: fed whole,
+        // the parked view would stop at the 5 000-line history, the count
+        // would come up ~1 000 short, and "first" would wrongly be kept.
+        let events = [
+            ev(&"y\r\n".repeat(100)),
+            ev("$ first\r\n"),
+            ev(&"x\r\n".repeat(6000)),
+            ev("$ second\r\n"),
+        ];
+        let commands = [cmd(1, "first", 0), cmd(3, "second", 1)];
+        let mut m = TailModel::from_log("s3-17", 24, 80, &events, &commands, false);
+        assert_eq!(m.marks.len(), 1, "the first command scrolled away");
+        assert_eq!(m.marks[0].command, "second");
+        assert_marks_on_their_lines(&mut m);
+    }
+
+    #[test]
+    fn log_n_and_p_step_through_commands() {
+        let (events, commands) = session(20, 3);
+        let mut m = TailModel::from_log("s3-17", 24, 80, &events, &commands, false);
+        m.act(TailAction::PrevCommand, 10);
+        assert_eq!(m.note.as_deref(), Some("no previous command"));
+        m.act(TailAction::NextCommand, 10);
+        assert_eq!(top_line(&m), "$ cmd-0");
+        assert_eq!(m.note.as_deref(), Some("command 1/20 · exit 0 · cmd-0"));
+        m.act(TailAction::NextCommand, 10);
+        assert_eq!(top_line(&m), "$ cmd-1", "n moves to the next command");
+        assert_eq!(m.note.as_deref(), Some("command 2/20 · exit 1 · cmd-1"));
+        m.act(TailAction::PrevCommand, 10);
+        assert_eq!(top_line(&m), "$ cmd-0", "p moves back");
+        for _ in 0..19 {
+            m.act(TailAction::NextCommand, 10);
+        }
+        assert_eq!(m.at_mark, Some(19));
+        m.act(TailAction::NextCommand, 10);
+        assert_eq!(m.note.as_deref(), Some("no next command"));
+        assert_eq!(m.at_mark, Some(19), "past the end it stays");
+
+        let mut empty = TailModel::from_log("s3-17", 24, 80, &events, &[], false);
+        empty.act(TailAction::NextCommand, 10);
+        assert_eq!(
+            empty.note.as_deref(),
+            Some("no commands recorded in this log")
+        );
+    }
+
+    #[test]
+    fn log_key_action_steps_commands_and_drops_follow_and_search() {
+        use crate::cli::input::Key;
+        assert_eq!(log_key_action(&Key::Char('n')), TailAction::NextCommand);
+        assert_eq!(log_key_action(&Key::Char('p')), TailAction::PrevCommand);
+        for none in [Key::Char('f'), Key::Char('/'), Key::Char('N')] {
+            assert_eq!(log_key_action(&none), TailAction::Ignore, "{none:?}");
+        }
+        assert_eq!(log_key_action(&Key::Char('q')), TailAction::Quit);
+        assert_eq!(log_key_action(&Key::CtrlC), TailAction::Quit);
+        assert_eq!(log_key_action(&Key::PageUp), TailAction::PageUp);
+        assert_eq!(
+            tail_key_action(&Key::Char('p'), false),
+            TailAction::Ignore,
+            "/tail keeps its own keys"
+        );
+    }
+
+    #[test]
+    fn open_log_builds_a_log_or_returns_the_error() {
+        let reply = Response::ShellLog {
+            id: "s3-17".into(),
+            rows: 24,
+            cols: 80,
+            events: vec![ev("$ ls\r\n")],
+            commands: vec![cmd(0, "ls", 0)],
+            truncated: true,
+        };
+        let m = open_log("s3-17", reply).expect("a ShellLog opens");
+        assert!(m.log && m.truncated);
+        assert_eq!(m.marks.len(), 1);
+        let err = open_log("s9-1", Response::Error("no recording named s9-1".into()))
+            .err()
+            .unwrap();
+        assert_eq!(err, "no recording named s9-1");
+        let odd = open_log("s3-17", Response::ShellExited).err().unwrap();
+        assert!(odd.contains("unexpected reply"), "{odd}");
+    }
+
+    #[test]
+    fn render_tail_shows_the_log_status_line() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let (events, commands) = session(3, 1);
+        let m = TailModel::from_log("s3-17", 5, 20, &events, &commands, true);
+        let mut terminal = Terminal::new(TestBackend::new(100, 8)).unwrap();
+        terminal.draw(|f| render_tail(f, &m)).unwrap();
+        let bottom: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .skip(7 * 100)
+            .take(100)
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(bottom.starts_with("log s3-17"), "{bottom:?}");
+        assert!(bottom.contains("3 commands"), "{bottom:?}");
+        assert!(bottom.contains("oldest output dropped"), "{bottom:?}");
+        assert!(bottom.contains("n/p commands"), "{bottom:?}");
+    }
+
+    #[tokio::test]
+    async fn tail_loop_steps_a_log_with_n() {
+        use crate::cli::input::Key;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use tokio::io::AsyncBufReadExt;
+        let (events, commands) = session(5, 1);
+        let mut model = TailModel::from_log("s3-17", 24, 80, &events, &commands, false);
+        let mut frames = tokio::io::BufReader::new(tokio::io::empty()).lines();
+        let mut keys = futures_util::stream::iter([Key::Char('n'), Key::Char('n'), Key::Char('q')]);
+        let mut resizes = Box::pin(futures_util::stream::pending::<()>());
+        let mut terminal = Terminal::new(TestBackend::new(80, 25)).unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            tail_loop(
+                &mut terminal,
+                &mut model,
+                &mut frames,
+                &mut keys,
+                &mut resizes,
+            ),
+        )
+        .await
+        .expect("q closes the loop")
+        .expect("the loop ends cleanly");
+        assert_eq!(model.at_mark, Some(1), "in a log, n steps commands");
     }
 
     fn lines(n: usize) -> Vec<u8> {

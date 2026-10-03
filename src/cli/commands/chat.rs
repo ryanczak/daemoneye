@@ -13,6 +13,16 @@ use super::pane::resolve_target_pane;
 use super::slash;
 use super::stream::{AskTmuxCtx, QueryArgs, RatatuiQueryCtx, TokenCtx, ask_with_session_ratatui};
 
+/// `/log` and its log id: `Some(Some(id))` for `/log <id>`, `Some(None)` for a
+/// bare `/log`, `None` for anything else — `/logs` included.
+fn log_command(query: &str) -> Option<Option<&str>> {
+    let mut words = query.split_whitespace();
+    if words.next() != Some("/log") {
+        return None;
+    }
+    Some(words.next())
+}
+
 const HELP_TEXT: &str = "\
 Commands:
   /help      show this list           /exit      quit
@@ -23,6 +33,7 @@ Commands:
   /shells    list the agent's shells  /hosts     configured hosts and ssh state
   /tail      live view of a shell     (alias /watch; f follow, esc to close)
   /logs      past shell recordings    [host] [--owner chat|ghost] [--since 2h]
+  /log       open one recording       (/log <id>; n/p step through commands)
 
 Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
 
@@ -431,6 +442,33 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         if query == "/help" || query == "help" || query == "?" || query == "/?" {
             let _ = renderer.commit(help_text);
             let _ = renderer.commit("\n");
+            redraw(
+                &mut renderer,
+                input_state,
+                &session_id,
+                approval,
+                &model,
+                prompt_tokens,
+                context_window,
+                daemon_up,
+                cost_usd,
+                has_untracked,
+            );
+            continue;
+        }
+        if let Some(id) = log_command(&query) {
+            match id {
+                Some(id) => {
+                    if let Err(e) =
+                        crate::cli::tail::run_log_viewer(stdin, sigwinch, &mut renderer, id).await
+                    {
+                        let _ = renderer.commit(&format!("  ✗ log {id}: {e}\n"));
+                    }
+                }
+                None => {
+                    let _ = renderer.commit("  usage: /log <log id>  (see /logs)\n");
+                }
+            }
             redraw(
                 &mut renderer,
                 input_state,
@@ -977,7 +1015,7 @@ fn turn_budget_label(turn: usize, prompt_tokens: u32, context_window: u32) -> St
 
 #[cfg(test)]
 mod tests {
-    use super::HELP_TEXT;
+    use super::{HELP_TEXT, log_command};
 
     #[test]
     fn help_text_lists_shells() {
@@ -999,6 +1037,17 @@ mod tests {
     #[test]
     fn help_text_lists_hosts() {
         assert!(HELP_TEXT.contains("/hosts"), "HELP_TEXT must list '/hosts'");
+    }
+
+    #[test]
+    fn log_command_matches_log_and_not_logs() {
+        assert_eq!(log_command("/log"), Some(None), "bare /log asks for usage");
+        assert_eq!(log_command("/log s3-17"), Some(Some("s3-17")));
+        assert_eq!(log_command("/log   s3-17  "), Some(Some("s3-17")));
+        for other in ["/logs", "/logs pinky", "/login", "/log-x", "log s3-17"] {
+            assert_eq!(log_command(other), None, "{other:?} is not /log");
+        }
+        assert!(HELP_TEXT.contains("/log "), "HELP_TEXT must list '/log'");
     }
 
     #[test]

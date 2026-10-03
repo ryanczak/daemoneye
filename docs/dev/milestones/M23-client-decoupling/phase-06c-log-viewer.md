@@ -1,7 +1,7 @@
 # Phase 06c: log-viewer — `/log <id>` opens a recording, `n`/`p` step through its commands
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 06b (done)
 **Estimated diff:** ~200 lines of production code across 4 files; 9 new tests (~530 diff lines in all)
 **Tags:** language=rust, kind=feature, size=m
@@ -956,3 +956,58 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-03 11:17 (started)
+
+**Executor:** executor-06c (headless)
+**Status flipped:** `todo` → `in-progress` (this doc; README row 06c updated to match).
+Applying the spec's diffs to `src/ipc.rs`, `src/cli/commands/ipc_client.rs`,
+`src/cli/tail.rs`, `src/cli/commands/chat.rs`, then running the gate set and
+capturing the end-to-end evidence.
+
+### Update — 2026-10-03 11:25 (end-to-end verification)
+
+Run with nothing else running `cargo test`. First block = contents of
+`/tmp/e2e-m23-06c.txt`.
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2170p-0f-14i
+phase_tests=9p-0f
+isolation=11 passed; 0 failed
+wired=1/1/0
+```
+
+PASTE MATCH
+
+Notes: two earlier whole-block runs were consumed by the spec's known lib
+flakes — run 1's `lib_counts` sweep hit
+`shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`
+(capture showed `lib_counts=test result: FAILED. 2169 passed…`), run 2's third
+lib pass hit the same test; the block was re-run in full each time, and the
+final capture above is all green. No new test ever failed.
+
+Gate set: `cargo fmt --all` clean, `cargo build` clean,
+`cargo clippy --all-targets --all-features -- -D warnings` exits 0,
+`cargo test` → lib 2170/0/14, bug_tracker 6, doc_truth 14, integration 32
+(2 ignored), isolation 11 (1 ignored) — other targets unmoved.
+
+### Update — 2026-10-03 11:40 (mutations A–F, observed)
+
+Each applied with `patch`, the named test run once, then restored; after each
+restore `git diff --stat` matched its pre-mutation state (6 files, 546
+insertions). All six went red on the named test.
+
+| Mut | Test | Observed |
+|---|---|---|
+| A (`first_held = 0`) | `tail::tests::log_model_counts_lines_past_the_scrollback_cap` | FAILED 0 passed |
+| B (`chunks(*1000)`) | `tail::tests::log_model_counts_one_event_longer_than_the_scrollback` | FAILED 0 passed |
+| C (drop `n` arm) | `tail::tests::log_key_action_steps_commands_and_drops_follow_and_search` | FAILED 0 passed |
+| D (`Some(1)`) | `tail::tests::log_n_and_p_step_through_commands` | FAILED 0 passed |
+| E (`if false {`) | `tail::tests::tail_loop_steps_a_log_with_n` | FAILED 0 passed |
+| F (`starts_with`) | `chat::tests::log_command_matches_log_and_not_logs` | FAILED 0 passed |
+
+Every named test green again after restore. All six mutants also built
+clippy-clean on the dry run, so no rename or `_` prefix was needed.

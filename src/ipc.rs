@@ -267,8 +267,9 @@ pub enum Request {
         limit: Option<usize>,
     },
     /// One shell recording by its log id (`s3-1788470000`), for `/log` (M23).
-    #[rustfmt::skip]
-    ShellLogRead { id: String },
+    ShellLogRead {
+        id: String,
+    },
     /// Ask the daemon to shut down cleanly.
     Shutdown,
     /// Send an ask request with the invoking tmux pane (if in tmux).
