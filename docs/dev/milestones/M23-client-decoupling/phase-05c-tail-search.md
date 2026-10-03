@@ -1,7 +1,7 @@
 # Phase 05c: tail-search — `/` searches the tail view; `n`/`N` step through matches; `Ctrl-C` closes it
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 05b (done)
 **Estimated diff:** ~190 lines of production code, one file; 5 new tests, 1 updated
 **Tags:** language=rust, kind=feature, size=m
@@ -1399,3 +1399,30 @@ kill: sending signal to 411405 failed: No such process
 **Commit:** dfb35fff2e6517c0418d1039e0d40803f8ad81ed
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (53 turns). Its
+  own entries say only "executor (headless run)". That is generic, not a
+  wrong model name, so it does not count toward fold C.
+- **Source vs the drafting dry run:** `src/cli/tail.rs` is **byte-identical**
+  to the dry-run file (`cmp`), tests included. No other source file changed.
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean;
+  - no new `unwrap`, `expect`, `panic!`, `#[allow]` or `unsafe` in
+    production code;
+  - lib was **2150/0/14** on five runs (three in the end-to-end re-run, two
+    full `cargo test` runs), and the other targets were unmoved (bug_tracker
+    6, doc_truth 14, integration 32, isolation 11);
+  - the end-to-end re-run run solo printed `PASTE MATCH` against the pasted
+    capture;
+  - mutations A–E, re-applied exactly as pinned, each went red, and the file
+    restored byte-identical.
+- **Scope deviations:** none.
+- **Calibration:** none new. When the spec is the whole file, review reduces to
+  `cmp` against the dry run plus the mutations. This is the first whole-file
+  spec in M23, and it landed first try in 53 turns, versus 103 for 05b's
+  multi-edit spec. That is one data point, held for the close.
+
