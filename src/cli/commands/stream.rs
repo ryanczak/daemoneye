@@ -754,6 +754,7 @@ pub(super) async fn ask_with_session_ratatui(
             | Response::PaneChanged { .. }
             | Response::PaneList { .. }
             | Response::ShellList { .. }
+            | Response::ShellLogList { .. }
             | Response::ShellScreen { .. }
             | Response::ShellChunk { .. }
             | Response::ShellExited

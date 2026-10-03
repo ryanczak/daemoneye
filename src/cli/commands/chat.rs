@@ -22,6 +22,7 @@ Commands:
   /limits    show active limits       /session   save/load/list/delete/rename
   /shells    list the agent's shells  /hosts     configured hosts and ssh state
   /tail      live view of a shell     (alias /watch; f follow, esc to close)
+  /logs      past shell recordings    [host] [--owner chat|ghost] [--since 2h]
 
 Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
 
@@ -998,6 +999,11 @@ mod tests {
     #[test]
     fn help_text_lists_hosts() {
         assert!(HELP_TEXT.contains("/hosts"), "HELP_TEXT must list '/hosts'");
+    }
+
+    #[test]
+    fn help_text_lists_logs() {
+        assert!(HELP_TEXT.contains("/logs"), "HELP_TEXT must list '/logs'");
     }
 
     #[test]

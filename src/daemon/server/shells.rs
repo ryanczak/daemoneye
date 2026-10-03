@@ -6,7 +6,7 @@
 use anyhow::Result;
 
 use crate::daemon::utils::send_response_split;
-use crate::ipc::{Response, ShellInfo};
+use crate::ipc::{Response, ShellInfo, ShellLogInfo};
 use crate::shell::{ShellId, ShellRegistry, meta_path_for, with_shells};
 
 /// The socket round-trip budget for one relay call. The ack is the write, not
@@ -121,6 +121,93 @@ fn last_command(id: &str, started_unix: u64) -> Option<String> {
     crate::shell::MetaIndex::load(&path)
         .ok()
         .and_then(|meta| meta.commands.last().map(|c| c.command.clone()))
+}
+
+/// How many recordings `/logs` shows when it names no limit.
+const LOG_LIST_DEFAULT_LIMIT: usize = 50;
+
+pub(super) async fn handle_shell_log_list<W>(
+    tx: &mut W,
+    since: Option<u64>,
+    host: Option<&str>,
+    owner: Option<&str>,
+    limit: Option<usize>,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let all = scan_shell_logs(&crate::config::shell_logs_dir());
+    let matched: Vec<ShellLogInfo> = all
+        .into_iter()
+        .filter(|log| log_matches(log, since, host, owner))
+        .collect();
+    let total = matched.len();
+    let logs = matched
+        .into_iter()
+        .take(limit.unwrap_or(LOG_LIST_DEFAULT_LIMIT))
+        .collect();
+    send_response_split(tx, Response::ShellLogList { logs, total }).await?;
+    Ok(())
+}
+
+/// Every recording in `dir`, newest first. A `.cast` whose name is not
+/// `<shell id>-<start>` is not a recording and is skipped; a missing or
+/// unreadable index leaves `owner`, `host`, `commands` and `first_command`
+/// `None`. The first command is masked before it leaves the daemon.
+fn scan_shell_logs(dir: &std::path::Path) -> Vec<ShellLogInfo> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut logs: Vec<ShellLogInfo> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_str()?.to_string();
+            let (_, started_unix) = crate::shell::parse_cast_name(&name)?;
+            let meta = crate::shell::MetaIndex::load(&meta_path_for(&entry.path())).ok();
+            Some(ShellLogInfo {
+                id: name.strip_suffix(".cast").unwrap_or(&name).to_string(),
+                started_unix,
+                owner: meta.as_ref().and_then(|m| m.owner.clone()),
+                host: meta.as_ref().and_then(|m| m.host.clone()),
+                commands: meta.as_ref().map(|m| m.commands.len()),
+                first_command: meta.as_ref().and_then(|m| {
+                    m.commands
+                        .first()
+                        .map(|c| crate::ai::filter::mask_sensitive(&c.command))
+                }),
+            })
+        })
+        .collect();
+    logs.sort_by_key(|log| std::cmp::Reverse(log.started_unix));
+    logs
+}
+
+/// Whether `log` passes `/logs`' filters. `owner` is a kind: `"ghost"` keeps
+/// `ghost:<job>`. A recording whose index does not say its owner or host
+/// fails a filter on that field — it cannot be shown to match.
+fn log_matches(
+    log: &ShellLogInfo,
+    since: Option<u64>,
+    host: Option<&str>,
+    owner: Option<&str>,
+) -> bool {
+    if since.is_some_and(|s| log.started_unix < s) {
+        return false;
+    }
+    if let Some(h) = host
+        && log.host.as_deref() != Some(h)
+    {
+        return false;
+    }
+    if let Some(kind) = owner {
+        let Some(key) = log.owner.as_deref() else {
+            return false;
+        };
+        if key != kind && !key.starts_with(&format!("{kind}:")) {
+            return false;
+        }
+    }
+    true
 }
 
 /// The shell host's answers, one JSON frame per line.
@@ -347,6 +434,96 @@ mod tests {
     }
 
     // ── Tests ─────────────────────────────────────────────────────────────
+
+    /// Write a cast (header only) named `<id>`.cast into the logs dir, and its
+    /// index when `meta` is given.
+    fn write_recording(id: &str, meta: Option<serde_json::Value>) {
+        let dir = crate::config::shell_logs_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let cast = dir.join(format!("{id}.cast"));
+        std::fs::write(&cast, "{\"version\":2,\"width\":80,\"height\":24}\n").unwrap();
+        if let Some(meta) = meta {
+            std::fs::write(meta_path_for(&cast), meta.to_string()).unwrap();
+        }
+    }
+
+    async fn log_list(
+        since: Option<u64>,
+        host: Option<&str>,
+        owner: Option<&str>,
+        limit: Option<usize>,
+    ) -> (Vec<String>, usize, Vec<ShellLogInfo>) {
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_log_list(&mut tx, since, host, owner, limit)
+            .await
+            .unwrap();
+        let Response::ShellLogList { logs, total } = parse_response(&tx) else {
+            panic!("expected a ShellLogList response, got {tx:?}");
+        };
+        (logs.iter().map(|l| l.id.clone()).collect(), total, logs)
+    }
+
+    #[tokio::test]
+    async fn shell_log_list_is_newest_first_and_filters() {
+        let (_guard, _dir) = shell_test_home();
+        let cmd = |c: &str| {
+            serde_json::json!({"index": 0, "command": c, "started": 0.0,
+            "ended": 0.0, "exit_code": 0, "first_byte": 0, "end_byte": 1})
+        };
+        write_recording(
+            "s1-100",
+            Some(
+                serde_json::json!({"shell_id": "s1", "cast": "s1-100.cast", "started_unix": 100,
+                "commands": [cmd("echo one")], "owner": "chat:t", "host": "local"}),
+            ),
+        );
+        write_recording(
+            "s2-200",
+            Some(
+                serde_json::json!({"shell_id": "s2", "cast": "s2-200.cast", "started_unix": 200,
+                "commands": [cmd("uptime"), cmd("df -h")], "owner": "ghost:job-1",
+                "host": "pinky"}),
+            ),
+        );
+        write_recording("s3-300", None);
+        write_recording("notes", None);
+
+        let (ids, total, logs) = log_list(None, None, None, None).await;
+        assert_eq!(
+            ids,
+            ["s3-300", "s2-200", "s1-100"],
+            "newest first, junk skipped"
+        );
+        assert_eq!(total, 3);
+        assert_eq!(logs[0].commands, None, "no index is unknown, not 0");
+        assert_eq!(logs[1].commands, Some(2));
+        assert_eq!(logs[1].first_command.as_deref(), Some("uptime"));
+        assert_eq!(logs[1].host.as_deref(), Some("pinky"));
+
+        assert_eq!(
+            log_list(None, None, Some("ghost"), None).await.0,
+            ["s2-200"]
+        );
+        assert_eq!(log_list(None, None, Some("chat"), None).await.0, ["s1-100"]);
+        assert!(
+            log_list(None, None, Some("gho"), None).await.0.is_empty(),
+            "an owner filter matches a whole kind, not a prefix of one"
+        );
+        assert_eq!(
+            log_list(None, Some("local"), None, None).await.0,
+            ["s1-100"]
+        );
+        assert_eq!(
+            log_list(Some(150), None, None, None).await.0,
+            ["s3-300", "s2-200"]
+        );
+        let (ids, total, _) = log_list(None, None, None, Some(1)).await;
+        assert_eq!(
+            (ids.len(), total),
+            (1, 3),
+            "the limit caps rows, total counts all"
+        );
+    }
 
     #[tokio::test]
     async fn shell_list_reports_every_shell_with_its_last_command() {

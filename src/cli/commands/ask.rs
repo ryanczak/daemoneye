@@ -215,6 +215,7 @@ async fn run_ask_raw(query: String) -> Result<()> {
             | Response::PaneChanged { .. }
             | Response::PaneList { .. }
             | Response::ShellList { .. }
+            | Response::ShellLogList { .. }
             | Response::ShellScreen { .. }
             | Response::ShellChunk { .. }
             | Response::ShellExited

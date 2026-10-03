@@ -1,7 +1,7 @@
 # Phase 06a: shell-log-list — `/logs` lists past shell recordings, filtered by host, owner and age
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 05c (done)
 **Estimated diff:** ~250 lines of production code across 10 files; 7 new tests, 1 updated
 **Tags:** language=rust, kind=feature, size=m
@@ -1209,3 +1209,41 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-10-03 01:55 (started)
+
+**Executor:** claude (phase 06a, shell-log-list). Status flipped to
+`in-progress`, README row updated. Beginning with Task 1.
+### Update — 2026-10-03 02:20 (progress)
+
+Tasks 1–6 applied. Mutations A–F each applied once with `patch`, run red, and
+restored (`git diff --stat` identical to pre-mutation after each):
+
+- **A** (`log_matches` → `!key.starts_with(kind)`): red.
+- **B** (sort ascending): red.
+- **C** (`.take(LOG_LIST_DEFAULT_LIMIT)`): red (the temporary
+  `_limit` parameter rename needed to compile it was restored with the
+  mutation).
+- **D** (`append` overwrites an existing owner): red.
+- **E** (`index_command_output` passes `None` for owner): red (the temporary
+  `_owner` binding rename was restored with the mutation).
+- **F** (`"schedx"` arm): red.
+
+All six restored; the filter prints **9 passed** again.
+### Update — 2026-10-03 02:25 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim, redirected to
+`/tmp/e2e-m23-06a.txt`, then read the file back and pasted it below. Other
+targets from the same run: bug_tracker 6 passed / 0 failed, doc_truth 14 / 0,
+integration 32 / 0, isolation 11 / 0.
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2157p-0f-14i
+phase_tests=9p-0f
+isolation=11 passed; 0 failed
+wired=1/1/1
+```
+
+PASTE MATCH

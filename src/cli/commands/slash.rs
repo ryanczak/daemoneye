@@ -61,6 +61,7 @@ pub(super) async fn handle_slash(ctx: SlashCtx<'_>, query: &str) -> SlashOutcome
         "/pane" | "/panes" => cmd_pane(ctx, rest).await,
         "/shells" => cmd_shells(ctx).await,
         "/hosts" => cmd_hosts(ctx).await,
+        "/logs" => cmd_logs(ctx, rest).await,
         "/approvals" | "/approval" => cmd_approvals(ctx, rest),
         "/prompt" => cmd_prompt(ctx, rest),
         "/limits" => cmd_limits(ctx.renderer, ctx.session_id).await,
@@ -283,6 +284,148 @@ async fn cmd_shells(ctx: SlashCtx<'_>) {
                 .unwrap_or(0);
             let body = render_shell_list(&shells, ctx.session_id, now);
             let _ = ctx.renderer.commit_panel("shells", &body, false);
+        }
+        Ok(other) => render_error(ctx.renderer, other),
+        Err(e) => note(ctx.renderer, &format!("✗ {e}")),
+    }
+}
+
+// ── /logs ────────────────────────────────────────────────────────────────────
+
+/// What `/logs` asks the daemon for.
+#[derive(Debug, PartialEq, Eq)]
+struct LogsQuery {
+    host: Option<String>,
+    owner: Option<String>,
+    since: Option<u64>,
+}
+
+const LOGS_USAGE: &str = "usage: /logs [host] [--owner chat|ghost|adopted] [--since 2h]";
+
+/// The seconds in a `/logs --since` age: `90s`, `30m`, `2h`, `7d`.
+fn parse_age(s: &str) -> Option<u64> {
+    let mult = match s.chars().last()? {
+        's' => 1,
+        'm' => 60,
+        'h' => 3600,
+        'd' => 86_400,
+        _ => return None,
+    };
+    // The unit is one ASCII byte, so cutting it off stays on a char boundary.
+    let n: u64 = s[..s.len() - 1].parse().ok()?;
+    n.checked_mul(mult)
+}
+
+/// Parse `/logs`' arguments: at most one bare word (the host), `--owner
+/// <kind>` and `--since <age>`, in any order. `now_unix` turns the age into
+/// the unix time the daemon filters on.
+fn parse_logs_args(rest: &str, now_unix: u64) -> Result<LogsQuery, String> {
+    let mut q = LogsQuery {
+        host: None,
+        owner: None,
+        since: None,
+    };
+    let mut words = rest.split_whitespace();
+    while let Some(word) = words.next() {
+        match word {
+            "--owner" => {
+                let kind = words.next().ok_or("--owner needs chat, ghost or adopted")?;
+                match kind {
+                    "chat" | "ghost" | "adopted" => q.owner = Some(kind.to_string()),
+                    "sched" => {
+                        return Err(
+                            "scheduled jobs' shells are owned by their ghost: use --owner ghost"
+                                .to_string(),
+                        );
+                    }
+                    other => {
+                        return Err(format!(
+                            "unknown owner {other:?}: use chat, ghost or adopted"
+                        ));
+                    }
+                }
+            }
+            "--since" => {
+                let age = words.next().ok_or("--since needs an age, like 2h")?;
+                let secs = parse_age(age).ok_or_else(|| {
+                    format!("bad age {age:?}: use a number and s, m, h or d, like 2h")
+                })?;
+                q.since = Some(now_unix.saturating_sub(secs));
+            }
+            flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
+            host if q.host.is_none() => q.host = Some(host.to_string()),
+            extra => return Err(format!("one host at most: {extra:?} is a second")),
+        }
+    }
+    Ok(q)
+}
+
+/// Render the `/logs` panel body: one row per recording, newest first, and a
+/// last line when the daemon matched more than it sent. Pure so it can be
+/// tested without a daemon.
+fn render_log_list(logs: &[crate::ipc::ShellLogInfo], total: usize, now_unix: u64) -> Vec<String> {
+    if logs.is_empty() {
+        return vec!["no shell recordings match".to_string()];
+    }
+    let mut body: Vec<String> = logs
+        .iter()
+        .map(|l| {
+            let age = if now_unix >= l.started_unix {
+                crate::tmux::status::format_age(now_unix - l.started_unix)
+            } else {
+                "?".to_string()
+            };
+            let commands = match l.commands {
+                Some(1) => "1 command".to_string(),
+                Some(n) => format!("{n} commands"),
+                None => "commands: unknown".to_string(),
+            };
+            let first = match &l.first_command {
+                Some(c) => format!("  first:{}", elide(c, SHELL_COMMAND_WIDTH)),
+                None => String::new(),
+            };
+            format!(
+                "{}  host:{}  owner:{}  age:{}  {}{}",
+                l.id,
+                l.host.as_deref().unwrap_or("?"),
+                l.owner.as_deref().unwrap_or("?"),
+                age,
+                commands,
+                first
+            )
+        })
+        .collect();
+    if total > logs.len() {
+        body.push(format!(
+            "… {} more — narrow with a host, --owner or --since",
+            total - logs.len()
+        ));
+    }
+    body
+}
+
+async fn cmd_logs(ctx: SlashCtx<'_>, rest: &str) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let q = match parse_logs_args(rest, now) {
+        Ok(q) => q,
+        Err(e) => {
+            note(ctx.renderer, &format!("✗ {e}  ({LOGS_USAGE})"));
+            return;
+        }
+    };
+    let request = Request::ShellLogList {
+        since: q.since,
+        host: q.host,
+        owner: q.owner,
+        limit: None,
+    };
+    match request_once(request).await {
+        Ok(Response::ShellLogList { logs, total }) => {
+            let body = render_log_list(&logs, total, now);
+            let _ = ctx.renderer.commit_panel("logs", &body, false);
         }
         Ok(other) => render_error(ctx.renderer, other),
         Err(e) => note(ctx.renderer, &format!("✗ {e}")),
@@ -944,6 +1087,88 @@ mod tests {
         let rows = render_shell_list(&[], "mine", NOW);
         assert_eq!(rows.len(), 1);
         assert!(rows[0].contains("no shells"), "{}", rows[0]);
+    }
+
+    #[test]
+    fn parse_logs_args_reads_host_owner_and_since() {
+        let q = parse_logs_args("pinky --owner ghost --since 2h", 10_000).unwrap();
+        assert_eq!(
+            q,
+            LogsQuery {
+                host: Some("pinky".into()),
+                owner: Some("ghost".into()),
+                since: Some(10_000 - 7200),
+            }
+        );
+        assert_eq!(
+            parse_logs_args("", NOW).unwrap(),
+            LogsQuery {
+                host: None,
+                owner: None,
+                since: None,
+            }
+        );
+        assert_eq!(parse_age("90s"), Some(90));
+        assert_eq!(parse_age("30m"), Some(1800));
+        assert_eq!(parse_age("7d"), Some(604_800));
+    }
+
+    #[test]
+    fn parse_logs_args_rejects_what_it_cannot_honour() {
+        for bad in [
+            "--owner sched",
+            "--owner robot",
+            "--owner",
+            "--since",
+            "--since 2",
+            "--since h",
+            "--since 2ĥ",
+            "--host pinky",
+            "pinky local",
+        ] {
+            assert!(
+                parse_logs_args(bad, NOW).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
+        let sched = parse_logs_args("--owner sched", NOW).unwrap_err();
+        assert!(sched.contains("--owner ghost"), "{sched}");
+    }
+
+    fn log(id: &str, started_unix: u64) -> crate::ipc::ShellLogInfo {
+        crate::ipc::ShellLogInfo {
+            id: id.to_string(),
+            started_unix,
+            owner: Some("ghost:job-1".to_string()),
+            host: Some("pinky".to_string()),
+            commands: Some(2),
+            first_command: Some("uptime".to_string()),
+        }
+    }
+
+    #[test]
+    fn render_log_list_shows_each_recordings_fields() {
+        let mut unindexed = log("s3-300", NOW - 60);
+        unindexed.owner = None;
+        unindexed.host = None;
+        unindexed.commands = None;
+        unindexed.first_command = None;
+        let rows = render_log_list(&[unindexed, log("s2-200", NOW - 7200)], 5, NOW);
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        assert!(
+            rows[0].starts_with("s3-300  host:?  owner:?"),
+            "{}",
+            rows[0]
+        );
+        assert!(rows[0].contains("commands: unknown"), "{}", rows[0]);
+        assert!(
+            rows[1].starts_with("s2-200  host:pinky  owner:ghost:job-1"),
+            "{}",
+            rows[1]
+        );
+        assert!(rows[1].contains("2 commands  first:uptime"), "{}", rows[1]);
+        assert!(rows[2].contains("3 more"), "{}", rows[2]);
+        assert_eq!(render_log_list(&[], 0, NOW), ["no shell recordings match"]);
     }
 
     #[test]

@@ -182,6 +182,15 @@ pub async fn handle_client(
         Request::ShellResize { id, rows, cols } => {
             shells::handle_shell_resize(&mut tx, crate::shell::registry(), &id, rows, cols).await?;
         }
+        Request::ShellLogList {
+            since,
+            host,
+            owner,
+            limit,
+        } => {
+            shells::handle_shell_log_list(&mut tx, since, host.as_deref(), owner.as_deref(), limit)
+                .await?;
+        }
         Request::ShellTail { id, follow } => {
             shells::handle_shell_tail(&mut rx, &mut tx, crate::shell::registry(), &id, follow)
                 .await?;

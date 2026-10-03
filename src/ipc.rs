@@ -94,6 +94,24 @@ pub struct ShellInfo {
     pub last_command: Option<String>,
 }
 
+/// One shell recording on disk, as `/logs` lists it (M23).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ShellLogInfo {
+    /// The log id, `s3-1788470000`: the shell id plus its start time.
+    pub id: String,
+    pub started_unix: u64,
+    /// The owner's key (`chat:<session>`, `ghost:<job>`), when the recording's
+    /// command index carries one.
+    pub owner: Option<String>,
+    /// `"local"` or the host name, when the command index carries one.
+    pub host: Option<String>,
+    /// How many commands the index holds; `None` when there is no readable
+    /// index (which is not the same as 0).
+    pub commands: Option<usize>,
+    /// The first recorded command, masked.
+    pub first_command: Option<String>,
+}
+
 /// Configuration for autonomous Ghost Shells triggered by a runbook.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GhostConfig {
@@ -219,6 +237,16 @@ pub enum Request {
     ShellTail {
         id: String,
         follow: bool,
+    },
+    /// The shell recordings on disk, newest first (M23). Each filter is
+    /// optional: `since` keeps recordings started at or after that unix time,
+    /// `host` a host name (`"local"` for the daemon host), `owner` an owner
+    /// kind (`"chat"`, `"ghost"`, `"adopted"`). `limit` caps the rows.
+    ShellLogList {
+        since: Option<u64>,
+        host: Option<String>,
+        owner: Option<String>,
+        limit: Option<usize>,
     },
     /// Ask the daemon to shut down cleanly.
     Shutdown,
@@ -515,6 +543,12 @@ pub enum Response {
     Ok,
     /// Every PTY shell the daemon runs, with its state and last command (M23).
     ShellList { shells: Vec<ShellInfo> },
+    /// The recordings `ShellLogList` matched, newest first and capped at its
+    /// limit; `total` counts every match before the cap.
+    ShellLogList {
+        logs: Vec<ShellLogInfo>,
+        total: usize,
+    },
     /// The first frame of a `ShellTail`: escape codes that redraw the shell's
     /// current screen, and the shell's terminal size, which those codes assume.
     /// `bytes` is empty when the shell's host is too old to provide a screen.
@@ -832,6 +866,7 @@ impl Response {
         match self {
             Response::Ok => "Ok",
             Response::ShellList { .. } => "ShellList",
+            Response::ShellLogList { .. } => "ShellLogList",
             Response::ShellScreen { .. } => "ShellScreen",
             Response::ShellChunk { .. } => "ShellChunk",
             Response::ShellExited => "ShellExited",

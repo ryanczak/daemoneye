@@ -217,6 +217,14 @@ pub struct MetaIndex {
     pub cast: String,
     pub started_unix: u64,
     pub commands: Vec<CommandRecord>,
+    /// The owner's key (`Owner::key()`) — `chat:<session>` or `ghost:<job>`.
+    /// `None` in an index written before the owner was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// `"local"` or the configured host name (`HostId::as_str()`). `None` in
+    /// an index written before the host was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 impl MetaIndex {
@@ -243,12 +251,16 @@ impl MetaIndex {
 
     /// One more command in the index. The absolute `first_byte`/`end_byte` are
     /// byte offsets into `cast`; the caller already excluded the marker
-    /// framing, so `read_command_output` needs no marker knowledge.
+    /// framing, so `read_command_output` needs no marker knowledge. `owner`
+    /// and `host` fill an index that does not carry them yet; one that does
+    /// keeps what it has.
     pub fn append(
         meta_path: &Path,
         cast: &Path,
         shell_id: &str,
         started_unix: u64,
+        owner: Option<&str>,
+        host: Option<&str>,
         record: CommandRecord,
     ) -> Result<()> {
         let mut meta = match MetaIndex::load(meta_path) {
@@ -262,8 +274,16 @@ impl MetaIndex {
                     .into_owned(),
                 started_unix,
                 commands: Vec::new(),
+                owner: None,
+                host: None,
             },
         };
+        if meta.owner.is_none() {
+            meta.owner = owner.map(str::to_owned);
+        }
+        if meta.host.is_none() {
+            meta.host = host.map(str::to_owned);
+        }
         let record = CommandRecord {
             index: meta.commands.len() as u32,
             ..record
@@ -564,6 +584,8 @@ mod tests {
         let end_byte = w.byte_len();
         drop(w);
         let meta = MetaIndex {
+            owner: None,
+            host: None,
             shell_id: "s7".into(),
             cast: path.file_name().unwrap().to_string_lossy().into_owned(),
             started_unix: 0,
@@ -644,6 +666,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = meta(dir.path());
         let m = MetaIndex {
+            owner: None,
+            host: None,
             shell_id: "s7".into(),
             cast: "x.cast".into(),
             started_unix: 1_788_470_000,
@@ -691,6 +715,8 @@ mod tests {
         let cast_path = cast(dir.path());
         CastWriter::create(&cast_path, 80, 24, 0).unwrap();
         let meta = MetaIndex {
+            owner: None,
+            host: None,
             shell_id: "s7".into(),
             cast: cast_path
                 .file_name()
@@ -736,6 +762,8 @@ mod tests {
             + after.len()
             + 1) as u64;
         let meta = MetaIndex {
+            owner: None,
+            host: None,
             shell_id: "s7".into(),
             cast: path.file_name().unwrap().to_string_lossy().into_owned(),
             started_unix: 0,
@@ -791,6 +819,8 @@ mod tests {
             });
         }
         let meta = MetaIndex {
+            owner: None,
+            host: None,
             shell_id: "s7".into(),
             cast: path.file_name().unwrap().to_string_lossy().into_owned(),
             started_unix: 1_788_470_000,
@@ -828,6 +858,8 @@ mod tests {
         let end_byte1 = w.byte_len();
         drop(w);
         let meta = MetaIndex {
+            owner: None,
+            host: None,
             shell_id: "s7".into(),
             cast: path.file_name().unwrap().to_string_lossy().into_owned(),
             started_unix: 0,
@@ -869,6 +901,8 @@ mod tests {
         {
             let w = CastWriter::create(&cast_path, 80, 24, 0).unwrap();
             let meta = MetaIndex {
+                owner: None,
+                host: None,
                 shell_id: "s7".into(),
                 cast: cast_path
                     .file_name()
@@ -1170,6 +1204,8 @@ mod tests {
                 &cast,
                 "s7",
                 1_788_470_000,
+                None,
+                None,
                 CommandRecord {
                     index: 0,
                     command: format!("cmd-{expected}"),
@@ -1192,5 +1228,92 @@ mod tests {
         assert_eq!(loaded.started_unix, 1_788_470_000);
         assert_eq!(loaded.commands[0].index, 0);
         assert_eq!(loaded.commands[1].index, 1);
+    }
+
+    fn record(command: &str) -> CommandRecord {
+        CommandRecord {
+            index: 0,
+            command: command.to_string(),
+            started: 0.0,
+            ended: 0.0,
+            exit_code: 0,
+            first_byte: 0,
+            end_byte: 1,
+        }
+    }
+
+    #[test]
+    fn meta_index_append_records_owner_and_host_once() {
+        let dir = tempdir().unwrap();
+        let (cast, meta) = (cast(dir.path()), meta(dir.path()));
+        MetaIndex::append(
+            &meta,
+            &cast,
+            "s7",
+            17,
+            Some("ghost:job-1"),
+            Some("pinky"),
+            record("a"),
+        )
+        .unwrap();
+        MetaIndex::append(
+            &meta,
+            &cast,
+            "s7",
+            17,
+            Some("chat:other"),
+            Some("local"),
+            record("b"),
+        )
+        .unwrap();
+        let loaded = MetaIndex::load(&meta).unwrap();
+        assert_eq!(
+            loaded.owner.as_deref(),
+            Some("ghost:job-1"),
+            "the first owner stays"
+        );
+        assert_eq!(
+            loaded.host.as_deref(),
+            Some("pinky"),
+            "the first host stays"
+        );
+        assert_eq!(loaded.commands.len(), 2);
+    }
+
+    #[test]
+    fn meta_index_without_owner_or_host_still_loads() {
+        let dir = tempdir().unwrap();
+        let meta = meta(dir.path());
+        std::fs::write(
+            &meta,
+            r#"{"shell_id":"s1","cast":"s1-17.cast","started_unix":17,"commands":[]}"#,
+        )
+        .unwrap();
+        let loaded = MetaIndex::load(&meta).expect("an older index loads");
+        assert_eq!((loaded.owner, loaded.host), (None, None));
+        let mut ok = MetaIndex::load(&meta).unwrap();
+        ok.owner = Some("chat:x".into());
+        ok.save(&meta).unwrap();
+        MetaIndex::append(
+            &meta,
+            &cast(dir.path()),
+            "s1",
+            17,
+            Some("ghost:y"),
+            Some("local"),
+            record("c"),
+        )
+        .unwrap();
+        let loaded = MetaIndex::load(&meta).unwrap();
+        assert_eq!(
+            loaded.owner.as_deref(),
+            Some("chat:x"),
+            "a recorded owner is kept"
+        );
+        assert_eq!(
+            loaded.host.as_deref(),
+            Some("local"),
+            "a missing host is filled"
+        );
     }
 }

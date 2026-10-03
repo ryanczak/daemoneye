@@ -795,11 +795,17 @@ async fn index_command_output(
     outcome: &CommandOutcome,
     before: Option<u64>,
 ) {
-    let started_unix = with_shells(reg, |store| {
+    let (started_unix, owner, host) = with_shells(reg, |store| {
         store
             .get(id.as_str())
-            .map(|record| record.started_unix)
-            .unwrap_or(0)
+            .map(|record| {
+                (
+                    record.started_unix,
+                    Some(record.owner.key()),
+                    Some(record.host.as_str().to_string()),
+                )
+            })
+            .unwrap_or((0, None, None))
     });
     let cast = crate::shell::resolve_cast(id.as_str(), started_unix);
     // `before` was snapshot in `run_in_shell_with`, before the command ran.
@@ -855,7 +861,15 @@ async fn index_command_output(
         end_byte,
     };
     let meta_path = meta_path_for(&cast);
-    if let Err(e) = MetaIndex::append(&meta_path, &cast, id.as_str(), started_unix, record) {
+    if let Err(e) = MetaIndex::append(
+        &meta_path,
+        &cast,
+        id.as_str(),
+        started_unix,
+        owner.as_deref(),
+        host.as_deref(),
+        record,
+    ) {
         log::warn!(
             "meta index: appending to {} failed, command output is unaffected: {e}",
             meta_path.display()
@@ -1799,6 +1813,12 @@ mod tests {
         assert_eq!(record.index, 0, "the first recorded command is index 0");
         assert_eq!(record.command, "printf 'SENTINEL_ONE\\n'; sh -c 'exit 3'");
         assert_eq!(record.exit_code, 3, "the real exit code is recorded");
+        assert_eq!(
+            meta.owner.as_deref(),
+            Some("chat:index-producer"),
+            "the index records who owned the shell"
+        );
+        assert_eq!(meta.host.as_deref(), Some("local"), "and where it ran");
         assert!(
             record.first_byte < record.end_byte,
             "a non-empty clean range is stored: {record:?}"

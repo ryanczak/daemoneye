@@ -2875,6 +2875,8 @@ mod tests {
             }
             drop(w);
             let meta = crate::shell::MetaIndex {
+                owner: None,
+                host: None,
                 shell_id: id.into(),
                 cast: cast.file_name().unwrap().to_string_lossy().into_owned(),
                 started_unix,
@@ -2931,6 +2933,8 @@ mod tests {
         }
         drop(w);
         let meta = crate::shell::MetaIndex {
+            owner: None,
+            host: None,
             shell_id: id.clone(),
             cast: cast.file_name().unwrap().to_string_lossy().into_owned(),
             started_unix,
@@ -4631,6 +4635,8 @@ mod tests {
             w.mark(Duration::from_secs_f64(2.5), "end 0").unwrap();
             drop(w);
             let meta = crate::shell::MetaIndex {
+                owner: None,
+                host: None,
                 shell_id: id.into(),
                 cast: cast.file_name().unwrap().to_string_lossy().into_owned(),
                 started_unix,
@@ -4740,6 +4746,8 @@ mod tests {
         }
         drop(w);
         let meta = crate::shell::MetaIndex {
+            owner: None,
+            host: None,
             shell_id: log_id
                 .rsplit_once('-')
                 .map(|(id, _)| id)
