@@ -1,18 +1,20 @@
 # NEXT
 
-**Active phase:** **M23 phase-06b — shell-log-read**, drafted 2026-10-03,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-06b`.
+**Active phase:** **M23 phase-06c — log-viewer**, drafted 2026-10-03,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-06c`.
 
-**What it does.** The daemon answers `ShellLogRead{id}` with one recording:
-its size, every output event with its time, and where each indexed command
-begins. A command begins at the first output after its typed line, so the
-prompt and the command are in view. This is the data the `/log` viewer
-(06c, `n`/`p`) and replay (06d) consume. Daemon side only, 5 files, 4 new
-tests; lib 2157 → 2161.
+**What it does.** `/log <id>` in chat reads one recording (`ShellLogRead`)
+and opens it in `/tail`'s alt-screen viewer: the view opens at the oldest
+line, and `n`/`p` jump between recorded commands, naming each one and its
+exit code. An error from the daemon prints without entering the viewer.
+It also removes 06b's `#[rustfmt::skip]`. Client side only: 4 files, 9 new
+tests; lib 2161 → 2170.
 
-**Measured at drafting.** Probed on three real recordings: every mark landed
-on the typed command's echo. One mutant was unobservable and was dropped.
-Every pinned mutant was checked clippy-clean (the 06a lesson). The spec's
-per-file diffs were verified to reproduce the dry run.
+**Measured at drafting.** vt100 does not number lines, so lines are counted
+while the recording is fed. Feeding in 1 KiB pieces is load-bearing, and its
+mutant was made observable by putting history before a 6 000-line event.
+**The end-to-end block was run on the dry-run tree** (the 06b calibration).
+All six mutants went red 3/3 and build clippy-clean. The doc's diffs
+reproduce the dry run byte for byte.
 
-**After 06b:** `/rexymcp:architect next` drafts 06c (log-viewer).
+**After 06c:** `/rexymcp:architect next` drafts 06d (log-replay).
