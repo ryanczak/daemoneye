@@ -15,6 +15,13 @@ pub const TAIL_SCROLLBACK: usize = 5_000;
 /// line per newline byte, so a piece this size stays far inside that limit.
 const LOG_FEED_PIECE: usize = 1024;
 
+/// The longest pause a replay keeps between two events, in seconds. A
+/// recording where nothing happened for ten minutes replays the gap as this.
+pub const REPLAY_IDLE_CAP: f64 = 2.0;
+
+/// How often a running replay advances its clock and redraws.
+const REPLAY_TICK: std::time::Duration = std::time::Duration::from_millis(33);
+
 /// One tailed shell. `follow` keeps the view pinned to the newest output;
 /// scrolling up pauses it, and the view then stays put while output arrives.
 pub struct TailModel {
@@ -34,6 +41,36 @@ pub struct TailModel {
     pub at_mark: Option<usize>,
     /// For a log, true when the daemon dropped the oldest output to fit.
     pub truncated: bool,
+    /// For a log, its output events, kept so `space` can replay them.
+    events: Vec<LogEvent>,
+    /// The replay in progress, if any.
+    pub replay: Option<Replay>,
+}
+
+/// A replay of a log at its recorded timing. `due[i]` is when event `i` is
+/// shown, in seconds from the start, with every idle gap capped at
+/// `REPLAY_IDLE_CAP`; `clock` is how far the replay has got.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Replay {
+    pub due: Vec<f64>,
+    pub next: usize,
+    pub clock: f64,
+    pub paused: bool,
+}
+
+/// When each event is shown in a replay: its recorded time, with every gap
+/// (the first event's time included) capped at `REPLAY_IDLE_CAP` and a time
+/// that goes backwards treated as no gap.
+pub fn replay_schedule(events: &[LogEvent]) -> Vec<f64> {
+    let mut due = Vec::with_capacity(events.len());
+    let mut at = 0.0;
+    let mut prev = 0.0;
+    for event in events {
+        at += (event.t - prev).clamp(0.0, REPLAY_IDLE_CAP);
+        prev = event.t;
+        due.push(at);
+    }
+    due
 }
 
 /// Where one recorded command begins in a log view.
@@ -71,6 +108,8 @@ impl TailModel {
             marks: Vec::new(),
             at_mark: None,
             truncated: false,
+            events: Vec::new(),
+            replay: None,
         }
     }
 
@@ -95,6 +134,7 @@ impl TailModel {
         model.exited = true;
         model.log = true;
         model.truncated = truncated;
+        model.events = events.to_vec();
         // Lines that have scrolled off the top of the screen so far.
         let mut scrolled = 0usize;
         let mut starts: Vec<usize> = Vec::with_capacity(commands.len());
@@ -183,6 +223,68 @@ impl TailModel {
             self.marks.len(),
             mark.exit_code
         ));
+    }
+
+    /// True while a replay is on screen, paused or not.
+    pub fn replaying(&self) -> bool {
+        self.replay.is_some()
+    }
+
+    /// True while a replay is on screen and its clock is running.
+    pub fn replay_running(&self) -> bool {
+        self.replay.as_ref().is_some_and(|r| !r.paused)
+    }
+
+    /// Start replaying the log: clear the grid and show each event as its
+    /// time comes, following the newest output.
+    fn start_replay(&mut self) {
+        if self.events.is_empty() {
+            self.note = Some("nothing to replay".to_string());
+            return;
+        }
+        let (rows, cols) = self.parser.screen().size();
+        self.parser = vt100::Parser::new(rows, cols, TAIL_SCROLLBACK);
+        self.follow = true;
+        self.at_mark = None;
+        self.replay = Some(Replay {
+            due: replay_schedule(&self.events),
+            next: 0,
+            clock: 0.0,
+            paused: false,
+        });
+        self.replay_tick(0.0);
+    }
+
+    /// Advance a running replay by `dt` seconds and show every event now due.
+    /// When the last one is shown the replay ends and the log view returns.
+    pub fn replay_tick(&mut self, dt: f64) {
+        let Some(r) = self.replay.as_mut() else {
+            return;
+        };
+        if r.paused {
+            return;
+        }
+        r.clock += dt;
+        while r.next < r.due.len() && r.due[r.next] <= r.clock {
+            self.parser.process(self.events[r.next].data.as_bytes());
+            r.next += 1;
+        }
+        if r.next == r.due.len() {
+            self.replay = None;
+            self.note = Some("replay finished".to_string());
+        }
+    }
+
+    /// Show the rest of the log at once and end the replay. The grid then
+    /// holds what `from_log` built, so the command marks still line up.
+    fn skip_replay(&mut self) {
+        let Some(r) = self.replay.take() else {
+            return;
+        };
+        for event in &self.events[r.next..] {
+            self.parser.process(event.data.as_bytes());
+        }
+        self.note = Some("replay skipped to the end".to_string());
     }
 
     /// Apply one later frame of the stream. Returns `true` when the view may
@@ -347,6 +449,9 @@ pub enum TailAction {
     MatchNewer,
     NextCommand,
     PrevCommand,
+    ReplayStart,
+    ReplayPause,
+    ReplaySkip,
     Quit,
     Ignore,
 }
@@ -392,8 +497,23 @@ pub fn log_key_action(key: &crate::cli::input::Key) -> TailAction {
     match key {
         Key::Char('n') => TailAction::NextCommand,
         Key::Char('p') => TailAction::PrevCommand,
+        Key::Char(' ') => TailAction::ReplayStart,
         Key::Char('f') | Key::Char('/') | Key::Char('N') => TailAction::Ignore,
         other => tail_key_action(other, false),
+    }
+}
+
+/// Decode one key while a replay is on screen: `space` pauses and resumes,
+/// `Ctrl-C` closes the view, and every other key skips to the end. Focus
+/// changes and mouse reports are not keys the user pressed, so they do
+/// nothing.
+pub fn replay_key_action(key: &crate::cli::input::Key) -> TailAction {
+    use crate::cli::input::Key;
+    match key {
+        Key::Char(' ') => TailAction::ReplayPause,
+        Key::CtrlC => TailAction::Quit,
+        Key::FocusGained | Key::FocusLost | Key::Mouse { .. } => TailAction::Ignore,
+        _ => TailAction::ReplaySkip,
     }
 }
 
@@ -455,6 +575,13 @@ impl TailModel {
             }
             TailAction::NextCommand => self.step_mark(true),
             TailAction::PrevCommand => self.step_mark(false),
+            TailAction::ReplayStart => self.start_replay(),
+            TailAction::ReplayPause => {
+                if let Some(r) = self.replay.as_mut() {
+                    r.paused = !r.paused;
+                }
+            }
+            TailAction::ReplaySkip => self.skip_replay(),
             TailAction::Quit => return false,
             TailAction::Ignore => {}
         }
@@ -627,8 +754,18 @@ where
 
     terminal.draw(|f| render_tail(f, model))?;
     let mut stream_open = true;
+    let mut ticker = tokio::time::interval(REPLAY_TICK);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // When the replay clock last moved; reset by every key, so time spent
+    // paused, or before a replay starts, is never counted.
+    let mut last = tokio::time::Instant::now();
     loop {
         tokio::select! {
+            _ = ticker.tick(), if model.replay_running() => {
+                let now = tokio::time::Instant::now();
+                model.replay_tick(now.duration_since(last).as_secs_f64());
+                last = now;
+            }
             line = frames.next_line(), if stream_open => {
                 match line {
                     Ok(Some(line)) => {
@@ -647,7 +784,9 @@ where
                 let Some(key) = key else { break };
                 let page = terminal.size()?.height.saturating_sub(1) as usize;
                 model.note = None;
-                let action = if model.log {
+                let action = if model.replaying() {
+                    replay_key_action(&key)
+                } else if model.log {
                     log_key_action(&key)
                 } else {
                     tail_key_action(&key, model.typing())
@@ -655,11 +794,31 @@ where
                 if !model.act(action, page) {
                     break;
                 }
+                last = tokio::time::Instant::now();
             }
         }
         terminal.draw(|f| render_tail(f, model))?;
     }
     Ok(())
+}
+
+/// The status line while a replay is on screen: how far it has got of how
+/// long, and whether it is paused.
+fn replay_status(model: &TailModel, rows: u16, cols: u16) -> String {
+    let Some(r) = &model.replay else {
+        return String::new();
+    };
+    let total = r.due.last().copied().unwrap_or(0.0);
+    let state = if r.paused {
+        "paused · space to resume"
+    } else {
+        "space to pause"
+    };
+    format!(
+        "log {} · {rows}×{cols} · replay {:.1}s/{total:.1}s · {state} · any key skips to the end · ctrl-c to close",
+        model.id,
+        r.clock.min(total)
+    )
 }
 
 /// Paint `model`'s grid into the frame, cell by cell, with a one-line status
@@ -716,6 +875,7 @@ pub fn render_tail(f: &mut ratatui::Frame, model: &TailModel) {
         format!("paused · {} lines back", model.offset())
     };
     let status = match (&model.search, &model.note) {
+        _ if model.replay.is_some() => replay_status(model, rows, cols),
         _ if model.log => {
             let at = match &model.note {
                 Some(note) => note.clone(),
@@ -727,7 +887,7 @@ pub fn render_tail(f: &mut ratatui::Frame, model: &TailModel) {
                 ""
             };
             format!(
-                "log {} · {rows}×{cols} · {at}{cut} · n/p commands · ↑↓ PgUp/PgDn · esc to close",
+                "log {} · {rows}×{cols} · {at}{cut} · n/p commands · space replay · ↑↓ PgUp/PgDn · esc to close",
                 model.id
             )
         }
@@ -1322,6 +1482,208 @@ mod tests {
         .expect("q closes the loop")
         .expect("the loop ends cleanly");
         assert_eq!(model.at_mark, Some(1), "in a log, n steps commands");
+    }
+
+    /// Three events at 0 s, 1 s and 30 s: the 29 s gap replays as 2 s, so
+    /// the last one is due at 3 s.
+    fn timed() -> Vec<crate::ipc::LogEvent> {
+        [(0.0, "one\r\n"), (1.0, "two\r\n"), (30.0, "three\r\n")]
+            .iter()
+            .map(|(t, data)| crate::ipc::LogEvent {
+                t: *t,
+                data: data.to_string(),
+            })
+            .collect()
+    }
+
+    fn shown(m: &TailModel) -> String {
+        m.screen().contents().trim_end().to_string()
+    }
+
+    #[test]
+    fn replay_schedule_caps_idle_gaps() {
+        let at = |ts: &[f64]| -> Vec<crate::ipc::LogEvent> {
+            ts.iter()
+                .map(|t| crate::ipc::LogEvent {
+                    t: *t,
+                    data: String::new(),
+                })
+                .collect()
+        };
+        assert_eq!(
+            replay_schedule(&at(&[0.5, 1.0, 30.0, 30.25, 29.0, 40.0])),
+            [0.5, 1.0, 3.0, 3.25, 3.25, 5.25],
+            "gaps over 2 s shrink to 2 s; a time going backwards is no gap"
+        );
+        assert_eq!(
+            replay_schedule(&at(&[3600.0])),
+            [2.0],
+            "the wait before the first event is capped too"
+        );
+    }
+
+    #[test]
+    fn replay_shows_each_event_when_its_time_comes() {
+        let mut m = TailModel::from_log("s3-17", 24, 80, &timed(), &[], false);
+        m.act(TailAction::ReplayStart, 10);
+        assert!(m.replay_running());
+        assert_eq!(shown(&m), "one", "a replay starts from a clear grid");
+        m.replay_tick(0.5);
+        assert_eq!(shown(&m), "one");
+        m.replay_tick(0.5);
+        assert_eq!(shown(&m), "one\ntwo");
+        m.replay_tick(1.5);
+        assert!(m.replaying(), "the 29 s gap replays as 2 s, not less");
+        assert_eq!(shown(&m), "one\ntwo");
+        m.replay_tick(0.5);
+        assert_eq!(shown(&m), "one\ntwo\nthree");
+        assert!(!m.replaying(), "the replay ends with its last event");
+        assert_eq!(m.note.as_deref(), Some("replay finished"));
+    }
+
+    #[test]
+    fn replay_pause_holds_the_clock() {
+        let mut m = TailModel::from_log("s3-17", 24, 80, &timed(), &[], false);
+        m.act(TailAction::ReplayStart, 10);
+        m.act(TailAction::ReplayPause, 10);
+        assert!(m.replaying() && !m.replay_running());
+        m.replay_tick(100.0);
+        assert_eq!(shown(&m), "one", "a paused replay shows nothing new");
+        m.act(TailAction::ReplayPause, 10);
+        assert!(m.replay_running(), "space again resumes");
+        m.replay_tick(1.0);
+        assert_eq!(shown(&m), "one\ntwo");
+    }
+
+    #[test]
+    fn replay_skip_shows_the_whole_log_with_its_marks() {
+        let (mut events, commands) = session(20, 3);
+        for (i, e) in events.iter_mut().enumerate() {
+            e.t = i as f64;
+        }
+        let mut whole = TailModel::from_log("s3-17", 24, 80, &events, &commands, false);
+        let mut m = TailModel::from_log("s3-17", 24, 80, &events, &commands, false);
+        m.act(TailAction::ReplayStart, 10);
+        m.replay_tick(1.0);
+        assert!(m.replaying());
+        m.act(TailAction::ReplaySkip, 10);
+        assert!(!m.replaying());
+        assert_eq!(m.note.as_deref(), Some("replay skipped to the end"));
+        assert_eq!(m.all_lines(), whole.all_lines(), "the whole log is back");
+        assert_marks_on_their_lines(&mut m);
+        m.act(TailAction::NextCommand, 10);
+        assert_eq!(top_line(&m), "$ cmd-0", "n still finds the commands");
+
+        let mut empty = TailModel::from_log("s3-17", 24, 80, &[], &[], false);
+        empty.act(TailAction::ReplayStart, 10);
+        assert!(!empty.replaying());
+        assert_eq!(empty.note.as_deref(), Some("nothing to replay"));
+    }
+
+    #[test]
+    fn replay_keys_pause_close_or_skip() {
+        use crate::cli::input::Key;
+        assert_eq!(log_key_action(&Key::Char(' ')), TailAction::ReplayStart);
+        assert_eq!(replay_key_action(&Key::Char(' ')), TailAction::ReplayPause);
+        assert_eq!(replay_key_action(&Key::CtrlC), TailAction::Quit);
+        for skip in [
+            Key::Char('q'),
+            Key::Char('\x1b'),
+            Key::Char('n'),
+            Key::Down,
+            Key::Enter,
+        ] {
+            assert_eq!(replay_key_action(&skip), TailAction::ReplaySkip, "{skip:?}");
+        }
+        for none in [
+            Key::FocusGained,
+            Key::FocusLost,
+            Key::Mouse {
+                button: 0,
+                col: 1,
+                row: 1,
+                pressed: true,
+            },
+        ] {
+            assert_eq!(replay_key_action(&none), TailAction::Ignore, "{none:?}");
+        }
+    }
+
+    #[test]
+    fn render_tail_shows_the_replay_status_line() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let bottom = |m: &TailModel| -> String {
+            let mut terminal = Terminal::new(TestBackend::new(140, 8)).unwrap();
+            terminal.draw(|f| render_tail(f, m)).unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .skip(7 * 140)
+                .take(140)
+                .flat_map(|c| c.symbol().chars())
+                .collect()
+        };
+        let mut m = TailModel::from_log("s3-17", 5, 20, &timed(), &[], false);
+        assert!(bottom(&m).contains("space replay"), "{:?}", bottom(&m));
+        m.act(TailAction::ReplayStart, 10);
+        m.replay_tick(0.5);
+        let running = bottom(&m);
+        assert!(running.starts_with("log s3-17"), "{running:?}");
+        assert!(running.contains("replay 0.5s/3.0s"), "{running:?}");
+        assert!(running.contains("space to pause"), "{running:?}");
+        m.act(TailAction::ReplayPause, 10);
+        assert!(
+            bottom(&m).contains("paused · space to resume"),
+            "{:?}",
+            bottom(&m)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn tail_loop_replays_a_log_in_recorded_time() {
+        use crate::cli::input::Key;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use std::time::Duration;
+        use tokio::io::AsyncBufReadExt;
+        let mut model = TailModel::from_log("s3-17", 24, 80, &timed(), &[], false);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut keys = Box::pin(futures_util::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|key| (key, rx))
+        }));
+        // Five seconds before space, then 1.5 s of replay, then close.
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let _ = tx.send(Key::Char(' '));
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            let _ = tx.send(Key::CtrlC);
+        });
+        let mut frames = tokio::io::BufReader::new(tokio::io::empty()).lines();
+        let mut resizes = Box::pin(futures_util::stream::pending::<()>());
+        let mut terminal = Terminal::new(TestBackend::new(80, 25)).unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            tail_loop(
+                &mut terminal,
+                &mut model,
+                &mut frames,
+                &mut keys,
+                &mut resizes,
+            ),
+        )
+        .await
+        .expect("ctrl-c closes the loop")
+        .expect("the loop ends cleanly");
+        assert!(model.replaying(), "closed mid-replay");
+        assert_eq!(
+            shown(&model),
+            "one\ntwo",
+            "1.5 s in: the 1 s event is shown, the 3 s one is not, and the \
+             5 s before space did not count"
+        );
     }
 
     fn lines(n: usize) -> Vec<u8> {

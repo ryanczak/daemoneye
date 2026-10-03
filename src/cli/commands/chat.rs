@@ -33,7 +33,7 @@ Commands:
   /shells    list the agent's shells  /hosts     configured hosts and ssh state
   /tail      live view of a shell     (alias /watch; f follow, esc to close)
   /logs      past shell recordings    [host] [--owner chat|ghost] [--since 2h]
-  /log       open one recording       (/log <id>; n/p step through commands)
+  /log       open one recording       (/log <id>; n/p commands, space replays)
 
 Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
 

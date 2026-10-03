@@ -1,7 +1,7 @@
 # Phase 06d: log-replay — `space` in `/log` replays the recording at its recorded timing
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 06c (done)
 **Estimated diff:** ~150 lines of production code across 2 files; 7 new tests (~365 diff lines in all)
 **Tags:** language=rust, kind=feature, size=m
@@ -781,3 +781,51 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-03 22:50 (started)
+
+**Executor:** executor-06d (headless run)
+Applied the spec's Task 1–3 diffs; beginning verification and mutation runs.
+
+### Update — 2026-10-03 (end-to-end verification)
+
+Captured to `/tmp/e2e-m23-06d.txt`; its contents:
+
+```
+lib1=ok 
+lib2=ok 
+lib3=ok 
+lib_counts=2177p-0f-14i
+phase_tests=7p-0f
+isolation=11 passed; 0 failed
+wired=1/1/1
+```
+
+PASTE MATCH
+
+Mutations, each applied with `patch`, run once with
+`cargo test --lib -- <name>`, restored, `git diff --stat` back at
+`4 files changed, 372 insertions(+), 5 deletions(-)`:
+
+- **A** (`replay_schedule`, idle cap → `max(0.0)`):
+  `replay_schedule_caps_idle_gaps ... FAILED` (panicked at
+  `src/cli/tail.rs:1513`, "gaps over 2 s shrink to 2 s") — red.
+- **B** (`replay_tick`, pause check deleted):
+  `replay_pause_holds_the_clock ... FAILED` (panicked at
+  `src/cli/tail.rs:1548`, "a paused replay shows nothing new") — red.
+- **C** (`skip_replay`, `r.next..r.next`):
+  `replay_skip_shows_the_whole_log_with_its_marks ... FAILED` (panicked at
+  `src/cli/tail.rs:1572`, "the whole log is back") — red.
+- **D** (`tail_loop`, key no longer resets `last`):
+  `tail_loop_replays_a_log_in_recorded_time ... FAILED` (panicked at
+  `src/cli/tail.rs:1679`, the 5 s before `space` counted) — red.
+- **E** (`tail_loop`, ticker `if false`):
+  `tail_loop_replays_a_log_in_recorded_time ... FAILED` (panicked at
+  `src/cli/tail.rs:1681`, no replay progress) — red.
+- **F** (`replay_key_action`, focus/mouse arm deleted):
+  `replay_keys_pause_close_or_skip ... FAILED` (panicked at
+  `src/cli/tail.rs:1607`, `FocusGained` expected `Ignore`) — red.
+
+All six mutants were clippy-clean under
+`cargo clippy --all-targets --all-features -- -D warnings` while red
+(checked across the runs; the final tree is clippy-clean again).
