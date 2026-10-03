@@ -1,7 +1,7 @@
 # Phase 06d: log-replay — `space` in `/log` replays the recording at its recorded timing
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 06c (done)
 **Estimated diff:** ~150 lines of production code across 2 files; 7 new tests (~365 diff lines in all)
 **Tags:** language=rust, kind=feature, size=m
@@ -960,3 +960,30 @@ kill: sending signal to 2146970 failed: No such process
 **Commit:** 5ab6324952cbf92b15bb561c8dc4727d5d32816e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-03
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (86 turns, per
+  `rexymcp.toml` and `executor_health`). Its entry names itself
+  "executor-06d (headless run)": fold C, 13th occurrence.
+- **Source diff vs the drafting dry run, tests included:** byte-identical
+  (`git diff ee72705d 5ab63249 -- src/` against the saved dry-run patch).
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean, each run separately;
+  - `cargo test` gave lib **2177/0/14**, with bug_tracker 6, doc_truth 14,
+    integration 32 and isolation 11 unmoved;
+  - the end-to-end block printed the Expected values exactly, and the paste
+    check printed `PASTE MATCH` against the pasted capture. Both criteria
+    greps gave 1;
+  - mutations A–F, re-applied exactly as pinned, each went red on 3 of 3 runs
+    with zero clippy diagnostics, and the tree restored clean.
+- **No flake re-runs this time.** Naming both known flakes in the spec (the
+  06c calibration) was not exercised.
+- **Scope deviations:** none. The executor disclosed that its "started"
+  entry was written before the edits rather than after. That is the order of
+  the bookkeeping, not the work.
+- **Calibration:** none new. Two phases in a row (06c, 06d) shipped
+  byte-identical to the dry run after the end-to-end block was run on the
+  dry-run tree at drafting.
