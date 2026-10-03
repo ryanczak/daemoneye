@@ -1,19 +1,19 @@
 # NEXT
 
-**Active phase:** **M23 phase-05c — tail-search**, drafted 2026-10-02, status
-`todo`. Dispatch with `/rexymcp:dispatch phase-05c`.
+**Active phase:** **M23 phase-06a — shell-log-list**, drafted 2026-10-02,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-06a`.
 
-**What it does.** In `/tail`'s view, `/` opens a search prompt and `Enter`
-finds the newest case-insensitive match across scrollback and the live
-screen. `n` steps to older matches and `N` to newer ones. No match keeps the
-view, and a jump pauses follow. `Ctrl-C` now closes the view (the 05b nit).
-One file, `src/cli/tail.rs`, given whole in the spec. Five new tests, one
-updated; lib 2145 → 2150.
+**What it does.** `/logs [host] [--owner chat|ghost|adopted] [--since 2h]`
+lists past shell recordings, newest first. To filter on owner and host, the
+command index now records both. They are written with the first command, and
+older indexes still load. Row 06 is split: 06a lists, 06b opens a recording
+with `n`/`p` command navigation, and 06c replays it.
 
-**Measured at drafting.** Rebuilding every line through vt100's scrollback
-offsets takes 1.6 ms at 5 000 lines, so search needs no index. A
-case-insensitivity mutant survived a lowercase-only test query, and the test
-now uses `"Error"` vs `ERROR`. Dry-run green: filter printed 6, lib 2150 ×3,
-mutations A–E red.
+**Measured at drafting.** Nothing on disk recorded a finished shell's owner
+or host. There is no `sched` owner kind (scheduled ghosts are ghost-owned),
+so `--owner sched` is refused. `CommandRecord.started/ended` are byte
+offsets, not times. Dry-run green: filter printed 9, lib 2150 → 2157 ×3,
+mutations A–F red. The spec quotes the per-file dry-run diffs, which were
+verified to reproduce the dry run exactly.
 
-**After 05c:** `/rexymcp:architect next` drafts 06 (logs-and-replay).
+**After 06a:** `/rexymcp:architect next` drafts 06b (log-viewer).
