@@ -1,7 +1,7 @@
 # Phase 06c: log-viewer — `/log <id>` opens a recording, `n`/`p` step through its commands
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 06b (done)
 **Estimated diff:** ~200 lines of production code across 4 files; 9 new tests (~530 diff lines in all)
 **Tags:** language=rust, kind=feature, size=m
@@ -1148,3 +1148,37 @@ kill: sending signal to 1824571 failed: No such process
 **Commit:** e3d8542bb484406036f4fb22d427a5235f40c2d6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-03
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (117 turns, per
+  `rexymcp.toml` and `executor_health`). Its entry names itself
+  "executor-06c (headless)", not the model: fold C, 12th occurrence (a
+  non-answer this time, not a wrong name).
+- **Source diff vs the drafting dry run, tests included:** byte-identical
+  (`git diff f8e742b1 e3d8542b -- src/` against the saved dry-run patch).
+  06b's `#[rustfmt::skip]` is gone (`wired=1/1/0`).
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean, each run separately;
+  - `cargo test` gave lib **2170/0/14**, with bug_tracker 6, doc_truth 14,
+    integration 32 and isolation 11 unmoved;
+  - the end-to-end block printed the Expected values exactly, and the paste
+    check printed `PASTE MATCH` against the executor's pasted capture. Both
+    criteria greps gave 1;
+  - mutations A–F, re-applied exactly as pinned, each went red on 3 of 3 runs
+    with zero clippy diagnostics, and the tree restored clean.
+- **Flake claim checked:** the executor's two re-runs hit
+  `shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`.
+  It called this "the spec's known flake", but the spec named only
+  `input_after_a_prompt_logs_a_redaction_marker`. The test is a documented
+  pre-existing flake (M22 README: about 1 full-suite run in 4 under load;
+  seen again at the 03a and 04c reviews). It lives in `src/shell/pty.rs`,
+  which this phase does not touch, and passed 20 of 20 runs in isolation.
+  Not a finding.
+- **Scope deviations:** none.
+- **Calibration:** the spec's re-run paragraph should name **both** known lib
+  flakes. Naming only one left the executor to guess, and it guessed right
+  but misattributed. Apply this from 06d onward; it is a drafting fix, not a
+  fold.
