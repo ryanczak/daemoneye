@@ -600,8 +600,13 @@ pub enum Response {
     /// Live output from a followed shell, after its `ShellScreen`.
     ShellChunk { bytes: Vec<u8> },
     /// The shell's state once a `ShellSignal` took effect: `"Idle"`,
-    /// `"Running"`, `"Paused"` or `"Exited"`.
-    ShellSignalled { state: String },
+    /// `"Running"`, `"Paused"` or `"Exited"`. After `INT`, `cancelled_run`
+    /// names the run that owned the shell and was cancelled with it.
+    ShellSignalled {
+        state: String,
+        #[serde(default)]
+        cancelled_run: Option<String>,
+    },
     /// The followed shell has exited; no more frames follow.
     ShellExited,
     /// An error occurred on the daemon side.

@@ -116,6 +116,21 @@ where
         send_response_split(tx, Response::Error(msg)).await?;
         return Ok(());
     }
+    // `Ctrl-c` while attached also cancels the run that owns the shell. The
+    // cancel is cooperative (the run stops at its next turn boundary), so it
+    // is fired first; the signal then ends what the shell is running now.
+    let cancelled_run = if sig == ShellSignal::Int {
+        with_shells(reg, |store| store.get(id).map(|record| record.owner.key()))
+            .and_then(|key| {
+                crate::daemon::run::cancel_owner_run(
+                    &key,
+                    crate::daemon::run::CancelReason::UserStop,
+                )
+            })
+            .map(|run| run.as_str().to_string())
+    } else {
+        None
+    };
     let sock = crate::shell::socket_path(id);
     if let Err(e) = crate::shell::send_signal(&sock, sig, RELAY_TIMEOUT).await {
         send_response_split(tx, Response::Error(format!("shell {id}: {e:#}"))).await?;
@@ -124,6 +139,7 @@ where
     let response = match settled_state(&sock, sig).await {
         Ok(state) => Response::ShellSignalled {
             state: state_name(state).to_string(),
+            cancelled_run,
         },
         Err(e) => Response::Error(format!("shell {id}: {e:#}")),
     };
@@ -1017,7 +1033,7 @@ mod tests {
         let mut tx: Vec<u8> = Vec::new();
         handle_shell_signal(&mut tx, reg, id, signal).await.unwrap();
         match parse_response(&tx) {
-            Response::ShellSignalled { state } => Ok(state),
+            Response::ShellSignalled { state, .. } => Ok(state),
             Response::Error(msg) => Err(msg),
             other => panic!("unexpected reply {other:?}"),
         }
@@ -1086,6 +1102,58 @@ mod tests {
         let _ = crate::daemon::executor::knowledge::close_shell_with(
             &reg,
             &id,
+            &owner,
+            std::time::Duration::from_millis(3000),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn shell_signal_int_cancels_the_run_that_owns_the_shell() {
+        use crate::daemon::run::{CancelDoor, register_active, register_run, take_cancel_door};
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let session = "shells-08b-owner";
+        let owner = Owner::Chat(session.into());
+        let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+            Box::pin(spawn_in_process_host(id))
+        })
+        .await
+        .unwrap();
+        let run = crate::daemon::run::cancel::test_support::fresh_run_id();
+        let (_cancel_guard, signal) = register_run(&run);
+        let _active_guard = register_active(session, &run);
+
+        let cancelled = |tx: &[u8]| match parse_response(tx) {
+            Response::ShellSignalled { cancelled_run, .. } => cancelled_run,
+            other => panic!("unexpected reply {other:?}"),
+        };
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_signal(&mut tx, &reg, id.as_str(), "STOP")
+            .await
+            .unwrap();
+        assert_eq!(cancelled(&tx), None, "STOP cancels no run");
+        assert!(!signal.is_cancelled());
+
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_signal(&mut tx, &reg, id.as_str(), "INT")
+            .await
+            .unwrap();
+        assert_eq!(
+            cancelled(&tx).as_deref(),
+            Some(run.as_str()),
+            "INT names the owning run it cancelled"
+        );
+        assert!(signal.is_cancelled());
+        assert_eq!(
+            take_cancel_door(&run),
+            Some(CancelDoor::UserAttached),
+            "the run records the attached door"
+        );
+
+        let _ = crate::daemon::executor::knowledge::close_shell_with(
+            &reg,
+            id.as_str(),
             &owner,
             std::time::Duration::from_millis(3000),
         )

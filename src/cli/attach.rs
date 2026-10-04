@@ -38,8 +38,12 @@ pub enum AttachOut {
 /// The daemon's answer to an `AttachOut::Signal`, fed back into the loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttachReply {
-    /// The state the shell settled in (`Response::ShellSignalled`).
-    Signalled(String),
+    /// The state the shell settled in (`Response::ShellSignalled`), and the
+    /// run an `INT` cancelled with it, if any.
+    Signalled {
+        state: String,
+        cancelled_run: Option<String>,
+    },
     /// The signal was refused or failed.
     Failed(String),
 }
@@ -160,6 +164,20 @@ pub fn attach_keys(chunk: &[u8], pending: bool, modes: ShellModes) -> AttachKeys
     out
 }
 
+/// The status note for a signal's answer: `sent` is the signal it answers,
+/// `paused` whether the shell is now paused, `cancelled_run` the run an `INT`
+/// cancelled.
+pub fn reply_note(sent: Option<&str>, paused: bool, cancelled_run: Option<&str>) -> Option<String> {
+    match sent {
+        Some("STOP") if !paused => Some("nothing running to pause".to_string()),
+        Some("INT") => Some(match cancelled_run {
+            Some(run) => format!("interrupted · cancelled run {run}"),
+            None => "interrupted".to_string(),
+        }),
+        _ => None,
+    }
+}
+
 /// The grid size for a terminal: every row but the status line.
 fn body_size(rows: u16, cols: u16) -> (u16, u16) {
     (rows.saturating_sub(1).max(1), cols.max(1))
@@ -207,15 +225,9 @@ where
                 let Some(reply) = reply else { continue };
                 let sent = asked.pop_front();
                 match reply {
-                    AttachReply::Signalled(state) => {
+                    AttachReply::Signalled { state, cancelled_run } => {
                         model.paused = state == "Paused";
-                        model.note = match sent {
-                            Some("STOP") if !model.paused => {
-                                Some("nothing running to pause".to_string())
-                            }
-                            Some("INT") => Some("interrupted".to_string()),
-                            _ => None,
-                        };
+                        model.note = reply_note(sent, model.paused, cancelled_run.as_deref());
                     }
                     AttachReply::Failed(msg) => model.note = Some(msg),
                 }
@@ -364,7 +376,13 @@ pub async fn run_attach(
             let reply = crate::cli::commands::ipc_client::request_once(req).await;
             if is_signal {
                 let reply = match reply {
-                    Ok(Response::ShellSignalled { state }) => AttachReply::Signalled(state),
+                    Ok(Response::ShellSignalled {
+                        state,
+                        cancelled_run,
+                    }) => AttachReply::Signalled {
+                        state,
+                        cancelled_run,
+                    },
                     Ok(Response::Error(msg)) => AttachReply::Failed(msg),
                     Ok(other) => AttachReply::Failed(format!("unexpected reply {}", other.kind())),
                     Err(e) => AttachReply::Failed(e.to_string()),
@@ -561,7 +579,10 @@ mod tests {
                         "CONT" => "Running",
                         _ => "Idle",
                     };
-                    let _ = reply_tx.send(AttachReply::Signalled(state.to_string()));
+                    let _ = reply_tx.send(AttachReply::Signalled {
+                        state: state.to_string(),
+                        cancelled_run: None,
+                    });
                 }
                 sent.push(item);
             }
@@ -789,6 +810,25 @@ mod tests {
             "ctrl-c is a signal, not a typed byte"
         );
         assert_eq!(model.note.as_deref(), Some("interrupted"));
+    }
+
+    #[test]
+    fn reply_note_names_what_a_signal_did() {
+        assert_eq!(
+            reply_note(Some("STOP"), false, None).as_deref(),
+            Some("nothing running to pause")
+        );
+        assert_eq!(reply_note(Some("STOP"), true, None), None, "PAUSED says it");
+        assert_eq!(reply_note(Some("CONT"), false, None), None);
+        assert_eq!(
+            reply_note(Some("INT"), false, None).as_deref(),
+            Some("interrupted")
+        );
+        assert_eq!(
+            reply_note(Some("INT"), false, Some("0123456789abcdef")).as_deref(),
+            Some("interrupted · cancelled run 0123456789abcdef"),
+            "an INT that cancelled the owning run names it"
+        );
     }
 
     #[test]

@@ -497,7 +497,8 @@ pub async fn trigger_ghost_turn(
     })
     .unwrap_or_else(|| ghost_run_kind(None, None, None, ""));
     let mut run_log = RunLogGuard::start(RunId::new(), kind.clone());
-    let (_cancel_guard, cancel_signal) = crate::daemon::run::register_run(run_log.run_id());
+    let (_cancel_guard, cancel_signal, _active_guard) =
+        register_ghost_run(session_id, run_log.run_id());
     tokio::spawn(crate::daemon::run::watch_stop_sentinel(
         run_log.run_id().clone(),
         crate::daemon::run::STOP_POLL_INTERVAL,
@@ -569,6 +570,22 @@ pub async fn trigger_ghost_turn(
         );
     }
     result
+}
+
+/// Register a ghost run for cancellation: by run id, which the stop sentinel
+/// fires, and by the ghost's session id, so `Ctrl-c` while attached to one of
+/// its shells (owner `ghost:<session>`) reaches it too.
+fn register_ghost_run(
+    session_id: &str,
+    run_id: &RunId,
+) -> (
+    crate::daemon::run::RunCancelGuard,
+    crate::daemon::run::RunCancelSignal,
+    crate::daemon::run::ActiveRunGuard,
+) {
+    let (cancel_guard, signal) = crate::daemon::run::register_run(run_id);
+    let active_guard = crate::daemon::run::register_active(session_id, run_id);
+    (cancel_guard, signal, active_guard)
 }
 
 fn cancel_stage(run_id: &crate::daemon::run::RunId) -> String {
@@ -1825,6 +1842,25 @@ mod tests {
             }
             other => panic!("Ok with both flags must read Cancelled, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn ghost_run_is_cancellable_from_an_attached_shell() {
+        use crate::daemon::run::cancel::test_support::{HomeGuard, fresh_run_id};
+        let _home = HomeGuard::new();
+        let id = fresh_run_id();
+        let session = "gs-attach-cancel-1";
+        let (_cancel_guard, signal, _active_guard) = register_ghost_run(session, &id);
+        assert_eq!(
+            crate::daemon::run::cancel_owner_run(
+                &format!("ghost:{session}"),
+                crate::daemon::run::CancelReason::UserStop
+            ),
+            Some(id.clone()),
+            "the ghost's shell owner key reaches the ghost's run"
+        );
+        assert!(signal.is_cancelled());
+        assert_eq!(cancel_stage(&id), "user_attached");
     }
 
     #[tokio::test(start_paused = true)]

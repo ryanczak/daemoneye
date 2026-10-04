@@ -39,6 +39,9 @@ pub enum CancelDoor {
     Chat,
     /// The `var/run/stop-<run>` filesystem sentinel (`daemoneye stop <run>`).
     Sentinel,
+    /// The user's `Ctrl-c` while attached to a shell the run owns
+    /// (`Request::ShellSignal` with `INT`), resolved through the shell's owner.
+    UserAttached,
 }
 
 impl CancelDoor {
@@ -48,6 +51,7 @@ impl CancelDoor {
         match self {
             CancelDoor::Chat => "chat_cancel",
             CancelDoor::Sentinel => "stop_sentinel",
+            CancelDoor::UserAttached => "user_attached",
         }
     }
 }
@@ -93,18 +97,33 @@ pub fn run_for_session(session_id: &str) -> Option<RunId> {
 /// line keeps its meaning. Marks the run's door `Chat` before flipping the
 /// signal, so the turn records the chat door's stage.
 pub fn cancel_session(session_id: &str, reason: CancelReason) -> bool {
-    let run_id = match run_for_session(session_id) {
-        Some(id) => id,
-        None => return false,
-    };
-    mark_cancel_door(&run_id, CancelDoor::Chat);
+    cancel_through(session_id, reason, CancelDoor::Chat).is_some()
+}
+
+/// Cancel the run in flight for the owner of an attached shell, through the
+/// `UserAttached` door. `owner_key` is the shell owner's `Owner::key()`:
+/// `chat:<session>` or `ghost:<session>`. An adopted shell (`adopted`) has no
+/// owning run, and neither does a session with nothing in flight. Returns the
+/// run that was cancelled.
+pub fn cancel_owner_run(owner_key: &str, reason: CancelReason) -> Option<RunId> {
+    let session = owner_key
+        .strip_prefix("chat:")
+        .or_else(|| owner_key.strip_prefix("ghost:"))?;
+    cancel_through(session, reason, CancelDoor::UserAttached)
+}
+
+/// Cancel `session_id`'s run in flight through `door`: mark the door, then
+/// fire the signal. Returns the run cancelled, if one was found.
+fn cancel_through(session_id: &str, reason: CancelReason, door: CancelDoor) -> Option<RunId> {
+    let run_id = run_for_session(session_id)?;
+    mark_cancel_door(&run_id, door);
     if super::cancel::cancel_run(&run_id, reason) {
-        true
+        Some(run_id)
     } else {
         // The run deregistered between the lookup and the fire; nobody will
         // consume the mark, so remove it.
         take_cancel_door(&run_id);
-        false
+        None
     }
 }
 
@@ -148,6 +167,41 @@ mod tests {
         static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         format!("active-session-{n}")
+    }
+
+    #[test]
+    fn cancel_owner_run_cancels_through_the_attached_door() {
+        let _home = HomeGuard::new();
+        for kind in ["chat", "ghost"] {
+            let session = fresh_session_id();
+            let run_id = fresh_run_id();
+            let (_cancel_guard, signal) = register_run(&run_id);
+            let _active_guard = register_active(&session, &run_id);
+            assert_eq!(
+                cancel_owner_run(&format!("{kind}:{session}"), CancelReason::UserStop),
+                Some(run_id.clone()),
+                "a {kind} owner's run in flight is cancelled"
+            );
+            assert!(signal.is_cancelled());
+            assert_eq!(
+                take_cancel_door(&run_id).map(CancelDoor::stage),
+                Some("user_attached"),
+                "the turn records the attached door"
+            );
+        }
+        let idle = fresh_session_id();
+        for key in [
+            "adopted".to_string(),
+            format!("chat:{idle}"),
+            idle.clone(),
+            format!("user:{idle}"),
+        ] {
+            assert_eq!(
+                cancel_owner_run(&key, CancelReason::UserStop),
+                None,
+                "{key:?} owns no run in flight"
+            );
+        }
     }
 
     #[test]

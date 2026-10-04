@@ -490,8 +490,8 @@ mod result;
 mod resume;
 mod turn_log;
 pub use active::{
-    ActiveRunGuard, CancelDoor, cancel_session, mark_cancel_door, register_active, run_for_session,
-    take_cancel_door,
+    ActiveRunGuard, CancelDoor, cancel_owner_run, cancel_session, mark_cancel_door,
+    register_active, run_for_session, take_cancel_door,
 };
 pub use cancel::{
     RunCancelGuard, RunCancelHandle, RunCancelSignal, STOP_POLL_INTERVAL, STOP_SENTINEL_PREFIX,

@@ -1,7 +1,7 @@
 # Phase 08b: attach-cancel — `Ctrl-c` while attached also cancels the run that owns the shell
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 08a (done)
 **Estimated diff:** ~90 lines of production code across 6 files; 4 new tests (~250 lines in all)
 **Tags:** language=rust, kind=feature, size=s
@@ -748,3 +748,52 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-10-03 21:06 (started)
+
+**Executor:** Claude (Opus 4.6, headless run)
+
+Status flipped `todo` → `in-progress` here and in the README's phase table.
+Starting on the spec's Task 1.
+### Update — 2026-10-03 21:20 (mutations)
+
+Tasks 1–5 applied as the spec's diffs; `cargo build --tests` clean; the
+phase filter printed **4 passed / 0 failed**; full lib run 2204/0/14.
+Mutations A–F applied with the `patch` tool, each run once with
+`cargo test --lib -- <name>`, then restored; `git diff --stat` matched its
+pre-mutation state (`8 files changed, 236 insertions(+), 27 deletions(-)`)
+after every restore.
+
+- **A** (`active.rs`, the stage):
+  `active::tests::cancel_owner_run_cancels_through_the_attached_door` → **red**
+  (`FAILED. 0 passed; 1 failed`).
+- **B** (`active.rs`, ghost owners):
+  `active::tests::cancel_owner_run_cancels_through_the_attached_door` → **red**
+  (`FAILED. 0 passed; 1 failed`).
+- **C** (`active.rs`, the door marked):
+  `active::tests::cancel_owner_run_cancels_through_the_attached_door` → **red**
+  (`FAILED. 0 passed; 1 failed`).
+- **D** (`ghost.rs`, the session registered):
+  `ghost::tests::ghost_run_is_cancellable_from_an_attached_shell` → **red**
+  (`FAILED. 0 passed; 1 failed`).
+- **E** (`shells.rs`, only `INT` cancels):
+  `shells::tests::shell_signal_int_cancels_the_run_that_owns_the_shell` →
+  **red** (`FAILED. 0 passed; 1 failed`).
+- **F** (`attach.rs`, the note names the run):
+  `cli::attach::tests::reply_note_names_what_a_signal_did` → **red**
+  (`FAILED. 0 passed; 1 failed`).
+### Update — 2026-10-03 21:45 (end-to-end verification)
+
+Run per the phase doc's § End-to-end verification block, verbatim, with
+nothing else running `cargo test`. The first fenced block below is the
+contents of `/tmp/e2e-m23-08b.txt`, copied by a tool, unchanged.
+
+```
+lib1=ok failed:none
+lib2=ok failed:none
+lib3=ok failed:none
+lib_counts=2204p-0f-14i
+phase_tests=4p-0f
+isolation=11 passed; 0 failed
+wired=1/1/1
+```
+PASTE MATCH
