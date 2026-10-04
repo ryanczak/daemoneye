@@ -1,21 +1,19 @@
 # NEXT
 
-**Active phase:** **M23 phase-09b — user-shell-agents**, drafted 2026-10-04,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-09b`.
+**Active phase:** **M23 phase-10a — readme-slash-commands**, drafted
+2026-10-04, status `todo`. Dispatch with `/rexymcp:dispatch phase-10a`.
 
-**What it does.** Shells the user opened with `/shell` become visible to
-agents (in `list_shells`' default listing and the `[SHELLS]` block). A chat
-agent may run commands in one, or type into one, but every such call
-prompts under a new `UserShell` classification that **no session approval
-covers**: the client always asks. Ghosts are refused, and `close_shell` is
-unchanged. 9 files, 5 new tests; lib 2214 → 2219. This closes row 09.
+**What it does.** README.md gains the eleven M23 slash commands (`/shells`,
+`/hosts`, `/tail`, `/logs`, `/log`, `/attach`, `/agents`, `/shell`, `/runs`,
+`/run`, `/stop`), the shell-viewer and attached-mode key tables, and a note
+that tmux is optional. A new doc_truth test fails the build when any
+command in `/help` or the slash dispatcher is missing from the README
+section. No production code; doc_truth 14 → 15, lib unchanged at 2219.
 
-**Measured at drafting.** "Approve for session" is decided in the client
-from the prompt's classification, so a never-approved variant is the whole
-mechanism. `send_input` was session-approvable too, and is now covered. One
-call-site mutant was unobservable and is pinned by the `wired` grep
-instead. The end-to-end block was run on the dry-run tree. Mutants A–E went
-red 3/3, all clippy-clean. The doc reproduces the dry run.
+**Measured at drafting.** The scan finds 28 commands. A naive regex picked up
+argument lists (`/on`, `/p`), so a command must start a word. The
+end-to-end block was run on the dry-run tree. Mutants A–C went red 3/3, all
+clippy-clean. The doc reproduces the dry run.
 
-**After 09b:** `/rexymcp:architect next` drafts row 10 (the live close,
-architect-run).
+**After 10a:** row 10b, the live close, is architect-run with the PE at the
+keyboard. Then the milestone close (retrospective and folds, PE sign-off).
