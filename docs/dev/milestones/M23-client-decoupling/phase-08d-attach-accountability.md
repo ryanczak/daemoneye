@@ -1,7 +1,7 @@
 # Phase 08d: attach-accountability — attached input is recorded (count, not content) and the owning agent is told
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 08c (done)
 **Estimated diff:** ~90 lines of production code across 4 files; 3 new tests (~200 lines in all)
 **Tags:** language=rust, kind=feature, size=s
@@ -853,3 +853,27 @@ kill: sending signal to 8398 failed: No such process
 **Commit:** 722f95a500014e3ed8cf0fbaf93368f80bfb1868
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-04
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (95 turns, per
+  `executor_health` and the server-authored entry). Its entry names itself
+  "codex (headless, session 1)": fold C, 18th occurrence.
+- **Source diff vs the drafting dry run, tests included:** byte-identical
+  (`git diff 39352d8a 722f95a5 -- src/` against the saved dry-run patch). The
+  08c carry is done: `let owner_key` sits directly above the `Ctrl-c`
+  comment again.
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean, each run separately;
+  - `cargo test` gave lib **2212/0/14**, with bug_tracker 6, doc_truth 14,
+    integration 32 and isolation 11 unmoved;
+  - the end-to-end block printed the Expected values exactly;
+  - the paste check, run verbatim, printed `PASTE MATCH`;
+  - the mutations and end-to-end entries exist (both counts 1);
+  - mutations A–D, re-applied exactly as pinned, each went red on 3 of 3 runs
+    with zero clippy diagnostics, and the tree restored clean;
+  - no `sleep 30` was left running.
+- **Scope deviations:** none.
+- **Calibration:** none new. Row 08 closes with all four phases first-try.
