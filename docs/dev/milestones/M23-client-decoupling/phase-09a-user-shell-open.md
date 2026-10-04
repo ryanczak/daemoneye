@@ -1,7 +1,7 @@
 # Phase 09a: user-shell-open — `/shell [host]` opens a shell the user owns and attaches to it
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 08d (done)
 **Estimated diff:** ~120 lines of production code across 9 files; 2 new tests (~200 lines in all)
 **Tags:** language=rust, kind=feature, size=s
@@ -740,3 +740,31 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-04 11:54 (started)
+
+Applying the pinned diffs from the dry run: `Owner::User`, the `open_shell_id` split, `Request::ShellOpen` / `Response::ShellOpened` with the daemon handler, `/shell` in chat, and the two pinned tests; then Mutations A–D and the end-to-end capture. — Executor (rexyMCP headless run)
+
+### Update — 2026-10-04 11:58 (mutations)
+
+- A (`registry.rs`, `Owner::User` key → `"adopted"`): `shells::tests::shell_open_opens_a_user_owned_shell` — **red** (assertion failed: `the user owns it`, left `Some("adopted")`, right `Some("user")`); restored, `git diff --stat` matched.
+- B (`shells.rs`, owner passed → `Owner::Adopted`): `shells::tests::shell_open_opens_a_user_owned_shell` — **red** (same assertion, `Some("adopted")` vs `Some("user")`); restored, `git diff --stat` matched.
+- C (`shells.rs`, refusal keeps the model's `Error: ` prefix): `shells::tests::shell_open_opens_a_user_owned_shell` — **red** (`the client adds its own prefix: Error: unknown host "no-such-host-08x"…`); restored, `git diff --stat` matched.
+- D (`chat.rs`, first-word compare → `starts_with("/shell")`): `chat::tests::shell_command_matches_shell_and_not_shells` — **red** (`bare /shell is the daemon host`, left `Some(Some("/shell"))`); restored, `git diff --stat` matched.
+
+### Update — 2026-10-04 12:03 (end-to-end verification)
+
+Ran § End-to-end verification verbatim; the capture below is `/tmp/e2e-m23-09a.txt`'s contents, unchanged.
+
+```
+lib1=ok failed:none
+lib2=ok failed:none
+lib3=ok failed:none
+lib_counts=2214p-0f-14i
+phase_tests=2p-0f
+isolation=11 passed; 0 failed
+open_shell_tests=9p-0f
+wired=1/1/1
+```
+
+Paste check: `PASTE MATCH` (diff of the fenced block against `/tmp/e2e-m23-09a.txt` — empty).

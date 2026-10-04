@@ -23,7 +23,7 @@ pub(super) use shell::{
 // Wider than the group above on purpose: the prompt builders reach it from
 // `daemon`, and a `pub(super)` binding cannot be widened on re-export.
 pub use shell::{
-    ContextBreadth, hosts_context_block, resolve_context_scope, shell_context_block,
+    ContextBreadth, hosts_context_block, open_shell_id, resolve_context_scope, shell_context_block,
     shells_only_context,
 };
 

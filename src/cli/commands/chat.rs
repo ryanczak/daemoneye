@@ -33,6 +33,17 @@ fn attach_command(query: &str) -> Option<Option<&str>> {
     Some(words.next())
 }
 
+/// `/shell` and its host: `Some(None)` for a bare `/shell` (the daemon
+/// host), `Some(Some(host))` for `/shell <host>`, `None` for anything else —
+/// `/shells` included.
+fn shell_command(query: &str) -> Option<Option<&str>> {
+    let mut words = query.split_whitespace();
+    if words.next() != Some("/shell") {
+        return None;
+    }
+    Some(words.next())
+}
+
 /// What to attach to: `Some(Some(id))` for `/attach <id>`, `Some(None)` for
 /// the picker (`/agents`, or a bare `/attach`), `None` for anything else.
 fn attach_target(query: &str) -> Option<Option<&str>> {
@@ -54,6 +65,7 @@ Commands:
   /logs      past shell recordings    [host] [--owner chat|ghost] [--since 2h]
   /log       open one recording       (/log <id>; n/p commands, space replays)
   /attach    type into a live shell   (/attach <id>; ctrl-d detach, twice for EOF)
+  /shell     open your own shell      (/shell [host]; attaches; agents see it)
   /agents    pick a shell to attach   (alias: a bare /attach; ↑↓ enter esc)
 
 Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
@@ -463,6 +475,44 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         if query == "/help" || query == "help" || query == "?" || query == "/?" {
             let _ = renderer.commit(help_text);
             let _ = renderer.commit("\n");
+            redraw(
+                &mut renderer,
+                input_state,
+                &session_id,
+                approval,
+                &model,
+                prompt_tokens,
+                context_window,
+                daemon_up,
+                cost_usd,
+                has_untracked,
+            );
+            continue;
+        }
+        if let Some(host) = shell_command(&query) {
+            let opened = super::ipc_client::request_once(crate::ipc::Request::ShellOpen {
+                host: host.map(str::to_string),
+            })
+            .await;
+            match opened {
+                Ok(crate::ipc::Response::ShellOpened { id }) => {
+                    if let Err(e) =
+                        crate::cli::attach::run_attach(stdin, sigwinch, &mut renderer, &id).await
+                    {
+                        let _ = renderer.commit(&format!("  ✗ attach {id}: {e}\n"));
+                    }
+                }
+                Ok(crate::ipc::Response::Error(msg)) => {
+                    let _ = renderer.commit(&format!("  ✗ shell: {msg}\n"));
+                }
+                Ok(other) => {
+                    let _ =
+                        renderer.commit(&format!("  ✗ shell: unexpected reply {}\n", other.kind()));
+                }
+                Err(e) => {
+                    let _ = renderer.commit(&format!("  ✗ shell: {e}\n"));
+                }
+            }
             redraw(
                 &mut renderer,
                 input_state,
@@ -1079,7 +1129,7 @@ fn turn_budget_label(turn: usize, prompt_tokens: u32, context_window: u32) -> St
 
 #[cfg(test)]
 mod tests {
-    use super::{HELP_TEXT, attach_command, attach_target, log_command};
+    use super::{HELP_TEXT, attach_command, attach_target, log_command, shell_command};
 
     #[test]
     fn help_text_lists_shells() {
@@ -1115,6 +1165,24 @@ mod tests {
         assert!(
             HELP_TEXT.contains("/agents"),
             "HELP_TEXT must list '/agents'"
+        );
+    }
+
+    #[test]
+    fn shell_command_matches_shell_and_not_shells() {
+        assert_eq!(
+            shell_command("/shell"),
+            Some(None),
+            "bare /shell is the daemon host"
+        );
+        assert_eq!(shell_command("/shell pinky"), Some(Some("pinky")));
+        assert_eq!(shell_command("  /shell   pinky "), Some(Some("pinky")));
+        for other in ["/shells", "/shells mine", "/shellx", "shell pinky", "/sh"] {
+            assert_eq!(shell_command(other), None, "{other:?} is not /shell");
+        }
+        assert!(
+            HELP_TEXT.contains("/shell "),
+            "HELP_TEXT must list '/shell'"
         );
     }
 

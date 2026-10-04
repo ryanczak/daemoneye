@@ -179,6 +179,9 @@ pub async fn handle_client(
         Request::ShellInput { id, bytes } => {
             shells::handle_shell_input(&mut tx, crate::shell::registry(), &id, &bytes).await?;
         }
+        Request::ShellOpen { host } => {
+            shells::handle_shell_open(&mut tx, host.as_deref()).await?;
+        }
         Request::ShellSignal { id, signal } => {
             shells::handle_shell_signal(&mut tx, crate::shell::registry(), &id, &signal).await?;
         }

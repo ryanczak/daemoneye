@@ -220,6 +220,7 @@ async fn run_ask_raw(query: String) -> Result<()> {
             | Response::ShellScreen { .. }
             | Response::ShellChunk { .. }
             | Response::ShellSignalled { .. }
+            | Response::ShellOpened { .. }
             | Response::ShellExited
             | Response::ContainerStatus { .. }
             | Response::DaemonStatus { .. }

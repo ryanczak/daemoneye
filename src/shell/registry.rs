@@ -56,6 +56,8 @@ pub enum Owner {
     /// definition — so an adopted shell is owned by nobody until a later phase
     /// re-claims it.
     Adopted,
+    /// A shell the user opened with `/shell` (M23), from any chat session.
+    User,
 }
 
 impl Owner {
@@ -66,6 +68,7 @@ impl Owner {
             Owner::Chat(id) => format!("chat:{id}"),
             Owner::Ghost(id) => format!("ghost:{id}"),
             Owner::Adopted => "adopted".to_string(),
+            Owner::User => "user".to_string(),
         }
     }
 }

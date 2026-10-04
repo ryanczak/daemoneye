@@ -244,6 +244,12 @@ pub enum Request {
         id: String,
         bytes: Vec<u8>,
     },
+    /// Open a PTY shell owned by the user (`/shell [host]`, M23), on the
+    /// daemon host or on a configured `[hosts.<name>]` host. Answered with
+    /// `Response::ShellOpened`.
+    ShellOpen {
+        host: Option<String>,
+    },
     /// Signal one PTY shell's foreground job from attached mode (M23):
     /// `"STOP"` pauses it, `"CONT"` resumes it, `"INT"` interrupts it.
     /// Answered with `Response::ShellSignalled`.
@@ -599,6 +605,8 @@ pub enum Response {
     },
     /// Live output from a followed shell, after its `ShellScreen`.
     ShellChunk { bytes: Vec<u8> },
+    /// The shell `ShellOpen` opened, owned by the user.
+    ShellOpened { id: String },
     /// The shell's state once a `ShellSignal` took effect: `"Idle"`,
     /// `"Running"`, `"Paused"` or `"Exited"`. After `INT`, `cancelled_run`
     /// names the run that owned the shell and was cancelled with it.
@@ -919,6 +927,7 @@ impl Response {
             Response::ShellScreen { .. } => "ShellScreen",
             Response::ShellChunk { .. } => "ShellChunk",
             Response::ShellSignalled { .. } => "ShellSignalled",
+            Response::ShellOpened { .. } => "ShellOpened",
             Response::ShellExited => "ShellExited",
             Response::Error(_) => "Error",
             Response::SessionInfo { .. } => "SessionInfo",

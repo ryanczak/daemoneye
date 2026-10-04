@@ -759,6 +759,7 @@ pub(super) async fn ask_with_session_ratatui(
             | Response::ShellScreen { .. }
             | Response::ShellChunk { .. }
             | Response::ShellSignalled { .. }
+            | Response::ShellOpened { .. }
             | Response::ShellExited
             | Response::ContainerStatus { .. }
             | Response::LimitsInfo { .. }

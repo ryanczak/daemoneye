@@ -1712,6 +1712,19 @@ fn format_err_chain(e: &anyhow::Error) -> String {
 /// through `open_shell_error`, which would wrap a host problem in per-owner
 /// shell-limit advice the model cannot act on.
 pub async fn open_shell(caller: &Owner, host: Option<&str>) -> String {
+    match open_shell_id(caller, host).await {
+        Ok((id, host)) => opened_shell_sentence(&id, &host),
+        Err(msg) => msg,
+    }
+}
+
+/// `open_shell` for a caller that needs the shell's id rather than the
+/// model's sentence: the user's `/shell` (M23). `Ok` carries the id and the
+/// host it landed on; `Err` carries the same sentence `open_shell` returns.
+pub async fn open_shell_id(
+    caller: &Owner,
+    host: Option<&str>,
+) -> Result<(ShellId, crate::host::HostId), String> {
     let max_per_owner = crate::config::Config::load()
         .unwrap_or_default()
         .shells
@@ -1719,13 +1732,13 @@ pub async fn open_shell(caller: &Owner, host: Option<&str>) -> String {
     let host = match host.map(crate::host::HostId::parse) {
         None => crate::host::HostId::Local,
         Some(Ok(parsed)) => parsed,
-        Some(Err(msg)) => return format!("Error: {msg}"),
+        Some(Err(msg)) => return Err(format!("Error: {msg}")),
     };
     // The two arms spawn different programs, so their closure types differ and
-    // each calls `open_shell_with` itself.
-    match &host {
+    // each calls `open_shell_with_id` itself.
+    let id = match &host {
         crate::host::HostId::Local => {
-            open_shell_with(
+            open_shell_with_id(
                 &open_shell_test_registry(),
                 caller,
                 crate::host::HostId::Local,
@@ -1742,9 +1755,9 @@ pub async fn open_shell(caller: &Owner, host: Option<&str>) -> String {
             // dress a host problem in per-owner shell-limit advice the model
             // cannot act on (§ Current state 5).
             if let Err(e) = crate::shell::host_entry(name) {
-                return format!("Error: {e}");
+                return Err(format!("Error: {e}"));
             }
-            open_shell_with(
+            open_shell_with_id(
                 &open_shell_test_registry(),
                 caller,
                 crate::host::HostId::Named(name.clone()),
@@ -1754,7 +1767,8 @@ pub async fn open_shell(caller: &Owner, host: Option<&str>) -> String {
             )
             .await
         }
-    }
+    }?;
+    Ok((id, host))
 }
 
 /// `open_shell` with every effect injected: the registry, the host the
@@ -1762,6 +1776,7 @@ pub async fn open_shell(caller: &Owner, host: Option<&str>) -> String {
 /// spawn step. Tests replace `spawn` with an in-process host because
 /// `spawn_detached_host` re-invokes `current_exe()`, which under a test
 /// binary is not the daemon (07b F4).
+#[cfg(test)]
 pub(super) async fn open_shell_with<F, Fut>(
     reg: &ShellRegistry,
     caller: &Owner,
@@ -1770,6 +1785,35 @@ pub(super) async fn open_shell_with<F, Fut>(
     ready_timeout: Duration,
     spawn: F,
 ) -> String
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    match open_shell_with_id(
+        reg,
+        caller,
+        host.clone(),
+        max_per_owner,
+        ready_timeout,
+        spawn,
+    )
+    .await
+    {
+        Ok(id) => opened_shell_sentence(&id, &host),
+        Err(msg) => msg,
+    }
+}
+
+/// `open_shell_with`'s work: spawn, wait for readiness, and return the id, or
+/// the sentence the model reads when the shell could not be opened.
+async fn open_shell_with_id<F, Fut>(
+    reg: &ShellRegistry,
+    caller: &Owner,
+    host: crate::host::HostId,
+    max_per_owner: u32,
+    ready_timeout: Duration,
+    spawn: F,
+) -> Result<ShellId, String>
 where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
@@ -1792,7 +1836,7 @@ where
         // The per-owner cap lives in `spawn_for`'s `check_owner_cap` breach,
         // returned as text rather than an `Err`: every tool result is a value
         // the model reads, so the refusal must name the configured limit.
-        Err(e) => return open_shell_error(max_per_owner, &e),
+        Err(e) => return Err(open_shell_error(max_per_owner, &e)),
     };
     // `spawn_for` reserved the record and rolled back only a *spawn* failure,
     // so a host that never came up leaves a record behind that would be
@@ -1802,21 +1846,27 @@ where
         with_shells(reg, |store| {
             store.remove(id.as_str());
         });
-        return format!(
+        return Err(format!(
             "Error: shell {} did not become ready, and its empty registry record \
              was removed, so nothing can reach a dead shell: {}.",
             id.as_str(),
             format_err_chain(&e)
-        );
+        ));
     }
+    Ok(id)
+}
+
+/// The sentence the model reads after `open_shell` opened shell `id` on
+/// `host`.
+fn opened_shell_sentence(id: &ShellId, host: &crate::host::HostId) -> String {
     // The local sentence is byte-identical to the pre-host one (`HostId` has
     // no printable form); a named host is appended so the model can see where
     // the shell landed and address follow-up work there.
-    let opened_on = match &host {
+    let opened_on = match host {
         crate::host::HostId::Local => String::new(),
         crate::host::HostId::Named(name) => format!(" It is on host {name}."),
     };
-    let s = format!(
+    format!(
         "Opened shell {}. It is now registered and readable — list_shells lists \
          it, read_shell and find_in_shells read its recorded output, close_shell \
          ends it.{opened_on} Note: a command still runs in this session's \
@@ -1826,8 +1876,7 @@ where
          shell.",
         id.as_str(),
         id.as_str()
-    );
-    s
+    )
 }
 
 /// The registry `open_shell`'s tests drive. The daemon-wide singleton is a

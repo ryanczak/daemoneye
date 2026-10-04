@@ -108,6 +108,26 @@ where
     answer_relay(tx, id, result).await
 }
 
+/// Open a shell owned by the user (`/shell [host]`): the same path the
+/// model's `open_shell` takes, with `Owner::User` as the owner. Answers with
+/// the new shell's id, or the refusal (an unknown host, the per-owner cap).
+pub(super) async fn handle_shell_open<W>(tx: &mut W, host: Option<&str>) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let response =
+        match crate::daemon::executor::knowledge::open_shell_id(&crate::shell::Owner::User, host)
+            .await
+        {
+            Ok((id, _)) => Response::ShellOpened {
+                id: id.as_str().to_string(),
+            },
+            Err(msg) => Response::Error(msg.trim_start_matches("Error: ").to_string()),
+        };
+    send_response_split(tx, response).await?;
+    Ok(())
+}
+
 /// How long a signal's effect is waited for. A stopped job reads `T` in
 /// `/proc` only once the kernel has delivered `SIGSTOP`, so the state right
 /// after the ack can still be the old one.
@@ -1322,6 +1342,41 @@ mod tests {
             &reg,
             &id,
             &owner,
+            std::time::Duration::from_millis(3000),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn shell_open_opens_a_user_owned_shell() {
+        let (_guard, _dir) = shell_test_home();
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_open(&mut tx, None).await.unwrap();
+        let Response::ShellOpened { id } = parse_response(&tx) else {
+            panic!("expected ShellOpened, got {tx:?}");
+        };
+        let owner = with_shells(crate::shell::registry(), |store| {
+            store.get(&id).map(|record| record.owner.key())
+        });
+        assert_eq!(owner.as_deref(), Some("user"), "the user owns it");
+
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_open(&mut tx, Some("no-such-host-08x"))
+            .await
+            .unwrap();
+        let Response::Error(msg) = parse_response(&tx) else {
+            panic!("an unknown host is refused, got {tx:?}");
+        };
+        assert!(msg.contains("no-such-host-08x"), "{msg}");
+        assert!(
+            !msg.starts_with("Error: "),
+            "the client adds its own prefix: {msg}"
+        );
+
+        let _ = crate::daemon::executor::knowledge::close_shell_with(
+            crate::shell::registry(),
+            &id,
+            &crate::shell::Owner::User,
             std::time::Duration::from_millis(3000),
         )
         .await;
