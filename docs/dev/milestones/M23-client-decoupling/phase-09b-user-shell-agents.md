@@ -1,7 +1,7 @@
 # Phase 09b: user-shell-agents — agents see the user's shells and drive them only through an approval that is always asked
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 09a (done)
 **Estimated diff:** ~70 lines of production code across 9 files; 5 new tests (~200 lines in all)
 **Tags:** language=rust, kind=feature, size=s
@@ -738,3 +738,11 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-04 21:03 (started)
+
+**Started by:** Executor (rexyMCP headless run)
+
+Status flipped `todo` → `in-progress` here and in the milestone README's
+phase-table row. Applying the dry-run diffs from the Spec file by file, then
+running the five named tests, Mutations A–E, and the end-to-end capture.
