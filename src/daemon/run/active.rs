@@ -106,10 +106,21 @@ pub fn cancel_session(session_id: &str, reason: CancelReason) -> bool {
 /// owning run, and neither does a session with nothing in flight. Returns the
 /// run that was cancelled.
 pub fn cancel_owner_run(owner_key: &str, reason: CancelReason) -> Option<RunId> {
-    let session = owner_key
+    cancel_through(owner_session(owner_key)?, reason, CancelDoor::UserAttached)
+}
+
+/// The run in flight for the owner of an attached shell (`chat:<session>` or
+/// `ghost:<session>`), if any.
+pub(super) fn owner_run(owner_key: &str) -> Option<RunId> {
+    run_for_session(owner_session(owner_key)?)
+}
+
+/// The session an owner key names: `chat:<session>` and `ghost:<session>`
+/// name one; `adopted` and anything else name none.
+fn owner_session(owner_key: &str) -> Option<&str> {
+    owner_key
         .strip_prefix("chat:")
-        .or_else(|| owner_key.strip_prefix("ghost:"))?;
-    cancel_through(session, reason, CancelDoor::UserAttached)
+        .or_else(|| owner_key.strip_prefix("ghost:"))
 }
 
 /// Cancel `session_id`'s run in flight through `door`: mark the door, then
@@ -139,6 +150,7 @@ impl Drop for ActiveRunGuard {
         // exit would otherwise sit in the map forever.
         if let Some(run_id) = run_id {
             doors().lock().unwrap_or_log().remove(run_id.as_str());
+            super::pause::clear_pause(run_id.as_str());
         }
     }
 }

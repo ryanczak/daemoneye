@@ -119,11 +119,13 @@ where
     // `Ctrl-c` while attached also cancels the run that owns the shell. The
     // cancel is cooperative (the run stops at its next turn boundary), so it
     // is fired first; the signal then ends what the shell is running now.
+    let owner_key = with_shells(reg, |store| store.get(id).map(|record| record.owner.key()));
     let cancelled_run = if sig == ShellSignal::Int {
-        with_shells(reg, |store| store.get(id).map(|record| record.owner.key()))
+        owner_key
+            .as_deref()
             .and_then(|key| {
                 crate::daemon::run::cancel_owner_run(
-                    &key,
+                    key,
                     crate::daemon::run::CancelReason::UserStop,
                 )
             })
@@ -137,14 +139,40 @@ where
         return Ok(());
     }
     let response = match settled_state(&sock, sig).await {
-        Ok(state) => Response::ShellSignalled {
-            state: state_name(state).to_string(),
-            cancelled_run,
-        },
+        Ok(state) => {
+            if let Some(key) = owner_key.as_deref() {
+                record_pause(key, id, sig, state);
+            }
+            Response::ShellSignalled {
+                state: state_name(state).to_string(),
+                cancelled_run,
+            }
+        }
         Err(e) => Response::Error(format!("shell {id}: {e:#}")),
     };
     send_response_split(tx, response).await?;
     Ok(())
+}
+
+/// Tell the run that owns shell `id` (owner `owner_key`) about a pause from
+/// attached mode: a `STOP` that really stopped the job parks the run at its
+/// next turn boundary, and a `CONT` wakes it.
+fn record_pause(
+    owner_key: &str,
+    id: &str,
+    sig: crate::shell::ShellSignal,
+    state: crate::shell::ShellState,
+) {
+    use crate::shell::{ShellSignal, ShellState};
+    match sig {
+        ShellSignal::Stop if state == ShellState::Paused => {
+            crate::daemon::run::pause_owner_run(owner_key, id);
+        }
+        ShellSignal::Cont => {
+            crate::daemon::run::resume_owner_run(owner_key);
+        }
+        _ => {}
+    }
 }
 
 /// The shell's state once `sig` has had its effect: read until it is `Paused`
@@ -1154,6 +1182,61 @@ mod tests {
         let _ = crate::daemon::executor::knowledge::close_shell_with(
             &reg,
             id.as_str(),
+            &owner,
+            std::time::Duration::from_millis(3000),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn shell_signal_stop_parks_and_cont_wakes_the_owning_run() {
+        use crate::daemon::run::{is_paused, register_active, take_pause_notice};
+        use crate::shell::ShellState;
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let session = "shells-08c-owner";
+        let owner = Owner::Ghost(session.into());
+        let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+            Box::pin(spawn_in_process_host(id))
+        })
+        .await
+        .unwrap();
+        let id = id.as_str().to_string();
+        let run = crate::daemon::run::cancel::test_support::fresh_run_id();
+        let _active_guard = register_active(session, &run);
+
+        assert_eq!(
+            signal_state(&reg, &id, "STOP").await,
+            Ok("Idle".to_string())
+        );
+        assert!(!is_paused(&run), "a STOP that paused nothing parks no run");
+
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_input(&mut tx, &reg, &id, b"sleep 30\n")
+            .await
+            .unwrap();
+        assert!(status_reaches(&id, ShellState::Running).await);
+        assert_eq!(
+            signal_state(&reg, &id, "STOP").await,
+            Ok("Paused".to_string())
+        );
+        assert!(is_paused(&run), "a STOP that paused the job parks its run");
+        assert_eq!(
+            signal_state(&reg, &id, "CONT").await,
+            Ok("Running".to_string())
+        );
+        assert!(!is_paused(&run), "CONT wakes the run");
+        assert_eq!(
+            take_pause_notice(&run).map(|(shell, _)| shell),
+            Some(id.clone()),
+            "the run is told which shell was paused"
+        );
+        let _ = signal_state(&reg, &id, "INT").await;
+        assert!(status_reaches(&id, ShellState::Idle).await);
+
+        let _ = crate::daemon::executor::knowledge::close_shell_with(
+            &reg,
+            &id,
             &owner,
             std::time::Duration::from_millis(3000),
         )

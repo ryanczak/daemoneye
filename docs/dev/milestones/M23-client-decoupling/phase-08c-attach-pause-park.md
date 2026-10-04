@@ -1,7 +1,7 @@
 # Phase 08c: attach-pause-park — a paused shell parks its ghost run, and the run is told how long
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 08b (done)
 **Estimated diff:** ~150 lines of production code (one new file given whole, four diffs); 5 new tests (~370 lines in all)
 **Tags:** language=rust, kind=feature, size=m
@@ -806,3 +806,34 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-10-03 21:57 (started)
+
+**Executor:** executor (M23 phase-08c). Flipped Status to `in-progress` (and the README phase-table row), read the dry-run facts, and am applying Tasks 1–5 as given.
+### Update — 2026-10-03 22:07 (mutations)
+
+All six mutations applied with the `patch` tool, each red on its single named run, each restored, `git diff --stat` confirmed unchanged after every restore, and each mutant clippy-clean with `-D warnings`:
+
+- **A** — `run::pause::tests::pause_resume_leaves_one_notice_of_how_long` → **red** (`a second pause keeps the first start: left Some(30s), right Some(40s)`).
+- **B** — `run::pause::tests::pause_resume_leaves_one_notice_of_how_long` → **red** (`the notice names the first shell: left Some(("s5", 0ns)), right Some(("s5", 40s))`).
+- **C** — `run::pause::tests::dropping_the_active_guard_clears_the_pause` → **red** (`a finished run leaves no pause behind`).
+- **D** — `shells::tests::shell_signal_stop_parks_and_cont_wakes_the_owning_run` → **red** (`a STOP that paused nothing parks no run`).
+- **E** — `shells::tests::shell_signal_stop_parks_and_cont_wakes_the_owning_run` → **red** (`CONT wakes the run`).
+- **F** — `ghost::tests::park_while_paused_waits_for_the_resume_and_says_how_long` → **red** (`it waits for the resume, then says which shell and how long: left None, right Some(...)`).
+### Update — 2026-10-03 22:12 (end-to-end verification)
+
+The § End-to-end verification block was run verbatim on this tree ( Tasks 1–5 + mutations restored, `git diff --stat` at its pre-mutation state ); its output is `/tmp/e2e-m23-08c.txt`, whose contents follow unchanged.
+
+```
+lib1=ok failed:none
+lib2=ok failed:none
+lib3=ok failed:none
+lib_counts=2209p-0f-14i
+phase_tests=5p-0f
+isolation=11 passed; 0 failed
+wired=1/1/1
+```
+
+All Expected values matched: three clean lib runs, `lib_counts=2209p-0f-14i` (2204 + 5 new), the phase filter printed `5p-0f`, isolation 11/0, and `wired=1/1/1`. The remaining targets were also checked unmoved: bug_tracker 6 passed / 0 failed, doc_truth 14 passed / 0 failed, integration 32 passed / 0 failed — no flake appeared and no `sleep 30` was left running.
+
+Paste check:
+PASTE MATCH

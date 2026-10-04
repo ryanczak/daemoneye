@@ -588,6 +588,41 @@ fn register_ghost_run(
     (cancel_guard, signal, active_guard)
 }
 
+/// How often a parked ghost checks whether the user has resumed it.
+const PAUSE_POLL: Duration = Duration::from_millis(250);
+
+/// Park at a turn boundary while the user has one of this ghost's shells
+/// paused from attached mode. Returns the line to tell the model once it has
+/// been resumed, or `None` when it was not paused or was cancelled while
+/// parked. Both edges are noted in the run log.
+async fn park_while_paused(
+    run_id: &RunId,
+    cancel: &crate::daemon::run::RunCancelSignal,
+) -> Option<String> {
+    let note = |text: String| {
+        append_turn_event(&TurnLogRecord {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            run_id: run_id.clone(),
+            event: TurnLogEvent::Note { text },
+        })
+    };
+    if crate::daemon::run::is_paused(run_id) {
+        note("paused by the user from attached mode".to_string());
+        while crate::daemon::run::is_paused(run_id) && !cancel.is_cancelled() {
+            tokio::time::sleep(PAUSE_POLL).await;
+        }
+    }
+    if cancel.is_cancelled() {
+        return None;
+    }
+    let (shell, lasted) = crate::daemon::run::take_pause_notice(run_id)?;
+    let secs = lasted.as_secs();
+    note(format!("resumed after {secs} s"));
+    Some(format!(
+        "[The user paused shell {shell} for {secs} s from attached mode. It is running again.]"
+    ))
+}
+
 fn cancel_stage(run_id: &crate::daemon::run::RunId) -> String {
     crate::daemon::run::take_cancel_door(run_id)
         .map(crate::daemon::run::CancelDoor::stage)
@@ -785,6 +820,26 @@ async fn do_ghost_turn(
     // exactly once before breaking the loop.
     let mut wrap_up_turn = false;
     loop {
+        if let Some(notice) = park_while_paused(run_id, cancel).await {
+            let message = crate::ai::Message {
+                role: "user".to_string(),
+                content: notice,
+                tool_calls: None,
+                tool_results: None,
+                turn: Some(turn + 1),
+            };
+            let pushed = with_sessions(sessions, |store| {
+                if let Some(entry) = store.get_mut(session_id) {
+                    entry.messages.push(message.clone());
+                    true
+                } else {
+                    false
+                }
+            });
+            if pushed {
+                crate::daemon::session::append_session_message(session_id, &message);
+            }
+        }
         if cancel.is_cancelled() {
             log::info!(
                 "Ghost Shell {session_id}: cancelled, stopping before turn {}",
@@ -1842,6 +1897,50 @@ mod tests {
             }
             other => panic!("Ok with both flags must read Cancelled, got {other:?}"),
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn park_while_paused_waits_for_the_resume_and_says_how_long() {
+        use crate::daemon::run::cancel::test_support::{HomeGuard, fresh_run_id};
+        use crate::daemon::run::{CancelReason, cancel_run, pause_run, register_run, resume_run};
+        let _home = HomeGuard::new();
+        let id = fresh_run_id();
+        let (_cancel_guard, signal) = register_run(&id);
+        assert_eq!(
+            park_while_paused(&id, &signal).await,
+            None,
+            "a run that is not paused does not wait"
+        );
+
+        pause_run(&id, "s5");
+        let resumer = tokio::spawn({
+            let id = id.clone();
+            async move {
+                tokio::time::sleep(Duration::from_secs(40)).await;
+                resume_run(&id);
+            }
+        });
+        assert_eq!(
+            park_while_paused(&id, &signal).await.as_deref(),
+            Some("[The user paused shell s5 for 40 s from attached mode. It is running again.]"),
+            "it waits for the resume, then says which shell and how long"
+        );
+        resumer.await.unwrap();
+
+        pause_run(&id, "s5");
+        let canceller = tokio::spawn({
+            let id = id.clone();
+            async move {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                cancel_run(&id, CancelReason::UserStop);
+            }
+        });
+        assert_eq!(
+            park_while_paused(&id, &signal).await,
+            None,
+            "a cancel ends the wait, and a cancelled run is told nothing"
+        );
+        canceller.await.unwrap();
     }
 
     #[test]
