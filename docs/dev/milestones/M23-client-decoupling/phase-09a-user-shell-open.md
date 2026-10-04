@@ -767,4 +767,6 @@ open_shell_tests=9p-0f
 wired=1/1/1
 ```
 
-Paste check: `PASTE MATCH` (diff of the fenced block against `/tmp/e2e-m23-09a.txt` — empty).
+Paste check (run as § End-to-end verification prescribes):
+
+PASTE MATCH
