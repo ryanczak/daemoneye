@@ -1,7 +1,7 @@
 # Phase 09b: user-shell-agents — agents see the user's shells and drive them only through an approval that is always asked
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** review
 **Depends on:** 09a (done)
 **Estimated diff:** ~70 lines of production code across 9 files; 5 new tests (~200 lines in all)
 **Tags:** language=rust, kind=feature, size=s
@@ -795,3 +795,142 @@ Known flakes named in the Spec
 (`shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`,
 `shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`)
 did not appear in the three lib runs above; no re-run was spent.
+
+### Update — 2026-10-04 21:23 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 09b is implemented exactly per the dry-run diffs — `Owner::may_drive` + `is_user_shell` in the registry (Task 1), the new `Classification::UserShell` that no session grant covers (`auto_approves` → false, `record_session_approval` → None) plus its panel/label arms (Task 2), `ApprovalRequest.user_shell` plumbed from the `run_terminal_command` and `send_input` doors through a pure `prompt_classification` (Task 3), the two ownership checks and the `"mine"` listing widened via `resolve_scope` (Task 4), and the five pinned tests (Task 5). Mutations A–E each ran once red and were restored with `git diff --stat` verified after each restore (Task 6); the end-to-end block was captured mechanically to `/tmp/e2e-m23-09b.txt` and pasted unchanged (Task 7).
+
+**Notes for review:** No deviation from the spec — every diff hunk landed as written; the only edits outside the diffs were mechanical rustfmt reflows of two `ApprovalRequest` literal lines the verifier forced by the new field, and the comment line in `auto_approves` was extended to mention the user's own shell so the never-arm comment stays truthful (the spec's diff showed the old two-line comment around the widened arm). End-to-end verification printed `lib_counts=2219p-0f-14i`, `phase_tests=5p-0f`, `isolation=11 passed; 0 failed`, `wired=1/1/2` — all four acceptance-capture values match Expected; the paste check printed `PASTE MATCH` on the first run; neither named flake appeared in the three lib runs, so no re-run budget was spent. Full gate set clean: `cargo fmt --all` (run immediately before `git add`), `cargo build` 0 warnings, `cargo clippy -D warnings` clean, and one full `cargo test` run with lib 2219/0/14 and other targets unmoved (bug_tracker 6, doc_truth 14, integration 32, isolation 11). Status left at `in-progress` with no hand-written `(complete)` entry, per the lifecycle split; tree is clean at `42757a28`.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 14 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+kill: sending signal to 612963 failed: No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M23-client-decoupling/phase-09b-user-shell-agents.md` — +58 -1
+- `src/cli/commands/approval.rs` — +22 -4
+- `src/cli/commands/stream.rs` — +22 -0
+- `src/daemon/executor/foreground.rs` — +2 -0
+- `src/daemon/executor/knowledge/shell.rs` — +58 -3
+- `src/daemon/executor/mod.rs` — +52 -1
+- `src/daemon/executor/shell_exec.rs` — +1 -1
+- `src/ipc.rs` — +3 -0
+- `src/shell/mod.rs` — +2 -2
+- `src/shell/registry.rs` — +37 -0
+
+**Commit:** 42757a2837459888b5ac18ffc46d328b6f4c1bc7
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
