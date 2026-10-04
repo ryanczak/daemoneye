@@ -1,27 +1,20 @@
 # NEXT
 
-**Active phase:** **M23 phase-08b — attach-cancel**, drafted 2026-10-04,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-08b`.
+**Active phase:** **M23 phase-08c — attach-pause-park**, drafted 2026-10-04,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-08c`.
 
-**What it does.** An attached `Ctrl-c` now also cooperatively cancels the
-run that owns the shell. The shell's owner (`chat:<s>` or `ghost:<s>`)
-resolves to that session's run, which stops at its next turn boundary as
-`Cancelled { stage: "user_attached" }`. Ghost runs are now registered by
-session so that their shells can reach them. The status note names the
-cancelled run. 6 files, 4 new tests; lib 2200 → 2204.
+**What it does.** An attached `Ctrl-p` that really pauses the job now also
+parks the ghost run that owns the shell: it starts no new turn while
+paused. On resume it is told "[The user paused shell s5 for 40 s from
+attached mode. It is running again.]". A cancel ends the park. Both edges
+are noted in the run log. A new `src/daemon/run/pause.rs` (given whole) plus
+four diffs; 5 new tests; lib 2204 → 2209.
 
-**Row 08 re-cut:** 08b (this) is cancel, 08c is park-on-pause, and 08d is
-accountability.
+**Measured at drafting.** No `RunState` change is needed, because the run
+log's existing `Note` event records the pause. The park is tested on tokio's
+paused clock and reads exactly `40 s`. Chat runs don't park; that is out of
+scope with the reason given. The end-to-end block was run on the dry-run
+tree. Mutants A–F went red 3/3, all clippy-clean. The doc reproduces the dry
+run.
 
-**Measured at drafting.** The dry-run `wired` grep at first missed a
-rustfmt-split call and printed `1/0/1`; running the block on the dry run
-caught it, and it is fixed. Mutants A–F went red 3/3, all clippy-clean. The
-doc reproduces the dry run.
-
-**For the PE: the known flake is frequent.**
-`pty_stop_with_no_foreground_job_remembers_nothing` failed in 4 of 22 full
-lib runs today (1 of 8 at HEAD). It is pre-existing (M22) and not made
-worse here (A/B), but most end-to-end blocks now need a re-run. A small row
-to fix it could be worth adding.
-
-**After 08b:** `/rexymcp:architect next` drafts 08c (attach-pause-park).
+**After 08c:** `/rexymcp:architect next` drafts 08d (attach-accountability).
