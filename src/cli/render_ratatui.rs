@@ -737,6 +737,88 @@ impl<B: Backend> RatatuiRenderer<B> {
         Ok(())
     }
 
+    /// Draw the live region as a picker: a bordered list of `rows` under
+    /// `title`, showing the window of rows that keeps `selected` in view, with
+    /// the selected row marked `›` and drawn reversed. Too short for a panel,
+    /// it shows the selected row alone on the prompt line.
+    pub fn draw_picker_panel(
+        &mut self,
+        title: &str,
+        rows: &[String],
+        selected: usize,
+        status: &StatusBarState<'_>,
+    ) -> Result<(), B::Error> {
+        let area = self.terminal.get_frame().area();
+        if area.height < 6 {
+            let line = rows.get(selected).map(String::as_str).unwrap_or("");
+            return self.draw_prompt(
+                &format!("{line} · ↑↓ enter esc › "),
+                &InputLine::new(),
+                status,
+            );
+        }
+
+        let session_id = status.session_id.to_string();
+        let model = status.model.to_string();
+        let start_time = self.start_time;
+        let title_owned = title.to_string();
+
+        self.terminal.draw(|frame| {
+            let area = frame.area();
+            let chunks = Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(area);
+
+            let yellow = self.palette.yellow();
+            let panel = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(Span::styled(
+                    format!(" {title_owned} "),
+                    Style::default().fg(yellow).add_modifier(Modifier::BOLD),
+                ));
+
+            let inner_height = chunks[0].height.saturating_sub(2).max(1) as usize;
+            let inner_width = chunks[0].width.saturating_sub(4) as usize;
+            let (start, end) = picker_window(rows.len(), selected, inner_height);
+            let lines: Vec<Line> = rows[start..end]
+                .iter()
+                .enumerate()
+                .map(|(i, row)| {
+                    let text = truncate_with_ellipsis(row, inner_width);
+                    if start + i == selected {
+                        Line::from(Span::styled(
+                            format!("› {text}"),
+                            Style::default().add_modifier(Modifier::REVERSED),
+                        ))
+                    } else {
+                        Line::from(Span::raw(format!("  {text}")))
+                    }
+                })
+                .collect();
+            frame.render_widget(Paragraph::new(lines).block(panel), chunks[0]);
+
+            let uptime = fmt_uptime(start_time.elapsed());
+            let status_text = format!(
+                " session:{} · {} · up {} ",
+                short_session(&session_id),
+                model,
+                uptime,
+            );
+            let status_block = Block::default().borders(Borders::NONE).style(
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM),
+            );
+            let status_para =
+                Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
+            frame.render_widget(status_para, chunks[1]);
+        })?;
+
+        Ok(())
+    }
+
     /// Commit a styled bordered panel into scrollback above the inline viewport.
     ///
     /// Renders a top border with a title, body lines (optionally dimmed and
@@ -1097,6 +1179,17 @@ fn render_spinner_region(
 /// Clip `s` to at most `max` characters, marking truncation with a trailing '…'.
 /// Returns `s` unchanged when it already fits. The '…' counts toward `max`, so a
 /// truncated result is exactly `max` chars wide.
+/// The rows `[start, end)` a picker of `len` rows shows in `height` lines:
+/// all of them when they fit, otherwise a window that ends at `selected` once
+/// it has moved past the first `height` rows.
+pub(crate) fn picker_window(len: usize, selected: usize, height: usize) -> (usize, usize) {
+    if len <= height {
+        return (0, len);
+    }
+    let start = (selected + 1).saturating_sub(height).min(len - height);
+    (start, start + height)
+}
+
 fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -1134,6 +1227,79 @@ fn fmt_uptime(elapsed: std::time::Duration) -> String {
 mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
+
+    #[test]
+    fn picker_window_keeps_the_selection_visible() {
+        assert_eq!(picker_window(2, 1, 3), (0, 2), "a short list shows whole");
+        assert_eq!(picker_window(5, 0, 3), (0, 3));
+        assert_eq!(picker_window(5, 2, 3), (0, 3), "no scroll while in view");
+        assert_eq!(picker_window(5, 3, 3), (1, 4), "the window follows down");
+        assert_eq!(picker_window(5, 4, 3), (2, 5));
+    }
+
+    #[test]
+    fn draw_picker_panel_shows_the_window_and_marks_the_selection() {
+        use crate::cli::palette::{ColorDepth, Palette};
+
+        let backend = TestBackend::new(60, 10);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: Palette::for_depth(ColorDepth::Xterm256),
+            origin_row: 0,
+            inserted_rows: 0,
+            rows_scrolled: 0,
+            history: std::collections::VecDeque::new(),
+            last_width: 0,
+            last_height: 0,
+        };
+        let status = StatusBarState {
+            session_id: "abcdef12",
+            approval_hint: "",
+            model: "m",
+            prompt_tokens: 0,
+            context_window: 0,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+        let rows: Vec<String> = (0..5).map(|i| format!("s{i}  host:local")).collect();
+        renderer
+            .draw_picker_panel("agents · 4/5", &rows, 3, &status)
+            .unwrap();
+        let buf = renderer.terminal.backend().buffer().clone();
+        let line = |y: u16| -> String {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect()
+        };
+        let text: Vec<String> = (0..buf.area.height).map(line).collect();
+        let all = text.join("\n");
+        assert!(all.contains("agents · 4/5"), "{all}");
+        assert!(
+            all.contains("› s3  host:local"),
+            "the selection is marked: {all}"
+        );
+        assert!(all.contains("  s1  host:local"), "{all}");
+        assert!(
+            !all.contains("s0  host"),
+            "row 0 scrolled out of the window: {all}"
+        );
+        let marked = text.iter().position(|l| l.contains("› s3")).unwrap() as u16;
+        let x = text[marked as usize].find('›').unwrap() as u16;
+        assert!(
+            buf[(x, marked)].modifier.contains(Modifier::REVERSED),
+            "the selected row is drawn reversed"
+        );
+    }
 
     fn make_test_renderer() -> RatatuiRenderer<TestBackend> {
         let backend = TestBackend::new(60, 10);

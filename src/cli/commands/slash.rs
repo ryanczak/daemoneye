@@ -215,7 +215,7 @@ const SHELL_COMMAND_WIDTH: usize = 40;
 /// Render the `/shells` panel body: one row per shell, in the order the
 /// daemon sent them (shell index order). `session_id` marks this chat's own
 /// shells. Pure so it can be tested without a daemon.
-fn render_shell_list(
+pub(super) fn render_shell_list(
     shells: &[crate::ipc::ShellInfo],
     session_id: &str,
     now_unix: u64,

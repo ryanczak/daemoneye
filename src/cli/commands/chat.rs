@@ -33,6 +33,15 @@ fn attach_command(query: &str) -> Option<Option<&str>> {
     Some(words.next())
 }
 
+/// What to attach to: `Some(Some(id))` for `/attach <id>`, `Some(None)` for
+/// the picker (`/agents`, or a bare `/attach`), `None` for anything else.
+fn attach_target(query: &str) -> Option<Option<&str>> {
+    if query.trim() == "/agents" {
+        return Some(None);
+    }
+    attach_command(query)
+}
+
 const HELP_TEXT: &str = "\
 Commands:
   /help      show this list           /exit      quit
@@ -45,6 +54,7 @@ Commands:
   /logs      past shell recordings    [host] [--owner chat|ghost] [--since 2h]
   /log       open one recording       (/log <id>; n/p commands, space replays)
   /attach    type into a live shell   (/attach <id>; ctrl-d detach, twice for EOF)
+  /agents    pick a shell to attach   (alias: a bare /attach; ↑↓ enter esc)
 
 Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
 
@@ -467,7 +477,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
             );
             continue;
         }
-        if let Some(id) = attach_command(&query) {
+        if let Some(id) = attach_target(&query) {
             match id {
                 Some(id) => {
                     if let Err(e) =
@@ -477,7 +487,23 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     }
                 }
                 None => {
-                    let _ = renderer.commit("  usage: /attach <shell id>  (see /shells)\n");
+                    let hint = approval.hint();
+                    let status = StatusBarState {
+                        session_id: &session_id,
+                        approval_hint: &hint,
+                        model: &model,
+                        prompt_tokens,
+                        context_window,
+                        daemon_up,
+                        tools_total: 0,
+                        cost_usd,
+                        has_untracked,
+                    };
+                    if let Err(e) =
+                        super::agents::run_agents(stdin, sigwinch, &mut renderer, &status).await
+                    {
+                        let _ = renderer.commit(&format!("  ✗ agents: {e}\n"));
+                    }
                 }
             }
             redraw(
@@ -1053,7 +1079,7 @@ fn turn_budget_label(turn: usize, prompt_tokens: u32, context_window: u32) -> St
 
 #[cfg(test)]
 mod tests {
-    use super::{HELP_TEXT, attach_command, log_command};
+    use super::{HELP_TEXT, attach_command, attach_target, log_command};
 
     #[test]
     fn help_text_lists_shells() {
@@ -1078,11 +1104,26 @@ mod tests {
     }
 
     #[test]
+    fn attach_target_opens_the_picker_for_agents_and_bare_attach() {
+        assert_eq!(attach_target("/agents"), Some(None));
+        assert_eq!(attach_target("  /agents "), Some(None));
+        assert_eq!(attach_target("/attach"), Some(None));
+        assert_eq!(attach_target("/attach s3"), Some(Some("s3")));
+        for other in ["/agentsx", "/agents s3", "/agent", "/shells"] {
+            assert_eq!(attach_target(other), None, "{other:?} opens nothing");
+        }
+        assert!(
+            HELP_TEXT.contains("/agents"),
+            "HELP_TEXT must list '/agents'"
+        );
+    }
+
+    #[test]
     fn attach_command_matches_attach_only() {
         assert_eq!(
             attach_command("/attach"),
             Some(None),
-            "bare /attach asks for usage"
+            "a bare /attach opens the picker"
         );
         assert_eq!(attach_command("/attach s3"), Some(Some("s3")));
         assert_eq!(attach_command("  /attach   s12 "), Some(Some("s12")));

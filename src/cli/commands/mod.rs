@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+mod agents;
 mod approval;
 mod ask;
 mod audit_prompts;
