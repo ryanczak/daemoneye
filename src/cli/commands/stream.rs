@@ -1181,6 +1181,9 @@ pub(super) fn approval_session_label(
             format!("{host} (unconfigured) — always asked")
         }
         crate::ipc::Classification::EscapeHatch => "escape hatch — always asked".to_string(),
+        crate::ipc::Classification::UserShell { shell } => {
+            format!("your shell {shell} — always asked")
+        }
     }
 }
 
@@ -1209,6 +1212,9 @@ pub(super) fn tool_call_panel_body(
         }
         crate::ipc::Classification::EscapeHatch => {
             body.push("→ ghost shell reaching outside its sandbox".to_string());
+        }
+        crate::ipc::Classification::UserShell { shell } => {
+            body.push(format!("→ your shell {shell} (opened with /shell)"));
         }
     }
     body
@@ -1895,6 +1901,22 @@ mod stream_seam_tests {
 mod tool_call_panel_tests {
     use super::*;
     use crate::daemon::utils::command_has_sudo;
+
+    #[test]
+    fn the_user_shell_panel_names_the_shell_and_is_always_asked() {
+        let class = crate::ipc::Classification::UserShell { shell: "s7".into() };
+        assert_eq!(
+            tool_call_panel_body("uptime", false, None, &class),
+            vec![
+                "$ uptime".to_string(),
+                "→ your shell s7 (opened with /shell)".to_string()
+            ]
+        );
+        assert_eq!(
+            approval_session_label(&class, false),
+            "your shell s7 — always asked"
+        );
+    }
 
     #[test]
     fn the_local_command_panel_is_unchanged() {

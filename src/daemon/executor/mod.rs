@@ -44,6 +44,25 @@ struct ApprovalRequest<'a> {
     /// host. Carried only so the prompt can classify and name the
     /// destination; the call's own host resolution is untouched.
     host: Option<&'a str>,
+    /// The user-owned shell (`/shell`) the call is aimed at, if any. Such a
+    /// prompt is classified `UserShell`, which no session grant covers.
+    user_shell: Option<&'a str>,
+}
+
+/// The classification an approval prompt carries: `UserShell` when the call
+/// is aimed at a shell the user owns, otherwise `ipc::classify`'s answer.
+fn prompt_classification(
+    host: Option<&str>,
+    is_ghost: bool,
+    known_hosts: &[String],
+    user_shell: Option<&str>,
+) -> crate::ipc::Classification {
+    match user_shell {
+        Some(shell) => crate::ipc::Classification::UserShell {
+            shell: shell.to_string(),
+        },
+        None => crate::ipc::classify(host, is_ghost, known_hosts),
+    }
 }
 
 /// The outcome of a single tool call execution.
@@ -490,6 +509,9 @@ where
                         background: false,
                         target_pane_hint: None,
                         host: Some(host.as_str()),
+                        user_shell: shell
+                            .as_deref()
+                            .filter(|s| crate::shell::is_user_shell(crate::shell::registry(), s)),
                     },
                     session_id,
                     ghost_policy.as_ref(),
@@ -757,6 +779,7 @@ where
                         background: true,
                         target_pane_hint: None,
                         host: None,
+                        user_shell: None,
                     },
                     session_id,
                     ghost_policy.as_ref(),
@@ -1364,6 +1387,8 @@ where
                     background: false,
                     target_pane_hint: None,
                     host: None,
+                    user_shell: crate::shell::is_user_shell(crate::shell::registry(), shell)
+                        .then_some(shell.as_str()),
                 },
                 session_id,
                 None,
@@ -1586,6 +1611,7 @@ where
         background,
         target_pane_hint,
         host,
+        user_shell,
     } = req;
     let mode = if background {
         "background"
@@ -1663,7 +1689,12 @@ where
             command: cmd.to_string(),
             background,
             target_pane: target_pane_hint.map(|s| s.to_string()),
-            classification: crate::ipc::classify(host, ghost_policy.is_some(), &known_hosts),
+            classification: prompt_classification(
+                host,
+                ghost_policy.is_some(),
+                &known_hosts,
+                user_shell,
+            ),
         },
     )
     .await?;
@@ -2160,6 +2191,26 @@ mod ghost_host_gate_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_classification_marks_the_users_shell() {
+        assert_eq!(
+            prompt_classification(None, false, &[], Some("s7")),
+            crate::ipc::Classification::UserShell { shell: "s7".into() },
+            "a call aimed at the user's shell is always asked"
+        );
+        assert_eq!(
+            prompt_classification(None, false, &[], None),
+            crate::ipc::Classification::Command,
+            "anything else is classified as before"
+        );
+        assert_eq!(
+            prompt_classification(Some("pinky"), false, &["pinky".to_string()], None),
+            crate::ipc::Classification::RemoteShell {
+                host: "pinky".into()
+            }
+        );
+    }
 
     #[test]
     fn namespaces_non_ghost_is_global_only() {

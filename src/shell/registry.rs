@@ -71,6 +71,24 @@ impl Owner {
             Owner::User => "user".to_string(),
         }
     }
+
+    /// Whether this caller may run commands in, or type into, a shell whose
+    /// owner key is `shell_owner`: its own shells, and — for a chat session —
+    /// the user's (`/shell`), which every such action reaches only through an
+    /// approval that is always asked. A ghost never drives the user's shells.
+    pub fn may_drive(&self, shell_owner: &str) -> bool {
+        shell_owner == self.key()
+            || (shell_owner == Owner::User.key() && matches!(self, Owner::Chat(_)))
+    }
+}
+
+/// Whether `id` names a shell the user owns (opened with `/shell`).
+pub fn is_user_shell(reg: &ShellRegistry, id: &str) -> bool {
+    with_shells(reg, |store| {
+        store
+            .get(id)
+            .is_some_and(|record| matches!(record.owner, Owner::User))
+    })
 }
 
 /// One entry in the registry, keyed in the underlying map by the id string.
@@ -434,6 +452,25 @@ pub fn reap_exited(reg: &ShellRegistry, retention_secs: u64, now_unix: u64) -> V
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn may_drive_reaches_the_users_shells_from_chat_only() {
+        let chat = Owner::Chat("a".into());
+        assert!(chat.may_drive("chat:a"), "its own shell");
+        assert!(chat.may_drive("user"), "the user's shell, through approval");
+        assert!(!chat.may_drive("chat:b"), "another session's shell");
+        assert!(
+            !chat.may_drive("ghost:a"),
+            "a ghost's shell, even with the same id"
+        );
+        let ghost = Owner::Ghost("g".into());
+        assert!(ghost.may_drive("ghost:g"));
+        assert!(
+            !ghost.may_drive("user"),
+            "a ghost never drives the user's shell"
+        );
+        assert!(!chat.may_drive("adopted"));
+    }
+
     use super::*;
     use crate::config::Config;
     use crate::test_home_guard;

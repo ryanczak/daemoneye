@@ -537,6 +537,9 @@ pub enum Classification {
     NewHost { host: String },
     /// A ghost shell reaching outside its sandbox.
     EscapeHatch,
+    /// A command or input aimed at a shell the user opened with `/shell`.
+    /// Always asked: no session grant covers the user's own shell.
+    UserShell { shell: String },
 }
 
 /// Classify a tool-call approval from its destination and origin — pure, so

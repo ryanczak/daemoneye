@@ -85,7 +85,7 @@ fn resolve_scope(
         None | Some("mine") => Ok(with_shells(reg, |store| {
             store
                 .values()
-                .filter(|record| record.owner.key() == key)
+                .filter(|record| record.owner.key() == key || matches!(record.owner, Owner::User))
                 .map(collect_row)
                 .collect::<Vec<_>>()
         })),
@@ -94,7 +94,7 @@ fn resolve_scope(
         })),
         Some(other) => Err(format!(
             "Error: unknown {tool} scope {other:?}. Accepted values: \
-             \"mine\" (this session's shells, the default) or \"all\" (every \
+             \"mine\" (this session's shells and the user's, the default) or \"all\" (every \
              shell the daemon is running)."
         )),
     }
@@ -1633,7 +1633,7 @@ where
             )
         };
     };
-    if owner_key != caller.key() {
+    if !caller.may_drive(&owner_key) {
         return format!(
             "Error: shell {shell} is not yours (it belongs to {owner_key}), so this \
              session cannot type into it. If it needs input, the session that \
@@ -4490,6 +4490,61 @@ mod tests {
             "exit: true appends exactly one \\n — a length cannot tell it from \\r, \
              so the bytes are asserted whole"
         );
+    }
+
+    #[tokio::test]
+    async fn the_users_shell_is_visible_and_drivable_from_chat_only() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert(&reg, 3, Owner::Chat("a".into()), NOW);
+        insert(&reg, 7, Owner::User, NOW);
+        insert(&reg, 8, Owner::Chat("b".into()), NOW);
+        let mine = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW);
+        assert!(mine.contains("s3") && mine.contains("s7"), "{mine}");
+        assert!(
+            !mine.contains("s8"),
+            "another session's shell stays out: {mine}"
+        );
+        assert!(crate::shell::is_user_shell(&reg, "s7"));
+        assert!(!crate::shell::is_user_shell(&reg, "s3"));
+
+        let sent: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+        let send = |bytes: Vec<u8>| {
+            let sent = &sent;
+            async move {
+                sent.lock().unwrap().push(bytes);
+                Ok(())
+            }
+        };
+        let out = send_input_with(
+            &reg,
+            "s7",
+            "ls",
+            true,
+            &Owner::Chat("a".into()),
+            Duration::from_secs(5),
+            send,
+        )
+        .await;
+        assert!(!out.contains("not yours"), "{out}");
+        assert_eq!(
+            sent.lock().unwrap().len(),
+            1,
+            "a chat session types into it"
+        );
+
+        let out = send_input_with(
+            &reg,
+            "s7",
+            "ls",
+            true,
+            &Owner::Ghost("g".into()),
+            Duration::from_secs(5),
+            send,
+        )
+        .await;
+        assert!(out.contains("not yours"), "a ghost is refused: {out}");
+        assert_eq!(sent.lock().unwrap().len(), 1, "nothing reached the shell");
     }
 
     #[tokio::test]

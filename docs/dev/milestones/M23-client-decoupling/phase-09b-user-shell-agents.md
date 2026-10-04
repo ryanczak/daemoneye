@@ -746,3 +746,52 @@ You may edit these files, and nothing else:
 Status flipped `todo` → `in-progress` here and in the milestone README's
 phase-table row. Applying the dry-run diffs from the Spec file by file, then
 running the five named tests, Mutations A–E, and the end-to-end capture.
+
+### Update — 2026-10-04 (mutations)
+
+- **A** `shell::registry::tests::may_drive_reaches_the_users_shells_from_chat_only`
+  → **red** (restored, `git diff --stat` back to 9 files / 199 insertions).
+- **B** `user_shell_is_always_asked` → **red** (restored).
+- **C** `the_users_shell_is_visible_and_drivable_from_chat_only` → **red**
+  (restored).
+- **D** `prompt_classification_marks_the_users_shell` → **red** (restored).
+- **E** `the_users_shell_is_visible_and_drivable_from_chat_only` → **red**
+  (restored).
+
+Each mutant was run once with `cargo test --lib -- <name>` as the Spec names
+it, restored with the `patch` tool, and `git diff --stat` confirmed to match
+its pre-mutation state (9 files, 199 insertions, 11 deletions) after each
+restore. Each restored tree passes `cargo fmt --all -- --check` and
+`cargo clippy --all-targets --all-features -- -D warnings`.
+
+### Update — 2026-10-04 (end-to-end verification)
+
+Captured mechanically with the Spec's § End-to-end verification block,
+redirected to `/tmp/e2e-m23-09b.txt` on a tree whose only uncommitted changes
+are this phase's nine source files plus this Update Log (confirmed with
+`git status --short` immediately before the run — no mutant was in the tree;
+every mutation had been restored and re-checked before the capture). The
+fenced block below is the contents of that file, copied unchanged:
+
+```
+lib1=ok failed:none
+lib2=ok failed:none
+lib3=ok failed:none
+lib_counts=2219p-0f-14i
+phase_tests=5p-0f
+isolation=11 passed; 0 failed
+wired=1/1/2
+```
+
+PASTE MATCH
+
+Other targets from the same tree, one `cargo test` run (not part of the
+capture above): lib 2219/0/14, bug_tracker 6, doc_truth 14, integration 32
+(2 ignored), isolation 11 (1 ignored) — unmoved, as the preservation line
+requires. `cargo build` and `cargo clippy --all-targets --all-features
+-- -D warnings` printed no warnings; `cargo fmt --all -- --check` clean.
+
+Known flakes named in the Spec
+(`shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`,
+`shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`)
+did not appear in the three lib runs above; no re-run was spent.

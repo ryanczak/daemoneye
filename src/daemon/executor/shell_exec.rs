@@ -238,7 +238,7 @@ where
                     live.join(", ")
                 );
             };
-            if record_owner != owner.key() {
+            if !owner.may_drive(&record_owner) {
                 anyhow::bail!(
                     "Error: shell {} is not yours (it belongs to {record_owner}), so \
                      this session cannot run a command in it. Run the command in one \

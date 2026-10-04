@@ -100,10 +100,11 @@ impl SessionApproval {
                     self.hosts_regular.contains(host)
                 }
             }
-            // An unconfigured destination, and a ghost shell reaching outside
-            // its sandbox, are always asked.
+            // An unconfigured destination, a ghost shell reaching outside
+            // its sandbox, and the user's own shell are always asked.
             crate::ipc::Classification::NewHost { .. }
-            | crate::ipc::Classification::EscapeHatch => false,
+            | crate::ipc::Classification::EscapeHatch
+            | crate::ipc::Classification::UserShell { .. } => false,
         }
     }
 
@@ -141,7 +142,8 @@ impl SessionApproval {
                 ))
             }
             crate::ipc::Classification::NewHost { .. }
-            | crate::ipc::Classification::EscapeHatch => None,
+            | crate::ipc::Classification::EscapeHatch
+            | crate::ipc::Classification::UserShell { .. } => None,
         }
     }
 
@@ -253,6 +255,22 @@ mod tests {
         assert!(a.scripts_all);
         assert!(a.runbooks_all);
         assert!(a.file_edits_all);
+    }
+
+    #[test]
+    fn user_shell_is_always_asked() {
+        let mut a = SessionApproval::from_config(&approvals_all());
+        let class = crate::ipc::Classification::UserShell { shell: "s7".into() };
+        assert!(
+            !a.auto_approves(&class, false) && !a.auto_approves(&class, true),
+            "every grant on: the user's shell is still asked"
+        );
+        assert_eq!(
+            a.record_session_approval(&class, false),
+            None,
+            "[A] widens nothing for the user's shell"
+        );
+        assert!(!a.auto_approves(&class, false));
     }
 
     #[test]
