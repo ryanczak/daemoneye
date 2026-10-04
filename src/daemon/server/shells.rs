@@ -84,6 +84,89 @@ where
     answer_relay(tx, id, result).await
 }
 
+/// How long a signal's effect is waited for. A stopped job reads `T` in
+/// `/proc` only once the kernel has delivered `SIGSTOP`, so the state right
+/// after the ack can still be the old one.
+const SIGNAL_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Relay a signal from attached mode to a shell's foreground job, then answer
+/// with the state it settled in, so the client shows "paused" only when a job
+/// really stopped: `STOP` with nothing running leaves the shell `Idle`.
+pub(super) async fn handle_shell_signal<W>(
+    tx: &mut W,
+    reg: &ShellRegistry,
+    id: &str,
+    signal: &str,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    use crate::shell::ShellSignal;
+    let sig = match signal {
+        "STOP" => ShellSignal::Stop,
+        "CONT" => ShellSignal::Cont,
+        "INT" => ShellSignal::Int,
+        other => {
+            let msg = format!("{other:?} is not a signal attached mode sends (STOP, CONT, INT)");
+            send_response_split(tx, Response::Error(msg)).await?;
+            return Ok(());
+        }
+    };
+    if let Err(msg) = live_shell(reg, id) {
+        send_response_split(tx, Response::Error(msg)).await?;
+        return Ok(());
+    }
+    let sock = crate::shell::socket_path(id);
+    if let Err(e) = crate::shell::send_signal(&sock, sig, RELAY_TIMEOUT).await {
+        send_response_split(tx, Response::Error(format!("shell {id}: {e:#}"))).await?;
+        return Ok(());
+    }
+    let response = match settled_state(&sock, sig).await {
+        Ok(state) => Response::ShellSignalled {
+            state: state_name(state).to_string(),
+        },
+        Err(e) => Response::Error(format!("shell {id}: {e:#}")),
+    };
+    send_response_split(tx, response).await?;
+    Ok(())
+}
+
+/// The shell's state once `sig` has had its effect: read until it is `Paused`
+/// after `STOP`, or anything but `Paused` after `CONT` or `INT`, or until
+/// `SIGNAL_SETTLE` runs out, when the last state read is the answer.
+async fn settled_state(
+    sock: &std::path::Path,
+    sig: crate::shell::ShellSignal,
+) -> anyhow::Result<crate::shell::ShellState> {
+    use crate::shell::{ShellResponse, ShellSignal, ShellState};
+    let deadline = tokio::time::Instant::now() + SIGNAL_SETTLE;
+    loop {
+        let state = match crate::shell::status(sock, RELAY_TIMEOUT).await? {
+            ShellResponse::Status { state, .. } => state,
+            other => anyhow::bail!("unexpected status reply {other:?}"),
+        };
+        let settled = match sig {
+            ShellSignal::Stop => state == ShellState::Paused,
+            _ => state != ShellState::Paused,
+        };
+        if settled || tokio::time::Instant::now() >= deadline {
+            return Ok(state);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// A shell state as `ShellSignalled` names it.
+fn state_name(state: crate::shell::ShellState) -> &'static str {
+    use crate::shell::ShellState;
+    match state {
+        ShellState::Idle => "Idle",
+        ShellState::Running => "Running",
+        ShellState::Paused => "Paused",
+        ShellState::Exited => "Exited",
+    }
+}
+
 /// The registry half of an input/resize relay: `Ok` only when `id` names a
 /// shell whose host has not been observed dead. `Err` carries the exact
 /// sentence the client reads.
@@ -927,6 +1010,96 @@ mod tests {
             std::time::Duration::from_millis(3000),
         )
         .await;
+    }
+
+    /// What `handle_shell_signal` answered: the settled state, or the error.
+    async fn signal_state(reg: &ShellRegistry, id: &str, signal: &str) -> Result<String, String> {
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_signal(&mut tx, reg, id, signal).await.unwrap();
+        match parse_response(&tx) {
+            Response::ShellSignalled { state } => Ok(state),
+            Response::Error(msg) => Err(msg),
+            other => panic!("unexpected reply {other:?}"),
+        }
+    }
+
+    /// Poll the shell's own status until it reads `want` (5 s cap).
+    async fn status_reaches(id: &str, want: crate::shell::ShellState) -> bool {
+        let sock = crate::shell::socket_path(id);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if let Ok(crate::shell::ShellResponse::Status { state, .. }) =
+                crate::shell::status(&sock, RELAY_TIMEOUT).await
+                && state == want
+            {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn shell_signal_pauses_resumes_and_interrupts_the_foreground_job() {
+        use crate::shell::ShellState;
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("t".into());
+        let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+            Box::pin(spawn_in_process_host(id))
+        })
+        .await
+        .unwrap();
+        let id = id.as_str().to_string();
+        let state = |name: &str| Ok(name.to_string());
+
+        assert_eq!(
+            signal_state(&reg, &id, "STOP").await,
+            state("Idle"),
+            "STOP with nothing running pauses nothing"
+        );
+
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_input(&mut tx, &reg, &id, b"sleep 30\n")
+            .await
+            .unwrap();
+        assert!(
+            status_reaches(&id, ShellState::Running).await,
+            "sleep 30 must be running before it is signalled"
+        );
+        assert_eq!(
+            signal_state(&reg, &id, "STOP").await,
+            state("Paused"),
+            "STOP answers with the state it settled in"
+        );
+        assert_eq!(signal_state(&reg, &id, "CONT").await, state("Running"));
+        assert_ne!(
+            signal_state(&reg, &id, "INT").await,
+            state("Paused"),
+            "INT leaves nothing paused"
+        );
+        assert!(
+            status_reaches(&id, ShellState::Idle).await,
+            "INT ended the foreground job"
+        );
+
+        let _ = crate::daemon::executor::knowledge::close_shell_with(
+            &reg,
+            &id,
+            &owner,
+            std::time::Duration::from_millis(3000),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn shell_signal_refuses_unknown_signals_and_shells() {
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let bad = signal_state(&reg, "s1", "TERM").await.unwrap_err();
+        assert!(bad.contains("STOP, CONT, INT"), "{bad}");
+        let missing = signal_state(&reg, "s99", "STOP").await.unwrap_err();
+        assert!(missing.contains("no live shell s99"), "{missing}");
     }
 
     #[tokio::test]

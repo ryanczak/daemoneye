@@ -244,6 +244,13 @@ pub enum Request {
         id: String,
         bytes: Vec<u8>,
     },
+    /// Signal one PTY shell's foreground job from attached mode (M23):
+    /// `"STOP"` pauses it, `"CONT"` resumes it, `"INT"` interrupts it.
+    /// Answered with `Response::ShellSignalled`.
+    ShellSignal {
+        id: String,
+        signal: String,
+    },
     /// Resize one PTY shell's terminal (M23).
     ShellResize {
         id: String,
@@ -592,6 +599,9 @@ pub enum Response {
     },
     /// Live output from a followed shell, after its `ShellScreen`.
     ShellChunk { bytes: Vec<u8> },
+    /// The shell's state once a `ShellSignal` took effect: `"Idle"`,
+    /// `"Running"`, `"Paused"` or `"Exited"`.
+    ShellSignalled { state: String },
     /// The followed shell has exited; no more frames follow.
     ShellExited,
     /// An error occurred on the daemon side.
@@ -903,6 +913,7 @@ impl Response {
             Response::ShellLog { .. } => "ShellLog",
             Response::ShellScreen { .. } => "ShellScreen",
             Response::ShellChunk { .. } => "ShellChunk",
+            Response::ShellSignalled { .. } => "ShellSignalled",
             Response::ShellExited => "ShellExited",
             Response::Error(_) => "Error",
             Response::SessionInfo { .. } => "SessionInfo",

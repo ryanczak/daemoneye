@@ -20,12 +20,37 @@ const KEY_CHUNK_MAX: usize = 4096;
 const KEY_CHUNK_GAP: std::time::Duration = std::time::Duration::from_millis(5);
 
 const CTRL_D: u8 = 0x04;
+const CTRL_C: u8 = 0x03;
+const CTRL_P: u8 = 0x10;
 
 /// What the attach loop sends to the daemon, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttachOut {
     Input(Vec<u8>),
-    Resize { rows: u16, cols: u16 },
+    Resize {
+        rows: u16,
+        cols: u16,
+    },
+    /// A `ShellSignal`: `"STOP"`, `"CONT"` or `"INT"`.
+    Signal(&'static str),
+}
+
+/// The daemon's answer to an `AttachOut::Signal`, fed back into the loop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttachReply {
+    /// The state the shell settled in (`Response::ShellSignalled`).
+    Signalled(String),
+    /// The signal was refused or failed.
+    Failed(String),
+}
+
+/// A chord attached mode takes for itself instead of sending it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Chord {
+    /// `Ctrl-p`: pause the foreground job, or resume it if paused.
+    TogglePause,
+    /// `Ctrl-c`: interrupt the foreground job.
+    Interrupt,
 }
 
 /// The shell's terminal modes that change what a key should send.
@@ -47,12 +72,14 @@ impl ShellModes {
 }
 
 /// What one chunk of keyboard bytes comes to: the bytes to send, whether to
-/// detach, and whether a trailing `Ctrl-d` now waits for a second.
+/// detach, whether a trailing `Ctrl-d` now waits for a second, and a chord
+/// the user pressed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AttachKeys {
     pub send: Vec<u8>,
     pub detach: bool,
     pub pending: bool,
+    pub chord: Option<Chord>,
 }
 
 /// Translate one chunk of the user's keyboard bytes for the shell.
@@ -66,6 +93,8 @@ pub struct AttachKeys {
 /// - Paste brackets (`ESC [ 200 ~`, `ESC [ 201 ~`) are dropped unless the
 ///   shell asked for bracketed paste; the pasted text is kept.
 /// - With application cursor keys on, `ESC [ A`–`D` become `ESC O A`–`D`.
+/// - `Ctrl-p` and `Ctrl-c` are chords, not bytes: the bytes before one are
+///   sent, the chord is returned, and the rest of the chunk is dropped.
 pub fn attach_keys(chunk: &[u8], pending: bool, modes: ShellModes) -> AttachKeys {
     let mut out = AttachKeys::default();
     let mut i = 0;
@@ -96,6 +125,14 @@ pub fn attach_keys(chunk: &[u8], pending: bool, modes: ShellModes) -> AttachKeys
                 }
             }
             continue;
+        }
+        if rest[0] == CTRL_P || rest[0] == CTRL_C {
+            out.chord = Some(if rest[0] == CTRL_P {
+                Chord::TogglePause
+            } else {
+                Chord::Interrupt
+            });
+            return out;
         }
         if rest.starts_with(b"\x1b[I") || rest.starts_with(b"\x1b[O") {
             i += 3;
@@ -141,6 +178,7 @@ pub async fn attach_loop<B, R, C, W>(
     chunks: &mut C,
     resizes: &mut W,
     out: &tokio::sync::mpsc::UnboundedSender<AttachOut>,
+    replies: &mut tokio::sync::mpsc::UnboundedReceiver<AttachReply>,
 ) -> anyhow::Result<()>
 where
     B: ratatui::backend::Backend,
@@ -161,8 +199,27 @@ where
     let mut stream_open = true;
     // When a pending `Ctrl-d` detaches if no second one comes.
     let mut ctrl_d_deadline = tokio::time::Instant::now();
+    // The signals sent and not yet answered, oldest first.
+    let mut asked: std::collections::VecDeque<&'static str> = std::collections::VecDeque::new();
     loop {
         tokio::select! {
+            reply = replies.recv() => {
+                let Some(reply) = reply else { continue };
+                let sent = asked.pop_front();
+                match reply {
+                    AttachReply::Signalled(state) => {
+                        model.paused = state == "Paused";
+                        model.note = match sent {
+                            Some("STOP") if !model.paused => {
+                                Some("nothing running to pause".to_string())
+                            }
+                            Some("INT") => Some("interrupted".to_string()),
+                            _ => None,
+                        };
+                    }
+                    AttachReply::Failed(msg) => model.note = Some(msg),
+                }
+            }
             line = frames.next_line(), if stream_open => {
                 match line {
                     Ok(Some(line)) => {
@@ -174,6 +231,7 @@ where
                         stream_open = false;
                         model.exited = true;
                         model.ctrl_d_pending = false;
+                        model.paused = false;
                     }
                 }
             }
@@ -192,11 +250,24 @@ where
                     break;
                 }
                 let keys = attach_keys(&chunk, model.ctrl_d_pending, ShellModes::of(model.screen()));
+                // A note lasts until the user types or presses a chord.
+                if !keys.send.is_empty() || keys.chord.is_some() {
+                    model.note = None;
+                }
                 if !keys.send.is_empty() {
                     let _ = out.send(AttachOut::Input(keys.send));
                 }
                 if keys.detach {
                     break;
+                }
+                if let Some(chord) = keys.chord {
+                    let signal = match chord {
+                        Chord::TogglePause if model.paused => "CONT",
+                        Chord::TogglePause => "STOP",
+                        Chord::Interrupt => "INT",
+                    };
+                    asked.push_back(signal);
+                    let _ = out.send(AttachOut::Signal(signal));
                 }
                 if keys.pending {
                     ctrl_d_deadline = tokio::time::Instant::now() + CTRL_D_WINDOW;
@@ -207,6 +278,12 @@ where
         terminal.draw(|f| render_tail(f, model))?;
     }
     model.ctrl_d_pending = false;
+    if model.paused && !model.exited {
+        // Leaving a job stopped with no attached view to resume it from
+        // would strand it: detaching resumes it.
+        let _ = out.send(AttachOut::Signal("CONT"));
+        model.paused = false;
+    }
     if !model.exited {
         let _ = out.send(AttachOut::Resize {
             rows: orig_rows,
@@ -264,9 +341,11 @@ pub async fn run_attach(
     model.attached = true;
 
     let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<AttachOut>();
+    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::unbounded_channel::<AttachReply>();
     let shell = id.to_string();
     let sender = tokio::spawn(async move {
         while let Some(item) = out_rx.recv().await {
+            let is_signal = matches!(item, AttachOut::Signal(_));
             let req = match item {
                 AttachOut::Input(bytes) => crate::ipc::Request::ShellInput {
                     id: shell.clone(),
@@ -277,8 +356,21 @@ pub async fn run_attach(
                     rows,
                     cols,
                 },
+                AttachOut::Signal(signal) => crate::ipc::Request::ShellSignal {
+                    id: shell.clone(),
+                    signal: signal.to_string(),
+                },
             };
-            let _ = crate::cli::commands::ipc_client::request_once(req).await;
+            let reply = crate::cli::commands::ipc_client::request_once(req).await;
+            if is_signal {
+                let reply = match reply {
+                    Ok(Response::ShellSignalled { state }) => AttachReply::Signalled(state),
+                    Ok(Response::Error(msg)) => AttachReply::Failed(msg),
+                    Ok(other) => AttachReply::Failed(format!("unexpected reply {}", other.kind())),
+                    Err(e) => AttachReply::Failed(e.to_string()),
+                };
+                let _ = reply_tx.send(reply);
+            }
         }
     });
 
@@ -304,6 +396,7 @@ pub async fn run_attach(
             &mut chunks,
             &mut resizes,
             &out_tx,
+            &mut reply_rx,
         )
         .await
     };
@@ -419,12 +512,15 @@ mod tests {
     }
 
     /// Drive the real loop with `chunks` sent at the given delays (ms after
-    /// the previous one) and `frames` as the stream; return what it sent.
+    /// the previous one) and `frames` as the stream; return what it sent. A
+    /// fake daemon answers each signal: `STOP` settles in `stop_state`,
+    /// `CONT` in `Running`, `INT` in `Idle`.
     async fn drive(
         model: &mut TailModel,
         chunks: Vec<(u64, Vec<u8>)>,
         frames: Vec<String>,
         keep_stream_open: bool,
+        stop_state: &'static str,
     ) -> Vec<AttachOut> {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -455,6 +551,22 @@ mod tests {
         }));
         let mut resizes = Box::pin(futures_util::stream::pending::<()>());
         let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (reply_tx, mut reply_rx) = tokio::sync::mpsc::unbounded_channel();
+        let responder = tokio::spawn(async move {
+            let mut sent = Vec::new();
+            while let Some(item) = out_rx.recv().await {
+                if let AttachOut::Signal(signal) = &item {
+                    let state = match *signal {
+                        "STOP" => stop_state,
+                        "CONT" => "Running",
+                        _ => "Idle",
+                    };
+                    let _ = reply_tx.send(AttachReply::Signalled(state.to_string()));
+                }
+                sent.push(item);
+            }
+            sent
+        });
         let mut terminal = Terminal::new(TestBackend::new(100, 31)).unwrap();
         tokio::time::timeout(
             Duration::from_secs(60),
@@ -465,6 +577,7 @@ mod tests {
                 &mut keys,
                 &mut resizes,
                 &out_tx,
+                &mut reply_rx,
             ),
         )
         .await
@@ -472,11 +585,7 @@ mod tests {
         .expect("the loop ends cleanly");
         drop(daemon);
         drop(out_tx);
-        let mut sent = Vec::new();
-        while let Some(item) = out_rx.recv().await {
-            sent.push(item);
-        }
-        sent
+        responder.await.unwrap()
     }
 
     #[tokio::test(start_paused = true)]
@@ -487,6 +596,7 @@ mod tests {
             vec![(10, b"ls\r".to_vec()), (10, vec![CTRL_D])],
             vec![],
             true,
+            "Paused",
         )
         .await;
         assert_eq!(
@@ -520,6 +630,7 @@ mod tests {
             ],
             vec![],
             true,
+            "Paused",
         )
         .await;
         assert_eq!(
@@ -545,7 +656,14 @@ mod tests {
         })
         .unwrap();
         let mut model = attached();
-        let sent = drive(&mut model, vec![(50, b"x".to_vec())], vec![chunk], false).await;
+        let sent = drive(
+            &mut model,
+            vec![(50, b"x".to_vec())],
+            vec![chunk],
+            false,
+            "Paused",
+        )
+        .await;
         assert!(model.exited, "a closed stream marks the shell exited");
         assert!(
             model.screen().contents().contains("hello from s3"),
@@ -561,6 +679,149 @@ mod tests {
             "after exit a key returns to chat; nothing is typed into a dead \
              shell and no size is restored"
         );
+    }
+
+    #[test]
+    fn attach_keys_takes_ctrl_p_and_ctrl_c_as_chords() {
+        let k = attach_keys(b"ab\x10cd", false, PLAIN);
+        assert_eq!(
+            (k.send, k.chord),
+            (b"ab".to_vec(), Some(Chord::TogglePause)),
+            "bytes before ctrl-p are sent; the rest of the chunk is dropped"
+        );
+        let k = attach_keys(b"\x03", false, PLAIN);
+        assert_eq!((k.send, k.chord), (vec![], Some(Chord::Interrupt)));
+        let k = attach_keys(b"\x10", true, PLAIN);
+        assert!(
+            k.detach && k.chord.is_none(),
+            "after a pending ctrl-d, ctrl-p detaches like any other key"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn attach_loop_ctrl_p_pauses_resumes_and_detach_resumes() {
+        let mut model = attached();
+        let sent = drive(
+            &mut model,
+            vec![
+                (10, vec![CTRL_P]),
+                (100, vec![CTRL_P]),
+                (100, vec![CTRL_P]),
+                (100, vec![CTRL_D]),
+            ],
+            vec![],
+            true,
+            "Paused",
+        )
+        .await;
+        assert_eq!(
+            sent,
+            [
+                AttachOut::Resize {
+                    rows: 30,
+                    cols: 100
+                },
+                AttachOut::Signal("STOP"),
+                AttachOut::Signal("CONT"),
+                AttachOut::Signal("STOP"),
+                AttachOut::Signal("CONT"),
+                AttachOut::Resize { rows: 24, cols: 80 },
+            ],
+            "ctrl-p stops, ctrl-p again continues, and detaching while paused \
+             resumes the job before the size is restored"
+        );
+        assert!(!model.paused);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn attach_loop_ctrl_p_with_nothing_running_says_so() {
+        let mut model = attached();
+        let sent = drive(
+            &mut model,
+            vec![(10, vec![CTRL_P]), (100, vec![CTRL_D])],
+            vec![],
+            true,
+            "Idle",
+        )
+        .await;
+        assert_eq!(
+            sent,
+            [
+                AttachOut::Resize {
+                    rows: 30,
+                    cols: 100
+                },
+                AttachOut::Signal("STOP"),
+                AttachOut::Resize { rows: 24, cols: 80 },
+            ],
+            "a STOP that paused nothing leaves nothing to resume on detach"
+        );
+        assert!(!model.paused, "only a Paused answer marks the shell paused");
+        assert_eq!(model.note.as_deref(), Some("nothing running to pause"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn attach_loop_ctrl_c_interrupts() {
+        let mut model = attached();
+        let sent = drive(
+            &mut model,
+            vec![
+                (10, b"sleep 9\r".to_vec()),
+                (10, vec![CTRL_C]),
+                (100, vec![CTRL_D]),
+            ],
+            vec![],
+            true,
+            "Paused",
+        )
+        .await;
+        assert_eq!(
+            sent,
+            [
+                AttachOut::Resize {
+                    rows: 30,
+                    cols: 100
+                },
+                AttachOut::Input(b"sleep 9\r".to_vec()),
+                AttachOut::Signal("INT"),
+                AttachOut::Resize { rows: 24, cols: 80 },
+            ],
+            "ctrl-c is a signal, not a typed byte"
+        );
+        assert_eq!(model.note.as_deref(), Some("interrupted"));
+    }
+
+    #[test]
+    fn render_tail_shows_the_paused_status_line() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut terminal = Terminal::new(TestBackend::new(110, 10)).unwrap();
+        let mut m = TailModel::new("s3", 9, 100, b"$ ");
+        m.attached = true;
+        let bottom = |m: &TailModel, terminal: &mut Terminal<TestBackend>| -> String {
+            terminal.draw(|f| render_tail(f, m)).unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .skip(9 * 110)
+                .take(110)
+                .flat_map(|c| c.symbol().chars())
+                .collect()
+        };
+        let line = bottom(&m, &mut terminal);
+        assert!(line.contains("ctrl-p pause · ctrl-c interrupt"), "{line:?}");
+        m.paused = true;
+        let line = bottom(&m, &mut terminal);
+        assert!(
+            line.contains("PAUSED · ctrl-p resume · ctrl-d detach (resumes)"),
+            "{line:?}"
+        );
+        m.paused = false;
+        m.note = Some("nothing running to pause".to_string());
+        let line = bottom(&m, &mut terminal);
+        assert!(line.contains("nothing running to pause"), "{line:?}");
     }
 
     #[test]

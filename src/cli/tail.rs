@@ -49,6 +49,8 @@ pub struct TailModel {
     pub attached: bool,
     /// While attached, true after one `Ctrl-d` while a second one is awaited.
     pub ctrl_d_pending: bool,
+    /// While attached, true when the shell's foreground job is stopped.
+    pub paused: bool,
 }
 
 /// A replay of a log at its recorded timing. `due[i]` is when event `i` is
@@ -116,6 +118,7 @@ impl TailModel {
             replay: None,
             attached: false,
             ctrl_d_pending: false,
+            paused: false,
         }
     }
 
@@ -824,9 +827,18 @@ fn attached_status(model: &TailModel, rows: u16, cols: u16) -> String {
             "attached {} · ctrl-d again sends EOF to the shell, or wait to detach",
             model.id
         )
-    } else {
+    } else if model.paused {
         format!(
-            "attached {} · {rows}×{cols} · ctrl-d detach · ctrl-d ctrl-d EOF",
+            "attached {} · PAUSED · ctrl-p resume · ctrl-d detach (resumes)",
+            model.id
+        )
+    } else {
+        let note = match &model.note {
+            Some(note) => format!(" · {note}"),
+            None => String::new(),
+        };
+        format!(
+            "attached {} · {rows}×{cols}{note} · ctrl-p pause · ctrl-c interrupt · ctrl-d detach · ctrl-d ctrl-d EOF",
             model.id
         )
     }

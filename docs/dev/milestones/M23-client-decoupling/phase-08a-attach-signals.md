@@ -1,7 +1,7 @@
 # Phase 08a: attach-signals — `Ctrl-p` pauses and resumes, `Ctrl-c` interrupts, while attached
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 07b (done)
 **Estimated diff:** ~200 lines of production code across 7 files; 7 new tests (~475 lines in all)
 **Tags:** language=rust, kind=feature, size=m
@@ -1094,3 +1094,31 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-03 19:07 (in-progress) — executor claude-sonnet-4-6
+
+Starting phase 08a. Pre-flight done: clean tree at `d6a43731`, phase doc and
+STANDARDS read. Applying the spec diffs file by file.
+
+### Update — 2026-10-03 19:07 (mutations)
+
+- **A** `shells::tests::shell_signal_pauses_resumes_and_interrupts_the_foreground_job` — red
+- **B** `cli::attach::tests::attach_loop_ctrl_c_interrupts` — red
+- **C** `cli::attach::tests::attach_loop_ctrl_p_pauses_resumes_and_detach_resumes` — red
+- **D** `cli::attach::tests::attach_loop_ctrl_p_with_nothing_running_says_so` — red
+- **E** `cli::attach::tests::attach_loop_ctrl_p_pauses_resumes_and_detach_resumes` — red
+- **F** `shells::tests::shell_signal_refuses_unknown_signals_and_shells` — red
+
+### Update — 2026-10-03 19:07 (end-to-end verification)
+
+```text
+lib1=ok failed:none
+lib2=ok failed:none
+lib3=ok failed:none
+lib_counts=2200p-0f-14i
+phase_tests=7p-0f
+isolation=11 passed; 0 failed
+wired=1/1/1
+```
+
+PASTE MATCH
