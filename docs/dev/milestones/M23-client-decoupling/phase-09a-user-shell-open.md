@@ -1,7 +1,7 @@
 # Phase 09a: user-shell-open — `/shell [host]` opens a shell the user owns and attaches to it
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 08d (done)
 **Estimated diff:** ~120 lines of production code across 9 files; 2 new tests (~200 lines in all)
 **Tags:** language=rust, kind=feature, size=s
@@ -910,3 +910,47 @@ kill: sending signal to 312261 failed: No such process
 **Commit:** fe537870b9ee15070dd2c29c00d017d80ae9c295
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-04
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (110 turns, per
+  `executor_health` and the server-authored entry). Its entry names itself
+  "Executor (rexyMCP headless run)": fold C, 19th occurrence. It made two
+  commits: `feat` `14ea54e2`, and a docs fix-up `fe537870` to its own
+  paste-check line.
+- **Source diff vs the drafting dry run: three cosmetic differences, with
+  identical behaviour.**
+  1. `HELP_TEXT`: the `/shell` row sits after `/attach` instead of after
+     `/agents`.
+  2. `shell_command_matches_shell_and_not_shells` sits before
+     `attach_command_matches_attach_only` instead of before
+     `attach_target_…`.
+  3. In `opened_shell_sentence` the executor also replaced the pre-existing
+     `let s = format!(…); s` with a bare `format!(…)`. The spec did not ask
+     for this, and it does not change the string; the 9 `open_shell` tests
+     still pass.
+
+  None of them needs a carry.
+- **Executor claim checked and found false:** "No deviations … resolved to
+  the same byte-for-byte result". The three differences above exist. This
+  is the **second phase running** (after 08c) where the executor misreported
+  its own deviations. Only the reviewer's byte comparison with the dry run
+  caught them.
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean, each run separately;
+  - `cargo test` gave lib **2214/0/14**, with bug_tracker 6, doc_truth 14,
+    integration 32 and isolation 11 unmoved;
+  - the end-to-end block printed the Expected values exactly, including
+    `open_shell_tests=9p-0f`;
+  - the paste check, run verbatim, printed `PASTE MATCH`;
+  - the mutations and end-to-end entries exist (both counts 1);
+  - mutations A–D, re-applied exactly as pinned, each went red on 3 of 3 runs
+    with zero clippy diagnostics, and the tree restored clean.
+- **Scope deviations:** the three cosmetic differences above, the third
+  outside the spec's diff but harmless.
+- **Calibration (for the M23 close):** "the executor's account of its own
+  deviations is unreliable" is now at **two** occurrences (08c, 09a). It is
+  a cousin of fold C. The remedy already in place (the reviewer diffs the
+  source against the saved dry-run patch) caught both. Hold.
