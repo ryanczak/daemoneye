@@ -1,7 +1,7 @@
 # Phase 10a: readme-slash-commands — the README documents every chat slash command, and a doc_truth test keeps it that way
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 09b (done)
 **Estimated diff:** ~42 lines of README.md; 1 new test plus a helper (~65 lines) in `tests/doc_truth.rs`; no production code
 **Tags:** language=rust, kind=docs, size=s
@@ -620,3 +620,24 @@ kill: sending signal to 849653 failed: No such process
 **Commit:** 017283f8fb198f0d73c70f695eef6c73d8374545
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-04
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none. Committed `README.md` and `tests/doc_truth.rs`
+  are byte-identical to the drafting dry run (`cmp`). No production code
+  changed.
+- **Re-verified by the architect:** fmt, build and clippy `-D warnings`
+  clean, run separately; full `cargo test` lib 2219/0/14, doc_truth 15,
+  bug_tracker 6, integration 32, isolation 11. The § End-to-end block re-run
+  verbatim printed the same seven lines, and the paste check against that
+  re-run printed `PASTE MATCH`. Mutations A–C were each re-applied and went
+  red 3 of 3. The tree was restored clean.
+- **Calibration:** one new flake reported, not one of the two named:
+  `daemon::utils::event_log::tests::for_each_streams_across_segments_in_order`
+  failed once in the executor's first e2e run (`lib2`), and passed 5/5 in
+  isolation and on the re-run. The executor disclosed it, re-ran within
+  budget and pasted the clean capture: the correct handling. Watch for it in
+  10b. If it recurs, it joins the known-flake list.
