@@ -1,7 +1,7 @@
 # Phase 08b: attach-cancel — `Ctrl-c` while attached also cancels the run that owns the shell
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 08a (done)
 **Estimated diff:** ~90 lines of production code across 6 files; 4 new tests (~250 lines in all)
 **Tags:** language=rust, kind=feature, size=s
@@ -935,3 +935,28 @@ kill: sending signal to 3465805 failed: No such process
 **Commit:** 68626301bcc0aa106f5d70159de8d2791e3b6efd
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-04
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (99 turns, per
+  `executor_health` and the server-authored entry). Its entry names itself
+  "Claude (Opus 4.6, headless run)": fold C, 16th occurrence.
+- **Source diff vs the drafting dry run, tests included:** byte-identical
+  (`git diff 758807e5 68626301 -- src/` against the saved dry-run patch).
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean, each run separately;
+  - `cargo test` gave lib **2204/0/14**, with bug_tracker 6, doc_truth 14,
+    integration 32 and isolation 11 unmoved;
+  - the end-to-end block printed the Expected values exactly;
+  - **the paste check, run verbatim, printed `PASTE MATCH`**;
+  - the mutations and end-to-end entries exist (both counts 1);
+  - mutations A–F, re-applied exactly as pinned, each went red on 3 of 3 runs
+    with zero clippy diagnostics, and the tree restored clean;
+  - no `sleep 30` was left running.
+- **Known flake:** it did not fire in the executor's three lib runs or in
+  the reviewer's four.
+- **Scope deviations:** none.
+- **Calibration:** none new. This is the third phase in a row with a genuine
+  paste and recorded mutations, under the 07a and 07b drafting rules.
