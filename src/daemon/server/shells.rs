@@ -62,7 +62,31 @@ where
     }
     let result =
         crate::shell::send_input(&crate::shell::socket_path(id), bytes, RELAY_TIMEOUT).await;
+    if result.is_ok() {
+        record_user_input(reg, id, bytes);
+    }
     answer_relay(tx, id, result).await
+}
+
+/// Account for input the user typed into shell `id` while attached: a
+/// `shell_input` event in `events.jsonl`, and a note for the run that owns
+/// the shell, which it is told at its next turn boundary. Only the byte
+/// count is recorded, never the bytes: a password typed at a prompt must not
+/// reach either record (the cast log's own scrub covers the `"i"` events).
+fn record_user_input(reg: &ShellRegistry, id: &str, bytes: &[u8]) {
+    let owner_key = with_shells(reg, |store| store.get(id).map(|record| record.owner.key()));
+    crate::daemon::utils::log_event(
+        "shell_input",
+        serde_json::json!({
+            "shell": id,
+            "owner": owner_key,
+            "bytes": bytes.len(),
+            "source": "user_attached",
+        }),
+    );
+    if let Some(key) = owner_key.as_deref() {
+        crate::daemon::run::note_owner_typed(key, id, bytes.len());
+    }
 }
 
 pub(super) async fn handle_shell_resize<W>(
@@ -116,10 +140,10 @@ where
         send_response_split(tx, Response::Error(msg)).await?;
         return Ok(());
     }
+    let owner_key = with_shells(reg, |store| store.get(id).map(|record| record.owner.key()));
     // `Ctrl-c` while attached also cancels the run that owns the shell. The
     // cancel is cooperative (the run stops at its next turn boundary), so it
     // is fired first; the signal then ends what the shell is running now.
-    let owner_key = with_shells(reg, |store| store.get(id).map(|record| record.owner.key()));
     let cancelled_run = if sig == ShellSignal::Int {
         owner_key
             .as_deref()
@@ -1233,6 +1257,66 @@ mod tests {
         );
         let _ = signal_state(&reg, &id, "INT").await;
         assert!(status_reaches(&id, ShellState::Idle).await);
+
+        let _ = crate::daemon::executor::knowledge::close_shell_with(
+            &reg,
+            &id,
+            &owner,
+            std::time::Duration::from_millis(3000),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn shell_input_records_a_user_input_event_without_its_content() {
+        use crate::daemon::run::{register_active, take_typed_notice};
+        let (_guard, _dir) = shell_test_home();
+        let reg = ShellRegistry::default();
+        let session = "shells-08d-owner";
+        let owner = Owner::Ghost(session.into());
+        let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+            Box::pin(spawn_in_process_host(id))
+        })
+        .await
+        .unwrap();
+        let id = id.as_str().to_string();
+        let run = crate::daemon::run::cancel::test_support::fresh_run_id();
+        let _active_guard = register_active(session, &run);
+        let input_events = || -> Vec<String> {
+            std::fs::read_to_string(crate::config::current_event_segment_path())
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| l.contains("\"shell_input\""))
+                .map(str::to_string)
+                .collect()
+        };
+
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_input(&mut tx, &reg, "s99", b"refused\n")
+            .await
+            .unwrap();
+        assert!(input_events().is_empty(), "refused input records nothing");
+
+        let typed = b"echo secret-xyz\n";
+        let mut tx: Vec<u8> = Vec::new();
+        handle_shell_input(&mut tx, &reg, &id, typed).await.unwrap();
+        let events = input_events();
+        assert_eq!(events.len(), 1, "{events:?}");
+        let event: serde_json::Value = serde_json::from_str(&events[0]).unwrap();
+        assert_eq!(event["shell"], id.as_str());
+        assert_eq!(event["owner"], format!("ghost:{session}"));
+        assert_eq!(event["bytes"], typed.len());
+        assert_eq!(event["source"], "user_attached");
+        assert!(
+            !events[0].contains("secret-xyz"),
+            "what was typed is never recorded: {}",
+            events[0]
+        );
+        assert_eq!(
+            take_typed_notice(&run),
+            Some((id.clone(), typed.len())),
+            "the owning run is told how much was typed and where"
+        );
 
         let _ = crate::daemon::executor::knowledge::close_shell_with(
             &reg,

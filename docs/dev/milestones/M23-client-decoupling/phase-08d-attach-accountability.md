@@ -1,7 +1,7 @@
 # Phase 08d: attach-accountability — attached input is recorded (count, not content) and the owning agent is told
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 08c (done)
 **Estimated diff:** ~90 lines of production code across 4 files; 3 new tests (~200 lines in all)
 **Tags:** language=rust, kind=feature, size=s
@@ -637,3 +637,52 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-04 17:12 (started)
+
+Executor: codex (headless, session 1). Status flipped `todo → in-progress`
+in this doc and in the milestone README's phase table. Applying the Spec's
+diffs (Tasks 1–4), then Task 5 (Mutations A–D), then Task 6 (the
+end-to-end capture).
+
+### Update — 2026-10-04 17:22 (mutations)
+
+Mutation testing per the Spec's § Mutations, one at a time with `patch`,
+each restored before the next (`git diff --stat` matched its pre-mutation
+`6 files changed, 211 insertions(+), 25 deletions(-)` after every restore):
+
+- **A** — `run::pause::tests::typed_notices_add_up_and_are_taken_once`
+  (`entry.typed = Some((first, total.max(bytes)));`) → **red**
+  (`test result: FAILED. 0 passed; 1 failed`). Restored.
+- **B** — `run::pause::tests::typed_notices_add_up_and_are_taken_once`
+  (`.and_then(|entry| entry.typed.clone())`) → **red**
+  (`test result: FAILED. 0 passed; 1 failed`). Restored.
+- **C** — `shells::tests::shell_input_records_a_user_input_event_without_its_content`
+  (added `"text": String::from_utf8_lossy(bytes),`) → **red**
+  (`test result: FAILED. 0 passed; 1 failed`). Restored.
+- **D** — `shells::tests::shell_input_records_a_user_input_event_without_its_content`
+  (`note_owner_typed(key, id, 0);`) → **red**
+  (`test result: FAILED. 0 passed; 1 failed`). Restored.
+
+After the final restore the tree was re-checked clean: `git diff --stat`
+matched, `cargo fmt --all -- --check` was clean, and
+`cargo clippy --all-targets --all-features -- -D warnings` exited 0.
+
+### Update — 2026-10-04 17:45 (end-to-end verification)
+
+Ran the Spec's § End-to-end verification block verbatim, with nothing else
+running `cargo test`, redirecting all output to `/tmp/e2e-m23-08d.txt`.
+Its contents, copied unchanged (no line ends in whitespace):
+
+```
+lib1=ok failed:none
+lib2=ok failed:none
+lib3=ok failed:none
+lib_counts=2212p-0f-14i
+phase_tests=3p-0f
+isolation=11 passed; 0 failed
+wired=1/1/1
+```
+
+Paste check (as written in the phase doc):
+PASTE MATCH

@@ -506,7 +506,8 @@ pub use log_read::{
     run_log_input_rejected, run_log_search, run_log_tail,
 };
 pub use pause::{
-    is_paused, pause_owner_run, pause_run, resume_owner_run, resume_run, take_pause_notice,
+    is_paused, note_owner_typed, note_typed, pause_owner_run, pause_run, resume_owner_run,
+    resume_run, take_pause_notice, take_typed_notice,
 };
 pub use result::{CancelReason, Cancellation, RunResult, RunStatus};
 pub use resume::{

@@ -623,6 +623,39 @@ async fn park_while_paused(
     ))
 }
 
+/// What to tell the model when the user typed into one of this ghost's shells
+/// from attached mode since its last turn, or `None` when nothing was typed.
+fn typed_notice(run_id: &RunId) -> Option<String> {
+    let (shell, bytes) = crate::daemon::run::take_typed_notice(run_id)?;
+    Some(format!(
+        "[The user typed {bytes} bytes into shell {shell} from attached mode. \
+         Read its recent output before relying on what you last saw.]"
+    ))
+}
+
+/// Add `text` to the ghost's conversation as a user message for `turn`, and
+/// persist it, as the wrap-up message is.
+fn push_user_note(session_id: &str, sessions: &SessionStore, text: String, turn: usize) {
+    let message = crate::ai::Message {
+        role: "user".to_string(),
+        content: text,
+        tool_calls: None,
+        tool_results: None,
+        turn: Some(turn),
+    };
+    let pushed = with_sessions(sessions, |store| {
+        if let Some(entry) = store.get_mut(session_id) {
+            entry.messages.push(message.clone());
+            true
+        } else {
+            false
+        }
+    });
+    if pushed {
+        crate::daemon::session::append_session_message(session_id, &message);
+    }
+}
+
 fn cancel_stage(run_id: &crate::daemon::run::RunId) -> String {
     crate::daemon::run::take_cancel_door(run_id)
         .map(crate::daemon::run::CancelDoor::stage)
@@ -820,25 +853,12 @@ async fn do_ghost_turn(
     // exactly once before breaking the loop.
     let mut wrap_up_turn = false;
     loop {
-        if let Some(notice) = park_while_paused(run_id, cancel).await {
-            let message = crate::ai::Message {
-                role: "user".to_string(),
-                content: notice,
-                tool_calls: None,
-                tool_results: None,
-                turn: Some(turn + 1),
-            };
-            let pushed = with_sessions(sessions, |store| {
-                if let Some(entry) = store.get_mut(session_id) {
-                    entry.messages.push(message.clone());
-                    true
-                } else {
-                    false
-                }
-            });
-            if pushed {
-                crate::daemon::session::append_session_message(session_id, &message);
-            }
+        let notices = [
+            park_while_paused(run_id, cancel).await,
+            typed_notice(run_id),
+        ];
+        for notice in notices.into_iter().flatten() {
+            push_user_note(session_id, sessions, notice, turn + 1);
         }
         if cancel.is_cancelled() {
             log::info!(
@@ -1941,6 +1961,22 @@ mod tests {
             "a cancel ends the wait, and a cancelled run is told nothing"
         );
         canceller.await.unwrap();
+    }
+
+    #[test]
+    fn typed_notice_tells_the_ghost_where_the_user_typed() {
+        use crate::daemon::run::cancel::test_support::fresh_run_id;
+        let id = fresh_run_id();
+        assert_eq!(typed_notice(&id), None, "nothing typed, nothing said");
+        crate::daemon::run::note_typed(&id, "s5", 12);
+        assert_eq!(
+            typed_notice(&id).as_deref(),
+            Some(
+                "[The user typed 12 bytes into shell s5 from attached mode. \
+                 Read its recent output before relying on what you last saw.]"
+            )
+        );
+        assert_eq!(typed_notice(&id), None, "said once");
     }
 
     #[test]

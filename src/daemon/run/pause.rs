@@ -3,6 +3,10 @@
 //! next turn boundary. `Ctrl-p` again resumes the job and leaves the run a
 //! one-shot notice of how long it was paused, which it reads when it wakes.
 //!
+//! Typing into the shell while attached is noted here too: the run is told,
+//! at its next turn boundary, how many bytes the user typed and where. Only
+//! the count is kept — never what was typed.
+//!
 //! Keyed by run id, like the cancel registry. An entry is swept when the
 //! run's `ActiveRunGuard` drops.
 
@@ -13,12 +17,15 @@ use std::time::Duration;
 use super::RunId;
 use crate::util::UnpoisonExt;
 
-/// One run's pause state: paused now (the shell and since when), and the
-/// notice a resume leaves for the run (the shell and how long).
+/// One run's attached-mode state: paused now (the shell and since when), the
+/// notice a resume leaves for the run (the shell and how long), and the
+/// bytes the user typed since the run last looked (the first shell and the
+/// total).
 #[derive(Default)]
 struct PauseEntry {
     paused: Option<(String, tokio::time::Instant)>,
     notice: Option<(String, Duration)>,
+    typed: Option<(String, usize)>,
 }
 
 static PAUSES: OnceLock<Mutex<HashMap<String, PauseEntry>>> = OnceLock::new();
@@ -65,6 +72,34 @@ pub fn take_pause_notice(run_id: &RunId) -> Option<(String, Duration)> {
         .unwrap_or_log()
         .get_mut(run_id.as_str())
         .and_then(|entry| entry.notice.take())
+}
+
+/// Note that the user typed `bytes` bytes into `shell` while attached to a
+/// shell `run_id` owns. Counts add up until the run takes them; the first
+/// shell named is kept.
+pub fn note_typed(run_id: &RunId, shell: &str, bytes: usize) {
+    let mut map = pauses().lock().unwrap_or_log();
+    let entry = map.entry(run_id.as_str().to_string()).or_default();
+    let (first, total) = entry.typed.take().unwrap_or((shell.to_string(), 0));
+    entry.typed = Some((first, total + bytes));
+}
+
+/// Take what the user typed for `run_id` since it last looked: the shell and
+/// the byte count. `None` once taken, or when nothing was typed.
+pub fn take_typed_notice(run_id: &RunId) -> Option<(String, usize)> {
+    pauses()
+        .lock()
+        .unwrap_or_log()
+        .get_mut(run_id.as_str())
+        .and_then(|entry| entry.typed.take())
+}
+
+/// Note typing for the run in flight for the owner of an attached shell.
+/// Returns the run noted.
+pub fn note_owner_typed(owner_key: &str, shell: &str, bytes: usize) -> Option<RunId> {
+    let run_id = super::active::owner_run(owner_key)?;
+    note_typed(&run_id, shell, bytes);
+    Some(run_id)
 }
 
 /// Forget everything about `run_id`. Called when its `ActiveRunGuard` drops.
@@ -147,6 +182,29 @@ mod tests {
         );
         assert_eq!(pause_owner_run("adopted", "s5"), None);
         assert_eq!(pause_owner_run("chat:pause-owner-idle", "s5"), None);
+    }
+
+    #[test]
+    fn typed_notices_add_up_and_are_taken_once() {
+        let run = fresh_run_id();
+        assert_eq!(take_typed_notice(&run), None);
+        note_typed(&run, "s5", 3);
+        note_typed(&run, "s6", 4);
+        assert_eq!(
+            take_typed_notice(&run),
+            Some(("s5".to_string(), 7)),
+            "counts add up under the first shell"
+        );
+        assert_eq!(take_typed_notice(&run), None, "the notice is one-shot");
+
+        let session = "typed-owner-session-1";
+        let _active_guard = crate::daemon::run::register_active(session, &run);
+        assert_eq!(
+            note_owner_typed(&format!("ghost:{session}"), "s5", 2),
+            Some(run.clone())
+        );
+        assert_eq!(take_typed_notice(&run), Some(("s5".to_string(), 2)));
+        assert_eq!(note_owner_typed("adopted", "s5", 2), None);
     }
 
     #[test]
