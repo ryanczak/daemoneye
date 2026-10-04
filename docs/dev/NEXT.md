@@ -1,21 +1,22 @@
 # NEXT
 
-**Active phase:** **M23 phase-08d — attach-accountability**, drafted
-2026-10-04, status `todo`. Dispatch with `/rexymcp:dispatch phase-08d`.
+**Active phase:** **M23 phase-09a — user-shell-open**, drafted 2026-10-04,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-09a`.
 
-**What it does.** Every input the user types while attached writes a
-`shell_input` event to `events.jsonl` with the shell, the owner and the
-**byte count only**. The owning ghost is told at its next turn boundary that
-the user typed N bytes into the shell. The cast log's password scrub
-already existed, and attached input already goes through it. It also
-carries 08c's one-line fix. 4 files, 3 new tests; lib 2209 → 2212. This
-closes row 08.
+**What it does.** `/shell` opens a new shell owned by the user on the daemon
+host, or on a configured host with `/shell pinky`, and attaches to it. This
+is the pre-authenticate use case. It adds a new `Owner::User`, a
+`ShellOpen` → `ShellOpened` request, and the model's `open_shell` path split
+into an id-returning core with the model's text unchanged. 9 files, 2 new
+tests; lib 2212 → 2214.
 
-**Measured at drafting.** The daemon can't see the host's scrub flag, so
-the event and the notice carry no content at all. One mutant was
-unobservable and was dropped. The end-to-end block was run on the dry-run
-tree, and its first `wired` grep missed a rustfmt-split line (the 2nd time,
-after 08b; logged in the calibration queue). Mutants A–D went red 3/3, all
-clippy-clean. The doc reproduces the dry run.
+**Row 09 was split at drafting:** 09a (this) opens a user shell, and 09b
+lets agents see user shells and drive them only through approval.
 
-**After 08d:** `/rexymcp:architect next` drafts row 09 (user-shell).
+**Measured at drafting.** The 9 existing `open_shell` tests guard the
+refactor, and the end-to-end block runs them. One named-host mutant needs
+real ssh and was dropped. The known flake hit 3 of 10 runs. The block was
+run on the dry-run tree. Mutants A–D went red 3/3, all clippy-clean. The doc
+reproduces the dry run.
+
+**After 09a:** `/rexymcp:architect next` drafts 09b (user-shell-agents).
