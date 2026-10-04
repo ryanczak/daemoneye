@@ -62,7 +62,7 @@ Then `tmux source-file ~/.tmux.conf`. The bind-key uses the full path so it work
 |---|---|
 | Linux | `fork(2)`, Unix domain sockets, Linux-specific tmux hooks |
 | Rust 1.79+ | Required by Rust edition 2024 |
-| tmux 2.6+ | Required for hook support (`pane-focus-in`, `client-attached`, `after-new-session`) |
+| tmux 2.6+ | Required for hook support (`pane-focus-in`, `client-attached`, `after-new-session`). Optional with `tmux_session = ""`: the daemon then starts no tmux, and `daemoneye chat` runs in any terminal |
 
 ```sh
 sudo apt install tmux      # Debian/Ubuntu
@@ -453,6 +453,17 @@ Both `reindex` and `audit-prompts` run without a daemon. `reindex` is safe to ru
 | `/approvals` | Inspect approval state; `on`/`off` toggle commands, `revoke` gates everything (alias: `/approval`) |
 | `/limits` | Show active limits and live session counters; `/limits reset` |
 | `/session` | `save`/`load`/`list`/`delete`/`rename`/`diff`/`tag` (alias: `/sessions`) |
+| `/shells` | The PTY shells the daemon runs: id, host, owner (`this session`, `user`, `ghost:…`), live or exited, age and last command |
+| `/hosts` | `local`, then each configured `[hosts.<name>]` with its ssh destination, ControlMaster state (`master:up`/`down`) and live-shell count |
+| `/tail <id>` | A live, read-only view of one shell in the alternate screen, with follow mode, scrollback and search (alias: `/watch`) |
+| `/logs` | Past shell recordings, newest first: `/logs [host] [--owner chat\|ghost\|adopted] [--since 2h]` |
+| `/log <id>` | Open one recording by the log id `/logs` prints: `n`/`p` step through its commands, `space` replays it at its recorded speed |
+| `/attach <id>` | Type into a live shell, full screen: every key goes to the shell except the chords in [Attached mode keys](#attached-mode-keys). A bare `/attach` opens the picker |
+| `/agents` | Pick a live shell to attach to from a list in the chat viewport, ghost-owned shells first: `↑`/`↓` select, `Enter` attaches, `Esc` closes |
+| `/shell [host]` | Open a shell you own, on the daemon host or a configured host, and attach to it, for example to type a password once before an agent needs the host. Agents see it in their shell list but can drive it only through an approval that is always asked |
+| `/runs` | Recent runs (chat turns and ghost runs) with their state |
+| `/run <id>` | The last records of one run's turn log |
+| `/stop <id>` | Ask a running run to stop (it ends at its next turn boundary) |
 
 At a tool-approval prompt, typing a message instead of `Y`/`A`/`N` redirects the agent. Up/Down navigate the input; at the top or bottom edge they recall history.
 
@@ -489,6 +500,36 @@ Active only while the alternate-screen viewer is open (`ctrl+o`).
 | `Esc` / `q` / `ctrl+o` | Close the viewer and restore the inline chat |
 
 While the search prompt is open, typing edits the query, `Enter` commits it and `Esc` cancels it.
+
+### Shell viewer keys
+
+Active in `/tail` and `/log`, which share the alternate-screen shell viewer.
+
+| Key | Effect |
+|---|---|
+| `↑` / `↓`, `PgUp` / `PgDn`, `Home` / `End` | Scroll; scrolling up in `/tail` pauses follow |
+| `f` | `/tail`: follow the newest output again |
+| `/`, then `n` / `N` | `/tail`: search, then the older / newer match |
+| `n` / `p` | `/log`: put the next / previous recorded command at the top, with its exit code in the status line |
+| `space` | `/log`: replay the recording at its recorded speed (pauses longer than 2 s replay as 2 s); `space` again pauses and resumes, any other key skips to the end |
+| `Esc` / `q` / `Ctrl+C` / `ctrl+o` | Close the viewer |
+
+### Attached mode keys
+
+Active while attached (`/attach`, `/agents`, `/shell`). Every other key goes
+to the shell.
+
+| Key | Effect |
+|---|---|
+| `Ctrl+P` | Pause the shell's foreground job; press again to resume. A ghost run that owns the shell waits at its next turn and is told how long it was paused |
+| `Ctrl+C` | Interrupt the foreground job, and cancel the run that owns the shell (it ends at its next turn boundary) |
+| `Ctrl+D` | Detach back to chat. Detaching while paused resumes the job first |
+| `Ctrl+D` `Ctrl+D` | Send one `Ctrl+D` (EOF) to the shell |
+
+What you type while attached is recorded in the shell's own log (scrubbed
+at password prompts), and as a byte count, never the bytes, in
+`events.jsonl`. The agent that owns the shell is told at its next turn that
+you typed into it.
 
 ---
 

@@ -939,3 +939,68 @@ fn e2e_prompt_asset_tool_hygiene() {
         "capture drifted from the pinned line"
     );
 }
+
+/// The slash commands chat knows: every `/word` in `HELP_TEXT`
+/// (`src/cli/commands/chat.rs`) and every `"/word"` arm of `handle_slash`
+/// (`src/cli/commands/slash.rs`), aliases included.
+fn chat_slash_commands(root: &Path) -> std::collections::BTreeSet<String> {
+    // A command starts a word: `list/on/off` and `n/p` in the help text are
+    // argument lists and keys, not commands.
+    let word = regex::Regex::new(r"(?:^|[\s(])(/[a-z]+)").expect("valid regex");
+    let mut commands = std::collections::BTreeSet::new();
+
+    let chat = std::fs::read_to_string(root.join("src/cli/commands/chat.rs"))
+        .expect("reading src/cli/commands/chat.rs");
+    let start = chat
+        .find("const HELP_TEXT: &str = \"")
+        .expect("HELP_TEXT is defined in chat.rs");
+    let help = &chat[start..];
+    let help = &help[..help.find("\n\";").expect("HELP_TEXT ends")];
+    for line in help.lines() {
+        let line = line.trim_start();
+        if line.starts_with('/') || line.starts_with("Aliases:") {
+            commands.extend(word.captures_iter(line).map(|c| c[1].to_string()));
+        }
+    }
+
+    let slash = std::fs::read_to_string(root.join("src/cli/commands/slash.rs"))
+        .expect("reading src/cli/commands/slash.rs");
+    let start = slash
+        .find("match cmd {")
+        .expect("handle_slash matches on cmd");
+    let arms = &slash[start..];
+    let arms = &arms[..arms
+        .find("_ => return SlashOutcome::NotACommand")
+        .expect("handle_slash's fallback arm")];
+    let quoted = regex::Regex::new(r#""(/[a-z]+)""#).expect("valid regex");
+    commands.extend(quoted.captures_iter(arms).map(|c| c[1].to_string()));
+    commands
+}
+
+/// README.md's "In-chat slash commands" section: every command chat knows is
+/// documented there, backticked (`` `/log` `` or `` `/log <id>` ``). The M23
+/// shell commands sat undocumented until the milestone close — this keeps the
+/// table from falling behind `/help` again.
+#[test]
+fn readme_documents_every_chat_slash_command() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let readme = std::fs::read_to_string(root.join("README.md")).expect("reading README.md");
+    let start = readme
+        .find("### In-chat slash commands")
+        .expect("README has an In-chat slash commands section");
+    let section = &readme[start..];
+    let section = &section[..section[4..].find("\n### ").map_or(section.len(), |i| i + 4)];
+    let commands = chat_slash_commands(root);
+    assert!(
+        commands.len() >= 20,
+        "the command scan found too few commands to be reading the sources: {commands:?}"
+    );
+    let missing: Vec<&String> = commands
+        .iter()
+        .filter(|c| !section.contains(&format!("`{c}`")) && !section.contains(&format!("`{c} ")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "README.md's In-chat slash commands section does not document: {missing:?}"
+    );
+}

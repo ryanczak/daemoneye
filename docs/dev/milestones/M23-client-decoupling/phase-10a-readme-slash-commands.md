@@ -1,7 +1,7 @@
 # Phase 10a: readme-slash-commands — the README documents every chat slash command, and a doc_truth test keeps it that way
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 09b (done)
 **Estimated diff:** ~42 lines of README.md; 1 new test plus a helper (~65 lines) in `tests/doc_truth.rs`; no production code
 **Tags:** language=rust, kind=docs, size=s
@@ -412,3 +412,62 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-04 22:07 (started, rexyMCP-executor)
+
+Executor dispatched headless for phase 10a. Flipped status to
+`in-progress` (both the phase doc and the milestone README's row). Now
+applying Task 1 (README.md) and Task 2 (`tests/doc_truth.rs`) exactly as the
+diffs show, then the mutations entry and the end-to-end capture.
+
+### Update — 2026-10-04 22:09 (mutations)
+
+- **A** — deleted the `` | `/runs` | `` README row;
+  `readme_documents_every_chat_slash_command` → **red** (naming `/runs`).
+- **B** — deleted the `` | `/tail <id>` | `` README row;
+  `readme_documents_every_chat_slash_command` → **red** (naming `/tail` and
+  `/watch`).
+- **C** — `r"(?:^|[\s(])(/[a-z]+)"` → `r"()(/[a-z]+)"` in `chat_slash_commands`;
+  `readme_documents_every_chat_slash_command` → **red** on the
+  `commands.len() >= 20` assertion.
+- Each mutation was restored with the `patch` tool and `git diff --stat`
+  confirmed the pre-mutation state (README.md +43, tests/doc_truth.rs +65)
+  before the next step.
+
+### Update — 2026-10-04 22:18 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim into
+`/tmp/e2e-m23-10a.txt`. The block ran once clean; the first run's `lib2`
+failed the pre-existing flake
+`daemon::utils::event_log::tests::for_each_streams_across_segments_in_order`
+(not one of the two known flakes; it passed 5/5 in isolation, see Notes), so
+the block was re-run in full per the re-run budget and the capture below is
+that second, clean run.
+
+```
+lib1=ok failed:none
+lib2=ok failed:none
+lib3=ok failed:none
+lib_counts=2219p-0f-14i
+doc_truth=15p-0f
+phase_test=1p-0f
+wired=1/1/1
+```
+
+PASTE MATCH
+
+Notes:
+
+- **Unexpected flake (first block run).** `lib2` of run 1 failed
+  `daemon::utils::event_log::tests::for_each_streams_across_segments_in_order`
+  — *not* one of the two known flakes the phase names. Re-run in isolation
+  5/5 green, and run 2's `lib2` was green; the capture above is run 2. Any
+  other target was unmoved (bug_tracker 6, integration 32, isolation 11 on
+  the last full `cargo test`).
+- **Scan sanity.** The guard's `commands.len() >= 20` floor passes with 28
+  commands found (aliases included), matching the phase doc's measurement;
+  Mutation C showed the floor is what catches a dead scan.
+- The phase doc's pinned literals are present: `grep -c '^| `/shells` |'
+  README.md` → 1, `'^### Attached mode keys$'` → 1,
+  `'^### Shell viewer keys$'` → 1 (the block's `wired=1/1/1` line).
+- Re-run budget used: 1 of 3. Paste check run once, printed `PASTE MATCH`.
