@@ -1,28 +1,27 @@
 # NEXT
 
-**Active phase:** **M23 phase-08a — attach-signals**, drafted 2026-10-04,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-08a`.
+**Active phase:** **M23 phase-08b — attach-cancel**, drafted 2026-10-04,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-08b`.
 
-**What it does.** While attached, `Ctrl-p` pauses the shell's foreground
-job and `Ctrl-p` again resumes it; `Ctrl-c` interrupts it. Both go through a
-new `ShellSignal` IPC relay, which answers with the state the shell actually
-settled in, so "paused" is shown only when something really stopped.
-Detaching while paused resumes the job. 7 files, 7 new tests; lib
-2193 → 2200.
+**What it does.** An attached `Ctrl-c` now also cooperatively cancels the
+run that owns the shell. The shell's owner (`chat:<s>` or `ghost:<s>`)
+resolves to that session's run, which stops at its next turn boundary as
+`Cancelled { stage: "user_attached" }`. Ghost runs are now registered by
+session so that their shells can reach them. The status note names the
+cancelled run. 6 files, 4 new tests; lib 2200 → 2204.
 
-**Row 08 was split at drafting:**
-- 08a (this) is the shell-level chords;
-- 08b ties them to the owning run (cooperative cancel with stage
-  `user_attached`, park/resume with the pause duration);
-- 08c is accountability (`events.jsonl`, telling the agent, scrubbing).
+**Row 08 re-cut:** 08b (this) is cancel, 08c is park-on-pause, and 08d is
+accountability.
 
-**Measured at drafting.** A real-host test pins the four state transitions.
-The settle poll's mutant was unobservable and was dropped. **The capture has
-no trailing whitespace**, which is the 07b fix. The end-to-end block was run
-on the dry-run tree. Mutants A–F went red 3/3, all clippy-clean. The doc
-reproduces the dry run.
+**Measured at drafting.** The dry-run `wired` grep at first missed a
+rustfmt-split call and printed `1/0/1`; running the block on the dry run
+caught it, and it is fixed. Mutants A–F went red 3/3, all clippy-clean. The
+doc reproduces the dry run.
 
-**For the PE:** detach-while-paused **resumes** the job. That was my call;
-the design doesn't say. Revisit if you want a paused shell to stay paused.
+**For the PE: the known flake is frequent.**
+`pty_stop_with_no_foreground_job_remembers_nothing` failed in 4 of 22 full
+lib runs today (1 of 8 at HEAD). It is pre-existing (M22) and not made
+worse here (A/B), but most end-to-end blocks now need a re-run. A small row
+to fix it could be worth adding.
 
-**After 08a:** `/rexymcp:architect next` drafts 08b (attach-run-control).
+**After 08b:** `/rexymcp:architect next` drafts 08c (attach-pause-park).
