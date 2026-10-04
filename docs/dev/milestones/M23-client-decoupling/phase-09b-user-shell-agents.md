@@ -1,7 +1,7 @@
 # Phase 09b: user-shell-agents — agents see the user's shells and drive them only through an approval that is always asked
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 09a (done)
 **Estimated diff:** ~70 lines of production code across 9 files; 5 new tests (~200 lines in all)
 **Tags:** language=rust, kind=feature, size=s
@@ -934,3 +934,32 @@ kill: sending signal to 612963 failed: No such process
 **Commit:** 42757a2837459888b5ac18ffc46d328b6f4c1bc7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-04
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (157 turns, per
+  `executor_health` and the server-authored entry). Its entry names itself
+  "Executor (rexyMCP headless run)": fold C, 20th occurrence.
+- **Source diff vs the drafting dry run:** identical **except one comment**.
+  The comment above the never-auto-approve arm in `auto_approves` now names
+  the user's own shell. **The executor disclosed this accurately**, so its
+  account of its own deviations was right this time; that counts against the
+  held "misreports its deviations" item (08c, 09a).
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean, each run separately;
+  - the end-to-end block printed the Expected values exactly
+    (`lib_counts=2219p-0f-14i`, `phase_tests=5p-0f`, `wired=1/1/2`);
+  - the paste check, run verbatim, printed `PASTE MATCH`;
+  - the mutations and end-to-end entries exist (both counts 1);
+  - mutations A–E, re-applied exactly as pinned, each went red on 3 of 3 runs
+    with zero clippy diagnostics, and the tree restored clean.
+- **Known flake, the other one:** one full `cargo test` run failed
+  `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`
+  (2218/1/14). That is the first of the two named flakes, the first time it
+  has fired this milestone. It lives in `src/shell/backend.rs`, which this
+  phase does not touch, and it passed 5 of 5 runs in isolation. The four lib
+  runs in the end-to-end block were all green. Not a finding.
+- **Scope deviations:** the one comment, above (an improvement, disclosed).
+- **Calibration:** none new. Row 09 closes, both phases first-try.
