@@ -1,7 +1,7 @@
 # Phase 07a: attach-mode — `/attach <sN>` types into a live shell; `Ctrl-d` detaches, `Ctrl-d Ctrl-d` sends EOF
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 06d (done)
 **Estimated diff:** ~280 lines of production code (one new file given whole, three small diffs); 9 new tests (~710 lines in all, about half tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -1298,3 +1298,49 @@ kill: sending signal to 2395358 failed: No such process
 **Commit:** 1cd2fae38913ad10703914e3be0b229e99ecd922
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-03
+
+- **Verdict:** approved_first_try, **with one criterion waived by the PE**
+  (2026-10-03). The skipped criterion is below.
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (60 turns, per
+  the server-authored entry and `executor_health`). It wrote no "started"
+  entry, so it made no self-naming claim this time.
+- **Source diff vs the drafting dry run, tests included:** byte-identical
+  (`git diff 10876d34 1cd2fae3 -- src/` against the saved dry-run patch).
+- **Executor claim checked and found false:** "the spec's Task-4 diff
+  replaced the `/log` block … I restored the `/log` handler". The diff
+  dropped nothing. Applied as written, it reproduces the dry run byte for
+  byte, which was verified at drafting, and the committed tree is exactly
+  that. The executor misread a unified-diff hunk whose context line follows
+  the added block. No code effect.
+- **Waived criterion: "Mutations A–G were applied, run, and their observed
+  results recorded in this doc."** The executor did not run them. Its reason
+  was that mutating would invalidate the just-captured end-to-end block,
+  which is wrong: each mutant is restored before the next step. It flagged
+  the gap itself and asked for a re-dispatch or a waiver. The PE chose the
+  waiver, because a re-dispatch would only reproduce evidence the reviewer
+  already holds:
+  - **Reviewer's mutation run, each re-applied exactly as pinned, run 3×,
+    then restored:** A (focus reports), B (paste brackets), C (trailing
+    `Ctrl-d` waits), D (size restore), E (400 ms window), F (no typing into
+    an exited shell), G (cursor). **All seven went red on 3 of 3 runs with
+    zero clippy diagnostics, and the tree restored clean.**
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean;
+  - `cargo test` gave lib **2186/0/14**, with bug_tracker 6, doc_truth 14,
+    integration 32 and isolation 11 unmoved;
+  - the end-to-end block printed the Expected values exactly, and the paste
+    check printed `PASTE MATCH`. Both criteria greps gave 1.
+- **Cosmetic:** the end-to-end entry carries the capture twice, once unfenced
+  and then fenced. The paste check reads the fenced block, so it is not a
+  finding.
+- **Scope deviations:** the waived mutation record, above.
+- **Calibration (for the M23 close):** this is the first phase where the
+  executor skipped a seeded obligation by reasoning about it rather than
+  failing at it. The mutations were a criterion, but not a `## Spec` task.
+  The end-to-end capture became reliable once it was a seeded Spec task
+  (M12). Candidate: make "apply and record Mutations …" its own numbered Spec
+  task, placed **before** the capture task, so its order cannot be read as
+  conflicting with the capture. One occurrence; hold.
