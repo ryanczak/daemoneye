@@ -1,7 +1,7 @@
 # Phase 10a: readme-slash-commands — the README documents every chat slash command, and a doc_truth test keeps it that way
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** review
 **Depends on:** 09b (done)
 **Estimated diff:** ~42 lines of README.md; 1 new test plus a helper (~65 lines) in `tests/doc_truth.rs`; no production code
 **Tags:** language=rust, kind=docs, size=s
@@ -471,3 +471,152 @@ Notes:
   README.md` → 1, `'^### Attached mode keys$'` → 1,
   `'^### Shell viewer keys$'` → 1 (the block's `wired=1/1/1` line).
 - Re-run budget used: 1 of 3. Paste check run once, printed `PASTE MATCH`.
+
+### Update — 2026-10-04 22:22 (complete, server-authored)
+
+**Summary:** </think>The working tree is clean, all committed. Status is left `in-progress`, no `(complete)` entry written. All acceptance criteria:
+
+- cargo test --lib → 2219/0/14 ✓ (three consecutive runs in the capture)
+- fmt clean, build clean, clippy -D warnings exit 0 ✓
+- doc_truth → 15 passed ✓
+- other targets unmoved: bug_tracker 6, integration 32, isolation 11 ✓ (verified in full cargo test)
+- phase test → 1 passed ✓
+- wired=1/1/1 ✓
+- mutations entry exists ✓ (1 match)
+- e2e entry exists ✓ (1 match), first fenced block = capture contents, PASTE MATCH ✓ (1 exact-line match)
+
+Now the final Summary + Notes for review, no tool call.</think>
+**Summary + Notes for review**
+
+Phase 10a is implemented and committed (`017283f8`): README.md now documents all eleven M23 chat slash commands (`/shells` … `/stop`) in the "In-chat slash commands" table, gains the "Shell viewer keys" and "Attached mode keys" tables with the typed-while-attached recording note, and the tmux requirement row now says tmux is optional with `tmux_session = ""` — all exactly the diff the phase doc pins, copied verbatim. Task 2 added `readme_documents_every_chat_slash_command` + `chat_slash_commands` to `tests/doc_truth.rs` verbatim from the spec; it finds 28 commands (aliases included) and `cargo test --test doc_truth` went 14 → **15 passed**.
+
+End-to-end verification ran the pinned block verbatim into `/tmp/e2e-m23-10a.txt`: `lib1/lib2/lib3=ok failed:none`, `lib_counts=2219p-0f-14i`, `doc_truth=15p-0f`, `phase_test=1p-0f`, `wired=1/1/1`; the paste check printed **PASTE MATCH**. Mutations A–C each went red as expected (A named `/runs`, B named `/tail` + `/watch`, C tripped the `>= 20` floor) and each restore was confirmed with `git diff --stat`; `cargo fmt --all`, `cargo build`, and `clippy --all-targets --all-features -- -D warnings` are clean, and the full `cargo test` left every other target unmoved (lib 2219, bug_tracker 6, integration 32, isolation 11). Status stays `in-progress` with no `(complete)` entry, per the contract; the tree is clean.
+
+**Notes for review:** (1) Run 1 of the e2e block hit an unexpected lib failure in `daemon::utils::event_log::tests::for_each_streams_across_segments_in_order` — not one of the two flakes the phase names; it passed 5/5 in isolation and was green in run 2, so I re-ran the block in full (1 of 3 re-runs used) and the capture above is run 2. Worth adding to the known-flake list if it recurs. (2) No deviations from the spec's diffs; no production code was touched. (3) The phase doc's Update Log has the started, mutations, and end-to-end entries; the mutations/e2e entry counts and the `PASTE MATCH` literal all grep to their pinned values.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+kill: sending signal to 849653 failed: No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +42 -1
+- `docs/dev/milestones/M23-client-decoupling/README.md` — +1 -1
+- `docs/dev/milestones/M23-client-decoupling/phase-10a-readme-slash-commands.md` — +60 -1
+- `tests/doc_truth.rs` — +65 -0
+
+**Commit:** 017283f8fb198f0d73c70f695eef6c73d8374545
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
