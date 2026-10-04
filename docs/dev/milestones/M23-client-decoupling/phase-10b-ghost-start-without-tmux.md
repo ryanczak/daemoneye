@@ -1,7 +1,7 @@
 # Phase 10b: ghost-start-without-tmux — a ghost started by a daemon running without tmux starts no tmux server
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 02 (done: `tmux_session = ""` means no tmux at daemon startup)
 **Estimated diff:** ~30 lines of production code across 2 files; 2 new tests (~25 lines)
 **Tags:** language=rust, kind=bugfix, size=s
@@ -587,3 +587,24 @@ kill: sending signal to 1056214 failed: No such process
 **Commit:** 9b1a32a7e5335cce9ce76a070d9d9144051de131
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-04
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (from the
+  server-authored entry; the executor's own "started" entry says "Claude
+  (this run)", fold C's 21st occurrence)
+- **Scope deviations:** none. Committed `src/daemon/mod.rs` and
+  `src/daemon/ghost.rs` are byte-identical to the drafting dry run (`cmp`).
+- **Re-verified by the architect:** fmt, build and clippy `-D warnings`
+  clean, run separately; full `cargo test` lib 2221/0/14, bug_tracker 6,
+  doc_truth 15, integration 32, isolation 11. The § End-to-end block re-run
+  verbatim printed the same seven lines, and the paste check against that
+  re-run printed `PASTE MATCH`. Mutations A and B were each re-applied and
+  went red 3 of 3. The tree was restored clean. The real-door measurement
+  (a real daemon with `--session ""` and a webhook ghost leaves no `tmux-*`
+  directory) was taken on the byte-identical dry-run tree at drafting; 10d
+  re-checks it live.
+- **Calibration:** none new. The capture's opening fence carries an `sh`
+  info string, which the paste check's `/^```/` tolerates.
