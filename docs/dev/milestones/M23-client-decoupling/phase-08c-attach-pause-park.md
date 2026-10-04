@@ -1,7 +1,7 @@
 # Phase 08c: attach-pause-park — a paused shell parks its ghost run, and the run is told how long
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 08b (done)
 **Estimated diff:** ~150 lines of production code (one new file given whole, four diffs); 5 new tests (~370 lines in all)
 **Tags:** language=rust, kind=feature, size=m
@@ -978,3 +978,40 @@ kill: sending signal to 3710146 failed: No such process
 **Commit:** fada32adf7730524204bb517cffa9b75a41eaf04
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-04
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (111 turns, per
+  `executor_health` and the server-authored entry). Its entry names itself
+  "executor (M23 phase-08c)", not the model: fold C, 17th occurrence.
+- **Source diff vs the drafting dry run:** identical **except one line's
+  position**. In `handle_shell_signal` (`src/daemon/server/shells.rs:119-123`)
+  the new `let owner_key = …;` line sits **between** the `Ctrl-c` comment and
+  `let cancelled_run`. The dry run had it **above** the comment. Behaviour is
+  the same, but the three-line comment no longer sits directly on the code
+  it describes.
+- **Executor claim checked and found false:** its note says the second
+  `cargo fmt` "collapsed the `cancel_owner_run` call in `shells.rs` onto one
+  line". The call is still wrapped over three lines, exactly as the spec's
+  diff has it. The real difference is the line placement above, which the
+  note does not mention.
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean, each run separately;
+  - `cargo test` gave lib **2209/0/14**, with bug_tracker 6, doc_truth 14,
+    integration 32 and isolation 11 unmoved;
+  - the end-to-end block printed the Expected values exactly;
+  - the paste check, run verbatim, printed `PASTE MATCH`;
+  - the mutations and end-to-end entries exist (both counts 1);
+  - mutations A–F, re-applied exactly as pinned, each went red on 3 of 3 runs
+    with zero clippy diagnostics, and the tree restored clean;
+  - no `sleep 30` was left running.
+- **Scope deviations:** the one misplaced line, above. It is cosmetic and
+  does not block approval.
+- **Carried to 08d:** move `let owner_key = …;` back above the `Ctrl-c`
+  comment in `handle_shell_signal`, so the comment sits on `let
+  cancelled_run`.
+- **Calibration:** none new. The executor misdescribing its own deviation is
+  a cousin of fold C (self-reports are not evidence); the reviewer's byte
+  comparison with the dry run is what caught it.
