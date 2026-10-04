@@ -1,7 +1,7 @@
 # Phase 07b: agents-picker — `/agents` (or a bare `/attach`) picks a live shell in the chat viewport and attaches
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 07a (done)
 **Estimated diff:** ~200 lines of production code (one new file given whole, four small diffs); 7 new tests (~480 lines in all)
 **Tags:** language=rust, kind=feature, size=m
@@ -1097,3 +1097,53 @@ kill: sending signal to 2659111 failed: No such process
 **Commit:** 74490614911396925db12f217d0e9ed037a0936d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-04
+
+- **Verdict:** approved_first_try, **with the paste criterion recorded as
+  unmet** (PE decision, 2026-10-04). Details below.
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (142 turns, per
+  `executor_health`). Its entry names itself "executor-7b-1": fold C, 14th
+  occurrence.
+- **Source diff vs the drafting dry run, tests included:** byte-identical
+  (`git diff 037f5467 74490614 -- src/` against the saved dry-run patch).
+- **The 07a calibration worked.** With "apply and record the mutations" as a
+  numbered Spec task before the capture, and a counted criterion, the
+  executor ran all seven and recorded them (`(mutations)` entry, count 1).
+- **Unmet: the end-to-end entry's first fenced block is not the capture.**
+  Each `libN=ok ` line in `/tmp/e2e-m23-07b.txt` ends in a space. The entry
+  shows `libN=ok ␠` instead, a visible marker the executor substituted and
+  disclosed. **The specified paste check, run verbatim by the reviewer, prints
+  `PASTE MISMATCH`** (only those three lines differ). The `PASTE MATCH` line
+  in the entry came from a substitute comparison of the executor's own
+  (`␠` swapped back before diffing). It is **not** the output of the
+  specified check, so `grep -cx 'PASTE MATCH'` → 1 is met only in letter.
+  - **Executor claim checked and found false:** "the extractor (`awk` over
+    the fenced blocks) strips the trailing space". It does not:
+    `printf 'lib1=ok \nx\n' | awk '{print}' | od -c` shows the space intact.
+    The space was most likely lost when the executor's edit tool wrote the
+    doc.
+  - **The root cause is mostly architect-side:** the capture format leaves a
+    trailing space whenever no test failed (`printf 'lib%d=%s %s\n'` with an
+    empty list of failed names). So the check depends on whether the
+    executor's editor keeps trailing whitespace. It held on 06c, 06d and 07a,
+    and failed here. **From row 08 on, no capture line ends in whitespace.**
+- **Reviewer re-run (the evidence this phase stands on):**
+  - fmt, build and clippy `-D warnings` were clean;
+  - `cargo test` gave lib **2193/0/14**, with bug_tracker 6, doc_truth 14,
+    integration 32 and isolation 11 unmoved;
+  - the end-to-end block, run verbatim, printed `lib1..3=ok` (none failed),
+    `lib_counts=2193p-0f-14i`, `phase_tests=7p-0f`,
+    `isolation=11 passed; 0 failed` and `wired=1/1/1`;
+  - mutations A–G, re-applied exactly as pinned, each went red on 3 of 3 runs
+    with zero clippy diagnostics, and the tree restored clean.
+- **Scope deviations:** the substituted paste and its non-specified
+  `PASTE MATCH`, above.
+- **Calibration (for the M23 close):** the **claimed-but-absent
+  `PASTE MATCH` is now at three occurrences** (M21 09a, M23 01b, M23 07b).
+  WORKFLOW.md § Calibration: three is a fix. Fold candidate, two parts:
+  (1) capture formats never end a line in whitespace, as a drafting rule;
+  (2) the paste-check verdict is printed by the check into the capture's
+  trailing line, not typed into the doc, so a substitute comparison cannot
+  produce it.
