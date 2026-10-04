@@ -1,7 +1,7 @@
 # Phase 10b: ghost-start-without-tmux — a ghost started by a daemon running without tmux starts no tmux server
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 02 (done: `tmux_session = ""` means no tmux at daemon startup)
 **Estimated diff:** ~30 lines of production code across 2 files; 2 new tests (~25 lines)
 **Tags:** language=rust, kind=bugfix, size=s
@@ -427,3 +427,28 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-04 16:17 (started)
+
+**Executor:** Claude (this run).
+
+Applying Tasks 1-5: `TMUX_OFF` OnceLock + `record_tmux_off`/`tmux_off` in `src/daemon/mod.rs`, `record_tmux_off(initial_session.is_none())` in `run_daemon`, the two pure decision functions and their call sites in `src/daemon/ghost.rs`, two new unit tests. Status flipped to in-progress here and in the README phase table.
+
+### Update — 2026-10-04 16:17 (mutations)
+
+- Mutation A (ghost.rs, `if !tmux_off`): `cargo test --lib -- ghost_tmux_session_starts_no_tmux_when_tmux_is_off` → red. Restored; `git diff --stat` matches the pre-mutation state (2 files, 72 insertions, 6 deletions).
+- Mutation B (ghost.rs, `!tmux_session.is_empty() && exists.await`): `cargo test --lib -- an_empty_tmux_session_is_never_checked` → red. Restored; `git diff --stat` matches the pre-mutation state (2 files, 72 insertions, 6 deletions).
+
+### Update — 2026-10-04 16:17 (end-to-end verification)
+
+
+```sh
+lib1=ok failed:none
+lib2=ok failed:none
+lib3=ok failed:none
+lib_counts=2221p-0f-14i
+phase_tests=2p-0f
+isolation=11 passed; 0 failed
+wired=1/1/1
+```
+PASTE MATCH

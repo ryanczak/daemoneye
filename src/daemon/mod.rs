@@ -24,6 +24,21 @@ pub fn daemon_uptime_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// Whether this daemon runs with no tmux at all: launched outside tmux with an
+/// empty `tmux_session`. Recorded once at startup; unrecorded (tests, the CLI)
+/// reads as `false`, today's behaviour.
+static TMUX_OFF: OnceLock<bool> = OnceLock::new();
+
+/// Record the daemon's tmux mode. The first call wins.
+pub(crate) fn record_tmux_off(off: bool) {
+    let _ = TMUX_OFF.set(off);
+}
+
+/// Whether the daemon runs with no tmux at all. See [`record_tmux_off`].
+pub(crate) fn tmux_off() -> bool {
+    TMUX_OFF.get().copied().unwrap_or(false)
+}
+
 pub mod auto_name;
 pub mod background;
 pub mod briefing;
@@ -657,6 +672,8 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             }
         }
     };
+
+    record_tmux_off(initial_session.is_none());
 
     log_event(
         "daemon_start",

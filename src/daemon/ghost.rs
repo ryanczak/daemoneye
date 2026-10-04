@@ -138,6 +138,26 @@ pub fn check_ghost_capacity(config: &crate::config::Config) -> bool {
     crate::daemon::stats::get_ghosts_active() < max
 }
 
+/// The tmux session a starting ghost's windows go in. With tmux off it is
+/// empty and `ensure` — which creates a session, and so a server, when none
+/// exists — is never called.
+fn ghost_tmux_session(tmux_off: bool, ensure: impl FnOnce() -> Result<String>) -> Result<String> {
+    if tmux_off {
+        return Ok(String::new());
+    }
+    ensure()
+}
+
+/// Whether a ghost's turn may run in `tmux_session`. An empty session — the
+/// daemon runs without tmux — has nothing to lose, so `exists` is never
+/// awaited; a named one must still exist.
+async fn ghost_session_alive(
+    tmux_session: &str,
+    exists: impl std::future::Future<Output = bool>,
+) -> bool {
+    tmux_session.is_empty() || exists.await
+}
+
 /// Resolve a ghost's `ssh_target` against `[hosts]` and record the outcome.
 ///
 /// Runs **once, at ghost start** — `start_session_with_config` is the one
@@ -243,9 +263,11 @@ impl GhostManager {
     ) -> Result<String> {
         let alert_name = &runbook.name;
 
-        // 1. Ensure host tmux session exists (active or detached)
-        let tmux_session =
-            ensure_incident_session().context("GhostManager: failed to ensure incident session")?;
+        // 1. The tmux session the ghost's windows go in: none when the daemon
+        //    runs without tmux, so a ghost never starts a tmux server.
+        let tmux_session = ghost_tmux_session(crate::daemon::tmux_off(), || {
+            ensure_incident_session().context("GhostManager: failed to ensure incident session")
+        })?;
 
         // 2. Initialize ghost shell entry
         let session_id = format!("ghost-{}-{}", alert_name, uuid::Uuid::new_v4().simple());
@@ -817,9 +839,12 @@ async fn do_ghost_turn(
     );
 
     let s = tmux_session.clone();
-    let pane_alive = tmux::off_runtime("session-exists", move || tmux::session_exists(&s))
-        .await
-        .unwrap_or(false);
+    let pane_alive = ghost_session_alive(&tmux_session, async move {
+        tmux::off_runtime("session-exists", move || tmux::session_exists(&s))
+            .await
+            .unwrap_or(false)
+    })
+    .await;
     if !pane_alive {
         anyhow::bail!(
             "Ghost Shell {}: tmux session '{}' no longer exists",
@@ -1548,6 +1573,30 @@ async fn do_ghost_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ghost_tmux_session_starts_no_tmux_when_tmux_is_off() {
+        let off = ghost_tmux_session(true, || panic!("tmux off must not ensure a session"));
+        assert_eq!(off.expect("tmux off"), "");
+
+        let on = ghost_tmux_session(false, || Ok("daemoneye-incidents".to_string()));
+        assert_eq!(on.expect("tmux on"), "daemoneye-incidents");
+
+        let failed = ghost_tmux_session(false, || anyhow::bail!("no tmux"));
+        assert!(failed.is_err(), "tmux on still reports a failed session");
+    }
+
+    #[tokio::test]
+    async fn an_empty_tmux_session_is_never_checked() {
+        assert!(
+            ghost_session_alive("", async { panic!("an empty session must not ask tmux") }).await
+        );
+        assert!(ghost_session_alive("daemoneye-incidents", async { true }).await);
+        assert!(
+            !ghost_session_alive("daemoneye-incidents", async { false }).await,
+            "a named session that is gone still stops the turn"
+        );
+    }
 
     #[test]
     fn ghost_start_records_how_its_ssh_target_resolved() {
