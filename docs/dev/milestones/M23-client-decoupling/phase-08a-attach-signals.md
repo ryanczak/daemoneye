@@ -1,7 +1,7 @@
 # Phase 08a: attach-signals — `Ctrl-p` pauses and resumes, `Ctrl-c` interrupts, while attached
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 07b (done)
 **Estimated diff:** ~200 lines of production code across 7 files; 7 new tests (~475 lines in all)
 **Tags:** language=rust, kind=feature, size=m
@@ -1258,3 +1258,31 @@ kill: sending signal to 2936673 failed: No such process
 **Commit:** f6fdb6f2f663bf1f3bf73f06ade98258cc7ba207
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-04
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (151 turns, per
+  `executor_health` and the server-authored entry). Its entry names itself
+  "executor claude-sonnet-4-6": fold C, 15th occurrence.
+- **Source diff vs the drafting dry run, tests included:** byte-identical
+  (`git diff d6a43731 f6fdb6f2 -- src/` against the saved dry-run patch).
+- **Reviewer re-run:**
+  - fmt, build and clippy `-D warnings` were clean, each run separately;
+  - `cargo test` gave lib **2200/0/14**, with bug_tracker 6, doc_truth 14,
+    integration 32 and isolation 11 unmoved;
+  - the end-to-end block printed the Expected values exactly;
+  - **the paste check, run verbatim, printed `PASTE MATCH`**;
+  - the mutations and end-to-end entries exist (both counts 1);
+  - mutations A–F, re-applied exactly as pinned, each went red on 3 of 3 runs
+    with zero clippy diagnostics, and the tree restored clean;
+  - no `sleep 30` was left running.
+- **Scope deviations:** none.
+- **Calibration:** both drafting changes worked first time.
+  - The whitespace-free capture (`libN=ok failed:none`, the 07b fix) gave a
+    genuine `PASTE MATCH`.
+  - The mutations as a numbered Spec task before the capture (the 07a fix)
+    were run and recorded for the second phase running.
+  - Both stay drafting rules. The first is part of the claimed-but-absent
+    `PASTE MATCH` fold proposed for the M23 close.
