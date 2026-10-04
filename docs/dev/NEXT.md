@@ -1,22 +1,21 @@
 # NEXT
 
-**Active phase:** **M23 phase-09a — user-shell-open**, drafted 2026-10-04,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-09a`.
+**Active phase:** **M23 phase-09b — user-shell-agents**, drafted 2026-10-04,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-09b`.
 
-**What it does.** `/shell` opens a new shell owned by the user on the daemon
-host, or on a configured host with `/shell pinky`, and attaches to it. This
-is the pre-authenticate use case. It adds a new `Owner::User`, a
-`ShellOpen` → `ShellOpened` request, and the model's `open_shell` path split
-into an id-returning core with the model's text unchanged. 9 files, 2 new
-tests; lib 2212 → 2214.
+**What it does.** Shells the user opened with `/shell` become visible to
+agents (in `list_shells`' default listing and the `[SHELLS]` block). A chat
+agent may run commands in one, or type into one, but every such call
+prompts under a new `UserShell` classification that **no session approval
+covers**: the client always asks. Ghosts are refused, and `close_shell` is
+unchanged. 9 files, 5 new tests; lib 2214 → 2219. This closes row 09.
 
-**Row 09 was split at drafting:** 09a (this) opens a user shell, and 09b
-lets agents see user shells and drive them only through approval.
+**Measured at drafting.** "Approve for session" is decided in the client
+from the prompt's classification, so a never-approved variant is the whole
+mechanism. `send_input` was session-approvable too, and is now covered. One
+call-site mutant was unobservable and is pinned by the `wired` grep
+instead. The end-to-end block was run on the dry-run tree. Mutants A–E went
+red 3/3, all clippy-clean. The doc reproduces the dry run.
 
-**Measured at drafting.** The 9 existing `open_shell` tests guard the
-refactor, and the end-to-end block runs them. One named-host mutant needs
-real ssh and was dropped. The known flake hit 3 of 10 runs. The block was
-run on the dry-run tree. Mutants A–D went red 3/3, all clippy-clean. The doc
-reproduces the dry run.
-
-**After 09a:** `/rexymcp:architect next` drafts 09b (user-shell-agents).
+**After 09b:** `/rexymcp:architect next` drafts row 10 (the live close,
+architect-run).
