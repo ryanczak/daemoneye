@@ -1,20 +1,28 @@
 # NEXT
 
-**Active phase:** **M23 phase-07b — agents-picker**, drafted 2026-10-03,
-status `todo`. Dispatch with `/rexymcp:dispatch phase-07b`.
+**Active phase:** **M23 phase-08a — attach-signals**, drafted 2026-10-04,
+status `todo`. Dispatch with `/rexymcp:dispatch phase-08a`.
 
-**What it does.** `/agents`, or a bare `/attach`, opens a picker inside the
-chat viewport: every live shell, ghost-owned first, one row each as
-`/shells` shows it. `↑`/`↓` select, `Enter` attaches through 07a, and `Esc`
-closes. A new `src/cli/commands/agents.rs` (given whole) plus small diffs to
-`render_ratatui.rs`, `chat.rs`, `commands/mod.rs` and `slash.rs`; 7 new
-tests; lib 2186 → 2193. This closes row 07.
+**What it does.** While attached, `Ctrl-p` pauses the shell's foreground
+job and `Ctrl-p` again resumes it; `Ctrl-c` interrupts it. Both go through a
+new `ShellSignal` IPC relay, which answers with the state the shell actually
+settled in, so "paused" is shown only when something really stopped.
+Detaching while paused resumes the job. 7 files, 7 new tests; lib
+2193 → 2200.
 
-**Measured at drafting.** The 6-row inline viewport fits 3 list rows, so
-the picker scrolls a window. The `/agents` routing is a pure function so
-its negatives are tested. The end-to-end block was run on the dry-run tree.
-Mutants A–G went red 3/3, all clippy-clean. The doc reproduces the dry run.
-**New this phase (07a calibration):** recording the mutations is its own
-numbered Spec task, placed before the capture, with a counted criterion.
+**Row 08 was split at drafting:**
+- 08a (this) is the shell-level chords;
+- 08b ties them to the owning run (cooperative cancel with stage
+  `user_attached`, park/resume with the pause duration);
+- 08c is accountability (`events.jsonl`, telling the agent, scrubbing).
 
-**After 07b:** `/rexymcp:architect next` drafts row 08 (attach-chords).
+**Measured at drafting.** A real-host test pins the four state transitions.
+The settle poll's mutant was unobservable and was dropped. **The capture has
+no trailing whitespace**, which is the 07b fix. The end-to-end block was run
+on the dry-run tree. Mutants A–F went red 3/3, all clippy-clean. The doc
+reproduces the dry run.
+
+**For the PE:** detach-while-paused **resumes** the job. That was my call;
+the design doesn't say. Revisit if you want a paused shell to stay paused.
+
+**After 08a:** `/rexymcp:architect next` drafts 08b (attach-run-control).
