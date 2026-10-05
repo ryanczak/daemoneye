@@ -1,7 +1,7 @@
 # Phase 10d: pause-stops-the-shell — `Ctrl-p` pauses the command, not just its current child process
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 08a (done: the attach chords), 10c (done: a local ghost runs in a PTY shell)
 **Estimated diff:** ~40 lines of production code in 1 file; 2 new tests and two adjusted tests (~110 lines)
 **Tags:** language=rust, kind=bugfix, size=s
