@@ -5,9 +5,10 @@ and the user can see, follow, attach to, pause, resume and replay the PTY
 shells the daemon and its agents run: `/shells`, `/tail`, `/agents` with
 attached mode, `/logs`, `/log`, `/hosts` and `/shell`.
 
-**Status:** complete — all 32 rows done 2026-10-05; the live exit met on 10e's
-run 4. **Awaiting PE sign-off** on the retrospective and the two folds below
-(§ Notes → "Retrospective").
+**Status:** **closed 2026-10-05, PE signed off** — all 32 rows done; the live
+exit met on 10e's run 4. The two fold proposals were **not landed** at this
+close (PE decision); they stay on the calibration queue (§ Notes →
+"Retrospective", "Fold proposals").
 
 **Depends on:** M20 (the PTY shell substrate and its host protocol), M21 (hosts,
 per-host shells, credential prompts), M22 (`list_shells` / `[SHELLS]`), M24
@@ -164,6 +165,11 @@ count used `pgrep -f`, which matched the harness's own wrapper shell. A
 rehearsal "fix" (a longer wait) was never tested under the failing condition.
 
 ### Fold proposals (for PE sign-off)
+
+**PE decision at close (2026-10-05): neither fold lands now.** Both stay on
+the calibration queue, with their counts as of this close (paste-check
+hygiene 3; `Executor:` source 22); `docs/dev/WORKFLOW.md` is unchanged. The
+paste-check drafting rule remains a drafting habit, not a written rule.
 
 Checked against `docs/dev/WORKFLOW.md` first: the counted `PASTE MATCH`
 criterion and the misreported-deviations rule are already there, and are
