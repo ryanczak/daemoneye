@@ -1,22 +1,20 @@
 # NEXT
 
-**Active phase:** **M23 phase-10d — pause-stops-the-shell**, drafted
-2026-10-05, status `todo`. Dispatch with `/rexymcp:dispatch phase-10d`.
+**Active phase:** **M23 phase-10e — live-close**, drafted 2026-10-05, status
+`todo`. **Architect-run with the PE present** — say when, and the architect
+runs § Spec S0–S5 while the PE watches the client read-only
+(`tmux -S /tmp/de10e-emu.sock attach -r` after S1).
 
-**Why it exists.** Rehearsing the live close showed `Ctrl-p` stopping only
-the command's current child process: bash ran on, so a ghost's loop kept
-ticking through a "pause" and a single command read as finished with exit
-147. (The sandboxed-ghost row that held the 10d ID was deferred to M26 by the
-PE on 2026-10-05.)
+**What it does.** The milestone exit for real: no tmux server anywhere
+(checked before, during, after), pick a running ghost in `/agents`, attach,
+`Ctrl-p` pause (10 s), resume, `Ctrl-d` detach, `/log` replay of the finished
+shell. Throwaway daemon, release build at HEAD, local model; nothing of the
+PE's setup is touched.
 
-**What it does.** The shell host stops the shell before its job and resumes
-the job before the shell; an interrupt, timeout or close on a paused shell
-resumes both. One file; two new tests, two adjusted; lib 2223 → 2225.
+**Measured at drafting.** The exact blocks were rehearsed three times; the
+last full run printed every value the criteria need (pause held 13 s in the
+cast, `tick 60`, truthful pause notice, replay advancing, nothing left over).
 
-**Measured at drafting.** Under a plain PTY and through the real door (a
-live rehearsal with a webhook ghost): before, the loop never paused; after,
-it held for the whole 12 s pause and the command finished with its real exit
-code. Mutants A–D red 3/3, clippy-clean. The doc reproduces the dry run.
-
-**After 10d:** 10e, the live close — architect-run with the PE present; the
-rehearsal script exists and passed every step but the pause.
+**After 10e:** the milestone close (`/rexymcp:architect`): README.md current
+with the 10b–10d behaviour, the retrospective, the folds due (claimed-but-
+absent PASTE MATCH, fold C, the executor-misreport pattern), PE sign-off.
