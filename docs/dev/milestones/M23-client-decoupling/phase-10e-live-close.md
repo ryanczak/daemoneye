@@ -1,7 +1,7 @@
 # Phase 10e: live-close — attach to a running ghost, pause it, resume it, detach, and replay its log, with no tmux server anywhere
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** done
 **Depends on:** 10b (ghost start without tmux), 10c (local ghost PTY shells), 10d (pause stops the shell), and rows 02–09
 **Estimated diff:** 0 lines of code; this doc's Update Log and the milestone README row
 **Tags:** language=rust, kind=verification, size=s, architect-run
@@ -57,6 +57,16 @@ Measured on **2026-10-05** at commit `2f8a7a53`.
     non-zero.
   - **The daemon takes a moment to exit after `stop`**, so the leftover-process
     count waits up to 10 s.
+  - **Amended at run time** (runs 1 and 2 below): the leftover-process count
+    used `pgrep -f`, which matches full command lines, so the shell that
+    wraps the S5 step matches whenever its own command line mentions the
+    throwaway path. Runs 1 and 2 read `leftover-procs=1` with no process of
+    ours alive. A bracketed pattern (`[/]tmp/…`, run 2) does not help: it
+    only avoids matching its own text. S5 now counts processes by
+    **environment**: every process the run starts has `HOME=/tmp/de10e-live`,
+    the wrapper does not. A new `procs-before-stop=` line proves the count
+    sees the run's processes (it must be ≥ 1) before the count is trusted
+    at 0.
 - **Why a throwaway daemon**, not the PE's own: the live config keeps
   `tmux_session = "daemoneye"` (PE decision 1), which starts a tmux session
   by design. The run uses an isolated `HOME` and `TMUX_TMPDIR`
@@ -223,15 +233,19 @@ cd /home/matt/src/daemoneye
 A=/tmp/e2e-m23-10e.txt; R=/tmp/de10e-live; EMU=/tmp/de10e-emu.sock
 BIN=/home/matt/src/daemoneye/target/release/daemoneye
 iso() { env -u TMUX -u TMUX_PANE HOME=$R TMUX_TMPDIR=$R "$@"; }
+# Processes the run started: those whose environment has HOME=$R (a command-line
+# match would also hit the shell that wraps this step).
+count_procs() { n=0; for p in /proc/[0-9]*; do { tr '\0' '\n' < $p/environ | grep -qx "HOME=$R"; } 2>/dev/null && n=$((n+1)); done; echo $n; }
 {
 echo "== S5 CLEANUP =="
+echo "procs-before-stop=$(count_procs)"
 tmux -S $EMU send-keys -t emu: '/quit' Enter; sleep 2
 iso tmux ls >/dev/null 2>&1; echo "tmux-after: tmux-ls-exit=$? server-socket=$([ -S $R/tmux-$(id -u)/default ] && echo yes || echo no)"
 iso $BIN stop 2>&1 | tail -1 | sed 's/\x1b\[[0-9;]*m//g'
 tmux -S $EMU kill-server; echo "emulator stopped exit=$?"
 sleep 2; echo "stopped-procs=$(ps -eo stat= | grep -c '^T')"
-for i in $(seq 1 10); do [ "$(pgrep -fc "$R")" = 0 ] && break; sleep 1; done
-echo "leftover-procs=$(pgrep -fc "$R")"
+for i in $(seq 1 10); do [ "$(count_procs)" = 0 ] && break; sleep 1; done
+echo "leftover-procs=$(count_procs)"
 } >> "$A" 2>&1
 cat "$A"
 ```
@@ -275,7 +289,8 @@ each fails today.
       shell `s0` and the attached-mode pause.
 - [ ] **`/log` replay of the finished shell:** `log-viewer=1` and
       `CHECK-S4 replay-advances: OK`.
-- [ ] **Nothing left behind:** `stopped-procs=0`, `leftover-procs=0`.
+- [ ] **Nothing left behind:** `procs-before-stop` ≥ 1 (the check sees the
+      run's processes), then `stopped-procs=0` and `leftover-procs=0`.
 - [ ] The `(end-to-end verification)` entry holds the file as its first
       fenced block and the literal `PASTE MATCH` on its own line:
       ``grep -cx 'PASTE MATCH' <this doc>`` → **1**.
@@ -383,3 +398,246 @@ filed as a bug against the row that owns the behaviour.
 Architect-run, PE at the keyboard (the PE issued `/rexymcp:dispatch phase-10e`,
 read as the go signal; no executor was dispatched). Status flipped
 `todo` → `in-progress`; README row to match. Running S0–S5.
+
+### Update — 2026-10-05 (run 1, superseded)
+
+Run 1 of S0–S5, blocks taken verbatim from the doc as drafted. Every
+criterion read as required **except `leftover-procs=1`**. The criterion
+(`leftover-procs=0`) is **unmet as written in run 1**. The capture, unchanged:
+
+```
+== S0 BUILD-FIXTURES ==
+2a67d53e
+    Finished `release` profile [optimized] target(s)
+build exit=0
+setup exit=0
+fixtures: tmux_session-off=1 runbook=1
+== S1 START ==
+tmux-before: tmux-ls-exit=1 server-socket=no
+daemon-start exit=0
+Daemon is running.
+emulator exit=0
+client-banner=1
+== S2 ATTACH-PAUSE-RESUME-DETACH ==
+webhook=200
+picker-ghost-row=1
+attached-status=1
+attached-last=tick 11
+paused-status=1
+paused-last: tick 11 then tick 11 ten seconds later
+CHECK-S2 pause-holds: OK
+tmux-during: tmux-ls-exit=1 server-socket=no
+resumed-last=tick 15
+resumed-status=1
+attached-after-detach=0
+== S3 EVIDENCE ==
+ghost-complete=1
+ghost-shells-closed=1
+ghost-start "tmux_session":""
+cast=s0-1791169017.cast
+cast-ticks=60 last=60
+cast-maxgap=13s after tick 11
+cast-stopped-lines=0
+tool-result-last-line=tick 60
+pause-notice=[The user paused shell s0 for N s from attached mode. It is running again.]
+== S4 LOG-REPLAY ==
+log-viewer=1
+replay-progress: replay 3.0s/ then replay 7.0s/
+CHECK-S4 replay-advances: OK
+== S5 CLEANUP ==
+tmux-after: tmux-ls-exit=1 server-socket=no
+Daemon stopped.
+emulator stopped exit=0
+stopped-procs=0
+leftover-procs=1
+```
+
+Diagnosis: nothing of ours was running afterwards (`pgrep -af` of the root
+found no process; the five `shell-host` processes left on this machine are
+the PE's own daemon's, days old). The one match was the shell wrapping the
+S5 step, whose command line ended `ls -d /tmp/de10e-live`. A second,
+separate run of S0–S5 with S5 instrumented to list its matches printed no
+match and `leftover-procs=0` after 1 s (its capture was written to a
+different file and is not evidence). The check is to be amended (see § Current
+state) and S0–S5 is run again.
+
+### Update — 2026-10-05 (run 2, superseded)
+
+Run 2, with `pgrep -fc` on a bracketed pattern (`[/]tmp/de10e-live`) as the
+first amendment. S0–S4 read as required again and **S5 read
+`leftover-procs=1` again; the criterion is unmet as written in run 2**. The
+capture, unchanged:
+
+```
+== S0 BUILD-FIXTURES ==
+2a67d53e
+    Finished `release` profile [optimized] target(s)
+build exit=0
+setup exit=0
+fixtures: tmux_session-off=1 runbook=1
+== S1 START ==
+tmux-before: tmux-ls-exit=1 server-socket=no
+daemon-start exit=0
+Daemon is running.
+emulator exit=0
+client-banner=1
+== S2 ATTACH-PAUSE-RESUME-DETACH ==
+webhook=200
+picker-ghost-row=1
+attached-status=1
+attached-last=tick 11
+paused-status=1
+paused-last: tick 11 then tick 11 ten seconds later
+CHECK-S2 pause-holds: OK
+tmux-during: tmux-ls-exit=1 server-socket=no
+resumed-last=tick 15
+resumed-status=1
+attached-after-detach=0
+== S3 EVIDENCE ==
+ghost-complete=1
+ghost-shells-closed=1
+ghost-start "tmux_session":""
+cast=s0-1791169433.cast
+cast-ticks=60 last=60
+cast-maxgap=13s after tick 11
+cast-stopped-lines=0
+tool-result-last-line=tick 60
+pause-notice=[The user paused shell s0 for N s from attached mode. It is running again.]
+== S4 LOG-REPLAY ==
+log-viewer=1
+replay-progress: replay 3.0s/ then replay 7.0s/
+CHECK-S4 replay-advances: OK
+== S5 CLEANUP ==
+tmux-after: tmux-ls-exit=1 server-socket=no
+Daemon stopped.
+emulator stopped exit=0
+stopped-procs=0
+leftover-procs=1
+```
+
+Diagnosis, measured: `pgrep -af '[/]tmp/de10e-live'` run from a call whose
+command line contained the path listed exactly one process, the harness's
+`/usr/bin/bash -c source …/shell-snapshot… ` wrapper, and listed none from a
+call that did not contain it. My amendment could not have worked: the
+bracket only keeps a pattern from matching its own text, not a caller's.
+The check is changed to count processes by environment (see § Current
+state) and S0–S5 is run once more (run 3).
+
+### Update — 2026-10-05 (run 3, superseded)
+
+Run 3, with the environment-based count. S0–S4 read as required. S5's count
+worked (`procs-before-stop=2`, `leftover-procs=0`), but its redirect
+(`tr … < $p/environ`) printed one `Permission denied` or `No such process`
+line per process the PE's account does not own into the capture file: 1852
+lines, 1803 of them errors. A capture like that cannot be the evidence. The
+criteria all read as required in run 3. S5's lines with those errors filtered
+out (a filtered view, `grep -v 'Permission denied'`, **not** the file):
+
+```
+== S5 CLEANUP ==
+/tmp/de10e-s5.sh: line 7: /proc/1819769/environ: No such process
+/tmp/de10e-s5.sh: line 7: /proc/2498446/environ: No such process
+procs-before-stop=2
+tmux-after: tmux-ls-exit=1 server-socket=no
+Daemon stopped.
+emulator stopped exit=0
+stopped-procs=0
+/tmp/de10e-s5.sh: line 7: /proc/2498446/environ: No such process
+/tmp/de10e-s5.sh: line 7: /proc/2498446/environ: No such process
+leftover-procs=0
+```
+
+The redirect is now inside the group (`{ tr … < $p/environ | grep -qx …; }
+2>/dev/null`), checked standalone to print nothing on stderr, and S0–S5 run
+once more as run 4.
+
+### Update — 2026-10-05 (end-to-end verification)
+
+Run 4 of S0–S5, blocks taken verbatim from this doc as amended. The capture,
+the contents of `/tmp/e2e-m23-10e.txt` unchanged (45 lines, none ending in
+whitespace); the S5 step's own command line carried the throwaway path, as
+in runs 1–3, to show the amended count is not fooled by it:
+
+```
+== S0 BUILD-FIXTURES ==
+2a67d53e
+    Finished `release` profile [optimized] target(s)
+build exit=0
+setup exit=0
+fixtures: tmux_session-off=1 runbook=1
+== S1 START ==
+tmux-before: tmux-ls-exit=1 server-socket=no
+daemon-start exit=0
+Daemon is running.
+emulator exit=0
+client-banner=1
+== S2 ATTACH-PAUSE-RESUME-DETACH ==
+webhook=200
+picker-ghost-row=1
+attached-status=1
+attached-last=tick 12
+paused-status=1
+paused-last: tick 12 then tick 12 ten seconds later
+CHECK-S2 pause-holds: OK
+tmux-during: tmux-ls-exit=1 server-socket=no
+resumed-last=tick 16
+resumed-status=1
+attached-after-detach=0
+== S3 EVIDENCE ==
+ghost-complete=1
+ghost-shells-closed=1
+ghost-start "tmux_session":""
+cast=s0-1791169844.cast
+cast-ticks=60 last=60
+cast-maxgap=13s after tick 12
+cast-stopped-lines=0
+tool-result-last-line=tick 60
+pause-notice=[The user paused shell s0 for N s from attached mode. It is running again.]
+== S4 LOG-REPLAY ==
+log-viewer=1
+replay-progress: replay 3.0s/ then replay 7.0s/
+CHECK-S4 replay-advances: OK
+== S5 CLEANUP ==
+procs-before-stop=2
+tmux-after: tmux-ls-exit=1 server-socket=no
+Daemon stopped.
+emulator stopped exit=0
+stopped-procs=0
+leftover-procs=0
+```
+
+PASTE MATCH
+
+Every acceptance criterion reads as required in run 4:
+- no tmux server before, during and after (`tmux-ls-exit=1
+  server-socket=no` three times; `ghost-start "tmux_session":""`);
+- `/agents` picked the ghost's shell, attach, pause, resume and detach all
+  worked, and the pause held (`tick 12` both times, ten seconds apart; in
+  the cast the largest gap is 13 s, after tick 12, with no `Stopped` line);
+- the ghost finished all 60 ticks and its result ends `tick 60`; it was
+  told, truthfully, of the pause;
+- `/log` replay advanced (3.0 s, then 7.0 s) and the throwaway root left
+  nothing behind (`procs-before-stop=2`, `stopped-procs=0`,
+  `leftover-procs=0`);
+- the tree changed only in this doc and the milestone README; no `src/`
+  change.
+
+### Review verdict — 2026-10-05
+
+- **Verdict:** criteria met on run 4 (architect-run: no executor, no
+  bounces, so no telemetry record — `rexymcp review` records executor runs)
+- **Executor:** none (Claude Code, architect-run, per the M14 convention)
+- **Scope deviations:** the verification instrument was amended three times
+  at run time, all in S5's leftover check (see runs 1–3 above): a
+  command-line `pgrep` that matched the harness's own wrapper shell, a
+  bracketed pattern that could not have fixed that, and a redirect whose
+  errors polluted the capture. None touched the product, and none touched a
+  criterion's meaning (the criterion gained one witness line,
+  `procs-before-stop`, so the zero-count cannot pass vacuously).
+- **Calibration:** (1) The rehearsal that first read `leftover-procs=1`
+  was "fixed" with a longer wait, a diagnosis never tested; the next
+  rehearsal passed only because its command line happened not to contain
+  the path. A nonzero reading was treated as timing instead of naming the
+  offender, and the instrument then cost three live runs. (2) The PE was
+  not asked to attach; the read-only attach command was offered but this
+  record does not claim anyone watched.
