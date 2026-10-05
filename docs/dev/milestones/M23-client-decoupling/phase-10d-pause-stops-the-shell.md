@@ -1,7 +1,7 @@
 # Phase 10d: pause-stops-the-shell — `Ctrl-p` pauses the command, not just its current child process
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** in-progress
+**Status:** review
 **Depends on:** 08a (done: the attach chords), 10c (done: a local ghost runs in a PTY shell)
 **Estimated diff:** ~40 lines of production code in 1 file; 2 new tests and two adjusted tests (~110 lines)
 **Tags:** language=rust, kind=bugfix, size=s
@@ -655,3 +655,136 @@ opening fence, so the extraction saw no first fenced block, and the
 check's next run printed:
 
 PASTE MATCH
+
+### Update — 2026-10-05 02:23 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 10d is implemented in `src/shell/pty.rs` exactly as the spec's dry-run diff: `signal_foreground("STOP")` now stops the shell before the foreground group (so a stopped bash cannot reap the stop and run on), `CONT` resumes the remembered group before the shell (so bash wakes to a running job and the command finishes with its real exit code), the `INT`/`TERM` arm and `hangup()` resume a paused shell and its job after queueing their signal, and the new private `signal_shell` helper carries the pid-targeted sends. Two tests were added (`pty_a_paused_command_finishes_with_its_real_exit_code`, `pty_hangup_while_paused_ends_the_shell`) and two that had asserted the defect as correct were adjusted to the new behaviour, names unchanged. All acceptance criteria were verified: mutations A–D each went red and were restored (`git diff --stat` back to 142 insertions/39 deletions each time), and the e2e block run verbatim gave `lib1..lib3=ok failed:none`, `lib_counts=2225p-0f-14i`, `phase_tests=6p-0f`, `stopped_procs=0`, `wired=1/3/0`, with the paste check printing `PASTE MATCH`; fmt, build and clippy `-D warnings` are clean and no stopped process was left behind.
+
+**Notes for review:** One mid-run correction the reviewer should know about — my first append of the e2e Update Log entry omitted the capture's opening fence, so the doc-prescribed paste check printed `PASTE MISMATCH` three times; I added the fence, re-ran the check, and it printed `PASTE MATCH` (recorded as-is in the entry, including the mismatch runs, and the check's prescribed diff showed only the missing fence). I also found and fixed four single-space trailing-whitespace lines inside the phase doc's embedded diff (in the diff's context blank lines), which would have made the doc's reproduction of the dry run inexact; they were blank-context lines only, not code. Status was left at `in-progress` in the phase doc and the milestone README row as required, the started/mutations/end-to-end Update Log entries are appended, and the work is committed across three commits (`fix(shell)` code+tests, then two `docs:` commits for the status flip and the started entry) with a clean tree. The pre-existing flake `pty_stop_with_no_foreground_job_remembers_nothing` never fired; the other two known flakes did not appear in any run.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.20s
+
+
+LINT
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.20s
+
+
+TEST
+hed in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.85s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-9810e08c3de1e001)
+kill: sending signal to 1736429 failed: No such process
+kill: sending signal to -1741509 failed: No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-54ad57cf3704bc40)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-d709c9b862b5691d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-34cb94d3012a3d69)
+     Running tests/integration.rs (target/debug/deps/integration-deb70358b520d0d5)
+     Running tests/isolation.rs (target/debug/deps/isolation-45facff22bac60f5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M23-client-decoupling/phase-10d-pause-stops-the-shell.md` — +70 -5
+- `src/shell/pty.rs` — +142 -39
+
+**Commit:** c1d16cc391768995586fb45d966d588ec5ed74a6
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
