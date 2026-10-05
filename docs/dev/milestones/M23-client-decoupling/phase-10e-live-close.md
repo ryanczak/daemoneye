@@ -1,7 +1,7 @@
 # Phase 10e: live-close — attach to a running ghost, pause it, resume it, detach, and replay its log, with no tmux server anywhere
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 10b (ghost start without tmux), 10c (local ghost PTY shells), 10d (pause stops the shell), and rows 02–09
 **Estimated diff:** 0 lines of code; this doc's Update Log and the milestone README row
 **Tags:** language=rust, kind=verification, size=s, architect-run
@@ -377,3 +377,9 @@ filed as a bug against the row that owns the behaviour.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-05 (started)
+
+Architect-run, PE at the keyboard (the PE issued `/rexymcp:dispatch phase-10e`,
+read as the go signal; no executor was dispatched). Status flipped
+`todo` → `in-progress`; README row to match. Running S0–S5.
