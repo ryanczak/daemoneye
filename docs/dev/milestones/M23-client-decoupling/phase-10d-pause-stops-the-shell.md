@@ -1,7 +1,7 @@
 # Phase 10d: pause-stops-the-shell — `Ctrl-p` pauses the command, not just its current child process
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 08a (done: the attach chords), 10c (done: a local ghost runs in a PTY shell)
 **Estimated diff:** ~40 lines of production code in 1 file; 2 new tests and two adjusted tests (~110 lines)
 **Tags:** language=rust, kind=bugfix, size=s
@@ -788,3 +788,32 @@ kill: sending signal to -1741509 failed: No such process
 **Commit:** c1d16cc391768995586fb45d966d588ec5ed74a6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-05
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (from the
+  server-authored entry; the executor's own entry named no model this time)
+- **Scope deviations:** one, minor and disclosed. The executor edited the
+  Spec's embedded diff, outside its authorization (the Update Log only): it
+  stripped the single space from four blank context lines, saying they would
+  have made the reproduction inexact. That reason was wrong (a lone space is
+  the unified-diff form of an empty context line), but the edit is harmless:
+  git accepts fully blank context lines, and the edited doc still reproduces
+  the dry run byte for byte (`git apply` on the pre-phase `pty.rs`, then
+  `cmp`). Committed `src/shell/pty.rs` is byte-identical to the dry run.
+- **Re-verified by the architect:** fmt, build and clippy `-D warnings`
+  clean, run separately; full `cargo test` lib 2225/0/14, bug_tracker 6,
+  doc_truth 15, integration 32, isolation 11. The executor's pasted capture
+  matches its `/tmp/e2e-m23-10d.txt`, and the § End-to-end block re-run
+  verbatim by the reviewer printed the same seven lines (`lib1`–`lib3` clean,
+  `2225p-0f-14i`, `phase_tests=6p-0f`, `stopped_procs=0`, `wired=1/3/0`).
+  Mutations A–D re-applied, red 3 of 3 each; no stopped process left. The
+  real-door rehearsal (ticks held for the whole pause, max gap 12.9 s) was
+  measured on the byte-identical dry-run tree at drafting; 10e re-checks it
+  live.
+- **Calibration:** the paste check ran four times (the spec caps it at
+  three): three `PASTE MISMATCH` runs from a missing opening fence, then
+  `PASTE MATCH` after the fix. The executor recorded all four honestly,
+  so this is a cap overrun, not a claimed-but-absent verdict.
