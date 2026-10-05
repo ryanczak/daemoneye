@@ -1,20 +1,22 @@
 # NEXT
 
-**Active phase:** **M23 phase-10c — local-ghost-pty-shells**, drafted
-2026-10-04, status `todo`. Dispatch with `/rexymcp:dispatch phase-10c`.
+**Active phase:** **M23 phase-10d — pause-stops-the-shell**, drafted
+2026-10-05, status `todo`. Dispatch with `/rexymcp:dispatch phase-10d`.
 
-**What it does.** A local ghost's commands run in a PTY shell the ghost owns
-on the daemon host (the remote ghost path's `run_ghost_remote` with
-`HostId::Local`) when `backend = "pty"`, the sandbox is off and there is no
-`ssh_target`; the ghost prompt stops claiming its commands run in tmux
-windows; a tmux-path regression test selects `backend = "tmux"` explicitly.
-3 files, 2 new tests; lib 2221 → 2223.
+**Why it exists.** Rehearsing the live close showed `Ctrl-p` stopping only
+the command's current child process: bash ran on, so a ghost's loop kept
+ticking through a "pause" and a single command read as finished with exit
+147. (The sandboxed-ghost row that held the 10d ID was deferred to M26 by the
+PE on 2026-10-05.)
 
-**Measured at drafting.** A throwaway daemon with the real local model and a
-webhook ghost: the current tree cannot run the ghost's command at all
-without tmux; the dry run runs it in `s0` and closes it at exit, with no
-tmux directory. The first dry run broke a tmux-path test, repaired in the
-spec. Mutants A–B red 3/3, clippy-clean. The doc reproduces the dry run.
+**What it does.** The shell host stops the shell before its job and resumes
+the job before the shell; an interrupt, timeout or close on a paused shell
+resumes both. One file; two new tests, two adjusted; lib 2223 → 2225.
 
-**After 10c:** 10d (sandboxed ghost: docker inside the PTY shell, PE decision
-2026-10-04), then 10e, the live close.
+**Measured at drafting.** Under a plain PTY and through the real door (a
+live rehearsal with a webhook ghost): before, the loop never paused; after,
+it held for the whole 12 s pause and the command finished with its real exit
+code. Mutants A–D red 3/3, clippy-clean. The doc reproduces the dry run.
+
+**After 10d:** 10e, the live close — architect-run with the PE present; the
+rehearsal script exists and passed every step but the pause.
