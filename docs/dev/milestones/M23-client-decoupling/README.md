@@ -5,9 +5,9 @@ and the user can see, follow, attach to, pause, resume and replay the PTY
 shells the daemon and its agents run: `/shells`, `/tail`, `/agents` with
 attached mode, `/logs`, `/log`, `/hosts` and `/shell`.
 
-**Status:** in-progress — scoped 2026-09-30 on live measurements (below);
-**PE signed off on the breakdown 2026-09-30** with three decisions (§ Notes →
-"PE decisions at sign-off"). Next: `/rexymcp:architect next` → 01a.
+**Status:** complete — all 32 rows done 2026-10-05; the live exit met on 10e's
+run 4. **Awaiting PE sign-off** on the retrospective and the two folds below
+(§ Notes → "Retrospective").
 
 **Depends on:** M20 (the PTY shell substrate and its host protocol), M21 (hosts,
 per-host shells, credential prompts), M22 (`list_shells` / `[SHELLS]`), M24
@@ -98,6 +98,105 @@ last.
 | 10e | live-close ([phase-10e-live-close.md](phase-10e-live-close.md)) — the exit criterion end to end, **architect-run with the PE watching**: a throwaway daemon (`tmux_session = ""`, isolated `HOME`/`TMUX_TMPDIR`, release build at HEAD, local model) and a private tmux server used only as the terminal emulator; a webhook ghost's 60-tick loop is picked in `/agents`, attached, paused 10 s (`Ctrl-p`), resumed, detached (`Ctrl-d`), then its finished shell is replayed with `/log`. Evidence from the capture, the cast (max tick gap ≥ 10 s, no `Stopped`), the ghost's session (tool result `tick 60`, the pause notice) and `tmux ls` + server-socket checks before, during and after. **Rehearsed three times at `2f8a7a53`**, last run all green; the rehearsals drove 10c and 10d and two block fixes (`tmux ls` creates the socket dir, so the check is the socket; the daemon's exit needs a wait) **Done 2026-10-05** (architect-run, criteria met on **run 4**: no tmux server before/during/after; `/agents` → attach → `Ctrl-p` 10 s (cast gap 13 s, ticks held) → resume → `Ctrl-d` → `/log` replay; ghost finished `tick 60`; nothing left behind. Runs 1–3 failed S5's leftover count — the instrument, not the product: `pgrep -f` matched the harness's own `bash -c` wrapper; recorded in the doc) | done |
 
 ## Notes
+
+### Retrospective (2026-10-05)
+
+**Outcome: every exit criterion met.**
+
+| Exit criterion | Evidence |
+|---|---|
+| The design's exit, live, no tmux server | 10e run 4: `tmux ls` fails and no server socket before, during and after; `/agents` → attach → `Ctrl-p` 10 s (ticks held, cast gap 13 s) → resume → `Ctrl-d` → `/log` replay |
+| Nothing starts tmux | 02 (daemon and chat with `tmux_session = ""`), 10b (a ghost start) |
+| IPC additions exist and are tested | 03a–03d (`ShellList`, `ShellInput`, `ShellResize`, `ShellTail` → `ShellScreen`/`ShellChunk`/`ShellExited`), 06a–06b (`ShellLogList`, `ShellLogRead`); the 1 MiB message cap is `server/mod.rs` |
+| Every attached keystroke accountable | 08d (`"i"` log scrubbed at secret prompts, a byte-count `shell_input` event, the owning agent told) |
+| `[HOSTS]` context block | 04c |
+| M21 carry-forwards closed | 01a–01d |
+| 42 tools unchanged | `CLAUDE.md` 42 (28 + 14); `doc_truth` green |
+| README documents every new slash command | 10a, guarded by `readme_documents_every_chat_slash_command`; the ghost passages brought current at this close |
+| All four gates green | fmt, build, clippy `-D warnings`, `cargo test` (lib 2225) at close |
+
+**Numbers.** 14 proposed rows became **32 phases** on measured seams: 30
+`approved_first_try`, 1 `approved_after_1` (03a, bug-03a-1, the milestone's
+only bug), 1 architect-run (10e). Every dispatched phase ran on
+GLM-5.3-Flash. Lib tests 2088 → 2225.
+
+**Headline: the exit was unreachable after 29 green phases, and only a
+rehearsal of the live close showed it.** Three defects, each invisible to
+2200+ green tests:
+1. **A ghost start created a tmux server** (`ensure_incident_session` ignored
+   `tmux_session = ""`) → 10b.
+2. **A local ghost had no PTY shell**: its commands ran in tmux windows, so
+   `/agents` had nothing to attach to without tmux → 10c. The `/agents`,
+   attach and pause tests (07b–08d) inserted ghost shells into the registry
+   by hand, which is how it stayed hidden.
+3. **`Ctrl-p` did not pause**: it stopped the foreground child, bash reaped
+   the stop and ran on (a loop kept ticking; a wrapped command read as
+   finished, exit 147) → 10d. Two M20 tests asserted "bash retakes the
+   terminal" as correct, and a first probe under tmux was fooled by tmux's
+   auto-`SIGCONT` of stopped pane processes.
+
+The lesson is architect-side: the live close was scheduled last and
+rehearsed last. Rehearsing it as soon as the rows it depends on are done, and
+tracing the real producer of every fixture-inserted state, would have found
+all three before rows 09–10a were built on them.
+
+**PE decisions during the milestone:** row 10 (2026-10-04, two fix rows
+before the live close); sandbox at 10c (docker inside the PTY shell, split
+out); 10d deferred to M26 (2026-10-05, `Ctrl-p` cannot freeze a container).
+Details below.
+
+**Carried to M26:**
+- a sandboxed ghost in a PTY shell, with `docker pause` for `Ctrl-p`;
+- the seeded `ghost-shell-guide` memory, which still describes
+  `de-gs-*` windows;
+- a long pause counts against a command's deadline (300 s for a ghost),
+  unlike prompt time.
+
+**Executor conduct.** Fold C reached **22** self-misnamings (the server-
+authored entry was right every time). Three misreports of the executor's own
+work (08c, 09a, 10c) fall under the existing M12 fold ("read the diff, not
+the narrative"; "reviewer: re-run and diff"), which every review applied. That
+fold is working, and it is not a new one. One out-of-authorization spec edit
+(10d), harmless and disclosed.
+
+**10e cost three live runs to an instrument defect**: S5's leftover-process
+count used `pgrep -f`, which matched the harness's own wrapper shell. A
+rehearsal "fix" (a longer wait) was never tested under the failing condition.
+
+### Fold proposals (for PE sign-off)
+
+Checked against `docs/dev/WORKFLOW.md` first: the counted `PASTE MATCH`
+criterion and the misreported-deviations rule are already there, and are
+not proposed again.
+
+1. **Paste-check hygiene — due, three claimed-but-absent occurrences** (M21
+   09a, M23 01b, M23 07b). Add to § "Close the entry with a PASTE MATCH
+   self-check":
+   - **no capture line may end in whitespace**: format every field so it is
+     never empty at the end of a line (e.g. `failed:none`, not a possibly
+     empty list); check the dry-run capture with `grep -c ' $'`;
+   - **never write a verdict the check did not print**; run it at most three
+     times and paste the line it prints.
+
+   Applied as a drafting rule from row 08 on. Zero claimed-but-absent verdicts
+   in the eleven phases since (08a–10d); 10d's executor ran the check four
+   times and recorded every result honestly.
+2. **The verdict's `Executor:` line comes from the server-authored entry —
+   due, 22 occurrences.** In § "Review verdict": take the model from the
+   server-authored `(complete)` entry (or `executor_health`), never from the
+   executor's own Update Log entries.
+
+**Held (one occurrence each, or not yet a pattern):**
+- trace the real producer of every fixture-inserted state, and rehearse the
+  live close as soon as its rows are done (M23 10b–10d; one milestone, three
+  defects, one root);
+- name what a nonzero check counted before fixing it (10e);
+- rustfmt splitting a line a drafting grep pins (08b, 08d: two, caught by the
+  existing run-the-e2e-on-the-dry-run rule);
+- mutations as a numbered Spec task before the capture (07a; applied since
+  07b, all mutations recorded in every phase since);
+- the capture instruction read as "paste the script" (02; one).
+
 
 ### Measured before scoping (2026-09-30, HEAD `f872adaa`)
 

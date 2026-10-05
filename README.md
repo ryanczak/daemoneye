@@ -108,7 +108,7 @@ Three properties are load-bearing:
 
 ### 👻 Autonomous Ghost Shells
 
-When a critical alert matches a runbook with `enabled: true`, DaemonEye spawns a Ghost Shell — an unattended AI agent that works the problem in dedicated `de-gs-bg-*` tmux windows on the daemon host without a human present. When you next attach, a catch-up brief tells you what happened.
+When a critical alert matches a runbook with `enabled: true`, DaemonEye spawns a Ghost Shell — an unattended AI agent that works the problem on the daemon host without a human present, in a PTY shell it owns. Watch it with `/tail`, or join it with `/agents` to pause, interrupt or type into it. When you next attach, a catch-up brief tells you what happened.
 
 - **Unattended Remediation** — Runs pre-approved remediation scripts, monitors output, and escalates when something unexpected happens.
 - **Policy Gating** — Non-sudo commands run freely within your OS permissions; `sudo` is gated to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`. Two keys are required for every privilege escalation.
@@ -521,7 +521,7 @@ to the shell.
 
 | Key | Effect |
 |---|---|
-| `Ctrl+P` | Pause the shell's foreground job; press again to resume. A ghost run that owns the shell waits at its next turn and is told how long it was paused |
+| `Ctrl+P` | Pause the running command — the shell and its foreground job stop together, so the rest of a loop or command line cannot run on; press again to resume. A ghost run that owns the shell waits at its next turn and is told how long it was paused |
 | `Ctrl+C` | Interrupt the foreground job, and cancel the run that owns the shell (it ends at its next turn boundary) |
 | `Ctrl+D` | Detach back to chat. Detaching while paused resumes the job first |
 | `Ctrl+D` `Ctrl+D` | Send one `Ctrl+D` (EOF) to the shell |
@@ -1108,7 +1108,7 @@ Artifacts (runbooks, scripts, memories) created during a named session are tagge
 
 ## Ghost Shells & Autonomous Remediation
 
-Ghost Shells are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost shell investigates the alert and executes pre-approved remediation steps — all without a human present. The ghost itself runs headless inside the daemon; each command it executes gets its own tmux window on the daemon host, created lazily and prefixed `de-gs-bg-*` (webhook- and interactively-triggered ghosts) or `de-gs-sj-*` (scheduler-triggered). Start, completion, and failure events appear in the next catch-up brief when you re-attach.
+Ghost Shells are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost shell investigates the alert and executes pre-approved remediation steps — all without a human present. The ghost itself runs headless inside the daemon. Its commands run in a PTY shell the ghost owns — on the daemon host, or on a configured `[hosts]` entry its runbook's `ssh_target` names — reused for its later commands and closed when the ghost exits; the recording stays, for `/logs` and `/log`. No tmux server is needed. Three cases still use tmux windows on the daemon host, prefixed `de-gs-bg-*` (webhook- and interactively-triggered) or `de-gs-sj-*` (scheduler-triggered): the container sandbox (`[sandbox] enabled`), `[execution] backend = "tmux"`, and an `ssh_target` that names no configured host (wrapped as `ssh <target> <cmd>`). Start, completion, and failure events appear in the next catch-up brief when you re-attach.
 
 ### How it works end-to-end
 
@@ -1331,10 +1331,13 @@ curl -s -X POST http://localhost:9393/webhook \
   }'
 ```
 
-Watch the ghost shell in real time:
+Watch the ghost shell in real time from `daemoneye chat`: `/agents` lists the
+live agent shells (ghosts first); `Enter` attaches, `Ctrl+P` pauses and
+resumes, `Ctrl+D` detaches. `/tail <id>` follows a shell read-only. With the
+container sandbox or `backend = "tmux"`, the commands run in tmux windows
+instead:
 
 ```bash
-# In another pane — list the ghost's command windows and select one
 tmux list-windows -a | grep de-gs-
 tmux select-window -t <window-name>
 
@@ -1369,7 +1372,9 @@ Cost (today)
   By provider: anthropic $0.47
 ```
 
-List the ghost command windows currently open:
+List the ghost shells currently open with `/shells` in `daemoneye chat`
+(owner `ghost:…`). With the container sandbox or `backend = "tmux"`, list the
+command windows instead:
 
 ```bash
 tmux list-windows -a | grep de-gs-
