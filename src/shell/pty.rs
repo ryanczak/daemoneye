@@ -364,13 +364,19 @@ impl PtyShell {
     /// `CONT` — to a process group.
     ///
     /// `STOP` targets the group this shell is tracking — the paused or
-    /// resumed memory first, because the moment the job stops bash takes the
-    /// terminal back (F2) and a later target cannot re-derive it from a tty
-    /// query; a shell tracking nothing falls back to the live foreground
-    /// group, unless that group is the shell's own (F1: stopping it would
-    /// stop the shell). `CONT` targets only the remembered paused group and
-    /// clears it. `INT`/`TERM` keep the live foreground target and clear the
-    /// memory, because a cancelled job leaves nothing paused (F4).
+    /// resumed memory first, so a later target never has to re-derive it
+    /// from a tty query; a shell tracking nothing falls back to the live
+    /// foreground group, unless that group is the shell's own (F1). It stops
+    /// **the shell first, then the job**: a running bash reaps a stopped job
+    /// and runs on — the rest of a `for` loop keeps going, and a wrapped
+    /// command prints its end marker with exit 147, so the command reads as
+    /// finished while its job sits stopped (measured). A stopped shell
+    /// cannot. `CONT` resumes the remembered group first, then the shell, so
+    /// bash wakes to a running job and never sees the stop; it clears the
+    /// memory. `INT`/`TERM` keep the live foreground target and clear the
+    /// memory, because a cancelled job leaves nothing paused (F4); on a
+    /// paused shell they also resume the job and the shell, or the signal
+    /// would wait on two stopped processes forever.
     ///
     /// portable-pty exposes no signal-sending API, so the platform `kill(1)`
     /// is invoked with the negative PGID. The shell itself sits in its own
@@ -409,17 +415,18 @@ impl PtyShell {
                     }
                 }
                 if let Some(pgid) = target {
+                    self.signal_shell("STOP")?;
                     self.signal_group(pgid, sig)?;
                     self.paused_pgid = Some(pgid);
                     self.resumed_pgid = None;
                 }
             }
             "CONT" => {
-                // F2: the stopped job is not the foreground group any more;
-                // a CONT that re-derives its target signals the shell's own
-                // group and the job stays stopped (red-verified).
+                // The remembered group, never a re-derived one: a tty query
+                // can answer the shell's own group and leave the job stopped.
                 if let Some(pgid) = self.paused_pgid.take() {
                     self.signal_group(pgid, sig)?;
+                    self.signal_shell("CONT")?;
                     self.resumed_pgid = Some(pgid);
                 }
             }
@@ -427,7 +434,10 @@ impl PtyShell {
                 if let Some(pgid) = current {
                     self.signal_group(pgid, sig)?;
                 }
-                self.paused_pgid = None;
+                if let Some(pgid) = self.paused_pgid.take() {
+                    self.signal_group(pgid, "CONT")?;
+                    self.signal_shell("CONT")?;
+                }
                 self.resumed_pgid = None;
             }
         }
@@ -439,20 +449,32 @@ impl PtyShell {
     }
 
     /// Hang up the shell itself: SIGHUP to its pid, not to the foreground
-    /// group. An interactive bash exits on it and hangs up its own jobs.
+    /// group. An interactive bash exits on it and hangs up its own jobs. A
+    /// paused shell is stopped, so the hangup would wait forever: it and its
+    /// job are resumed after the signal is queued.
     pub fn hangup(&self) -> anyhow::Result<()> {
+        self.signal_shell("HUP")?;
+        if let Some(pgid) = self.paused_pgid {
+            self.signal_group(pgid, "CONT")?;
+            self.signal_shell("CONT")?;
+        }
+        Ok(())
+    }
+
+    /// Send `sig` to the shell's own pid.
+    fn signal_shell(&self, sig: &str) -> anyhow::Result<()> {
         let pid = self
             .pid()
-            .ok_or_else(|| anyhow::anyhow!("the shell has no pid to hang up"))?;
+            .ok_or_else(|| anyhow::anyhow!("the shell has no pid to signal"))?;
         let status = std::process::Command::new("kill")
             .arg("-s")
-            .arg("HUP")
+            .arg(sig)
             .arg("--")
             .arg(pid.to_string())
             .status()
-            .context("running kill -s HUP")?;
+            .with_context(|| format!("running kill -s {sig}"))?;
         if !status.success() {
-            anyhow::bail!("kill -s HUP -- {pid} failed: {status}");
+            anyhow::bail!("kill -s {sig} -- {pid} failed: {status}");
         }
         Ok(())
     }
@@ -737,19 +759,17 @@ mod pause_resume_tests {
             "the remembered job to be in /proc state T after STOP",
         );
 
-        // The regression leg: a paused job is NOT the foreground group — bash
-        // took the terminal back — so a CONT that re-derives its target from
-        // a tty query (the pre-08a behaviour, F2) would signal the
-        // shell's own group and leave the job stopped forever. This
-        // foreground condition is itself part of the guard: after the STOP
-        // the terminal no longer belongs to the job. Bash reaps the stop and
-        // takes the terminal back asynchronously (after the job is already
-        // in state T, in order but not atomically), so this waits for the
-        // handoff rather than asserting it instantly (bug-08a-1).
+        // The shell is stopped too, so it cannot reap the stopped job and
+        // run on: the job keeps the terminal for the whole pause.
+        let shell_pid = shell.pid().map(i64::from).expect("the shell has a pid");
         poll_until(
             Instant::now() + Duration::from_secs(10),
-            || !shell.has_foreground_job(),
-            "the stopped job to no longer hold the terminal (bash retook it)",
+            || job_state_char(shell_pid).as_deref() == Some("T"),
+            "the shell itself to be in /proc state T after STOP",
+        );
+        assert!(
+            shell.has_foreground_job(),
+            "the paused job keeps the terminal: bash never took it back"
         );
 
         shell
@@ -760,10 +780,18 @@ mod pause_resume_tests {
             || matches!(job_state_char(paused).as_deref(), Some("S") | Some("R")),
             "the remembered job to resume (state S or R) after CONT",
         );
+        poll_until(
+            Instant::now() + Duration::from_secs(10),
+            || matches!(job_state_char(shell_pid).as_deref(), Some("S") | Some("R")),
+            "the shell to resume (state S or R) after CONT",
+        );
         assert!(
             shell.paused_pgid().is_none(),
             "CONT consumed the memory: nothing is paused afterwards"
         );
+        // The job still holds the terminal, so the shell cannot run the next
+        // command until it is gone.
+        shell.signal_foreground("INT").expect("end the resumed job");
         let outcome = shell
             .run("printf 'RESUMED\\n'", Duration::from_secs(10))
             .expect("the shell still answers after a pause/resume cycle");
@@ -872,18 +900,9 @@ mod pause_resume_tests {
             Some(pgid),
             "the resumed group must still be alive before the second STOP"
         );
-        // Same F2 guard as the primary test: after the resumed job runs, the
-        // terminal belongs to bash, not to the job — poll, don't assert (bug-08a-1).
-        poll_until(
-            Instant::now() + Duration::from_secs(10),
-            || !shell.has_foreground_job(),
-            "the resumed job to no longer hold the terminal (bash kept it)",
-        );
-
-        // Second cycle: the terminal is bash's now — inside its own group
-        // bash can also transiently hand the terminal to an rc-spawned
-        // child — so the STOP must reach the job through the remembered
-        // group, not through a tty query.
+        // Second cycle: the STOP reaches the job through the remembered
+        // group, not through a tty query — inside its own group bash can
+        // transiently hand the terminal to an rc-spawned child.
         shell.signal_foreground("STOP").expect("the second STOP");
         assert_eq!(
             shell.paused_pgid(),
@@ -904,6 +923,90 @@ mod pause_resume_tests {
         assert!(
             shell.paused_pgid().is_none(),
             "the second CONT must consume the paused memory too"
+        );
+    }
+
+    /// The property a pause exists for: a command paused mid-run does not
+    /// finish during the pause, and after the resume it finishes with its
+    /// own exit code. With only the job stopped, bash reaped the stop and
+    /// printed `END 147` at once (measured).
+    #[test]
+    fn pty_a_paused_command_finishes_with_its_real_exit_code() {
+        let _home = crate::test_home_guard();
+        let mut shell = PtyShell::spawn("bash", &[], (24, 80))
+            .map(JobGuard)
+            .expect("bash available");
+        let mut rx = shell.subscribe();
+        shell
+            // `E''ND` in the typed line: the echo must not match the needle.
+            .write_input(b"sleep 2; printf 'E''ND %s\\n' $?\n")
+            .expect("start the command");
+        let pid = shell.pid().map(i64::from);
+        poll_until(
+            Instant::now() + Duration::from_secs(10),
+            || {
+                shell.current_foreground_pgid().is_some_and(|fg| {
+                    Some(fg) != pid
+                        && std::fs::read(format!("/proc/{fg}/cmdline"))
+                            .is_ok_and(|c| c == b"sleep\x002\x00")
+                })
+            },
+            "the command's sleep to hold the terminal",
+        );
+        shell.signal_foreground("STOP").expect("pause the command");
+        let paused = shell.paused_pgid().expect("STOP remembers the job");
+        poll_until(
+            Instant::now() + Duration::from_secs(10),
+            || job_state_char(paused).as_deref() == Some("T"),
+            "the job to be in /proc state T after STOP",
+        );
+        shell.signal_foreground("CONT").expect("resume the command");
+
+        let mut seen = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !String::from_utf8_lossy(&seen).contains("END ") {
+            assert!(
+                Instant::now() < deadline,
+                "the command never finished: {:?}",
+                String::from_utf8_lossy(&seen)
+            );
+            match rx.try_recv() {
+                Ok(chunk) => seen.extend_from_slice(&chunk),
+                Err(_) => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        let text = String::from_utf8_lossy(&seen);
+        assert!(
+            text.contains("END 0"),
+            "the paused command finished with its own exit code: {text:?}"
+        );
+        assert!(
+            !text.contains("Stopped"),
+            "bash never saw the job stop: {text:?}"
+        );
+    }
+
+    /// Closing a paused shell ends it: the hangup reaches a shell that is
+    /// itself stopped, so the shell and its job are resumed after it.
+    #[test]
+    fn pty_hangup_while_paused_ends_the_shell() {
+        let _home = crate::test_home_guard();
+        let mut shell = PtyShell::spawn("bash", &[], (24, 80))
+            .map(JobGuard)
+            .expect("bash available");
+        start_job(&mut shell, b"sleep 30\n");
+        shell.signal_foreground("STOP").expect("pause the job");
+        let paused = shell.paused_pgid().expect("STOP remembers the job");
+        poll_until(
+            Instant::now() + Duration::from_secs(10),
+            || job_state_char(paused).as_deref() == Some("T"),
+            "the job to be in /proc state T after STOP",
+        );
+        shell.hangup().expect("hang up the paused shell");
+        poll_until(
+            Instant::now() + Duration::from_secs(10),
+            || !shell.is_alive().unwrap_or(true),
+            "the paused shell to exit after the hangup",
         );
     }
 }

@@ -202,7 +202,7 @@ Copy; do not retype from memory.
          }
 @@ -439,20 +449,32 @@ impl PtyShell {
      }
- 
+
      /// Hang up the shell itself: SIGHUP to its pid, not to the foreground
 -    /// group. An interactive bash exits on it and hangs up its own jobs.
 +    /// group. An interactive bash exits on it and hangs up its own jobs. A
@@ -241,7 +241,7 @@ Copy; do not retype from memory.
 @@ -737,19 +759,17 @@ mod pause_resume_tests {
              "the remembered job to be in /proc state T after STOP",
          );
- 
+
 -        // The regression leg: a paused job is NOT the foreground group — bash
 -        // took the terminal back — so a CONT that re-derives its target from
 -        // a tty query (the pre-08a behaviour, F2) would signal the
@@ -265,7 +265,7 @@ Copy; do not retype from memory.
 +            shell.has_foreground_job(),
 +            "the paused job keeps the terminal: bash never took it back"
          );
- 
+
          shell
 @@ -760,10 +780,18 @@ mod pause_resume_tests {
              || matches!(job_state_char(paused).as_deref(), Some("S") | Some("R")),
@@ -397,7 +397,7 @@ Copy; do not retype from memory.
 +        );
 +    }
  }
- 
+
  #[cfg(test)]
 ```
 
@@ -590,3 +590,54 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-05 02:00 (mutations)
+
+Applied after Tasks 1–2 passed; each mutation was applied with the `patch`
+tool, its named test was run once, the mutation was restored, and
+`git diff --stat` was confirmed back at `142 insertions(+), 39 deletions(-)`.
+
+- A (`STOP` stops the shell — deleted `self.signal_shell("STOP")?;` from the
+  `"STOP"` arm): `cargo test --lib --
+  pty_a_paused_command_finishes_with_its_real_exit_code` → **red**
+  (FAILED, 0 passed / 1 failed).
+- B (`CONT` resumes the shell — deleted the `self.signal_shell("CONT")?;` in
+  the `"CONT"` arm): `cargo test --lib --
+  pty_a_paused_command_finishes_with_its_real_exit_code` → **red**
+  (FAILED, 0 passed / 1 failed).
+- C (an interrupt resumes a paused shell — replaced the four
+  `paused_pgid.take()` lines with `self.paused_pgid = None;`):
+  `cargo test --lib -- pty_cancel_clears_the_paused_group` → **red**
+  (FAILED, 0 passed / 1 failed).
+- D (a hangup resumes a paused shell — deleted the `paused_pgid` resume
+  block from `hangup`): `cargo test --lib --
+  pty_hangup_while_paused_ends_the_shell` → **red**
+  (FAILED, 0 passed / 1 failed).
+
+No stopped process was left behind by any mutation run
+(`ps -eo stat=` shows no `T`).
+
+### Update — 2026-10-05 02:00 (end-to-end verification)
+
+The block in § End-to-end verification was run verbatim on the working
+tree, once, with nothing else running `cargo test`. Its output was
+redirected to `/tmp/e2e-m23-10d.txt`; the fenced block below is that
+file's contents, copied unchanged:
+
+```
+lib1=ok failed:none
+lib2=ok failed:none
+lib3=ok failed:none
+lib_counts=2225p-0f-14i
+phase_tests=6p-0f
+stopped_procs=0
+wired=1/3/0
+```
+
+The paste check was run as written in the phase doc. Its first three
+runs printed `PASTE MISMATCH`: the capture had been appended without its
+opening fence, so the extraction saw no first fenced block, and the
+`diff` it prescribes showed exactly that. The fence was added; the
+check's next run printed:
+
+PASTE MATCH
