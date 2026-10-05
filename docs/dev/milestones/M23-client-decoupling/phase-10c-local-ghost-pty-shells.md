@@ -1,7 +1,7 @@
 # Phase 10c: local-ghost-pty-shells — a local ghost's commands run in a PTY shell it owns, so `/agents` can attach to it
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** review
+**Status:** done
 **Depends on:** 10b (done: a ghost starts without tmux)
 **Estimated diff:** ~35 lines of production code and ~10 lines of prompt text across 3 files; 2 new tests and one test repair (~85 lines)
 **Tags:** language=rust, kind=feature, size=s
@@ -709,3 +709,33 @@ kill: sending signal to 1490862 failed: No such process
 **Commit:** 32327321f81a7d39fea1ddd9bea6665e19edc15f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-05
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (from the
+  server-authored entry; the executor's own "started" entry says "Claude
+  (this run)", fold C's 22nd occurrence)
+- **Scope deviations:** none. Committed `ghost_remote.rs`, `foreground.rs`
+  and `assets/prompts/ghost-shell.txt` are byte-identical to the drafting dry
+  run (`cmp`).
+- **Re-verified by the architect:** fmt, build and clippy `-D warnings`
+  clean, run separately; full `cargo test` lib 2223/0/14, bug_tracker 6,
+  doc_truth 15, integration 32, isolation 11. The executor's pasted capture
+  matched its `/tmp/e2e-m23-10c.txt` (`PASTE MATCH` re-checked against that
+  file before re-running), but its `lib1` was the known
+  `pty_stop_with_no_foreground_job_remembers_nothing` flake. The § End-to-end
+  block re-run verbatim by the reviewer printed `lib1`–`lib3=ok failed:none`,
+  `lib_counts=2223p-0f-14i`, `phase_tests=2p-0f`, `doc_truth=15 passed; 0
+  failed`, `wired=1/1/1/0`: three consecutive clean runs, so the criterion
+  is met by the reviewer's run. Mutations A and B re-applied, red 3 of 3. The
+  real-door probe (a local ghost's command in a ghost-owned PTY shell, no
+  tmux) was measured on the byte-identical dry-run tree at drafting; 10e
+  re-checks it live.
+- **Calibration:** (1) the executor pasted a capture containing a flake
+  failure and stopped with one re-run of its budget left, instead of
+  re-running the whole block as the spec says; (2) its account of the
+  re-runs contradicts the capture (it says the `lib_counts` run failed; that
+  line reads a clean `2223p-0f-14i`). Recorded under "the executor
+  misreports its own deviations", now three occurrences (08c, 09a, 10c).
