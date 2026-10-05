@@ -1151,8 +1151,8 @@ where
     // chat uses — synchronously, capped at the ghost turn budget, instead of
     // wrapping it in `ssh <target> <cmd>` in a tmux window. Everything above
     // (the two 08a gates, resolve_command, the approval, the remote-script
-    // build) already ran; everything below serves an unresolved ssh_target,
-    // a local ghost, and `backend = "tmux"`.
+    // build) already ran; everything below serves a local ghost, an
+    // unresolved ssh_target, and `backend = "tmux"`.
     let uses_pty = crate::config::Config::load()
         .unwrap_or_default()
         .execution
@@ -1212,6 +1212,42 @@ where
         )
         .await?;
         log_command(session_id, "background", name, cmd, "approved", &output);
+        return Ok(ToolCallOutcome::Result(output));
+    }
+
+    // A local ghost runs the approved command in a PTY shell on the daemon
+    // host, owned by the ghost and reused for its later commands, as the
+    // remote branch above does on its host. The sandbox keeps the tmux
+    // window path below: its container is launched there.
+    if super::ghost_remote::ghost_local_pty(
+        is_ghost,
+        uses_pty,
+        crate::config::Config::load()
+            .unwrap_or_default()
+            .sandbox
+            .enabled,
+        ghost_policy,
+    ) {
+        let owner = crate::shell::Owner::Ghost(session_id.unwrap_or_default().to_string());
+        let (output, exit_code) = super::ghost_remote::run_ghost_remote(
+            crate::shell::registry(),
+            owner,
+            crate::host::HostId::Local,
+            cmd,
+            id,
+            |shell_id| crate::shell::spawn_detached_host(shell_id, &[], 24, 80),
+        )
+        .await;
+        crate::daemon::stats::finish_command(cmd_id, exit_code);
+        send_response_split(
+            tx,
+            Response::ToolResult {
+                tool_call_id: id.to_string(),
+                output: output.clone(),
+            },
+        )
+        .await?;
+        log_command(session_id, "background", "", cmd, "approved", &output);
         return Ok(ToolCallOutcome::Result(output));
     }
 
@@ -1469,6 +1505,13 @@ fn run_background_resolves_ghost_script_paths() {
         std::env::remove_var("TMUX_PANE");
     }
     crate::config::Config::ensure_dirs().expect("ensure dirs");
+    // The tmux window path is the one this test pins: with the default PTY
+    // backend a local ghost runs in a PTY shell instead (`ghost_local_pty`).
+    std::fs::write(
+        crate::config::etc_dir().join("config.toml"),
+        "[execution]\nbackend = \"tmux\"\n",
+    )
+    .expect("write config");
 
     let marker = tmp.path().join("resolved-marker.txt");
     let script_name = "de-ghost-resolve-check.sh";

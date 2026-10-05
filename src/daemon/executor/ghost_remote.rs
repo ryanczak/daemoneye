@@ -10,6 +10,10 @@
 //! exit detection reports it, 08f's wording names the unanswerable prompt).
 //! An `ssh_target` that did not resolve keeps the 1.x tmux wrap, and so does
 //! `[execution] backend = "tmux"`.
+//!
+//! A **local** ghost (no `ssh_target`) runs the same way on the daemon host
+//! when the sandbox is off ([`ghost_local_pty`]), so its shell is one
+//! `/agents` can attach to.
 
 use crate::daemon::policy::GhostPolicy;
 use crate::host::HostId;
@@ -34,6 +38,21 @@ pub(super) fn ghost_remote_host(
         return None;
     }
     policy.and_then(|p| p.remote_host.clone())
+}
+
+/// Whether a ghost's command runs in a PTY shell on the **daemon host**.
+///
+/// Pure. True for a ghost with the PTY backend, the sandbox off, and no
+/// `ssh_target` (a resolved one took [`ghost_remote_host`]'s branch already;
+/// an unresolved one keeps the 1.x `ssh <target>` wrap in a tmux window).
+/// The sandboxed local command keeps its container in a tmux window.
+pub(super) fn ghost_local_pty(
+    is_ghost: bool,
+    uses_pty: bool,
+    sandbox_enabled: bool,
+    policy: Option<&GhostPolicy>,
+) -> bool {
+    is_ghost && uses_pty && !sandbox_enabled && policy.is_some_and(|p| p.ssh_target.is_none())
 }
 
 /// Run one approved ghost command in a PTY shell on `host`, synchronously.
@@ -215,6 +234,78 @@ mod tests {
             Some(HostId::Named("e2e-host".into())),
             "the record names the host the command runs on: {host:?}"
         );
+    }
+
+    #[test]
+    fn a_local_ghost_reaches_the_pty_path_only_unsandboxed_with_the_pty_backend() {
+        let local = GhostPolicy::from_config(&crate::ipc::GhostConfig::default());
+        assert!(
+            ghost_local_pty(true, true, false, Some(&local)),
+            "a local ghost with the PTY backend and no sandbox takes the branch"
+        );
+        assert!(
+            !ghost_local_pty(true, false, false, Some(&local)),
+            "backend = \"tmux\" keeps the tmux window"
+        );
+        assert!(
+            !ghost_local_pty(true, true, true, Some(&local)),
+            "a sandboxed command keeps its container in a tmux window"
+        );
+        assert!(
+            !ghost_local_pty(false, true, false, Some(&local)),
+            "chat never routes through this module"
+        );
+        assert!(
+            !ghost_local_pty(true, true, false, None),
+            "no policy, no shell"
+        );
+        let unresolved = GhostPolicy {
+            ssh_target: Some("matt@db01.lan".to_string()),
+            ..GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
+        };
+        assert!(
+            !ghost_local_pty(true, true, false, Some(&unresolved)),
+            "an unresolved ssh_target keeps the ssh wrap"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_local_ghost_command_runs_in_a_ghost_owned_shell_on_the_daemon_host() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Ghost("g-local".into());
+        let (text, exit_code) = run_ghost_remote(
+            &reg,
+            owner.clone(),
+            HostId::Local,
+            "echo LOCAL_OK",
+            "c1",
+            spawn_in_process_host,
+        )
+        .await;
+        let (owner_key, host) = crate::shell::with_shells(&reg, |store| {
+            (
+                store.values().next().map(|r| r.owner.key()),
+                store.values().next().map(|r| r.host.clone()),
+            )
+        });
+        crate::daemon::executor::knowledge::close_owner_shells(
+            &reg,
+            &owner,
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(exit_code, 0, "the command ran cleanly: {text:?}");
+        assert!(
+            text.contains("LOCAL_OK"),
+            "the command's output must come back: {text:?}"
+        );
+        assert_eq!(
+            owner_key.as_deref(),
+            Some("ghost:g-local"),
+            "the shell is the ghost's: {owner_key:?}"
+        );
+        assert_eq!(host, Some(HostId::Local), "the shell is on the daemon host");
     }
 
     #[tokio::test]

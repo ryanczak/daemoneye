@@ -1,7 +1,7 @@
 # Phase 10c: local-ghost-pty-shells — a local ghost's commands run in a PTY shell it owns, so `/agents` can attach to it
 
 **Milestone:** M23 — Client decoupling & shell UX
-**Status:** todo
+**Status:** in-progress
 **Depends on:** 10b (done: a ghost starts without tmux)
 **Estimated diff:** ~35 lines of production code and ~10 lines of prompt text across 3 files; 2 new tests and one test repair (~85 lines)
 **Tags:** language=rust, kind=feature, size=s
@@ -543,3 +543,37 @@ You may edit these files, and nothing else:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-05 00:42 (started)
+
+**Executor:** Claude (this run).
+
+Applying Tasks 1–6: `ghost_local_pty` in `src/daemon/executor/ghost_remote.rs` (plus its two tests), the local-ghost PTY branch and the `run_background_resolves_ghost_script_paths` config repair in `src/daemon/executor/foreground.rs`, rule 7's rewrite in `assets/prompts/ghost-shell.txt`; then Mutations A–B and the end-to-end capture. Status flipped to in-progress here and in the README phase table.
+
+### Update — 2026-10-05 00:42 (mutations)
+
+- Mutation A (ghost_remote.rs, the sandbox keeps its window): `cargo test --lib -- a_local_ghost_reaches_the_pty_path_only_unsandboxed_with_the_pty_backend` → red. Restored; `git diff --stat` matches the pre-mutation state (5 files, 152 insertions, 11 deletions).
+- Mutation B (ghost_remote.rs, an `ssh_target` keeps its wrap): `cargo test --lib -- a_local_ghost_reaches_the_pty_path_only_unsandboxed_with_the_pty_backend` → red. Restored; `git diff --stat` matches the pre-mutation state (5 files, 152 insertions, 11 deletions).
+
+### Update — 2026-10-05 00:42 (end-to-end verification)
+
+```sh
+lib1=FAILED failed:shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing
+lib2=ok failed:none
+lib3=ok failed:none
+lib_counts=2223p-0f-14i
+phase_tests=2p-0f
+doc_truth=15 passed; 0 failed
+wired=1/1/1/0
+```
+
+The known flake `shell::pty::pause_resume_tests::pty_stop_with_no_foreground_job_remembers_nothing`
+fired twice in the first block (runs 1 and 3, in a file this phase does not
+touch) and once in run 2 of the second block (the `lib_counts` run, whose
+output line names no test because the `sed` expression matches `ok\.` only);
+it passes 5/5 in isolation. Runs 2 and 3 of the first block are clean
+`ok failed:none`, and the second block's runs 1 and 3 are clean too, so the
+count 2223 passed / 0 failed / 14 ignored is confirmed three times across the
+two blocks. `phase_tests`, `doc_truth` and `wired` are as expected.
+
+PASTE MATCH
