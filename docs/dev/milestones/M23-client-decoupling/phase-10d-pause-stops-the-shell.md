@@ -591,6 +591,20 @@ You may edit these files, and nothing else:
 
 <!-- entries appended below this line -->
 
+### Update — 2026-10-05 02:00 (started)
+
+Started by the dispatched executor. Applied the Spec diff to
+`src/shell/pty.rs`: `STOP` stops the shell before the job, `CONT` resumes
+the job before the shell, `INT`/`TERM` on a paused shell resume the job
+and the shell, `hangup()` resumes a paused shell after queueing `HUP`, and
+the new `signal_shell` helper carries the pid-targeted sends. Tests: two
+new (`pty_a_paused_command_finishes_with_its_real_exit_code`,
+`pty_hangup_while_paused_ends_the_shell`), two adjusted
+(`pty_pause_then_resume_actually_restarts_the_job`,
+`pty_pause_resume_pause_toggles_more_than_once`). Build, fmt, clippy
+`-D warnings` clean; lib 2225/0/14 across three runs; module filter 6/0;
+mutations A–D and the e2e capture recorded below.
+
 ### Update — 2026-10-05 02:00 (mutations)
 
 Applied after Tasks 1–2 passed; each mutation was applied with the `patch`
