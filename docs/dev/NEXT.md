@@ -6,11 +6,9 @@ Rescoped 2026-10-05 from "tmux removal & 2.0 close" (now **M27**; later
 milestones are M28–M30, `docs/design/daemoneye-2.0.md` § 6). **PE signed off
 on scope 2026-10-05**, accepting all six recommendations.
 
-**Active phase: 02b — backend-flake**,
-[`phase-02b-backend-flake.md`](milestones/M26-sbx-isolation/phase-02b-backend-flake.md),
-status `todo`, for the executor: a test-only fix for the flaky
-`input_after_a_prompt_logs_a_redaction_marker`. Phases 01, 01b and 02 are
-done. Row 03 (sbx-config) follows.
+**Active phase: none drafted.** Phases 01, 01b, 02 and 02b are **done**;
+`master` is green on pinky and the backend flake is fixed. Next is row
+**03 — sbx-config**; `/rexymcp:architect next` drafts it.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline

@@ -67,7 +67,7 @@ drafted on demand and may split.
 | 01 | sbx-measure ([phase-01-sbx-measure.md](phase-01-sbx-measure.md)) — architect-run probes on pinky (`probes/`): in-VM foreground group for pause, resize, cancel, teardown under a live shell, `sbx cp` staging, limits, error shapes, the per-sandbox policy mapping; results quoted in this README | done (approved_first_try, 2026-10-05) |
 | 01b | baseline-green ([phase-01b-baseline-green.md](phase-01b-baseline-green.md)) — fix the 4 clippy 1.97 lints and make `bounded_output_with` kill the child's process group on timeout (see § Baseline red on pinky) | done (escalated, 2026-10-06) |
 | 02 | sbx-argv ([phase-02-sbx-argv.md](phase-02-sbx-argv.md)) — `src/daemon/executor/sbx.rs`: pure argv builders (`create`/`exec`/`stop`/`rm`/`ls --json`/`policy allow|deny --sandbox`), `ls --json` parser, sandbox naming, profile → flags mapping, preflight (`sbx version`, `sbx daemon status`) cached and fail-closed | done (approved_first_try, 2026-10-06) |
-| 02b | backend-flake ([phase-02b-backend-flake.md](phase-02b-backend-flake.md)) — make `input_after_a_prompt_logs_a_redaction_marker` use a real `read -rs` prompt and re-read the cast while polling (see § Flaky test on pinky) | in-progress |
+| 02b | backend-flake ([phase-02b-backend-flake.md](phase-02b-backend-flake.md)) — make `input_after_a_prompt_logs_a_redaction_marker` use a real `read -rs` prompt and re-read the cast while polling (see § Flaky test on pinky) | done (approved_first_try, 2026-10-06) |
 | 03 | sbx-config — `[sandbox] runtime = "sbx"`; `limits.memory`/`cpus` → `--memory`/`--cpus`; `image` → `--template`; docker-only keys (`run_as`, `docker_host`, `proxy_image`, `limits.pids`, `limits.scratch`, `ghost_defaults.mount_scripts`) warn and are ignored | todo |
 | 04 | sbx-shell — `ShellRecord` carries `sandbox: Option<String>`; `spawn_for` launches the shell-host with child argv `sbx exec -it -w <workdir> <sandbox> bash`; adoption at startup recovers the sandbox name (this row measures it against the real shell-host); reuse is sandbox-keyed (never hand a sandbox shell to a host caller, or the reverse) | todo |
 | 05 | sbx-signals — pause/resume/cancel for a sandbox shell signal the **in-VM** foreground job through a side `sbx exec`; cancel also kills in-VM (killing the client orphans the job — measured); pause-vs-deadline decision lands here | todo |
@@ -207,6 +207,8 @@ so readline echoes the credential back as an `"o"` event, and it reads the
 cast once, before polling. It passes only when that one read beats the echo.
 The product is correct. Row **02b** gives it the `read -rs` fixture its
 sibling already uses; measured at 4/4 green full library runs.
+**Fixed 2026-10-06** (`96e061b7`): 3/3 executor runs and the reviewer's
+first full run green. Later phases no longer need the run-twice rule.
 
 ### Out of scope
 

@@ -1,7 +1,7 @@
 # Phase 02b: backend-flake — make the redaction-marker test model a real password prompt
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** done
 **Depends on:** phase-02
 **Estimated diff:** ~30 lines, one test in one file
 **Tags:** language=rust, kind=bugfix, size=s
@@ -259,3 +259,176 @@ fmt_exit=0
  src/shell/backend.rs                               | 32 ++++++++++++----------
  3 files changed, 26 insertions(+), 17 deletions(-)
 ```
+
+### Update — 2026-10-06 20:42 (complete, server-authored)
+
+**Summary:** </think>All tasks complete. Working tree is clean (git status --short shows nothing). Commit includes all three files.
+
+Checklist:
+- [x] Phase doc Status: in-progress ✓ (I set it; server flips to review)
+- [x] README row in-progress ✓
+- [x] No (complete) entry written ✓
+- [x] cargo fmt --all run before git add ✓
+- [x] Verification commands clean ✓
+- [x] Final message substantive ✓ (about to write)
+- [x] git status clean ✓
+- [x] git log -1 --stat includes all touched files ✓
+
+Now write the Summary + Notes for review.</think>
+**Summary:** Rewrote `input_after_a_prompt_logs_a_redaction_marker` in `src/shell/backend.rs` exactly per the spec's measured diff — the prompt fixture is now `read -rs -p '[de-sudo-prompt''-77] Pass''word: ' de_secret; …; echo "got ${#de_secret}"` (a real echo-off password prompt; the `''` splits keep the echoed command line from arming `looks_like_secret_prompt`), the credential is submitted with a trailing newline (`ends_secret_entry` disarms the scrub), and the cast is re-read inside the polling loop, which now waits for both `[redacted]` and `got 19` before yielding a settled cast to the two unchanged assertions. The comment above `let prompt` was replaced with the 8-line version naming the echo window, the `''` splits, the settle marker, and pointing at the sibling test for full reasoning. All three tasks are done.
+
+**Notes for review:**
+- The diff touches only the body and comment of that one test; `git diff --stat` (committed as `96e061b`) shows `src/shell/backend.rs | 32`, plus the two doc files (status flip + Update Log). No product code, helpers, or other tests changed.
+- The executor-dispatch prompt contained only the contract/standards + Update Log tail of the phase doc (the Spec, Task 1's diff, and § End-to-end verification), not its full text — the missing sections turned out to be exactly what the dispatcher's "measured" narrative implied, so nothing blocked; flagging only so the phase-doc dispatch template is known to be truncated.
+- The executor-run mutation check (swap `b"[redacted]"` for `bytes` in `PtyBackend::input`) was deliberately **not** run, per the spec's test plan; the reviewer owns that re-run.
+- Phase doc Status and the README row remain `in-progress`; the completion entry, status flip, and end-to-end-log grep are the server's to finalize per the executor contract.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+iled; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.89s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (19260): No such process
+kill: (-19943): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M26-sbx-isolation/README.md` — +1 -1
+- `docs/dev/milestones/M26-sbx-isolation/phase-02b-backend-flake.md` — +26 -1
+- `src/shell/backend.rs` — +17 -15
+
+**Commit:** 96e061b78dda48b77685b5dbfd3dde2ce843adf7
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-06
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (50 turns). Its
+  Update Log names itself `Codex`; the server-authored entry is right (fold C).
+- **Scope deviations:** none. `96e061b7` changes only the body and comment of
+  `input_after_a_prompt_logs_a_redaction_marker`, and the code is the
+  specified diff verbatim. The new comment is 8 lines against the asked-for
+  3–6; it says what was asked, so that is accepted.
+- **Evidence:** the pasted block omits the clippy line even though it claims
+  `PASTE MATCH: yes`. The reviewer re-ran clippy and it is clean, so this is
+  a paste defect, not a gate failure.
+- **Reviewer re-run:** fmt, build and clippy clean; the test passes solo; the
+  full suite gave `passed=2312 failed=0` on its **first** run.
+- **Reviewer mutation check:** with `b"[redacted]"` swapped for `bytes` in
+  `PtyBackend::input`, the test fails at `backend.rs:603` (the settle loop
+  times out); restored, it passes in 0.09 s.
+- **Calibration (rexyMCP, not this repo):** the executor reported that its
+  dispatch prompt held only the contract and the Update Log tail, not the
+  full phase doc. The server-authored completion entry also carries raw
+  `</think>` tags and the executor's private checklist. Both are rexyMCP
+  issues to raise there; they cost nothing here.
