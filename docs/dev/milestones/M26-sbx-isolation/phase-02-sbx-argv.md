@@ -396,3 +396,54 @@ Flipped the phase status to `in-progress` (and the README row). Implementing
 tasks 1–6: `src/daemon/executor/sbx.rs` with naming, network plan, argv
 builders, the `ls --json` parser, and preflight classification, plus the 22
 unit tests in the test plan. End-to-end capture (task 7) follows.
+### Update — 2026-10-06 17:45 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim, one line at a time; the
+transcript below is the captured output of each command as it ran.
+
+```sh
+$ cargo test --lib executor::sbx 2>&1 | grep -E '^test |^test result'
+test daemon::executor::sbx::tests::classify_preflight_accepts_the_measured_outputs ... ok
+test daemon::executor::sbx::tests::describe_unavailable_names_the_fix ... ok
+test daemon::executor::sbx::tests::exec_and_policy_args_match_the_measured_shapes ... ok
+test daemon::executor::sbx::tests::create_args_none_denies_everything ... ok
+test daemon::executor::sbx::tests::is_daemon_sandbox_matches_only_daemon_prefixes ... ok
+test daemon::executor::sbx::tests::classify_preflight_maps_each_failure ... ok
+test daemon::executor::sbx::tests::network_plan_proxy_copies_and_trims ... ok
+test daemon::executor::sbx::tests::create_args_proxy_lists_each_deny_and_no_allow ... ok
+test daemon::executor::sbx::tests::sandbox_name_sanitizes_the_id ... ok
+test daemon::executor::sbx::tests::parse_ls_json_reads_the_measured_shape ... ok
+test daemon::executor::sbx::tests::stop_and_rm_args_are_empty_for_no_names ... ok
+test daemon::executor::sbx::tests::stale_daemon_sandboxes_skips_live_and_foreign ... ok
+test daemon::executor::sbx::tests::sandbox_name_caps_at_63_characters ... ok
+test daemon::executor::sbx::tests::create_args_proxy_with_no_deny_has_no_deny_flag ... ok
+test daemon::executor::sbx::tests::parse_ls_json_reads_an_empty_list ... ok
+test daemon::executor::sbx::tests::create_args_renders_cpus_as_an_integer ... ok
+test daemon::executor::sbx::tests::sandbox_name_never_contains_an_underscore ... ok
+test daemon::executor::sbx::tests::sandbox_name_prefixes_by_kind ... ok
+test daemon::executor::sbx::tests::parse_ls_json_rejects_non_json_and_wrong_shapes ... ok
+test daemon::executor::sbx::tests::network_plan_rejects_unknown_modes ... ok
+test daemon::executor::sbx::tests::network_plan_none_ignores_lists ... ok
+test daemon::executor::sbx::tests::create_args_always_pulls_missing_and_ends_with_shell ... ok
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 2240 filtered out; finished in 0.00s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2312 failed=0
+
+$ grep -c 'container::' src/daemon/executor/sbx.rs
+0
+
+$ git diff --stat
+ docs/dev/milestones/M26-sbx-isolation/README.md            |  2 +-
+ docs/dev/milestones/M26-sbx-isolation/phase-02-sbx-argv.md | 10 +++++++++-
+ src/daemon/executor/mod.rs                                 |  1 +
+ 3 files changed, 11 insertions(+), 2 deletions(-)
+```
+
+PASTE MATCH: yes
