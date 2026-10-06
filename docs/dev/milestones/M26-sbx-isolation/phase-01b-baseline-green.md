@@ -1,7 +1,7 @@
 # Phase 01b: baseline-green — clear the clippy 1.97 lints and kill the whole process group on a tmux timeout
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** done
 **Depends on:** phase-01
 **Estimated diff:** ~60 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -286,3 +286,68 @@ committed (`998bb9d4`). It then spent about 13.5 h and 193 turns re-running
 pre-existing flake
 `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`. The
 spec was fine; only Task 6 is missing, so resume rather than re-dispatch.
+
+### Update — 2026-10-06 10:25 (complete — architect takeover of Task 6)
+
+**Executor for Tasks 1–5:** GLM-5.3-Flash (`998bb9d4`). **Task 6:** Claude Code
+(direct), after the resumed run (`continue_phase`, session `6ac515bf`) repeated
+the first run's failure: 54 more full `cargo test` runs over 161 turns with
+no file change, against guidance capping it at two. The `.rexymcp/stop`
+sentinel was written at 09:59 and not honoured by that run for 10+ minutes
+(a rexyMCP finding, below); the serve process was terminated on PE
+instruction to end it. Nothing of the executor's work was changed.
+
+Each command below ran **once**.
+
+```
+--- clippy
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s
+--- bounded_output
+test tmux::bounded_output_tests::bounded_output_captures_stderr ... ok
+test tmux::bounded_output_tests::bounded_output_handles_output_larger_than_pipe_buffer ... ok
+test tmux::bounded_output_tests::bounded_output_preserves_failure_status ... ok
+test tmux::bounded_output_tests::bounded_output_returns_stdout_and_success ... ok
+test tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child ... ok
+test tmux::bounded_output_tests::bounded_output_timeout_kills_a_forked_grandchild ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2234 filtered out; finished in 1.22s
+--- cargo test
+passed=2290 failed=0
+--- fmt
+fmt_exit=0
+--- diffstat
+ src/cli/viewer.rs                 |  2 +-
+ src/daemon/executor/foreground.rs |  1 -
+ src/shell/pty.rs                  | 11 ++++---
+ src/tmux/mod.rs                   | 68 +++++++++++++++++++++++++++++++++++++--
+ 4 files changed, 73 insertions(+), 9 deletions(-)
+```
+
+The diffstat is `git diff --stat 61bd3e1d..HEAD -- src/ Cargo.toml` because
+the executor committed; `Cargo.toml` is absent from it, as required. The
+known flake `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`
+did not appear in this run.
+
+PASTE MATCH: yes
+
+### Review verdict — 2026-10-06
+
+- **Verdict:** escalated
+- **Bounces:** none (one `claude_stop` cancel, one resume, then takeover of
+  Task 6 only)
+- **Executor:** GLM-5.3-Flash (Tasks 1–5, `998bb9d4`); Claude Code (direct) for
+  the evidence entry
+- **Scope deviations:** none in the code. The diff is the spec's four files;
+  the `pty.rs` fix uses a `let alive = …` instead of the spec's wording, same
+  behaviour.
+- **Independent mutation check (reviewer-run):** with the group kill removed
+  from `bounded_output_with`, `bounded_output_timeout_kills_a_forked_grandchild`
+  fails with `returned in 30.004529252s, should be ~200ms`; restored, it
+  passes in 1.2 s.
+- **DoD greps:** the only `unwrap`/`panic!` in the diff are inside the new
+  test. No `unsafe`, no `#[allow]`, no dependency change.
+- **Calibration (rexyMCP, not this repo):** two runs of GLM-5.3-Flash looped
+  on re-running a passing suite, 536 and 54 full runs, with every command
+  differing by a counter, so the identical-call and oscillation detectors
+  never matched and the read-only exemption kept the stall backstop from
+  firing. Second: the `.rexymcp/stop` sentinel did not cancel the
+  `continue_phase` run. Both session logs are kept for `calibrate-governor`.
