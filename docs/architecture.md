@@ -448,7 +448,7 @@ sandbox) are merged. DaemonEye 2.0 — plan of record
 [`docs/design/daemoneye-2.0.md`](design/daemoneye-2.0.md) — replaces the
 tmux substrate of § 1.4. M20 delivers the **shell engine**: it shipped and is
 described below; the remaining 2.0 milestones (run/turn model, SSH transport,
-client UX) are not yet scoped here. Until M26 removes tmux, §§ 1–4 above
+client UX) are not yet scoped here. Until M27 removes tmux (renumbered from M26 on 2026-10-05; M26 is now agent isolation on Docker Sandboxes, `docs/dev/milestones/M26-sbx-isolation/`), §§ 1–4 above
 describe the `tmux` backend and remain accurate.
 
 #### The shell engine as built (`src/shell/`, shipped)

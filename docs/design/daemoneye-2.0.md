@@ -414,14 +414,22 @@ the same approval gate — the alert-provider plugins of ROADMAP I8.
 
 ### 2.9 Sandbox integration (M18/M19)
 
-The container backend is orthogonal to the substrate change and gets simpler:
-a sandboxed command is a shell whose transport is `docker exec -it …` — the
-`Transport` enum gains `Container { id, profile }`, the marker protocol is
-unchanged, and the D3 requirement "the user can still watch the job in a
-pane" is met by `/tail` rather than by a `de-bg-*` window. `Host` profiles
-choose `sandbox_profile`; ghosts default to sandboxed local shells exactly as
-M19 phase-03 closed. The escape hatch (M19 phase-09) becomes an approval
+**Rescoped 2026-10-05 (M26): the runtime is Docker Sandboxes (`sbx`), not
+`docker run`.** A sandboxed command is a PTY shell whose shell-host child is
+`sbx exec -it <sandbox> bash`. The marker protocol is unchanged (measured on
+pinky: markers and exit codes pass through intact), and the D3 requirement
+"the user can still watch the job in a pane" is met by `/tail` rather than by
+a `de-bg-*` window. Each sandbox is a microVM with its own kernel and Docker
+engine. Egress goes through sbx's host-side, deny-by-default policy proxy;
+service credentials are injected by that proxy and never enter the VM. These
+replace M18's uid gate, `--network=none` and egress-proxy container, and the
+docker runtime is deleted in M26. Ghosts get one sandbox per run; chat
+`wait: false` commands also run sandboxed when `[sandbox] enabled`. Pause
+signals the **in-VM** foreground job: stopping the host `sbx exec` client does
+not freeze it (measured). The escape hatch (M19 phase-09) remains an approval
 classification on `open_shell { transport: Local }` from a sandboxed run.
+Details, measurements and open questions:
+`docs/dev/milestones/M26-sbx-isolation/README.md`.
 
 ---
 
@@ -495,7 +503,7 @@ the proxy image/network and both lockfiles, `Request::ContainerStatus` +
 the `SANDBOX` status section, the hardening flags, the proxy allowlist and
 audit, and `src/cli/commands/sandbox.rs` — 5,356 lines across 18 files, of
 which only the wiring in `background/run.rs` / `respawn.rs` / `ghost.rs` is
-tmux-bound, and that code is deleted in M26 anyway. Phases 09 (escape hatch)
+tmux-bound, and that code is deleted with the docker runtime in M26 (rescoped to sbx). Phases 09 (escape hatch)
 and 12 (workspace mount) are **re-homed** into M21/M22 where they become an
 approval classification and a host profile option; phase 10 (live close)
 runs as the M19 close-out on the merged tree. **Done 2026-09-03:** merged
@@ -513,10 +521,10 @@ CLAUDE.md flipping in the same commit.
 **README.md stays current as we go (PE rule, 2026-09-03).** Every milestone
 close, and any phase that changes a user-visible command, slash command,
 config section, tool or key binding, updates `README.md` in the same commit
-series — not in one sweep at M26. `tests/doc_truth.rs` guards only the AI
+series — not in one sweep at M27. `tests/doc_truth.rs` guards only the AI
 tools tables; the feature prose, CLI table, slash-command table, key tables
 and config sections are the architect's responsibility at each close. Until
-M26 the README describes 1.x behind a "Where this is going" note; M26
+M27 the README describes 1.x behind a "Where this is going" note; M27
 rewrites it.
 
 **Tests.** The M6 isolation harness (throwaway `HOME`, private tmux server)
@@ -546,16 +554,18 @@ per `WORKFLOW.md`; phase counts are estimates from the survey's line counts.
 | **M23** | **Client decoupling & shell UX** | Chat runs outside tmux; `/shells`, `/tail`, the `/agents` picker + attached mode with `Ctrl-p`/`Ctrl-c`/`Ctrl-d`, `/logs`, `/log`, `/hosts`, `/shell`; the IPC additions; viewer gains follow mode, marker navigation and replay. Exit: pick a running ghost from `/agents`, attach, pause it, resume it, detach, then `/log` replay of a finished shell — from a plain `alacritty` window with no tmux server running. | 9–11 |
 | **M24** | **Run manager** | One `Run` model for chat/ghost/scheduled/delegated; per-run turn log; heartbeat; cooperative cancel + sentinel; `RunResult` + briefing; briefing-seeded resume; seeded tasks from runbook `## Steps`; `/runs`, `/run`, `/stop`; `run_log_*` tools. Ghost mailbox carries a `RunResult`. | 10–12 |
 | **M25** | **Governor & guards** | Ten detectors as pure functions, advisory novelty + `NoveltySample`, `daemoneye calibrate-governor` over turn logs; read-before-edit, self-revert refusal, `RefuseInPlaceEdit`, command classifier + blast-radius hint; output filter with shell-log spill; post-write script check. | 8–10 |
-| **M26** | **tmux removal & 2.0 close** | Delete `src/tmux/`, `pane_prefs.rs`, `hook.rs`, `cli/notify.rs`, window prefixes, `DE_EXIT` setup snippet, the `[execution]` flag; rewrite `architecture.md`, `PRODUCT_DEFINITION.md` (drop "tmux" from the type line), `REQUIREMENTS.md`, `security.md`, `CLAUDE.md`; `daemoneye doctor`; live-verification sweep per M14 convention; retrospective. Tag `v2.0.0`. | 5–6 |
-| **M27** | **Telemetry & dashboard** | `RunRecord` store, `daemoneye scorecard/profile` with `n_runs`, `failure_class` + `is_model_attributable`, `[budget] max_cost_per_day` breaker, `daemoneye top`. | 6–8 |
-| **M28** | **MCP surface** | `daemoneye mcp serve` (rmcp, stdio) with the § 2.8 tools; installed smoke test from Claude Code and from rexyMCP; `[mcp.servers]` client side as deferred tool groups. | 6–8 |
-| **M29** | **Knowledge & fleet follow-ons** | Shell logs as a knowledge corpus; postmortem + proposed-runbook generation; runbook fan-out over `hosts:` with a cap; `requires_review` gate. | 6–8 |
+| **M26** | **Agent isolation on Docker Sandboxes** | *(Rescoped 2026-10-05.)* Ghost shells and chat `wait: false` commands run in `sbx` microVMs on the PTY substrate: one sandbox per ghost run, `sbx exec -it` shells, in-VM pause/cancel, profile → sbx network policy, fail-closed preflight, startup sweep; the M18/M19 `docker run` sandbox deleted. See `docs/dev/milestones/M26-sbx-isolation/`. | 9–10 |
+| **M27** | **tmux removal & 2.0 close** | Delete `src/tmux/`, `pane_prefs.rs`, `hook.rs`, `cli/notify.rs`, window prefixes, `DE_EXIT` setup snippet, the `[execution]` flag; rewrite `architecture.md`, `PRODUCT_DEFINITION.md` (drop "tmux" from the type line), `REQUIREMENTS.md`, `security.md`, `CLAUDE.md`; `daemoneye doctor`; live-verification sweep per M14 convention; retrospective. Tag `v2.0.0`. | 5–6 |
+| **M28** | **Telemetry & dashboard** | `RunRecord` store, `daemoneye scorecard/profile` with `n_runs`, `failure_class` + `is_model_attributable`, `[budget] max_cost_per_day` breaker, `daemoneye top`. | 6–8 |
+| **M29** | **MCP surface** | `daemoneye mcp serve` (rmcp, stdio) with the § 2.8 tools; installed smoke test from Claude Code and from rexyMCP; `[mcp.servers]` client side as deferred tool groups. | 6–8 |
+| **M30** | **Knowledge & fleet follow-ons** | Shell logs as a knowledge corpus; postmortem + proposed-runbook generation; runbook fan-out over `hosts:` with a cap; `requires_review` gate. | 6–8 |
 
 Ordering rationale: M20–M23 are the substrate and the user-facing
 requirement; they can ship as `v2.0.0-alpha` on the flag. M24–M25 are the
 rexyMCP ports and are deliberately *after* the tool surface settles so the
-governor classifies the final tool set, not the transitional one. M26 is the
-point of no return. M27–M29 are additive.
+governor classifies the final tool set, not the transitional one. M26 lands
+the sandbox on the substrate before tmux goes. M27 is the point of no return.
+M28–M30 are additive.
 
 ---
 
@@ -592,7 +602,7 @@ The eight open questions from the first draft, answered:
    attached mode intercepts `Ctrl-p` pause/resume, `Ctrl-c` cancel, `Ctrl-d`
    detach (§ 2.6). Pausing parks the owning run; the agent is told.
 6. **Governor on chat turns** — advisory only (§ 3).
-7. **MCP server priority** — stays at M28.
+7. **MCP server priority** — stays at M28 (renumbered M29 on 2026-10-05).
 8. **Naming** — `v1.0.0` tagged for the last tmux release (done). **"Ghost Shell"
    remains the term for an autonomous agent shell DaemonEye runs in the
    background**; a chat turn's shells are just shells.
