@@ -260,7 +260,7 @@ fn layout_block(block: &Block, width: usize, rows: &mut Vec<ViewRow>, idx: usize
             });
             push_wrapped(rows, summary, width, RowKind::Tool, idx);
         }
-        Block::Output { full, shown: _, .. } => {
+        Block::Output { full, .. } => {
             let n = full.lines().count();
             rows.push(ViewRow {
                 text: format!("output ({n} lines)"),

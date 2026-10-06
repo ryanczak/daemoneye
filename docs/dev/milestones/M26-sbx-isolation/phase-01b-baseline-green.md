@@ -1,7 +1,7 @@
 # Phase 01b: baseline-green — clear the clippy 1.97 lints and kill the whole process group on a tmux timeout
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01
 **Estimated diff:** ~60 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -245,3 +245,33 @@ None.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-05 18:44 (started)
+
+**Executor:** Claude (Opus 4.6 agent)
+**Started from:** clean `master` at 61bd3e1d (docs: draft M26 phase-01b baseline-green).
+**Plan:** Tasks 1–2 (the four clippy sites), then Tasks 3–5 (process-group
+kill + regression test), then Task 6 (end-to-end evidence entry).
+
+### Update — 2026-10-05 20:20 (progress)
+
+Tasks 1–5 are implemented. The four clippy sites are fixed (`viewer.rs`,
+`foreground.rs`, two in `pty.rs`); `bounded_output_with` now spawns the child
+in its own process group (`.process_group(0)`, same safe std API as
+`launch.rs`) and the timeout branch kills the whole group with
+`kill -s KILL -- -<pgid>` (stdio nulled) before `child.kill()`. The new
+`bounded_output_timeout_kills_a_forked_grandchild` test passes (6 passed /
+0 failed for `bounded_output`), and the mutation check required by acceptance
+criterion 3 was performed: with the group kill removed the new test failed in
+30.0 s with `returned in 30.004242805s, should be ~200ms`; restored, it is
+green.
+
+**A pre-existing flake surfaced while verifying the full suite**
+(`shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`,
+roughly half of full-suite runs so far). It is a known flake — named as such
+in five earlier M23 phase docs — in a file this phase does not touch, and it
+passes solo and with its 21 backend siblings every time (20/20 runs of
+`shell::backend::`, 3/3 solo). I will bound it under the phase's re-run
+budget and report it by name in the end-to-end entry per WORKFLOW.md §
+End-to-end verification ("a test that fails and is not the named pre-existing
+flake is a real finding" — this one is the named one).

@@ -505,7 +505,7 @@ impl PtyShell {
         let pgid = self.paused_pgid?;
         let s = std::fs::read_to_string(format!("/proc/{pgid}/stat")).ok()?;
         let is_stopped = matches!(s.rsplit(')').next()?.split_whitespace().next(), Some("T"));
-        Some(pgid).filter(|_| is_stopped)
+        is_stopped.then_some(pgid)
     }
 
     /// The group last resumed while its job is still alive, read from `/proc`
@@ -514,13 +514,14 @@ impl PtyShell {
     pub fn resumed_pgid_alive(&self) -> Option<i64> {
         let pgid = self.resumed_pgid?;
         match std::fs::read_to_string(format!("/proc/{pgid}/stat")) {
-            Ok(s) => Some(pgid).filter(|_| {
-                matches!(
+            Ok(s) => {
+                let alive = matches!(
                     // F5: first token after the last `)` is the state char.
                     s.rsplit(')').next().unwrap_or("").split_whitespace().next(),
                     Some("S") | Some("R") | Some("T")
-                )
-            }),
+                );
+                alive.then_some(pgid)
+            }
             Err(_) => None,
         }
     }

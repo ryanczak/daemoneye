@@ -68,16 +68,21 @@ const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 /// the OS pipe buffer (~64 KiB) — `tmux capture-pane -S -` dumps the entire
 /// scrollback and routinely does.
 ///
-/// On timeout the child is killed and reaped, and the error is
-/// [`std::io::ErrorKind::TimedOut`].
+/// On timeout the child's **process group** is killed and the child reaped, and
+/// the error is [`std::io::ErrorKind::TimedOut`]. Killing the group, not just
+/// the child, matters because a forked grandchild keeps the write ends of the
+/// stdout/stderr pipes open — `read_to_end` would not see EOF (and the threads
+/// would never join) until it exits on its own.
 pub fn bounded_output_with(
     cmd: &mut std::process::Command,
     timeout: std::time::Duration,
 ) -> std::io::Result<std::process::Output> {
     use std::io::Read;
+    use std::os::unix::process::CommandExt;
     let mut child = cmd
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        .process_group(0)
         .spawn()?;
 
     let mut out_pipe = child.stdout.take();
@@ -103,6 +108,17 @@ pub fn bounded_output_with(
             Some(status) => break status,
             None => {
                 if std::time::Instant::now() >= deadline {
+                    // The child may have forked a grandchild that still holds
+                    // the pipe write ends; kill the whole group first.
+                    let pgid = child.id();
+                    let _ = std::process::Command::new("kill")
+                        .arg("-s")
+                        .arg("KILL")
+                        .arg("--")
+                        .arg(format!("-{pgid}"))
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status();
                     let _ = child.kill();
                     let status = child.wait()?;
                     let _ = out_reader.join();
@@ -198,5 +214,53 @@ mod bounded_output_tests {
             elapsed < Duration::from_secs(5),
             "returned in {elapsed:?}, should be ~200ms"
         );
+    }
+
+    /// `sh -c 'sleep 30'` only exercises the orphan case under a shell that
+    /// execs a lone command (bash); dash forks `sleep` instead. This test
+    /// forks a grandchild explicitly, so it reproduces on every `sh`.
+    #[test]
+    fn bounded_output_timeout_kills_a_forked_grandchild() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("sleep.pid");
+        let start = Instant::now();
+        let err = bounded_output_with(
+            Command::new("sh")
+                .arg("-c")
+                .arg(format!("sleep 30 & echo $! > {}; wait", pid_file.display())),
+            Duration::from_millis(200),
+        )
+        .unwrap_err();
+        let elapsed = start.elapsed();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "returned in {elapsed:?}, should be ~200ms"
+        );
+
+        let grandchild_pid = std::fs::read_to_string(&pid_file)
+            .unwrap_or_else(|_| panic!("pid file missing: {}", pid_file.display()))
+            .trim()
+            .to_string();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let stat = std::fs::read_to_string(format!("/proc/{grandchild_pid}/stat")).ok();
+            let alive = stat.is_some_and(|s| {
+                matches!(
+                    // first token after the last `)` is the state char
+                    s.rsplit(')').next().unwrap_or("").split_whitespace().next(),
+                    Some("S") | Some("R") | Some("T")
+                )
+            });
+            assert!(
+                !alive,
+                "grandchild {grandchild_pid} is still alive: {:?}",
+                std::fs::read_to_string(format!("/proc/{grandchild_pid}/stat"))
+            );
+            if Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }

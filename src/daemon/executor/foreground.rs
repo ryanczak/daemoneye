@@ -139,7 +139,6 @@ where
     } = ctx;
     let GhostCtx {
         policy: ghost_policy,
-        is_ghost: _,
         ..
     } = ghost_ctx;
 
