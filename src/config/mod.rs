@@ -771,6 +771,26 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_warnings_unknown_runtime_still_checks_profiles() {
+        let sbx = SandboxConfig {
+            runtime: "podman".to_string(),
+            profile: std::collections::HashMap::from([(
+                "bad".to_string(),
+                SandboxProfile {
+                    network: "bogus".to_string(),
+                    proxy_allow: Vec::new(),
+                    proxy_deny: Vec::new(),
+                },
+            )]),
+            ..SandboxConfig::default()
+        };
+        let warnings = sbx.warnings();
+        assert_eq!(warnings.len(), 2, "got {warnings:#?}");
+        assert!(warnings[0].contains("podman"), "got {warnings:#?}");
+        assert!(warnings[1].contains("profile.bad"), "got {warnings:#?}");
+    }
+
+    #[test]
     fn sandbox_warnings_reject_unknown_runtime() {
         let sbx = SandboxConfig {
             runtime: "podman".to_string(),

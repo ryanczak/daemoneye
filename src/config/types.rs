@@ -624,7 +624,6 @@ impl SandboxConfig {
                  until it is removed)",
                 self.runtime
             ));
-            return out;
         }
         if self.runtime == "docker" && self.runs_as_container_root() {
             out.push(format!(
@@ -688,7 +687,10 @@ impl SandboxConfig {
                      hosts to it and does not restrict it — use network = \"none\" for no \
                      egress"
                 ));
-            } else if network == "proxy" && profile.proxy_allow.is_empty() {
+            } else if network == "proxy"
+                && self.runtime == "docker"
+                && profile.proxy_allow.is_empty()
+            {
                 out.push(format!(
                     "[sandbox] profile.{name} has network = \"proxy\" but an empty \
                      proxy_allow — it can reach nothing and is equivalent to \"none\""
