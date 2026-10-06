@@ -6,11 +6,10 @@ Rescoped 2026-10-05 from "tmux removal & 2.0 close" (now **M27**; later
 milestones are M28–M30, `docs/design/daemoneye-2.0.md` § 6). **PE signed off
 on scope 2026-10-05**, accepting all six recommendations.
 
-**Active phase: 03 — sbx-config**,
-[`phase-03-sbx-config.md`](milestones/M26-sbx-isolation/phase-03-sbx-config.md),
-status `in-progress`, **bounced on bug-03-1** (an unknown runtime suppresses
-the profile checks). The reviewer-measured fix and the remaining steps are in
-the phase doc's "Notes for executor". Re-dispatch with `/rexymcp:dispatch phase-03`.
+**Active phase: none drafted.** Phases 01, 01b, 02, 02b and 03 are **done**
+(03: `[sandbox] runtime = "sbx"` accepted, `SandboxConfig::warnings()`,
+approved_after_1). Next is row **04 — sbx-shell**; `/rexymcp:architect next`
+drafts it.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline

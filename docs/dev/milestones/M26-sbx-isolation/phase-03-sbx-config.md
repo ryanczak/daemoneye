@@ -1,7 +1,7 @@
 # Phase 03: sbx-config — accept `runtime = "sbx"` and warn on settings it ignores
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** done
 **Depends on:** phase-02b
 **Estimated diff:** ~220 lines (about 70 code, 150 tests)
 **Tags:** language=rust, kind=feature, size=s
@@ -654,3 +654,196 @@ Gate set on the final tree: `cargo fmt --all` (run before staging),
 `passed=2321 failed=0`).
 
 PASTE MATCH: yes
+
+### Update — 2026-10-06 22:44 (complete, server-authored)
+
+**Summary:** </think>All done. Let me verify the completion checklist one more time:
+
+- [x] Phase doc Status: in-progress — I never flipped it to review
+- [x] README phase-table row — the previous run set it; I didn't touch it (stays in-progress)
+- [x] No hand-written (complete) entry — correct, I wrote a re-dispatch entry and an e2e verification entry
+- [x] cargo fmt --all run before git add — yes, ran `cargo fmt --all` in the combined gate command before committing
+- [x] All verification commands ran clean — fmt_exit=0, clippy exit 0 with Finished line, build clean, test passed=2321 failed=0
+- [x] Final message: Summary + Notes for review
+- [x] git status clean — confirmed
+- [x] git log shows both commits include all touched files
+
+Acceptance criteria for the re-dispatch:
+- [x] `cargo test --lib config::tests::sandbox` reports 0 failed, 15 passed (finish condition), all eight test-plan names appear as ok
+- [x] bug-03-1 test: `cargo test --lib sandbox_warnings_unknown_runtime_still_checks_profiles` reports 1 passed; 0 failed — verified, full transcript captured
+- [x] `sandbox_warnings_reject_unknown_runtime` passes unedited — I didn't touch it
+- [x] E2E paste shows clippy's real last line `Finished ...` — yes, pasted as printed
+- [x] `sandbox_validate_warns_and_never_panics` still passes, unedited
+- [x] validate() body has exactly 1 log::warn! — unchanged from before, verified in my read of the function (lines 611-615: single loop)
+- [x] grep -c '"sbx"' assets/etc/config.toml = 2
+- [x] cargo test --test doc_truth: 15 passed, 0 failed
+- [x] clippy exits 0
+- [x] fmt --check exits 0
+- [x] cargo test: passed=2321 failed=0
+- [x] git diff --stat lists only src/config/types.rs and src/config/mod.rs among non-doc files — confirmed (only 2 files)
+- [x] Update Log entry contains E2E output and PASTE MATCH: yes
+
+The finish condition: `cargo test --lib config::tests::sandbox` reports **15 passed** — confirmed (15 passed; 0 failed).
+
+Everything is complete. Now the final Summary + Notes for review message.</think>
+All done — tree clean, both commits in.
+
+**Summary**
+
+Fixed bug-03-1 in `SandboxConfig::warnings()` per the reviewer's measured two-edit fix: deleted the early `return out;` after the unknown-runtime warning (so rule 4's profile loop now runs for every runtime, as the spec's "for every runtime including an unknown one" requires), and gated the empty-`proxy_allow` "equivalent to none" branch on `self.runtime == "docker"` so it can never fire for an unknown runtime. Added the pinning test `sandbox_warnings_unknown_runtime_still_checks_profiles` in the `── SandboxConfig ──` group and confirmed the bug's prediction first: it failed against the pre-fix tree with `left: 1, right: 2`, then passed after the fix. `sandbox_warnings_reject_unknown_runtime` and `sandbox_validate_warns_and_never_panics` pass unedited. Finish condition met: `config::tests::sandbox` reports **15 passed; 0 failed** (was 14). Gates re-run clean on the final tree (`fmt_exit=0`, clippy exit 0, build zero warnings, full suite `passed=2321 failed=0`); committed as `e028057f` with the Update Log evidence as `b9ecc3a6`.
+
+**Notes for review**
+
+- Clippy's `tail -1` now shows the real `    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.31s` line, pasted as printed — the reviewer's point about the earlier substituted `clippy_exit=0` is addressed. I also note in the entry that two later clippy runs against a fresh cache printed nothing; exit code 0 either way.
+- One capture quirk, documented in the entry rather than papered over: on the standalone bug-03-1 run, libtest's per-test `... ok` row and the `test result` row occasionally coalesced into one write, so the line-anchored grep of that command sometimes caught only the `test result` row. The entry therefore includes the untruncated full transcript of `cargo test --lib sandbox_warnings_unknown_runtime_still_checks_profiles 2>&1` redirected to a file, which shows `test config::tests::sandbox_warnings_unknown_runtime_still_checks_profiles ... ok` verbatim; the criterion's `1 passed; 0 failed` appears in both captures.
+- The e2e block ran once per line as required; the standalone bug-test run is an *additional* capture beyond the seven block lines, included because the criterion names that test by command line.
+- `git diff --stat` at paste time showed only `src/config/mod.rs` and `src/config/types.rs` — no non-doc files beyond those two; docs were committed separately after.
+- Remaining scope note (not touched, per out-of-scope): with `runtime = "sbx"` the docker preflight in `container.rs` still refuses background commands — correct until row 06 routes sbx.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+r_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (110849): No such process
+kill: (-111546): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M26-sbx-isolation/phase-03-sbx-config.md` — +123 -0
+- `src/config/mod.rs` — +20 -0
+- `src/config/types.rs` — +4 -2
+
+**Commit:** b9ecc3a6d119275b79a98e1d5badf34cf3fc6fc2
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-06
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-03-1, minor: an unknown runtime suppressed the
+  profile checks; evidence substituted `clippy_exit=0` for clippy's output)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark. First run 161
+  turns (`8cf0803d`); fix run 231 turns (`e028057f`, `b9ecc3a6`). The fix
+  run's code is exactly the reviewer-measured two-line change plus the
+  specified test, and `sandbox_warnings_reject_unknown_runtime` is unedited.
+- **Scope deviations:** none.
+- **Reviewer re-run:** fmt, build and clippy clean;
+  `config::tests::sandbox` **15 passed**; the bug's test `1 passed`; full suite
+  `passed=2321 failed=0` on the first run.
+- **Reviewer mutation check:** with the early `return out;` restored,
+  `sandbox_warnings_unknown_runtime_still_checks_profiles` fails (14 passed,
+  1 failed); restored, it passes.
+- **Calibration:** 231 turns for a reviewer-specified two-line fix is the
+  cost outlier of this milestone so far (02: 64, 02b: 50). It was not a loop
+  and every gate is green; noting it for the per-model profile rather than
+  as a fold.
