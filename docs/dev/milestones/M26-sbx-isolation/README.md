@@ -66,7 +66,7 @@ drafted on demand and may split.
 |----|-------|--------|
 | 01 | sbx-measure ([phase-01-sbx-measure.md](phase-01-sbx-measure.md)) — architect-run probes on pinky (`probes/`): in-VM foreground group for pause, resize, cancel, teardown under a live shell, `sbx cp` staging, limits, error shapes, the per-sandbox policy mapping; results quoted in this README | done (approved_first_try, 2026-10-05) |
 | 01b | baseline-green ([phase-01b-baseline-green.md](phase-01b-baseline-green.md)) — fix the 4 clippy 1.97 lints and make `bounded_output_with` kill the child's process group on timeout (see § Baseline red on pinky) | done (escalated, 2026-10-06) |
-| 02 | sbx-argv ([phase-02-sbx-argv.md](phase-02-sbx-argv.md)) — `src/daemon/executor/sbx.rs`: pure argv builders (`create`/`exec`/`stop`/`rm`/`ls --json`/`policy allow|deny --sandbox`), `ls --json` parser, sandbox naming, profile → flags mapping, preflight (`sbx version`, `sbx daemon status`) cached and fail-closed | in-progress |
+| 02 | sbx-argv ([phase-02-sbx-argv.md](phase-02-sbx-argv.md)) — `src/daemon/executor/sbx.rs`: pure argv builders (`create`/`exec`/`stop`/`rm`/`ls --json`/`policy allow|deny --sandbox`), `ls --json` parser, sandbox naming, profile → flags mapping, preflight (`sbx version`, `sbx daemon status`) cached and fail-closed | done (approved_first_try, 2026-10-06) |
 | 03 | sbx-config — `[sandbox] runtime = "sbx"`; `limits.memory`/`cpus` → `--memory`/`--cpus`; `image` → `--template`; docker-only keys (`run_as`, `docker_host`, `proxy_image`, `limits.pids`, `limits.scratch`, `ghost_defaults.mount_scripts`) warn and are ignored | todo |
 | 04 | sbx-shell — `ShellRecord` carries `sandbox: Option<String>`; `spawn_for` launches the shell-host with child argv `sbx exec -it -w <workdir> <sandbox> bash`; adoption at startup recovers the sandbox name (this row measures it against the real shell-host); reuse is sandbox-keyed (never hand a sandbox shell to a host caller, or the reverse) | todo |
 | 05 | sbx-signals — pause/resume/cancel for a sandbox shell signal the **in-VM** foreground job through a side `sbx exec`; cancel also kills in-VM (killing the client orphans the job — measured); pause-vs-deadline decision lands here | todo |
@@ -192,6 +192,17 @@ gates would fail on code it never touched.
 
 Fixed by row **01b** (`998bb9d4`, done 2026-10-06): `master` is green on
 pinky with rustc/clippy 1.97.1.
+
+### Flaky test on pinky (found at phase-02 review, 2026-10-06)
+
+`shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`
+(`src/shell/backend.rs`, last touched by M23) fails on roughly half of full
+`cargo test` runs on pinky. It failed 118 times in the 01b runaway, and twice
+of three at the phase-02 review. It passes solo and with its `shell::backend`
+siblings. When it fails, cargo stops before the other test binaries, so the
+pass count drops too. Every phase now carries a "run at most twice" rule
+because of it. **Proposed:** a row **02b — backend-flake**, before row 03, to
+find the race and fix it, rather than carrying the rule forward.
 
 ### Out of scope
 

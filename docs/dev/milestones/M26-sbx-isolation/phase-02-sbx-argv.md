@@ -1,7 +1,7 @@
 # Phase 02: sbx-argv — the pure sbx command builders, parsers and preflight classifier
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** done
 **Depends on:** phase-01b
 **Estimated diff:** ~380 lines (about 170 code, 210 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -447,3 +447,172 @@ $ git diff --stat
 ```
 
 PASTE MATCH: yes
+
+### Update — 2026-10-06 17:49 (complete, server-authored)
+
+**Summary:** **Summary:** Built `src/daemon/executor/sbx.rs` (~430 lines non-test, ~370 test) — the pure sbx module with `BINARY`, `SandboxKind`/`sandbox_name`/`is_daemon_sandbox` (63-byte cap, sanitize-to-`-`, prefix-only ownership check), `NetworkPlan`/`network_plan` (Q1: `none` ignores lists, `proxy` trims, unknown → Err), all nine argv builders with the measured shapes (`--pull missing`, integer `--cpus` via ceil/clamp/NaN-guard, deny-per-entry in create, allows deferred to `policy_allow_args`, empty stop/rm argv for no names), `parse_ls_json`/`stale_daemon_sandboxes`, and `classify_preflight`/`describe_unavailable` (keychain/auth stderr markers checked even on `exit_ok`, keychain wins; version token `v…` extraction from `sbx version: <v> <sha>`). Declared as `pub mod sbx;` in the executor mod, no `container.rs` usage, no allows/unsafe/panics in the non-test part.
+
+**Notes for review:**
+- All 22 planned tests pass; `classify_preflight_accepts_the_measured_outputs` and the failure-mapping test both assert the exact measured `sbx version: v0.46.0 …` and `Status: running` outputs.
+- E2E transcript pasted into the phase doc's Update Log with `PASTE MATCH: yes`: 22/22 `executor::sbx` tests ok, clippy `Finished`, `fmt_exit=0`, full suite `passed=2312 failed=0`, `grep -c 'container::'` = 0, diffstat = sbx.rs (new) + mod.rs (1 line) + phase doc + README row, matching the acceptance criteria.
+- One adaptation worth flagging: `classify_preflight` re-derives the version token from `version.stdout` after `classify_version` validates it, so the two paths must stay in sync (single `first.split_whitespace().nth(2)` contract).
+- Committed as `be3a56a3` (code+status flip) and `2b3c9a3c` (evidence transcript); `git status --short` is clean. Phase status left at `in-progress` for the server to flip to `review`.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.44s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test event_log_append_read ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (4061872): No such process
+kill: (-4062552): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M26-sbx-isolation/README.md` — +1 -1
+- `docs/dev/milestones/M26-sbx-isolation/phase-02-sbx-argv.md` — +60 -1
+- `src/daemon/executor/mod.rs` — +1 -0
+- `src/daemon/executor/sbx.rs` — +810 -0
+
+**Commit:** 2b3c9a3c8b8840c2702d93ed0874a57fc39a6cfd
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-06
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (64 turns). The
+  Update Log names itself `claude`, the same self-misnaming as M23's fold C;
+  the server-authored result is right.
+- **Scope deviations:** none in scope (`be3a56a3`: `sbx.rs` new, one line in
+  `executor/mod.rs`). Three small notes:
+  1. `classify_preflight` runs the spawn and stderr-marker checks over **both**
+     probes before the version probe's `exit_ok` and content checks, where the
+     spec ordered all checks per probe. The only effect: a failed version probe
+     plus a daemon probe that cannot spawn reports the daemon's
+     `NotInstalled`/`SpawnFailed` instead of `UnrecognisedVersion`. Either
+     answer is a fail-closed refusal, so this is accepted as is.
+  2. The pasted `git diff --stat` omits `sbx.rs` because it was still
+     untracked when the command ran; the commit's stat shows it.
+  3. 365 non-test lines against the ~170 estimate, mostly doc comments.
+- **Reviewer re-run:** fmt, build and clippy clean; `executor::sbx` 22/22.
+  The full suite failed once on each of two runs with the pre-existing flake
+  `shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`;
+  a third, lib-only run was `2248 passed; 0 failed`.
+- **Reviewer mutation checks** (each turned a test red, then was restored):
+  `is_daemon_sandbox` using `contains` instead of `starts_with`; dropping
+  `--pull missing`; checking the keychain marker only on a failed probe;
+  `rm_args` emitting an extra argument.
+- **Calibration:** none for this repo. The flake now fails on roughly half of
+  full runs on pinky and costs every gate run; README § "Flaky test on pinky"
+  proposes a fix row.
