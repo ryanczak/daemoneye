@@ -66,7 +66,7 @@ drafted on demand and may split.
 |----|-------|--------|
 | 01 | sbx-measure ([phase-01-sbx-measure.md](phase-01-sbx-measure.md)) — architect-run probes on pinky (`probes/`): in-VM foreground group for pause, resize, cancel, teardown under a live shell, `sbx cp` staging, limits, error shapes, the per-sandbox policy mapping; results quoted in this README | done (approved_first_try, 2026-10-05) |
 | 01b | baseline-green ([phase-01b-baseline-green.md](phase-01b-baseline-green.md)) — fix the 4 clippy 1.97 lints and make `bounded_output_with` kill the child's process group on timeout (see § Baseline red on pinky) | done (escalated, 2026-10-06) |
-| 02 | sbx-argv — `src/daemon/executor/sbx.rs`: pure argv builders (`create`/`exec`/`stop`/`rm`/`ls --json`/`policy allow|deny --sandbox`), `ls --json` parser, sandbox naming, profile → flags mapping, preflight (`sbx version`, `sbx daemon status`) cached and fail-closed | todo |
+| 02 | sbx-argv ([phase-02-sbx-argv.md](phase-02-sbx-argv.md)) — `src/daemon/executor/sbx.rs`: pure argv builders (`create`/`exec`/`stop`/`rm`/`ls --json`/`policy allow|deny --sandbox`), `ls --json` parser, sandbox naming, profile → flags mapping, preflight (`sbx version`, `sbx daemon status`) cached and fail-closed | todo |
 | 03 | sbx-config — `[sandbox] runtime = "sbx"`; `limits.memory`/`cpus` → `--memory`/`--cpus`; `image` → `--template`; docker-only keys (`run_as`, `docker_host`, `proxy_image`, `limits.pids`, `limits.scratch`, `ghost_defaults.mount_scripts`) warn and are ignored | todo |
 | 04 | sbx-shell — `ShellRecord` carries `sandbox: Option<String>`; `spawn_for` launches the shell-host with child argv `sbx exec -it -w <workdir> <sandbox> bash`; adoption at startup recovers the sandbox name (this row measures it against the real shell-host); reuse is sandbox-keyed (never hand a sandbox shell to a host caller, or the reverse) | todo |
 | 05 | sbx-signals — pause/resume/cancel for a sandbox shell signal the **in-VM** foreground job through a side `sbx exec`; cancel also kills in-VM (killing the client orphans the job — measured); pause-vs-deadline decision lands here | todo |
@@ -140,6 +140,11 @@ Quote these, don't re-derive them.
 | Pause | STOP of the job alone does **not** freeze a loop typed at the prompt; STOP shell **then** job freezes it; CONT job then shell resumes — the host rule in `pty.rs`, unchanged |
 | Cancel | `^C` through the PTY ends the loop and the shell stays usable; in-VM `TERM` to the foreground group → status 143 |
 | Teardown | `sbx rm -f` under a live shell ends the host client, exit 137 |
+| `sbx ls --json`, empty | `{"sandboxes": []}`, exit 0 — never the human "No sandboxes found." text |
+| `sbx version` / `sbx daemon status` | exit 0; stdout `sbx version: v0.46.0 <sha>` and first line `Status: running` |
+| `--cpus` | integer only: `--cpus 1.5` → exit 1 `invalid argument "1.5" for "--cpus" flag` |
+| Names | underscores rejected (`sandbox name cannot contain underscores`); upper case and dots accepted |
+| **Locked OS keychain** (2026-10-06, an SSH session with gnome-keyring locked) | `sbx create` with the default `--pull always` → exit 1 `encode registry auth: … docker login service unavailable`; with `--pull missing` it succeeds with a `WARN: failed to list stored credentials … the OS keychain is locked` on stderr. **`sbx rm -f` fails** (`snapshot associated scoped secrets: … the OS keychain is locked`) while **`sbx stop` succeeds**. A headless daemon can therefore create but not remove sandboxes while the keyring is locked |
 
 ### Decisions on the open questions (PE, 2026-10-05 — all recommendations accepted)
 
@@ -204,5 +209,6 @@ pinky with rustc/clippy 1.97.1.
 |---|---|
 | sbx is pre-1.0 (v0.46.0) and its CLI surface moves | 02 — one module owns every argv; preflight records `sbx version` in the run record; doctor warns on an untested major/minor |
 | Finding the in-VM foreground job for `Ctrl-p` | 01 measures (e.g. `ps -o tpgid=` of the in-VM bash recorded at shell start); 05 implements |
+| sbx needs the operator's unlocked OS keychain: with it locked, `rm` fails (measured), so a ghost's teardown cannot complete | 02 classifies the error; 06 falls back to `sbx stop` and leaves removal to the startup/periodic sweep; status names the locked keychain |
 | Leaked sandboxes hold a VM each (memory default: 50 % of host RAM, clamped) | 03 sets `--memory`/`--cpus` from `[sandbox.limits]`; 06 sweep; live close checks `sbx ls` is empty after teardown |
 | A `proxy` profile is wider than an M18 allowlist | Q1/Q2 decisions; documented in README and `security.md` |
