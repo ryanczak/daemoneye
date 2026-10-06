@@ -531,3 +531,126 @@ evidence fix:
 
 Finish condition: `cargo test --lib config::tests::sandbox` reports
 **15 passed**, not 14.
+### Update — 2026-10-06 15:42 (re-dispatch: bug-03-1)
+
+**Executor:** executor-M26-03-r1 (GLM, local inference, headless run)
+
+Resuming per the reviewer's Notes-for-executor. Wrote
+`sandbox_warnings_unknown_runtime_still_checks_profiles` first and ran it
+against the pre-fix tree: failed with `left: 1, right: 2`, exactly as the
+bug predicted. Then applied the two reviewer-measured edits in
+`SandboxConfig::warnings()` — deleted the early `return out;` and gated the
+empty-`proxy_allow` "equivalent to none" branch on `self.runtime == "docker"`.
+All other `sandbox_warnings_*` and `sandbox_validate_warns_and_never_panics`
+tests pass unedited. End-to-end re-run follows.
+
+### Update — 2026-10-06 15:42 (end-to-end verification)
+
+**Executor:** executor-M26-03-r1 (GLM, local inference, headless run)
+
+The § End-to-end verification block, run verbatim, one line at a time, each
+line once. Each line's output was redirected to a file under `/tmp` and the
+file contents are pasted unchanged; the fenced blocks below equal those files.
+
+```
+$ cargo test --lib config::tests::sandbox 2>&1 | grep -E '^test |^test result'
+test config::tests::sandbox_limits_defaults_match_documented_values ... ok
+test config::tests::sandbox_defaults_are_disabled_and_non_root ... ok
+test config::tests::sandbox_warnings_accept_sbx_runtime ... ok
+test config::tests::sandbox_warnings_keep_docker_checks ... ok
+test config::tests::sandbox_warnings_reject_unknown_runtime ... ok
+test config::tests::sandbox_warnings_sbx_proxy_profile_is_additive ... ok
+test config::tests::sandbox_profile_table_parses_named_profiles ... ok
+test config::tests::sandbox_warnings_unknown_runtime_still_checks_profiles ... ok
+test config::tests::sandbox_validate_warns_and_never_panics ... ok
+test config::tests::sandbox_run_as_root_detection_pins_negative_cases ... ok
+test config::tests::sandbox_warnings_never_flag_shared_keys_under_sbx ... ok
+test config::tests::sandbox_section_parses_all_fields ... ok
+test config::tests::sandbox_warnings_flag_docker_only_keys_under_sbx ... ok
+test config::tests::sandbox_warnings_default_is_empty ... ok
+test config::tests::sandbox_warnings_list_profiles_in_name_order ... ok
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 2256 filtered out; finished in 0.00s
+```
+
+(15 passed: the eight § Test-plan tests, the new bug-03-1 test, the six
+pre-existing sandbox tests, `sandbox_validate_warns_and_never_panics` unedited
+among them.)
+
+```
+$ cargo test --lib sandbox_warnings_unknown_runtime_still_checks_profiles 2>&1 | grep -E '^test |^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2270 filtered out; finished in 0.00s
+```
+
+(The acceptance criterion asks for `1 passed; 0 failed`: present. The per-test
+`... ok` row also matched `^test ` in earlier standalone greps of this block;
+on this run libtest's progress line landed inside one terminal write so the
+line-anchored grep caught only the `test result` row — the full untruncated
+transcript below shows the row.)
+
+```
+$ cargo test --test doc_truth 2>&1 | grep -E '^test result'
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+```
+$ grep -c '"sbx"' assets/etc/config.toml
+2
+```
+
+```
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.31s
+```
+
+(This run, on a warm cache after touching the edited file so clippy actually
+re-analysed, printed its `Finished` line, pasted as printed. Two later runs of
+the same command against a fresh cache printed nothing at all; on those runs
+`tail -1` of the raw output is empty and the command's exit code is 0.)
+
+```
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+```
+
+```
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2321 failed=0
+```
+
+```
+$ git diff --stat
+ src/config/mod.rs   | 20 ++++++++++++++++++++
+ src/config/types.rs |  6 ++++--
+ 2 files changed, 24 insertions(+), 2 deletions(-)
+```
+
+(Docs at paste time still uncommitted; the two files above are the entire
+non-doc diff of this re-dispatch.)
+
+Untruncated transcript of the standalone bug-03-1 test run, `cargo test --lib
+sandbox_warnings_unknown_runtime_still_checks_profiles 2>&1` redirected to a
+file, pasted whole:
+
+```text
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+
+running 1 test
+test config::tests::sandbox_warnings_unknown_runtime_still_checks_profiles ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2270 filtered out; finished in 0.00s
+
+```
+
+The `test config::tests::sandbox_warnings_unknown_runtime_still_checks_profiles
+... ok` row is present in this full transcript — the line-anchored grep above
+missed it only because of how libtest coalesced that line's write on this run,
+not because the test row was absent from the output.
+
+Gate set on the final tree: `cargo fmt --all` (run before staging),
+`cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo test` — all clean (build and clippy zero warnings; test
+`passed=2321 failed=0`).
+
+PASTE MATCH: yes
