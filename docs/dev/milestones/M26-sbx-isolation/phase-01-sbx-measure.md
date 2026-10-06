@@ -1,7 +1,7 @@
 # Phase 01: sbx-measure — execute every sbx fact the later rows will cite
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** 0 lines of code; this doc's Update Log, the milestone README's measurement table, and `probes/` (already written)
 **Tags:** language=rust, kind=verification, size=s, architect-run
@@ -264,3 +264,18 @@ classifier. Before = after, as the criteria require. No line differs from the
 reference, so no README row changes beyond the table additions in Task 3.
 
 PASTE MATCH: yes
+
+### Review verdict — 2026-10-05
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Claude Code (direct) — architect-run
+- **Scope deviations:** none. The README table gained 13 rows for the 12
+  facts (the pause fact took one row; the PTY fact split into "marker +
+  resize" and "foreground group").
+- **Calibration:** none.
+- **Gates:** `cargo fmt --all --check` and `cargo build` pass. **`cargo clippy`
+  (4 errors) and `cargo test` (1 failure) are red on the unchanged `src/` at
+  `c1613db4`.** This phase changed no code; both failures are host and
+  toolchain drift on pinky, recorded in README § "Baseline red on pinky" as
+  a blocker for dispatching row 02.

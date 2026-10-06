@@ -64,7 +64,8 @@ drafted on demand and may split.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | sbx-measure ([phase-01-sbx-measure.md](phase-01-sbx-measure.md)) — architect-run probes on pinky (`probes/`): in-VM foreground group for pause, resize, cancel, teardown under a live shell, `sbx cp` staging, limits, error shapes, the per-sandbox policy mapping; results quoted in this README | review |
+| 01 | sbx-measure ([phase-01-sbx-measure.md](phase-01-sbx-measure.md)) — architect-run probes on pinky (`probes/`): in-VM foreground group for pause, resize, cancel, teardown under a live shell, `sbx cp` staging, limits, error shapes, the per-sandbox policy mapping; results quoted in this README | done (approved_first_try, 2026-10-05) |
+| 01b | baseline-green — fix the 4 clippy 1.97 lints and make `bounded_output_with` kill the child's process group on timeout (see § Baseline red on pinky) | todo (not drafted) |
 | 02 | sbx-argv — `src/daemon/executor/sbx.rs`: pure argv builders (`create`/`exec`/`stop`/`rm`/`ls --json`/`policy allow|deny --sandbox`), `ls --json` parser, sandbox naming, profile → flags mapping, preflight (`sbx version`, `sbx daemon status`) cached and fail-closed | todo |
 | 03 | sbx-config — `[sandbox] runtime = "sbx"`; `limits.memory`/`cpus` → `--memory`/`--cpus`; `image` → `--template`; docker-only keys (`run_as`, `docker_host`, `proxy_image`, `limits.pids`, `limits.scratch`, `ghost_defaults.mount_scripts`) warn and are ignored | todo |
 | 04 | sbx-shell — `ShellRecord` carries `sandbox: Option<String>`; `spawn_for` launches the shell-host with child argv `sbx exec -it -w <workdir> <sandbox> bash`; adoption at startup recovers the sandbox name (this row measures it against the real shell-host); reuse is sandbox-keyed (never hand a sandbox shell to a host caller, or the reverse) | todo |
@@ -164,6 +165,28 @@ Quote these, don't re-derive them.
   use and removed when the session's shells are reaped.
 - **Q6 — pause vs deadline.** A pause suspends the command's deadline clock,
   as prompt time already does.
+
+### Baseline red on pinky (found at phase-01 review, 2026-10-05) — blocks row 02
+
+`master` at `c1613db4` does not pass two gates on pinky, the new development
+host. Row 02 must not be dispatched until both are fixed; the executor's
+gates would fail on code it never touched.
+
+- **`cargo clippy --all-targets --all-features -- -D warnings`: 4 errors**,
+  lints new in rustc/clippy 1.97.1: `unneeded pattern … the .. pattern can
+  match that element` at `src/cli/viewer.rs:263` and
+  `src/daemon/executor/foreground.rs:142`; `use of Some(x).filter(|_|
+  predicate)` at `src/shell/pty.rs:508` and `:517`.
+- **`cargo test`: `tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child`
+  fails every time** (30.0 s, three runs). pinky's `/bin/sh` is dash, and
+  `sh -c 'sleep 30'` **forks** `sleep` (measured: `sleep 30` runs as a child
+  of `sh -c sleep 30`). `bounded_output_with` (`src/tmux/mod.rs:73`) kills
+  only the direct child, then joins the pipe readers, which wait for the
+  grandchild that still holds the pipes. The test exposes a real defect:
+  a timed-out tmux call whose child forked does not return on time.
+
+Proposed: one row **01b — baseline-green**, dispatched to the executor
+before row 02.
 
 ### Out of scope
 
