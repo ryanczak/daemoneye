@@ -65,7 +65,7 @@ drafted on demand and may split.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | sbx-measure ([phase-01-sbx-measure.md](phase-01-sbx-measure.md)) — architect-run probes on pinky (`probes/`): in-VM foreground group for pause, resize, cancel, teardown under a live shell, `sbx cp` staging, limits, error shapes, the per-sandbox policy mapping; results quoted in this README | done (approved_first_try, 2026-10-05) |
-| 01b | baseline-green — fix the 4 clippy 1.97 lints and make `bounded_output_with` kill the child's process group on timeout (see § Baseline red on pinky) | todo (not drafted) |
+| 01b | baseline-green ([phase-01b-baseline-green.md](phase-01b-baseline-green.md)) — fix the 4 clippy 1.97 lints and make `bounded_output_with` kill the child's process group on timeout (see § Baseline red on pinky) | todo |
 | 02 | sbx-argv — `src/daemon/executor/sbx.rs`: pure argv builders (`create`/`exec`/`stop`/`rm`/`ls --json`/`policy allow|deny --sandbox`), `ls --json` parser, sandbox naming, profile → flags mapping, preflight (`sbx version`, `sbx daemon status`) cached and fail-closed | todo |
 | 03 | sbx-config — `[sandbox] runtime = "sbx"`; `limits.memory`/`cpus` → `--memory`/`--cpus`; `image` → `--template`; docker-only keys (`run_as`, `docker_host`, `proxy_image`, `limits.pids`, `limits.scratch`, `ghost_defaults.mount_scripts`) warn and are ignored | todo |
 | 04 | sbx-shell — `ShellRecord` carries `sandbox: Option<String>`; `spawn_for` launches the shell-host with child argv `sbx exec -it -w <workdir> <sandbox> bash`; adoption at startup recovers the sandbox name (this row measures it against the real shell-host); reuse is sandbox-keyed (never hand a sandbox shell to a host caller, or the reverse) | todo |
