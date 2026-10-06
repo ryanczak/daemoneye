@@ -567,14 +567,15 @@ mod tests {
         quiet(&mut rx, std::time::Instant::now() + Duration::from_secs(10));
 
         let rt = tokio::runtime::Runtime::new().expect("runtime");
-        // Emit a prompt-shaped line so the pump's chunk arm sets the flag.
-        // This echo runs *while armed* — the whole point is that the answer,
-        // not surrounding traffic, is the thing the scrub must survive. Here
-        // `'[de-sudo-prompt-77] Password: …'` is sent from an armed state's
-        // ordinary traffic side: the pump's first chunk of that echo re-arms
-        // (the sentinel is in the prompt shape), which is what an already
-        // armed output looks like at the ordering boundary.
-        let prompt = "printf '[de-sudo-prompt-77] Password: redaction-e2e-probe\\n'\n";
+        // `read -rs` is the fixture that owns the echo window the way a real
+        // password prompt does: `-s` silences terminal echo around the
+        // answer, so readline's prompt redraw cannot reflect the credential
+        // back as an "o" event. The `''` splits keep the echoed command line
+        // from arming the scrub (see `looks_like_secret_prompt`), so the flag
+        // arms on `read`'s own prompt, printed after echo is off. `got N` in
+        // the output marks the settled cast to poll for. Full reasoning:
+        // `the_flag_clears_once_the_answer_is_submitted`.
+        let prompt = "read -rs -p '[de-sudo-prompt''-77] Pass''word: ' de_secret; printf '\\n'; echo \"got ${#de_secret}\"\n";
         rt.block_on(backend.input(prompt.as_bytes()))
             .expect("emit prompt");
         // The pump is a thread; poll rather than sleep on a guess.
@@ -590,20 +591,21 @@ mod tests {
         );
 
         // The answer reaching the shell must never reach the cast file.
-        rt.block_on(backend.input(CREDENTIAL.as_bytes().to_vec().leak()))
+        rt.block_on(backend.input(format!("{CREDENTIAL}\n").as_bytes()))
             .expect("submit the credential");
+        let done = format!("got {}", CREDENTIAL.len());
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let cast = cast_output(&backend, &dir);
-        loop {
-            if cast.contains("[redacted]") {
-                break;
+        let cast = loop {
+            let cast = cast_output(&backend, &dir);
+            if cast.contains("[redacted]") && cast_has_o_text(&cast, &done) {
+                break cast;
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "`[redacted]` never reached the cast: {cast}"
+                "`[redacted]` and `{done}` never both reached the cast: {cast}"
             );
             std::thread::sleep(Duration::from_millis(20));
-        }
+        };
         assert!(
             cast.contains("[redacted]"),
             "the marker must exist in the cast: {cast}"

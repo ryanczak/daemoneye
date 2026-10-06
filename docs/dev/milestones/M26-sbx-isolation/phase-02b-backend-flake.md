@@ -1,7 +1,7 @@
 # Phase 02b: backend-flake — make the redaction-marker test model a real password prompt
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02
 **Estimated diff:** ~30 lines, one test in one file
 **Tags:** language=rust, kind=bugfix, size=s
@@ -234,3 +234,28 @@ None.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-06 13:31 (started)
+
+Executor: Codex (headless). Read STANDARDS.md and this phase doc; repo is clean
+on `master` at `e538bdfe`. Status flipped `todo` → `in-progress` (and the
+milestone README row with it). Applying Tasks 1–2 now, then Task 3's single
+end-to-end run.
+
+### Update — 2026-10-06 13:44 (end-to-end verification)
+
+Executor: Codex. Captured mechanically to `/tmp/p02b/{solo,runs,clippy,fmt,diffstat}.txt` (one run per line of the § End-to-end verification block, each line executed exactly once, no re-runs — the full library loop was run a single time). Paste below is the concatenation of those capture files, byte-for-byte what the commands printed.
+
+PASTE MATCH: yes
+
+```text
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2261 filtered out; finished in 0.09s
+lib run 1: test result: ok. 2248 passed; 0 failed; 14 ignored; 0 measured; 0 filtered out; finished in 62.63s
+lib run 2: test result: ok. 2248 passed; 0 failed; 14 ignored; 0 measured; 0 filtered out; finished in 62.62s
+lib run 3: test result: ok. 2248 passed; 0 failed; 14 ignored; 0 measured; 0 filtered out; finished in 62.57s
+fmt_exit=0
+ docs/dev/milestones/M26-sbx-isolation/README.md    |  2 +-
+ .../M26-sbx-isolation/phase-02b-backend-flake.md   |  9 +++++-
+ src/shell/backend.rs                               | 32 ++++++++++++----------
+ 3 files changed, 26 insertions(+), 17 deletions(-)
+```
