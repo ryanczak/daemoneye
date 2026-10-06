@@ -275,3 +275,14 @@ passes solo and with its 21 backend siblings every time (20/20 runs of
 budget and report it by name in the end-to-end entry per WORKFLOW.md §
 End-to-end verification ("a test that fails and is not the named pre-existing
 flake is a real finding" — this one is the named one).
+
+### Update — 2026-10-06 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the run was cancelled by the architect on PE instruction
+(`claude_stop`, between turns, 437 turns) after Tasks 1–5 were implemented and
+committed (`998bb9d4`). It then spent about 13.5 h and 193 turns re-running
+`cargo test --lib` four times per turn, about 536 runs, to characterise the
+pre-existing flake
+`shell::backend::tests::input_after_a_prompt_logs_a_redaction_marker`. The
+spec was fine; only Task 6 is missing, so resume rather than re-dispatch.
