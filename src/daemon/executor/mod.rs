@@ -4,6 +4,7 @@ mod file_ops;
 mod foreground;
 mod ghost_remote;
 pub(crate) mod knowledge;
+pub mod sbx;
 mod schedule;
 mod shell_exec;
 

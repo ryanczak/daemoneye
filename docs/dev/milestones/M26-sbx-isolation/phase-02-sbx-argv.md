@@ -1,7 +1,7 @@
 # Phase 02: sbx-argv — the pure sbx command builders, parsers and preflight classifier
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01b
 **Estimated diff:** ~380 lines (about 170 code, 210 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -388,3 +388,11 @@ None. `serde` and `serde_json` are already dependencies.
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-10-06 17:37 (started)
+
+**Executor:** claude (M26 phase-02 run 1)
+
+Flipped the phase status to `in-progress` (and the README row). Implementing
+tasks 1–6: `src/daemon/executor/sbx.rs` with naming, network plan, argv
+builders, the `ls --json` parser, and preflight classification, plus the 22
+unit tests in the test plan. End-to-end capture (task 7) follows.
