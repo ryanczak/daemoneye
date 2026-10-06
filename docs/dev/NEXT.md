@@ -8,9 +8,9 @@ on scope 2026-10-05**, accepting all six recommendations.
 
 **Active phase: 03 — sbx-config**,
 [`phase-03-sbx-config.md`](milestones/M26-sbx-isolation/phase-03-sbx-config.md),
-status `todo`, for the executor: accept `[sandbox] runtime = "sbx"` and warn
-on settings sbx ignores, via a pure `SandboxConfig::warnings()`. Phases 01,
-01b, 02 and 02b are done.
+status `in-progress`, **bounced on bug-03-1** (an unknown runtime suppresses
+the profile checks). The reviewer-measured fix and the remaining steps are in
+the phase doc's "Notes for executor". Re-dispatch with `/rexymcp:dispatch phase-03`.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline
