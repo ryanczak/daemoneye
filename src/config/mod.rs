@@ -750,6 +750,174 @@ mod tests {
         sbx.validate(); // must not panic
     }
 
+    #[test]
+    fn sandbox_warnings_default_is_empty() {
+        let sbx = SandboxConfig::default();
+        assert_eq!(sbx.runtime, "docker");
+        assert!(sbx.warnings().is_empty());
+    }
+
+    #[test]
+    fn sandbox_warnings_accept_sbx_runtime() {
+        let sbx = SandboxConfig {
+            runtime: "sbx".to_string(),
+            ..SandboxConfig::default()
+        };
+        assert!(
+            sbx.warnings().is_empty(),
+            "a default sbx config is valid; got {:?}",
+            sbx.warnings()
+        );
+    }
+
+    #[test]
+    fn sandbox_warnings_reject_unknown_runtime() {
+        let sbx = SandboxConfig {
+            runtime: "podman".to_string(),
+            run_as: "0:0".to_string(),
+            image: "x".to_string(),
+            profile: std::collections::HashMap::from([(
+                "researcher".to_string(),
+                SandboxProfile {
+                    network: "proxy".to_string(),
+                    proxy_allow: Vec::new(),
+                    proxy_deny: Vec::new(),
+                },
+            )]),
+            ..SandboxConfig::default()
+        };
+        let warnings = sbx.warnings();
+        assert_eq!(warnings.len(), 1, "got {warnings:#?}");
+        assert!(warnings[0].contains("podman"), "got {warnings:#?}");
+        assert!(warnings[0].contains("sbx"), "got {warnings:#?}");
+    }
+
+    #[test]
+    fn sandbox_warnings_flag_docker_only_keys_under_sbx() {
+        let sbx = SandboxConfig {
+            runtime: "sbx".to_string(),
+            image: "my-image".to_string(),
+            run_as: "0:0".to_string(),
+            limits: SandboxLimits {
+                pids: 10,
+                ..SandboxLimits::default()
+            },
+            ..SandboxConfig::default()
+        };
+        let warnings = sbx.warnings();
+        assert_eq!(warnings.len(), 3, "got {warnings:#?}");
+        assert!(warnings[0].contains("image"), "got {warnings:#?}");
+        assert!(warnings[0].contains("has no effect"), "got {warnings:#?}");
+        assert!(warnings[1].contains("run_as"), "got {warnings:#?}");
+        assert!(warnings[1].contains("has no effect"), "got {warnings:#?}");
+        assert!(warnings[2].contains("limits.pids"), "got {warnings:#?}");
+        assert!(warnings[2].contains("has no effect"), "got {warnings:#?}");
+        assert!(
+            warnings.iter().all(|w| !w.contains("container root")),
+            "sbx never warns on container root: {warnings:#?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_warnings_keep_docker_checks() {
+        let sbx = SandboxConfig {
+            runtime: "docker".to_string(),
+            run_as: "0:0".to_string(),
+            image: "my-image".to_string(),
+            ..SandboxConfig::default()
+        };
+        let warnings = sbx.warnings();
+        assert_eq!(warnings.len(), 1, "got {warnings:#?}");
+        assert!(warnings[0].contains("container root"), "got {warnings:#?}");
+        assert!(
+            warnings.iter().all(|w| !w.contains("has no effect")),
+            "docker never warns has-no-effect: {warnings:#?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_warnings_never_flag_shared_keys_under_sbx() {
+        let sbx = SandboxConfig {
+            runtime: "sbx".to_string(),
+            enabled: true,
+            limits: SandboxLimits {
+                memory: "4g".to_string(),
+                cpus: 8.0,
+                ..SandboxLimits::default()
+            },
+            ghost_defaults: SandboxGhostDefaults {
+                destroy_on_exit: false,
+                ..SandboxGhostDefaults::default()
+            },
+            ..SandboxConfig::default()
+        };
+        assert!(
+            sbx.warnings().is_empty(),
+            "shared keys must not warn under sbx: {:?}",
+            sbx.warnings()
+        );
+    }
+
+    #[test]
+    fn sandbox_warnings_sbx_proxy_profile_is_additive() {
+        let sbx = SandboxConfig {
+            runtime: "sbx".to_string(),
+            profile: std::collections::HashMap::from([(
+                "researcher".to_string(),
+                SandboxProfile {
+                    network: "proxy".to_string(),
+                    proxy_allow: Vec::new(),
+                    proxy_deny: Vec::new(),
+                },
+            )]),
+            ..SandboxConfig::default()
+        };
+        let warnings = sbx.warnings();
+        assert_eq!(warnings.len(), 1, "got {warnings:#?}");
+        assert!(
+            warnings[0].contains("profile.researcher"),
+            "got {warnings:#?}"
+        );
+        assert!(
+            warnings[0].contains("global sbx network policy"),
+            "got {warnings:#?}"
+        );
+        assert!(
+            !warnings[0].contains("equivalent to"),
+            "an empty proxy_allow is not equivalent to none under sbx: {warnings:#?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_warnings_list_profiles_in_name_order() {
+        let sbx = SandboxConfig {
+            runtime: "docker".to_string(),
+            profile: std::collections::HashMap::from([
+                (
+                    "zeta".to_string(),
+                    SandboxProfile {
+                        network: "bogus".to_string(),
+                        proxy_allow: Vec::new(),
+                        proxy_deny: Vec::new(),
+                    },
+                ),
+                (
+                    "alpha".to_string(),
+                    SandboxProfile {
+                        network: "bogus".to_string(),
+                        proxy_allow: Vec::new(),
+                        proxy_deny: Vec::new(),
+                    },
+                ),
+            ]),
+            ..SandboxConfig::default()
+        };
+        let warnings = sbx.warnings();
+        assert_eq!(warnings.len(), 2, "got {warnings:#?}");
+        assert!(warnings[0].contains("profile.alpha"), "got {warnings:#?}");
+        assert!(warnings[1].contains("profile.zeta"), "got {warnings:#?}");
+    }
+
     // ── ExecutionConfig and ShellsConfig (M20 phase-01) ─────────────────────
 
     #[test]

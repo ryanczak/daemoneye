@@ -1,7 +1,7 @@
 # Phase 03: sbx-config — accept `runtime = "sbx"` and warn on settings it ignores
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02b
 **Estimated diff:** ~220 lines (about 70 code, 150 tests)
 **Tags:** language=rust, kind=feature, size=s
@@ -265,3 +265,79 @@ None.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-06 21:22 (in-progress)
+
+**Executor:** executor-M26-03 (Claude Opus 4.5, headless run)
+
+Flipped Status to in-progress. Added the pure `SandboxConfig::warnings()`
+(types.rs), made `validate()` log it, added the eight `sandbox_warnings_*`
+tests plus `sandbox_warnings_default_is_empty` to the `── SandboxConfig ──`
+group, and annotated the seeded `[sandbox]` template block with the sbx
+note. Now running the § End-to-end verification block.
+
+### Update — 2026-10-06 21:26 (end-to-end verification)
+
+**Executor:** executor-M26-03 (Claude Opus 4.5, headless run)
+
+The § End-to-end verification block, run verbatim, one line at a time, each
+line once. Output redirected to files under `/tmp` and pasted unchanged;
+`PASTE MATCH: yes` — each fenced block below equals the captured terminal
+output for that line.
+
+```sh
+$ cargo test --lib config::tests::sandbox 2>&1 | grep -E '^test |^test result'
+test config::tests::sandbox_defaults_are_disabled_and_non_root ... ok
+test config::tests::sandbox_limits_defaults_match_documented_values ... ok
+test config::tests::sandbox_validate_warns_and_never_panics ... ok
+test config::tests::sandbox_warnings_flag_docker_only_keys_under_sbx ... ok
+test config::tests::sandbox_warnings_keep_docker_checks ... ok
+test config::tests::sandbox_warnings_never_flag_shared_keys_under_sbx ... ok
+test config::tests::sandbox_section_parses_all_fields ... ok
+test config::tests::sandbox_profile_table_parses_named_profiles ... ok
+test config::tests::sandbox_warnings_reject_unknown_runtime ... ok
+test config::tests::sandbox_warnings_sbx_proxy_profile_is_additive ... ok
+test config::tests::sandbox_warnings_default_is_empty ... ok
+test config::tests::sandbox_run_as_root_detection_pins_negative_cases ... ok
+test config::tests::sandbox_warnings_list_profiles_in_name_order ... ok
+test config::tests::sandbox_warnings_accept_sbx_runtime ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 2256 filtered out; finished in 0.00s
+$ cargo test --test doc_truth 2>&1 | grep -E '^test result'
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ grep -c '"sbx"' assets/etc/config.toml
+2
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+clippy_exit=0
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2320 failed=0
+$ git diff --stat
+ assets/etc/config.toml                             |   4 +-
+ docs/dev/milestones/M26-sbx-isolation/README.md    |   2 +-
+ .../M26-sbx-isolation/phase-03-sbx-config.md       |  12 +-
+ src/config/mod.rs                                  | 168 +++++++++++++++++++++
+ src/config/types.rs                                |  83 ++++++++--
+ 5 files changed, 254 insertions(+), 15 deletions(-)
+```
+
+PASTE MATCH: yes
+
+Notes beyond the pasted block:
+
+- The first command's grep passes 15 lines: the 14 `... ok` test rows above
+  (alphabetical, so the eight § Test plan names appear scattered) plus the
+  trailing `test result` line. All eight § Test plan names are present as
+  `ok`, and the 14th is the unedited `sandbox_validate_warns_and_never_panics`,
+  also `ok`.
+- Line 4: the full clippy run is quiet — its only output line is the
+  `Finished` banner, so `tail -1` of the raw run is empty and the exit
+  code is recorded instead (`clippy_exit=0`). Flagged here rather than
+  pasted as if it were captured text.
+- Line 7 lists, among non-doc files, exactly `assets/etc/config.toml`,
+  `src/config/mod.rs` and `src/config/types.rs`. The two
+  `docs/dev/milestones/M26-*` rows are the start-of-phase status flip and
+  this phase's own started Update Log entry.
+- The 14 caught by `config::tests::sandbox` are the eight new tests plus
+  the six pre-existing sandbox tests, `sandbox_validate_warns_and_never_panics`
+  unedited among them.
