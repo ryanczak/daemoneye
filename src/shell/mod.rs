@@ -40,13 +40,13 @@ pub(crate) use pty::{test_begin_marker, test_end_marker};
 pub use registry::{
     Owner, ShellId, ShellRecord, ShellRegistry, adopt_at_startup, allocate_index, check_owner_cap,
     host_is_alive, is_user_shell, mark_interactive, parse_cast_name, reap_exited, scan_shell_ids,
-    spawn_for, spawn_for_on_host, sweep_stale, with_shells,
+    spawn_for, spawn_for_in_sandbox, spawn_for_on_host, sweep_stale, with_shells,
 };
 pub use screen::ShellScreen;
 pub use session::{
     host_entry, host_entry_or_bare, login_shell, marker_shell_name, master_running,
-    shell_for_owner, spawn_dedicated_for, spawn_detached_host, spawn_ghost_ssh_host,
-    spawn_ssh_host, which_ssh,
+    shell_for_owner, shell_marker_name, spawn_dedicated_for, spawn_detached_host,
+    spawn_ghost_ssh_host, spawn_sbx_host, spawn_ssh_host, which_sbx, which_ssh,
 };
 
 use std::sync::OnceLock;

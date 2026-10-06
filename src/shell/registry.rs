@@ -98,6 +98,10 @@ pub struct ShellRecord {
     /// Where this shell runs. `HostId::Local` for every shell the daemon
     /// spawns today; a named host arrives with the SSH spawn.
     pub host: crate::host::HostId,
+    /// The sbx sandbox this shell's child runs in (`sbx exec -it <sandbox> bash`),
+    /// or `None` for a shell on the host itself. A sandbox shell is only ever
+    /// handed to a caller that asks for that sandbox.
+    pub sandbox: Option<String>,
     pub started_unix: u64,
     /// Set when an interactive command (ssh, mosh, …) took this shell's
     /// terminal. Such a shell still passes the liveness probe — its `bash` is
@@ -240,6 +244,48 @@ where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
+    spawn_for_placed(reg, owner, max_per_owner, host, None, dedicated, spawn).await
+}
+
+/// `spawn_for` for a shell whose child runs inside the sbx sandbox `sandbox`.
+/// The shell process itself is local; its commands run in the VM.
+pub async fn spawn_for_in_sandbox<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    max_per_owner: u32,
+    sandbox: String,
+    dedicated: bool,
+    spawn: F,
+) -> anyhow::Result<ShellId>
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    spawn_for_placed(
+        reg,
+        owner,
+        max_per_owner,
+        crate::host::HostId::Local,
+        Some(sandbox),
+        dedicated,
+        spawn,
+    )
+    .await
+}
+
+async fn spawn_for_placed<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    max_per_owner: u32,
+    host: crate::host::HostId,
+    sandbox: Option<String>,
+    dedicated: bool,
+    spawn: F,
+) -> anyhow::Result<ShellId>
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
     let id = with_shells(reg, |store| -> anyhow::Result<ShellId> {
         check_owner_cap(store, &owner, max_per_owner)?;
         let occupied = store.values().map(|record| record.id.index()).collect();
@@ -254,6 +300,7 @@ where
                 id: id.clone(),
                 owner: owner.clone(),
                 host,
+                sandbox,
                 started_unix,
                 interactive: false,
                 dedicated,
@@ -378,6 +425,7 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
                     id: id.clone(),
                     owner: Owner::Adopted,
                     host: crate::host::HostId::Local,
+                    sandbox: None,
                     started_unix,
                     interactive: false,
                     // An adopted shell's original purpose is unknown; `false`
@@ -480,6 +528,7 @@ mod tests {
             id: ShellId::from_index(index),
             owner,
             host: crate::host::HostId::Local,
+            sandbox: None,
             started_unix: 0,
             interactive: false,
             dedicated: false,
@@ -1038,6 +1087,57 @@ mod tests {
             crate::host::HostId::Named("pinky".to_string()),
             "the record must carry the host the spawn named"
         );
+    }
+
+    /// Task 2: the sandbox form stamps the record with the sandbox its child
+    /// runs in, while the shell process itself stays on the local host.
+    #[tokio::test]
+    async fn spawn_for_in_sandbox_records_the_sandbox() {
+        let reg = ShellRegistry::default();
+        let id = spawn_for_in_sandbox(
+            &reg,
+            Owner::Chat("a".into()),
+            5,
+            "de-ghost-r1".into(),
+            false,
+            |_id| async { Ok(()) },
+        )
+        .await
+        .expect("the stub spawn must succeed");
+
+        let guard = reg.try_lock().unwrap();
+        let saved = guard.get(id.as_str()).expect("the record is registered");
+        assert_eq!(
+            saved.sandbox,
+            Some("de-ghost-r1".to_string()),
+            "the record must carry the sandbox the spawn named"
+        );
+        assert_eq!(
+            saved.host,
+            crate::host::HostId::Local,
+            "the shell process itself is local; only its commands run in the VM"
+        );
+    }
+
+    /// The named-host form must keep leaving `sandbox` empty: a sandbox name
+    /// arrives only from the sandbox spawn.
+    #[tokio::test]
+    async fn spawn_for_on_host_records_no_sandbox() {
+        let reg = ShellRegistry::default();
+        let id = spawn_for_on_host(
+            &reg,
+            Owner::Chat("a".into()),
+            5,
+            crate::host::HostId::Named("pinky".to_string()),
+            false,
+            |_id| async { Ok(()) },
+        )
+        .await
+        .expect("the stub spawn must succeed");
+
+        let guard = reg.try_lock().unwrap();
+        let saved = guard.get(id.as_str()).expect("the record is registered");
+        assert_eq!(saved.sandbox, None, "a host spawn records no sandbox");
     }
 
     /// The one-line delegation is what every existing caller still goes

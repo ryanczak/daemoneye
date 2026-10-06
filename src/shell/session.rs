@@ -11,7 +11,8 @@ use crate::config::Config;
 use crate::host::ssh_argv;
 use crate::shell::launch;
 use crate::shell::registry::{
-    Owner, ShellId, ShellRegistry, host_is_alive, spawn_for, spawn_for_on_host, with_shells,
+    Owner, ShellId, ShellRecord, ShellRegistry, host_is_alive, spawn_for, spawn_for_on_host,
+    with_shells,
 };
 
 /// A ready shell socket for `owner` on `host`: reuse the owner's live shell
@@ -48,10 +49,13 @@ where
                 // host-keyed: a shell runs its commands on the host its
                 // record names, so it is handed only to a caller asking for
                 // that same host — anything else would silently relocate
-                // the command.
+                // the command. A sandbox shell runs its commands in a VM, so
+                // it is handed only to a caller that asks for that sandbox,
+                // never to `shell_for_owner`.
                 !record.interactive
                     && !record.dedicated
                     && record.host == host
+                    && record.sandbox.is_none()
                     && record.owner.key() == owner_key
             })
             .map(|record| record.id.clone())
@@ -120,6 +124,16 @@ pub fn marker_shell_name(host: &crate::host::HostId) -> String {
     }
 }
 
+/// The marker-protocol shell name for an existing shell: `"sh"` for a shell
+/// inside a sandbox (its child is always `bash`), otherwise
+/// [`marker_shell_name`] of its host.
+pub fn shell_marker_name(record: &ShellRecord) -> String {
+    if record.sandbox.is_some() {
+        return "sh".to_string();
+    }
+    marker_shell_name(&record.host)
+}
+
 /// The `spawn` argument `shell_for_owner` takes in production: a detached
 /// `daemoneye shell-host` for `id`. Separate from `shell_for_owner` because
 /// `spawn_detached` resolves `current_exe()` and so cannot run under a test
@@ -149,6 +163,38 @@ pub async fn spawn_ssh_host(id: ShellId, name: &str, rows: u16, cols: u16) -> an
     std::fs::create_dir_all(&control).with_context(|| format!("creating {}", control.display()))?;
     let argv = ssh_argv(&entry, &control);
     let program = which_ssh()?;
+    launch::spawn_detached(id.as_str(), &program, &argv, rows, cols).await
+}
+
+/// The `sbx` binary to spawn, resolved on `PATH`. A missing `sbx` is an error
+/// naming the remedy, never a silent fallback and never a spawn failure deep
+/// in the PTY.
+pub fn which_sbx() -> anyhow::Result<String> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join("sbx");
+        if candidate.is_file() {
+            return Ok(candidate.to_string_lossy().into_owned());
+        }
+    }
+    Err(anyhow::anyhow!(
+        "sbx was not found on PATH for the daemon user — a sandbox shell needs \
+         Docker Sandboxes (sbx) installed"
+    ))
+}
+
+/// Spawn a detached `daemoneye shell-host` for `id` whose child is
+/// `sbx exec -it <sandbox> bash`: the shell process itself is local, and every
+/// command it runs executes inside the sandbox's VM. Like `spawn_ssh_host`,
+/// this cannot run under a test — `spawn_detached` resolves `current_exe()`.
+pub async fn spawn_sbx_host(
+    id: ShellId,
+    sandbox: &str,
+    rows: u16,
+    cols: u16,
+) -> anyhow::Result<()> {
+    let argv = crate::daemon::executor::sbx::shell_exec_args(sandbox, None);
+    let program = which_sbx()?;
     launch::spawn_detached(id.as_str(), &program, &argv, rows, cols).await
 }
 
@@ -335,6 +381,7 @@ mod tests {
     use crate::shell::host;
     use crate::shell::registry::ShellRecord;
     use crate::shell::registry::mark_interactive;
+    use crate::shell::registry::spawn_for_in_sandbox;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -514,6 +561,7 @@ mod tests {
                     id: ShellId::from_index(2),
                     owner: owner.clone(),
                     host: crate::host::HostId::Named("pinky".to_string()),
+                    sandbox: None,
                     started_unix: 0,
                     interactive: false,
                     dedicated: false,
@@ -565,6 +613,7 @@ mod tests {
                     id: ShellId::from_index(5),
                     owner: owner.clone(),
                     host: crate::host::HostId::Local,
+                    sandbox: None,
                     started_unix: 0,
                     interactive: false,
                     dedicated: false,
@@ -616,6 +665,7 @@ mod tests {
                     id: ShellId::from_index(0),
                     owner: owner.clone(),
                     host: crate::host::HostId::Local,
+                    sandbox: None,
                     started_unix: 0,
                     interactive: false,
                     dedicated: false,
@@ -628,6 +678,7 @@ mod tests {
                     id: ShellId::from_index(1),
                     owner: owner.clone(),
                     host: crate::host::HostId::Local,
+                    sandbox: None,
                     started_unix: 0,
                     interactive: false,
                     dedicated: false,
@@ -772,6 +823,7 @@ mod tests {
                     id: ShellId::from_index(0),
                     owner: owner.clone(),
                     host: crate::host::HostId::Local,
+                    sandbox: None,
                     started_unix: 0,
                     interactive: false,
                     dedicated: true,
@@ -947,6 +999,46 @@ mod tests {
             "bash",
             "no $SHELL falls back to bash, as login_shell always did"
         );
+    }
+
+    /// A sandbox shell's child is always `bash`, so its marker name is POSIX
+    /// `"sh"` (`$?`) regardless of the daemon's `$SHELL` — the same rule a
+    /// remote shell gets. A record with no sandbox keeps the host's name.
+    #[test]
+    fn shell_marker_name_is_posix_inside_a_sandbox() {
+        let _guard = crate::test_home_guard();
+        let boxed = ShellRecord {
+            id: ShellId::from_index(9),
+            owner: Owner::Chat("a".into()),
+            host: crate::host::HostId::Local,
+            sandbox: Some("de-ghost-r1".to_string()),
+            started_unix: 0,
+            interactive: false,
+            dedicated: false,
+            exited_unix: None,
+        };
+        let plain = ShellRecord {
+            id: ShellId::from_index(10),
+            owner: Owner::Chat("a".into()),
+            host: crate::host::HostId::Local,
+            sandbox: None,
+            started_unix: 0,
+            interactive: false,
+            dedicated: false,
+            exited_unix: None,
+        };
+        with_fish_shell(|| {
+            assert_eq!(
+                shell_marker_name(&boxed),
+                "sh",
+                "a sandbox shell's child is bash; its marker must ride POSIX $?"
+            );
+            assert_eq!(
+                shell_marker_name(&plain),
+                login_shell(),
+                "a shell with no sandbox keeps its host's marker name"
+            );
+        });
     }
 
     /// A host the config does not carry is refused by name, and the refusal
@@ -1178,6 +1270,63 @@ mod tests {
         assert_eq!(
             local_rows, 1,
             "the fresh local shell is the one the local caller got"
+        );
+    }
+
+    /// Task 4's negative case: an ordinary `shell_for_owner` caller is never
+    /// handed a shell that lives in a sandbox — its commands would run in a
+    /// VM. The sandbox shell is skipped, left in the registry for later work
+    /// that asks for that sandbox by name, and the caller gets a fresh host
+    /// shell.
+    #[tokio::test]
+    async fn shell_for_owner_never_reuses_a_sandbox_shell() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("boxed".into());
+
+        let boxed_id = spawn_for_in_sandbox(
+            &reg,
+            owner.clone(),
+            5,
+            "de-chat-t".into(),
+            false,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the sandbox shell's host comes up");
+        launch::await_ready(
+            &launch::socket_path(boxed_id.as_str()),
+            std::time::Instant::now() + Duration::from_secs(15),
+        )
+        .await
+        .expect("the sandbox shell's host must be alive, or the filter is not under test");
+
+        let (local_id, _) = shell_for_owner(
+            &reg,
+            owner,
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the local request is answered with a shell");
+
+        assert_ne!(
+            local_id.as_str(),
+            boxed_id.as_str(),
+            "an ordinary caller must not land in a sandbox shell"
+        );
+
+        let boxed_rows = with_shells(&reg, |store| {
+            store
+                .values()
+                .filter(|r| r.id.as_str() == boxed_id.as_str())
+                .count()
+        });
+        assert_eq!(
+            boxed_rows, 1,
+            "the sandbox shell must be skipped, not reaped: it is still in the registry"
         );
     }
 }

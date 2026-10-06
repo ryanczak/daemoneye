@@ -1,7 +1,7 @@
 # Phase 04a: sbx-shell — shell records that live in a sandbox, and how they are spawned
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03
 **Estimated diff:** ~200 lines (about 70 code, 130 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -352,3 +352,39 @@ clippy `Finished …`; `fmt_exit=0`; `failed=0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-06 16:43 (progress)
+
+Started phase-04a: flipped the status to in-progress and updated the README row.
+Read the current `ShellRecord` and its ten literal sites, the SSH launcher shape
+in `session.rs`, and the `shell_exec_args` builder in `sbx.rs`. Now adding the
+`sandbox` field, the `spawn_for_in_sandbox` registry spawn, the sbx launcher,
+the reuse-filter guard, and `shell_marker_name`.
+
+### Update — 2026-10-06 16:58 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim, once, redirecting to
+`.rexymcp/output/phase-04a-e2e.log`; the paste below is that file.
+
+```
+test shell::session::tests::shell_marker_name_is_posix_inside_a_sandbox ... ok
+test shell::registry::tests::spawn_for_on_host_records_the_named_host ... ok
+test shell::registry::tests::spawn_for_in_sandbox_records_the_sandbox ... ok
+test shell::registry::tests::spawn_for_on_host_records_no_sandbox ... ok
+test shell::session::tests::shell_for_owner_never_reuses_a_sandbox_shell ... ok
+test shell::session::tests::shell_for_owner_does_not_reuse_a_shell_from_another_host ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2269 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.92s
+fmt_exit=0
+passed=2325 failed=0
+ docs/dev/milestones/M26-sbx-isolation/README.md    |   2 +-
+ .../M26-sbx-isolation/phase-04a-sbx-shell.md       |  10 +-
+ src/daemon/executor/knowledge/shell.rs             |   1 +
+ src/shell/mod.rs                                   |   6 +-
+ src/shell/registry.rs                              | 100 ++++++++++++++
+ src/shell/session.rs                               | 153 ++++++++++++++++++++-
+ 6 files changed, 265 insertions(+), 7 deletions(-)
+```
+
+PASTE MATCH: yes — six tests ok and `6 passed; 0 failed`; clippy `Finished …`;
+`fmt_exit=0`; `passed=2325 failed=0`.

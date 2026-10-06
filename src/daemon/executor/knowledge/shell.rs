@@ -2310,6 +2310,7 @@ mod tests {
                     id: ShellId::from_index(index),
                     owner,
                     host: crate::host::HostId::Local,
+                    sandbox: None,
                     started_unix,
                     interactive: false,
                     dedicated: false,
