@@ -1,7 +1,7 @@
 # Phase 06d: sbx-script-stage — copy the one approved script into the ghost's sandbox
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06c
 **Estimated diff:** ~300 lines (about 90 code, 210 tests)
 **Tags:** language=rust, kind=feature, size=m

@@ -1238,19 +1238,52 @@ where
         .await
         {
             Ok(sandbox) => {
-                let spawn_sandbox = sandbox.clone();
-                super::ghost_sandbox::run_ghost_in_sandbox(
-                    crate::shell::registry(),
-                    crate::shell::Owner::Ghost(sid.clone()),
-                    &sandbox,
-                    cmd,
-                    id,
-                    move |shell_id| {
-                        let s = spawn_sandbox.clone();
-                        async move { crate::shell::spawn_sbx_host(shell_id, &s, 24, 80).await }
-                    },
-                )
-                .await
+                // An approved-script invocation runs the operator's copy of
+                // the script, staged into the sandbox on every call, never
+                // the sandbox's own (overwritable) one. A staging failure is
+                // an operator-facing reason: the command never runs.
+                let staged: Result<String, String> =
+                    match crate::daemon::executor::sbx::script_invocation(cmd, |n| {
+                        crate::scripts::resolve_script(n).is_ok()
+                    }) {
+                        Some((name, args_tail)) => {
+                            let host_path = crate::config::scripts_dir().join(&name);
+                            match super::ghost_sandbox::stage_script(
+                                &run,
+                                &sandbox,
+                                &name,
+                                &host_path.to_string_lossy(),
+                            )
+                            .await
+                            {
+                                Ok(()) => Ok(crate::daemon::executor::sbx::staged_script_command(
+                                    &name, &args_tail,
+                                )),
+                                Err(reason) => Err(reason),
+                            }
+                        }
+                        None => Ok(cmd.to_string()),
+                    };
+                match staged {
+                    Ok(cmd_to_run) => {
+                        let spawn_sandbox = sandbox.clone();
+                        super::ghost_sandbox::run_ghost_in_sandbox(
+                            crate::shell::registry(),
+                            crate::shell::Owner::Ghost(sid.clone()),
+                            &sandbox,
+                            &cmd_to_run,
+                            id,
+                            move |shell_id| {
+                                let s = spawn_sandbox.clone();
+                                async move {
+                                    crate::shell::spawn_sbx_host(shell_id, &s, 24, 80).await
+                                }
+                            },
+                        )
+                        .await
+                    }
+                    Err(reason) => (reason, 1),
+                }
             }
             Err(reason) => (reason, 1),
         };

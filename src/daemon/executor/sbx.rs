@@ -341,6 +341,68 @@ pub fn exec_args(name: &str, argv: &[&str]) -> Vec<String> {
     out
 }
 
+/// Where staged scripts live inside a sandbox.
+pub const STAGED_SCRIPTS_DIR: &str = "/de/scripts";
+
+/// A script name safe to put on a path and a command line: no `..`, no
+/// whitespace, none of `/ ; & | $ \` ' " \n`.
+pub fn script_name_is_safe(script_name: &str) -> bool {
+    if script_name.is_empty() || script_name.contains("..") {
+        return false;
+    }
+    script_name.chars().all(|c| {
+        !c.is_whitespace() && !matches!(c, '/' | ';' | '&' | '|' | '$' | '`' | '\'' | '"' | '\n')
+    })
+}
+
+/// The approved script `cmd` invokes, as `(name, args_tail)`; never under
+/// sudo. `script_exists` answers whether `~/.daemoneye/scripts/<name>` is a
+/// real script (production passes `resolve_script(..).is_ok()`). `None` is
+/// an ordinary command: run it as it stands.
+pub fn script_invocation(
+    cmd: &str,
+    script_exists: impl Fn(&str) -> bool,
+) -> Option<(String, String)> {
+    if crate::daemon::utils::command_has_sudo(cmd) {
+        return None;
+    }
+    let (name, args_tail) = crate::scripts::parse_script_invocation(cmd)?;
+    if !script_exists(&name) {
+        return None;
+    }
+    Some((name, args_tail))
+}
+
+/// The in-VM command for a staged script: its path under
+/// [`STAGED_SCRIPTS_DIR`], then the verbatim argument tail.
+pub fn staged_script_command(script_name: &str, args_tail: &str) -> String {
+    format!("{STAGED_SCRIPTS_DIR}/{script_name}{args_tail}")
+}
+
+/// Argv to create [`STAGED_SCRIPTS_DIR`] in the sandbox as `root`, then hand
+/// it to the sandbox's `agent` user (the default user of an `sbx exec`).
+pub fn stage_prep_args(sandbox: &str) -> Vec<String> {
+    vec![
+        "exec".to_string(),
+        "-u".to_string(),
+        "root".to_string(),
+        sandbox.to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        format!("mkdir -p {STAGED_SCRIPTS_DIR} && chown agent:agent {STAGED_SCRIPTS_DIR}"),
+    ]
+}
+
+/// Argv to copy the host script into the sandbox at
+/// `<sandbox>:[STAGED_SCRIPTS_DIR]/<name>`.
+pub fn stage_cp_args(host_path: &str, sandbox: &str, script_name: &str) -> Vec<String> {
+    vec![
+        "cp".to_string(),
+        host_path.to_string(),
+        format!("{sandbox}:{STAGED_SCRIPTS_DIR}/{script_name}"),
+    ]
+}
+
 /// Argv to stop sandboxes. Empty for no names — callers skip an empty argv,
 /// because `sbx stop` with no names must never run.
 pub fn stop_args(names: &[String]) -> Vec<String> {
@@ -553,6 +615,90 @@ mod tests {
             stdout: stdout.to_string(),
             stderr: stderr.to_string(),
         }
+    }
+
+    #[test]
+    fn staged_script_command_points_at_the_sandbox_copy() {
+        assert_eq!(
+            staged_script_command("restart.sh", " --now"),
+            "/de/scripts/restart.sh --now"
+        );
+        assert_eq!(
+            staged_script_command("a.sh", ""),
+            "/de/scripts/a.sh",
+            "an argument-less invocation appends nothing"
+        );
+        assert_eq!(
+            staged_script_command("restart.sh", " --now"),
+            format!("{STAGED_SCRIPTS_DIR}/restart.sh --now"),
+            "the dir constant is the source of the path"
+        );
+    }
+
+    #[test]
+    fn stage_args_match_the_measured_shapes() {
+        assert_eq!(
+            stage_prep_args("de-ghost-r1"),
+            vec![
+                "exec".to_string(),
+                "-u".to_string(),
+                "root".to_string(),
+                "de-ghost-r1".to_string(),
+                "sh".to_string(),
+                "-c".to_string(),
+                "mkdir -p /de/scripts && chown agent:agent /de/scripts".to_string(),
+            ]
+        );
+        assert_eq!(
+            stage_cp_args("/h/s.sh", "de-ghost-r1", "s.sh"),
+            vec![
+                "cp".to_string(),
+                "/h/s.sh".to_string(),
+                "de-ghost-r1:/de/scripts/s.sh".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn script_name_is_safe_rejects_path_and_shell_characters() {
+        for ok in ["ok.sh", "backup-db_2.sh"] {
+            assert!(script_name_is_safe(ok), "`{ok}` is a safe name");
+        }
+        for bad in [
+            "", "../x", "a/b", "a b", "a;b", "a&b", "a|b", "$(x)", "a`b", "a'b", "a\"b", "a\nb",
+        ] {
+            assert!(!script_name_is_safe(bad), "`{bad:?}` is not a safe name");
+        }
+    }
+
+    #[test]
+    fn script_invocation_skips_sudo_and_unknown_scripts() {
+        let exists = |n: &str| n == "restart.sh";
+        assert_eq!(
+            script_invocation("restart.sh --now", exists),
+            Some(("restart.sh".to_string(), " --now".to_string())),
+            "a bare script name followed by its arguments"
+        );
+        assert_eq!(
+            script_invocation("restart.sh", exists),
+            Some(("restart.sh".to_string(), String::new())),
+            "a bare script name with no arguments"
+        );
+        assert_eq!(
+            script_invocation("sudo restart.sh --now", exists),
+            None,
+            "sudo is never staged"
+        );
+        assert_eq!(
+            script_invocation("unknown.sh --flag", exists),
+            None,
+            "an unknown script is an ordinary command"
+        );
+        assert_eq!(
+            script_invocation("ls -la", exists),
+            None,
+            "a basename that is not a script is an ordinary command"
+        );
     }
 
     fn spawn_probe(kind: std::io::ErrorKind) -> Probe {

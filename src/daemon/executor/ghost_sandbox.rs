@@ -4,7 +4,9 @@
 //! The created-sandbox set is process-wide, so one ghost run creates at most
 //! one sandbox however many turns and commands it has.
 
-use crate::daemon::executor::sbx::SandboxKind;
+use crate::daemon::executor::sbx::{
+    SandboxKind, script_name_is_safe, stage_cp_args, stage_prep_args,
+};
 use crate::shell::{Owner, SbxRunner, ShellRegistry};
 use crate::util::UnpoisonExt;
 
@@ -138,6 +140,36 @@ where
         Ok((_, result)) => (result.text, result.exit_code),
         Err(e) => (super::shell_run_error_text(id.as_str(), &e), 1),
     }
+}
+
+/// Copy the approved script `name` into `sandbox` at [`sbx::STAGED_SCRIPTS_DIR`],
+/// every time it is invoked: the agent can overwrite its copy, so the
+/// operator's version is re-staged per command. Fails closed: `Err` is an
+/// operator-facing reason, and the caller must not run the command.
+pub async fn stage_script(
+    run: &crate::shell::SbxRunner,
+    sandbox: &str,
+    name: &str,
+    host_path: &str,
+) -> Result<(), String> {
+    if !script_name_is_safe(name) {
+        return Err(format!(
+            "sandbox staging failed for `{name}`: `{name}` is not a stageable script name"
+        ));
+    }
+    for args in [
+        stage_prep_args(sandbox),
+        stage_cp_args(host_path, sandbox, name),
+    ] {
+        let out = run(args).await;
+        if out.code != Some(0) {
+            return Err(format!(
+                "sandbox staging failed for `{name}`: {}",
+                out.stderr.trim()
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -702,5 +734,76 @@ mod tests {
             store.get(id.as_str()).and_then(|r| r.sandbox.clone())
         });
         assert_eq!(sandbox, Some("de-ghost-z".to_string()));
+    }
+
+    #[tokio::test]
+    async fn stage_script_preps_then_copies() {
+        let (runner, calls, _canned) = fake();
+        stage_script(&runner, "de-ghost-t", "s.sh", "/h/s.sh")
+            .await
+            .expect("both runs exited 0");
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "prep, then the copy: {calls:?}");
+        assert_eq!(calls[0], stage_prep_args("de-ghost-t"), "{calls:?}");
+        assert_eq!(
+            calls[1],
+            stage_cp_args("/h/s.sh", "de-ghost-t", "s.sh"),
+            "{calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stage_script_refuses_an_unsafe_name_without_sbx() {
+        let (runner, calls, _canned) = fake();
+        let err = stage_script(&runner, "de-ghost-t", "../evil", "/h/evil")
+            .await
+            .expect_err("an unsafe name is refused");
+        assert!(
+            err.starts_with("sandbox staging failed for `../evil`: "),
+            "got: {err}"
+        );
+        let calls = calls.lock().unwrap();
+        assert!(
+            calls.is_empty(),
+            "no sbx call before the name check: {calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stage_script_fails_closed_on_a_failed_copy() {
+        let (runner, calls, canned) = fake();
+        canned.lock().unwrap().push(run(Some(0), "", ""));
+        canned.lock().unwrap().push(run(
+            Some(1),
+            "",
+            "error: resolve source path: lstat /h/s.sh: no such file or directory",
+        ));
+        let err = stage_script(&runner, "de-ghost-t", "s.sh", "/h/s.sh")
+            .await
+            .expect_err("the copy failed");
+        assert!(
+            err.starts_with("sandbox staging failed for `s.sh`: "),
+            "got: {err}"
+        );
+        assert!(err.contains("no such file"), "got: {err}");
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "prep ran, then the failed copy: {calls:?}");
+    }
+
+    #[tokio::test]
+    async fn stage_script_fails_closed_on_a_failed_prep() {
+        let (runner, calls, canned) = fake();
+        canned.lock().unwrap().push(run(Some(1), "", "mkdir: oops"));
+        let err = stage_script(&runner, "de-ghost-t", "s.sh", "/h/s.sh")
+            .await
+            .expect_err("the prep failed");
+        assert!(
+            err.starts_with("sandbox staging failed for `s.sh`: "),
+            "got: {err}"
+        );
+        assert!(err.contains("mkdir: oops"), "got: {err}");
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "no cp call after a failed prep: {calls:?}");
+        assert_eq!(calls[0], stage_prep_args("de-ghost-t"), "{calls:?}");
     }
 }
