@@ -591,6 +591,24 @@ pub async fn trigger_ghost_turn(
             }),
         );
     }
+    // 06c: the ghost's sbx sandbox dies with the ghost, after its shells do.
+    // A ghost that never ran a sandboxed command gets `rm` of a missing
+    // sandbox, which reads as `Removed`, so this is harmless for it.
+    if config.sandbox.enabled && config.sandbox.runtime == "sbx" {
+        let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
+        let outcome = crate::daemon::executor::ghost_sandbox::teardown_ghost_sandbox(
+            &crate::shell::real_runner(program),
+            session_id,
+        )
+        .await;
+        crate::daemon::utils::log_event(
+            "ghost_sandbox_teardown",
+            serde_json::json!({
+                "session": session_id,
+                "outcome": format!("{outcome:?}"),
+            }),
+        );
+    }
     result
 }
 

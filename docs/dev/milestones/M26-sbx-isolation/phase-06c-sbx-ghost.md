@@ -1,7 +1,7 @@
 # Phase 06c: sbx-ghost — a sandboxed local ghost runs in its own sandbox
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06b
 **Estimated diff:** ~420 lines (about 180 code, 240 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -429,3 +429,12 @@ the `cargo test` lines. rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-07 16:56 (started, executor dispatch 1)
+
+**Executor:** executor (M26 phase-06c, dispatch 1)
+
+Flipped the phase and README rows to `in-progress`. Beginning Task 1: the
+`ghost_sandbox` module with its tests, then the `run_background` routing,
+the ghost-exit teardown and the startup sweep, then Task 5's end-to-end
+capture.

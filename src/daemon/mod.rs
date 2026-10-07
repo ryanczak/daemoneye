@@ -810,6 +810,30 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                 adopted.len()
             );
         }
+        // 06c: a daemon that died with `sbx` sandboxes live sweeps the ones
+        // no surviving shell record owns, off the startup path.
+        if startup_config.sandbox.enabled && startup_config.sandbox.runtime == "sbx" {
+            let live: Vec<String> = crate::shell::with_shells(&reg, |store| {
+                store.values().filter_map(|r| r.sandbox.clone()).collect()
+            });
+            let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
+            tokio::spawn(async move {
+                let report = crate::daemon::executor::sbx_lifecycle::sweep_daemon_sandboxes(
+                    &crate::shell::real_runner(program),
+                    &live,
+                )
+                .await;
+                crate::daemon::utils::log_event(
+                    "sbx_startup_sweep",
+                    serde_json::json!({
+                        "removed": report.removed,
+                        "stopped": report.stopped,
+                        "failed": report.failed,
+                        "list_error": report.list_error,
+                    }),
+                );
+            });
+        }
         Some(reg)
     } else {
         None

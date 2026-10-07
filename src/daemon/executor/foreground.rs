@@ -1214,6 +1214,59 @@ where
         return Ok(ToolCallOutcome::Result(output));
     }
 
+    // A **sandboxed** local ghost runs the approved command in a PTY shell
+    // inside the ghost run's own sbx sandbox: the sandbox is created on the
+    // first command behind a fail-closed preflight (a failure returns the
+    // reason as the tool result and the command is never run on the host).
+    // The ghost's sandbox profile is its agent name.
+    let sandbox_cfg = crate::config::Config::load().unwrap_or_default().sandbox;
+    if super::ghost_sandbox::ghost_sandbox_pty(is_ghost, uses_pty, &sandbox_cfg, ghost_policy) {
+        let sid = session_id.unwrap_or_default().to_string();
+        let profile = with_sessions(sessions, |store| {
+            store
+                .get(sid.as_str())
+                .and_then(|e| e.ghost_config.as_ref().and_then(|g| g.agent.clone()))
+        });
+        let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
+        let run = crate::shell::real_runner(program);
+        let (output, exit_code) = match super::ghost_sandbox::ensure_ghost_sandbox(
+            &run,
+            &sandbox_cfg,
+            &sid,
+            profile.as_deref(),
+        )
+        .await
+        {
+            Ok(sandbox) => {
+                let spawn_sandbox = sandbox.clone();
+                super::ghost_sandbox::run_ghost_in_sandbox(
+                    crate::shell::registry(),
+                    crate::shell::Owner::Ghost(sid.clone()),
+                    &sandbox,
+                    cmd,
+                    id,
+                    move |shell_id| {
+                        let s = spawn_sandbox.clone();
+                        async move { crate::shell::spawn_sbx_host(shell_id, &s, 24, 80).await }
+                    },
+                )
+                .await
+            }
+            Err(reason) => (reason, 1),
+        };
+        crate::daemon::stats::finish_command(cmd_id, exit_code);
+        send_response_split(
+            tx,
+            Response::ToolResult {
+                tool_call_id: id.to_string(),
+                output: output.clone(),
+            },
+        )
+        .await?;
+        log_command(session_id, "background", "", cmd, "approved", &output);
+        return Ok(ToolCallOutcome::Result(output));
+    }
+
     // A local ghost runs the approved command in a PTY shell on the daemon
     // host, owned by the ghost and reused for its later commands, as the
     // remote branch above does on its host. The sandbox keeps the tmux
