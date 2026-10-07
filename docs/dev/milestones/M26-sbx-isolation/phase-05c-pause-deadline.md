@@ -1,7 +1,7 @@
 # Phase 05c: pause-deadline — time spent paused does not count against a command's deadline
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-05b
 **Estimated diff:** ~120 lines (about 25 code, 95 tests)
 **Tags:** language=rust, kind=bugfix, size=s
@@ -403,3 +403,25 @@ kill: (-315464): No such process
 **Commit:** b9c5993abf5848cf9bd416b04c4a04797b5ca5cb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-07
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (62 turns,
+  `b9c5993a`). No evidence-step loop.
+- **Scope deviations:** none. Only `read_to_marker`'s timed-out-slice arm
+  changed: the status check now comes first, a `Paused` status adds the
+  slice back to the deadline, and the deadline is judged after. The
+  `Chunk`/prompt handling and the constants are untouched, and no existing
+  test was edited.
+- **Reviewer re-run:** fmt, build and clippy clean; the pause test passes
+  (3.31 s, longer than its 2 s limit, as intended); the negative test times
+  out at 1.00 s; `shell::client` 29 passed; full suite `passed=2353 failed=0`
+  on the first run.
+- **Reviewer mutation check:** deleting `deadline += slice_started.elapsed();`
+  makes the pause test fail with `timed out after 2s waiting for command
+  output: "sleep 1; echo PAUSED_OK"`.
+- **Note:** the status flip and server-authored completion entry were
+  committed by the PE as `8b6e3370` (no code).
+- **Calibration:** none.
