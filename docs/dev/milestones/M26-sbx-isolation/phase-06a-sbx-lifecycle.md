@@ -1,7 +1,7 @@
 # Phase 06a: sbx-lifecycle — preflight, create, teardown and sweep sandboxes
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-05c
 **Estimated diff:** ~420 lines (about 150 code, 270 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -526,3 +526,24 @@ kill: (-363780): No such process
 **Commit:** 06aafca6fa877218dce389d12c09648370794bfb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-07
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (105 turns,
+  `06aafca6`). No evidence-step loop.
+- **Scope deviations:** none. There are three extra tests (17 instead of 14):
+  the daemon-probe spawn failure, an unparsable listing and one more. They
+  add coverage without changing the spec. `clear_sandbox_sidecar` is called
+  once in each of the three plain spawners; `spawn_sbx_host` now runs
+  `which_sbx()` before writing the sidecar and removes it when the spawn fails.
+- **Reviewer re-run:** fmt, build and clippy clean; `executor::sbx_lifecycle`
+  17 passed; the sidecar test passed; `executor::sbx` 49 and `shell::` 347
+  passed; full suite `passed=2371 failed=0` on the first run. No `unwrap` /
+  `expect` / `panic!` / `#[allow]` outside tests.
+- **Reviewer mutation checks** (each turned its test red, then was restored):
+  (a) `teardown_sandbox` never accepting `stop` fails
+  `teardown_falls_back_to_stop_when_rm_fails`; (b) the sweep tearing down
+  every listed name fails `sweep_removes_only_stale_daemon_sandboxes`.
+- **Calibration:** none.
