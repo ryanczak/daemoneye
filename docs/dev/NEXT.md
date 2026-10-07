@@ -6,10 +6,10 @@ Rescoped 2026-10-05 from "tmux removal & 2.0 close" (now **M27**; later
 milestones are M28–M30, `docs/design/daemoneye-2.0.md` § 6). **PE signed off
 on scope 2026-10-05**, accepting all six recommendations.
 
-**Active phase: 04b — sbx-adopt**,
-[`phase-04b-sbx-adopt.md`](milestones/M26-sbx-isolation/phase-04b-sbx-adopt.md),
-status `todo`, for the executor: a sandbox shell keeps its sandbox across a
-daemon restart through a `<id>.sandbox` sidecar. Phases 01–03 and 04a are done.
+**Active phase: none drafted.** Phases 01–03, 04a and 04b are **done** (04b:
+the `<id>.sandbox` sidecar survives a daemon restart, approved_first_try). Next
+is row **05 — sbx-signals** (pause/resume/cancel inside the VM);
+`/rexymcp:architect next` drafts it.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline
