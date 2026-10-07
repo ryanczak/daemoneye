@@ -198,9 +198,16 @@ a new Update Log entry.
 
 ## Acceptance criteria
 
-- [ ] The tests in § Test plan pass when run by name. Use
-      `cargo test --lib staged` and `cargo test --lib stage_` for groups, and
-      read the `test result:` line.
+- [ ] Each of these eight tests reports `1 passed; 0 failed` when run alone
+      (`cargo test --lib <name>`):
+      `staged_script_command_points_at_the_sandbox_copy`,
+      `stage_args_match_the_measured_shapes`,
+      `script_name_is_safe_rejects_path_and_shell_characters`,
+      `script_invocation_skips_sudo_and_unknown_scripts`,
+      `stage_script_preps_then_copies`,
+      `stage_script_refuses_an_unsafe_name_without_sbx`,
+      `stage_script_fails_closed_on_a_failed_copy`,
+      `stage_script_fails_closed_on_a_failed_prep`.
 - [ ] `cargo test --lib executor::sbx` and `cargo test --lib executor::ghost_sandbox`
       report `0 failed`, with no existing test edited.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` exits 0.
@@ -224,9 +231,11 @@ In `src/daemon/executor/sbx.rs` tests:
   `"$(x)"`, ``"a`b"``, `"a'b"` and `"a\"b"` are not.
 - `script_invocation_skips_sudo_and_unknown_scripts`: with
   `exists = |n| n == "restart.sh"`, an invocation of `restart.sh` with args →
-  `Some(("restart.sh", <tail>))`. Build the command string the way
-  `crate::scripts::parse_script_invocation`'s own tests do, and read one of
-  them first to get the exact accepted shape. `sudo` plus the same invocation
+  `Some(("restart.sh", " --now"))` for the command `"restart.sh --now"`. The
+  accepted shape is a bare script name followed by its arguments, and the tail
+  keeps its leading space; `parse_script_invocation`'s own test shows it as
+  `parse_script_invocation("foo.sh --flag arg")` ==
+  `Some(("foo.sh", " --flag arg"))`. `sudo restart.sh --now`
   → `None`; an unknown script → `None`; `ls -la` → `None`.
 
 In `src/daemon/executor/ghost_sandbox.rs` tests (fake runner):
@@ -249,10 +258,7 @@ In `src/daemon/executor/ghost_sandbox.rs` tests (fake runner):
 ## End-to-end verification
 
 ```sh
-cargo test --lib staged 2>&1 | grep -E '^test result'
-cargo test --lib stage_ 2>&1 | grep -E '^test result'
-cargo test --lib script_invocation_skips_sudo_and_unknown_scripts 2>&1 | grep -E '^test result'
-cargo test --lib script_name_is_safe_rejects_path_and_shell_characters 2>&1 | grep -E '^test result'
+for t in staged_script_command_points_at_the_sandbox_copy stage_args_match_the_measured_shapes script_name_is_safe_rejects_path_and_shell_characters script_invocation_skips_sudo_and_unknown_scripts stage_script_preps_then_copies stage_script_refuses_an_unsafe_name_without_sbx stage_script_fails_closed_on_a_failed_copy stage_script_fails_closed_on_a_failed_prep; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
 cargo test --lib executor::sbx 2>&1 | grep -E '^test result'
 cargo test --lib executor::ghost_sandbox 2>&1 | grep -E '^test result'
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
