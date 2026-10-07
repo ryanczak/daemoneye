@@ -6,12 +6,11 @@ Rescoped 2026-10-05 from "tmux removal & 2.0 close" (now **M27**; later
 milestones are M28–M30, `docs/design/daemoneye-2.0.md` § 6). **PE signed off
 on scope 2026-10-05**, accepting all six recommendations.
 
-**Active phase: none drafted.** Phases 01–08a are **done** (08a, sbx status,
-approved_first_try). Next is row **08b — sbx-egress-audit**: read `sbx policy
-log <name> --json` just before each teardown, put a ghost run's
-allowed/blocked hosts in its turn log and events.jsonl, and log chat sandboxes'
-at reap. `/rexymcp:architect next` drafts it. The live checks for 06c, 07 and
-08a are deferred to the row-10 live close.
+**Active phase: 08b — sbx-egress-audit**,
+[`phase-08b-sbx-egress-audit.md`](milestones/M26-sbx-isolation/phase-08b-sbx-egress-audit.md),
+status `todo`, for the executor: read `sbx policy log <name> --json` before
+each teardown; a ghost run gets a turn-log `Note` plus a `sandbox_egress`
+event, and a reaped chat sandbox gets the event. Phases 01–08a are done.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline
