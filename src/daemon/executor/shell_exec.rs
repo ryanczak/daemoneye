@@ -328,11 +328,23 @@ where
         );
         return Ok((id, ShellRunResult { text, exit_code: 0 }));
     }
-    let (started_unix, record_host) = with_shells(reg, |store| {
+    let (started_unix, record_host, marker) = with_shells(reg, |store| {
         store
             .get(id.as_str())
-            .map(|record| (record.started_unix, record.host.clone()))
-            .unwrap_or((0, crate::host::HostId::Local))
+            .map(|record| {
+                (
+                    record.started_unix,
+                    record.host.clone(),
+                    crate::shell::shell_marker_name(record),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    0,
+                    crate::host::HostId::Local,
+                    marker_shell_name(&crate::host::HostId::Local),
+                )
+            })
     });
     // The cast length BEFORE the command runs — the producer window's left
     // edge. Read here, not inside the indexing step: by the time a completed
@@ -346,26 +358,21 @@ where
     // Task 3, step 1: a command without sudo takes the plain path. Everything
     // about the call is identical to what shipped before this phase.
     let Some(prompts) = prompts else {
-        let outcome = run_command(
-            &socket,
-            cmd,
-            &marker_shell_name(&record_host),
-            applied_timeout,
-        )
-        .await
-        .map_err(|e| {
-            if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
-                e.context(format!(
-                    "shell {} exited before the command finished",
-                    id.as_str()
-                ))
-            } else {
-                e.context(format!(
-                    "command exceeded the {applied_timeout:#?} limit in shell {}",
-                    id.as_str()
-                ))
-            }
-        })?;
+        let outcome = run_command(&socket, cmd, &marker, applied_timeout)
+            .await
+            .map_err(|e| {
+                if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
+                    e.context(format!(
+                        "shell {} exited before the command finished",
+                        id.as_str()
+                    ))
+                } else {
+                    e.context(format!(
+                        "command exceeded the {applied_timeout:#?} limit in shell {}",
+                        id.as_str()
+                    ))
+                }
+            })?;
         return finish_run(reg, cmd, &id, &outcome, before).await;
     };
 
@@ -373,7 +380,7 @@ where
     let outcome = run_sudo_command(
         &socket,
         &wrapped,
-        &marker_shell_name(&record_host),
+        &marker,
         applied_timeout,
         prompts,
         record_host.as_str(),
@@ -1069,6 +1076,28 @@ mod tests {
         (guard, dir)
     }
 
+    /// `$SHELL` pointed at fish for the duration of one test, restored by
+    /// `Drop` even when an assertion fails mid-test — the guard form of the
+    /// session module's `with_fish_shell`, which cannot early-return.
+    pub(super) struct FishShellEnv;
+
+    impl FishShellEnv {
+        pub(super) fn set() -> Self {
+            unsafe {
+                std::env::set_var("SHELL", "/usr/bin/fish");
+            }
+            FishShellEnv
+        }
+    }
+
+    impl Drop for FishShellEnv {
+        fn drop(&mut self) {
+            unsafe {
+                std::env::remove_var("SHELL");
+            }
+        }
+    }
+
     /// The production spawn substitute: a real in-process PTY host serving the
     /// configured socket for `id`, a bash session whose `.cast` the returned
     /// path points at. `spawn_detached_host` cannot run under a test (07b F4).
@@ -1091,7 +1120,7 @@ mod tests {
 
     /// The spawn step `run_in_shell_with` takes, paired with the cast path the
     /// host writes so a test can read the raw log afterwards.
-    async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
+    pub(super) async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
         let cast = spawn_with_cast(id.clone()).await?;
         std::mem::forget(cast);
         Ok(())
@@ -3312,5 +3341,74 @@ mod connect_tests {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
+    }
+
+    // ── M26 phase-06b: the marker comes from the record ─────────────────────
+
+    use super::tests::{FishShellEnv, spawn_in_process_host};
+
+    /// A sandbox shell targeted by id gets the POSIX marker (`"sh"` → `$?`),
+    /// **not** the daemon's `$SHELL`. With the daemon's `$SHELL` fish, the
+    /// marker would ask for `$status`, which the sandbox's bash expands to
+    /// nothing, so the exit code never parses. Regression guard for phase-06b
+    /// Task 2: reverting to `marker_shell_name(&record_host)` (the host's
+    /// login shell, `/usr/bin/fish` here) makes this test time out.
+    #[tokio::test]
+    async fn a_sandbox_shell_targeted_by_id_uses_the_posix_marker() {
+        let _pty = PTY_TEST_LOCK.lock().await;
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("sandbox-marker".into());
+
+        // A live sandbox shell: the record carries `sandbox`, its host is
+        // `Local`. The in-process host runs a real `bash` behind the socket,
+        // which stands in for the VM's bash — the marker protocol is the same.
+        let id = crate::shell::spawn_for_in_sandbox(
+            &reg,
+            owner.clone(),
+            5,
+            "de-ghost-t".into(),
+            false,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the sandbox shell's host comes up");
+        crate::shell::await_ready(
+            &socket_path(id.as_str()),
+            std::time::Instant::now() + Duration::from_secs(15),
+        )
+        .await
+        .expect("the sandbox shell's host must be alive, or the marker is not under test");
+
+        // The daemon's `$SHELL` is fish for the duration of the call; the
+        // guard restores it even when an assertion below fails.
+        let _fish = FishShellEnv::set();
+
+        let outcome = run_in_shell_with_prompts(
+            &reg,
+            owner,
+            "sh -c 'exit 3'",
+            5,
+            Some(id.as_str()),
+            Some(10),
+            "",
+            &mut tokio::io::sink(),
+            &mut tokio::io::empty(),
+            crate::host::HostId::Local,
+            |_id: ShellId| async move { Ok(()) },
+        )
+        .await;
+
+        // Drop the guard before asserting: an async-drop tail would be a
+        // surprise, and the restore must not depend on the assertions.
+        drop(_fish);
+
+        let (_id, result) =
+            outcome.expect("the POSIX marker must parse the exit code out of a sandbox shell");
+        assert_eq!(
+            result.exit_code, 3,
+            "the sandbox's bash must report its child's exit code through the \
+             POSIX marker: {result:?}"
+        );
     }
 }

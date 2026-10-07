@@ -1,7 +1,7 @@
 # Phase 06b: sbx-shell-lookup — find or create an owner's shell in a given sandbox, and mark it POSIX
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06a
 **Estimated diff:** ~260 lines (about 60 code, 200 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -318,3 +318,9 @@ The first line should report `4 passed`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-07 08:39 (started)
+
+**Executor:** executor (Claude Opus 4.6, headless run)
+Flipped the phase's Status to `in-progress` and the milestone README's row
+with it. Beginning Task 1 (`shell_for_owner_in_sandbox`).

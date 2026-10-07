@@ -102,6 +102,84 @@ where
     Ok((id, socket))
 }
 
+/// `shell_for_owner` for shells inside the sbx sandbox `sandbox`: reuse the
+/// owner's lowest-numbered live shell in **that** sandbox, or create one with
+/// `spawn_for_in_sandbox`. A host shell, and a shell in any other sandbox, is
+/// never returned.
+pub async fn shell_for_owner_in_sandbox<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    sandbox: &str,
+    max_per_owner: u32,
+    ready_timeout: Duration,
+    spawn: F,
+) -> anyhow::Result<(ShellId, PathBuf)>
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    // The same reuse scan `shell_for_owner` runs, keyed on the sandbox
+    // instead of the host: a sandbox shell's own host is always `Local`, so
+    // the host is not what distinguishes two of the owner's shells here — the
+    // sandbox is. Interactive and dedicated shells are excluded for the same
+    // reasons `shell_for_owner` excludes them, and a match whose host is dead
+    // is removed so it is not handed to the next caller as a live shell.
+    let owner_key = owner.key();
+    let reuse: Option<ShellId> = with_shells(reg, |store| {
+        let mut matches: Vec<ShellId> = store
+            .values()
+            .filter(|record| {
+                !record.interactive
+                    && !record.dedicated
+                    && record.owner.key() == owner_key
+                    && record.sandbox.as_deref() == Some(sandbox)
+            })
+            .map(|record| record.id.clone())
+            .collect();
+        matches.sort_by_key(|id| id.index());
+        let lowest = matches.into_iter().next()?;
+        if host_is_alive(&launch::lock_path(lowest.as_str())) {
+            Some(lowest)
+        } else {
+            store.remove(lowest.as_str());
+            None
+        }
+    });
+
+    // The same reuse shortcut: a live shell needs no readiness wait.
+    if let Some(id) = reuse {
+        let socket = launch::socket_path(id.as_str());
+        return Ok((id, socket));
+    }
+
+    // Create in the named sandbox, then wait for readiness, rolling the
+    // record back if the host never comes up — `spawn_for_in_sandbox` rolls
+    // back only a spawn failure.
+    let id = crate::shell::registry::spawn_for_in_sandbox(
+        reg,
+        owner,
+        max_per_owner,
+        sandbox.to_string(),
+        false,
+        spawn,
+    )
+    .await?;
+    let socket = launch::socket_path(id.as_str());
+    if let Err(e) = launch::await_ready(&socket, Instant::now() + ready_timeout).await {
+        with_shells(reg, |store| {
+            store.remove(id.as_str());
+        });
+        return Err(e).with_context(|| {
+            format!(
+                "shell {} never became ready at {} within {ready_timeout:?}",
+                id.as_str(),
+                socket.display()
+            )
+        });
+    }
+    Ok((id, socket))
+}
+
 /// The shell a host is spawned with, and the same name `client::run_command`
 /// must be told so it reads the right exit variable (`$?` vs fish's
 /// `$status`). One function so the two can never disagree.
@@ -1348,6 +1426,211 @@ mod tests {
         assert_eq!(
             boxed_rows, 1,
             "the sandbox shell must be skipped, not reaped: it is still in the registry"
+        );
+    }
+
+    // ── shell_for_owner_in_sandbox (M26 phase-06b) ──────────────────────────
+
+    #[tokio::test]
+    async fn shell_for_owner_in_sandbox_creates_then_reuses() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("boxed".into());
+        let spawn_calls = Arc::new(AtomicUsize::new(0));
+
+        let host_spawn = {
+            let counter = Arc::clone(&spawn_calls);
+            move |id: ShellId| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                spawn_in_process_host(id)
+            }
+        };
+
+        let (first, _) = shell_for_owner_in_sandbox(
+            &reg,
+            owner.clone(),
+            "de-ghost-a",
+            5,
+            Duration::from_secs(15),
+            host_spawn,
+        )
+        .await
+        .expect("the first request creates the owner's sandbox shell");
+
+        let (second, socket) = shell_for_owner_in_sandbox(
+            &reg,
+            owner,
+            "de-ghost-a",
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the second request is answered");
+
+        assert_eq!(
+            second.as_str(),
+            first.as_str(),
+            "the same owner asking twice for the same sandbox must get the same shell"
+        );
+        assert_eq!(socket, launch::socket_path(second.as_str()));
+
+        assert_eq!(
+            spawn_calls.load(Ordering::SeqCst),
+            1,
+            "the live sandbox shell must be reused, not respawned"
+        );
+
+        let sandbox = with_shells(&reg, |store| {
+            store.get(second.as_str()).and_then(|r| r.sandbox.clone())
+        });
+        assert_eq!(
+            sandbox.as_deref(),
+            Some("de-ghost-a"),
+            "the record must carry the sandbox its child runs in"
+        );
+    }
+
+    #[tokio::test]
+    async fn shell_for_owner_in_sandbox_keeps_sandboxes_apart() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("boxed".into());
+
+        let (in_a, _) = shell_for_owner_in_sandbox(
+            &reg,
+            owner.clone(),
+            "de-ghost-a",
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("owner's shell in de-ghost-a comes up");
+
+        let (in_b, _) = shell_for_owner_in_sandbox(
+            &reg,
+            owner,
+            "de-ghost-b",
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("owner's shell in de-ghost-b comes up");
+
+        assert_ne!(
+            in_a.as_str(),
+            in_b.as_str(),
+            "two sandboxes must never share the owner's shell — each runs a \
+             different VM"
+        );
+
+        let (sandbox_a, sandbox_b) = with_shells(&reg, |store| {
+            (
+                store.get(in_a.as_str()).and_then(|r| r.sandbox.clone()),
+                store.get(in_b.as_str()).and_then(|r| r.sandbox.clone()),
+            )
+        });
+        assert_eq!(sandbox_a.as_deref(), Some("de-ghost-a"));
+        assert_eq!(sandbox_b.as_deref(), Some("de-ghost-b"));
+    }
+
+    #[tokio::test]
+    async fn shell_for_owner_in_sandbox_never_returns_a_host_shell() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("boxed".into());
+
+        let (plain, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the owner's host shell comes up");
+
+        let (boxed, _) = shell_for_owner_in_sandbox(
+            &reg,
+            owner,
+            "de-ghost-a",
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the sandbox request must create its own shell, not reuse the host one");
+
+        assert_ne!(
+            boxed.as_str(),
+            plain.as_str(),
+            "a sandbox command must never land in a host shell — its commands \
+             would run on the daemon host, outside the VM"
+        );
+
+        let (plain_sandbox, plain_host) = with_shells(&reg, |store| {
+            store
+                .get(plain.as_str())
+                .map(|r| (r.sandbox.clone(), r.host.clone()))
+        })
+        .expect("the host shell's record stays registered");
+        assert_eq!(
+            plain_sandbox, None,
+            "the host shell keeps its plain (no-sandbox) record"
+        );
+        assert!(
+            matches!(plain_host, crate::host::HostId::Local),
+            "the host shell is untouched by the sandbox request"
+        );
+    }
+
+    #[tokio::test]
+    async fn shell_for_owner_in_sandbox_ignores_another_owners_shell() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner_a = Owner::Chat("a".into());
+        let owner_b = Owner::Chat("b".into());
+
+        let (a_shell, _) = shell_for_owner_in_sandbox(
+            &reg,
+            owner_a,
+            "de-ghost-a",
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("owner A's sandbox shell comes up");
+
+        let (b_shell, _) = shell_for_owner_in_sandbox(
+            &reg,
+            owner_b,
+            "de-ghost-a",
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("owner B's request in the same sandbox is answered with its own shell");
+
+        assert_ne!(
+            b_shell.as_str(),
+            a_shell.as_str(),
+            "owner B must never be handed owner A's shell, even in the same sandbox"
+        );
+
+        let a_owner_key = with_shells(&reg, |store| {
+            store
+                .get(a_shell.as_str())
+                .map(|r| r.owner.key().to_string())
+        });
+        assert_ne!(
+            a_owner_key.as_deref(),
+            Some(Owner::Chat("b".into()).key().as_str()),
+            "owner A's record keeps owner A"
         );
     }
 
