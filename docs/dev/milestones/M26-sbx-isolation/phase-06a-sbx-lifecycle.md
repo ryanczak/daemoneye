@@ -1,7 +1,7 @@
 # Phase 06a: sbx-lifecycle — preflight, create, teardown and sweep sandboxes
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-05c
 **Estimated diff:** ~420 lines (about 150 code, 270 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -388,3 +388,141 @@ fmt check exited 0; the full `cargo test` run is 2371 passed, 0 failed.
 `git diff --stat` was captured with only the phase doc + README status
 flips and the code files present at that moment; the Update Log entry
 itself was appended after, so it is not in that stat.
+
+### Update — 2026-10-07 04:11 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Built phase 06a as specced: `src/daemon/executor/sbx_lifecycle.rs` (declared `pub` in `executor/mod.rs`) provides `profile_for`, `preflight` (version probe → daemon probe, `SpawnFailed` on `code: None` before classification), `create_sandbox` (plan built and validated **before** any `sbx` call; non-zero create errors; a failed per-host allow tears the sandbox down and returns the host + stderr; the create error names the sandbox), `teardown_sandbox` (`Removed` on exit 0 or `not found`, `StoppedOnly` on the locked-keychain fallback, `Failed` carrying `rm: … ; stop: …`), and `sweep_daemon_sandboxes` (`list_error` on a failed or unparsable listing, then per-stale-name teardown into `removed`/`stopped`/`failed`). Task 2 reordered `spawn_sbx_host` to resolve `which_sbx()?` first and remove the sidecar on a `spawn_detached` error, and added `clear_sandbox_sidecar` (exported from `src/shell/mod.rs`) called at the top of the three plain spawners. All 17 lifecycle tests plus the sidecar test pass against the copied fake runner; nothing calls these yet (row 06b wires them).
+
+**Notes for review:** (1) The fake runner drains FIFO then defaults to `Some(0)`/empty, so a failed call must be canned explicitly — early test failures were mis-ordered/mis-canned queues, not product bugs; the product code needed no change. (2) The `SweepReport.failed` detail is the `Teardown::Failed.error` string verbatim, so a canned stderr of `"nope"` reads `rm: nope ; stop: nope`. (3) Added one test beyond the plan: `preflight_reports_a_daemon_spawn_failure` covers the daemon probe's `code: None` branch (the spec only names the version-probe case), and `sweep_reports_an_unparsable_listing` covers the `unrecognised sbx ls output` arm. (4) E2E block ran once and is pasted in the Update Log with `PASTE MATCH: yes` — 17 lifecycle tests, 49 in `executor::sbx` (32 prior + 17 new), 347 in `shell::`, clippy 0, fmt 0, full suite 2371 passed / 0 failed. Commit `06aafca6`; working tree clean; phase status left `in-progress` per the lifecycle split.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+r_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (363066): No such process
+kill: (-363780): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M26-sbx-isolation/README.md` — +1 -1
+- `docs/dev/milestones/M26-sbx-isolation/phase-06a-sbx-lifecycle.md` — +41 -1
+- `src/daemon/executor/mod.rs` — +1 -0
+- `src/daemon/executor/sbx_lifecycle.rs` — +605 -0
+- `src/shell/mod.rs` — +2 -2
+- `src/shell/session.rs` — +41 -2
+
+**Commit:** 06aafca6fa877218dce389d12c09648370794bfb
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
