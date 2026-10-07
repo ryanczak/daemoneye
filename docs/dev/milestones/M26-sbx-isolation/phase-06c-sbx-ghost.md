@@ -1,7 +1,7 @@
 # Phase 06c: sbx-ghost — a sandboxed local ghost runs in its own sandbox
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06b
 **Estimated diff:** ~420 lines (about 180 code, 240 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -479,3 +479,146 @@ exited 0; the full `cargo test` run is 2388 passed, 0 failed. The
 status flips plus the five code files; the module file itself
 (`ghost_sandbox.rs`, 706 lines) is in the commit this phase produced
 (`1cec484b`), written before the capture.
+
+### Update — 2026-10-07 17:21 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 06c is implemented and committed in two commits — `1cec484b` (code + tests) and `ccd5273d` (the E2E transcript) — with the phase doc and README rows left `in-progress` for the server's completion tail. Task 1 added `src/daemon/executor/ghost_sandbox.rs` (declared `pub(crate)` in `executor/mod.rs`) with `ghost_sandbox_pty`, `ensure_ghost_sandbox` (created-set short-circuit → preflight → create, adopting the measured `already exists` case and failing closed with `sandbox unavailable: …` on everything else), `teardown_ghost_sandbox` (forgets the name, then the 06a teardown), and `run_ghost_in_sandbox` (opens the owner's shell in the sandbox via `shell_for_owner_in_sandbox`, then runs the command through `run_in_shell_with_prompts` with the record-driven POSIX marker, `HostId::Local`, the 300 s ghost budget and a never-called spawn closure). Task 2 inserted the sandbox branch immediately before `ghost_local_pty`'s branch in `run_background` — preflight/create failure returns the reason as the tool result with exit 1 and the command never touches the host; Task 3 added the `ghost_sandbox_teardown` log right after the ghost's `close_owner_shells` block; Task 4 spawns the `sbx_startup_sweep` after `adopt_at_startup`, off the startup path via `tokio::spawn`.
+
+**Notes for review**
+
+- E2E block ran once, verbatim, and is pasted in the Update Log entry `### Update — 2026-10-07 17:11 (end-to-end verification)` with `PASTE MATCH: yes`: `executor::ghost_sandbox` **12 passed / 0 failed** (≥ the required 9), `executor::ghost_remote` 6/0, `executor::sbx` 49/0, clippy exit 0, `fmt_exit=0`, full suite **2388 passed / 0 failed**. Grep for the pinned literal confirms `sandbox unavailable:` is produced in the module (4 hits, including the production `Err(format!("sandbox unavailable: {detail}"))` at line 69) and `describe_unavailable`'s operator-facing messages flow through preflight failures; every wired call site (`foreground.rs:1223/1232`, `ghost.rs:599`, `daemon/mod.rs:821`) is present.
+- Two test-authoring corrections worth noting (product code unchanged): preflight runs **two** probes, so `ensure_ghost_sandbox_fails_closed_on_preflight` asserts the exact two-call argv sequence (not one call) and `…reports_a_failed_create` counts 6 recorded calls (3 + 3), not 7; and the profile test asserts the exact four-call sequence because a proxy plan's denies ride on the **create** argv (the `deny-network` flags), with the allows as separate `policy allow` calls — matching 06a's measured builder contract.
+- The `run_ghost_in_sandbox` shell-open error path uses a `match` rather than `let Ok(..) = .. else { opened.unwrap_err() }` so no `unwrap` appears outside `#[cfg(test)]`; clippy's one earlier hit (`cloned_ref_to_slice_refs` in a test) was fixed with `std::slice::from_ref` rather than an allow. No `TODO`, no debug calls, no `#[allow(`, no existing test edited; a `CreatedSet` guard drops names from the process-wide created-set so parallel tests stay independent. Out-of-scope script staging (`sbx cp`, row 06d) was not needed by any test — the two shell tests run only builtins.
+- Live pinky check (reviewer item b) not runnable from here: it needs `[sandbox] runtime = "sbx"` on the pinky daemon plus `sbx` installed; the unit suite pins the same behaviour against the fake runner and a real in-process bash shell host.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+d; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g4_briefing_injection_block_format ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test event_log_entry_format ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.40s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (616230): No such process
+kill: (-616944): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M26-sbx-isolation/README.md` — +1 -1
+- `docs/dev/milestones/M26-sbx-isolation/phase-06c-sbx-ghost.md` — +51 -1
+- `src/daemon/executor/foreground.rs` — +53 -0
+- `src/daemon/executor/ghost_sandbox.rs` — +706 -0
+- `src/daemon/executor/mod.rs` — +1 -0
+- `src/daemon/ghost.rs` — +18 -0
+- `src/daemon/mod.rs` — +24 -0
+
+**Commit:** ccd5273d0f3a7ba3616b4da30a18dc090431f8f1
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
