@@ -1,7 +1,7 @@
 # Phase 07: sbx-chat-background — chat `wait: false` in a per-session sandbox
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-06d
 **Estimated diff:** ~420 lines (about 160 code, 260 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -691,3 +691,24 @@ kill: (-704799): No such process
 **Commit:** fb56b7a0ed3772df0ecd8945b3141d7757a5d675
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-07
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (`b02421cc`).
+- **Scope deviations:** one, and it was necessary. The spec said
+  `knowledge::close_shell_with` was reachable from production code, but its
+  re-export was `#[cfg(test)]`-gated. The executor removed the gate and
+  updated the comment. The fixture move into a test-support module was
+  authorized, and all 25 pre-existing test bodies in `ghost_sandbox.rs` and
+  `bg_shell.rs` are byte-identical (checked by extracting each one).
+  `container.rs` is unchanged. No lock is held across `.await`.
+- **Reviewer re-run:** fmt, build and clippy clean; all ten named tests
+  `1 passed`; `ghost_sandbox` 18, `bg_shell` 12 and `chat_sandbox` 6 passed;
+  full suite `passed=2407 failed=0` on the first run.
+- **Reviewer mutation checks:** dropping the `live` check fails the idle
+  test, and closing before notifying fails the close test.
+- **Calibration:** the spec's reachability claim about a re-export was not
+  checked against a `#[cfg(test)]` gate. One occurrence; noted, not folded.
+- **Deferred:** the live run of a real chat sandbox is part of row 10.
