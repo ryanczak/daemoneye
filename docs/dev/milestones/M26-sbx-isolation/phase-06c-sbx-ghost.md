@@ -438,3 +438,44 @@ Flipped the phase and README rows to `in-progress`. Beginning Task 1: the
 `ghost_sandbox` module with its tests, then the `run_background` routing,
 the ghost-exit teardown and the startup sweep, then Task 5's end-to-end
 capture.
+
+### Update — 2026-10-07 17:11 (end-to-end verification)
+
+§ End-to-end verification, run verbatim, every line as printed. The `cargo
+test --lib` lines show only the `test result:` summaries because rexyMCP's
+output filter removes the individual `test … ok` lines; the `cargo clippy …
+-D warnings` tail line is its `Finished` line, i.e. exit 0. Captured into
+`/tmp/e2e-06c.txt` and pasted below:
+
+```
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 2326 filtered out; finished in 0.04s
+exit=0
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 2331 filtered out; finished in 1.90s
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 2289 filtered out; finished in 0.00s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+fmt_exit=0
+passed=2388 failed=0
+ docs/dev/milestones/M26-sbx-isolation/README.md    |  2 +-
+ .../M26-sbx-isolation/phase-06c-sbx-ghost.md       | 11 ++++-
+ src/daemon/executor/foreground.rs                  | 53 ++++++++++++++++++++++
+ src/daemon/executor/mod.rs                         |  1 +
+ src/daemon/ghost.rs                                | 18 ++++++++
+ src/daemon/mod.rs                                  | 24 ++++++++++
+ 6 files changed, 107 insertions(+), 2 deletions(-)
+```
+
+PASTE MATCH: yes
+
+Line 1 is `executor::ghost_sandbox` (12 passed ≥ the required 9; the plan's
+nine tests plus `profile_for_is_available_to_the_routing_test`,
+`teardown_ghost_sandbox_of_a_ghost_that_never_created_one_is_removed` and
+`shell_for_owner_in_sandbox_is_reachable_for_the_module_tests`). The `exit=0`
+line is the shell's exit status of the first grep's pipeline, captured into
+the same file. Line 3 is `executor::ghost_remote` (6 passed, 1 pre-existing
+ignored live-model test). Line 4 is `executor::sbx` (49 = the phase-02 + 06a
+sets; the prefix overlap the 06a doc notes). clippy exited 0; fmt check
+exited 0; the full `cargo test` run is 2388 passed, 0 failed. The
+`git diff --stat` tail shows the working tree at capture time: the two doc
+status flips plus the five code files; the module file itself
+(`ghost_sandbox.rs`, 706 lines) is in the commit this phase produced
+(`1cec484b`), written before the capture.
