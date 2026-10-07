@@ -6,11 +6,10 @@ Rescoped 2026-10-05 from "tmux removal & 2.0 close" (now **M27**; later
 milestones are M28–M30, `docs/design/daemoneye-2.0.md` § 6). **PE signed off
 on scope 2026-10-05**, accepting all six recommendations.
 
-**Active phase: 04a — sbx-shell**,
-[`phase-04a-sbx-shell.md`](milestones/M26-sbx-isolation/phase-04a-sbx-shell.md),
-status `todo`, for the executor: shell records that live in a sandbox, the
-`sbx exec -it` shell-host launcher, reuse exclusion and the marker name. Row 04
-was split; 04b (adoption across a restart) follows.
+**Active phase: none drafted.** Phases 01–03 and 04a are **done** (04a:
+`ShellRecord.sandbox`, `spawn_for_in_sandbox`, `spawn_sbx_host`,
+approved_first_try). Next is row **04b — sbx-adopt**; `/rexymcp:architect next`
+drafts it.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline

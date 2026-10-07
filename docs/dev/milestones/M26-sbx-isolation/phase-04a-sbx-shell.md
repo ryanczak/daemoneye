@@ -1,7 +1,7 @@
 # Phase 04a: sbx-shell — shell records that live in a sandbox, and how they are spawned
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** done
 **Depends on:** phase-03
 **Estimated diff:** ~200 lines (about 70 code, 130 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -388,3 +388,161 @@ passed=2325 failed=0
 
 PASTE MATCH: yes — six tests ok and `6 passed; 0 failed`; clippy `Finished …`;
 `fmt_exit=0`; `passed=2325 failed=0`.
+
+### Update — 2026-10-06 23:59 (complete, server-authored)
+
+**Summary:** </think>All tasks complete. Working tree clean, commit made, phase status stays in-progress (server flips to review). Final message: Summary + Notes for review.</think>
+**Summary:** Phase-04a is implemented and committed (`cedb2d5`, working tree clean). `ShellRecord` gained `sandbox: Option<String>` (set `None` at all ten literal sites, compiler-enforced); the registry spawn body moved into private `spawn_for_placed` with `spawn_for_on_host` now a one-line delegation and new `spawn_for_in_sandbox` stamping `HostId::Local` + `Some(sandbox)`; `session.rs` gained `which_sbx` (PATH probe, remedy-naming error) and `spawn_sbx_host` (child argv reuses the tested `sbx::shell_exec_args`, so it spells `exec -it <sandbox> bash` exactly); `shell_for_owner`'s reuse filter gained `&& record.sandbox.is_none()` with the one-sentence comment extension; and `shell_marker_name(&ShellRecord)` returns `"sh"` for a sandbox shell and otherwise defers to the existing `marker_shell_name(&record.host)` — no existing caller of `marker_shell_name` changed. Both new exports are re-exported from `src/shell/mod.rs`; adoption still stamps `None` (row 04b).
+
+**Notes for review:** One deviation from the spec's sketch: `spawn_for_in_sandbox`'s `sandbox` parameter sits after `max_per_owner` (before `dedicated`) rather than after `host`, because the function takes no `host` at all — the spec's own signature shows the same ordering, so only the prose ordering ("placed right after `host`") was adapted to the real signature. The end-to-end block ran once, captured to `.rexymcp/output/phase-04a-e2e.log`, and is pasted in the phase's `(end-to-end verification)` Update Log entry with `PASTE MATCH: yes`: all six named tests `ok` / `6 passed; 0 failed`, clippy `Finished`, `fmt_exit=0`, full suite `passed=2325 failed=0`. `git diff --stat` in that capture predates the commit (it shows the pre-commit working tree), which is what the block as specified produces. The mutation check (`delete && record.sandbox.is_none()` → the reuse test must fail) is left for the reviewer per the phase doc. Phase doc status remains `in-progress` with no `(complete)` entry written by me, per the contract.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+r_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (165484): No such process
+kill: (-166381): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M26-sbx-isolation/README.md` — +1 -1
+- `docs/dev/milestones/M26-sbx-isolation/phase-04a-sbx-shell.md` — +37 -1
+- `src/daemon/executor/knowledge/shell.rs` — +1 -0
+- `src/shell/mod.rs` — +3 -3
+- `src/shell/registry.rs` — +100 -0
+- `src/shell/session.rs` — +146 -2
+
+**Commit:** cedb2d5260fd90921f1b814f472b0a6d2e1b9c7a
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-06
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (128 turns,
+  `cedb2d52`)
+- **Scope deviations:** none. The "deviation" the executor flags (parameter
+  order) is not one: `spawn_for_placed` takes `sandbox` right after `host` as
+  specified, and `spawn_for_in_sandbox` has the specified signature. The
+  marker test wraps its assertions in the existing `with_fish_shell` helper,
+  which makes the `"sh"`-vs-`login_shell()` distinction real. That is better
+  than the spec asked for.
+- **Reviewer re-run:** fmt, build and clippy clean; the six named tests
+  `6 passed`; full suite `passed=2325 failed=0` on the first run; no
+  `unsafe` or `#[allow]` added.
+- **Reviewer mutation checks** (each turned its test red, then restored):
+  dropping `&& record.sandbox.is_none()` from the reuse filter
+  (`shell_for_owner_never_reuses_a_sandbox_shell`); deleting the sandbox
+  branch of `shell_marker_name` (`shell_marker_name_is_posix_inside_a_sandbox`).
+- **Calibration:** none.
