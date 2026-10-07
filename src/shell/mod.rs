@@ -46,8 +46,8 @@ pub use registry::{
 pub use sbx_backend::{SbxBackend, SbxRunner, VmRun, real_runner};
 pub use screen::ShellScreen;
 pub use session::{
-    host_entry, host_entry_or_bare, login_shell, marker_shell_name, master_running,
-    shell_for_owner, shell_marker_name, spawn_dedicated_for, spawn_detached_host,
+    clear_sandbox_sidecar, host_entry, host_entry_or_bare, login_shell, marker_shell_name,
+    master_running, shell_for_owner, shell_marker_name, spawn_dedicated_for, spawn_detached_host,
     spawn_ghost_ssh_host, spawn_sbx_host, spawn_ssh_host, which_sbx, which_ssh,
 };
 

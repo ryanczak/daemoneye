@@ -144,6 +144,7 @@ pub async fn spawn_detached_host(
     rows: u16,
     cols: u16,
 ) -> anyhow::Result<()> {
+    clear_sandbox_sidecar(&crate::config::shells_dir(), id.as_str());
     let shell = login_shell();
     launch::spawn_detached(id.as_str(), &shell, args, rows, cols).await
 }
@@ -158,6 +159,7 @@ pub async fn spawn_detached_host(
 /// `host` is a **named** host; the implicit local host is refused here
 /// because `spawn_detached_host` already covers it.
 pub async fn spawn_ssh_host(id: ShellId, name: &str, rows: u16, cols: u16) -> anyhow::Result<()> {
+    clear_sandbox_sidecar(&crate::config::shells_dir(), id.as_str());
     let entry = host_entry_or_bare(name)?;
     let control = crate::config::ssh_dir();
     std::fs::create_dir_all(&control).with_context(|| format!("creating {}", control.display()))?;
@@ -183,6 +185,12 @@ pub fn which_sbx() -> anyhow::Result<String> {
     ))
 }
 
+/// Remove any `<id>.sandbox` left by an earlier sandbox shell with this id,
+/// so a plain shell that reuses the id is never adopted as a sandbox shell.
+pub fn clear_sandbox_sidecar(dir: &std::path::Path, id: &str) {
+    let _ = std::fs::remove_file(sandbox_sidecar_path(dir, id));
+}
+
 /// Spawn a detached `daemoneye shell-host` for `id` whose child is
 /// `sbx exec -it <sandbox> bash`: the shell process itself is local, and every
 /// command it runs executes inside the sandbox's VM. Like `spawn_ssh_host`,
@@ -193,6 +201,7 @@ pub async fn spawn_sbx_host(
     rows: u16,
     cols: u16,
 ) -> anyhow::Result<()> {
+    let program = which_sbx()?;
     let dir = crate::config::shells_dir();
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     write_sandbox_sidecar(&dir, id.as_str(), sandbox).with_context(|| {
@@ -202,8 +211,11 @@ pub async fn spawn_sbx_host(
         )
     })?;
     let argv = crate::daemon::executor::sbx::tagged_shell_exec_args(sandbox, id.as_str());
-    let program = which_sbx()?;
-    launch::spawn_detached(id.as_str(), &program, &argv, rows, cols).await
+    if let Err(e) = launch::spawn_detached(id.as_str(), &program, &argv, rows, cols).await {
+        let _ = std::fs::remove_file(sandbox_sidecar_path(&dir, id.as_str()));
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// True when a ControlMaster is already running for `entry` under
@@ -245,6 +257,7 @@ pub async fn spawn_ghost_ssh_host(
     rows: u16,
     cols: u16,
 ) -> anyhow::Result<()> {
+    clear_sandbox_sidecar(&crate::config::shells_dir(), id.as_str());
     let entry = host_entry(name)?;
     let control = crate::config::ssh_dir();
     std::fs::create_dir_all(&control).with_context(|| format!("creating {}", control.display()))?;
@@ -1335,6 +1348,32 @@ mod tests {
         assert_eq!(
             boxed_rows, 1,
             "the sandbox shell must be skipped, not reaped: it is still in the registry"
+        );
+    }
+
+    #[test]
+    fn clear_sandbox_sidecar_removes_only_that_ids_sidecar() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_sandbox_sidecar(dir.path(), "s1", "de-ghost-r1").expect("sidecar s1 writable");
+        write_sandbox_sidecar(dir.path(), "s2", "de-ghost-r2").expect("sidecar s2 writable");
+
+        clear_sandbox_sidecar(dir.path(), "s1");
+
+        assert!(
+            !sandbox_sidecar_path(dir.path(), "s1").exists(),
+            "s1's sidecar must be gone"
+        );
+        assert!(
+            sandbox_sidecar_path(dir.path(), "s2").exists(),
+            "s2's sidecar must survive"
+        );
+
+        clear_sandbox_sidecar(dir.path(), "s1");
+
+        assert!(
+            sandbox_sidecar_path(dir.path(), "s2").exists(),
+            "clearing a missing sidecar must not touch the others"
         );
     }
 }

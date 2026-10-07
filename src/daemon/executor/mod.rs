@@ -5,6 +5,7 @@ mod foreground;
 mod ghost_remote;
 pub(crate) mod knowledge;
 pub mod sbx;
+pub mod sbx_lifecycle;
 mod schedule;
 mod shell_exec;
 

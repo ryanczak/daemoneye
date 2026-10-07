@@ -1,7 +1,7 @@
 # Phase 06a: sbx-lifecycle — preflight, create, teardown and sweep sandboxes
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05c
 **Estimated diff:** ~420 lines (about 150 code, 270 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -348,3 +348,43 @@ count includes the new tests.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-06 20:37 (started, executor dispatch 1)
+
+**Executor:** executor (M26 phase-06a, dispatch 1)
+
+Flipped the phase and README rows to `in-progress`. Beginning Task 1: the
+`sbx_lifecycle` module, then the Task 2 sidecar-gap fix, then Task 3's
+end-to-end capture.
+
+### Update — 2026-10-06 20:52 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim, once, into
+`/tmp/e2e-06a.txt`:
+
+```
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 2304 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2320 filtered out; finished in 0.00s
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 2272 filtered out; finished in 0.00s
+test result: ok. 347 passed; 0 failed; 3 ignored; 0 measured; 1971 filtered out; finished in 11.83s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.86s
+fmt_exit=0
+passed=2371 failed=0
+ docs/dev/milestones/M26-sbx-isolation/README.md    |  2 +-
+ .../M26-sbx-isolation/phase-06a-sbx-lifecycle.md   | 10 ++++-
+ src/daemon/executor/mod.rs                         |  1 +
+ src/shell/mod.rs                                   |  4 +-
+ src/shell/session.rs                               | 43 +++++++++++++++++++++-
+ 5 files changed, 54 insertions(+), 6 deletions(-)
+```
+
+PASTE MATCH: yes
+
+Line 1 is `executor::sbx_lifecycle` (17 ≥ the required 14). Line 2 is the
+sidecar test. Line 3 is `executor::sbx` (49 = 32 sbx + 17 new lifecycle
+tests, as the phase doc notes the prefix overlap). Line 4 is `shell::`
+(347 passed, 3 pre-existing ignored live-model tests). clippy exited 0;
+fmt check exited 0; the full `cargo test` run is 2371 passed, 0 failed.
+`git diff --stat` was captured with only the phase doc + README status
+flips and the code files present at that moment; the Update Log entry
+itself was appended after, so it is not in that stat.
