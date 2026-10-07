@@ -1,7 +1,7 @@
 # Phase 08a: sbx-status — the SANDBOX status section and `daemoneye sandbox status` on sbx
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-07
 **Estimated diff:** ~260 lines (about 90 code, 170 tests)
 **Tags:** language=rust, kind=feature, size=s
@@ -493,3 +493,23 @@ kill: (-762171): No such process
 **Commit:** 7db22bc4d53644848faa839f7887ac9845fdd9d3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-07
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (115 turns,
+  `7db22bc4`).
+- **Scope deviations:** none. The SANDBOX section was extracted verbatim and
+  `run_status` now calls it. The handler routes `runtime = "sbx"` to the
+  async collector and leaves the docker path untouched. `sbx_lifecycle.rs`
+  is additions only, so no existing test was edited. `src/ipc.rs` and
+  `container.rs` are unchanged.
+- **Reviewer re-run:** fmt, build and clippy clean; all six named tests
+  `1 passed`; `sbx_lifecycle` 21 passed; `sandbox --help` lists `status`;
+  full suite `passed=2413 failed=0` on the first run.
+- **Reviewer mutation check:** dropping the `is_daemon_sandbox` filter fails
+  `sandbox_rows_lists_only_daemon_sandboxes`.
+- **Calibration:** none.
+- **Deferred:** `daemoneye sandbox status` against a running sbx-enabled
+  daemon is part of row 10.
