@@ -1,7 +1,7 @@
 # Phase 06d: sbx-script-stage — copy the one approved script into the ghost's sandbox
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-06c
 **Estimated diff:** ~300 lines (about 90 code, 210 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -457,3 +457,22 @@ kill: (-655253): No such process
 **Commit:** add3f7197a12a3d983b36413f3d4e21c819ee359
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-07
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (105 turns,
+  `a8395eb4`). No evidence-step loop.
+- **Scope deviations:** none. The helpers in `sbx.rs` are faithful ports of
+  the docker ones, built from `STAGED_SCRIPTS_DIR`. `stage_script` checks the
+  name before any `sbx` call, then runs prep and copy, and fails closed on
+  either. In `run_background`, a staging failure yields `(reason, 1)` and the
+  command never runs, while `log_command` keeps the original command.
+  `container.rs` is unchanged.
+- **Reviewer re-run:** fmt, build and clippy clean; all eight named tests
+  `1 passed`; `executor::sbx` 53 and `executor::ghost_sandbox` 16 passed; full
+  suite `passed=2396 failed=0` on the first run.
+- **Reviewer mutation check:** dropping the prep call fails
+  `stage_script_preps_then_copies`.
+- **Calibration:** none.

@@ -6,10 +6,10 @@ Rescoped 2026-10-05 from "tmux removal & 2.0 close" (now **M27**; later
 milestones are M28–M30, `docs/design/daemoneye-2.0.md` § 6). **PE signed off
 on scope 2026-10-05**, accepting all six recommendations.
 
-**Active phase: 06d — sbx-script-stage**,
-[`phase-06d-sbx-script-stage.md`](milestones/M26-sbx-isolation/phase-06d-sbx-script-stage.md),
-status `todo`, for the executor: Q3, `sbx cp` the one approved script into a
-sandboxed ghost's sandbox on every invocation. Phases 01–06c are done.
+**Active phase: none drafted.** Phases 01–06d are **done**: a sandboxed local
+ghost runs in its own sbx sandbox, with its approved scripts staged in (06d,
+approved_first_try). Next is row **07 — sbx-chat-background** (chat `wait: false`
+in a per-session sandbox, Q5); `/rexymcp:architect next` drafts it.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline
