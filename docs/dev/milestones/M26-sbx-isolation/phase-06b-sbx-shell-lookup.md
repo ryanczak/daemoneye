@@ -1,7 +1,7 @@
 # Phase 06b: sbx-shell-lookup — find or create an owner's shell in a given sandbox, and mark it POSIX
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-06a
 **Estimated diff:** ~260 lines (about 60 code, 200 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -517,3 +517,29 @@ kill: (-573273): No such process
 **Commit:** 91df5c7822cb5a27f131d880fc55b4ad573d8b90
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-07
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (334 turns,
+  `cacadc69`). No evidence-step loop, but this is the milestone's highest turn
+  count for a modest diff.
+- **Scope deviations:** none in production code. `run_in_shell_with_prompts`
+  changed only in the marker read and its two uses; rustfmt reflowed the
+  shortened `run_command` call, which is where the 148-line diffstat comes
+  from. Test-only additions: a `FishShellEnv` drop-guard restoring `SHELL`,
+  and `spawn_in_process_host` made `pub(super)` so the new test in
+  `connect_tests` can reuse it. `shell_for_owner_in_sandbox` is the specified
+  copy of `shell_for_owner`.
+- **Reviewer re-run:** fmt, build and clippy clean; `shell_for_owner_in_sandbox`
+  4 passed; the POSIX-marker test 1 passed; `shell::session` 29 and
+  `executor::shell_exec` 40 passed; full suite `passed=2376 failed=0` on the
+  first run.
+- **Reviewer mutation checks** (each turned tests red, then was restored):
+  the host-based marker (`marker_shell_name(&record_host)`) fails the
+  POSIX-marker test at its 10 s timeout; dropping the
+  `record.sandbox.as_deref() == Some(sandbox)` filter fails
+  `…_keeps_sandboxes_apart` and `…_never_returns_a_host_shell`.
+- **Calibration:** turn count noted for the per-model profile (334 turns for
+  ~60 lines of code); no fold.
