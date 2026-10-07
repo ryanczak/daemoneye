@@ -5,6 +5,7 @@
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
@@ -100,7 +101,19 @@ pub async fn run_host(id: &str, shell: &str, args: &[String], rows: u16, cols: u
         now,
     )?;
     let listener = crate::shell::host::bind(&socket_path(id)).await?;
-    crate::shell::host::serve_until_exit(listener, backend, SHELL_EXIT_POLL).await?;
+    match crate::daemon::executor::sbx::sbx_target_from_host(shell, args) {
+        Some(target) => {
+            let sbx = Arc::new(crate::shell::SbxBackend::new(
+                backend,
+                target,
+                crate::shell::real_runner(shell.to_string()),
+            ));
+            crate::shell::host::serve_until_exit(listener, sbx, SHELL_EXIT_POLL).await?;
+        }
+        None => {
+            crate::shell::host::serve_until_exit(listener, backend, SHELL_EXIT_POLL).await?;
+        }
+    }
     log::info!("shell host {id}: the shell exited; stopping");
     Ok(())
 }

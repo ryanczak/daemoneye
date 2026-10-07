@@ -1,7 +1,7 @@
 # Phase 05b: sbx-signal-host — the shell host acts on the VM for a sandbox shell
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05a
 **Estimated diff:** ~330 lines (about 140 code, 190 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -322,3 +322,57 @@ the `cargo test` lines. rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-07 02:20 (started)
+
+**Executor:** Claude Sonnet 4.5 (run 05b-1). Pre-flight read: STANDARDS.md,
+this phase doc, the M26 README § Measured on pinky, and phase-05a's doc.
+Branch `master` clean at `fb5782a0`. Confirmed `futures-util` is already a
+dependency (line 20 of `Cargo.toml`) and `sbx.rs` exports everything the spec
+lists. Scope confirmed: `is_exited` on `ShellBackend` (`src/shell/host.rs`),
+new `src/shell/sbx_backend.rs`, the `run_host` backend pick
+(`src/shell/launch.rs`), and the Update Log entry. No new dependencies, no
+daemon-side change.
+
+### Update — 2026-10-07 02:35 (end-to-end verification)
+
+Every command below ran once, on `master` at the working tree shown in `git
+diff --stat` (05b code present, `Cargo.toml` untouched). Output captured to
+files, pasted verbatim.
+
+```
+$ cargo test --lib shell::sbx_backend 2>&1 | grep -E '^test result'
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 2292 filtered out; finished in 0.06s
+
+$ cargo test --lib shell::host 2>&1 | grep -E '^test result'
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 2291 filtered out; finished in 0.00s
+
+$ cargo test --lib shell::backend 2>&1 | grep -E '^test result'
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 2280 filtered out; finished in 4.02s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+clippy_exit=0
+
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2351 failed=0
+
+$ git diff --stat
+ docs/dev/milestones/M26-sbx-isolation/README.md       |  2 +-
+ .../M26-sbx-isolation/phase-05b-sbx-signal-host.md    | 13 ++++++++++++-
+ src/shell/host.rs                                     | 19 +++++++++++++++----
+ src/shell/launch.rs                                   | 15 ++++++++++++++-
+ src/shell/mod.rs                                      |  2 ++
+ 5 files changed, 44 insertions(+), 7 deletions(-)
+
+PASTE MATCH: yes
+```
+
+Grep proof for the spec-pinned literals: `^C` payload and the `DE_SHELL`
+tag shape are exercised by `int_and_term_send_ctrl_c_and_never_call_sbx`
+(two `\u0003` `i` events found in the cast, 9/9 tests pass) and by
+`stop_and_cont_run_the_vm_script`, which asserts the recorded argv equals
+`vm_signal_args("de-ghost-t", "s9", Stop)` — the argv whose fourth element
+is the literal `DE_SHELL=s9` builder `tagged_shell_exec_args` produces.

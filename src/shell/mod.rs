@@ -12,6 +12,7 @@ mod log;
 mod proto;
 mod pty;
 mod registry;
+mod sbx_backend;
 mod screen;
 mod session;
 
@@ -42,6 +43,7 @@ pub use registry::{
     host_is_alive, is_user_shell, mark_interactive, parse_cast_name, reap_exited, scan_shell_ids,
     spawn_for, spawn_for_in_sandbox, spawn_for_on_host, sweep_stale, with_shells,
 };
+pub use sbx_backend::{SbxBackend, SbxRunner, VmRun, real_runner};
 pub use screen::ShellScreen;
 pub use session::{
     host_entry, host_entry_or_bare, login_shell, marker_shell_name, master_running,

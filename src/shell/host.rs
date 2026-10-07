@@ -30,6 +30,20 @@ pub trait ShellBackend: Send + Sync + 'static {
         (Vec::new(), self.subscribe())
     }
 
+    /// Whether the shell has exited. The exit watch in `serve_until_exit`
+    /// polls this every 250 ms, so it must be cheap: a backend that probes
+    /// the shell with an external call overrides it with something that is
+    /// not that call. The default asks `status()`.
+    async fn is_exited(&self) -> bool {
+        matches!(
+            self.status().await,
+            ShellResponse::Status {
+                state: ShellState::Exited,
+                ..
+            }
+        )
+    }
+
     /// End the shell itself. A backend that cannot answers an error, which
     /// the host relays as an `Error` frame.
     async fn close(&self) -> anyhow::Result<()> {
@@ -71,10 +85,7 @@ pub async fn serve_until_exit<B: ShellBackend>(
         () = async move {
             loop {
                 tokio::time::sleep(poll).await;
-                if matches!(
-                    watched.status().await,
-                    ShellResponse::Status { state: ShellState::Exited, .. }
-                ) {
+                if watched.is_exited().await {
                     break;
                 }
             }
