@@ -201,7 +201,7 @@ pub async fn spawn_sbx_host(
             sandbox_sidecar_path(&dir, id.as_str()).display()
         )
     })?;
-    let argv = crate::daemon::executor::sbx::shell_exec_args(sandbox, None);
+    let argv = crate::daemon::executor::sbx::tagged_shell_exec_args(sandbox, id.as_str());
     let program = which_sbx()?;
     launch::spawn_detached(id.as_str(), &program, &argv, rows, cols).await
 }

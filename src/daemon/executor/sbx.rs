@@ -155,6 +155,185 @@ pub fn shell_exec_args(name: &str, workdir: Option<&str>) -> Vec<String> {
     argv
 }
 
+/// The sandbox shell argv, tagged so a side `sbx exec` can find this shell's
+/// bash among the sandbox's other shells:
+/// `exec -it -e DE_SHELL=<tag> <name> bash`.
+pub fn tagged_shell_exec_args(name: &str, tag: &str) -> Vec<String> {
+    vec![
+        "exec".to_string(),
+        "-it".to_string(),
+        "-e".to_string(),
+        format!("DE_SHELL={tag}"),
+        name.to_string(),
+        "bash".to_string(),
+    ]
+}
+
+/// The in-VM signal script, measured on sbx v0.46.0 (see the M26 README).
+///
+/// Reads `$1` = the shell's tag and `$2` = one of `FIND`, `STOP`, `CONT`,
+/// `HUP`. It finds the process whose environment holds `DE_SHELL=<tag>`,
+/// which is a **session leader** and whose **parent is not tagged** (the
+/// outer bash), then acts on it and on its terminal's foreground group
+/// (`tpgid`).
+pub const VM_SIGNAL_SCRIPT: &str = r#"id=$1; sig=$2; bash_pid=""
+for p in /proc/[0-9]*; do
+  pid=${p#/proc/}
+  tr '\0' '\n' < "$p/environ" 2>/dev/null | grep -qx "DE_SHELL=$id" || continue
+  # stat: pid (comm) state ppid pgrp session tty_nr tpgid ...
+  rest=$(sed 's/.*) //' "$p/stat" 2>/dev/null) || continue
+  set -- $rest; state=$1; sid=$4; tpgid=$6
+  [ "$sid" = "$pid" ] || continue
+  ppid=$2
+  tr '\0' '\n' < "/proc/$ppid/environ" 2>/dev/null | grep -qx "DE_SHELL=$id" && continue
+  bash_pid=$pid; fg=$tpgid; st=$state; break
+done
+[ -n "$bash_pid" ] || { echo "no-shell"; exit 3; }
+case $sig in
+  FIND) echo "bash=$bash_pid fg=$fg state=$st";;
+  HUP) kill -CONT "$bash_pid"; [ "$fg" != "$bash_pid" ] && kill -CONT -- "-$fg"; kill -HUP "$bash_pid"; echo "hup bash=$bash_pid";;
+  STOP) kill -STOP "$bash_pid"; [ "$fg" != "$bash_pid" ] && kill -STOP -- "-$fg"; echo "stopped bash=$bash_pid fg=$fg";;
+  CONT) [ "$fg" != "$bash_pid" ] && kill -CONT -- "-$fg"; kill -CONT "$bash_pid"; echo "cont bash=$bash_pid fg=$fg";;
+esac
+"#;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmOp {
+    Find,
+    Stop,
+    Cont,
+    Hup,
+}
+
+impl VmOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VmOp::Find => "FIND",
+            VmOp::Stop => "STOP",
+            VmOp::Cont => "CONT",
+            VmOp::Hup => "HUP",
+        }
+    }
+}
+
+/// `exec <sandbox> sh -c <VM_SIGNAL_SCRIPT> vmsig <tag> <OP>`.
+pub fn vm_signal_args(sandbox: &str, tag: &str, op: VmOp) -> Vec<String> {
+    vec![
+        "exec".to_string(),
+        sandbox.to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        VM_SIGNAL_SCRIPT.to_string(),
+        "vmsig".to_string(),
+        tag.to_string(),
+        op.as_str().to_string(),
+    ]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmShellState {
+    pub bash_pid: u32,
+    pub fg_pgid: u32,
+    pub state: char,
+}
+
+impl VmShellState {
+    /// The shell is stopped (`T`).
+    pub fn is_paused(&self) -> bool {
+        self.state == 'T'
+    }
+
+    /// A job holds the terminal (`fg_pgid != bash_pid`).
+    pub fn has_foreground_job(&self) -> bool {
+        self.fg_pgid != self.bash_pid
+    }
+}
+
+/// Parse `FIND` output: one line `bash=<u32> fg=<u32> state=<one char>`.
+pub fn parse_vm_find(stdout: &str) -> Option<VmShellState> {
+    let mut fields = stdout.split_whitespace();
+    let bash_pid = fields.next()?.strip_prefix("bash=")?.parse().ok()?;
+    let fg_pgid = fields.next()?.strip_prefix("fg=")?.parse().ok()?;
+    let state = fields.next()?.strip_prefix("state=")?;
+    if state.chars().count() != 1 {
+        return None;
+    }
+    let state = state.chars().next()?;
+    if fields.next().is_some() {
+        return None;
+    }
+    Some(VmShellState {
+        bash_pid,
+        fg_pgid,
+        state,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VmOpOutcome {
+    Done,
+    NoShell,
+    Failed(String),
+}
+
+/// The outcome of any `vm_signal_args` run. `exit_code` is `None` when the
+/// process was killed by a signal.
+pub fn vm_op_outcome(exit_code: Option<i32>, stdout: &str, stderr: &str) -> VmOpOutcome {
+    match exit_code {
+        Some(0) => VmOpOutcome::Done,
+        Some(3) if stdout.trim() == "no-shell" => VmOpOutcome::NoShell,
+        other => {
+            let detail = match (stderr.trim(), stdout.trim()) {
+                ("", "") => match other {
+                    Some(code) => format!("exit {code}"),
+                    None => "killed by a signal".to_string(),
+                },
+                ("", out) => out.to_string(),
+                (err, _) => err.to_string(),
+            };
+            VmOpOutcome::Failed(detail)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SbxTarget {
+    pub sandbox: String,
+    pub tag: String,
+}
+
+/// `Some` when a shell host's `program` + `args` are exactly what
+/// `tagged_shell_exec_args` builds: `program`'s file name is `sbx` and
+/// `args == ["exec", "-it", "-e", "DE_SHELL=<tag>", <sandbox>, "bash"]`
+/// with a non-empty tag and sandbox.
+pub fn sbx_target_from_host(program: &str, args: &[String]) -> Option<SbxTarget> {
+    if std::path::Path::new(program)
+        .file_name()
+        .and_then(|n| n.to_str())
+        != Some("sbx")
+    {
+        return None;
+    }
+    if args.len() != 6
+        || args[0] != "exec"
+        || args[1] != "-it"
+        || args[2] != "-e"
+        || args[5] != "bash"
+    {
+        return None;
+    }
+    let tag = args[3]
+        .strip_prefix("DE_SHELL=")
+        .filter(|t| !t.is_empty())?;
+    if args[4].is_empty() {
+        return None;
+    }
+    Some(SbxTarget {
+        sandbox: args[4].clone(),
+        tag: tag.to_string(),
+    })
+}
+
 /// Argv for a one-off command whose exit status passes through.
 pub fn exec_args(name: &str, argv: &[&str]) -> Vec<String> {
     let mut out = vec!["exec".to_string(), name.to_string()];
@@ -806,5 +985,205 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn tagged_shell_exec_args_match_the_measured_shape() {
+        let argv = tagged_shell_exec_args("de-ghost-r1", "s3");
+        let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+        assert_eq!(
+            refs,
+            vec!["exec", "-it", "-e", "DE_SHELL=s3", "de-ghost-r1", "bash"]
+        );
+    }
+
+    #[test]
+    fn vm_signal_args_pass_tag_and_op_as_positionals() {
+        for (op, word) in [
+            (VmOp::Find, "FIND"),
+            (VmOp::Stop, "STOP"),
+            (VmOp::Cont, "CONT"),
+            (VmOp::Hup, "HUP"),
+        ] {
+            let argv = vm_signal_args("de-ghost-r1", "s3", op);
+            let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+            assert_eq!(
+                refs,
+                vec![
+                    "exec",
+                    "de-ghost-r1",
+                    "sh",
+                    "-c",
+                    VM_SIGNAL_SCRIPT,
+                    "vmsig",
+                    "s3",
+                    word
+                ],
+                "op {word}"
+            );
+        }
+    }
+
+    #[test]
+    fn vm_signal_script_is_valid_posix_sh() {
+        let status = std::process::Command::new("sh")
+            .args(["-n", "-c", VM_SIGNAL_SCRIPT])
+            .status()
+            .unwrap_or_else(|e| panic!("sh should spawn: {e}"));
+        assert!(status.success(), "sh -n rejected the script: {status}");
+    }
+
+    #[test]
+    fn vm_signal_script_matches_the_measured_text() {
+        for line in [
+            r#"[ "$sid" = "$pid" ] || continue"#,
+            r#"tr '\0' '\n' < "/proc/$ppid/environ" 2>/dev/null | grep -qx "DE_SHELL=$id" && continue"#,
+            r#"[ -n "$bash_pid" ] || { echo "no-shell"; exit 3; }"#,
+            r#"STOP) kill -STOP "$bash_pid"; [ "$fg" != "$bash_pid" ] && kill -STOP -- "-$fg"; echo "stopped bash=$bash_pid fg=$fg";;"#,
+        ] {
+            assert!(
+                VM_SIGNAL_SCRIPT.contains(line),
+                "script misses the measured line `{line}`"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_vm_find_reads_the_measured_lines() {
+        let idle = parse_vm_find("bash=366 fg=366 state=S\n").expect("idle line parses");
+        assert_eq!(
+            idle,
+            VmShellState {
+                bash_pid: 366,
+                fg_pgid: 366,
+                state: 'S'
+            }
+        );
+        assert!(!idle.is_paused());
+        assert!(!idle.has_foreground_job());
+
+        let running = parse_vm_find("bash=366 fg=414 state=S").expect("running line parses");
+        assert_eq!(running.fg_pgid, 414);
+        assert!(running.has_foreground_job());
+        assert!(!running.is_paused());
+
+        let paused = parse_vm_find("bash=366 fg=450 state=T").expect("paused line parses");
+        assert!(paused.is_paused());
+        assert!(paused.has_foreground_job());
+    }
+
+    #[test]
+    fn parse_vm_find_rejects_other_output() {
+        for text in [
+            "no-shell",
+            "",
+            "bash=x fg=1 state=S",
+            "bash=1 fg=1",
+            "bash=1 fg=1 state=ST",
+            "fg=1 bash=1 state=S",
+        ] {
+            assert_eq!(parse_vm_find(text), None, "text `{text}` should reject");
+        }
+    }
+
+    #[test]
+    fn vm_op_outcome_maps_exit_codes() {
+        assert_eq!(
+            vm_op_outcome(Some(0), "stopped bash=1 fg=2", ""),
+            VmOpOutcome::Done
+        );
+        assert_eq!(
+            vm_op_outcome(Some(3), "no-shell\n", ""),
+            VmOpOutcome::NoShell
+        );
+        assert_eq!(
+            vm_op_outcome(Some(3), "other", ""),
+            VmOpOutcome::Failed("other".to_string())
+        );
+        assert_eq!(
+            vm_op_outcome(Some(1), "", "error: sandbox 'x' not found"),
+            VmOpOutcome::Failed("error: sandbox 'x' not found".to_string())
+        );
+        assert_eq!(
+            vm_op_outcome(None, "", ""),
+            VmOpOutcome::Failed("killed by a signal".to_string())
+        );
+    }
+
+    #[test]
+    fn sbx_target_from_host_reads_a_tagged_shell() {
+        let args: Vec<String> = tagged_shell_exec_args("de-ghost-r1", "s3");
+        assert_eq!(
+            sbx_target_from_host("/usr/bin/sbx", &args),
+            Some(SbxTarget {
+                sandbox: "de-ghost-r1".to_string(),
+                tag: "s3".to_string()
+            })
+        );
+        assert_eq!(
+            sbx_target_from_host("sbx", &args),
+            Some(SbxTarget {
+                sandbox: "de-ghost-r1".to_string(),
+                tag: "s3".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn sbx_target_from_host_rejects_everything_else() {
+        let tagged: Vec<String> = tagged_shell_exec_args("de-ghost-r1", "s3");
+        assert_eq!(
+            sbx_target_from_host("/usr/bin/ssh", &tagged),
+            None,
+            "wrong program"
+        );
+        let untagged = vec![
+            "exec".to_string(),
+            "-it".to_string(),
+            "de-ghost-r1".to_string(),
+            "bash".to_string(),
+        ];
+        assert_eq!(sbx_target_from_host("sbx", &untagged), None, "untagged");
+        let wrong_var = vec![
+            "exec".to_string(),
+            "-it".to_string(),
+            "-e".to_string(),
+            "FOO=s3".to_string(),
+            "de-ghost-r1".to_string(),
+            "bash".to_string(),
+        ];
+        assert_eq!(sbx_target_from_host("sbx", &wrong_var), None, "wrong var");
+        let empty_tag = vec![
+            "exec".to_string(),
+            "-it".to_string(),
+            "-e".to_string(),
+            "DE_SHELL=".to_string(),
+            "de-ghost-r1".to_string(),
+            "bash".to_string(),
+        ];
+        assert_eq!(sbx_target_from_host("sbx", &empty_tag), None, "empty tag");
+        let seventh: Vec<String> = tagged
+            .iter()
+            .chain(["extra".to_string()].iter())
+            .cloned()
+            .collect();
+        assert_eq!(sbx_target_from_host("sbx", &seventh), None, "seventh arg");
+        assert_eq!(
+            sbx_target_from_host("/usr/bin/sbx-helper", &tagged),
+            None,
+            "sbx-helper program"
+        );
+    }
+
+    #[test]
+    fn sbx_target_round_trips_the_builder() {
+        let args = tagged_shell_exec_args("de-chat-x", "s7");
+        assert_eq!(
+            sbx_target_from_host("sbx", &args),
+            Some(SbxTarget {
+                sandbox: "de-chat-x".to_string(),
+                tag: "s7".to_string()
+            })
+        );
     }
 }
