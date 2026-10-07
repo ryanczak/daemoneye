@@ -510,3 +510,43 @@ the `cargo test` lines. rexyMCP's output filter removes the individual
 ### Update — 2026-10-07 11:25 (started)
 
 Executor **opencode/claude-xlarge** dispatched with `--dangerously-skip-permissions`; this prompt is the sole instruction. Spec bound, all ten test names accepted as given. No resume context. Plan: Tasks 1→6 in order, then §4 commands, one commit.
+
+### Update — 2026-10-07 11:45 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim; every line below is as printed:
+
+```
+ensure_sandbox_names_the_chat_sandbox_by_kind: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2356 filtered out; finished in 0.00s
+forget_and_teardown_forgets_then_removes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2356 filtered out; finished in 0.00s
+chat_sandbox_enabled_only_for_enabled_sbx: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2356 filtered out; finished in 0.00s
+idle_chat_sandboxes_skips_referenced_recent_and_non_chat: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2356 filtered out; finished in 0.00s
+ensure_chat_sandbox_stamps_last_used: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2356 filtered out; finished in 0.00s
+ensure_chat_sandbox_failure_stamps_nothing: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2356 filtered out; finished in 0.00s
+reap_idle_in_tears_down_only_idle_sandboxes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2356 filtered out; finished in 0.00s
+bg_start_in_sandbox_places_a_dedicated_sandbox_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2356 filtered out; finished in 0.01s
+bg_start_in_sandbox_refuses_an_interactive_command: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2356 filtered out; finished in 0.00s
+bg_notify_and_close_closes_after_the_message_lands: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2356 filtered out; finished in 0.02s
+=== ghost_sandbox ===
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 2339 filtered out; finished in 0.04s
+=== bg_shell ===
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 2345 filtered out; finished in 1.05s
+=== chat_sandbox ===
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2351 filtered out; finished in 0.00s
+=== clippy ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+=== fmt ===
+fmt_exit=0
+=== full test ===
+passed=2407 failed=0
+=== diff stat ===
+PASTE MATCH: yes
+```
+
+PASTE MATCH: yes. (The `git diff --stat` line printed nothing because the run
+was captured after the commit; the working tree was clean — `git status
+--short` empty — so there was nothing for it to report.)
+
+Pin: the sandbox-name literal `de-chat-` appears in
+`src/daemon/executor/chat_sandbox.rs:65` (the reaper's prefix gate) and the
+name grammar lives in `src/daemon/executor/sbx.rs` (`CHAT_PREFIX`), so the
+`de-chat-` prefix the reaper filters on is the one `sandbox_name` mints.
