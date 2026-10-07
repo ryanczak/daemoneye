@@ -1,7 +1,7 @@
 # Phase 05c: pause-deadline — time spent paused does not count against a command's deadline
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05b
 **Estimated diff:** ~120 lines (about 25 code, 95 tests)
 **Tags:** language=rust, kind=bugfix, size=s
@@ -211,4 +211,46 @@ None. The change is inside `read_to_marker` and its tests.
 
 ## Update Log
 
-<!-- entries appended below this line -->
+### Update — 2026-10-07 02:50 (started)
+
+**Executor:** Claude (Opus 4.6)
+**Status:** in-progress.
+
+Task 1: restructure `read_to_marker`'s timed-out-slice arm — status check
+first, `Paused` adds the slice's span back to the deadline, deadline check
+last. Task 2: run the phase's end-to-end block and paste its output.
+
+### Update — 2026-10-07 02:56 (end-to-end verification)
+
+The phase's § End-to-end verification block, run verbatim, redirected to
+`.rexymcp/output/phase-05c-e2e.txt`; its contents, every line as printed:
+
+```
+$ cargo test --lib client_run_command_pause_does_not_count_against_the_deadline 2>&1 | grep -E '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2302 filtered out; finished in 3.31s
+$ cargo test --lib client_run_command_still_times_out_when_not_paused 2>&1 | grep -E '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2302 filtered out; finished in 1.00s
+$ cargo test --lib shell::client 2>&1 | grep -E '^test result'
+test result: ok. 29 passed; 0 failed; 1 ignored; 0 measured; 2273 filtered out; finished in 3.35s
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2353 failed=0
+$ git diff --stat
+ docs/dev/milestones/M26-sbx-isolation/README.md    |  2 +-
+ .../M26-sbx-isolation/phase-05c-pause-deadline.md  | 12 ++-
+ src/shell/client.rs                                | 88 +++++++++++++++++++---
+ 3 files changed, 88 insertions(+), 14 deletions(-)
+```
+
+PASTE MATCH: yes
+
+The two new tests behave as the spec's Test plan describes: the pause test
+finishes in ~3.3 s — the command survives a pause longer than its whole 2 s
+deadline and reports `PAUSED_OK` — and the unpaused `sleep 5` against a 1 s
+deadline fails with `timed out` in ~1.0 s, under the 3 s bound. No existing
+test in `shell::client` was edited (the full `shell::client` run is 29
+passed, the same set plus the two new tests).
+

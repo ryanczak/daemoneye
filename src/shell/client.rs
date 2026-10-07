@@ -427,6 +427,7 @@ where
             Some(end) => end,
             None => deadline.min(tokio::time::Instant::now() + EXIT_POLL_INTERVAL),
         };
+        let slice_started = tokio::time::Instant::now();
         let read = tokio::time::timeout_at(slice_end, reader.read_until(b'\n', &mut line)).await;
         let n = match read {
             Ok(Ok(n)) => n,
@@ -434,11 +435,6 @@ where
                 return Err(e).with_context(|| format!("reading frame from {}", sock.display()));
             }
             Err(_) => {
-                if tokio::time::Instant::now() >= deadline {
-                    anyhow::bail!(
-                        "timed out after {timeout:?} waiting for command output: {cmd:?}"
-                    );
-                }
                 if let Some(end) = drain_until {
                     // The drain window is over and no end marker arrived: the
                     // shell's program is gone and this command will never
@@ -449,12 +445,30 @@ where
                         }
                         .into());
                     }
-                } else if let Ok(ShellResponse::Status {
-                    state: ShellState::Exited,
-                    ..
-                }) = status(sock, EXIT_STATUS_TIMEOUT).await
-                {
-                    drain_until = Some(tokio::time::Instant::now() + EXIT_DRAIN_WINDOW);
+                } else {
+                    match status(sock, EXIT_STATUS_TIMEOUT).await {
+                        Ok(ShellResponse::Status {
+                            state: ShellState::Exited,
+                            ..
+                        }) => {
+                            drain_until = Some(tokio::time::Instant::now() + EXIT_DRAIN_WINDOW);
+                        }
+                        Ok(ShellResponse::Status {
+                            state: ShellState::Paused,
+                            ..
+                        }) => {
+                            // A pause is not the command's run time either, so
+                            // this slice's paused span is added back to the
+                            // deadline, the same way prompt time is.
+                            deadline += slice_started.elapsed();
+                        }
+                        _ => {}
+                    }
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    anyhow::bail!(
+                        "timed out after {timeout:?} waiting for command output: {cmd:?}"
+                    );
                 }
                 continue;
             }
@@ -1600,6 +1614,58 @@ mod tests {
         assert!(
             text.contains("LIVE_OK"),
             "the live command's output must arrive intact: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_run_command_pause_does_not_count_against_the_deadline() {
+        let host = spawn_host().await;
+        let sock = host.path.clone();
+        let task = tokio::spawn(async move {
+            run_command(
+                &sock,
+                "sleep 1; echo PAUSED_OK",
+                "bash",
+                Duration::from_secs(2),
+            )
+            .await
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        send_signal(&host.path, ShellSignal::Stop, Duration::from_secs(5))
+            .await
+            .expect("the shell acknowledges the stop");
+        // Sleep past the 2 s limit entirely while paused: none of it may
+        // count against the command's deadline.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        send_signal(&host.path, ShellSignal::Cont, Duration::from_secs(5))
+            .await
+            .expect("the shell acknowledges the continue");
+        let outcome = task
+            .await
+            .expect("the command task joins")
+            .expect("paused time is not the command's run time");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(
+            text.contains("PAUSED_OK"),
+            "the command must complete after the resume, with its output: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_run_command_still_times_out_when_not_paused() {
+        let host = spawn_host().await;
+        let started = std::time::Instant::now();
+        let result = run_command(&host.path, "sleep 5", "bash", Duration::from_secs(1)).await;
+        let elapsed = started.elapsed();
+        let err = result.expect_err("an unpaused command past its deadline must Err");
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "the extension must apply only while paused: elapsed={elapsed:?}"
+        );
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("timed out"),
+            "the error must name the timeout: {msg}"
         );
     }
 
