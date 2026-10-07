@@ -286,3 +286,15 @@ the `cargo test` lines. rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-07 10:54 (progress)
+
+Executor local-inference-lab/GLM-5.3-Flash-NVFP4-Spark started phase 06d.
+Status flipped to `in-progress` here and in the milestone README's phase
+table. All four Spec tasks are implemented and committed as `a8395eb4`:
+the four pure helpers + `STAGED_SCRIPTS_DIR` in `sbx.rs`, `stage_script`
+in `ghost_sandbox.rs`, the staging step in `run_background`'s
+`Ok(sandbox)` arm (`foreground.rs`, command rewrite before
+`run_ghost_in_sandbox`; staging failure yields `(reason, 1)` and
+`log_command` still records the original command), and the eight named
+tests. Full-suite run: 2396 passed, 0 failed.
