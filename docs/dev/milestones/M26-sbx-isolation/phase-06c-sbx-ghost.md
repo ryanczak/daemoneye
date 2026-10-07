@@ -1,7 +1,7 @@
 # Phase 06c: sbx-ghost — a sandboxed local ghost runs in its own sandbox
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-06b
 **Estimated diff:** ~420 lines (about 180 code, 240 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -622,3 +622,29 @@ kill: (-616944): No such process
 **Commit:** ccd5273d0f3a7ba3616b4da30a18dc090431f8f1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-07
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (184 turns,
+  `1cec484b`). No evidence-step loop.
+- **Scope deviations:** none. The wiring in `run_background`, the ghost exit
+  path (teardown after `close_owner_shells`) and the startup sweep (after
+  adoption, on a spawned task) is as specified. The created-set lock is never
+  held across an `.await`, every lock goes through `unwrap_or_log`, and a failed
+  create is not cached. There are three extra tests (12 instead of 9).
+- **Reviewer re-run:** fmt, build and clippy clean; `executor::ghost_sandbox`
+  12, `executor::ghost_remote` 6 and `executor::sbx` 49 passed; full suite
+  `passed=2388 failed=0` on the first run. No `unwrap` / `expect` / `panic!` /
+  `#[allow]` outside tests.
+- **Reviewer mutation check:** removing the preflight call fails
+  `ensure_ghost_sandbox_fails_closed_on_preflight`.
+- **Live check deferred to row 10 (live close).** A real sandboxed ghost
+  needs a running daemon with `[sandbox] enabled = true` / `runtime = "sbx"`,
+  a runbook and the model endpoint, which means changing the operator's real
+  `~/.daemoneye` config. That is the live close's job, with the PE present,
+  rather than this review's. The pieces it composes were each verified live
+  earlier: the shell host with a tagged sbx child (05b), and preflight, create,
+  `rm`/`stop` and the sweep's argv shapes (02, 06a).
+- **Calibration:** none.
