@@ -1,7 +1,7 @@
 # Phase 07: sbx-chat-background — chat `wait: false` in a per-session sandbox
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06d
 **Estimated diff:** ~420 lines (about 160 code, 260 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -506,3 +506,7 @@ the `cargo test` lines. rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-07 11:25 (started)
+
+Executor **opencode/claude-xlarge** dispatched with `--dangerously-skip-permissions`; this prompt is the sole instruction. Spec bound, all ten test names accepted as given. No resume context. Plan: Tasks 1→6 in order, then §4 commands, one commit.

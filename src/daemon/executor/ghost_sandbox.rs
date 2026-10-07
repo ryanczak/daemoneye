@@ -32,31 +32,25 @@ pub fn ghost_sandbox_pty(
         && policy.is_some_and(|p| p.ssh_target.is_none())
 }
 
-/// Make sure the ghost run `session` has its sandbox; returns the sandbox
-/// name. The first call runs preflight and creates the sandbox; later calls
-/// in the same daemon return at once. `Err` is an operator-facing reason,
-/// ready to hand to the model, starting `sandbox unavailable:`.
-pub async fn ensure_ghost_sandbox(
+/// Make sure the sandbox of `kind` for `id` exists, and return its name. The
+/// first call runs preflight and creates the sandbox; later calls in the same
+/// daemon return at once. `Err` is an operator-facing reason, ready to hand
+/// to the model, starting `sandbox unavailable:`.
+pub async fn ensure_sandbox(
     run: &SbxRunner,
     cfg: &crate::config::SandboxConfig,
-    session: &str,
+    kind: SandboxKind,
+    id: &str,
     profile: Option<&str>,
 ) -> Result<String, String> {
-    let name = crate::daemon::executor::sbx::sandbox_name(SandboxKind::Ghost, session);
+    let name = crate::daemon::executor::sbx::sandbox_name(kind, id);
     if created().lock().unwrap_or_log().contains(&name) {
         return Ok(name);
     }
     if let Err(r) = crate::daemon::executor::sbx_lifecycle::preflight(run).await {
         return Err(crate::daemon::executor::sbx::describe_unavailable(&r));
     }
-    match crate::daemon::executor::sbx_lifecycle::create_sandbox(
-        run,
-        cfg,
-        profile,
-        SandboxKind::Ghost,
-        session,
-    )
-    .await
+    match crate::daemon::executor::sbx_lifecycle::create_sandbox(run, cfg, profile, kind, id).await
     {
         Ok(_) => {
             created().lock().unwrap_or_log().insert(name.clone());
@@ -73,6 +67,30 @@ pub async fn ensure_ghost_sandbox(
     }
 }
 
+/// Make sure the ghost run `session` has its sandbox; returns the sandbox
+/// name. The first call runs preflight and creates the sandbox; later calls
+/// in the same daemon return at once. `Err` is an operator-facing reason,
+/// ready to hand to the model, starting `sandbox unavailable:`.
+pub async fn ensure_ghost_sandbox(
+    run: &SbxRunner,
+    cfg: &crate::config::SandboxConfig,
+    session: &str,
+    profile: Option<&str>,
+) -> Result<String, String> {
+    ensure_sandbox(run, cfg, SandboxKind::Ghost, session, profile).await
+}
+
+/// Remove `name` from the created set, then tear the sandbox down. The
+/// single place that forgets a sandbox, so a name the daemon stops tracking
+/// is the same name it stops running.
+pub async fn forget_and_teardown(
+    run: &SbxRunner,
+    name: &str,
+) -> crate::daemon::executor::sbx_lifecycle::Teardown {
+    created().lock().unwrap_or_log().remove(name);
+    crate::daemon::executor::sbx_lifecycle::teardown_sandbox(run, name).await
+}
+
 /// Tear the ghost run's sandbox down and forget it. A ghost that never ran a
 /// sandboxed command gets `rm` of a missing sandbox, which
 /// [`sbx_lifecycle::Teardown::Removed`] covers, so this is harmless for it.
@@ -81,8 +99,7 @@ pub async fn teardown_ghost_sandbox(
     session: &str,
 ) -> crate::daemon::executor::sbx_lifecycle::Teardown {
     let name = crate::daemon::executor::sbx::sandbox_name(SandboxKind::Ghost, session);
-    created().lock().unwrap_or_log().remove(&name);
-    crate::daemon::executor::sbx_lifecycle::teardown_sandbox(run, &name).await
+    forget_and_teardown(run, &name).await
 }
 
 /// `run_ghost_remote`, in this ghost's sandbox shell.
@@ -173,23 +190,29 @@ pub async fn stage_script(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::daemon::executor::sbx::{self, NetworkPlan};
-    use crate::daemon::executor::sbx_lifecycle::{Teardown, profile_for};
-    use crate::shell::{VmRun, shell_for_owner_in_sandbox};
-    use crate::test_home_guard;
-    use anyhow::Context;
-    use futures_util::FutureExt;
-    use std::sync::Arc;
-    use std::sync::Mutex;
+pub(crate) mod test_support {
+    //! Fixtures shared by `ghost_sandbox.rs`'s and `chat_sandbox.rs`'s test
+    //! modules. `chat_sandbox.rs` tests the same lifecycle against the same
+    //! fake `sbx`, so both must drive one shared definition or a copied one
+    //! drifts. The created set is process-wide and libtest runs tests in
+    //! parallel, so every test also gets a `CreatedSet` guard naming its
+    //! sandboxes.
 
-    type CannedRuns = Arc<Mutex<Vec<VmRun>>>;
+    use super::created;
+    use crate::shell::{SbxRunner, VmRun};
+    use crate::util::UnpoisonExt;
+    use futures_util::FutureExt;
+    use std::sync::{Arc, Mutex};
+
+    pub(crate) type CannedRuns = Arc<Mutex<Vec<VmRun>>>;
 
     /// The fake runner, byte-for-byte as `sbx_lifecycle.rs` tests define it:
     /// every argv is recorded, runs come off a FIFO queue and a drained
     /// queue answers `Some(0)` with empty output.
-    fn fake_runner(canned: CannedRuns, calls: Arc<Mutex<Vec<Vec<String>>>>) -> SbxRunner {
+    pub(crate) fn fake_runner(
+        canned: CannedRuns,
+        calls: Arc<Mutex<Vec<Vec<String>>>>,
+    ) -> SbxRunner {
         Arc::new(move |argv: Vec<String>| {
             calls.lock().unwrap().push(argv.clone());
             let mut queue = canned.lock().unwrap();
@@ -209,14 +232,14 @@ mod tests {
     /// A runner plus the handles a test reads: every argv in order, and the
     /// FIFO queue of runs the fake hands back (a drained queue answers
     /// `Some(0)` with empty output, so late teardowns succeed by default).
-    fn fake() -> (SbxRunner, Arc<Mutex<Vec<Vec<String>>>>, CannedRuns) {
+    pub(crate) fn fake() -> (SbxRunner, Arc<Mutex<Vec<Vec<String>>>>, CannedRuns) {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let canned: CannedRuns = Arc::new(Mutex::new(Vec::new()));
         let runner = fake_runner(Arc::clone(&canned), Arc::clone(&calls));
         (runner, calls, canned)
     }
 
-    fn run(code: Option<i32>, stdout: &str, stderr: &str) -> VmRun {
+    pub(crate) fn run(code: Option<i32>, stdout: &str, stderr: &str) -> VmRun {
         VmRun {
             code,
             stdout: stdout.to_string(),
@@ -224,11 +247,11 @@ mod tests {
         }
     }
 
-    fn ok_run(stdout: &str) -> VmRun {
+    pub(crate) fn ok_run(stdout: &str) -> VmRun {
         run(Some(0), stdout, "")
     }
 
-    fn sbx_config(runtime: &str, enabled: bool) -> crate::config::SandboxConfig {
+    pub(crate) fn sbx_config(runtime: &str, enabled: bool) -> crate::config::SandboxConfig {
         crate::config::SandboxConfig {
             enabled,
             runtime: runtime.to_string(),
@@ -236,15 +259,15 @@ mod tests {
         }
     }
 
-    fn enabled_sbx() -> crate::config::SandboxConfig {
+    pub(crate) fn enabled_sbx() -> crate::config::SandboxConfig {
         sbx_config("sbx", true)
     }
 
-    fn local_policy() -> crate::daemon::policy::GhostPolicy {
+    pub(crate) fn local_policy() -> crate::daemon::policy::GhostPolicy {
         crate::daemon::policy::GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
     }
 
-    fn resolved_policy() -> crate::daemon::policy::GhostPolicy {
+    pub(crate) fn resolved_policy() -> crate::daemon::policy::GhostPolicy {
         crate::daemon::policy::GhostPolicy {
             ssh_target: Some("matt@db01.lan".to_string()),
             ..crate::daemon::policy::GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
@@ -254,18 +277,18 @@ mod tests {
     /// Forget every name one test put in the process-wide created set, so a
     /// later test starts from an empty set — the set is process-wide and
     /// tests run in parallel.
-    struct CreatedSet {
+    pub(crate) struct CreatedSet {
         names: Vec<String>,
     }
 
     impl CreatedSet {
-        fn from_name(name: &str) -> Self {
+        pub(crate) fn from_name(name: &str) -> Self {
             Self {
                 names: vec![name.to_string()],
             }
         }
 
-        fn forget(&self) {
+        pub(crate) fn forget(&self) {
             let mut set = created().lock().unwrap_or_log();
             for name in &self.names {
                 set.remove(name);
@@ -279,18 +302,12 @@ mod tests {
         }
     }
 
-    /// The PTY geometry every shell host is spawned with, matching the
-    /// detached production spawns (24×80).
-    const ROWS: u16 = 24;
-    /// The PTY geometry every shell host is spawned with.
-    const COLS: u16 = 80;
-
-    fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-        let guard = test_home_guard();
+    /// Point `HOME` at a fresh temp dir for the duration of the test and
+    /// serialise against other HOME-mutating tests (bug-05c-1).
+    pub(crate) fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
+        let guard = crate::test_home_guard();
         let dir = tempfile::tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("HOME", dir.path());
-        }
+        unsafe { std::env::set_var("HOME", dir.path()) }
         crate::config::Config::ensure_dirs().ok();
         (guard, dir)
     }
@@ -298,23 +315,39 @@ mod tests {
     /// A real in-process PTY host serving the configured socket for `id`: a
     /// bash session standing in for the sandbox's bash. The detached
     /// `spawn_sbx_host` cannot run under a test binary (07b F4).
-    async fn spawn_in_process_host(id: crate::shell::ShellId) -> anyhow::Result<()> {
-        let dir = tempfile::tempdir().context("tempdir for cast")?;
+    pub(crate) async fn spawn_in_process_host(id: crate::shell::ShellId) -> anyhow::Result<()> {
+        let dir = tempfile::tempdir().expect("tempdir for cast");
         let cast = dir.path().join(format!("{}.cast", id.as_str()));
         let backend = crate::shell::PtyBackend::spawn("bash", &[], ROWS, COLS, 100, &cast, 0)
-            .context("spawning bash")?;
+            .expect("spawning bash");
         let lock =
             crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id.as_str()))
-                .context("holding the per-id instance lock")?;
+                .expect("holding the per-id instance lock");
         let socket = crate::shell::socket_path(id.as_str());
-        let listener = crate::shell::bind(&socket)
-            .await
-            .context("binding the in-process host's socket")?;
+        let listener = crate::shell::bind(&socket).await.expect("binding");
         tokio::spawn(crate::shell::serve(listener, Arc::clone(&backend)));
         std::mem::forget(lock);
         std::mem::forget(dir);
         Ok(())
     }
+
+    /// The PTY geometry every shell host is spawned with, matching the
+    /// detached production spawns (24×80).
+    pub(crate) const ROWS: u16 = 24;
+    /// The PTY geometry every shell host is spawned with.
+    pub(crate) const COLS: u16 = 80;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::{
+        CreatedSet, enabled_sbx, fake, local_policy, ok_run, resolved_policy, run, sbx_config,
+        spawn_in_process_host, test_home,
+    };
+    use super::*;
+    use crate::daemon::executor::sbx::{self, NetworkPlan};
+    use crate::daemon::executor::sbx_lifecycle::{Teardown, profile_for};
+    use crate::shell::shell_for_owner_in_sandbox;
 
     #[test]
     fn ghost_sandbox_pty_only_for_a_local_sbx_ghost() {
@@ -788,6 +821,67 @@ mod tests {
         assert!(err.contains("no such file"), "got: {err}");
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 2, "prep ran, then the failed copy: {calls:?}");
+    }
+
+    #[tokio::test]
+    async fn ensure_sandbox_names_the_chat_sandbox_by_kind() {
+        let name = sbx::sandbox_name(SandboxKind::Chat, "t-chat-kind");
+        let _guard = CreatedSet::from_name(&name);
+        let (runner, calls, canned) = fake();
+        canned.lock().unwrap().push(ok_run(
+            "sbx version: v0.46.0 991967dc90ce0d9a440cd1df1bdf3e395c5a2693\n",
+        ));
+        canned.lock().unwrap().push(ok_run("Status: running\n"));
+        let cfg = enabled_sbx();
+
+        let got = ensure_sandbox(&runner, &cfg, SandboxKind::Chat, "t-chat-kind", None)
+            .await
+            .expect("the canned version and daemon runs accept preflight");
+
+        assert_eq!(
+            got,
+            sbx::sandbox_name(SandboxKind::Chat, "t-chat-kind"),
+            "the kind decides the prefix, not the caller"
+        );
+        assert!(
+            got.starts_with("de-chat-"),
+            "a chat sandbox is a chat-prefixed sandbox: {got}"
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                sbx::version_args(),
+                sbx::daemon_status_args(),
+                sbx::create_args(&name, &NetworkPlan::None, "1g", 2.0),
+            ],
+            "the chat kind runs the same preflight-then-create sequence"
+        );
+    }
+
+    #[tokio::test]
+    async fn forget_and_teardown_forgets_then_removes() {
+        let name = "de-chat-t-forget".to_string();
+        let _guard = CreatedSet::from_name(&name);
+        created().lock().unwrap_or_log().insert(name.clone());
+        let (runner, calls, canned) = fake();
+        canned.lock().unwrap().push(ok_run(""));
+
+        let got = forget_and_teardown(&runner, &name).await;
+
+        assert_eq!(
+            got,
+            Teardown::Removed,
+            "the canned rm succeeds, so the sandbox is removed"
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![sbx::rm_args(std::slice::from_ref(&name))],
+            "exactly one rm, of the name handed in"
+        );
+        assert!(
+            !created().lock().unwrap_or_log().contains(&name),
+            "the name is forgotten before the rm runs, so a concurrent ensure              can never answer from the created set"
+        );
     }
 
     #[tokio::test]

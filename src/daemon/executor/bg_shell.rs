@@ -9,6 +9,7 @@
 //! takes no `tx`/`rx`, so every part of it is testable against a real
 //! in-process PTY host.
 
+use anyhow::Context;
 use std::time::Duration;
 
 use super::shell_exec;
@@ -78,6 +79,134 @@ where
         spawn,
     )
     .await?;
+    finish_start(reg, owner, run_id, shell_id, socket, cmd).await
+}
+
+/// Start `cmd` on a dedicated shell in the chat session's own sbx sandbox,
+/// and return without awaiting it. The sandbox is created behind a
+/// fail-closed preflight (a failure is an `Err` and the command never runs on
+/// the host), a staged-script invocation is re-staged from the operator's
+/// copy on every call, and the shell's child runs `sbx exec -it <sandbox>`
+/// so the command executes inside the VM.
+///
+/// An interactive command (`ssh`, `mosh`, …) is refused here for the same
+/// reason [`start_background_with`] refuses it, before any spawn: the shell
+/// and the sandbox are never created for a command that cannot run.
+pub(super) async fn start_background_sandboxed(
+    reg: &ShellRegistry,
+    owner: Owner,
+    session: &str,
+    cmd: &str,
+    max_per_owner: u32,
+) -> anyhow::Result<(BackgroundStart, CommandHandle)> {
+    let cfg = crate::config::Config::load().unwrap_or_default().sandbox;
+    let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
+    let run = crate::shell::real_runner(program);
+    let sandbox = super::chat_sandbox::ensure_chat_sandbox(
+        &run,
+        &cfg,
+        session,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    let cmd_to_run = match crate::daemon::executor::sbx::script_invocation(cmd, |n| {
+        crate::scripts::resolve_script(n).is_ok()
+    }) {
+        Some((name, args_tail)) => {
+            let host_path = crate::config::scripts_dir().join(&name);
+            super::ghost_sandbox::stage_script(&run, &sandbox, &name, &host_path.to_string_lossy())
+                .await
+                .map(|_| crate::daemon::executor::sbx::staged_script_command(&name, &args_tail))
+                .map_err(anyhow::Error::msg)?
+        }
+        None => cmd.to_string(),
+    };
+    start_background_in_sandbox_with(
+        reg,
+        owner,
+        &cmd_to_run,
+        max_per_owner,
+        &sandbox,
+        |shell_id| {
+            let s = sandbox.clone();
+            async move { crate::shell::spawn_sbx_host(shell_id, &s, 24, 80).await }
+        },
+    )
+    .await
+}
+
+/// Start `cmd` on a **dedicated** shell inside the sbx sandbox `sandbox`, and
+/// return without awaiting it. The steps of [`start_background_with`] with
+/// `spawn_for_in_sandbox` in place of `spawn_for` and the same
+/// spawn-then-ready-with-rollback shape: a record for a host that never came
+/// up is removed before the error is returned.
+pub(super) async fn start_background_in_sandbox_with<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    cmd: &str,
+    max_per_owner: u32,
+    sandbox: &str,
+    spawn: F,
+) -> anyhow::Result<(BackgroundStart, CommandHandle)>
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    if crate::daemon::utils::is_interactive_command(cmd) {
+        anyhow::bail!(
+            "`{cmd}` is an interactive command and cannot run with background=true — \
+             a background ssh/mosh session can never be typed into. Run it in the \
+             foreground instead (background=false)."
+        );
+    }
+    let run_id = RunId::new();
+    let id = crate::shell::spawn_for_in_sandbox(
+        reg,
+        owner.clone(),
+        max_per_owner,
+        sandbox.to_string(),
+        true,
+        spawn,
+    )
+    .await?;
+    let socket = crate::shell::socket_path(id.as_str());
+    if let Err(e) = crate::shell::await_ready(
+        &socket,
+        std::time::Instant::now() + shell_exec::SHELL_READY_TIMEOUT,
+    )
+    .await
+    {
+        with_shells(reg, |store| {
+            store.remove(id.as_str());
+        });
+        return Err(e).with_context(|| {
+            format!(
+                "shell {} never became ready at {} within {:?}",
+                id.as_str(),
+                socket.display(),
+                shell_exec::SHELL_READY_TIMEOUT
+            )
+        });
+    }
+    finish_start(reg, owner, run_id, id, socket, cmd).await
+}
+
+/// The tail both starts share: the `RunStarted` record, the marker name the
+/// record dictates, and the command's dispatch. Takes the marker from
+/// [`crate::shell::shell_marker_name`] so a sandbox record's marker is POSIX
+/// `$?` while a host record's is today's value.
+async fn finish_start(
+    reg: &ShellRegistry,
+    owner: Owner,
+    run_id: RunId,
+    shell_id: ShellId,
+    socket: std::path::PathBuf,
+    cmd: &str,
+) -> anyhow::Result<(BackgroundStart, CommandHandle)> {
     append_turn_event(&TurnLogRecord {
         timestamp: chrono::Utc::now().to_rfc3339(),
         run_id: run_id.clone(),
@@ -90,7 +219,7 @@ where
     let marker_name = with_shells(reg, |store| {
         store
             .get(shell_id.as_str())
-            .map(|record| crate::shell::marker_shell_name(&record.host))
+            .map(crate::shell::shell_marker_name)
     })
     .unwrap_or_else(login_shell);
     let handle = spawn_command(&socket, cmd, &marker_name, BACKGROUND_CMD_TIMEOUT).await?;
@@ -219,6 +348,27 @@ pub(super) async fn await_and_notify(
     });
 }
 
+/// [`await_and_notify`] to completion, then `close(shell_id)`: a sandboxed
+/// background shell is single-use, and the command's completion message has
+/// landed by the time this runs, so the shell is done for good. The close
+/// comes **after** the message lands — closing first would hang the command
+/// up before its reader has drained it.
+pub(super) async fn await_notify_and_close<F, Fut>(
+    sessions: SessionStore,
+    session_id: String,
+    cmd: String,
+    start: BackgroundStart,
+    handle: CommandHandle,
+    close: F,
+) where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let shell_id = start.shell_id.clone();
+    await_and_notify(sessions, session_id, cmd, start, handle).await;
+    close(shell_id).await;
+}
+
 /// The `RunFinished` state a resolved (or dropped) handle reports.
 fn report_state(outcome: &Result<CommandOutcome, String>) -> RunState {
     match outcome {
@@ -242,7 +392,7 @@ mod tests {
     use crate::shell::{Nonce, PtyBackend, bind, lock_path, serve, socket_path};
     use anyhow::Context;
     use std::path::PathBuf;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     const ROWS: u16 = 24;
     const COLS: u16 = 80;
@@ -621,6 +771,142 @@ mod tests {
         assert_eq!(
             count, 0,
             "a vanished session must stay vanished — no entry resurrected"
+        );
+    }
+
+    // ── the sandboxed background start — real PTY host ───────────────────────
+
+    #[tokio::test]
+    async fn bg_start_in_sandbox_places_a_dedicated_sandbox_shell() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let (start, handle) = start_background_in_sandbox_with(
+            &reg,
+            Owner::Chat("bg-sbx".into()),
+            "echo IN_SANDBOX",
+            5,
+            "de-chat-bg-sbx",
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the sandbox shell starts");
+
+        let record = with_shells(&reg, |store| {
+            store
+                .get(start.shell_id.as_str())
+                .map(|r| (r.sandbox.clone(), r.dedicated, r.owner.key()))
+        })
+        .expect("the shell's record is registered");
+        assert_eq!(
+            record.0,
+            Some("de-chat-bg-sbx".to_string()),
+            "the record must name the sandbox it runs in"
+        );
+        assert!(record.1, "a background shell must be dedicated");
+        assert_eq!(record.2, "chat:bg-sbx", "the shell belongs to the session");
+
+        let outcome = handle
+            .outcome
+            .await
+            .expect("the reader task stays alive to deliver")
+            .expect("the command finishes inside the timeout");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(
+            text.contains("IN_SANDBOX"),
+            "the command's bytes must arrive through the sandbox shell: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bg_start_in_sandbox_refuses_an_interactive_command() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let result = start_background_in_sandbox_with(
+            &reg,
+            Owner::Chat("bg-sbx-interactive".into()),
+            "ssh example.com",
+            5,
+            "de-chat-bg-sbx-interactive",
+            spawn_in_process_host,
+        )
+        .await;
+        let err = result.expect_err("an interactive command must be refused, not started");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("interactive"),
+            "the refusal must name the interactive problem: {msg}"
+        );
+        let guard = reg.try_lock().expect("registry test peek");
+        assert!(
+            guard.is_empty(),
+            "the refusal comes before any spawn: no shell, no record"
+        );
+    }
+
+    // ── await_notify_and_close — real PTY host + a real SessionStore ─────────
+
+    #[tokio::test]
+    async fn bg_notify_and_close_closes_after_the_message_lands() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let session_id = "bg-close".to_string();
+        let sessions = store_with_entry(&session_id);
+        let (start, handle) = start_background_with(
+            &reg,
+            Owner::Chat(session_id.clone()),
+            "echo DONE",
+            5,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the command starts");
+
+        let closed: Arc<Mutex<Vec<(String, bool)>>> = Arc::new(Mutex::new(Vec::new()));
+        let close_log = Arc::clone(&closed);
+        await_notify_and_close(
+            sessions.clone(),
+            session_id.clone(),
+            "echo DONE".to_string(),
+            start.clone(),
+            handle,
+            move |id: ShellId| {
+                let close_log = Arc::clone(&close_log);
+                async move {
+                    let message_there = with_sessions(&sessions, |store| {
+                        store
+                            .get(&session_id)
+                            .map(|entry| {
+                                entry
+                                    .messages
+                                    .iter()
+                                    .any(|m| m.content.starts_with("[Background Task Completed]"))
+                            })
+                            .unwrap_or(false)
+                    });
+                    close_log
+                        .lock()
+                        .expect("close log lock")
+                        .push((id.as_str().to_string(), message_there));
+                }
+            },
+        )
+        .await;
+
+        let log = closed.lock().expect("close log lock");
+        assert_eq!(
+            log.len(),
+            1,
+            "the close step runs exactly once, after the await: {log:?}"
+        );
+        assert_eq!(
+            log[0].0,
+            start.shell_id.as_str(),
+            "the close step is handed the run's own shell id: {log:?}"
+        );
+        assert!(
+            log[0].1,
+            "the [Background Task Completed] message must already be in the \
+             session when the close runs: {log:?}"
         );
     }
 }

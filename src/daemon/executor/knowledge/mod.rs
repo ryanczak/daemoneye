@@ -27,9 +27,9 @@ pub use shell::{
     shells_only_context,
 };
 
-/// `close_shell_with` is `pub(super)`-wired inside `shell.rs`; the read-file
-/// live test (07a) reaches it through this re-export.
-#[cfg(test)]
+/// `close_shell_with` is `pub(crate)` in `shell.rs`; the sandboxed chat
+/// background path (07) and the read-file live test (07a) reach it through
+/// this re-export. Not cfg(test)-gated: the chat path is production code.
 pub(crate) use shell::close_shell_with;
 
 /// The 08c ghost teardown: close a ghost's shells when its turn ends. Only

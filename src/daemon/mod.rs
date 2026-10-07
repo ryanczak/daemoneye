@@ -1031,14 +1031,30 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                         );
                         // Reap the record first so a just-reaped shell's log
                         // is swept on the same tick rather than the next one.
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
                         crate::shell::reap_exited(
                             crate::shell::registry(),
                             startup_config.shells.exited_retention_secs,
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0),
+                            now,
                         );
+                        let program =
+                            crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
+                        for (name, outcome) in
+                            crate::daemon::executor::chat_sandbox::reap_idle_chat_sandboxes(
+                                &crate::shell::real_runner(program),
+                                crate::shell::registry(),
+                                now,
+                            )
+                            .await
+                        {
+                            crate::daemon::utils::log_event(
+                                "chat_sandbox_teardown",
+                                serde_json::json!({ "sandbox": name, "outcome": format!("{outcome:?}") }),
+                            );
+                        }
                         let mut live_shell_ids = std::collections::BTreeSet::new();
                         crate::shell::with_shells(crate::shell::registry(), |store| {
                             live_shell_ids.extend(store.keys().cloned());

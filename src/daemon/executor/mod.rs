@@ -1,4 +1,5 @@
 mod bg_shell;
+pub(crate) mod chat_sandbox;
 pub(crate) mod container;
 mod file_ops;
 mod foreground;
@@ -798,14 +799,28 @@ where
                             .unwrap_or_default()
                             .shells
                             .max_per_owner;
-                        match bg_shell::start_background(
-                            crate::shell::registry(),
-                            owner.clone(),
-                            cmd,
-                            max_per_owner,
-                        )
-                        .await
-                        {
+                        let sandboxed = chat_sandbox::chat_sandbox_enabled(
+                            &crate::config::Config::load().unwrap_or_default().sandbox,
+                        );
+                        let started = if sandboxed {
+                            bg_shell::start_background_sandboxed(
+                                crate::shell::registry(),
+                                owner.clone(),
+                                session_id.unwrap_or_default(),
+                                cmd,
+                                max_per_owner,
+                            )
+                            .await
+                        } else {
+                            bg_shell::start_background(
+                                crate::shell::registry(),
+                                owner.clone(),
+                                cmd,
+                                max_per_owner,
+                            )
+                            .await
+                        };
+                        match started {
                             Ok((start, handle)) => {
                                 // The command was dispatched; its real exit code is
                                 // not known yet and the stats row is about
@@ -835,13 +850,33 @@ where
                                     0,
                                     &text,
                                 );
-                                tokio::spawn(bg_shell::await_and_notify(
-                                    sessions.clone(),
-                                    session_id.map(|s| s.to_string()).unwrap_or_default(),
-                                    cmd.to_string(),
-                                    start,
-                                    handle,
-                                ));
+                                if sandboxed {
+                                    let close_owner = owner.clone();
+                                    tokio::spawn(bg_shell::await_notify_and_close(
+                                        sessions.clone(),
+                                        session_id.map(|s| s.to_string()).unwrap_or_default(),
+                                        cmd.to_string(),
+                                        start,
+                                        handle,
+                                        move |id: crate::shell::ShellId| async move {
+                                            let _ = crate::daemon::executor::knowledge::close_shell_with(
+                                                crate::shell::registry(),
+                                                id.as_str(),
+                                                &close_owner,
+                                                std::time::Duration::from_secs(5),
+                                            )
+                                            .await;
+                                        },
+                                    ));
+                                } else {
+                                    tokio::spawn(bg_shell::await_and_notify(
+                                        sessions.clone(),
+                                        session_id.map(|s| s.to_string()).unwrap_or_default(),
+                                        cmd.to_string(),
+                                        start,
+                                        handle,
+                                    ));
+                                }
                                 return Ok(ToolCallOutcome::Result(text));
                             }
                             Err(e) => {
