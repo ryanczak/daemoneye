@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::util::UnpoisonExt;
@@ -416,27 +416,98 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
         .into_iter()
         .filter(|id| host_is_alive(&dir.join(format!("{}.lock", id.as_str()))))
         .collect();
+    // File I/O stays outside `with_shells`: collect `(id, sidecar)` pairs
+    // first, then insert under the lock.
+    let sidecars: Vec<(ShellId, SandboxSidecar)> = adopted
+        .iter()
+        .map(|id| (id.clone(), read_sandbox_sidecar(dir, id.as_str())))
+        .collect();
+    for (id, sidecar) in &sidecars {
+        if matches!(sidecar, SandboxSidecar::Invalid) {
+            log::warn!(
+                "shell {id}: sandbox sidecar was unreadable or invalid, adopting as \
+                 dedicated so it is never reused",
+            );
+        }
+    }
     with_shells(reg, |store| {
-        for id in &adopted {
+        for (id, sidecar) in &sidecars {
             let started_unix = started.get(id.as_str()).copied().unwrap_or(0);
+            let (sandbox, dedicated) = match sidecar {
+                // No sidecar: a shell on the host itself.
+                SandboxSidecar::Absent => (None, false),
+                SandboxSidecar::Sandbox(name) => (Some(name.clone()), false),
+                // A bad sidecar fails closed: the child is probably in a VM
+                // but which one is unknown, so the shell must never be
+                // handed to another command.
+                SandboxSidecar::Invalid => (None, true),
+            };
             store.insert(
                 id.as_str().to_string(),
                 ShellRecord {
                     id: id.clone(),
                     owner: Owner::Adopted,
                     host: crate::host::HostId::Local,
-                    sandbox: None,
+                    sandbox,
                     started_unix,
                     interactive: false,
                     // An adopted shell's original purpose is unknown; `false`
-                    // keeps it reusable, which is today's behaviour.
-                    dedicated: false,
+                    // keeps it reusable, which is today's behaviour. A shell
+                    // whose sidecar was invalid is `true` instead, so a
+                    // probably-in-a-VM child is never reused for another
+                    // command.
+                    dedicated,
                     exited_unix: None,
                 },
             );
         }
     });
     adopted
+}
+
+/// What `<dir>/<id>.sandbox` says about a shell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SandboxSidecar {
+    /// No sidecar: a shell on the host itself.
+    Absent,
+    /// The sandbox this shell's child runs in.
+    Sandbox(String),
+    /// A sidecar exists but is unreadable or does not name a daemon sandbox.
+    Invalid,
+}
+
+/// The sidecar path recording which sandbox `<id>`'s shell child runs in.
+pub fn sandbox_sidecar_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.sandbox"))
+}
+
+/// Write the sandbox sidecar for `id`: the sandbox name followed by a
+/// newline. Does not create `dir`; the caller does.
+pub fn write_sandbox_sidecar(dir: &Path, id: &str, sandbox: &str) -> std::io::Result<()> {
+    std::fs::write(
+        sandbox_sidecar_path(dir, id),
+        format!("{sandbox}\n").into_bytes(),
+    )
+}
+
+/// Read the sandbox sidecar for `id`. `NotFound` means no sidecar was ever
+/// written (a plain shell host) and reads as `Absent`; any other read error
+/// fails closed as `Invalid`, as does content that does not name a daemon
+/// sandbox — the same gate the sandbox sweep deletes by, so a file an
+/// operator wrote can never be adopted as a sandbox shell.
+pub fn read_sandbox_sidecar(dir: &Path, id: &str) -> SandboxSidecar {
+    match std::fs::read_to_string(sandbox_sidecar_path(dir, id)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => SandboxSidecar::Absent,
+        Err(_) => SandboxSidecar::Invalid,
+        Ok(content) => {
+            let trimmed = content.trim();
+            if crate::daemon::executor::sbx::is_daemon_sandbox(trimmed) {
+                SandboxSidecar::Sandbox(trimmed.to_string())
+            } else {
+                SandboxSidecar::Invalid
+            }
+        }
+    }
 }
 
 /// Remove the socket and lock of every DEAD host in `dir`; return the ids
@@ -451,6 +522,8 @@ pub fn sweep_stale(dir: &Path) -> Vec<ShellId> {
         }
         let _ = std::fs::remove_file(dir.join(format!("{}.sock", id.as_str())));
         let _ = std::fs::remove_file(&lock);
+        // Most shells have no sidecar; ignore the error there.
+        let _ = std::fs::remove_file(sandbox_sidecar_path(dir, id.as_str()));
         swept.push(id);
     }
     swept
@@ -761,6 +834,130 @@ mod tests {
         assert!(
             dir.path().join("s0.sock").exists() && dir.path().join("s0.lock").exists(),
             "the live host's files must both survive"
+        );
+    }
+
+    #[test]
+    fn sandbox_sidecar_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        write_sandbox_sidecar(dir.path(), "s3", "de-ghost-r1").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("s3.sandbox")).unwrap(),
+            "de-ghost-r1\n",
+            "the file content must be exactly the name plus a newline"
+        );
+        assert_eq!(
+            read_sandbox_sidecar(dir.path(), "s3"),
+            SandboxSidecar::Sandbox("de-ghost-r1".into()),
+            "the written name must read back"
+        );
+    }
+
+    #[test]
+    fn sandbox_sidecar_absent_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            read_sandbox_sidecar(dir.path(), "s0"),
+            SandboxSidecar::Absent,
+            "no sidecar file must read as Absent"
+        );
+    }
+
+    #[test]
+    fn sandbox_sidecar_rejects_foreign_or_empty_names() {
+        for content in ["", "   \n", "de-probe-a\n", "claude-x\n"] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("s0.sandbox"), content).unwrap();
+            assert_eq!(
+                read_sandbox_sidecar(dir.path(), "s0"),
+                SandboxSidecar::Invalid,
+                "`{content:?}` must not read as a daemon sandbox"
+            );
+        }
+    }
+
+    #[test]
+    fn adopt_at_startup_recovers_the_sandbox_from_its_sidecar() {
+        let (dir, logs) = fixture_dirs();
+        write(dir.path(), "s0.sock");
+        write_sandbox_sidecar(dir.path(), "s0", "de-ghost-r1").unwrap();
+        let _held =
+            crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+        let reg = ShellRegistry::default();
+        adopt_at_startup(&reg, dir.path(), logs.path());
+
+        let guard = reg.try_lock().unwrap();
+        let record = guard.get("s0").expect("s0 must be adopted");
+        assert_eq!(
+            record.sandbox,
+            Some("de-ghost-r1".to_string()),
+            "the sidecar's sandbox must be recovered"
+        );
+        assert!(!record.dedicated, "a known sandbox shell stays reusable");
+    }
+
+    #[test]
+    fn adopt_at_startup_without_a_sidecar_has_no_sandbox() {
+        let (dir, logs) = fixture_dirs();
+        write(dir.path(), "s0.sock");
+        let _held =
+            crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+        let reg = ShellRegistry::default();
+        adopt_at_startup(&reg, dir.path(), logs.path());
+
+        let guard = reg.try_lock().unwrap();
+        let record = guard.get("s0").expect("s0 must be adopted");
+        assert_eq!(record.sandbox, None, "no sidecar means no sandbox");
+        assert!(!record.dedicated, "today's behaviour: still reusable");
+    }
+
+    #[test]
+    fn adopt_at_startup_marks_a_bad_sidecar_dedicated() {
+        let (dir, logs) = fixture_dirs();
+        write(dir.path(), "s0.sock");
+        std::fs::write(dir.path().join("s0.sandbox"), "claude-x\n").unwrap();
+        let _held =
+            crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+        let reg = ShellRegistry::default();
+        adopt_at_startup(&reg, dir.path(), logs.path());
+
+        let guard = reg.try_lock().unwrap();
+        let record = guard.get("s0").expect("s0 must be adopted");
+        assert_eq!(
+            record.sandbox, None,
+            "an invalid sidecar must not name a sandbox"
+        );
+        assert!(
+            record.dedicated,
+            "an invalid sidecar fails closed: the shell must never be reused"
+        );
+    }
+
+    #[test]
+    fn sweep_stale_removes_a_dead_hosts_sandbox_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "s0.sock");
+        write(dir.path(), "s1.sock");
+        write_sandbox_sidecar(dir.path(), "s0", "de-ghost-r1").unwrap();
+        write_sandbox_sidecar(dir.path(), "s1", "de-ghost-r2").unwrap();
+        let _held_live =
+            crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+        let swept = sweep_stale(dir.path());
+        assert_eq!(swept.len(), 1);
+        assert_eq!(swept[0].as_str(), "s1");
+
+        assert!(
+            !dir.path().join("s1.sandbox").exists(),
+            "the dead host's sidecar must be removed"
+        );
+        assert!(
+            dir.path().join("s0.sandbox").exists(),
+            "the live host's sidecar must survive"
         );
     }
 

@@ -1,7 +1,7 @@
 # Phase 04b: sbx-adopt — a sandbox shell keeps its sandbox across a daemon restart
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04a
 **Estimated diff:** ~220 lines (about 70 code, 150 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -300,3 +300,61 @@ None beyond the files named: `src/shell/registry.rs`, `src/shell/session.rs`
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-10-06 17:41 (started)
+
+**Executor:** Claude (Sonnet 4.5, headless run)
+**Scope:** Tasks 1–5 as specced — the `<id>.sandbox` sidecar helpers, `spawn_sbx_host` writing the sidecar before spawning, `adopt_at_startup` reading it back, `sweep_stale` removing it, and the end-to-end evidence capture.
+### Update — 2026-10-06 18:05 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim, once per line, output
+redirected to files and pasted below as printed.
+
+`cargo test --lib -- <the seven names + registry_adopt + registry_sweep +
+adopt_at_startup_adopts_a_real_socket_host> 2>&1 | grep -E '^test |^test result'`:
+
+```
+test shell::registry::tests::sandbox_sidecar_absent_when_missing ... ok
+test shell::registry::tests::registry_adopt_skips_dead_hosts ... ok
+test shell::registry::tests::sweep_stale_removes_a_dead_hosts_sandbox_sidecar ... ok
+test shell::registry::tests::sandbox_sidecar_round_trips ... ok
+test shell::registry::tests::adopt_at_startup_adopts_a_real_socket_host ... ok
+test shell::registry::tests::registry_adopt_uses_zero_when_no_cast_file_matches ... ok
+test shell::registry::tests::registry_adopt_inserts_live_hosts_with_owner_adopted ... ok
+test shell::registry::tests::adopt_at_startup_marks_a_bad_sidecar_dedicated ... ok
+test shell::registry::tests::registry_sweep_never_touches_a_live_host ... ok
+test shell::registry::tests::adopt_at_startup_recovers_the_sandbox_from_its_sidecar ... ok
+test shell::registry::tests::adopt_at_startup_without_a_sidecar_has_no_sandbox ... ok
+test shell::registry::tests::sandbox_sidecar_rejects_foreign_or_empty_names ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 2270 filtered out; finished in 0.00s
+```
+
+`cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1`:
+
+```
+clippy_exit=0
+```
+
+`cargo fmt --all --check; echo "fmt_exit=$?"`:
+
+```
+fmt_exit=0
+```
+
+`cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print
+"passed=" p, "failed=" f}'`:
+
+```
+passed=2332 failed=0
+```
+
+`git diff --stat`:
+
+```
+ docs/dev/milestones/M26-sbx-isolation/README.md    |   2 +-
+ .../M26-sbx-isolation/phase-04b-sbx-adopt.md       |   6 +-
+ src/shell/registry.rs                              | 207 ++++++++++++++++++++-
+ src/shell/session.rs                               |  12 +-
+ 4 files changed, 218 insertions(+), 9 deletions(-)
+```
+
+PASTE MATCH: yes

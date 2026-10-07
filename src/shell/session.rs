@@ -11,8 +11,8 @@ use crate::config::Config;
 use crate::host::ssh_argv;
 use crate::shell::launch;
 use crate::shell::registry::{
-    Owner, ShellId, ShellRecord, ShellRegistry, host_is_alive, spawn_for, spawn_for_on_host,
-    with_shells,
+    Owner, ShellId, ShellRecord, ShellRegistry, host_is_alive, sandbox_sidecar_path, spawn_for,
+    spawn_for_on_host, with_shells, write_sandbox_sidecar,
 };
 
 /// A ready shell socket for `owner` on `host`: reuse the owner's live shell
@@ -193,6 +193,14 @@ pub async fn spawn_sbx_host(
     rows: u16,
     cols: u16,
 ) -> anyhow::Result<()> {
+    let dir = crate::config::shells_dir();
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    write_sandbox_sidecar(&dir, id.as_str(), sandbox).with_context(|| {
+        format!(
+            "writing {}",
+            sandbox_sidecar_path(&dir, id.as_str()).display()
+        )
+    })?;
     let argv = crate::daemon::executor::sbx::shell_exec_args(sandbox, None);
     let program = which_sbx()?;
     launch::spawn_detached(id.as_str(), &program, &argv, rows, cols).await
