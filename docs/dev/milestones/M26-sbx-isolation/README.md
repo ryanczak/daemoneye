@@ -78,7 +78,7 @@ drafted on demand and may split.
 | 06b | sbx-shell-lookup ([phase-06b-sbx-shell-lookup.md](phase-06b-sbx-shell-lookup.md)) — `shell_for_owner_in_sandbox` (reuse/create the owner's shell in a named sandbox); `run_in_shell_with_prompts` takes the marker from the record (`shell_marker_name`), so a sandbox shell targeted by id uses POSIX `$?` | done (approved_first_try, 2026-10-07) |
 | 06c | sbx-ghost ([phase-06c-sbx-ghost.md](phase-06c-sbx-ghost.md)) — `ghost_sandbox`: `ensure_ghost_sandbox` (fail-closed preflight, create once per run, profile = the ghost's agent), `run_ghost_in_sandbox`; routed in `run_background`; teardown in the ghost exit path; startup sweep after adoption | done (approved_first_try, 2026-10-07) |
 | 06d | sbx-script-stage ([phase-06d-sbx-script-stage.md](phase-06d-sbx-script-stage.md)) — Q3: `sbx cp` the one script a ghost runs into its sandbox | done (approved_first_try, 2026-10-07) |
-| 07 | sbx-chat-background — chat `wait: false` in a sandbox shell when enabled; sandbox lifetime per chat session (see Q5) | todo |
+| 07 | sbx-chat-background ([phase-07-sbx-chat-background.md](phase-07-sbx-chat-background.md)) — chat `wait: false` in a sandbox shell when enabled; sandbox lifetime per chat session (see Q5) | todo |
 | 08 | sbx-status — `Request::ContainerStatus` / the `SANDBOX` status section / `daemoneye sandbox status` read `sbx ls --json` + `sbx policy log --json`; per-run egress audit into the run record | todo |
 | 09 | docker-removal — delete `container.rs`, `containers/`, lockfiles, `sandbox build`, the tmux-window sandbox wiring in `background/run.rs`/`ghost.rs`; docs + `ghost-shell-guide` rewrite | todo |
 | 10 | live-close — architect-run live verification of every exit criterion on pinky | todo |
@@ -177,6 +177,12 @@ Quote these, don't re-derive them.
 - **Q4 — workspace.** Ghost sandboxes are mountless in M26; no runbook option.
 - **Q5 — chat `wait: false`.** One sandbox per chat session, created on first
   use and removed when the session's shells are reaped.
+  *Refined at row-07 drafting (2026-10-07):* dedicated background shells are
+  never closed and nothing closes chat shells, so "reaped" alone would keep a
+  chat sandbox up for the daemon's lifetime. Row 07 therefore closes a
+  sandboxed command's dedicated shell after its completion message lands, and
+  the hourly reaper removes a chat sandbox that no shell record names once it
+  has been unused for 600 s.
 - **Q6 — pause vs deadline.** A pause suspends the command's deadline clock,
   as prompt time already does.
 
