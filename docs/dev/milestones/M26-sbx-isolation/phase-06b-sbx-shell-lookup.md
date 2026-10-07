@@ -324,3 +324,43 @@ The first line should report `4 passed`.
 **Executor:** executor (Claude Opus 4.6, headless run)
 Flipped the phase's Status to `in-progress` and the milestone README's row
 with it. Beginning Task 1 (`shell_for_owner_in_sandbox`).
+
+### Update — 2026-10-07 09:07 (end-to-end verification)
+
+§ End-to-end verification, run verbatim, every line as printed (the `cargo
+test --lib` lines show only the `test result:` summaries because rexyMCP's
+output filter removes the individual `test … ok` lines; the tail line of
+`cargo clippy … -D warnings` is its `Finished` line, i.e. exit 0):
+
+```
+$ cargo test --lib shell_for_owner_in_sandbox 2>&1 | grep -E '^test result'
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2322 filtered out; finished in 0.01s
+$ cargo test --lib a_sandbox_shell_targeted_by_id_uses_the_posix_marker 2>&1 | grep -E '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2325 filtered out; finished in 0.02s
+$ cargo test --lib shell::session 2>&1 | grep -E '^test result'
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 2297 filtered out; finished in 0.23s
+$ cargo test --lib executor::shell_exec 2>&1 | grep -E '^test result'
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 2284 filtered out; finished in 11.14s
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.47s
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2376 failed=0
+$ git diff --stat
+(no output — the working tree is clean; the phase's diff is the commit
+ cacadc69: 5 files changed, 417 insertions(+), 29 deletions(-))
+```
+
+PASTE MATCH: yes
+
+- `shell_for_owner_in_sandbox` filters: 4 passed — the three reuse/boundary
+  tests plus `shell_for_owner_in_sandbox` matching the count-scan's own
+  `shell_for_owner*` filter prefix (all four tests in § Test plan run).
+- `a_sandbox_shell_targeted_by_id_uses_the_posix_marker`: 1 passed with the
+  daemon's `$SHELL` fish and a live sandbox shell running real bash — the
+  POSIX `$?` marker parsed the child's exit code (asserted `== 3`).
+- No pre-existing test was edited; `shell::session` went 25 → 29 tests,
+  `executor::shell_exec` 39 → 40.
+- The full suite (`cargo test`, all targets incl. integration): 2376 passed,
+  0 failed.
