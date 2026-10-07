@@ -1,7 +1,7 @@
 # Phase 05a: sbx-signal-plan — tag sandbox shells and build the in-VM signal command
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** done
 **Depends on:** phase-04b
 **Estimated diff:** ~260 lines (about 90 code, 170 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -305,3 +305,70 @@ Each line runs **once**.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-07 01:30 (started)
+
+**Executor:** Claude Opus 4.6 (run 05a-1). Pre-flight read: STANDARDS.md,
+this phase doc, the M26 README § Measured on pinky. Branch `master` clean at
+`962c775a`. Scope confirmed: pure argv builders, parsers and the measured
+script in `src/daemon/executor/sbx.rs`, plus the one authorized
+`spawn_sbx_host` call swap in `src/shell/session.rs`.
+
+
+### Update — 2026-10-06 (complete — architect takeover of Task 5)
+
+**Executor for Tasks 1–4:** GLM-5.3-Flash (run `1bce96d8`). It finished the
+code and all ten tests, then re-ran the ten-test evidence command **482 times
+in 35 minutes** (turn 570) and was stopped on PE instruction. Cause: rexyMCP's
+`cargo` output filter collapses `test … ok` lines to the summary line, so the
+executor never saw the ten lines the evidence block expects and kept
+re-running the command. The read-only exemption kept the identical-call
+detector from firing on 482 byte-identical calls. The executor's code is
+committed unchanged as `22541ff3`.
+
+**Task 5, architect-run.** Each command below ran once:
+
+```
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 2260 filtered out; finished in 0.00s
+test daemon::executor::sbx::tests::parse_vm_find_rejects_other_output ... ok
+test daemon::executor::sbx::tests::parse_vm_find_reads_the_measured_lines ... ok
+test daemon::executor::sbx::tests::sbx_target_from_host_reads_a_tagged_shell ... ok
+test daemon::executor::sbx::tests::vm_op_outcome_maps_exit_codes ... ok
+test daemon::executor::sbx::tests::sbx_target_from_host_rejects_everything_else ... ok
+test daemon::executor::sbx::tests::tagged_shell_exec_args_match_the_measured_shape ... ok
+test daemon::executor::sbx::tests::sbx_target_round_trips_the_builder ... ok
+test daemon::executor::sbx::tests::vm_signal_args_pass_tag_and_op_as_positionals ... ok
+test daemon::executor::sbx::tests::vm_signal_script_matches_the_measured_text ... ok
+test daemon::executor::sbx::tests::vm_signal_script_is_valid_posix_sh ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 2282 filtered out; finished in 0.00s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.43s
+fmt_exit=0
+passed=2342 failed=0
+ docs/dev/milestones/M26-sbx-isolation/README.md    |   2 +-
+ .../M26-sbx-isolation/phase-05a-sbx-signal-plan.md |  11 +-
+ src/daemon/executor/sbx.rs                         | 379 +++++++++++++++++++++
+ src/shell/session.rs                               |   2 +-
+ 4 files changed, 391 insertions(+), 3 deletions(-)
+```
+
+The diffstat is the pre-commit tree. `PASTE MATCH: yes`.
+
+### Review verdict — 2026-10-06
+
+- **Verdict:** escalated
+- **Bounces:** none (one `claude_stop` cancel, then takeover of Task 5 only)
+- **Executor:** GLM-5.3-Flash (Tasks 1–4); Claude Code (direct) for the
+  evidence entry
+- **Scope deviations:** none. `VM_SIGNAL_SCRIPT` is **byte-identical** to the
+  measured script (987 bytes, compared by the reviewer); the `session.rs`
+  change is the one authorised line; test-only `expect`/`panic!`.
+- **Reviewer re-run:** fmt and clippy clean; `executor::sbx` 32 passed (22 +
+  10); full suite `passed=2342 failed=0` on the first run.
+- **Reviewer mutation checks** (each turned its test red, then restored):
+  dropping the parent-tag `continue` line from the script
+  (`vm_signal_script_matches_the_measured_text`); accepting any program in
+  `sbx_target_from_host` (`sbx_target_from_host_rejects_everything_else`).
+- **Calibration (rexyMCP):** the `cargo` output filter must not strip
+  `test … ok` lines when the command's own `grep` asked for them, and the
+  read-only exemption should not cover byte-identical repeats. Third GLM
+  evidence-step loop in this milestone (01b ×2, 05a).
