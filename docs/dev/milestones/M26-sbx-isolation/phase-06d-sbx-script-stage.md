@@ -1,7 +1,7 @@
 # Phase 06d: sbx-script-stage — copy the one approved script into the ghost's sandbox
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06c
 **Estimated diff:** ~300 lines (about 90 code, 210 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -298,3 +298,162 @@ in `ghost_sandbox.rs`, the staging step in `run_background`'s
 `run_ghost_in_sandbox`; staging failure yields `(reason, 1)` and
 `log_command` still records the original command), and the eight named
 tests. Full-suite run: 2396 passed, 0 failed.
+
+### Update — 2026-10-07 17:56 (complete, server-authored)
+
+**Summary:** Phase 06d complete and committed.
+
+**Summary:** Implemented the Q3 script-staging path for sandboxed ghosts. Task 1 added `STAGED_SCRIPTS_DIR`, `script_name_is_safe`, `script_invocation`, `staged_script_command`, `stage_prep_args`, and `stage_cp_args` to `src/daemon/executor/sbx.rs`, building every string from the constant per spec. Task 2 added `stage_script` to `ghost_sandbox.rs`: it refuses an unsafe name with zero `sbx` calls, then runs prep (`exec -u root <sbx> sh -c "mkdir -p /de/scripts && chown agent:agent /de/scripts"`) followed by `cp <host_path> <sandbox>:/de/scripts/<name>`, failing closed with `` sandbox staging failed for `<name>`: `` plus the trimmed stderr on any non-zero exit. Task 3 rewrote the `Ok(sandbox)` arm in `run_background`: the command is detected as an approved-script invocation, staged, and rewritten to `/de/scripts/<name><args_tail>` before `run_ghost_in_sandbox`; a staging failure yields `(reason, 1)` and never runs the command, while `log_command` still records the original command the model asked for. Task 4 captured the E2E block verbatim.
+
+**End-to-end verification** (run once, output pasted below as required by the acceptance criteria):
+
+```
+staged_script_command_points_at_the_sandbox_copy: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2345 filtered out; finished in 0.00s
+stage_args_match_the_measured_shapes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2345 filtered out; finished in 0.00s
+script_name_is_safe_rejects_path_and_shell_characters: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2345 filtered out; finished in 0.00s
+script_invocation_skips_sudo_and_unknown_scripts: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2345 filtered out; finished in 0.00s
+stage_script_preps_then_copies: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2345 filtered out; finished in 0.00s
+stage_script_refuses_an_unsafe_name_without_sbx: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2345 filtered out; finished in 0.00s
+stage_script_fails_closed_on_a_failed_copy: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2345 filtered out; finished in 0.00s
+stage_script_fails_closed_on_a_failed_prep: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2345 filtered out; finished in 0.00s
+test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 2293 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 2330 filtered out; finished in 0.03s
+fmt_exit=0
+passed=2396 failed=0
+```
+
+**Notes for review:**
+- All eight named tests pass individually; `executor::sbx` is 53/0 (49 prior + 4 new) and `executor::ghost_sandbox` is 16/0 (12 prior + 4 new); clippy exited 0; `fmt_exit=0`; full suite 2396 passed / 0 failed. No `#[allow(`, no `unsafe`, no `.unwrap()`/`.expect(` outside `#[cfg(test)]`; `container.rs` untouched.
+- Two adaptations from the spec's sketch: (1) `exec_args` in `sbx.rs` puts the sandbox name before the `-u root` flags (`exec <name> -u root …`), which the existing test module's shape for one-off commands pins, so `stage_prep_args` builds its argv literally in the spec's exact order (`exec -u root <name> …`) instead of routing through `exec_args` — the spec's pinned vector is authoritative and the test asserts it. (2) The Task 3 sketch's early `return (reason, 1)` is illegal inside the `Ok(sandbox)` arm (the arm must evaluate to the `(output, exit_code)` tuple), so the arm computes `Result<String, String>` and matches on it — same semantics: staging failure → `(reason, 1)`, command never run.
+- Verification loop drove three build errors (module-path scoping in `ghost_sandbox.rs`, a borrow/move conflict in the staging arm, and an argv-order mismatch the exact-shape test caught); all fixed by editing through file tools only. The staging failure message for an unsafe name embeds the name twice (prefix + body) to satisfy both the prefix pin and the "not a stageable script name" wording the docker path's error uses.
+- Commits: `a8395eb4` (code + tests, includes the start-of-phase status flips), `add3f719` (the progress entry). Phase doc and README rows left `in-progress` for the server's completion tail.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.30s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+r_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_counts_are_accurate ... ok
+test docs_document_the_reindex_command ... ok
+test readme_tools_tables_match_the_code ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test config_pricing_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (654525): No such process
+kill: (-655253): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M26-sbx-isolation/README.md` — +1 -1
+- `docs/dev/milestones/M26-sbx-isolation/phase-06d-sbx-script-stage.md` — +13 -1
+- `src/daemon/executor/foreground.rs` — +46 -13
+- `src/daemon/executor/ghost_sandbox.rs` — +104 -1
+- `src/daemon/executor/sbx.rs` — +146 -0
+
+**Commit:** add3f7197a12a3d983b36413f3d4e21c819ee359
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
