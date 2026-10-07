@@ -296,6 +296,8 @@ enum NotifyCommands {
 enum SandboxCommands {
     /// Build the agent image from containers/Dockerfile and record its id
     Build,
+    /// Show sandbox runtime health and the daemon's sandboxes
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -487,6 +489,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Commands::Sandbox { cmd } => match cmd {
             SandboxCommands::Build => {
                 cli::run_sandbox_build();
+            }
+            SandboxCommands::Status => {
+                cli::run_sandbox_status().await?;
             }
         },
         Commands::Notify { cmd } => match cmd {

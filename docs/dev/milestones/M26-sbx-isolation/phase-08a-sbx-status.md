@@ -1,7 +1,7 @@
 # Phase 08a: sbx-status — the SANDBOX status section and `daemoneye sandbox status` on sbx
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07
 **Estimated diff:** ~260 lines (about 90 code, 170 tests)
 **Tags:** language=rust, kind=feature, size=s
@@ -319,3 +319,38 @@ the `cargo test` lines. rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-07 14:17 (started, executor)
+
+**Executor:** implementation run for phase-08a sbx-status. Flipped Status to
+`in-progress` here and in the milestone README. Working through Task 1–4 in
+order; no code committed yet.
+
+### Update — 2026-10-07 14:17 (end-to-end verification, executor)
+
+The § End-to-end verification block, run verbatim, each line once, output as
+printed (rexyMCP's filter removed individual `test … ok` lines, so only
+`test result:` summary lines appear):
+
+```
+sandbox_rows_lists_only_daemon_sandboxes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2362 filtered out; finished in 0.00s
+collect_sbx_status_reports_the_daemon_sandboxes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2362 filtered out; finished in 0.00s
+collect_sbx_status_reports_an_unusable_sbx_without_listing: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2362 filtered out; finished in 0.00s
+collect_sbx_status_survives_a_failed_listing: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2362 filtered out; finished in 0.00s
+sandbox_section_lists_each_sandbox: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2362 filtered out; finished in 0.00s
+sandbox_section_marks_an_unusable_runtime: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2362 filtered out; finished in 0.00s
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 2342 filtered out; finished in 0.00s
+  status  Show sandbox runtime health and the daemon's sandboxes
+(no warning/error lines; clippy's tail is "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s", exit 0)
+fmt_exit=0
+passed=2413 failed=0
+ docs/dev/milestones/M26-sbx-isolation/README.md    |   2 +-
+ .../M26-sbx-isolation/phase-08a-sbx-status.md      |   8 +-
+ src/cli/status.rs                                  | 209 +++++++++++++++++----
+ src/daemon/executor/sbx_lifecycle.rs               | 187 ++++++++++++++++++
+ src/daemon/server/handlers.rs                      |   8 +
+ src/main.rs                                        |   5 +
+ 6 files changed, 384 insertions(+), 35 deletions(-)
+```
+
+PASTE MATCH: yes

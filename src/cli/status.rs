@@ -125,6 +125,45 @@ impl Section {
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
+/// The SANDBOX section: runtime health plus the daemon's own sandboxes, from
+/// a `Request::ContainerStatus` report. Shared by `status` and
+/// `sandbox status`.
+fn sandbox_section(report: &crate::ipc::ContainerStatusReport) -> Section {
+    let mut sbx = Section::new("SANDBOX");
+    sbx.kv(
+        "enabled",
+        if report.enabled {
+            c_ok("yes")
+        } else {
+            c_dim("no")
+        },
+    );
+    sbx.kv(
+        "runtime",
+        if report.runtime_ok {
+            c_ok(&report.runtime_detail)
+        } else {
+            c_err(&report.runtime_detail)
+        },
+    );
+    sbx.kv("image", c_val(&report.image_detail));
+    sbx.kv("containers", c_num(&report.containers.len().to_string()));
+    for ci in &report.containers {
+        sbx.cont(format!(
+            "{} {} {} {}",
+            c_key(&ci.id),
+            c_val(&ci.state),
+            if ci.is_ghost {
+                c_warn("ghost")
+            } else {
+                c_dim("session")
+            },
+            c_dim(ci.session.as_deref().unwrap_or("-")),
+        ));
+    }
+    sbx
+}
+
 fn fmt_uptime(secs: u64) -> String {
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
@@ -602,39 +641,7 @@ pub async fn run_status() -> Result<()> {
                     // ── SANDBOX ───────────────────────────────────────────────
                     send_request(&mut tx, Request::ContainerStatus).await?;
                     if let Ok(Response::ContainerStatus { report }) = recv(&mut rx).await {
-                        let mut sbx = Section::new("SANDBOX");
-                        sbx.kv(
-                            "enabled",
-                            if report.enabled {
-                                c_ok("yes")
-                            } else {
-                                c_dim("no")
-                            },
-                        );
-                        sbx.kv(
-                            "runtime",
-                            if report.runtime_ok {
-                                c_ok(&report.runtime_detail)
-                            } else {
-                                c_err(&report.runtime_detail)
-                            },
-                        );
-                        sbx.kv("image", c_val(&report.image_detail));
-                        sbx.kv("containers", c_num(&report.containers.len().to_string()));
-                        for ci in &report.containers {
-                            sbx.cont(format!(
-                                "{} {} {} {}",
-                                c_key(&ci.id),
-                                c_val(&ci.state),
-                                if ci.is_ghost {
-                                    c_warn("ghost")
-                                } else {
-                                    c_dim("session")
-                                },
-                                c_dim(ci.session.as_deref().unwrap_or("-")),
-                            ));
-                        }
-                        sbx.render(tw);
+                        sandbox_section(&report).render(tw);
                     }
                 }
                 _ => {
@@ -645,4 +652,140 @@ pub async fn run_status() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// `daemoneye sandbox status` — the daemon's SANDBOX section on its own.
+pub async fn run_sandbox_status() -> Result<()> {
+    match connect().await {
+        Err(_) => {
+            let liveness = daemon_liveness().await;
+            let pid = read_pid(&default_pid_path());
+            eprintln!("{}", c_err(&liveness_line(liveness, pid)));
+            std::process::exit(1);
+        }
+        Ok(stream) => {
+            let (rx, mut tx) = stream.into_split();
+            let mut rx = BufReader::new(rx);
+            send_request(&mut tx, Request::ContainerStatus).await?;
+            match recv(&mut rx).await {
+                Ok(Response::ContainerStatus { report }) => {
+                    sandbox_section(&report).render(terminal_width());
+                }
+                _ => {
+                    eprintln!("{}", c_err("Daemon did not return sandbox status."));
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status_report(
+        containers: Vec<crate::ipc::ContainerInfo>,
+    ) -> crate::ipc::ContainerStatusReport {
+        crate::ipc::ContainerStatusReport {
+            enabled: true,
+            runtime_ok: true,
+            runtime_detail: "sbx v0.46.0".to_string(),
+            image_detail: "not used by sbx".to_string(),
+            containers,
+        }
+    }
+
+    fn container(id: &str, state: &str, is_ghost: bool) -> crate::ipc::ContainerInfo {
+        crate::ipc::ContainerInfo {
+            id: id.to_string(),
+            state: state.to_string(),
+            image: "shell".to_string(),
+            session: Some("s".to_string()),
+            is_ghost,
+        }
+    }
+
+    fn rows(section: &Section) -> &Vec<Row> {
+        &section.rows
+    }
+
+    #[test]
+    fn sandbox_section_lists_each_sandbox() {
+        let report = status_report(vec![
+            container("de-ghost-r1", "running", true),
+            container("de-chat-s7", "stopped", false),
+        ]);
+
+        let section = sandbox_section(&report);
+
+        let kv_values = |key: &str| -> Vec<String> {
+            rows(&section)
+                .iter()
+                .filter_map(|r| match r {
+                    Row::KV(k, v) if k == key => Some(v.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(kv_values("enabled").len(), 1, "one enabled row");
+        assert_eq!(kv_values("runtime").len(), 1, "one runtime row");
+        assert!(
+            kv_values("runtime")[0].contains("sbx v0.46.0"),
+            "runtime value carries the version"
+        );
+        assert_eq!(kv_values("image").len(), 1, "one image row");
+        assert!(
+            kv_values("containers")[0].contains('2'),
+            "`containers` value counts the rows"
+        );
+        let conts: Vec<&String> = rows(&section)
+            .iter()
+            .filter_map(|r| match r {
+                Row::Cont(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(conts.len(), 2, "one continuation row per container");
+        assert!(
+            conts
+                .iter()
+                .all(|t| t.contains("de-ghost-r1") || t.contains("de-chat-s7")),
+            "each row names its container id"
+        );
+    }
+
+    #[test]
+    fn sandbox_section_marks_an_unusable_runtime() {
+        let report = crate::ipc::ContainerStatusReport {
+            enabled: true,
+            runtime_ok: false,
+            runtime_detail: "sandbox unavailable: x".to_string(),
+            image_detail: "not used by sbx".to_string(),
+            containers: Vec::new(),
+        };
+
+        let section = sandbox_section(&report);
+
+        let kv_values = |key: &str| -> Vec<String> {
+            rows(&section)
+                .iter()
+                .filter_map(|r| match r {
+                    Row::KV(k, v) if k == key => Some(v.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(kv_values("runtime").len(), 1, "one runtime row");
+        assert!(
+            kv_values("runtime")[0].contains("sandbox unavailable: x"),
+            "the runtime row must carry the operator-facing reason"
+        );
+        let conts = rows(&section)
+            .iter()
+            .filter(|r| matches!(r, Row::Cont(_)))
+            .count();
+        assert_eq!(conts, 0, "no containers when sbx is unusable");
+    }
 }

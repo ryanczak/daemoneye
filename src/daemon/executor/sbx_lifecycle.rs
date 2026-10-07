@@ -8,6 +8,69 @@
 use crate::daemon::executor::sbx::{self, NetworkPlan, SandboxKind, SbxUnavailable};
 use crate::shell::{SbxRunner, VmRun};
 
+/// The rows the status section lists: the daemon's own sandboxes from an
+/// `sbx ls --json` listing, in listed order. Pure.
+pub fn sandbox_rows(listed: &[sbx::SandboxInfo]) -> Vec<crate::ipc::ContainerInfo> {
+    listed
+        .iter()
+        .filter(|s| sbx::is_daemon_sandbox(&s.name))
+        .map(|s| {
+            let session = s
+                .name
+                .strip_prefix("de-ghost-")
+                .or_else(|| s.name.strip_prefix("de-chat-"))
+                .map(str::to_string);
+            crate::ipc::ContainerInfo {
+                id: s.name.clone(),
+                state: s.status.clone(),
+                image: "shell".to_string(),
+                session,
+                is_ghost: s.name.starts_with("de-ghost-"),
+            }
+        })
+        .collect()
+}
+
+/// Status on sbx. Never fails: an unusable sbx is reported, not raised.
+pub async fn collect_sbx_status(
+    run: &SbxRunner,
+    cfg: &crate::config::SandboxConfig,
+) -> crate::ipc::ContainerStatusReport {
+    let enabled = cfg.enabled;
+    let unavailable = |detail: String| crate::ipc::ContainerStatusReport {
+        enabled,
+        runtime_ok: false,
+        runtime_detail: detail,
+        image_detail: "not used by sbx".to_string(),
+        containers: Vec::new(),
+    };
+    match preflight(run).await {
+        Err(reason) => unavailable(sbx::describe_unavailable(&reason)),
+        Ok(version) => {
+            let listed = run(sbx::ls_args()).await;
+            let containers = if listed.code == Some(0)
+                && let Some(list) = sbx::parse_ls_json(&listed.stdout)
+            {
+                sandbox_rows(&list)
+            } else {
+                log::warn!(
+                    "sbx ls --json failed (exit {:?}): {}",
+                    listed.code,
+                    listed.stderr.trim()
+                );
+                Vec::new()
+            };
+            crate::ipc::ContainerStatusReport {
+                enabled,
+                runtime_ok: true,
+                runtime_detail: format!("sbx {version}"),
+                image_detail: "not used by sbx".to_string(),
+                containers,
+            }
+        }
+    }
+}
+
 /// The profile for `name`, or the default (network "none") when `name` is
 /// `None` or is not configured. A job that cannot be matched to a profile
 /// must not acquire egress.
@@ -601,5 +664,129 @@ mod tests {
             sbx::stop_args(&["de-ghost-a".to_string()]),
             "the locked-keychain sandbox gets the stop fallback"
         );
+    }
+
+    fn daemon_sandbox(name: &str, status: &str) -> sbx::SandboxInfo {
+        sbx::SandboxInfo {
+            name: name.to_string(),
+            status: status.to_string(),
+        }
+    }
+
+    #[test]
+    fn sandbox_rows_lists_only_daemon_sandboxes() {
+        let listed = vec![
+            daemon_sandbox("de-ghost-r1", "running"),
+            daemon_sandbox("de-probe-x", "running"),
+            daemon_sandbox("de-chat-s7", "stopped"),
+        ];
+
+        let rows = sandbox_rows(&listed);
+
+        assert_eq!(
+            rows,
+            vec![
+                crate::ipc::ContainerInfo {
+                    id: "de-ghost-r1".to_string(),
+                    state: "running".to_string(),
+                    image: "shell".to_string(),
+                    session: Some("r1".to_string()),
+                    is_ghost: true,
+                },
+                crate::ipc::ContainerInfo {
+                    id: "de-chat-s7".to_string(),
+                    state: "stopped".to_string(),
+                    image: "shell".to_string(),
+                    session: Some("s7".to_string()),
+                    is_ghost: false,
+                },
+            ],
+            "the foreign de-probe-x must be dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_sbx_status_reports_the_daemon_sandboxes() {
+        let (runner, calls, canned) = fake();
+        canned.lock().unwrap().push(ok_run(
+            "sbx version: v0.46.0 991967dc90ce0d9a440cd1df1bdf3e395c5a2693\n",
+        ));
+        canned.lock().unwrap().push(ok_run("Status: running\n"));
+        canned
+            .lock()
+            .unwrap()
+            .push(ok_run(r#"{"sandboxes":[{"name":"de-ghost-r1","id":"d8831e0c-c782-4df2-a998-d3bbcf146c13","agent":"shell","status":"running","last_used_at":"t1","created_at":"t2"}]}"#));
+
+        let report = collect_sbx_status(&runner, &default_config()).await;
+
+        assert!(report.runtime_ok);
+        assert_eq!(report.runtime_detail, "sbx v0.46.0");
+        assert_eq!(report.image_detail, "not used by sbx");
+        assert_eq!(
+            report
+                .containers
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["de-ghost-r1"]
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                sbx::version_args(),
+                sbx::daemon_status_args(),
+                sbx::ls_args(),
+            ],
+            "the preflight probes run before the listing"
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_sbx_status_reports_an_unusable_sbx_without_listing() {
+        let (runner, calls, canned) = fake();
+        canned.lock().unwrap().push(ok_run(
+            "sbx version: v0.46.0 991967dc90ce0d9a440cd1df1bdf3e395c5a2693\n",
+        ));
+        canned.lock().unwrap().push(run(
+            Some(0),
+            "Status: running\n",
+            "WARN: failed to list stored credentials … the OS keychain is locked\n",
+        ));
+
+        let report = collect_sbx_status(&runner, &default_config()).await;
+
+        assert!(!report.runtime_ok);
+        assert!(
+            report.runtime_detail.starts_with("sandbox unavailable:"),
+            "`{}` must name the fix",
+            report.runtime_detail
+        );
+        assert!(report.containers.is_empty());
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![sbx::version_args(), sbx::daemon_status_args(),],
+            "an unusable sbx must not be listed"
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_sbx_status_survives_a_failed_listing() {
+        let (runner, _calls, canned) = fake();
+        canned.lock().unwrap().push(ok_run(
+            "sbx version: v0.46.0 991967dc90ce0d9a440cd1df1bdf3e395c5a2693\n",
+        ));
+        canned.lock().unwrap().push(ok_run("Status: running\n"));
+        canned
+            .lock()
+            .unwrap()
+            .push(run(Some(1), "", "error: daemon gone"));
+
+        let report = collect_sbx_status(&runner, &default_config()).await;
+
+        assert!(
+            report.runtime_ok,
+            "a failed listing must not fail the runtime"
+        );
+        assert!(report.containers.is_empty());
     }
 }

@@ -261,6 +261,14 @@ pub(super) async fn handle_container_status<W>(tx: &mut W, config: &Config) -> R
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
+    if config.sandbox.runtime == "sbx" {
+        let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
+        let run = crate::shell::real_runner(program);
+        let report =
+            crate::daemon::executor::sbx_lifecycle::collect_sbx_status(&run, &config.sandbox).await;
+        send_response_split(tx, Response::ContainerStatus { report }).await?;
+        return Ok(());
+    }
     let sandbox = config.sandbox.clone();
     let report = tokio::task::spawn_blocking(move || {
         crate::daemon::executor::container::collect_container_status(&sandbox)
