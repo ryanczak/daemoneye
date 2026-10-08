@@ -1,7 +1,7 @@
 # Phase 08b: sbx-egress-audit — record each sandbox's allowed and blocked hosts
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-08a
 **Estimated diff:** ~300 lines (about 110 code, 190 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -588,3 +588,24 @@ kill: (-822199): No such process
 **Commit:** 8f12312801a948bf2eeb1c3a702eef386ab49d68
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-07
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (109 turns,
+  `8f123128`).
+- **Scope deviations:** none. The parser mirrors `parse_ls_json` and
+  filters on `vm_name`. The ghost note is written before `run_log.finish`
+  (`ghost.rs` lines 568 and 578), and only when `is_created`. `reap_idle_in`
+  reads the log before `forget_and_teardown`. The one authorized test
+  amendment touched only its `got` and `calls` assertions. `src/ipc.rs` and
+  `container.rs` are unchanged.
+- **Reviewer re-run:** fmt, build and clippy clean; all nine named tests
+  `1 passed`; `sbx_lifecycle` 23, `ghost_sandbox` 19 and `chat_sandbox` 6
+  passed; full suite `passed=2421 failed=0` on the first run.
+- **Reviewer mutation check:** dropping the `vm_name` filter fails
+  `parse_policy_log_drops_other_sandboxes_and_rejects_garbage`.
+- **Calibration:** none.
+- **Deferred:** a real ghost run with egress, checking the turn-log note and
+  the `sandbox_egress` event, is part of row 10.
