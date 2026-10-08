@@ -1,7 +1,7 @@
 # Phase 09b: docker-delete — remove the docker runtime's code
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-09a
 **Estimated diff:** ~4,700 lines deleted, ~10 added
 **Tags:** language=rust, kind=refactor, size=m
@@ -209,3 +209,80 @@ the `cargo test` lines. rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-10-08 14:34 (started)
+
+Executing phase 09b. Flipped Status to `in-progress` (README row too), then:
+
+1. `git rm -q src/daemon/executor/container.rs src/cli/commands/sandbox.rs`
+   and `git rm -q -r containers` (Task 1). Deleted `pub mod container;` from
+   `src/daemon/executor/mod.rs`.
+2. Removed every caller the architect's trial-compile had listed (Task 2):
+   `daemon/mod.rs` sweep call, `ghost.rs` teardown block, all of items 1–7 in
+   `background/run.rs`, `cli/commands/mod.rs` `mod sandbox;` + `pub use`,
+   and `main.rs` `SandboxCommands::Build` variant + match arm.
+3. Ran `cargo clippy --all-targets --all-features -- -D warnings`: exit 0,
+   zero dead-code findings, so Task 3 required no further deletions. The only
+   leftover artifact was a stale comment in `run.rs` mentioning
+   `sandbox_window_command`/`job_id`; trimmed to the part that still applies.
+4. `cargo fmt --all --check` exits 0; `cargo test` reports `passed=2297
+   failed=0` (was 2422; −125 matches the 124 `container.rs` tests + 1
+   `sandbox.rs` test).
+
+Proceeding to the end-to-end evidence run (Task 4).
+
+### Update — 2026-10-08 14:47 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim, each line once,
+output redirected to `/tmp/09b_e2e.txt` and pasted below, every line as
+printed. `PASTE MATCH: yes`.
+
+```text
+exists_any=1
+grep_container_done
+grep_host_done
+  status  Show sandbox runtime health and the daemon's sandboxes
+=== per-module tests
+executor::sbx: test result: ok. 64 passed; 0 failed; 0 ignored; 0 measured; 2179 filtered out; finished in 0.00s
+executor::ghost_sandbox: test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 2224 filtered out; finished in 0.04s
+executor::chat_sandbox: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2237 filtered out; finished in 0.00s
+executor::bg_shell: test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 2231 filtered out; finished in 1.05s
+config::: test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 2135 filtered out; finished in 0.01s
+tmux_window_refusal_names_the_fix: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2242 filtered out; finished in 0.00s
+=== clippy
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+fmt_exit=0
+=== full test
+passed=2297 failed=0
+=== allow count
+0
+=== diffstat
+ 11 files changed, 1 insertion(+), 4592 deletions(-)
+```
+
+Line notes:
+
+- `exists_any=1` — the pass value; none of the three paths exists.
+- The `grep_container_done` / `grep_host_done` sentinels print with **no match
+  lines above them**: `executor::container` and `"--host"` are gone.
+- `cargo run -q -- sandbox --help` lists `status`, does not list `build`.
+- Per-module sandbox suites all green (the six the phase doc names).
+- `cargo clippy … -D warnings` prints only its `Finished` line; exit 0.
+- `cargo fmt --all --check` → `fmt_exit=0`.
+- Full `cargo test`: `passed=2297 failed=0`, the pinned count (2422 − 125).
+- `git diff 7a54d97d -- src/ | grep -c '^+.*allow('` prints `0`.
+- `git diff --stat 7a54d97d -- src/ containers/ | tail -1`:
+  `11 files changed, 1 insertion(+), 4592 deletions(-)`.
+
+Per-suite breakdown of the same `cargo test` run (separate pass, captured at
+`/tmp/09b_test_suites.txt`, sum = the 2297 above):
+
+```text
+passed=2297 failed=0
+test result: ok. 2233 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 63.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```

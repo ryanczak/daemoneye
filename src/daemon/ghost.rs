@@ -599,11 +599,6 @@ pub async fn trigger_ghost_turn(
         .ok(),
     )
     .await;
-    let (sbx, sid) = (config.sandbox.clone(), session_id.to_string());
-    let _ = tokio::task::spawn_blocking(move || {
-        crate::daemon::executor::container::teardown_ghost_containers(&sbx, &sid)
-    })
-    .await;
     // 08c: the ghost's shells die with the ghost — every run's commands share
     // one `Owner::Ghost(session)` shell per host, and a scheduled ghost would
     // otherwise leave an idle ssh shell host behind per run.

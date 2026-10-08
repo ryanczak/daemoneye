@@ -20,24 +20,6 @@ pub(crate) const SANDBOX_TMUX_REFUSAL: &str = "sandbox unavailable: this command
 // Chat-session background execution
 // ---------------------------------------------------------------------------
 
-/// Drain the job proxy's log into `events.jsonl`, one record per request.
-///
-/// Called at both completion sites **before** `remove_proxy`: a removed
-/// container takes its log with it. Blocking, so it runs inside the same
-/// `spawn_blocking` as the teardown it precedes.
-fn log_proxy_audit(
-    cfg: &crate::config::SandboxConfig,
-    job_id: &str,
-    session: Option<&str>,
-    rules: &(Vec<String>, Vec<String>),
-) {
-    for record in
-        crate::daemon::executor::container::collect_proxy_audit(cfg, job_id, &rules.0, &rules.1)
-    {
-        log_event("proxy_request", record.to_event(job_id, session));
-    }
-}
-
 /// Run a command in a dedicated tmux window (`de-bg-*`) on the daemon host.
 ///
 /// Returns **immediately** after sending the command.  A background task
@@ -64,9 +46,7 @@ pub async fn run_background_in_window(
     sessions: SessionStore,
 ) -> String {
     // Load the sandbox config and gate BEFORE any window is created: a
-    // refused command must leave no `de-bg-*` window behind. The config is
-    // reused below where `sandbox_window_command` builds its `job_id` from
-    // the pane number.
+    // refused command must leave no `de-bg-*` window behind.
     let config = crate::config::Config::load().unwrap_or_default();
     if config.sandbox.enabled {
         log::warn!("refusing sandboxed background command: {SANDBOX_TMUX_REFUSAL}");
@@ -77,20 +57,6 @@ pub async fn run_background_in_window(
         .as_deref()
         .and_then(|id| with_sessions(&sessions, |store| store.get(id).map(|e| e.is_ghost)));
     let is_ghost = crate::daemon::resolve_is_ghost(session_id.as_deref(), entry_is_ghost);
-
-    // The sandbox profile this job runs under is the ghost's agent name; an
-    // interactive session has none and so resolves to the default profile.
-    let profile_name = session_id.as_deref().and_then(|id| {
-        with_sessions(&sessions, |store| {
-            store
-                .get(id)
-                .and_then(|e| e.ghost_config.as_ref().and_then(|g| g.agent.clone()))
-        })
-    });
-    let proxy_rules = crate::daemon::executor::container::proxy_rules_for_profile(
-        &config.sandbox,
-        profile_name.as_deref(),
-    );
 
     let prefix = if let Some(sid) = &session_id {
         if is_ghost {
@@ -128,7 +94,6 @@ pub async fn run_background_in_window(
 
     // Build final name: prefix + pane-number + unix-ts + command-slug.
     let pane_num = pane_id.trim_start_matches('%');
-    let job_id = crate::daemon::executor::container::job_id_for(&pane_id, unix_ts);
     let cmd_slug = crate::daemon::utils::sanitize_cmd_for_window(cmd, 30);
     let final_name = format!("{}{}-{}-{}", prefix, pane_num, unix_ts, cmd_slug);
     let (s2, t2, f2) = (session.to_string(), temp_name.clone(), final_name.clone());
@@ -214,94 +179,6 @@ pub async fn run_background_in_window(
         &sentineled_cmd
     } else {
         cmd
-    };
-
-    // Stage the daemon-host script this command invokes, if any, into the
-    // job's volume and point the command at the staged copy. Fails closed: a
-    // command whose script cannot be staged is refused and its window reclaimed.
-    let staged_cmd;
-    let cmd: &str = if config.sandbox.enabled
-        && let Some((name, args_tail)) =
-            crate::daemon::executor::container::sandbox_script_invocation(cmd, |n| {
-                crate::scripts::resolve_script(n).is_ok()
-            }) {
-        let (cfg_s, job_s, name_s) = (config.sandbox.clone(), job_id.clone(), name.clone());
-        let staged = tokio::task::spawn_blocking(move || {
-            crate::daemon::executor::container::stage_script(&cfg_s, &job_s, &name_s)
-        })
-        .await
-        .unwrap_or_else(|e| Err(format!("sandbox staging task failed: {e}")));
-        if let Err(message) = staged {
-            log::warn!("refusing sandboxed background command: {message}");
-            let (s5, wn5) = (session.to_string(), win_name.clone());
-            let _ = tmux::off_runtime("kill-job-window", move || tmux::kill_job_window(&s5, &wn5))
-                .await;
-            return message;
-        }
-        staged_cmd = crate::daemon::executor::container::staged_script_command(&name, &args_tail);
-        &staged_cmd
-    } else {
-        cmd
-    };
-
-    // Stand up this job's egress proxy when its profile asks for one. Same
-    // fail-closed shape as staging above: a command whose proxy cannot be
-    // started is refused and its window reclaimed, never run unproxied.
-    let mut proxy_started = false;
-    let network = if config.sandbox.enabled
-        && crate::daemon::executor::container::resolve_network_mode(
-            &config.sandbox,
-            profile_name.as_deref(),
-        ) == crate::daemon::executor::container::NetworkMode::Proxy
-    {
-        let filter = crate::daemon::executor::container::filter_for_profile(
-            &config.sandbox,
-            profile_name.as_deref(),
-        );
-        let (cfg_p, job_p, sid_p) = (config.sandbox.clone(), job_id.clone(), session_id.clone());
-        let started = tokio::task::spawn_blocking(move || {
-            crate::daemon::executor::container::start_proxy(
-                &cfg_p,
-                &job_p,
-                is_ghost,
-                sid_p.as_deref(),
-                &filter,
-            )
-        })
-        .await
-        .unwrap_or_else(|e| Err(format!("sandbox egress task failed: {e}")));
-        if let Err(message) = started {
-            log::warn!("refusing sandboxed background command: {message}");
-            let (s6, wn6) = (session.to_string(), win_name.clone());
-            let _ = tmux::off_runtime("kill-job-window", move || tmux::kill_job_window(&s6, &wn6))
-                .await;
-            return message;
-        }
-        proxy_started = true;
-        crate::daemon::executor::container::proxy_network_name(&job_id)
-    } else {
-        "none".to_string()
-    };
-
-    let sandboxed_cmd;
-    let cmd: &str = {
-        if config.sandbox.enabled {
-            let spec = crate::daemon::executor::container::ExecSpec {
-                job_id: &job_id,
-                network: &network,
-                is_ghost,
-                command: cmd,
-            };
-            sandboxed_cmd = crate::daemon::executor::container::sandbox_window_command(
-                &config.sandbox,
-                &spec,
-                cmd,
-                session_id.as_deref(),
-            );
-            &sandboxed_cmd
-        } else {
-            cmd
-        }
     };
 
     let wrapped = if exit_var == "$status" {
@@ -427,16 +304,6 @@ pub async fn run_background_in_window(
             "pane": pane_id,
         }),
     );
-    if let Some(payload) = crate::daemon::executor::container::container_run_event(
-        &config.sandbox,
-        crate::daemon::executor::container::read_lock().as_ref(),
-        &job_id,
-        &win_name,
-        &network,
-        session_id.as_deref(),
-    ) {
-        log_event("container_run", payload);
-    }
 
     // Inline completion wait (3 s): the async block borrows complete_rx / died_rx
     // by &mut without moving them, so after .await the receivers are still owned
@@ -487,19 +354,6 @@ pub async fn run_background_in_window(
             })
             .await
             .unwrap_or_default();
-
-            if config.sandbox.enabled {
-                let (cfg_v, job_v) = (config.sandbox.clone(), job_id.clone());
-                let rules_v = proxy_rules.clone();
-                let sid_v = session_id.clone();
-                tokio::task::spawn_blocking(move || {
-                    crate::daemon::executor::container::remove_stage_volume(&cfg_v, &job_v);
-                    if proxy_started {
-                        log_proxy_audit(&cfg_v, &job_v, sid_v.as_deref(), &rules_v);
-                        crate::daemon::executor::container::remove_proxy(&cfg_v, &job_v);
-                    }
-                });
-            }
 
             log_event(
                 "job_complete",
@@ -577,8 +431,6 @@ pub async fn run_background_in_window(
             let session_bg = session.to_string();
             let session_id_bg = session_id.clone();
             let sessions_bg = sessions.clone();
-            let sandbox_bg = config.sandbox.clone();
-            let job_id_bg = job_id.clone();
 
             tokio::spawn(async move {
                 let mut complete_rx = complete_rx;
@@ -628,29 +480,6 @@ pub async fn run_background_in_window(
                 })
                 .await
                 .unwrap_or_default();
-
-                if sandbox_bg.enabled {
-                    let rules_bg = proxy_rules.clone();
-                    let sid_audit = session_id_bg.clone();
-                    tokio::task::spawn_blocking(move || {
-                        crate::daemon::executor::container::remove_stage_volume(
-                            &sandbox_bg,
-                            &job_id_bg,
-                        );
-                        if proxy_started {
-                            log_proxy_audit(
-                                &sandbox_bg,
-                                &job_id_bg,
-                                sid_audit.as_deref(),
-                                &rules_bg,
-                            );
-                            crate::daemon::executor::container::remove_proxy(
-                                &sandbox_bg,
-                                &job_id_bg,
-                            );
-                        }
-                    });
-                }
 
                 log_event(
                     "job_complete",

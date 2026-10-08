@@ -1,6 +1,5 @@
 mod bg_shell;
 pub(crate) mod chat_sandbox;
-pub mod container;
 mod file_ops;
 mod foreground;
 mod ghost_remote;
