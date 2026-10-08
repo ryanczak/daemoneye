@@ -1,7 +1,7 @@
 # Phase 08b: sbx-egress-audit — record each sandbox's allowed and blocked hosts
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-08a
 **Estimated diff:** ~300 lines (about 110 code, 190 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -435,3 +435,156 @@ passed=2421 failed=0
 ```
 
 PASTE MATCH
+
+### Update — 2026-10-08 00:18 (complete, server-authored)
+
+**Summary:** </think>All nine tests individually pass, fmt clean, working tree clean. All acceptance criteria met:
+
+- [x] Eight named tests each pass alone (verified above, plus reap_idle_in amended test)
+- [x] reap_idle_in_tears_down_only_idle_sandboxes passes as amended
+- [x] Module runs 0 failed
+- [x] clippy exit 0
+- [x] fmt --check exit 0
+- [x] cargo test 0 failed (2421 passed)
+- [x] No unwrap/expect/allow/unsafe added outside tests
+- [x] container.rs and src/ipc.rs unchanged
+- [x] Update Log entry contains E2E output and PASTE MATCH line
+
+Status left at in-progress, no complete entry written by me, server authors that. Done — write the summary.</think>
+Phase 08b is complete and committed. Working tree is clean, all gates green.
+
+**Summary:** Implemented the sbx egress audit exactly per spec: `sbx.rs` gained `policy_log_args`, `EgressEntry`/`EgressAudit`, `parse_policy_log` (with the `vm_name` filter that drops other sandboxes' accumulated entries), `egress_summary` (sorted, counted, `none`/`no network requests` forms), and `egress_event`; `sbx_lifecycle::read_egress` runs it through the injectable `SbxRunner` and degrades to `None` + `log::warn!` on any sbx failure or unrecognised output; `ghost_sandbox::is_created` exposes the created set; `trigger_ghost_turn` now reads the log immediately before `run_log.finish` (so the turn log reads note-then-finished) and emits the Note plus `sandbox_egress`, skipping ghosts that never created a sandbox; the reaper path returns `ReapedSandbox { name, egress, teardown }` with the log read before `forget_and_teardown`, and the hourly block in `daemon/mod.rs` logs `sandbox_egress` when egress exists, then `chat_sandbox_teardown` as before. End-to-end block ran verbatim and was pasted mechanically into the Update Log: all nine named tests pass individually (`1 passed; 0 failed`), the four module filters report `0 failed` (64/23/19/6 passed), clippy `-D warnings` exit 0, `fmt_exit=0`, full suite `passed=2421 failed=0`, and the self-check printed `PASTE MATCH` (now inside the entry).
+
+**Notes for review:** One small adaptation: Task 4's block binds `run_id` to a local before building the `TurnLogRecord` (instead of `run_log.run_id().clone()` inline) purely so the borrow of `run_log` doesn't collide with the field-ordering of the struct literal — semantics identical to the spec sketch. The amended `reap_idle_in_tears_down_only_idle_sandboxes` keeps its setup and both `map` assertions, changing only the `got`/`calls` assertions as authorized. No `unwrap`/`expect`/`allow`/`unsafe` outside `#[cfg(test)]`; `container.rs` and `src/ipc.rs` are untouched. Status is left `in-progress` (phase doc + README row) with no self-written completion entry, per the lifecycle split — the server authors the `in-progress → review` flip and the `(complete)` entry. Out-of-scope items (egress in `daemoneye status`, filesystem policy logs, live egress run row 10) untouched.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+r_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_tools_tables_match_the_code ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (821491): No such process
+kill: (-822199): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M26-sbx-isolation/README.md` — +1 -1
+- `docs/dev/milestones/M26-sbx-isolation/phase-08b-sbx-egress-audit.md` — +45 -1
+- `src/daemon/executor/chat_sandbox.rs` — +35 -12
+- `src/daemon/executor/ghost_sandbox.rs` — +18 -0
+- `src/daemon/executor/sbx.rs` — +244 -0
+- `src/daemon/executor/sbx_lifecycle.rs` — +82 -0
+- `src/daemon/ghost.rs` — +32 -0
+- `src/daemon/mod.rs` — +14 -2
+
+**Commit:** 8f12312801a948bf2eeb1c3a702eef386ab49d68
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
