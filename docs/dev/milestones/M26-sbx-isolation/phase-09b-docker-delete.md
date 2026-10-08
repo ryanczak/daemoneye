@@ -1,7 +1,7 @@
 # Phase 09b: docker-delete — remove the docker runtime's code
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-09a
 **Estimated diff:** ~4,700 lines deleted, ~10 added
 **Tags:** language=rust, kind=refactor, size=m
@@ -286,3 +286,170 @@ test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; fin
 test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
+
+### Update — 2026-10-08 14:54 (complete, server-authored)
+
+**Summary:** </think>Everything is committed and clean. Note the "status-clean-check=0" — `git status --short` printed nothing (exit 0 with no output), meaning clean tree. Good.
+
+Completion checklist:
+- [x] Phase doc Status says `in-progress` (I flipped at start; server will flip to review).
+- [x] README row says in-progress.
+- [x] No hand-written `(complete)` entry — I wrote started + e2e entries only.
+- [x] `cargo fmt --all` run before staging.
+- [x] All verification commands ran clean.
+- [x] Final message will be Summary + Notes.
+- [x] git status clean.
+- [x] git log shows all touched files.
+
+Wait — the diffstat said `11 files changed, 1 insertion(+), 4592 deletions(-)` for `src/ containers/` but commit shows 13 files with 80 insertions (including docs). The 1 insertion in src/ is... let me check: `git diff --stat 7a54d97d -- src/ containers/` showed `11 files changed, 1 insertion(+), 4592 deletions(-)`. Hmm, that's odd — I edited 6 source files with deletions, plus 5 file deletions = 11 files, and 1 insertion. What's the 1 insertion in src/? Possibly a line in run.rs that changed (the comment trim counts as +1/-2 → net +1? Actually comment edit: replaced 3 lines with 1 line = -2+1). Yes that accounts for the single insertion. Good.
+
+The commit's total includes docs (phase doc +79/-... and README row), so 13 files, 80 insertions (1 src + 78 phase doc + 1 README = 80). Consistent.
+
+One more check: the reviewer's criterion "git show --stat lists only deletions, plus the small edits in main.rs, cli/commands/mod.rs, executor/mod.rs, ghost.rs, daemon/mod.rs and run.rs, and any Task 3 cleanup" — plus docs bookkeeping, which the server also commits separately. My commit includes docs edits (status flip + README row + Update Log). The contract says the commit should include "the start-of-phase status flip from step 1". So including the phase doc and README is expected; the server authors the completion entry separately. Good.
+
+Now write the final Summary + Notes for review.</think>
+All tasks complete, tree clean, commit landed. Final report:
+
+**Summary**
+
+Phase 09b (docker-delete) is done: `src/daemon/executor/container.rs` (4,238 lines, 124 tests), `src/cli/commands/sandbox.rs` (1 test), and the whole `containers/` directory are gone, along with every caller — `pub mod container;` in `executor/mod.rs`, the startup sweep in `daemon/mod.rs`, the ghost teardown block in `ghost.rs`, all seven docker stages in `background/run.rs` (proxy-audit drain, profile/proxy-rules bindings, `job_id`, script staging, egress proxy, the container wrap, the `container_run` event, and both teardown blocks), `mod sandbox;` + its `pub use` in `cli/commands/mod.rs`, and the `SandboxCommands::Build` variant + match arm in `main.rs`. Clippy `-D warnings` surfaced no dead code, so Task 3 needed no further deletions; the only cleanup was trimming a `run.rs` comment that referenced the deleted `sandbox_window_command`/`job_id`. Committed as `a83b16f0` (`refactor: M26 phase-09b — delete the docker runtime`), 13 files, +80/−4594, working tree clean.
+
+**End-to-end verification** — the phase doc's block ran verbatim, one line each, captured to `/tmp/09b_e2e.txt` and pasted in full into a dedicated `(end-to-end verification)` Update Log entry with `PASTE MATCH: yes`: `exists_any=1`; both greps (`executor::container`, `"--host"`) print nothing; `sandbox --help` lists `status` and not `build`; the six named sandbox suites all green (`sbx` 64, `ghost_sandbox` 19, `chat_sandbox` 6, `bg_shell` 12, `config::` 108, refusal-naming 1); clippy exits 0; `fmt_exit=0`; full `cargo test` `passed=2297 failed=0` (exactly the pinned 2422 − 125); `+.*allow(` count `0`; diffstat vs `7a54d97d` for `src/ containers/` is `11 files changed, 1 insertion(+), 4592 deletions(-)`.
+
+**Notes for review**
+- Status is left `in-progress` with no `(complete)` entry, per the contract — the server authors the completion tail.
+- The single +1 line in `src/` is the comment trim in `run.rs` (3 lines → 1); everything else in source is deletion.
+- Test count dropped by exactly 125 (124 `container.rs` + 1 `sandbox.rs`); no other test was touched or added. Per-suite breakdown is appended to the e2e entry (2233 lib + 6 + 15 + 32 + 11 + 0 = 2297).
+- Kept per authorization: the docker-only `SandboxConfig` fields, `runs_as_container_root()`, and the wire names `ContainerStatusReport` / `Request::ContainerStatus`. Docs were not touched (row 09c).
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (1159453): No such process
+kill: (-1160171): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M26-sbx-isolation/README.md` — +1 -1
+- `docs/dev/milestones/M26-sbx-isolation/phase-09b-docker-delete.md` — +78 -1
+- `src/cli/commands/mod.rs` — +0 -2
+- `src/daemon/background/run.rs` — +1 -172
+- `src/daemon/executor/mod.rs` — +0 -1
+- `src/daemon/ghost.rs` — +0 -5
+- `src/daemon/mod.rs` — +0 -4
+- `src/main.rs` — +0 -5
+
+**Commit:** a83b16f0be0363f0ca36958ea8b71ece03a4d3ce
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
