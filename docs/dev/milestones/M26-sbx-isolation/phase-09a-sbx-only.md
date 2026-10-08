@@ -1,7 +1,7 @@
 # Phase 09a: sbx-only — an enabled sandbox always means sbx, and never falls back to the host
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-08b
 **Estimated diff:** ~220 lines (about 90 code, 130 tests)
 **Tags:** language=rust, kind=refactor, size=s
@@ -354,3 +354,147 @@ a failing diagnostic, and the sandbox `enabled`-gate tests live in their
 own modules. `container.rs` is otherwise unchanged. If the review wants
 the literal criterion instead, the alternative is deleting
 `container.rs` now (row 09b's work, out of scope here).
+
+### Update — 2026-10-08 03:41 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Built phase-09a: `default_sandbox_runtime()` now returns `"sbx"`, the field's doc comment says it is ignored, and `warnings()` was rewritten exactly as specified — runtime non-`"sbx"` warns it is ignored/removed, docker-only keys warn "has no effect" whatever the runtime says (order preserved: image, proxy_image, workdir, run_as, docker_host, limits.pids, limits.scratch, ghost_defaults.mount_scripts), the container-root and empty-`proxy_allow` docker checks are deleted (`runs_as_container_root()` kept for row 09b), and the proxy-is-additive note is unconditional under `network = "proxy"` with the "with runtime = \"sbx\"" words dropped. All six production gates (`ghost_sandbox_pty`, `chat_sandbox_enabled`, both `ghost.rs` conditions, the `mod.rs` startup sweep, `handle_container_status`) now gate on `enabled` alone; `handle_container_status` always builds the sbx runner and returns `collect_sbx_status`, with the docker `spawn_blocking` path deleted and `collect_container_status` left for row 09b. `run_background_in_window` refuses any command while the sandbox is enabled via the new `SANDBOX_TMUX_REFUSAL` constant (with the later dead blocks left in place per spec), and the dead blocks in `ghost.rs`/`mod.rs` were left in place too. New tests `sandbox_warnings_flag_a_docker_config_as_removed` and `tmux_window_refusal_names_the_fix` pass; the nine amended tests pass alone and `cargo test` totals are `passed=2422 failed=0` (clippy and `cargo fmt --all --check` exit 0); the E2E block was run once per line and pasted verbatim into an Update Log entry with `PASTE MATCH: yes`, plus one extra full-`--lib` run (`2358 passed; 0 failed; 14 ignored`) to confirm nothing else broke.
+
+**Notes for review — one deviation:** removing the `runtime == "sbx"` terms made 23 `pub` items in `container.rs` dead, which failed `clippy -D warnings` with 23 errors, so `container.rs` (the file row 09b deletes) now carries a file-level `#![allow(dead_code)]` with a comment naming rows 09a/09b. This is technically outside the acceptance criterion's "no `#[allow(` added outside `#[cfg(test)]` code" and outside the Authorizations list, but the criterion pair ("no allow" + "clippy exits 0") is unsatisfiable without touching that file; I chose the minimal file-scoped allow over deleting `container.rs` early (row 09b's work, out of scope). Flagging it for the reviewer's call — if the literal criterion wins, the fix is pulling row 09b forward. Also: two existing tests outside the amended list (`sandbox_window_enabled_starts_with_the_quoted_runtime` in `container.rs` and `partial_sandbox_section_fills_remaining_defaults` in `config/mod.rs`) broke purely because `SandboxConfig::default().runtime` changed to `"sbx"`; I pinned the first to an explicit `runtime: "docker"` (its argv expectations are docker's) and updated the second's `"docker"` → `"sbx"` default assertion. Both are noted here rather than hidden; neither is in the Test plan's list, so they were *forced* edits, not scope creep. Phase doc and README status rows are `in-progress` (server flips to review); commits `d6c18fcc` (code) and `8a178f97` (E2E evidence); tree clean.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.75s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+r_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test readme_documents_every_chat_slash_command ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test event_log_append_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test hooks_land_on_private_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (922619): No such process
+kill: (-923341): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M26-sbx-isolation/README.md` — +1 -1
+- `docs/dev/milestones/M26-sbx-isolation/phase-09a-sbx-only.md` — +65 -1
+- `src/config/mod.rs` — +28 -13
+- `src/config/types.rs` — +43 -61
+- `src/daemon/background/run.rs` — +28 -6
+- `src/daemon/executor/chat_sandbox.rs` — +5 -5
+- `src/daemon/executor/container.rs` — +6 -0
+- `src/daemon/executor/ghost_sandbox.rs` — +5 -8
+- `src/daemon/ghost.rs` — +2 -2
+- `src/daemon/mod.rs` — +1 -1
+- `src/daemon/server/handlers.rs` — +8 -25
+
+**Commit:** 8a178f972481d5008d46fa7052d89783610b3da6
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
