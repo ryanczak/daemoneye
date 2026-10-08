@@ -163,7 +163,7 @@ a new Update Log entry.
 
 ## Acceptance criteria
 
-- [ ] **(bug-09a-1)** `grep -rn 'allow(dead_code)' src/` prints nothing.
+- [ ] **(bug-09a-1)** `grep -n 'allow(dead_code)' src/daemon/executor/container.rs` prints nothing.
 - [ ] **(bug-09a-1)** `grep -n '^pub mod container;' src/daemon/executor/mod.rs`
       prints one line.
 - [ ] **(bug-09a-1)** `cargo test` reports `passed=2422 failed=0` — exactly
@@ -527,7 +527,7 @@ There is **exactly one change left**, two edits from bug-09a-1:
    `pub mod container;`.
 
 **Finish condition:**
-- `grep -rn 'allow(dead_code)' src/` prints nothing;
+- `grep -n 'allow(dead_code)' src/daemon/executor/container.rs` prints nothing;
 - clippy exits 0;
 - `cargo test` reports **`passed=2422 failed=0`**: 2422, **not** 2423. A
   rising count means scope creep.

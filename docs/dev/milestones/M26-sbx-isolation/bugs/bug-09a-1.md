@@ -21,7 +21,9 @@ it, and phase-09a's acceptance criteria say "No `#[allow(` … added" and
 
 ## What should happen
 
-The lint gate is green with **no** `allow` anywhere in the tree.
+The lint gate is green with no `allow` added by this phase. The six pre-existing
+`#[allow(dead_code)]` lines in `src/search.rs` and `src/memory/index/mod.rs`
+are not this phase's, so leave them alone.
 
 ## Root cause
 
@@ -50,8 +52,9 @@ default runtime changed, is **accepted**. Leave it.
 
 ## Definition of done
 
-- [ ] `grep -rn 'allow(dead_code)' src/` prints nothing. Today it prints
-      `src/daemon/executor/container.rs:4`.
+- [ ] `grep -n 'allow(dead_code)' src/daemon/executor/container.rs` prints nothing. Today it prints
+      `4:#![allow(dead_code)]`. Do not touch the pre-existing allows in
+      `src/search.rs` and `src/memory/index/mod.rs`.
 - [ ] `grep -n '^pub mod container;' src/daemon/executor/mod.rs` prints one
       line. Today it prints nothing.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` exits 0.
