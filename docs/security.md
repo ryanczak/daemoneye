@@ -8,7 +8,8 @@ security boundary, and what each guard actually does.
 DaemonEye runs as the logged-in user. Its Unix socket, CLI, and tmux hooks all
 assume that user. The agent is a regular user-space process: it can run
 commands, read files, and write files as you. The controls below raise the
-cost of abusing that privilege; they do **not** turn it into a sandbox.
+cost of abusing that privilege; they do **not** turn it into a sandbox — that
+is the opt-in agent sandbox's job (below).
 
 Two kinds of attacker matter:
 
@@ -113,6 +114,30 @@ contain unmasked text. If you need a scrubbed export, don't rely on the log
 files.
 
 ---
+
+## The agent sandbox (opt-in)
+
+With `[sandbox] enabled = true`, agent work runs in Docker Sandboxes (`sbx`)
+microVMs: a ghost run in its own sandbox, a chat session's `wait: false`
+commands in the session's sandbox. Inside the VM the agent has full control;
+the VM boundary, not anything inside it, is the guard. It holds:
+
+- **No host filesystem.** Sandboxes are mountless. The one approved script a
+  command invokes is copied in per invocation (`sbx cp`); config, memory,
+  `.ssh`, the scripts directory and the daemon's sockets are never mounted.
+- **No credentials.** sbx secret injection is not configured; the daemon
+  keeps the model-provider key.
+- **Egress is policy.** `network = "none"` (the default) denies all egress;
+  `network = "proxy"` inherits the operator's global sbx policy plus
+  `proxy_allow`, minus `proxy_deny`. Each sandbox's allowed and blocked hosts
+  are recorded before teardown (`sandbox_egress` in `events.jsonl`).
+- **Fails closed.** A failed preflight (`sbx` missing, daemon not running)
+  refuses the command; there is no host fallback. So does any command that
+  would run in a tmux window while the sandbox is enabled.
+
+Not covered: foreground commands in your own pane, commands on configured
+`[hosts.*]`, and the daemon's own tools — those run with the daemon's
+privileges, under the guards above.
 
 ## What is deliberately NOT a boundary
 

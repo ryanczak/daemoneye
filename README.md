@@ -222,64 +222,50 @@ When a class flag is `true`, approval is pre-granted for the entire class at ses
 
 ---
 
-### 🔒 Container-Sandboxed Agents (opt-in)
+### 🔒 Sandboxed Agents — Docker Sandboxes (opt-in)
 
-> **Status as of v1.0.0:** M18 and M19 are merged. When `[sandbox] enabled =
-> true`, background commands and ghost-shell commands run inside a rootless
-> Docker container as an unprivileged uid, approved scripts are staged into
-> the container per run, a `network = "proxy"` profile gets HTTP(S) egress
-> only through a containerized proxy with a per-profile allowlist and an
-> `events.jsonl` audit record per request, every container spawn is recorded,
-> and `daemoneye status` reports runtime, image-vs-lockfile and live
-> containers. The sandbox stays **off by default**, so no container runtime
-> is required to build, test, or run DaemonEye. Not yet shipped: the
-> escape hatch and the workspace mount — both carried into DaemonEye 2.0 (see
-> [`docs/design/daemoneye-2.0.md`](docs/design/daemoneye-2.0.md)). Build the
-> image with `daemoneye sandbox build`.
+> With `[sandbox] enabled = true`, agent work runs inside **Docker
+> Sandboxes** (`sbx`) microVMs instead of on your host. The sandbox stays
+> **off by default**, so `sbx` is not needed to build, test or run
+> DaemonEye. Check it with `daemoneye sandbox status`.
 
 Every approval prompt above is a *behavioural* control: it depends on the
 operator reading the command correctly. None of it stops a
 degenerate-but-approved command, a script that writes outside its lane, or a
-prompt-injection that yields a plausible-looking command the operator waves
-through. Today a compromised agent has exactly the daemon's privileges — the
-daemon's user, its filesystem, its tmux, its network.
+prompt injection that yields a plausible-looking command. Without the
+sandbox a compromised agent has exactly the daemon's privileges.
 
-The fix is architectural: separate the **control plane** (the daemon) from the
-**work plane** (command execution), and give the work plane a bounded sandbox.
-Background commands and scripts move into ephemeral **rootless Docker**
-containers; the daemon stays native so it can keep mediating tmux, approvals,
-scheduling and the socket.
+With it:
 
-What that buys, and the decisions behind it:
+- **Each ghost run gets its own microVM** (`de-ghost-<id>`), created on
+  its first command and destroyed when the ghost exits — on every path,
+  including failure and cancel. Its profile is the ghost's agent name.
+- **Chat background commands** (`wait: false`) run in your session's own
+  sandbox (`de-chat-<id>`), removed once it has sat unused for ten minutes.
+- **No network by default.** A profile's `network = "none"` denies all
+  egress. `network = "proxy"` uses your global `sbx` network policy;
+  `proxy_allow` adds hosts to it and `proxy_deny` blocks them.
+- **Every request is audited.** Before a sandbox is removed, its `sbx`
+  policy log — the hosts it reached and the hosts that were blocked — is
+  written to the run's log and to `events.jsonl`.
+- **Only the script you approved goes in.** An approved script is copied
+  into the sandbox each time it runs; the script library, your config,
+  memory and `.ssh` are never mounted.
+- **No credentials in the sandbox.** The daemon talks to the model
+  provider; the sandbox holds no API key.
+- **Fails closed.** If `sbx` is missing or its daemon is not running, a
+  sandboxed command is refused with the reason — it never falls back to
+  your host.
+- **Pause means pause.** `Ctrl+P` on an attached ghost stops the job
+  inside the VM, not just the client.
 
-- **Never container root.** Under rootless Docker, container uid 0 maps to the
-  daemon's *own* host uid — so a container running as root is exactly the
-  blast radius the sandbox exists to remove. Everything runs as
-  `--user 1000:1000`, which maps to an unprivileged subuid that owns nothing
-  on the host. A startup gate asserts this and refuses sandboxed execution if
-  the mapping ever breaks.
-- **No credentials in the sandbox.** The daemon talks to the model provider;
-  the container never holds an API key.
-- **No network by default.** Containers run `--network=none`. Profiles that
-  genuinely need egress get it through a proxy that enforces a per-profile
-  hostname allowlist and logs every request.
-- **Least-privilege mounts.** Only the *one* vetted script a run was approved
-  for is staged in, read-only — not the script library, and never the config,
-  memory, `.ssh`, or the tmux socket.
-- **Host access stays deliberate.** Operations that genuinely need the host
-  (package updates, zpool, sudo scripts) are classified as **escape-hatch**:
-  approved interactively in chat, or — for unattended ghost shells — limited
-  to a pre-vetted allowlist, with anything else parked and surfaced in your
-  catch-up brief rather than silently run or silently dropped.
-- **Your visibility doesn't change.** Sandboxed background jobs still run in
-  their own `de-bg-*` tmux window, so you can watch a job exactly as you do
-  now — the process inside the pane is simply contained.
+Foreground commands — the ones injected into your own pane — stay on the
+host by design: they are visible, approved, and run in your shell.
+Commands on a configured `[hosts.<name>]` host run there, not in a sandbox.
+While the sandbox is enabled, `[execution] backend = "tmux"` is refused,
+because a tmux window is outside it.
 
-Foreground commands — the ones injected into your own pane with `send-keys` —
-stay host-level by design. They are visible, approved, and run in your shell;
-sandboxing them would break the thing that makes them useful.
-
-Design of record: [`docs/design/agent-container-sandboxing.md`](docs/design/agent-container-sandboxing.md).
+Design of record: [`docs/design/daemoneye-2.0.md`](docs/design/daemoneye-2.0.md) § 2.9.
 
 ---
 
@@ -407,7 +393,7 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye daemon --log-file FILE` | Write the daemon log to `FILE` instead of `~/.daemoneye/var/log/daemon.log` |
 | `daemoneye daemon --session NAME` | Override the managed tmux session name from config |
 | `daemoneye stop` | Stop the daemon gracefully |
-| `daemoneye sandbox build` | Build the agent (and proxy) container images from `containers/` and record their ids in `~/.daemoneye/etc/*.lock` |
+| `daemoneye sandbox status` | Show the sandbox runtime (the `sbx` version, or why it is unusable) and the daemon's own sandboxes |
 | `daemoneye ping` | Check whether the daemon is running |
 | `daemoneye status` | Daemon status: uptime, sessions, ghost shells, cost today, redactions, circuit state |
 | `daemoneye logs` | Tail `daemon.log` |
@@ -1108,7 +1094,7 @@ Artifacts (runbooks, scripts, memories) created during a named session are tagge
 
 ## Ghost Shells & Autonomous Remediation
 
-Ghost Shells are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost shell investigates the alert and executes pre-approved remediation steps — all without a human present. The ghost itself runs headless inside the daemon. Its commands run in a PTY shell the ghost owns — on the daemon host, or on a configured `[hosts]` entry its runbook's `ssh_target` names — reused for its later commands and closed when the ghost exits; the recording stays, for `/logs` and `/log`. No tmux server is needed. Three cases still use tmux windows on the daemon host, prefixed `de-gs-bg-*` (webhook- and interactively-triggered) or `de-gs-sj-*` (scheduler-triggered): the container sandbox (`[sandbox] enabled`), `[execution] backend = "tmux"`, and an `ssh_target` that names no configured host (wrapped as `ssh <target> <cmd>`). Start, completion, and failure events appear in the next catch-up brief when you re-attach.
+Ghost Shells are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost shell investigates the alert and executes pre-approved remediation steps — all without a human present. The ghost itself runs headless inside the daemon. Its commands run in a PTY shell the ghost owns — on the daemon host, or on a configured `[hosts]` entry its runbook's `ssh_target` names — reused for its later commands and closed when the ghost exits; the recording stays, for `/logs` and `/log`. No tmux server is needed. With the sandbox enabled, a ghost's local commands run in its own Docker Sandboxes microVM instead (see the sandbox section above). Two cases still use tmux windows on the daemon host, prefixed `de-gs-bg-*` (webhook- and interactively-triggered) or `de-gs-sj-*` (scheduler-triggered): `[execution] backend = "tmux"`, and an `ssh_target` that names no configured host (wrapped as `ssh <target> <cmd>`) — and both are refused while the sandbox is enabled. Start, completion, and failure events appear in the next catch-up brief when you re-attach.
 
 ### How it works end-to-end
 
@@ -1333,8 +1319,8 @@ curl -s -X POST http://localhost:9393/webhook \
 
 Watch the ghost shell in real time from `daemoneye chat`: `/agents` lists the
 live agent shells (ghosts first); `Enter` attaches, `Ctrl+P` pauses and
-resumes, `Ctrl+D` detaches. `/tail <id>` follows a shell read-only. With the
-container sandbox or `backend = "tmux"`, the commands run in tmux windows
+resumes, `Ctrl+D` detaches. `/tail <id>` follows a shell read-only. With
+`backend = "tmux"`, the commands run in tmux windows
 instead:
 
 ```bash
@@ -1373,7 +1359,7 @@ Cost (today)
 ```
 
 List the ghost shells currently open with `/shells` in `daemoneye chat`
-(owner `ghost:…`). With the container sandbox or `backend = "tmux"`, list the
+(owner `ghost:…`). With `backend = "tmux"`, list the
 command windows instead:
 
 ```bash

@@ -451,6 +451,13 @@ described below; the remaining 2.0 milestones (run/turn model, SSH transport,
 client UX) are not yet scoped here. Until M27 removes tmux (renumbered from M26 on 2026-10-05; M26 is now agent isolation on Docker Sandboxes, `docs/dev/milestones/M26-sbx-isolation/`), §§ 1–4 above
 describe the `tmux` backend and remain accurate.
 
+**Agent sandbox (M26).** The M18/M19 docker container sandbox is replaced by
+Docker Sandboxes (`sbx`): with `[sandbox] enabled`, a ghost run gets its own
+microVM and a chat session's `wait: false` commands run in the session's
+sandbox, each reached through a shell host whose child is `sbx exec`. The
+decisions are in `docs/design/daemoneye-2.0.md` § 2.9 and
+`docs/dev/milestones/M26-sbx-isolation/README.md`.
+
 #### The shell engine as built (`src/shell/`, shipped)
 
 With `[execution] backend = "pty"` (opt-in; `"tmux"` remains the default and

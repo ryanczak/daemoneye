@@ -66,17 +66,24 @@ The ghost operates under a simple OS-delegation model:
 
 This means the ghost can freely run `ps`, `df`, `curl`, `journalctl`, `systemctl status`, etc. without any configuration. Sudo access always requires an explicit `auto_approve_scripts` entry and a NOPASSWD sudoers rule.
 
-## tmux Window Naming
+## Where Ghost Commands Run
 
-Ghost shells create windows with `de-gs-*` prefixes, distinct from interactive background windows (`de-bg-*`):
+A ghost's commands run in a **PTY shell the ghost owns**, reused for its
+later commands and closed when the ghost exits:
 
-| Prefix | When created |
-|---|---|
-| `de-gs-bg-*` | Background command within a webhook- or interactively-triggered ghost |
-| `de-gs-sj-*` | Background command within a scheduler-triggered ghost (`ActionOn::Ghost`) |
-| `de-gs-ir-*` | Reserved for incident-response main session windows |
+- **Sandbox enabled** (`[sandbox] enabled = true`): the shell runs inside
+  the ghost's own Docker Sandboxes microVM, `de-ghost-<id>`, created on
+  the first command and destroyed on exit. Approved scripts are copied in
+  per invocation (`/de/scripts/<name>`); the network follows the profile
+  named after the ghost's agent (default: no egress). A refused command's
+  result starts `sandbox unavailable:` — do not retry it on the host.
+- **Sandbox off:** on the daemon host, or on the configured `[hosts]`
+  entry the runbook's `ssh_target` names.
+- **`backend = "tmux"`** (opt-out) and an `ssh_target` naming no
+  configured host use tmux windows `de-gs-bg-*` (webhook/interactive) and
+  `de-gs-sj-*` (scheduled) — both refused while the sandbox is enabled.
 
-When you see `[BACKGROUND PANE de-gs-bg-*]` or `[BACKGROUND PANE de-gs-sj-*]` in terminal context, it is a ghost shell command window. The `[ghost]` annotation is always present.
+`list_shells` / `read_shell` show a ghost's shells (owner `ghost:…`).
 
 ## Concurrency Cap
 
@@ -112,10 +119,12 @@ Ghost shell activity is logged at multiple levels:
 - `ghost_turn` — per-turn tool dispatch: `session_id`, `turn`, `tool_count`, `tools` (array of `{name, cmd}`)
 - `ghost_complete` — successful finish: `session_id`, `turns_used`
 - `ghost_error` — errors/timeouts/denials: `session_id`, `turn`, `error`
+- `sandbox_egress` — a sandbox's allowed and blocked hosts, read before teardown: `sandbox`, `allowed`, `blocked`
+- `ghost_sandbox_teardown` — the ghost sandbox's removal outcome: `session`, `outcome`
 
 **`~/.daemoneye/var/log/sessions/ghost-<name>-<uuid>.jsonl`** — full message history including all tool calls and results. Created immediately when the session starts (even if the ghost fails before its first turn).
 
-**`~/.daemoneye/var/log/panes/<win_name>.log`** — complete output from each background command. Written from the full pipe-pane log — never truncated by tmux scrollback limits.
+**Shell recordings** — every command's output, in the shell's cast log: `list_shell_logs` / `read_shell_log` (tmux-backend ghosts also keep `~/.daemoneye/var/log/panes/<win_name>.log`).
 
 ## Operational Checklist Before Spawning a Ghost
 

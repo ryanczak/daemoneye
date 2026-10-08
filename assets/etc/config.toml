@@ -237,45 +237,37 @@ prompt = "sre"
 # ── Sandbox ──────────────────────────────────────────────────────────────────
 
 # [sandbox]
-# Container-sandboxed agent command execution. Nothing here takes effect
-# while `enabled` is false; later M18 phases consume these values. The
-# defaults describe the safe, disabled state.
+# Run agent work in Docker Sandboxes (`sbx`) microVMs. Off by default;
+# needs `sbx` installed and its daemon running (`daemoneye sandbox status`).
 #
 # enabled     = false                    # master feature flag
-# runtime     = "docker"                 # "docker" or "sbx" (Docker Sandboxes)
-# image       = "daemoneye-agent-base"   # tag pinned by digest in sandbox.lock
-# proxy_image = "daemoneye-egress-proxy"  # egress proxy image, pinned in proxy.lock (M19)
-# workdir     = "/de/work"               # container scratch mount point
-# run_as      = "1000:1000"              # NEVER container root: under rootless
-#                                        # Docker container root IS the daemon's
-#                                        # host uid, defeating the sandbox
-# docker_host = "unix:///run/user/1000/docker.sock"   # rootless per-user socket
-# Under runtime = "sbx", image, proxy_image, workdir, run_as, docker_host,
-# limits.pids, limits.scratch and ghost_defaults.mount_scripts are ignored.
+# runtime     = "sbx"                    # ignored: an enabled sandbox is always sbx
+# The keys below applied only to the removed docker runtime. They still parse,
+# and warn at load if set.
+# image       = "daemoneye-agent-base"
+# proxy_image = "daemoneye-egress-proxy"
+# workdir     = "/de/work"
+# run_as      = "1000:1000"
+# docker_host = "unix:///run/user/1000/docker.sock"
 #
 # [sandbox.limits]
-# memory  = "1g"   # per-container memory ceiling (`--memory`)
-# pids    = 256    # max PIDs inside the container (`--pids-limit`) bounds a fork bomb
-# cpus    = 2.0    # CPU quota (`--cpus`)
-# scratch = "2g"   # /de/work tmpfs size
+# memory  = "1g"   # per-sandbox memory
+# pids    = 256    # docker-only: no effect
+# cpus    = 2.0    # per-sandbox CPUs
+# scratch = "2g"   # docker-only: no effect
 #
 # [sandbox.profile]
-# Per-profile policy, keyed by agent/profile name. A profile absent here gets
-# the defaults (network "none", empty proxy_allow).
+# Per-profile policy, keyed by agent name (a ghost's sandbox uses its agent's
+# profile; chat uses the default: network "none").
 # [sandbox.profile.researcher]
-# network      = "proxy"    # "none" (default, no route out) or "proxy" (egress
-#                           # via the containerized proxy on a shared network)
-# proxy_allow  = ["crates.io", "*.crates.io"]  # only consulted when network =
-#                           # "proxy". Exact host, or "*.domain" for subdomains
-#                           # (which does NOT include the domain itself); an
-#                           # optional :80 / :443 suffix is allowed.
-# proxy_deny   = []         # hosts this profile may never reach; deny always
-#                           # beats allow, and a deny inside a wildcard allow
-#                           # drops that wildcard
+# network      = "proxy"    # "none" (default: no egress) or "proxy" (the global
+#                           # sbx network policy, plus proxy_allow, minus proxy_deny)
+# proxy_allow  = ["crates.io", "*.crates.io"]  # hosts added to the policy
+# proxy_deny   = []         # hosts this profile may never reach; deny beats allow
 #
 # [sandbox.ghost_defaults]
-# destroy_on_exit = true   # destroy the container on ghost exit, every path
-# mount_scripts   = "ro"   # mount mode for the staged script volume
+# destroy_on_exit = true   # destroy the ghost's sandbox on exit, every path
+# mount_scripts   = "ro"   # docker-only: no effect
 
 # ── Execution ────────────────────────────────────────────────────────────────
 

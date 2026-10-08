@@ -48,7 +48,11 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/prompt.rs` | Prompt assembly via `PromptCtx` (`build_first_turn_prompt`, `build_subsequent_turn_prompt`) |
 | `src/daemon/stream.rs` | AI event streaming loop (`run_conversation_loop`); tool execution; response persistence |
 | `src/daemon/executor/` | Tool call dispatch; approval gate (`ToolCallOutcome`); background/foreground execution coordination; `ArtifactCtx` for session-origin stamping |
-| `src/daemon/executor/container.rs` | Container sandbox: runtime probe + D1 uid gate, `evaluate_preflight`, the `docker` argv builders (`run_args`/`stage_args`), `sandbox_window_command`, the image lockfile, and the startup sweep. All decision logic is pure; one spawn site per operation. Gated by `[sandbox] enabled` (default off). |
+| `src/daemon/executor/sbx.rs` | Docker Sandboxes (sbx), pure: sandbox naming (`de-ghost-*` / `de-chat-*`), `network_plan`, every `sbx` argv builder, the `ls --json` / `policy log --json` parsers, preflight classification, and the in-VM signal script (`VM_SIGNAL_SCRIPT`, `VmOp`) |
+| `src/daemon/executor/sbx_lifecycle.rs` | sbx side effects through an injected `SbxRunner`: `preflight`, `create_sandbox`, `teardown_sandbox` (rm, falling back to stop), `sweep_daemon_sandboxes`, `collect_sbx_status`, `read_egress` |
+| `src/daemon/executor/ghost_sandbox.rs` | A ghost run's sandbox: `ensure_sandbox` (fail-closed, created once per run), `run_ghost_in_sandbox`, `stage_script`, `forget_and_teardown`, `is_created` |
+| `src/daemon/executor/chat_sandbox.rs` | A chat session's sandbox for `wait: false`: `ensure_chat_sandbox`, the idle reaper (`reap_idle_chat_sandboxes`, 600 s grace) |
+| `src/shell/sbx_backend.rs` | `SbxBackend`: a shell host whose child is `sbx exec`, routing STOP/CONT/close into the VM and sending INT/TERM as a PTY `^C` |
 | `src/daemon/background/` | Background execution: `run.rs` `run_background_in_window()`, `gc.rs` `notify_job_completion()` + `gc_bg_windows()` + `OwnedJobInfo`, `helpers.rs` output capture/archive and session notification |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
 | `src/daemon/digest.rs` | Session digest: structured compaction of conversation history at 30 messages; scans events.jsonl + filesystem for artifacts |
@@ -237,30 +241,32 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 - **Ghost sessions are excluded**: `ArtifactCtx.is_ghost` guards `track_artifact()` — ghost sessions never write to `artifacts_created` or stamp `session_origin`.
 - **Import**: `daemoneye session import <id> --name <name>` reads an orphaned `var/log/sessions/<id>.jsonl` and saves it to the named session store without a running daemon.
 
-## Container sandbox
+## Sandbox (Docker Sandboxes / sbx)
 
-Background `run_terminal_command` execution is wrapped as
-`docker --host <docker_host> run … sh -lc '<cmd>'` and runs **inside the
-existing `de-bg-*` window** via `sandbox_window_command`, so completion
-detection, output capture/archive and GC are unchanged.
+`[sandbox] enabled = true` (default off) runs agent work in **Docker
+Sandboxes** microVMs via the `sbx` CLI. `runtime` is ignored — an enabled
+sandbox is always sbx — and docker-only keys warn at load.
 
-- Every sandboxed process runs as `--user <run_as>`, `1000:1000` by default.
-  Under rootless Docker container root maps to the daemon's own host uid, so
-  running as root would defeat the sandbox entirely — this is the reason for
-  the uid gate.
-- Preflight (runtime probe → uid gate → `sandbox.lock` → live image id) is
-  cached once per daemon lifetime and **fails closed**: a failed gate refuses
-  the command with an operator-facing reason instead of running it on the host.
-- Containers are `--network=none`, carry `--label de.sandbox=1` (plus
-  `de.ghost=1` for ghost sessions), get a `0700` tmpfs scratch at `/de/work`,
-  and are swept at daemon start along with leaked `de-stage-*` volumes.
-- **Not sandboxed:** foreground execution, remote (`target_pane`) execution,
-  and every broker-native tool.
-- `daemoneye sandbox build` builds the image and records its digest in
-  `~/.daemoneye/etc/sandbox.lock`; a live image that differs from the lock is
-  refused.
-
-All sandboxed code is gated by `[sandbox] enabled` (default off); with the flag
-off, background execution is byte-for-byte today's host behaviour.
+- **Fails closed.** Preflight (`sbx version`, `sbx daemon status`) gates
+  every sandboxed command; a failure refuses it with a `sandbox
+  unavailable:` reason and it never runs on the host.
+- **Ghost runs** get their own sandbox `de-ghost-<id>` (profile = the
+  ghost's agent, mountless), created on the first command, torn down on
+  every exit path. Commands run in a PTY shell whose child is `sbx exec`.
+- **Chat `wait: false`** runs in a per-session sandbox `de-chat-<id>`; the
+  dedicated shell closes after its completion message, and the hourly
+  reaper removes a sandbox no shell uses once it has idled 600 s.
+- **Scripts** are staged with `sbx cp` into `/de/scripts/` on every
+  invocation; the scripts directory is never mounted.
+- **Network:** `network = "none"` → `--deny-network '**'`; `"proxy"`
+  inherits the global sbx policy, `proxy_allow` adds, `proxy_deny` denies.
+- **Egress audit:** `sbx policy log --json` is read before teardown — a
+  turn-log note plus a `sandbox_egress` event.
+- **Signals:** pause/resume act inside the VM; cancel is a PTY `^C`.
+- **Startup** adopts sandbox shells (sidecar) and sweeps only `de-*`
+  sandboxes no live record owns.
+- **Not sandboxed:** foreground commands, `[hosts.*]` commands, and
+  broker-native tools. **Refused while enabled:** anything that would run
+  in a tmux window (`backend = "tmux"`, an unresolved ghost `ssh_target`).
 
 @REXYMCP.md

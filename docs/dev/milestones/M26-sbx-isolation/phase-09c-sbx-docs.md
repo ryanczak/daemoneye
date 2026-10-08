@@ -1,7 +1,7 @@
 # Phase 09c: sbx-docs — the docs describe Docker Sandboxes, not docker containers
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** review
 **Depends on:** phase-09b
 **Estimated diff:** ~250 lines, docs and assets only
 **Tags:** language=markdown, kind=docs, size=s
@@ -361,7 +361,7 @@ a new Update Log entry.
 - [ ] `grep -c '^## Where Ghost Commands Run' assets/memory/knowledge/ghost-shell-guide.md`
       prints `1`, and `grep -c '^## tmux Window Naming' …` prints `0`.
 - [ ] `grep -c '^## Sandbox (Docker Sandboxes / sbx)' CLAUDE.md` prints `1`.
-- [ ] `git diff --stat e7005955 -- src/` prints nothing: no Rust source
+- [ ] `git diff --stat 373018da -- src/` prints nothing: no Rust source
       changes.
 - [ ] `cargo test --test doc_truth` reports `0 failed`.
 - [ ] `cargo test` reports exactly `passed=2297 failed=0`, unchanged.
@@ -382,7 +382,7 @@ grep -c 'Docker Sandboxes' docs/security.md
 grep -c '^## Where Ghost Commands Run' assets/memory/knowledge/ghost-shell-guide.md
 grep -c '^## tmux Window Naming' assets/memory/knowledge/ghost-shell-guide.md
 grep -c '^## Sandbox (Docker Sandboxes / sbx)' CLAUDE.md
-git diff --stat e7005955 -- src/ ; echo "src_diff_done"
+git diff --stat 373018da -- src/ ; echo "src_diff_done"
 cargo test --test doc_truth 2>&1 | grep -E '^test result'
 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
 git diff --stat
@@ -410,3 +410,77 @@ the `cargo test` lines. rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-08 17:47 (progress)
+
+Started phase 09c (sbx-docs). Status flipped to in-progress. Executor: executor-2
+(automated). Working through the docs edits in the order the spec lists them:
+CLAUDE.md key-files table and § Container sandbox, README sandbox section + CLI
+table + ghost prose, docs/security.md, the seeded ghost-shell-guide memory, the
+seeded config.toml `[sandbox]` block, docs/architecture.md; then the end-to-end
+verification block.
+
+### Notes for executor — 2026-10-08 (resume after a NoProgressStall)
+
+The governor stopped the previous run at 60 consecutive read-only calls
+**during verification**. All six doc edits were already made. The architect
+ran every acceptance criterion against the tree you left and **all pass**:
+the stale grep prints nothing, `doc_truth` is 15/15, and `cargo test` is
+`passed=2297 failed=0`. **Do not re-read or re-edit the six files.**
+
+One spec error is fixed: the no-source-changes criterion compared against
+`e7005955`, a commit from before phase 09b's deletion, so it could never
+print nothing. It now compares against `373018da`.
+
+What remains, and nothing else:
+1. Run the § End-to-end verification block **once**, as one shell script.
+2. Paste its output into a new Update Log entry with `PASTE MATCH: yes`.
+3. Set `Status:` to `review` and commit.
+
+### Update — 2026-10-08 18:06 (end-to-end verification)
+
+Resumed run: the six doc edits were already on disk, so I ran the §
+End-to-end verification block once, as a single shell script, with its output
+redirected to a file. The block below is that file's contents, line for line
+(18 lines; the first grep printed nothing before `stale_grep_done`).
+
+```sh
+stale_grep_done
+0
+1
+1
+0
+1
+src_diff_done
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+passed=2297 failed=0
+ CLAUDE.md                                          |  58 ++++++------
+ README.md                                          | 104 +++++++++------------
+ assets/etc/config.toml                             |  52 +++++------
+ assets/memory/knowledge/ghost-shell-guide.md       |  27 ++++--
+ docs/architecture.md                               |   7 ++
+ docs/dev/milestones/M26-sbx-isolation/README.md    |   2 +-
+ .../M26-sbx-isolation/phase-09c-sbx-docs.md        |  32 ++++++-
+ docs/security.md                                   |  27 +++++-
+ 8 files changed, 180 insertions(+), 129 deletions(-)
+```
+
+PASTE MATCH: yes
+
+Criterion-by-criterion reading of that transcript:
+
+- The stale grep (`docker --host|sandbox build|sandbox\.lock|rootless
+  docker|container\.rs|Container-Sandboxed` across all six files) printed
+  nothing — `stale_grep_done` is the first line of output.
+- `grep -c 'container sandbox' README.md` → `0` (was 3).
+- `grep -c 'Docker Sandboxes' docs/security.md` → `1` (needs ≥1).
+- `grep -c '^## Where Ghost Commands Run' ghost-shell-guide.md` → `1`;
+  `grep -c '^## tmux Window Naming'` → `0`.
+- `grep -c '^## Sandbox (Docker Sandboxes / sbx)' CLAUDE.md` → `1`.
+- `git diff --stat 373018da -- src/` printed nothing — no Rust source
+  changes against `373018da`.
+- `cargo test --test doc_truth`: 15 passed, 0 failed.
+- Full suite: `passed=2297 failed=0`, exactly the required count, unchanged.
+- The trailing `git diff --stat` shows the only uncommitted content: the six
+  doc/asset edits, the milestone README row, and this phase doc — all captured
+  by the commit that follows this entry.
