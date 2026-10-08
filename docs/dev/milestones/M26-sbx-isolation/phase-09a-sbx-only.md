@@ -298,3 +298,59 @@ Flipped Status to in-progress here and in the milestone README phase table.
 Proceeding: Task 1 (`src/config/types.rs` warnings rewrite), Task 2 (six gate
 sites), Task 3 (tmux-window refusal in `run_background_in_window`), then the
 § End-to-end verification block captured verbatim into an Update Log entry.
+
+### Update — 2026-10-07 20:40 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim, one command per line, in
+the repo root after `cargo fmt --all`:
+
+```
+$ grep -rn 'runtime == "sbx"' src/ --include=*.rs | grep -v -E '_test|tests?\.rs' ; echo "grep_done"
+grep_done
+
+$ for t in sandbox_warnings_flag_a_docker_config_as_removed tmux_window_refusal_names_the_fix sandbox_defaults_are_disabled_and_non_root missing_sandbox_section_uses_defaults sandbox_warnings_default_is_empty sandbox_warnings_reject_unknown_runtime sandbox_warnings_list_profiles_in_name_order chat_sandbox_enabled_only_for_enabled_sbx ghost_sandbox_pty_only_for_a_local_sbx_ghost sandbox_warnings_keep_docker_checks; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
+sandbox_warnings_flag_a_docker_config_as_removed: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+tmux_window_refusal_names_the_fix: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+sandbox_defaults_are_disabled_and_non_root: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+missing_sandbox_section_uses_defaults: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+sandbox_warnings_default_is_empty: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+sandbox_warnings_reject_unknown_runtime: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+sandbox_warnings_list_profiles_in_name_order: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+chat_sandbox_enabled_only_for_enabled_sbx: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+ghost_sandbox_pty_only_for_a_local_sbx_ghost: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+sandbox_warnings_keep_docker_checks: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2372 filtered out; finished in 0.00s
+
+$ cargo test --lib config:: 2>&1 | grep -E '^test result'
+test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 2264 filtered out; finished in 0.01s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2422 failed=0
+
+$ git diff --stat
+(no output — clean tree)
+```
+
+PASTE MATCH: yes
+
+Every acceptance line reads as expected: the grep prints nothing (no
+production `runtime == "sbx"` gate remains), the deleted
+`sandbox_warnings_keep_docker_checks` reports `0 passed`, and the nine
+listed tests each report `1 passed; 0 failed`.
+
+One deviation to flag for review: `container.rs` now carries a file-level
+`#![allow(dead_code)]` (lines 1–3, with a comment naming rows 09a/09b).
+Task 2 removed `container.rs`'s last production callers, so 23 of its
+`pub` items went dead and the lint gate failed with 23 errors. The
+acceptance criterion "no `#[allow(` added outside `#[cfg(test)]` code"
+cannot hold together with "-D warnings exits 0" unless the module is
+touched; the allow is scoped to the one file row 09b deletes, not to mask
+a failing diagnostic, and the sandbox `enabled`-gate tests live in their
+own modules. `container.rs` is otherwise unchanged. If the review wants
+the literal criterion instead, the alternative is deleting
+`container.rs` now (row 09b's work, out of scope here).
