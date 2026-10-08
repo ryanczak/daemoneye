@@ -537,3 +537,69 @@ reporting, mutation-check it: put `pub(crate)` back, confirm clippy then
 fails, restore `pub mod`, and state both results in the Update Log.
 Then run the § End-to-end verification block once and paste it with
 `PASTE MATCH: yes`.
+
+### Update — 2026-10-08 14:20 (started, re-dispatch after bug-09a-1)
+
+**Executor:** rexy (Claude Opus 4.5, headless run)
+Resuming the bounced phase. Tasks 1–3 were already implemented and approved in
+commit `d6c18fcc`; this run makes only the two bug-09a-1 edits: deleting the
+file-level `#![allow(dead_code)]` (plus its three comment lines and trailing
+blank line) from `src/daemon/executor/container.rs`, and changing
+`pub(crate) mod container;` to `pub mod container;` in
+`src/daemon/executor/mod.rs`. Then the mutation check on edit 2 and one verbatim
+run of the § End-to-end verification block.
+
+### Update — 2026-10-08 14:30 (end-to-end verification)
+
+Ran the § End-to-end verification block verbatim, one command per line, in the
+repo root, after `cargo fmt --all`:
+
+```
+$ grep -rn 'runtime == "sbx"' src/ --include=*.rs | grep -v -E '_test|tests?\.rs' ; echo "grep_done"
+grep_done
+
+$ for t in sandbox_warnings_flag_a_docker_config_as_removed tmux_window_refusal_names_the_fix sandbox_defaults_are_disabled_and_non_root missing_sandbox_section_uses_defaults sandbox_warnings_default_is_empty sandbox_warnings_reject_unknown_runtime sandbox_warnings_list_profiles_in_name_order chat_sandbox_enabled_only_for_enabled_sbx ghost_sandbox_pty_only_for_a_local_sbx_ghost sandbox_warnings_keep_docker_checks; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
+sandbox_warnings_flag_a_docker_config_as_removed: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+tmux_window_refusal_names_the_fix: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+sandbox_defaults_are_disabled_and_non_root: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+missing_sandbox_section_uses_defaults: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+sandbox_warnings_default_is_empty: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+sandbox_warnings_reject_unknown_runtime: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+sandbox_warnings_list_profiles_in_name_order: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+chat_sandbox_enabled_only_for_enabled_sbx: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+ghost_sandbox_pty_only_for_a_local_sbx_ghost: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2371 filtered out; finished in 0.00s
+sandbox_warnings_keep_docker_checks: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2372 filtered out; finished in 0.00s
+
+$ cargo test --lib config:: 2>&1 | grep -E '^test result'
+test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured; 2264 filtered out; finished in 0.01s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2422 failed=0
+
+$ git diff --stat
+ docs/dev/milestones/M26-sbx-isolation/phase-09a-sbx-only.md | 11 +++++++++++
+ src/daemon/executor/container.rs                            |  5 -----
+ src/daemon/executor/mod.rs                                  |  2 +-
+ 3 files changed, 12 insertions(+), 6 deletions(-)
+```
+
+PASTE MATCH: yes
+
+Notes on lines the tail filter mangled or left blank:
+- the clippy `tail -1` printed an empty line because clippy is fully quiet on
+  success; re-checked immediately after with `grep -cE '^error'` → `0`.
+- the `git diff --stat` block is the pre-completion working tree (the doc append
+  and the two code edits), not a claim the tree stayed dirty; everything below
+  is committed before this entry is finalized.
+
+Mutation check requested by the re-dispatch notes, run before the E2E block:
+- with `pub(crate) mod container;` restored temporarily, clippy
+  `-D warnings` failed with five `never used` errors (`RuntimeUnavailable`,
+  `UidGateOutcome`, `UidRange`, `parse_uid_map`, `host_uid_for`) — the exact
+  mechanism the architect measured;
+- restored `pub mod container;`, clippy clean again (0 errors).
