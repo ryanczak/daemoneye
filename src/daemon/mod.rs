@@ -1042,7 +1042,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                         );
                         let program =
                             crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
-                        for (name, outcome) in
+                        for reaped in
                             crate::daemon::executor::chat_sandbox::reap_idle_chat_sandboxes(
                                 &crate::shell::real_runner(program),
                                 crate::shell::registry(),
@@ -1050,9 +1050,21 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                             )
                             .await
                         {
+                            // 08b: the log is read before `rm` (reap_idle_in
+                            // orders it), because it survives `rm` and
+                            // accumulates across sandboxes that reuse a name.
+                            if let Some(audit) = reaped.egress {
+                                crate::daemon::utils::log_event(
+                                    "sandbox_egress",
+                                    crate::daemon::executor::sbx::egress_event(
+                                        &reaped.name,
+                                        &audit,
+                                    ),
+                                );
+                            }
                             crate::daemon::utils::log_event(
                                 "chat_sandbox_teardown",
-                                serde_json::json!({ "sandbox": name, "outcome": format!("{outcome:?}") }),
+                                serde_json::json!({ "sandbox": reaped.name, "outcome": format!("{:?}", reaped.teardown) }),
                             );
                         }
                         let mut live_shell_ids = std::collections::BTreeSet::new();

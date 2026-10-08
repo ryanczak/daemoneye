@@ -474,6 +474,80 @@ pub fn stale_daemon_sandboxes(listed: &[SandboxInfo], live: &[String]) -> Vec<St
         .collect()
 }
 
+/// Argv for one sandbox's egress log: `policy log <name> --json`.
+pub fn policy_log_args(sandbox: &str) -> Vec<String> {
+    vec![
+        "policy".to_string(),
+        "log".to_string(),
+        sandbox.to_string(),
+        "--json".to_string(),
+    ]
+}
+
+/// One host the proxy saw. Extra fields (`proxy_type`, `rule`, `since`, …)
+/// are ignored by serde.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EgressEntry {
+    pub host: String,
+    pub vm_name: String,
+    pub count_since: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EgressAudit {
+    pub allowed: Vec<EgressEntry>,
+    pub blocked: Vec<EgressEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct PolicyLogOutput {
+    #[serde(default)]
+    allowed_hosts: Vec<EgressEntry>,
+    #[serde(default)]
+    blocked_hosts: Vec<EgressEntry>,
+}
+
+/// Parse `sbx policy log <name> --json` output. `None` for text that is not
+/// the policy-log JSON. Entries whose `vm_name` is not `sandbox` are dropped:
+/// the log survives `rm` and accumulates across sandboxes that reuse a name.
+pub fn parse_policy_log(text: &str, sandbox: &str) -> Option<EgressAudit> {
+    let out = serde_json::from_str::<PolicyLogOutput>(text).ok()?;
+    let mine = |e: &EgressEntry| e.vm_name == sandbox;
+    Some(EgressAudit {
+        allowed: out.allowed_hosts.into_iter().filter(mine).collect(),
+        blocked: out.blocked_hosts.into_iter().filter(mine).collect(),
+    })
+}
+
+/// The one-line turn-log note: hosts sorted by host, each with its count.
+pub fn egress_summary(audit: &EgressAudit) -> String {
+    if audit.allowed.is_empty() && audit.blocked.is_empty() {
+        return "sandbox egress: no network requests".to_string();
+    }
+    let side = |list: &[EgressEntry]| -> String {
+        if list.is_empty() {
+            return "none".to_string();
+        }
+        let mut hosts: Vec<&EgressEntry> = list.iter().collect();
+        hosts.sort_by(|a, b| a.host.cmp(&b.host));
+        hosts
+            .iter()
+            .map(|e| format!("{} ({})", e.host, e.count_since))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "sandbox egress: allowed {}; blocked {}",
+        side(&audit.allowed),
+        side(&audit.blocked)
+    )
+}
+
+/// The `sandbox_egress` event payload.
+pub fn egress_event(sandbox: &str, audit: &EgressAudit) -> serde_json::Value {
+    serde_json::json!({ "sandbox": sandbox, "allowed": audit.allowed, "blocked": audit.blocked })
+}
+
 /// The collected outcome of one preflight probe (`sbx version` or
 /// `sbx daemon status`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1331,5 +1405,175 @@ mod tests {
                 tag: "s7".to_string()
             })
         );
+    }
+
+    #[test]
+    fn policy_log_args_match_the_measured_shape() {
+        assert_eq!(
+            policy_log_args("de-ghost-r1"),
+            vec![
+                "policy".to_string(),
+                "log".to_string(),
+                "de-ghost-r1".to_string(),
+                "--json".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_policy_log_reads_the_measured_output() {
+        let text = r#"{
+  "blocked_hosts": [
+    {
+      "host": "example.com:443",
+      "vm_name": "de-probe-audit",
+      "proxy_type": "forward",
+      "rule": "no applicable policies for op(action=net:connect:tcp, resource=net:domain:example.com:443)",
+      "last_seen": "2026-10-07T13:22:09.930609713-07:00",
+      "since": "2026-10-07T13:22:09.930609713-07:00",
+      "count_since": 1,
+      "reason": "No matching allow rule (default deny)"
+    }
+  ],
+  "allowed_hosts": [
+    {
+      "host": "github.com:443",
+      "vm_name": "de-probe-audit",
+      "proxy_type": "forward-bypass",
+      "rule": "",
+      "last_seen": "2026-10-07T13:22:10.315805171-07:00",
+      "since": "2026-10-07T13:22:10.315805171-07:00",
+      "count_since": 1
+    },
+    {
+      "host": "security.ubuntu.com:80",
+      "vm_name": "de-probe-audit",
+      "proxy_type": "forward",
+      "rule": "",
+      "last_seen": "2026-10-07T13:22:10.14940568-07:00",
+      "since": "2026-10-07T13:22:10.14940568-07:00",
+      "count_since": 1
+    },
+    {
+      "host": "download.docker.com:443",
+      "vm_name": "de-probe-audit",
+      "proxy_type": "forward-bypass",
+      "rule": "",
+      "last_seen": "2026-10-07T13:22:09.71884377-07:00",
+      "since": "2026-10-07T13:22:09.71884377-07:00",
+      "count_since": 1
+    }
+  ]
+}"#;
+
+        let audit = parse_policy_log(text, "de-probe-audit").expect("the measured output parses");
+
+        assert_eq!(
+            audit.blocked,
+            vec![EgressEntry {
+                host: "example.com:443".to_string(),
+                vm_name: "de-probe-audit".to_string(),
+                count_since: 1,
+            }],
+            "the blocked host carries its count"
+        );
+        assert_eq!(audit.allowed.len(), 3, "three allowed hosts");
+        assert_eq!(audit.allowed[0].host, "github.com:443");
+        assert_eq!(
+            audit.allowed[0],
+            EgressEntry {
+                host: "github.com:443".to_string(),
+                vm_name: "de-probe-audit".to_string(),
+                count_since: 1,
+            },
+            "the extra fields, including `reason`, must not break parsing"
+        );
+    }
+
+    #[test]
+    fn parse_policy_log_drops_other_sandboxes_and_rejects_garbage() {
+        let text = r#"{"blocked_hosts": [], "allowed_hosts": [
+            {"host": "a.example:443", "vm_name": "de-ghost-a", "count_since": 2},
+            {"host": "b.example:443", "vm_name": "de-ghost-b", "count_since": 5}
+        ]}"#;
+
+        let audit = parse_policy_log(text, "de-ghost-a").expect("the log parses");
+
+        assert_eq!(
+            audit,
+            EgressAudit {
+                allowed: vec![EgressEntry {
+                    host: "a.example:443".to_string(),
+                    vm_name: "de-ghost-a".to_string(),
+                    count_since: 2,
+                }],
+                blocked: Vec::new(),
+            },
+            "the entry naming another sandbox is dropped"
+        );
+
+        assert_eq!(parse_policy_log("not json", "de-ghost-a"), None);
+
+        assert_eq!(
+            parse_policy_log(
+                r#"{"blocked_hosts": [], "allowed_hosts": []}"#,
+                "de-ghost-a"
+            ),
+            Some(EgressAudit::default()),
+            "a sandbox that never existed still parses to an empty audit"
+        );
+    }
+
+    #[test]
+    fn egress_summary_lists_hosts_sorted_with_counts() {
+        let audit =
+            |allowed: Vec<EgressEntry>, blocked: Vec<EgressEntry>| EgressAudit { allowed, blocked };
+        let entry = |host: &str, count: u64| EgressEntry {
+            host: host.to_string(),
+            vm_name: "de-ghost-r1".to_string(),
+            count_since: count,
+        };
+
+        assert_eq!(
+            egress_summary(&audit(
+                vec![entry("zeta.io:443", 2), entry("alpha.io:443", 1)],
+                vec![entry("example.com:443", 1)],
+            )),
+            "sandbox egress: allowed alpha.io:443 (1), zeta.io:443 (2); blocked example.com:443 (1)",
+            "hosts render sorted by host, each with its count"
+        );
+        assert_eq!(
+            egress_summary(&audit(vec![entry("a.io:443", 3)], Vec::new())),
+            "sandbox egress: allowed a.io:443 (3); blocked none",
+            "an empty side renders as none"
+        );
+        assert_eq!(
+            egress_summary(&EgressAudit::default()),
+            "sandbox egress: no network requests",
+            "an empty audit is the no-requests note"
+        );
+    }
+
+    #[test]
+    fn egress_event_carries_the_sandbox_and_hosts() {
+        let audit = EgressAudit {
+            allowed: vec![EgressEntry {
+                host: "github.com:443".to_string(),
+                vm_name: "de-ghost-r1".to_string(),
+                count_since: 1,
+            }],
+            blocked: vec![EgressEntry {
+                host: "example.com:443".to_string(),
+                vm_name: "de-ghost-r1".to_string(),
+                count_since: 1,
+            }],
+        };
+
+        let event = egress_event("de-ghost-r1", &audit);
+
+        assert_eq!(event["sandbox"], "de-ghost-r1");
+        assert_eq!(event["allowed"][0]["host"], "github.com:443");
+        assert_eq!(event["allowed"][0]["count_since"], 1);
+        assert_eq!(event["blocked"].as_array().map(Vec::len), Some(1));
     }
 }

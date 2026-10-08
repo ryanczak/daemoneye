@@ -543,6 +543,38 @@ pub async fn trigger_ghost_turn(
         cancel_stage(run_log.run_id()),
         session_id,
     );
+    // 08b: record the sandbox's egress while the log is still this sandbox's
+    // own — the log survives `rm` and accumulates across sandboxes that reuse
+    // a name. A created set miss (the ghost never ran a sandboxed command)
+    // keeps the "no network requests" note out of runs that had no sandbox.
+    if config.sandbox.enabled && config.sandbox.runtime == "sbx" {
+        let name = crate::daemon::executor::sbx::sandbox_name(
+            crate::daemon::executor::sbx::SandboxKind::Ghost,
+            session_id,
+        );
+        if crate::daemon::executor::ghost_sandbox::is_created(&name) {
+            let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
+            if let Some(audit) = crate::daemon::executor::sbx_lifecycle::read_egress(
+                &crate::shell::real_runner(program),
+                &name,
+            )
+            .await
+            {
+                let run_id = run_log.run_id().clone();
+                append_turn_event(&TurnLogRecord {
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    run_id,
+                    event: TurnLogEvent::Note {
+                        text: crate::daemon::executor::sbx::egress_summary(&audit),
+                    },
+                });
+                crate::daemon::utils::log_event(
+                    "sandbox_egress",
+                    crate::daemon::executor::sbx::egress_event(&name, &audit),
+                );
+            }
+        }
+    }
     run_log.finish(state.clone());
     let summary = with_sessions(sessions, |store| {
         store

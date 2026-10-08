@@ -32,6 +32,12 @@ pub fn ghost_sandbox_pty(
         && policy.is_some_and(|p| p.ssh_target.is_none())
 }
 
+/// Whether the process-wide created set holds `name`: true for every sandbox
+/// `ensure_sandbox` created or adopted in this daemon.
+pub fn is_created(name: &str) -> bool {
+    created().lock().unwrap_or_log().contains(name)
+}
+
 /// Make sure the sandbox of `kind` for `id` exists, and return its name. The
 /// first call runs preflight and creates the sandbox; later calls in the same
 /// daemon return at once. `Err` is an operator-facing reason, ready to hand
@@ -821,6 +827,18 @@ mod tests {
         assert!(err.contains("no such file"), "got: {err}");
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 2, "prep ran, then the failed copy: {calls:?}");
+    }
+
+    #[test]
+    fn is_created_tracks_the_created_set() {
+        let name = sbx::sandbox_name(SandboxKind::Ghost, "t-isc");
+        assert!(!is_created(&name), "nothing has created it yet");
+
+        created().lock().unwrap_or_log().insert(name.clone());
+        assert!(is_created(&name), "the created set holds it");
+
+        created().lock().unwrap_or_log().remove(&name);
+        assert!(!is_created(&name), "forgetting drops it");
     }
 
     #[tokio::test]

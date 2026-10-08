@@ -1,7 +1,7 @@
 # Phase 08b: sbx-egress-audit — record each sandbox's allowed and blocked hosts
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-08a
 **Estimated diff:** ~300 lines (about 110 code, 190 tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -391,3 +391,47 @@ expected.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-07 17:02 (started)
+
+Executor dispatched (Claude Sonnet 4.5 via rexyMCP). Status flipped
+`todo → in-progress` here and in the milestone README's phase table. Starting
+with the pure parsing and formatting in `sbx.rs` (Task 1), then the runner in
+`sbx_lifecycle.rs` (Task 2), `is_created` (Task 3), the ghost and reaper
+wiring (Tasks 4–5), and the end-to-end capture (Task 6).
+
+### Update — 2026-10-07 17:20 (end-to-end verification)
+
+All six tasks implemented. The E2E block from § End-to-end verification, run
+verbatim, output redirected to `/tmp/e2e-08b.txt` and pasted below, every line
+as printed:
+
+```
+policy_log_args_match_the_measured_shape: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2370 filtered out; finished in 0.00s
+parse_policy_log_reads_the_measured_output: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2370 filtered out; finished in 0.00s
+parse_policy_log_drops_other_sandboxes_and_rejects_garbage: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2370 filtered out; finished in 0.00s
+egress_summary_lists_hosts_sorted_with_counts: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2370 filtered out; finished in 0.00s
+egress_event_carries_the_sandbox_and_hosts: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2370 filtered out; finished in 0.00s
+read_egress_parses_a_successful_log: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2370 filtered out; finished in 0.00s
+read_egress_is_none_on_failure: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2370 filtered out; finished in 0.00s
+is_created_tracks_the_created_set: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2370 filtered out; finished in 0.00s
+reap_idle_in_tears_down_only_idle_sandboxes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2370 filtered out; finished in 0.00s
+executor::sbx: test result: ok. 64 passed; 0 failed; 0 ignored; 0 measured; 2307 filtered out; finished in 0.00s
+executor::sbx_lifecycle: test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 2348 filtered out; finished in 0.00s
+executor::ghost_sandbox: test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 2352 filtered out; finished in 0.04s
+executor::chat_sandbox: test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2365 filtered out; finished in 0.00s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+fmt_exit=0
+passed=2421 failed=0
+ docs/dev/milestones/M26-sbx-isolation/README.md    |   2 +-
+ .../phase-08b-sbx-egress-audit.md                  |  10 +-
+ src/daemon/executor/chat_sandbox.rs                |  47 +++-
+ src/daemon/executor/ghost_sandbox.rs               |  18 ++
+ src/daemon/executor/sbx.rs                         | 244 +++++++++++++++++++++
+ src/daemon/executor/sbx_lifecycle.rs               |  82 +++++++
+ src/daemon/ghost.rs                                |  32 +++
+ src/daemon/mod.rs                                  |  16 +-
+ 8 files changed, 435 insertions(+), 16 deletions(-)
+```
+
+PASTE MATCH

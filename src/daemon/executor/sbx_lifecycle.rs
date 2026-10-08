@@ -148,6 +148,30 @@ pub async fn create_sandbox(
     Ok(name)
 }
 
+/// The sandbox's egress log, or `None` (with a `log::warn!`) when sbx fails
+/// or prints something unrecognised. Never fails the caller.
+pub async fn read_egress(run: &SbxRunner, sandbox: &str) -> Option<sbx::EgressAudit> {
+    let out = run(sbx::policy_log_args(sandbox)).await;
+    if out.code != Some(0) {
+        log::warn!(
+            "sbx policy log {sandbox} failed (exit {:?}): {}",
+            out.code,
+            out.stderr.trim()
+        );
+        return None;
+    }
+    match sbx::parse_policy_log(&out.stdout, sandbox) {
+        Some(audit) => Some(audit),
+        None => {
+            log::warn!(
+                "sbx policy log {sandbox} printed unrecognised output: {}",
+                out.stdout.trim()
+            );
+            None
+        }
+    }
+}
+
 /// The outcome of removing one sandbox. `Removed` covers the measured
 /// already-gone case (`rm` reporting `not found`); `StoppedOnly` is the
 /// locked-keychain case — the VM is stopped and removal is left to the next
@@ -285,6 +309,64 @@ mod tests {
         let mut cfg = default_config();
         cfg.profile.insert(profile.to_string(), p);
         cfg
+    }
+
+    #[tokio::test]
+    async fn read_egress_parses_a_successful_log() {
+        let sandbox = "de-ghost-r1";
+        let log = format!(
+            r#"{{"blocked_hosts": [], "allowed_hosts": [
+            {{"host": "github.com:443", "vm_name": "{sandbox}", "count_since": 1}}
+        ]}}"#
+        );
+        let (runner, calls, canned) = fake();
+        canned.lock().unwrap().push(ok_run(&log));
+
+        let got = read_egress(&runner, sandbox).await;
+
+        assert_eq!(
+            got,
+            Some(sbx::EgressAudit {
+                allowed: vec![sbx::EgressEntry {
+                    host: "github.com:443".to_string(),
+                    vm_name: sandbox.to_string(),
+                    count_since: 1,
+                }],
+                blocked: Vec::new(),
+            }),
+            "the one-entry log parses to that entry"
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![sbx::policy_log_args(sandbox)],
+            "exactly one `policy log <name> --json` call"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_egress_is_none_on_failure() {
+        let (runner, calls, canned) = fake();
+        canned
+            .lock()
+            .unwrap()
+            .push(run(Some(1), "", "error: daemon gone"));
+        let got = read_egress(&runner, "de-ghost-r1").await;
+        assert_eq!(
+            got, None,
+            "a failed sbx run is None, never an error for the caller"
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![sbx::policy_log_args("de-ghost-r1")]
+        );
+
+        let (runner, _calls, canned) = fake();
+        canned.lock().unwrap().push(ok_run("garbage"));
+        let got = read_egress(&runner, "de-ghost-r1").await;
+        assert_eq!(
+            got, None,
+            "unrecognised output is None, never an error for the caller"
+        );
     }
 
     #[test]

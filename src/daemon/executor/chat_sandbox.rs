@@ -72,15 +72,25 @@ pub fn idle_chat_sandboxes(
     idle
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReapedSandbox {
+    pub name: String,
+    pub egress: Option<super::sbx::EgressAudit>,
+    pub teardown: super::sbx_lifecycle::Teardown,
+}
+
 /// One reaper pass over `map`: pick the idle names and remove them from the
-/// map in one critical section, then tear each down after the lock is
-/// released. Returns `(name, outcome)` per teardown, in sorted order.
+/// map in one critical section, then read each sandbox's egress and tear it
+/// down after the lock is released — the log is read **before** `rm`, because
+/// it survives `rm` and accumulates across sandboxes that reuse a name, so a
+/// post-teardown read could pick up the next sandbox's entries. Returns one
+/// [`ReapedSandbox`] per teardown, in sorted order.
 pub async fn reap_idle_in(
     map: &Mutex<HashMap<String, u64>>,
     run: &SbxRunner,
     live: &HashSet<String>,
     now_unix: u64,
-) -> Vec<(String, super::sbx_lifecycle::Teardown)> {
+) -> Vec<ReapedSandbox> {
     let idle = {
         let mut stamps = map.lock().unwrap_or_log();
         let idle = idle_chat_sandboxes(&stamps, live, now_unix, CHAT_SANDBOX_IDLE_GRACE_SECS);
@@ -89,12 +99,17 @@ pub async fn reap_idle_in(
         }
         idle
     };
-    let mut outcomes = Vec::with_capacity(idle.len());
+    let mut reaped = Vec::with_capacity(idle.len());
     for name in idle {
-        let outcome = super::ghost_sandbox::forget_and_teardown(run, &name).await;
-        outcomes.push((name, outcome));
+        let egress = super::sbx_lifecycle::read_egress(run, &name).await;
+        let teardown = super::ghost_sandbox::forget_and_teardown(run, &name).await;
+        reaped.push(ReapedSandbox {
+            name,
+            egress,
+            teardown,
+        });
     }
-    outcomes
+    reaped
 }
 
 /// The production form: `live` is every `record.sandbox` in `reg`, then one
@@ -104,7 +119,7 @@ pub async fn reap_idle_chat_sandboxes(
     run: &SbxRunner,
     reg: &ShellRegistry,
     now_unix: u64,
-) -> Vec<(String, super::sbx_lifecycle::Teardown)> {
+) -> Vec<ReapedSandbox> {
     let live: HashSet<String> = crate::shell::with_shells(reg, |store| {
         store
             .values()
@@ -269,13 +284,21 @@ mod tests {
 
         assert_eq!(
             got,
-            vec![("de-chat-t-old".to_string(), Teardown::Removed)],
-            "only the idle sandbox is torn down, and a drained queue answers rm 0"
+            vec![ReapedSandbox {
+                name: "de-chat-t-old".into(),
+                egress: None,
+                teardown: Teardown::Removed,
+            }],
+            "only the idle sandbox is torn down, and a drained queue answers rm 0; \
+             the fake answers the policy-log call with empty stdout, so egress is None"
         );
         assert_eq!(
             *calls.lock().expect("calls"),
-            vec![sbx::rm_args(&["de-chat-t-old".to_string()])],
-            "the reaper removes, it does not stop"
+            vec![
+                sbx::policy_log_args("de-chat-t-old"),
+                sbx::rm_args(&["de-chat-t-old".to_string()]),
+            ],
+            "the log is read before the removal, and the reaper removes, it does not stop"
         );
         let stamps = map.lock().expect("map lock");
         assert!(
