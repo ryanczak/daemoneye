@@ -81,7 +81,9 @@ drafted on demand and may split.
 | 07 | sbx-chat-background ([phase-07-sbx-chat-background.md](phase-07-sbx-chat-background.md)) — chat `wait: false` in a sandbox shell when enabled; sandbox lifetime per chat session (see Q5) | done (approved_first_try, 2026-10-07) |
 | 08a | sbx-status ([phase-08a-sbx-status.md](phase-08a-sbx-status.md)) — `Request::ContainerStatus` reads the sbx preflight + `sbx ls --json` when `runtime = "sbx"`; the SANDBOX section is shared with a new `daemoneye sandbox status`; wire type unchanged until row 09 | done (approved_first_try, 2026-10-07) |
 | 08b | sbx-egress-audit ([phase-08b-sbx-egress-audit.md](phase-08b-sbx-egress-audit.md)) — read `sbx policy log <name> --json` just before each teardown; a ghost run's allowed/blocked hosts go into its turn log as a `Note` and into events.jsonl (`sandbox_egress`); chat sandboxes log the event at reap. Measured 2026-10-07: the log survives `rm`, and accumulates across sandboxes reusing a name, so read before teardown | done (approved_first_try, 2026-10-07) |
-| 09 | docker-removal — delete `container.rs`, `containers/`, lockfiles, `sandbox build`, the tmux-window sandbox wiring in `background/run.rs`/`ghost.rs`; docs + `ghost-shell-guide` rewrite | todo |
+| 09a | sbx-only ([phase-09a-sbx-only.md](phase-09a-sbx-only.md)) — `runtime` ignored (an enabled sandbox is always sbx; any other value warns), every `runtime == "sbx"` gate becomes `enabled`, the tmux window path refuses while the sandbox is enabled, warnings rewritten for a removed docker runtime | todo |
+| 09b | docker-delete — delete `container.rs`, `containers/`, lockfiles, `sandbox build`, and the now-dead docker blocks in `background/run.rs`, `ghost.rs`, `daemon/mod.rs` | todo |
+| 09c | sbx-docs — README (sandbox section, CLI table, config table, ghost prose), CLAUDE.md § Container sandbox, `security.md`, the seeded `ghost-shell-guide` memory, `docs/architecture.md`; `tests/doc_truth.rs` passes | todo |
 | 10 | live-close — architect-run live verification of every exit criterion on pinky | todo |
 
 ## Notes
