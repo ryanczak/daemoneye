@@ -1,7 +1,7 @@
 # Bug 1 on phase-09a: `container.rs` gained a file-level `#![allow(dead_code)]`
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (`6050a97a`, verified 2026-10-08)
 **Filed:** 2026-10-08
 
 ## What's wrong

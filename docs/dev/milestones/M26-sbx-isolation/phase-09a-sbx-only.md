@@ -1,7 +1,7 @@
 # Phase 09a: sbx-only — an enabled sandbox always means sbx, and never falls back to the host
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-08b
 **Estimated diff:** ~220 lines (about 90 code, 130 tests)
 **Tags:** language=rust, kind=refactor, size=s
@@ -736,3 +736,31 @@ kill: (-1099567): No such process
 **Commit:** 6050a97ac2eaf0d3f3f83ab6efc6ce526b9ff8c5
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-08
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 — [bug-09a-1](bugs/bug-09a-1.md) (a file-level
+  `#![allow(dead_code)]` in `container.rs`). The root cause was the spec's
+  wrong claim that unused `pub` items inside a `pub(crate) mod` do not warn.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark. The first
+  run took 145 turns (`d6c18fcc`). The re-dispatch took 37 turns (`6050a97a`)
+  and made exactly the two edits: the `allow` deleted, and
+  `pub(crate) mod container` → `pub mod container`.
+- **Scope deviations:** the executor's `runtime: "docker"` line in the
+  `container.rs` test `sandbox_window_enabled_starts_with_the_quoted_runtime`
+  was accepted in bug-09a-1. Row 09b deletes that file. No other deviation.
+- **Reviewer re-run:** fmt, build and clippy clean. No `allow` in
+  `container.rs`; the six pre-existing allows elsewhere are untouched. The
+  `runtime == "sbx"` grep prints nothing. All nine named tests pass, and the
+  deleted test reports 0 passed. Full suite `passed=2422 failed=0`, with the
+  count unchanged by the fix.
+- **Reviewer mutation checks:**
+  - restoring the runtime term fails `chat_sandbox_enabled_only_for_enabled_sbx`;
+  - restoring `pub(crate) mod container` brings back 27 clippy warnings,
+    which independently confirms the executor's own check.
+- **Calibration:** the second occurrence in M26 of the architect misjudging
+  dead-code warnings under `pub(crate) mod`. The first was at the 02 drafting.
+  Two occurrences make a trend, so hold for a third before folding. The
+  green-bounce treatment worked: a loud header, one enumerated change, an
+  inverted count, and a mutation check, landing in 37 turns.
