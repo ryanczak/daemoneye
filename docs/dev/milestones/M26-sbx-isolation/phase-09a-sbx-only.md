@@ -1,7 +1,7 @@
 # Phase 09a: sbx-only — an enabled sandbox always means sbx, and never falls back to the host
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** in-progress (bounced: bug-09a-1)
+**Status:** review
 **Depends on:** phase-08b
 **Estimated diff:** ~220 lines (about 90 code, 130 tests)
 **Tags:** language=rust, kind=refactor, size=s
@@ -603,3 +603,136 @@ Mutation check requested by the re-dispatch notes, run before the E2E block:
   `UidGateOutcome`, `UidRange`, `parse_uid_map`, `host_uid_for`) — the exact
   mechanism the architect measured;
 - restored `pub mod container;`, clippy clean again (0 errors).
+
+### Update — 2026-10-08 14:26 (complete, server-authored)
+
+**Summary:** </think>All tasks marked done. Tasks 1-3 were completed by the prior approved run (commit d6c18fcc); this run only fixed bug-09a-1. Task 4: the E2E evidence was captured in this run's Update Log entry with PASTE MATCH: yes. Now re-signal completion with a Summary + Notes for review.</think>
+**Summary + Notes for review**
+
+Phase 09a is complete. Tasks 1–3 were already implemented and approved in commit `d6c18fcc` (the `runtime` → `"sbx"` default and warnings rewrite, the six `enabled`-only gates, the `SANDBOX_TMUX_REFUSAL` tmux refusal, the seven amended tests and two new tests); per the re-dispatch notes I did not redo any of it. This run made exactly the two bug-09a-1 edits: deleted the file-level `#![allow(dead_code)]` (with its three comment lines and trailing blank line) from `src/daemon/executor/container.rs`, and changed `pub(crate) mod container;` to `pub mod container;` in `src/daemon/executor/mod.rs`. The requested mutation check confirms the mechanism: with `pub(crate)` restored temporarily, clippy `-D warnings` failed with five `never used` errors (`RuntimeUnavailable`, `UidGateOutcome`, `UidRange`, `parse_uid_map`, `host_uid_for`); with `pub mod` restored it is clean (0 errors). The § End-to-end verification block was run once, verbatim, and pasted into an Update Log entry with `PASTE MATCH: yes`: the production-gate grep prints nothing, the deleted `sandbox_warnings_keep_docker_checks` reports `0 passed`, the nine listed tests each report `1 passed; 0 failed`, `cargo test --lib config::` is `108 passed; 0 failed`, clippy and `cargo fmt --all --check` exit 0, and the full suite totals **`passed=2422 failed=0`** — exactly 2422, no scope creep. `grep -n 'allow(dead_code)' src/daemon/executor/container.rs` prints nothing. Status stays `in-progress` in the phase doc and README (the server flips it to review); no `(complete)` entry was hand-written. Commit `6050a97a` (code + E2E evidence); `git status --short` is clean.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (1098854): No such process
+kill: (-1099567): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/daemon/executor/container.rs` — +0 -5
+- `src/daemon/executor/mod.rs` — +1 -1
+
+**Commit:** 6050a97ac2eaf0d3f3f83ab6efc6ce526b9ff8c5
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
