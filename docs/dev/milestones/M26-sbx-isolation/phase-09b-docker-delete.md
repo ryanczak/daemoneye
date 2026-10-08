@@ -1,7 +1,7 @@
 # Phase 09b: docker-delete — remove the docker runtime's code
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-09a
 **Estimated diff:** ~4,700 lines deleted, ~10 added
 **Tags:** language=rust, kind=refactor, size=m
@@ -453,3 +453,31 @@ kill: (-1160171): No such process
 **Commit:** a83b16f0be0363f0ca36958ea8b71ece03a4d3ce
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-08
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (97 turns,
+  `a83b16f0`).
+- **Scope deviations:** none. The commit's 13 files are exactly the spec's:
+  the three deleted paths, the four `containers/` files, and the small
+  caller edits in `main.rs`, `cli/commands/mod.rs`, `executor/mod.rs`,
+  `ghost.rs`, `daemon/mod.rs` and `run.rs`. In `run.rs` the only addition is
+  one comment line, and the `SUDO_PROMPT`, `wrapped`, `exit_var` and `notify`
+  stages are intact. Task 3 needed no dead-item cleanup.
+- **Reviewer re-run:**
+  - none of the three deleted paths exists;
+  - the `executor::container` and `"--host"` greps print nothing;
+  - `sandbox --help` lists `status` and not `build`;
+  - the diff adds `0` `allow(`;
+  - fmt, build and clippy are clean;
+  - `sbx` 64, `ghost_sandbox` 19, `chat_sandbox` 6, `bg_shell` 12 and
+    `config::` 108 pass;
+  - full suite **exactly `passed=2297 failed=0`**: 2422 − 124 − 1, as
+    pinned.
+- **Calibration:** `rexymcp status`'s diff stat (`+80/-191`, 8 files) leaves
+  out deleted files. The real commit is −4,594 across 13 files. Read
+  `git show --stat`, not the status line, when reviewing a deletion phase.
+- **Note:** before reviewing, the user raised the governor's
+  `read_only_stall_threshold` to 60 in `rexymcp.toml`.
