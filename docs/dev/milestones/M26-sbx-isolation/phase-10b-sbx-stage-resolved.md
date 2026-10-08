@@ -1,7 +1,7 @@
 # Phase 10b: sbx-stage-resolved — stage a script the ghost path has already resolved to its absolute path
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-10a
 **Estimated diff:** ~60 lines
 **Tags:** language=rust, kind=bugfix, size=xs
@@ -89,3 +89,41 @@ the `cargo test` lines; rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-08 15:01 (started, executor: claude)
+
+Executor run started. Flipped Status todo → in-progress; README row mirrored.
+Plan: re-read the resolve/staging call path (`policy.resolve_command` in
+`run_background`, then `sbx::script_invocation` → `parse_script_invocation`),
+choose where the absolute-path fix lives, add the two named tests, keep the
+remote ghost path and all existing tests untouched, then run the § End-to-end
+verification block verbatim and paste it as this phase's end-to-end entry.
+
+### Notes for executor — 2026-10-08 (refined re-dispatch after a NoProgressStall)
+
+The previous run made 120 read-only calls exploring `policy.rs`,
+`executor/mod.rs` and `session.rs`, and edited nothing. The spec left the
+fix's location open, and that was the gap. **It is now decided**:
+
+- **Fix only `script_invocation` in `src/daemon/executor/sbx.rs`** (line
+  ~362). Before it calls `parse_script_invocation`, if the command's first
+  word is an absolute path whose **parent directory equals
+  `crate::config::scripts_dir()`**, replace that first word with its file
+  name. Any other absolute path is left as it is, and
+  `parse_script_invocation` rejects it as today.
+- Keep the signature unchanged. Both callers (`foreground.rs` ~1246, the
+  ghost path; `bg_shell.rs` ~116, chat `wait: false`) then get the fix with
+  no edit.
+- Do **not** touch `src/scripts.rs`, `policy.rs` or `executor/mod.rs`.
+  There is nothing to investigate there.
+- Add the two named tests next to `script_invocation_skips_sudo_and_unknown_scripts`.
+  Build the absolute path from `crate::config::scripts_dir()`.
+
+Finish condition: `passed=2300`, exactly two more than today.
+
+### Update — 2026-10-08 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** no code was written, so there is nothing to resume. The stall
+came from the spec leaving the fix's location open, and pinning that one
+decision removes it.
