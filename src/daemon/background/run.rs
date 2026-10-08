@@ -12,6 +12,10 @@ use crate::tmux;
 use std::sync::Mutex;
 use std::time::Duration;
 
+/// Why a command that would run in a tmux window is refused while the
+/// sandbox is enabled: the sbx sandbox covers PTY shells only.
+pub(crate) const SANDBOX_TMUX_REFUSAL: &str = "sandbox unavailable: this command would run in a tmux window, which the sbx sandbox does not cover — use [execution] backend = \"pty\" (the default), or a configured [hosts.<name>] host for remote work";
+
 // ---------------------------------------------------------------------------
 // Chat-session background execution
 // ---------------------------------------------------------------------------
@@ -64,12 +68,9 @@ pub async fn run_background_in_window(
     // reused below where `sandbox_window_command` builds its `job_id` from
     // the pane number.
     let config = crate::config::Config::load().unwrap_or_default();
-    if config.sandbox.enabled
-        && let Err(reason) = crate::daemon::executor::container::sandbox_preflight(&config.sandbox)
-    {
-        let message = crate::daemon::executor::container::describe_unavailable(&reason);
-        log::warn!("refusing sandboxed background command: {message}");
-        return message;
+    if config.sandbox.enabled {
+        log::warn!("refusing sandboxed background command: {SANDBOX_TMUX_REFUSAL}");
+        return SANDBOX_TMUX_REFUSAL.to_string();
     }
 
     let entry_is_ghost = session_id
@@ -720,5 +721,26 @@ pub async fn run_background_in_window(
                  You will receive a [Background Task Completed] context message when it finishes."
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SANDBOX_TMUX_REFUSAL;
+
+    #[test]
+    fn tmux_window_refusal_names_the_fix() {
+        assert!(
+            SANDBOX_TMUX_REFUSAL.starts_with("sandbox unavailable:"),
+            "the refusal must read as an operator-facing sandbox failure: {SANDBOX_TMUX_REFUSAL}"
+        );
+        assert!(
+            SANDBOX_TMUX_REFUSAL.contains("tmux window"),
+            "the refusal must say the command would run in a tmux window: {SANDBOX_TMUX_REFUSAL}"
+        );
+        assert!(
+            SANDBOX_TMUX_REFUSAL.contains(r#"backend = "pty""#),
+            "the refusal must name the [execution] backend fix: {SANDBOX_TMUX_REFUSAL}"
+        );
     }
 }

@@ -812,7 +812,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         }
         // 06c: a daemon that died with `sbx` sandboxes live sweeps the ones
         // no surviving shell record owns, off the startup path.
-        if startup_config.sandbox.enabled && startup_config.sandbox.runtime == "sbx" {
+        if startup_config.sandbox.enabled {
             let live: Vec<String> = crate::shell::with_shells(&reg, |store| {
                 store.values().filter_map(|r| r.sandbox.clone()).collect()
             });

@@ -1,7 +1,7 @@
 # Phase 09a: sbx-only — an enabled sandbox always means sbx, and never falls back to the host
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-08b
 **Estimated diff:** ~220 lines (about 90 code, 130 tests)
 **Tags:** language=rust, kind=refactor, size=s
@@ -290,3 +290,11 @@ the `cargo test` lines. rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-07 20:10 (started)
+
+**Executor:** rexy (Claude Opus 4.5, headless run)
+Flipped Status to in-progress here and in the milestone README phase table.
+Proceeding: Task 1 (`src/config/types.rs` warnings rewrite), Task 2 (six gate
+sites), Task 3 (tmux-window refusal in `run_background_in_window`), then the
+§ End-to-end verification block captured verbatim into an Update Log entry.

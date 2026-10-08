@@ -1,3 +1,8 @@
+// Phase 09a removed every production caller of this module's items (row 09b
+// deletes the whole docker runtime). The file-level dead-code allow keeps the
+// lint gate green in between.
+#![allow(dead_code)]
+
 use crate::config::SandboxConfig;
 use crate::tmux::bounded_output_with;
 use std::process::Command;
@@ -2614,6 +2619,7 @@ mod tests {
     fn sandbox_window_enabled_starts_with_the_quoted_runtime() {
         let cfg = SandboxConfig {
             enabled: true,
+            runtime: "docker".to_string(),
             ..SandboxConfig::default()
         };
         let spec = ExecSpec {

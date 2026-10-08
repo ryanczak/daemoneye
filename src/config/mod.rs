@@ -574,7 +574,7 @@ mod tests {
     fn sandbox_defaults_are_disabled_and_non_root() {
         let sbx = SandboxConfig::default();
         assert!(!sbx.enabled);
-        assert_eq!(sbx.runtime, "docker");
+        assert_eq!(sbx.runtime, "sbx");
         assert_eq!(sbx.run_as, "1000:1000");
         assert_eq!(sbx.workdir, "/de/work");
         assert!(!sbx.runs_as_container_root());
@@ -600,7 +600,7 @@ mod tests {
         let cfg: Config = toml::from_str(toml_src).unwrap();
         let sbx = &cfg.sandbox;
         assert!(!sbx.enabled);
-        assert_eq!(sbx.runtime, "docker");
+        assert_eq!(sbx.runtime, "sbx");
         assert_eq!(sbx.run_as, "1000:1000");
         assert_eq!(sbx.workdir, "/de/work");
         assert_eq!(sbx.limits.memory, "1g");
@@ -670,7 +670,7 @@ mod tests {
         let sbx = &cfg.sandbox;
         assert!(sbx.enabled);
         assert_eq!(sbx.run_as, "1000:1000");
-        assert_eq!(sbx.runtime, "docker");
+        assert_eq!(sbx.runtime, "sbx");
         assert_eq!(sbx.limits.memory, "1g");
         assert_eq!(sbx.limits.pids, 256);
         assert_eq!(sbx.limits.cpus, 2.0);
@@ -753,7 +753,7 @@ mod tests {
     #[test]
     fn sandbox_warnings_default_is_empty() {
         let sbx = SandboxConfig::default();
-        assert_eq!(sbx.runtime, "docker");
+        assert_eq!(sbx.runtime, "sbx");
         assert!(sbx.warnings().is_empty());
     }
 
@@ -807,9 +807,15 @@ mod tests {
             ..SandboxConfig::default()
         };
         let warnings = sbx.warnings();
-        assert_eq!(warnings.len(), 1, "got {warnings:#?}");
+        assert_eq!(warnings.len(), 4, "got {warnings:#?}");
         assert!(warnings[0].contains("podman"), "got {warnings:#?}");
         assert!(warnings[0].contains("sbx"), "got {warnings:#?}");
+        assert!(warnings[1].contains("image"), "got {warnings:#?}");
+        assert!(warnings[2].contains("run_as"), "got {warnings:#?}");
+        assert!(
+            warnings[3].contains("profile.researcher"),
+            "got {warnings:#?}"
+        );
     }
 
     #[test]
@@ -839,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_warnings_keep_docker_checks() {
+    fn sandbox_warnings_flag_a_docker_config_as_removed() {
         let sbx = SandboxConfig {
             runtime: "docker".to_string(),
             run_as: "0:0".to_string(),
@@ -847,11 +853,19 @@ mod tests {
             ..SandboxConfig::default()
         };
         let warnings = sbx.warnings();
-        assert_eq!(warnings.len(), 1, "got {warnings:#?}");
-        assert!(warnings[0].contains("container root"), "got {warnings:#?}");
+        assert_eq!(warnings.len(), 3, "got {warnings:#?}");
         assert!(
-            warnings.iter().all(|w| !w.contains("has no effect")),
-            "docker never warns has-no-effect: {warnings:#?}"
+            warnings[0].contains(r#"runtime = "docker" is ignored"#),
+            "got {warnings:#?}"
+        );
+        assert!(warnings[0].contains("removed"), "got {warnings:#?}");
+        assert!(warnings[1].contains("image"), "got {warnings:#?}");
+        assert!(warnings[1].contains("has no effect"), "got {warnings:#?}");
+        assert!(warnings[2].contains("run_as"), "got {warnings:#?}");
+        assert!(warnings[2].contains("has no effect"), "got {warnings:#?}");
+        assert!(
+            warnings.iter().all(|w| !w.contains("container root")),
+            "the docker container-root warning is gone: {warnings:#?}"
         );
     }
 
@@ -933,9 +947,10 @@ mod tests {
             ..SandboxConfig::default()
         };
         let warnings = sbx.warnings();
-        assert_eq!(warnings.len(), 2, "got {warnings:#?}");
-        assert!(warnings[0].contains("profile.alpha"), "got {warnings:#?}");
-        assert!(warnings[1].contains("profile.zeta"), "got {warnings:#?}");
+        assert_eq!(warnings.len(), 3, "got {warnings:#?}");
+        assert!(warnings[0].contains("runtime"), "got {warnings:#?}");
+        assert!(warnings[1].contains("profile.alpha"), "got {warnings:#?}");
+        assert!(warnings[2].contains("profile.zeta"), "got {warnings:#?}");
     }
 
     // ── ExecutionConfig and ShellsConfig (M20 phase-01) ─────────────────────

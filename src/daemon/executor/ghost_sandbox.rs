@@ -18,18 +18,15 @@ fn created() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
 }
 
 /// True for a ghost on the PTY backend whose command runs locally (no
-/// `ssh_target`) while the sandbox is enabled with runtime "sbx".
+/// `ssh_target`) while the sandbox is enabled. The runtime field is ignored:
+/// an enabled sandbox always runs on sbx.
 pub fn ghost_sandbox_pty(
     is_ghost: bool,
     uses_pty: bool,
     sandbox: &crate::config::SandboxConfig,
     policy: Option<&crate::daemon::policy::GhostPolicy>,
 ) -> bool {
-    is_ghost
-        && uses_pty
-        && sandbox.enabled
-        && sandbox.runtime == "sbx"
-        && policy.is_some_and(|p| p.ssh_target.is_none())
+    is_ghost && uses_pty && sandbox.enabled && policy.is_some_and(|p| p.ssh_target.is_none())
 }
 
 /// Whether the process-wide created set holds `name`: true for every sandbox
@@ -374,13 +371,13 @@ mod tests {
             "the sandbox off keeps the plain local PTY"
         );
         assert!(
-            !ghost_sandbox_pty(
+            ghost_sandbox_pty(
                 true,
                 true,
                 &sbx_config("docker", true),
                 Some(&local_policy())
             ),
-            "runtime = \"docker\" keeps the container path"
+            "runtime is ignored: an enabled sandbox is always sbx"
         );
         assert!(
             !ghost_sandbox_pty(true, true, &enabled_sbx(), Some(&resolved_policy())),

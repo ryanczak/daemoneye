@@ -547,7 +547,7 @@ pub async fn trigger_ghost_turn(
     // own — the log survives `rm` and accumulates across sandboxes that reuse
     // a name. A created set miss (the ghost never ran a sandboxed command)
     // keeps the "no network requests" note out of runs that had no sandbox.
-    if config.sandbox.enabled && config.sandbox.runtime == "sbx" {
+    if config.sandbox.enabled {
         let name = crate::daemon::executor::sbx::sandbox_name(
             crate::daemon::executor::sbx::SandboxKind::Ghost,
             session_id,
@@ -626,7 +626,7 @@ pub async fn trigger_ghost_turn(
     // 06c: the ghost's sbx sandbox dies with the ghost, after its shells do.
     // A ghost that never ran a sandboxed command gets `rm` of a missing
     // sandbox, which reads as `Removed`, so this is harmless for it.
-    if config.sandbox.enabled && config.sandbox.runtime == "sbx" {
+    if config.sandbox.enabled {
         let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
         let outcome = crate::daemon::executor::ghost_sandbox::teardown_ghost_sandbox(
             &crate::shell::real_runner(program),

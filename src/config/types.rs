@@ -524,7 +524,8 @@ pub struct SandboxConfig {
     /// Master feature flag. Default: false — behaviour is unchanged until set.
     #[serde(default)]
     pub enabled: bool,
-    /// Container runtime. Only "docker" is supported today.
+    /// Ignored: an enabled sandbox always runs on sbx. Kept so an old config
+    /// still parses; a value other than "sbx" warns.
     #[serde(default = "default_sandbox_runtime")]
     pub runtime: String,
     /// Image the agent containers run. Default: "daemoneye-agent-base".
@@ -556,7 +557,7 @@ pub struct SandboxConfig {
 }
 
 fn default_sandbox_runtime() -> String {
-    "docker".to_string()
+    "sbx".to_string()
 }
 
 fn default_sandbox_image() -> String {
@@ -618,56 +619,46 @@ impl SandboxConfig {
     /// `validate()` is the caller that logs them.
     pub fn warnings(&self) -> Vec<String> {
         let mut out = Vec::new();
-        if self.runtime != "docker" && self.runtime != "sbx" {
+        if self.runtime != "sbx" {
             out.push(format!(
-                "[sandbox] runtime = {:?} is not supported — use \"sbx\" (or \"docker\", \
-                 until it is removed)",
+                "[sandbox] runtime = {:?} is ignored — the docker runtime was removed, and \
+                 an enabled sandbox always runs on sbx",
                 self.runtime
             ));
         }
-        if self.runtime == "docker" && self.runs_as_container_root() {
-            out.push(format!(
-                "[sandbox] run_as = {:?} puts the process at container root, which under \
-                 rootless Docker maps to the daemon's own host uid — the sandbox would not \
-                 reduce the blast radius",
-                self.run_as
-            ));
-        }
-        if self.runtime == "sbx" {
-            let docker_only: Vec<(&str, String)> = vec![
-                ("image", self.image.clone()),
-                ("proxy_image", self.proxy_image.clone()),
-                ("workdir", self.workdir.clone()),
-                ("run_as", self.run_as.clone()),
-                ("docker_host", self.docker_host.clone()),
-                ("limits.pids", self.limits.pids.to_string()),
-                ("limits.scratch", self.limits.scratch.clone()),
-                (
-                    "ghost_defaults.mount_scripts",
-                    self.ghost_defaults.mount_scripts.clone(),
-                ),
-            ];
-            let defaults = SandboxConfig::default();
-            let default_values: Vec<(&str, String)> = vec![
-                ("image", defaults.image),
-                ("proxy_image", defaults.proxy_image),
-                ("workdir", defaults.workdir),
-                ("run_as", defaults.run_as),
-                ("docker_host", defaults.docker_host),
-                ("limits.pids", defaults.limits.pids.to_string()),
-                ("limits.scratch", defaults.limits.scratch),
-                (
-                    "ghost_defaults.mount_scripts",
-                    defaults.ghost_defaults.mount_scripts,
-                ),
-            ];
-            for ((key, value), (_, default)) in docker_only.into_iter().zip(default_values) {
-                if value != default {
-                    out.push(format!(
-                        "[sandbox] {key} = {value:?} has no effect with runtime = \"sbx\" \
-                         — it applies only to the docker runtime"
-                    ));
-                }
+        let docker_only: Vec<(&str, String)> = vec![
+            ("image", self.image.clone()),
+            ("proxy_image", self.proxy_image.clone()),
+            ("workdir", self.workdir.clone()),
+            ("run_as", self.run_as.clone()),
+            ("docker_host", self.docker_host.clone()),
+            ("limits.pids", self.limits.pids.to_string()),
+            ("limits.scratch", self.limits.scratch.clone()),
+            (
+                "ghost_defaults.mount_scripts",
+                self.ghost_defaults.mount_scripts.clone(),
+            ),
+        ];
+        let defaults = SandboxConfig::default();
+        let default_values: Vec<(&str, String)> = vec![
+            ("image", defaults.image),
+            ("proxy_image", defaults.proxy_image),
+            ("workdir", defaults.workdir),
+            ("run_as", defaults.run_as),
+            ("docker_host", defaults.docker_host),
+            ("limits.pids", defaults.limits.pids.to_string()),
+            ("limits.scratch", defaults.limits.scratch),
+            (
+                "ghost_defaults.mount_scripts",
+                defaults.ghost_defaults.mount_scripts,
+            ),
+        ];
+        for ((key, value), (_, default)) in docker_only.into_iter().zip(default_values) {
+            if value != default {
+                out.push(format!(
+                    "[sandbox] {key} = {value:?} has no effect — it applied only to the \
+                     removed docker runtime"
+                ));
             }
         }
         let mut names: Vec<&String> = self.profile.keys().collect();
@@ -680,20 +671,11 @@ impl SandboxConfig {
                     "[sandbox] profile.{name} network = {network:?} is invalid — only \
                      \"none\" or \"proxy\" are supported"
                 ));
-            } else if network == "proxy" && self.runtime == "sbx" {
+            } else if network == "proxy" {
                 out.push(format!(
-                    "[sandbox] profile.{name} network = \"proxy\" with runtime = \"sbx\" \
-                     inherits the operator's global sbx network policy; proxy_allow adds \
-                     hosts to it and does not restrict it — use network = \"none\" for no \
-                     egress"
-                ));
-            } else if network == "proxy"
-                && self.runtime == "docker"
-                && profile.proxy_allow.is_empty()
-            {
-                out.push(format!(
-                    "[sandbox] profile.{name} has network = \"proxy\" but an empty \
-                     proxy_allow — it can reach nothing and is equivalent to \"none\""
+                    "[sandbox] profile.{name} network = \"proxy\" inherits the operator's \
+                     global sbx network policy; proxy_allow adds hosts to it and does not \
+                     restrict it — use network = \"none\" for no egress"
                 ));
             }
         }

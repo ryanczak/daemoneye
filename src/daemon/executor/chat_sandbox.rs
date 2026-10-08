@@ -20,9 +20,10 @@ fn last_used() -> &'static Mutex<HashMap<String, u64>> {
     LAST_USED.get_or_init(Default::default)
 }
 
-/// True when `[sandbox]` is enabled with runtime "sbx".
+/// True when `[sandbox]` is enabled. The runtime field is ignored: an
+/// enabled sandbox always runs on sbx.
 pub fn chat_sandbox_enabled(cfg: &crate::config::SandboxConfig) -> bool {
-    cfg.enabled && cfg.runtime == "sbx"
+    cfg.enabled
 }
 
 /// Make sure the chat session's sandbox exists and stamp it as just used.
@@ -156,8 +157,8 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            !chat_sandbox_enabled(&enabled_docker),
-            "a docker runtime has no chat sandbox path"
+            chat_sandbox_enabled(&enabled_docker),
+            "runtime is ignored: an enabled sandbox is always sbx"
         );
 
         let disabled_sbx = crate::config::SandboxConfig {
@@ -170,7 +171,6 @@ mod tests {
             "sandbox disabled means every command stays on the host"
         );
     }
-
     #[test]
     fn idle_chat_sandboxes_skips_referenced_recent_and_non_chat() {
         let map: HashMap<String, u64> = [

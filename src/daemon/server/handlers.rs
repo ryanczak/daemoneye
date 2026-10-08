@@ -255,35 +255,18 @@ where
 
 // ── Status / limits handlers ─────────────────────────────────────────────────
 
-/// Sandbox runtime health and the containers this daemon owns. Collected off
-/// the async runtime because it spawns the container runtime.
+/// Sandbox health and the sandboxes this daemon owns. Collected off the
+/// async runtime because it runs `sbx`.
 pub(super) async fn handle_container_status<W>(tx: &mut W, config: &Config) -> Result<()>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    if config.sandbox.runtime == "sbx" {
-        let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
-        let run = crate::shell::real_runner(program);
-        let report =
-            crate::daemon::executor::sbx_lifecycle::collect_sbx_status(&run, &config.sandbox).await;
-        send_response_split(tx, Response::ContainerStatus { report }).await?;
-        return Ok(());
-    }
-    let sandbox = config.sandbox.clone();
-    let report = tokio::task::spawn_blocking(move || {
-        crate::daemon::executor::container::collect_container_status(&sandbox)
-    })
-    .await
-    .unwrap_or_else(|e| {
-        log::warn!("container status task failed: {e}");
-        crate::ipc::ContainerStatusReport {
-            enabled: config.sandbox.enabled,
-            runtime_ok: false,
-            runtime_detail: format!("status collection failed: {e}"),
-            image_detail: String::new(),
-            containers: Vec::new(),
-        }
-    });
+    // 08a: the SANDBOX section always reflects the sbx runtime — there is no
+    // other runtime for an enabled sandbox to use.
+    let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
+    let run = crate::shell::real_runner(program);
+    let report =
+        crate::daemon::executor::sbx_lifecycle::collect_sbx_status(&run, &config.sandbox).await;
     send_response_split(tx, Response::ContainerStatus { report }).await?;
     Ok(())
 }
