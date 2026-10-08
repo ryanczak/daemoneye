@@ -121,6 +121,14 @@ pub async fn run_host(id: &str, shell: &str, args: &[String], rows: u16, cols: u
 /// How often a host checks whether its shell has exited.
 const SHELL_EXIT_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// The largest per-probe gap `await_ready` will wait for one `Status` reply.
+/// An sbx host's `Status` runs the in-VM FIND script through `sbx exec` —
+/// measured 0.24 s warm on pinky — so this must exceed that comfortably; a
+/// plain PTY host answers in microseconds either way. The probe still loops
+/// until its own overall deadline, so a host that is genuinely dead rolls back
+/// exactly as before.
+const STATUS_REPLY_TIMEOUT: Duration = Duration::from_millis(2000);
+
 /// Poll `sock` until the host answers a full `Status` round-trip. A successful
 /// `connect()` alone is not readiness (F3): a bound-but-unserved socket still
 /// accepts a connection and a write into the listen backlog, so readiness must
@@ -147,9 +155,13 @@ pub async fn await_ready(sock: &Path, deadline: Instant) -> Result<()> {
                 }
                 let mut reader = BufReader::new(reader);
                 let mut line = String::new();
-                let read =
-                    tokio::time::timeout(Duration::from_millis(200), reader.read_line(&mut line))
-                        .await;
+                // The overall deadline wins: a host that answers slowly but
+                // inside it is ready, and one that never answers rolls back at
+                // the deadline rather than waiting for the reply timeout.
+                let end = tokio::time::Instant::from_std(
+                    deadline.min(Instant::now() + STATUS_REPLY_TIMEOUT),
+                );
+                let read = tokio::time::timeout_at(end, reader.read_line(&mut line)).await;
                 match read {
                     Ok(Ok(n)) if n > 0 => {
                         if let Ok(ShellResponse::Status { .. }) =
@@ -318,6 +330,46 @@ mod tests {
         await_ready(&path, Instant::now() + Duration::from_secs(5))
             .await
             .expect("a status responder is ready");
+    }
+
+    #[tokio::test]
+    async fn launch_await_ready_accepts_a_slow_status_reply() {
+        // An sbx host's `Status` round-trips the in-VM FIND script through
+        // `sbx exec` (measured 0.24 s warm), so the probe must still accept a
+        // reply that lands half a second after the request.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("slow.sock");
+        let path_for_task = path.clone();
+        tokio::spawn(async move {
+            let listener = UnixListener::bind(&path_for_task).unwrap();
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut line = Vec::new();
+                    let mut reader = BufReader::new(&mut stream);
+                    let _ = reader.read_until(b'\n', &mut line).await;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let resp = encode(ShellResponse::Status {
+                        state: ShellState::Idle,
+                        rows: 24,
+                        cols: 80,
+                        pid: 1,
+                    })
+                    .unwrap();
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+
+        let start = Instant::now();
+        await_ready(&path, start + Duration::from_secs(2))
+            .await
+            .expect("a 500 ms status reply is ready within the 2 s deadline");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "await_ready must have returned before its deadline, took {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]

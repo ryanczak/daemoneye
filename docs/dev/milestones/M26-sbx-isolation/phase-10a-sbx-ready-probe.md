@@ -1,7 +1,7 @@
 # Phase 10a: sbx-ready-probe — a sandbox shell host must pass the readiness probe
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-09c
 **Estimated diff:** ~40 lines
 **Tags:** language=rust, kind=bugfix, size=xs
@@ -85,3 +85,34 @@ the `cargo test` lines; rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-08 12:56 (started)
+
+Starting phase-10a. Chosen mechanism: lengthen `await_ready`'s per-probe reply
+timeout — a slow reply arrives inside the existing connect loop, so the 15 s
+overall deadline and the rollback on failure stay untouched, and
+`SbxBackend::status` needs no change (the FIND round trip is the reply, just a
+slower one). Next: implement, add
+`launch_await_ready_accepts_a_slow_status_reply`, verify. — Executor (phase-10a)
+
+### Update — 2026-10-08 13:00 (end-to-end verification)
+
+Ran the phase's End-to-end verification block; every line as printed, each run
+once:
+
+```text
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2243 filtered out; finished in 0.53s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 2232 filtered out; finished in 1.02s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+fmt_exit=0
+passed=2298 failed=0
+ docs/dev/milestones/M26-sbx-isolation/README.md    |  2 +-
+ .../M26-sbx-isolation/phase-10a-sbx-ready-probe.md | 11 +++-
+ src/shell/launch.rs                                | 58 ++++++++++++++++++++--
+ 3 files changed, 66 insertions(+), 5 deletions(-)
+```
+
+PASTE MATCH: yes
+
+Notes: the test count moved 2297 → 2298 (the one new test, no existing test
+edited); `shell::launch` is 12 passed / 0 failed. — Executor (phase-10a)
