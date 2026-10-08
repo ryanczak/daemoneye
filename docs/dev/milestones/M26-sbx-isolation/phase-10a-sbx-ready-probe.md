@@ -1,7 +1,7 @@
 # Phase 10a: sbx-ready-probe — a sandbox shell host must pass the readiness probe
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-09c
 **Estimated diff:** ~40 lines
 **Tags:** language=rust, kind=bugfix, size=xs
@@ -255,3 +255,20 @@ kill: (-1370468): No such process
 **Commit:** 50892344cd8d2024033bcd80a8b862ac1bbbe098
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-08
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (`50892344`),
+  dispatched from a lean spec (~90 lines, mechanism left to the executor).
+- **Scope deviations:** none. Only `src/shell/launch.rs` changed. The
+  per-probe `Status` reply wait is now `STATUS_REPLY_TIMEOUT` (2 s), clamped
+  to the overall deadline with `timeout_at`, so a dead host still rolls back
+  at the caller's deadline. The test name carries a `launch_` prefix, and
+  the pinned name matches it as a filter.
+- **Reviewer re-run:** fmt and clippy clean; the new test `1 passed`;
+  `shell::launch` 12 passed; full suite exactly `passed=2298 failed=0`.
+- **Test is real:** under the old 200 ms reply timeout every probe
+  reconnects before the 500 ms reply lands, so the 2 s deadline fails.
+- **Calibration:** none. The live re-run of the row-10 ghost check follows.

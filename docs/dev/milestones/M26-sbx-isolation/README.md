@@ -84,7 +84,7 @@ drafted on demand and may split.
 | 09a | sbx-only ([phase-09a-sbx-only.md](phase-09a-sbx-only.md)) — `runtime` ignored (an enabled sandbox is always sbx; any other value warns), every `runtime == "sbx"` gate becomes `enabled`, the tmux window path refuses while the sandbox is enabled, warnings rewritten for a removed docker runtime | done (approved_after_1, 2026-10-08) |
 | 09b | docker-delete ([phase-09b-docker-delete.md](phase-09b-docker-delete.md)) — delete `container.rs`, `containers/`, lockfiles, `sandbox build`, and the now-dead docker blocks in `background/run.rs`, `ghost.rs`, `daemon/mod.rs` | done (approved_first_try, 2026-10-08) |
 | 09c | sbx-docs ([phase-09c-sbx-docs.md](phase-09c-sbx-docs.md)) — README (sandbox section, CLI table, config table, ghost prose), CLAUDE.md § Container sandbox, `security.md`, the seeded `ghost-shell-guide` memory, `docs/architecture.md`; `tests/doc_truth.rs` passes | done (approved_first_try, 2026-10-08) |
-| 10a | sbx-ready-probe ([phase-10a-sbx-ready-probe.md](phase-10a-sbx-ready-probe.md)) — found live: `await_ready`'s 200 ms per-probe reply timeout is shorter than an sbx `Status` round trip (0.24 s warm), so every sandbox shell is declared never-ready | review      |
+| 10a | sbx-ready-probe ([phase-10a-sbx-ready-probe.md](phase-10a-sbx-ready-probe.md)) — found live: `await_ready`'s 200 ms per-probe reply timeout is shorter than an sbx `Status` round trip (0.24 s warm), so every sandbox shell is declared never-ready | done (approved_first_try, 2026-10-08) |
 | 10 | live-close — architect-run live verification of every exit criterion on pinky | todo |
 
 ## Notes
