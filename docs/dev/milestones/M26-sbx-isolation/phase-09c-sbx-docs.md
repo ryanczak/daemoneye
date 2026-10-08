@@ -1,7 +1,7 @@
 # Phase 09c: sbx-docs — the docs describe Docker Sandboxes, not docker containers
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-09b
 **Estimated diff:** ~250 lines, docs and assets only
 **Tags:** language=markdown, kind=docs, size=s
@@ -484,3 +484,31 @@ Criterion-by-criterion reading of that transcript:
 - The trailing `git diff --stat` shows the only uncommitted content: the six
   doc/asset edits, the milestone README row, and this phase doc — all captured
   by the commit that follows this entry.
+
+### Review verdict — 2026-10-08
+
+- **Verdict:** approved_first_try. No bug was filed. The first run
+  hard-failed on the governor's `NoProgressStall` (60 consecutive read-only
+  calls) **after** all six doc edits were made, during verification. The
+  architect resumed it with `continue_phase`, and the resume took 22 turns
+  and committed `1ce390cb`.
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark.
+- **Scope deviations:** none. Only the six authorized files plus the
+  milestone docs changed, with no `src/` diff against `373018da`. Spot
+  checks confirm the pinned text landed in each file.
+- **Reviewer re-run:** the stale grep prints nothing; README "container
+  sandbox" count 0; `security.md` names Docker Sandboxes; the guide has the
+  new section and not the old one; CLAUDE.md has the new section; fmt and
+  clippy clean; `doc_truth` 15/15; full suite **`passed=2297 failed=0`**,
+  unchanged.
+- **Calibration:**
+  1. **Spec error (architect):** the no-source-changes criterion compared
+     against `e7005955`, a commit from before phase 09b's deletion, so it
+     could never pass. Corrected to `373018da` before the resume.
+  2. **Governor:** 60 was too low for this executor's verify-heavy style on
+     a long spec. Matt raised `read_only_stall_threshold` to 120 in
+     `rexymcp.toml`; it takes effect when `rexymcp serve` restarts.
+  3. **Spec weight:** this phase doc (~300 lines with pinned prose) is the
+     over-front-loading Matt flagged on 2026-10-08. From now on, phase docs
+     stay lean and let the executor do the work.

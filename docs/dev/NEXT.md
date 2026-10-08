@@ -6,13 +6,13 @@ Rescoped 2026-10-05 from "tmux removal & 2.0 close" (now **M27**; later
 milestones are M28–M30, `docs/design/daemoneye-2.0.md` § 6). **PE signed off
 on scope 2026-10-05**, accepting all six recommendations.
 
-**Active phase: 09c — sbx-docs**,
-[`phase-09c-sbx-docs.md`](milestones/M26-sbx-isolation/phase-09c-sbx-docs.md),
-status `todo`, for the executor: README, CLAUDE.md, `security.md`,
-`architecture.md`, the seeded `ghost-shell-guide` memory and the seeded
-`config.toml` `[sandbox]` block describe sbx. The architect pinned the
-replacement text, and there are no Rust changes. Phases 01–09b are done;
-row 10 (live close) follows.
+**Active phase: none drafted.** Phases 01–09c are **done**: sbx isolation
+is built, docker is removed, and the docs are current. Next is row **10 —
+live-close**: architect-run live verification of every exit criterion on
+pinky, including the checks deferred from 06c, 07, 08a and 08b. It needs
+`[sandbox] enabled = true` in the real `~/.daemoneye` config, set with Matt
+present. Restart `rexymcp serve` first, to pick up
+`read_only_stall_threshold = 120`.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline
