@@ -1,7 +1,7 @@
 # Phase 09a: sbx-only — an enabled sandbox always means sbx, and never falls back to the host
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** in-progress (bounced: bug-09a-1)
 **Depends on:** phase-08b
 **Estimated diff:** ~220 lines (about 90 code, 130 tests)
 **Tags:** language=rust, kind=refactor, size=s
@@ -163,6 +163,11 @@ a new Update Log entry.
 
 ## Acceptance criteria
 
+- [ ] **(bug-09a-1)** `grep -rn 'allow(dead_code)' src/` prints nothing.
+- [ ] **(bug-09a-1)** `grep -n '^pub mod container;' src/daemon/executor/mod.rs`
+      prints one line.
+- [ ] **(bug-09a-1)** `cargo test` reports `passed=2422 failed=0` — exactly
+      2422, **not** more. The fix adds no tests.
 - [ ] `grep -rn 'runtime == "sbx"' src/ --include=*.rs` prints only lines
       inside `#[cfg(test)]` modules, or nothing at all. Today it prints
       eight production lines: the six gates in the table, plus two inside
@@ -498,3 +503,37 @@ kill: (-923341): No such process
 **Commit:** 8a178f972481d5008d46fa7052d89783610b3da6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-10-08 (re-dispatch after bug-09a-1)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything in Tasks 1–3 is already implemented and approved
+(commit `d6c18fcc`), including the warnings rewrite, the six gates, the
+tmux refusal, the seven amended tests, and the two new tests. Do not redo
+any of it.
+
+There is **exactly one change left**, two edits from bug-09a-1:
+
+1. Delete these four lines at the top of `src/daemon/executor/container.rs`:
+   ```rust
+   // Phase 09a removed every production caller of this module's items (row 09b
+   // deletes the whole docker runtime). The file-level dead-code allow keeps the
+   // lint gate green in between.
+   #![allow(dead_code)]
+
+   ```
+   That includes the blank line after them.
+2. In `src/daemon/executor/mod.rs`, change `pub(crate) mod container;` to
+   `pub mod container;`.
+
+**Finish condition:**
+- `grep -rn 'allow(dead_code)' src/` prints nothing;
+- clippy exits 0;
+- `cargo test` reports **`passed=2422 failed=0`**: 2422, **not** 2423. A
+  rising count means scope creep.
+
+The architect measured that edit 2 is what keeps clippy clean. Before
+reporting, mutation-check it: put `pub(crate)` back, confirm clippy then
+fails, restore `pub mod`, and state both results in the Update Log.
+Then run the § End-to-end verification block once and paste it with
+`PASTE MATCH: yes`.

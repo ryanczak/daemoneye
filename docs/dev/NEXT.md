@@ -8,10 +8,11 @@ on scope 2026-10-05**, accepting all six recommendations.
 
 **Active phase: 09a — sbx-only**,
 [`phase-09a-sbx-only.md`](milestones/M26-sbx-isolation/phase-09a-sbx-only.md),
-status `todo`, for the executor: `runtime` ignored, `enabled` alone gates the
-sandbox, the tmux window path refuses while it is enabled, and the warnings
-describe a removed docker runtime. Row 09 is split into 09a (semantics), 09b
-(delete the docker code) and 09c (docs). Phases 01–08b are done.
+status `in-progress` — **bounced** on
+[bug-09a-1](milestones/M26-sbx-isolation/bugs/bug-09a-1.md): a lint-silencing
+`#![allow(dead_code)]` in `container.rs`, caused by a spec error about
+`pub(crate) mod` visibility. One two-line fix remains; re-dispatch with
+`/rexymcp:dispatch phase-09a`. Phases 01–08b are done.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline
