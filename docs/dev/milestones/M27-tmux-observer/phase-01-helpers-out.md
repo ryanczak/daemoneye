@@ -108,3 +108,32 @@ move. Stating the baseline removes it, and there is no partial work to resume.
 `in-progress`; milestone README row updated to match. Following the
 re-dispatch note: moving the helpers first, then fixing call sites from
 `cargo build` errors. No baseline measured.
+
+### Update — 2026-10-08 19:35 (end-to-end verification)
+
+Run verbatim (single script, output redirected to
+`.rexymcp/output/e2e-phase-01.txt` and pasted whole):
+
+```
+$ grep -rnE 'tmux::(bounded_output|annotate_output|status)' src/ tests/ ; echo "grep_done"
+grep_done
+$ test -e src/tmux/status.rs; echo "old_status_exists=$?"
+old_status_exists=1
+$ ls src/process.rs src/shell/status.rs
+src/process.rs
+src/shell/status.rs
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.65s
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+$ cargo test --test doc_truth 2>&1 | grep -E '^test result'
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2300 failed=0
+$ git diff --stat
+```
+
+`git diff --stat` printed nothing: the move was committed before the
+verification script ran, so the working tree was clean.
+
+PASTE MATCH: yes
