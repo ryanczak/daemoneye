@@ -323,3 +323,80 @@ Add `scheduled_host_shell_is_not_marked_sandboxed`.
 Finish condition: `passed=2305`, exactly one more than today's 2304.
 Before reporting, mutation-check it: put the empty-name call back, confirm
 the new test fails, restore it, and state both results.
+
+### Notes for executor — 2026-10-09 (refined re-dispatch after a NoProgressStall)
+
+The last run made 120 read-only calls tracing the shell stack and edited
+nothing. **Do not investigate further: the fix is fully decided below.**
+Green gates and a clean tree are expected and are NOT evidence of done.
+Everything else in the phase is approved.
+
+**Why the existing test missed the bug:** `run_script_on_host_seam` in the
+`scheduled.rs` tests is a *copy* of the host path, so the production
+`run_script_on_host` is never exercised. The fix makes production and test
+share one function.
+
+**The edits, all in `src/daemon/scheduled.rs`, except visibility:**
+
+1. In `src/daemon/executor/mod.rs`, change `mod ghost_remote;` to
+   `pub(crate) mod ghost_remote;`. In `src/daemon/executor/ghost_remote.rs`,
+   change `pub(super) async fn run_ghost_remote` to
+   `pub(crate) async fn run_ghost_remote`.
+2. Replace `run_script_on_host` with an injectable form plus a production
+   wrapper:
+
+```rust
+async fn run_script_on_host_with<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    cmd: &str,
+    spawn: F,
+) -> (String, i32)
+where
+    F: FnOnce(crate::shell::ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    crate::daemon::executor::ghost_remote::run_ghost_remote(
+        reg,
+        owner,
+        crate::host::HostId::Local,
+        cmd,
+        "scheduled",
+        spawn,
+    )
+    .await
+}
+
+async fn run_script_on_host(reg: &ShellRegistry, owner: Owner, cmd: &str) -> (String, i32) {
+    run_script_on_host_with(reg, owner, cmd, |shell_id| {
+        crate::shell::spawn_detached_host(shell_id, &[], 24, 80)
+    })
+    .await
+}
+```
+
+3. In the tests, **delete** `run_script_on_host_seam`, and make
+   `scheduled_script_runs_in_a_scheduler_pty_shell` call
+   `run_script_on_host_with(&reg, owner, cmd, spawn_in_process_host)`
+   instead. That is an authorized edit to that one test, call site only.
+4. Add `scheduled_host_shell_is_not_marked_sandboxed`. It calls
+   `run_script_on_host_with` the same way, then asserts that the
+   scheduler-owned record in `reg` has `sandbox == None`. The owner key is
+   `Owner::Scheduler(..).key()`.
+
+If `cargo build` reports something these steps did not anticipate, fix
+**only** that, then continue.
+
+**Finish condition:** `cargo test` reports exactly `passed=2305 failed=0`.
+Mutation-check before reporting: temporarily make `run_script_on_host_with`
+call `ghost_sandbox::run_ghost_in_sandbox(reg, owner, "", cmd, "scheduled",
+spawn)` instead, confirm the new test fails, then restore. Paste both
+`test result:` lines in the Update Log.
+
+### Update — 2026-10-09 (escalation)
+
+**Chosen lever:** refined re-dispatch with the fix inlined.
+**Rationale:** the spec named the helper but not the edit, and the executor
+stalled re-deriving the whole shell stack. Inlining the one known edit, and
+removing the test seam that masked the bug, is a spec refinement, not a
+takeover case.
