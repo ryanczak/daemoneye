@@ -355,6 +355,25 @@ pub fn script_name_is_safe(script_name: &str) -> bool {
     })
 }
 
+/// The command `cmd` with a leading absolute path under the scripts
+/// directory replaced by the bare script name, so
+/// [`crate::scripts::parse_script_invocation`] stages and rewrites a
+/// resolved `<scripts_dir>/<name>` exactly as it does a bare `name`; any
+/// other absolute path is returned untouched and stays `None`.
+fn canonicalize_scripts_dir_path(cmd: &str) -> String {
+    let cmd = cmd.strip_prefix("sudo ").unwrap_or(cmd).trim_start();
+    let first = cmd.split(char::is_whitespace).next().unwrap_or_default();
+    let dir = crate::config::scripts_dir();
+    let path = std::path::Path::new(first);
+    if path.parent().and_then(|p| p.to_str()) == dir.to_str()
+        && let Some(name) = path.file_name().and_then(|n| n.to_str())
+    {
+        let tail = cmd[first.len()..].to_string();
+        return format!("{name}{tail}");
+    }
+    cmd.to_string()
+}
+
 /// The approved script `cmd` invokes, as `(name, args_tail)`; never under
 /// sudo. `script_exists` answers whether `~/.daemoneye/scripts/<name>` is a
 /// real script (production passes `resolve_script(..).is_ok()`). `None` is
@@ -366,7 +385,8 @@ pub fn script_invocation(
     if crate::daemon::utils::command_has_sudo(cmd) {
         return None;
     }
-    let (name, args_tail) = crate::scripts::parse_script_invocation(cmd)?;
+    let cmd = canonicalize_scripts_dir_path(cmd);
+    let (name, args_tail) = crate::scripts::parse_script_invocation(&cmd)?;
     if !script_exists(&name) {
         return None;
     }
@@ -772,6 +792,30 @@ mod tests {
             script_invocation("ls -la", exists),
             None,
             "a basename that is not a script is an ordinary command"
+        );
+    }
+
+    #[test]
+    fn script_invocation_accepts_an_absolute_path_under_scripts_dir() {
+        let exists = |n: &str| n == "restart.sh";
+        let cmd = format!(
+            "{}/restart.sh --now",
+            crate::config::scripts_dir().display()
+        );
+        assert_eq!(
+            script_invocation(&cmd, exists),
+            Some(("restart.sh".to_string(), " --now".to_string())),
+            "a resolved path inside the scripts directory stages like a bare name"
+        );
+    }
+
+    #[test]
+    fn script_invocation_rejects_an_absolute_path_outside_scripts_dir() {
+        let exists = |n: &str| n == "restart.sh";
+        assert_eq!(
+            script_invocation("/usr/bin/restart.sh --now", exists),
+            None,
+            "an absolute path outside the scripts directory is never staged"
         );
     }
 

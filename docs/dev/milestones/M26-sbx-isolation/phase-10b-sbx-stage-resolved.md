@@ -127,3 +127,34 @@ Finish condition: `passed=2300`, exactly two more than today.
 **Rationale:** no code was written, so there is nothing to resume. The stall
 came from the spec leaving the fix's location open, and pinning that one
 decision removes it.
+
+### Update — 2026-10-08 (end-to-end verification)
+
+Fix landed in `src/daemon/executor/sbx.rs` only, per the re-dispatch note:
+`script_invocation` now runs its first word through
+`canonicalize_scripts_dir_path`, which rewrites
+`<crate::config::scripts_dir()>/<name>` to the bare `name` (keeping the
+verbatim argument tail) before `parse_script_invocation` sees it; any other
+absolute path passes through untouched and stays `None` there. Both callers
+(`foreground.rs` ghost path, `bg_shell.rs` chat `wait: false`) pick the fix up
+unmodified. `src/scripts.rs`, `policy.rs`, `executor/mod.rs` untouched; no
+existing test edited.
+
+```
+$ for t in script_invocation_accepts_an_absolute_path_under_scripts_dir script_invocation_rejects_an_absolute_path_outside_scripts_dir; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
+script_invocation_accepts_an_absolute_path_under_scripts_dir: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2245 filtered out; finished in 0.00s
+script_invocation_rejects_an_absolute_path_outside_scripts_dir: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2245 filtered out; finished in 0.00s
+$ cargo test --lib executor::sbx 2>&1 | grep -E '^test result'
+test result: ok. 66 passed; 0 failed; 0 ignored; 0 measured; 2180 filtered out; finished in 0.00s
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.10s
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2300 failed=0
+$ git diff --stat
+ src/daemon/executor/sbx.rs | 46 +++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 45 insertions(+), 1 deletion(-)
+```
+
+PASTE MATCH: yes
