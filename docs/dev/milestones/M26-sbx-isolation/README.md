@@ -85,7 +85,7 @@ drafted on demand and may split.
 | 09b | docker-delete ([phase-09b-docker-delete.md](phase-09b-docker-delete.md)) — delete `container.rs`, `containers/`, lockfiles, `sandbox build`, and the now-dead docker blocks in `background/run.rs`, `ghost.rs`, `daemon/mod.rs` | done (approved_first_try, 2026-10-08) |
 | 09c | sbx-docs ([phase-09c-sbx-docs.md](phase-09c-sbx-docs.md)) — README (sandbox section, CLI table, config table, ghost prose), CLAUDE.md § Container sandbox, `security.md`, the seeded `ghost-shell-guide` memory, `docs/architecture.md`; `tests/doc_truth.rs` passes | done (approved_first_try, 2026-10-08) |
 | 10a | sbx-ready-probe ([phase-10a-sbx-ready-probe.md](phase-10a-sbx-ready-probe.md)) — found live: `await_ready`'s 200 ms per-probe reply timeout is shorter than an sbx `Status` round trip (0.24 s warm), so every sandbox shell is declared never-ready | done (approved_first_try, 2026-10-08) |
-| 10b | sbx-stage-resolved ([phase-10b-sbx-stage-resolved.md](phase-10b-sbx-stage-resolved.md)) — found live (run 4): the ghost path resolves a script to its absolute host path before the sandbox branch, and `parse_script_invocation` rejects absolute paths, so the script is never staged (exit 127 in the VM) | review      |
+| 10b | sbx-stage-resolved ([phase-10b-sbx-stage-resolved.md](phase-10b-sbx-stage-resolved.md)) — found live (run 4): the ghost path resolves a script to its absolute host path before the sandbox branch, and `parse_script_invocation` rejects absolute paths, so the script is never staged (exit 127 in the VM) | done (approved_after_1, 2026-10-08) |
 | 10 | live-close — architect-run live verification of every exit criterion on pinky | todo |
 
 ## Notes

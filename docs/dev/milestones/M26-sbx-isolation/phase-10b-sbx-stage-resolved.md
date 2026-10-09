@@ -1,7 +1,7 @@
 # Phase 10b: sbx-stage-resolved — stage a script the ghost path has already resolved to its absolute path
 
 **Milestone:** M26 — Agent isolation on Docker Sandboxes (sbx)
-**Status:** review
+**Status:** done
 **Depends on:** phase-10a
 **Estimated diff:** ~60 lines
 **Tags:** language=rust, kind=bugfix, size=xs
@@ -287,3 +287,21 @@ kill: (-1638403): No such process
 **Commit:** db5b20f77e5539c38c50429afa8503811adb5d33
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-08
+
+- **Verdict:** approved_after_1. The first run hard-failed on a
+  `NoProgressStall` (120 read-only calls, no edit). No bug was filed; the
+  lever was a refined re-dispatch that pinned the fix's location.
+- **Bounces:** 1
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark. The
+  re-dispatch took 35 turns, `db5b20f7`.
+- **Scope deviations:** none. Only `src/daemon/executor/sbx.rs` changed: a
+  private helper rewrites a leading `<scripts_dir>/<name>` to `<name>`
+  before `parse_script_invocation`, and both callers inherit it.
+- **Reviewer re-run:** fmt and clippy clean; both new tests `1 passed`;
+  `executor::sbx` 66 passed; full suite exactly `passed=2300 failed=0`.
+- **Calibration:** a lean spec that leaves *where* the fix goes open
+  stalls this executor when several files are plausible. Pin the location
+  when the architect has already traced it (recorded in the
+  `rexymcp-lean-specs` memory).
