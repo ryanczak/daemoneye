@@ -2,7 +2,7 @@ mod bg_shell;
 pub(crate) mod chat_sandbox;
 mod file_ops;
 mod foreground;
-mod ghost_remote;
+pub(crate) mod ghost_remote;
 pub(crate) mod ghost_sandbox;
 pub(crate) mod knowledge;
 pub mod sbx;

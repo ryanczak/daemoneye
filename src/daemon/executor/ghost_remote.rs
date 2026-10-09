@@ -66,7 +66,7 @@ pub(super) fn ghost_local_pty(
 ///
 /// `spawn` is the spawn step, bound by the caller to the host the ghost
 /// reaches (`spawn_ghost_ssh_host` in production).
-pub(super) async fn run_ghost_remote<F, Fut>(
+pub(crate) async fn run_ghost_remote<F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
     host: HostId,

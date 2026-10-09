@@ -407,32 +407,49 @@ async fn run_script_job(
 
 /// The PTY run: the resolved script in the job's own shell on the daemon
 /// host, with the ghost helper's shape — reuse the owner's shell, real exit
-/// code back.
+/// code back. [`run_script_on_host_with`] is the seam the tests drive;
+/// [`run_script_on_host`] is the production call.
 ///
-/// The production spawn is [`crate::shell::spawn_detached_host`] (a detached
-/// `daemoneye shell-host`), the same one `run_background`'s local-ghost PTY
-/// branch passes. The tests drive the shell engine through
-/// [`crate::daemon::executor::ghost_sandbox::run_ghost_in_sandbox`]'s seam
-/// instead, so this arm takes no spawn parameter.
-async fn run_script_on_host(reg: &ShellRegistry, owner: Owner, cmd: &str) -> (String, i32) {
-    let _max_per_owner = crate::config::Config::load()
-        .unwrap_or_default()
-        .shells
-        .max_per_owner;
-    crate::daemon::executor::ghost_sandbox::run_ghost_in_sandbox(
+/// The host path is [`run_ghost_remote`] with `HostId::Local`: a **host**
+/// shell's `sandbox` stays `None`, so the marker protocol uses the login
+/// shell's exit-variable syntax rather than a sandbox's pinned `sh`. An
+/// empty sandbox name through [`run_ghost_in_sandbox`] would register the
+/// shell as `sandbox: Some("")` and get the wrong marker shell — bug-02-1.
+async fn run_script_on_host_with<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    cmd: &str,
+    spawn: F,
+) -> (String, i32)
+where
+    F: FnOnce(crate::shell::ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    crate::daemon::executor::ghost_remote::run_ghost_remote(
         reg,
         owner,
-        "",
+        crate::host::HostId::Local,
         cmd,
         "scheduled",
-        |shell_id| crate::shell::spawn_detached_host(shell_id, &[], 24, 80),
+        spawn,
     )
+    .await
+}
+
+/// The production PTY run: a detached `daemoneye shell-host` (the same spawn
+/// `run_background`'s local-ghost PTY branch passes) in the job's own shell.
+/// `spawn_detached_host` resolves `current_exe()`, so it cannot run under a
+/// test — the seam is what makes the host path testable at all.
+async fn run_script_on_host(reg: &ShellRegistry, owner: Owner, cmd: &str) -> (String, i32) {
+    run_script_on_host_with(reg, owner, cmd, |shell_id| {
+        crate::shell::spawn_detached_host(shell_id, &[], 24, 80)
+    })
     .await
 }
 
 /// The sandboxed run: the ghost sandbox lifecycle, keyed by the job id, with
 /// the resolved script staged in and the reason carried on failure. The spawn
-/// step is the test seam, as [`run_script_on_host`]'s is.
+/// step is the test seam, as [`run_script_on_host_with`]'s is.
 async fn run_script_in_sandbox(
     reg: &ShellRegistry,
     owner: &Owner,
@@ -671,7 +688,7 @@ mod tests {
         crate::config::Config::ensure_dirs().ok();
         let reg = ShellRegistry::default();
         let owner = Owner::Scheduler("job-sched-1".to_string());
-        let (output, exit_code) = run_script_on_host_seam(
+        let (output, exit_code) = run_script_on_host_with(
             &reg,
             owner.clone(),
             "printf 'SCHED_OK\\n'; sh -c 'exit 3'",
@@ -686,26 +703,18 @@ mod tests {
             output.contains("SCHED_OK"),
             "the script's output is captured: {output:?}"
         );
-        let (count, owner_key) = crate::shell::with_shells(&reg, |store| {
-            (store.len(), store.values().next().map(|r| r.owner.key()))
-        });
+        let owner_key =
+            crate::shell::with_shells(&reg, |store| store.values().next().map(|r| r.owner.key()));
         assert_eq!(
             owner_key.as_deref(),
             Some("scheduler:job-sched-1"),
             "the shell's owner is the scheduler's"
         );
-        crate::daemon::executor::knowledge::close_owner_shells(
-            &reg,
-            &owner,
-            Duration::from_secs(5),
-        )
-        .await;
         let sentence = close_owner_shells_result(&reg, &owner).await;
         assert!(
             sentence.contains("Closed shell") || sentence.contains("still"),
-            "the close reports an observed end or a still-finishing host, never              silence: {sentence:?}"
+            "the close reports an observed end or a still-finishing host, never silence: {sentence:?}"
         );
-        let _ = count;
     }
 
     /// The one close sentence `close_owner_shells` produces for this owner,
@@ -722,42 +731,6 @@ mod tests {
             .map(|(_, sentence)| sentence)
             .collect::<Vec<_>>()
             .join(" | ")
-    }
-
-    /// The in-process version of [`run_script_on_host`]: the same
-    /// `run_in_shell_with_prompts` call with the in-process PTY host standing
-    /// in for the detached production spawn, so the test needs no
-    /// `current_exe()`.
-    async fn run_script_on_host_seam<F, Fut>(
-        reg: &ShellRegistry,
-        owner: Owner,
-        cmd: &str,
-        spawn: F,
-    ) -> (String, i32)
-    where
-        F: FnOnce(crate::shell::ShellId) -> Fut,
-        Fut: std::future::Future<Output = anyhow::Result<()>>,
-    {
-        let mut sink = tokio::io::sink();
-        let mut eof = tokio::io::BufReader::new(tokio::io::empty());
-        let outcome = crate::daemon::executor::shell_exec::run_in_shell_with_prompts(
-            reg,
-            owner,
-            cmd,
-            5,
-            None,
-            Some(20),
-            "scheduled",
-            &mut sink,
-            &mut eof,
-            crate::host::HostId::Local,
-            spawn,
-        )
-        .await;
-        match outcome {
-            Ok((_, result)) => (result.text, result.exit_code),
-            Err(e) => (format!("scheduled job script could not run: {e:#}"), 1),
-        }
     }
 
     async fn spawn_in_process_host(id: crate::shell::ShellId) -> anyhow::Result<()> {
@@ -826,10 +799,6 @@ mod tests {
             enabled: true,
             ..Default::default()
         };
-        let name = crate::daemon::executor::sbx::sandbox_name(
-            crate::daemon::executor::sbx::SandboxKind::Ghost,
-            "job-sbx-1",
-        );
         let got = crate::daemon::executor::ghost_sandbox::ensure_sandbox(
             &runner,
             &cfg,
@@ -848,12 +817,40 @@ mod tests {
             2,
             "only the two preflight probes ran: no create, no script"
         );
-        let count = crate::shell::with_shells(&ShellRegistry::default(), |s| s.len());
+        let reg = ShellRegistry::default();
+        let count = crate::shell::with_shells(&reg, |s| s.len());
         assert_eq!(
             count, 0,
             "no shell is spawned when the sandbox is unavailable"
         );
-        let _ = name;
+    }
+
+    #[tokio::test]
+    async fn scheduled_host_shell_is_not_marked_sandboxed() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("HOME", dir.path()) }
+        crate::config::Config::ensure_dirs().ok();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Scheduler("job-host-1".to_string());
+        let (_output, _exit) = run_script_on_host_with(
+            &reg,
+            owner.clone(),
+            "printf 'HOST_OK\\n'; sh -c 'exit 0'",
+            spawn_in_process_host,
+        )
+        .await;
+        let sandbox = crate::shell::with_shells(&reg, |store| {
+            store
+                .values()
+                .find(|record| record.owner.key() == owner.key())
+                .and_then(|record| record.sandbox.clone())
+        });
+        assert_eq!(
+            sandbox, None,
+            "the host path's scheduler shell is a host shell, not a sandboxed one"
+        );
+        close_owner_shells_result(&reg, &owner).await;
     }
 
     fn test_job(name: &str, action: ActionOn, id: &str) -> ScheduledJob {

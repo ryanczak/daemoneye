@@ -400,3 +400,75 @@ spawn)` instead, confirm the new test fails, then restore. Paste both
 stalled re-deriving the whole shell stack. Inlining the one known edit, and
 removing the test seam that masked the bug, is a spec refinement, not a
 takeover case.
+
+### Update — 2026-10-09 (bug-02-1 fix applied, resuming run)
+
+**Executor:** GLM-5.3-Flash-NVFP4-Spark (headless run, resumed on the
+refined re-dispatch). Applied exactly the four edits the refinement
+inlined — nothing else was changed:
+
+1. `ghost_remote::run_ghost_remote` widened `pub(super)` → `pub(crate)`,
+   and `mod ghost_remote` → `pub(crate) mod ghost_remote` in
+   `src/daemon/executor/mod.rs` (both authorized by the phase doc).
+2. `run_script_on_host` split into `run_script_on_host_with` (the seam,
+   now calling `run_ghost_remote(reg, owner, HostId::Local, cmd,
+   "scheduled", spawn)`) plus the production wrapper binding
+   `spawn_detached_host(shell_id, &[], 24, 80)`. The empty-sandbox-name
+   call through `run_ghost_in_sandbox` is gone.
+3. `run_script_on_host_seam` deleted; the PTY test calls
+   `run_script_on_host_with` with `spawn_in_process_host` directly, so the
+   production host path is what the test exercises.
+4. `scheduled_host_shell_is_not_marked_sandboxed` added: it runs the host
+   path through the seam and asserts the scheduler-owned record's
+   `sandbox` is `None`.
+
+`scheduled_script_fails_closed_when_the_sandbox_is_unavailable` also lost
+its unused `name` binding (it was left dangling by an earlier edit;
+clippy `-D warnings` caught it).
+
+**Mutation check (as instructed):** with `run_script_on_host_with`
+temporarily calling
+`ghost_sandbox::run_ghost_in_sandbox(reg, owner, "", cmd, "scheduled", spawn)`:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2250 filtered out; finished in 0.03s
+```
+
+(the assertion fired: "the host path's scheduler shell is a host shell,
+not a sandboxed one"). Restored to `run_ghost_remote(…, HostId::Local, …)`:
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2250 filtered out; finished in 1.57s
+```
+
+**End-to-end verification** (captured mechanically to
+`.rexymcp/output/e2e-phase-02-bug.txt`, pasted in full, one run):
+
+```
+$ for t in scheduled_script_runs_in_a_scheduler_pty_shell scheduled_command_job_refuses_to_fire owner_scheduler_key_is_distinct scheduled_script_fails_closed_when_the_sandbox_is_unavailable scheduled_host_shell_is_not_marked_sandboxed; do cargo test --lib "$t" 2>&1 | grep -E "^test result" | sed "s/^/$t: /"; done
+scheduled_script_runs_in_a_scheduler_pty_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2250 filtered out; finished in 1.57s
+scheduled_command_job_refuses_to_fire: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2250 filtered out; finished in 0.02s
+owner_scheduler_key_is_distinct: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2250 filtered out; finished in 0.00s
+scheduled_script_fails_closed_when_the_sandbox_is_unavailable: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2250 filtered out; finished in 0.00s
+scheduled_host_shell_is_not_marked_sandboxed: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2250 filtered out; finished in 1.57s
+
+$ grep -n "create_job_window\|kill_job_window" src/daemon/scheduled.rs ; echo "grep_done"
+grep_done
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.84s
+
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+
+$ cargo test 2>&1 | grep -E "^test result" | awk "{p+=\$4; f+=\$6} END {print \"passed=\" p, \"failed=\" f}"
+passed=2305 failed=0
+
+$ git diff --stat
+ src/daemon/executor/ghost_remote.rs |   2 +-
+ src/daemon/executor/mod.rs          |   2 +-
+ src/daemon/scheduled.rs             | 135 ++++++++++++++++++------------------
+ 3 files changed, 68 insertions(+), 71 deletions(-)
+```
+
+PASTE MATCH: yes
