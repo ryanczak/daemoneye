@@ -700,8 +700,28 @@ mod tests {
             Duration::from_secs(5),
         )
         .await;
-        let after = crate::shell::with_shells(&reg, |store| store.len());
-        let _ = (count, after);
+        let sentence = close_owner_shells_result(&reg, &owner).await;
+        assert!(
+            sentence.contains("Closed shell") || sentence.contains("still"),
+            "the close reports an observed end or a still-finishing host, never              silence: {sentence:?}"
+        );
+        let _ = count;
+    }
+
+    /// The one close sentence `close_owner_shells` produces for this owner,
+    /// for the test to read.
+    async fn close_owner_shells_result(reg: &ShellRegistry, owner: &Owner) -> String {
+        let closed = crate::daemon::executor::knowledge::close_owner_shells(
+            reg,
+            owner,
+            Duration::from_secs(5),
+        )
+        .await;
+        closed
+            .into_iter()
+            .map(|(_, sentence)| sentence)
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     /// The in-process version of [`run_script_on_host`]: the same
