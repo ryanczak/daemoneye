@@ -15,6 +15,7 @@ use crate::daemon::session::{
     SessionEntry, SessionStore, append_session_message, with_sessions, write_session_file,
 };
 use crate::daemon::utils::daemon_hostname;
+use crate::process;
 use crate::runbook::Runbook;
 use crate::scheduler::ScheduleStore;
 use crate::sys_context::get_or_init_sys_context;
@@ -885,7 +886,7 @@ async fn do_ghost_turn(
 
     let s = tmux_session.clone();
     let pane_alive = ghost_session_alive(&tmux_session, async move {
-        tmux::off_runtime("session-exists", move || tmux::session_exists(&s))
+        process::off_runtime("session-exists", move || tmux::session_exists(&s))
             .await
             .unwrap_or(false)
     })

@@ -13,6 +13,7 @@ use crate::daemon::utils::{
     wait_for_sudo_prompt_and_inject, with_sudo_sentinel,
 };
 use crate::ipc::{Request, Response};
+use crate::process;
 use crate::tmux;
 use crate::util::UnpoisonExt;
 
@@ -71,7 +72,7 @@ impl FgHookGuard {
 impl Drop for FgHookGuard {
     fn drop(&mut self) {
         for hook in &self.hooks {
-            let _ = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+            let _ = crate::process::bounded_output(std::process::Command::new("tmux").args([
                 "set-hook",
                 "-u",
                 "-t",
@@ -80,7 +81,7 @@ impl Drop for FgHookGuard {
             ]));
         }
         if self.monitor_silence {
-            let _ = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+            let _ = crate::process::bounded_output(std::process::Command::new("tmux").args([
                 "set-option",
                 "-u",
                 "-t",
@@ -211,12 +212,12 @@ where
     }
 
     let target_str_pid = target_str.to_string();
-    let idle_pid = tmux::off_runtime("pane-pid", move || tmux::pane_pid(&target_str_pid))
+    let idle_pid = process::off_runtime("pane-pid", move || tmux::pane_pid(&target_str_pid))
         .await
         .and_then(|r| r.ok())
         .unwrap_or(0);
     let t = target_str.to_string();
-    let is_remote_pane = crate::tmux::off_runtime("pane-remote-host", move || {
+    let is_remote_pane = crate::process::off_runtime("pane-remote-host", move || {
         crate::daemon::utils::get_pane_remote_host(&t)
     })
     .await
@@ -290,7 +291,7 @@ where
     let target_str_hook = target_str.to_string();
     let hook_name_hook = hook_name.clone();
     let notify_cmd_hook = notify_cmd.clone();
-    let _ = tmux::off_runtime("set-hook", move || {
+    let _ = process::off_runtime("set-hook", move || {
         std::process::Command::new("tmux")
             .args([
                 "set-hook",
@@ -310,7 +311,7 @@ where
     // the previous command. No-op for remote/interactive panes (they don't
     // consult it).
     let target_str_clear = target_str.to_string();
-    let _ = tmux::off_runtime("clear-pane-exit-status", move || {
+    let _ = process::off_runtime("clear-pane-exit-status", move || {
         tmux::clear_pane_exit_status(&target_str_clear)
     })
     .await;
@@ -322,7 +323,7 @@ where
         send_cmd.to_string()
     };
     let send_cmd_keys = send_cmd_final;
-    let send_keys_res = tmux::off_runtime("send-keys", move || {
+    let send_keys_res = process::off_runtime("send-keys", move || {
         tmux::send_keys(&target_str_keys, &send_cmd_keys)
     })
     .await;
@@ -330,7 +331,7 @@ where
         Some(Ok(())) => {
             let target_str_highlight = target_str.to_string();
             let chat_pane_highlight = chat_pane.map(|s| s.to_string());
-            let _ = tmux::off_runtime("highlight-pane", move || {
+            let _ = process::off_runtime("highlight-pane", move || {
                 tmux::highlight_pane(&target_str_highlight, chat_pane_highlight.as_deref())
             })
             .await;
@@ -380,7 +381,7 @@ where
                         crate::daemon::utils::maybe_keepalive(tx, &mut last_ka).await?;
 
                         let target_str_cur = target_str.to_string();
-                        let cur = tmux::off_runtime("pane-current-command", move || {
+                        let cur = process::off_runtime("pane-current-command", move || {
                             tmux::pane_current_command(&target_str_cur)
                         })
                         .await
@@ -392,7 +393,7 @@ where
                         // prompts. Checked regardless of `cur` because remote
                         // panes report `ssh`/`mosh`, never `sudo`.
                         let target_str_snap = target_str.to_string();
-                        let snap = tmux::off_runtime("capture-pane", move || {
+                        let snap = process::off_runtime("capture-pane", move || {
                             tmux::capture_pane(&target_str_snap, 10)
                         })
                         .await
@@ -412,7 +413,7 @@ where
                             }
                         } else if idle_pid != 0 && {
                             let t = target_str.to_string();
-                            tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t))
+                            process::off_runtime("pane-pid", move || tmux::pane_pid(&t))
                                 .await
                                 .and_then(|r| r.ok())
                                 .unwrap_or(0)
@@ -459,8 +460,9 @@ where
                             )
                             .await?;
                             let t = target_str.to_string();
-                            let _ = tmux::off_runtime("select-pane", move || tmux::select_pane(&t))
-                                .await;
+                            let _ =
+                                process::off_runtime("select-pane", move || tmux::select_pane(&t))
+                                    .await;
                             switched_to_working = true;
                         } else {
                             // P2: Prompt in the chat pane (no focus switch).
@@ -529,7 +531,7 @@ where
                                     // sudo is still sitting at the password prompt — clear it so the
                                     // pane returns to a usable shell rather than a dangling prompt.
                                     let t = target_str.to_string();
-                                    let _ = tmux::off_runtime("send-cancel", move || {
+                                    let _ = process::off_runtime("send-cancel", move || {
                                         crate::tmux::send_cancel(&t)
                                     })
                                     .await;
@@ -555,7 +557,7 @@ where
                                 drop(fg_hook_guard);
                                 let t = target_str.to_string();
                                 let cp = chat_pane.map(|s| s.to_string());
-                                let _ = tmux::off_runtime("unhighlight-pane", move || {
+                                let _ = process::off_runtime("unhighlight-pane", move || {
                                     tmux::unhighlight_pane(&t, cp.as_deref())
                                 })
                                 .await;
@@ -600,7 +602,7 @@ where
                                 && notified_pane == target_str
                             {
                                 let t = target_str.to_string();
-                                let snap = tmux::off_runtime("capture-pane", move || {
+                                let snap = process::off_runtime("capture-pane", move || {
                                     tmux::capture_pane(&t, 20)
                                 })
                                 .await
@@ -615,7 +617,7 @@ where
                         }
                         _ = tokio::time::sleep(INTERACTIVE_POLL_INTERVAL) => {
                             let t = target_str.to_string();
-                            let snap = tmux::off_runtime("capture-pane", move || {
+                            let snap = process::off_runtime("capture-pane", move || {
                                 tmux::capture_pane(&t, 20)
                             })
                             .await
@@ -641,11 +643,12 @@ where
                         tokio::time::sleep(INTERACTIVE_POLL_INTERVAL).await;
                         crate::daemon::utils::maybe_keepalive(tx, &mut last_ka).await?;
                         let t = target_str.to_string();
-                        let snap =
-                            tmux::off_runtime("capture-pane", move || tmux::capture_pane(&t, 20))
-                                .await
-                                .and_then(|r| r.ok())
-                                .unwrap_or_default();
+                        let snap = process::off_runtime("capture-pane", move || {
+                            tmux::capture_pane(&t, 20)
+                        })
+                        .await
+                        .and_then(|r| r.ok())
+                        .unwrap_or_default();
                         if snap == prev && !snap.is_empty() {
                             break;
                         }
@@ -670,7 +673,7 @@ where
                         }
                         _ = tokio::time::sleep(REMOTE_POLL_INTERVAL) => {
                             let t = target_str.to_string();
-                            let snap = tmux::off_runtime("capture-pane", move || {
+                            let snap = process::off_runtime("capture-pane", move || {
                                 tmux::capture_pane(&t, 10)
                             })
                             .await
@@ -692,14 +695,14 @@ where
                 let shn = silence_hook_name.clone();
                 let th = target_str.to_string();
                 let nh = notify_cmd.clone();
-                let _ = tmux::off_runtime("set-hook", move || {
+                let _ = process::off_runtime("set-hook", move || {
                     std::process::Command::new("tmux")
                         .args(["set-hook", "-t", &th, &shn, &nh])
                         .output()
                 })
                 .await;
                 let th2 = target_str.to_string();
-                let _ = tmux::off_runtime("set-option", move || {
+                let _ = process::off_runtime("set-option", move || {
                     std::process::Command::new("tmux")
                         .args([
                             "set-option",
@@ -729,7 +732,7 @@ where
                         && !saw_child
                     {
                         let t = target_str.to_string();
-                        let latch = tmux::off_runtime("read-pane-exit-status", move || {
+                        let latch = process::off_runtime("read-pane-exit-status", move || {
                             tmux::read_pane_exit_status(&t)
                         })
                         .await
@@ -741,7 +744,7 @@ where
                         tokio::time::sleep(LOCAL_CHILD_POLL).await;
                         crate::daemon::utils::maybe_keepalive(tx, &mut last_ka).await?;
                         let t2 = target_str.to_string();
-                        let pid = tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t2))
+                        let pid = process::off_runtime("pane-pid", move || tmux::pane_pid(&t2))
                             .await
                             .and_then(|r| r.ok())
                             .unwrap_or(0);
@@ -765,7 +768,7 @@ where
                         }
                         crate::daemon::utils::maybe_keepalive(tx, &mut last_ka).await?;
                         let t = target_str.to_string();
-                        let latch = tmux::off_runtime("read-pane-exit-status", move || {
+                        let latch = process::off_runtime("read-pane-exit-status", move || {
                             tmux::read_pane_exit_status(&t)
                         })
                         .await
@@ -779,7 +782,7 @@ where
                                 if let Ok(notified_pane) = result
                                     && notified_pane == target_str {
                                         let t3 = target_str.to_string();
-                                        let cur_pid = tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t3))
+                                        let cur_pid = process::off_runtime("pane-pid", move || tmux::pane_pid(&t3))
                                             .await
                                             .and_then(|r| r.ok())
                                             .unwrap_or(0);
@@ -788,7 +791,7 @@ where
                             }
                             _ = tokio::time::sleep(LOCAL_SLOW_POLL) => {
                                 let t4 = target_str.to_string();
-                                let cur_pid = tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t4))
+                                let cur_pid = process::off_runtime("pane-pid", move || tmux::pane_pid(&t4))
                                     .await
                                     .and_then(|r| r.ok())
                                     .unwrap_or(0);
@@ -804,15 +807,16 @@ where
 
             let t = target_str.to_string();
             let cp = chat_pane.map(|s| s.to_string());
-            let _ = tmux::off_runtime("unhighlight-pane", move || {
+            let _ = process::off_runtime("unhighlight-pane", move || {
                 tmux::unhighlight_pane(&t, cp.as_deref())
             })
             .await;
 
             let t2 = target_str.to_string();
-            let captured = tmux::off_runtime("capture-pane", move || tmux::capture_pane(&t2, 200))
-                .await
-                .and_then(|r| r.ok());
+            let captured =
+                process::off_runtime("capture-pane", move || tmux::capture_pane(&t2, 200))
+                    .await
+                    .and_then(|r| r.ok());
             let mut output = match captured {
                 Some(snap) if is_interactive => {
                     let destination = interactive_destination(cmd)
@@ -848,7 +852,7 @@ where
 
             if switched_to_working && let Some(cp) = chat_pane {
                 let cp2 = cp.to_string();
-                let _ = tmux::off_runtime("select-pane", move || tmux::select_pane(&cp2)).await;
+                let _ = process::off_runtime("select-pane", move || tmux::select_pane(&cp2)).await;
             }
 
             // Surface the exit status to the model — local pane only. Interactive
@@ -1457,7 +1461,7 @@ pub(super) fn exit_status_annotation(exit_status: Option<i32>) -> Option<String>
 #[cfg(test)]
 mod tests {
     use super::{exit_status_annotation, looks_like_shell_prompt};
-    use crate::tmux::status::is_shell_prompt;
+    use crate::shell::status::is_shell_prompt;
 
     #[test]
     fn is_shell_prompt_recognises_common_shells() {

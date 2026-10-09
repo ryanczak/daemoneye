@@ -105,7 +105,7 @@ where
     // Unlocked phase: everything blocking happens out here.
     for entry in &closed {
         let teardown = entry.bg_teardown();
-        let _ = crate::tmux::off_runtime("bg-teardown", move || {
+        let _ = crate::process::off_runtime("bg-teardown", move || {
             crate::daemon::session::run_bg_teardown(teardown)
         })
         .await;
@@ -117,7 +117,7 @@ where
 
     if managed_session.as_deref() == Some(session_name.as_str()) {
         let sn = session_name.clone();
-        let created = crate::tmux::off_runtime("new-session", move || {
+        let created = crate::process::off_runtime("new-session", move || {
             std::process::Command::new("tmux")
                 .args(["new-session", "-d", "-s", &sn])
                 .output()
@@ -170,7 +170,7 @@ where
         .unwrap_or_else(|_| "daemoneye".to_string());
     let sn = session_name.clone();
     let he = hook_exe.clone();
-    let _ = crate::tmux::off_runtime("install-session-hooks", move || {
+    let _ = crate::process::off_runtime("install-session-hooks", move || {
         crate::daemon::install_session_hooks(&sn, &he)
     })
     .await;

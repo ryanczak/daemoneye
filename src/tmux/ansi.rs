@@ -47,7 +47,7 @@ fn flush_span(out: &mut String, span_buf: &mut String, color: SpanColor) {
 ///
 /// All other CSI / OSC sequences (cursor movement, bold, underline, …) are
 /// stripped.  `\r\n` and lone `\r` are normalised to `\n`.
-pub(super) fn annotate_ansi(s: &str) -> String {
+pub(crate) fn annotate_ansi(s: &str) -> String {
     use regex::Regex;
     use std::sync::OnceLock;
 

@@ -43,7 +43,7 @@ fn get_labeled_context_client_viewport_shown_when_known() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -81,7 +81,7 @@ fn get_labeled_context_client_viewport_absent_when_zero() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -118,7 +118,7 @@ fn get_labeled_context_background_panes_sorted() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
         panes.insert(
@@ -142,7 +142,7 @@ fn get_labeled_context_background_panes_sorted() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -241,7 +241,7 @@ fn get_labeled_context_source_pane_excluded_from_background() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -278,7 +278,7 @@ fn get_labeled_context_copy_mode_annotated() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -320,7 +320,7 @@ fn get_labeled_context_synchronized_pane_noted() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -358,7 +358,7 @@ fn get_labeled_context_dead_pane_noted() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -397,7 +397,7 @@ fn get_labeled_context_chat_pane_excluded_from_background() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
         // Pane running daemoneye chat.
@@ -422,7 +422,7 @@ fn get_labeled_context_chat_pane_excluded_from_background() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -466,7 +466,7 @@ fn get_labeled_context_pane_classification() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
         // Visible peer — same window as chat.
@@ -491,7 +491,7 @@ fn get_labeled_context_pane_classification() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
         // Daemon-launched background window.
@@ -516,7 +516,7 @@ fn get_labeled_context_pane_classification() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
         // User's session pane in a different window.
@@ -541,7 +541,7 @@ fn get_labeled_context_pane_classification() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -584,7 +584,7 @@ fn test_pane(session: &str) -> PaneState {
         start_cmd: String::new(),
         pane_index: 0,
         shell_pid: 0,
-        status: crate::tmux::status::PaneStatus::Idle(0),
+        status: crate::shell::status::PaneStatus::Idle(0),
     }
 }
 
@@ -742,7 +742,7 @@ fn labeled_context_window_scope_excludes_other_windows() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
         panes.insert(
@@ -766,7 +766,7 @@ fn labeled_context_window_scope_excludes_other_windows() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Running,
+                status: crate::shell::status::PaneStatus::Running,
             },
         );
     }
@@ -808,7 +808,7 @@ fn labeled_context_all_scope_lists_foreign_panes() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
         panes.insert(
@@ -832,7 +832,7 @@ fn labeled_context_all_scope_lists_foreign_panes() {
                 start_cmd: String::new(),
                 pane_index: 1,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Running,
+                status: crate::shell::status::PaneStatus::Running,
             },
         );
     }
@@ -882,7 +882,7 @@ fn labeled_context_session_scope_omits_foreign_header_when_none() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
-                status: crate::tmux::status::PaneStatus::Idle(0),
+                status: crate::shell::status::PaneStatus::Idle(0),
             },
         );
     }

@@ -196,7 +196,7 @@ pub async fn wait_for_sudo_prompt_and_inject(
         waited += POLL;
         let p = pane_id.to_string();
         let snap =
-            crate::tmux::off_runtime("capture-pane", move || crate::tmux::capture_pane(&p, 20))
+            crate::process::off_runtime("capture-pane", move || crate::tmux::capture_pane(&p, 20))
                 .await
                 .and_then(|r| r.ok())
                 .unwrap_or_default();
@@ -209,12 +209,13 @@ pub async fn wait_for_sudo_prompt_and_inject(
             let p = pane_id.to_string();
             let c = credential.to_string();
             let _ =
-                crate::tmux::off_runtime("send-keys", move || crate::tmux::send_keys(&p, &c)).await;
+                crate::process::off_runtime("send-keys", move || crate::tmux::send_keys(&p, &c))
+                    .await;
             return true;
         }
         if waited >= TIMEOUT || {
             let p = pane_id.to_string();
-            crate::tmux::off_runtime("pane-dead-status", move || {
+            crate::process::off_runtime("pane-dead-status", move || {
                 crate::tmux::pane_dead_status(&p)
             })
             .await
@@ -238,7 +239,7 @@ pub async fn sudo_auth_failed(pane_id: &str) -> bool {
         waited += POLL;
         let p = pane_id.to_string();
         let snap =
-            crate::tmux::off_runtime("capture-pane", move || crate::tmux::capture_pane(&p, 20))
+            crate::process::off_runtime("capture-pane", move || crate::tmux::capture_pane(&p, 20))
                 .await
                 .and_then(|r| r.ok())
                 .unwrap_or_default();

@@ -158,7 +158,7 @@ pub struct PaneState {
     /// returns to this value.  Zero when unknown.
     pub shell_pid: u32,
     /// Live status classification, re-derived on every 2 s refresh (D2).
-    pub status: crate::tmux::status::PaneStatus,
+    pub status: crate::shell::status::PaneStatus,
 }
 
 /// Breadth of a `get_labeled_context` snapshot (M12 D4).
@@ -370,7 +370,7 @@ impl SessionCache {
                         start_cmd: String::new(),
                         pane_index: 0,
                         shell_pid: 0,
-                        status: crate::tmux::status::PaneStatus::Idle(0),
+                        status: crate::shell::status::PaneStatus::Idle(0),
                     });
 
                 entry.current_cmd = info.current_cmd;
@@ -389,7 +389,7 @@ impl SessionCache {
                 entry.pane_index = info.pane_index;
                 entry.shell_pid = info.pane_pid;
 
-                entry.status = crate::tmux::status::classify(
+                entry.status = crate::shell::status::classify(
                     entry.dead,
                     entry.dead_status,
                     belled.contains(&entry.window_name),
@@ -404,7 +404,7 @@ impl SessionCache {
                     entry.buffer = c;
                     entry.last_updated = std::time::Instant::now();
                 }
-                entry.summary = crate::tmux::status::summarize(entry.status, &entry.buffer);
+                entry.summary = crate::shell::status::summarize(entry.status, &entry.buffer);
             }
         }
 

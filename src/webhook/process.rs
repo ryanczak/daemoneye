@@ -140,8 +140,8 @@ pub async fn process_alert(
     let first_line = formatted.lines().next().unwrap_or(&formatted).to_string();
     let s = state.sessions.clone();
     let line = first_line.clone();
-    let _ =
-        crate::tmux::off_runtime("notify-chat-panes", move || notify_chat_panes(&s, &line)).await;
+    let _ = crate::process::off_runtime("notify-chat-panes", move || notify_chat_panes(&s, &line))
+        .await;
 
     // 7. Severity gate: fire notification + optionally trigger AI analysis.
     let threshold_rank = severity_rank(&cfg.severity_threshold);
@@ -227,7 +227,7 @@ pub(crate) async fn inject_ghost_event(sessions: &SessionStore, content: &str) {
     let one_liner = content.lines().next().unwrap_or(content);
     let s_ncp = sessions.clone();
     let line = one_liner.to_string();
-    let _ = crate::tmux::off_runtime("notify-chat-panes", move || {
+    let _ = crate::process::off_runtime("notify-chat-panes", move || {
         notify_chat_panes(&s_ncp, &line)
     })
     .await;
@@ -521,8 +521,9 @@ async fn maybe_analyze_alert(
         let first_line = analysis.lines().next().unwrap_or(&analysis).to_string();
         let s = state.sessions.clone();
         let line = first_line.clone();
-        let _ = crate::tmux::off_runtime("notify-chat-panes", move || notify_chat_panes(&s, &line))
-            .await;
+        let _ =
+            crate::process::off_runtime("notify-chat-panes", move || notify_chat_panes(&s, &line))
+                .await;
         fire_notification(&alert.alert_name, &analysis, &state.config);
     }
     None

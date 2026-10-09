@@ -104,7 +104,7 @@ fn offer_no_sibling_options(chat_pane: &str, session: &str) -> Option<String> {
 
     match choice.as_str() {
         "" | "s" => {
-            let out = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+            let out = crate::process::bounded_output(std::process::Command::new("tmux").args([
                 "split-window",
                 "-h",
                 "-t",
@@ -138,7 +138,7 @@ fn pick_sibling_pane(_chat_pane: &str, candidates: Vec<String>, session: &str) -
     println!();
     println!("Multiple panes available. Which should I use for foreground commands?");
     for (i, pane_id) in candidates.iter().enumerate() {
-        let info = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+        let info = crate::process::bounded_output(std::process::Command::new("tmux").args([
             "display-message",
             "-t",
             pane_id,

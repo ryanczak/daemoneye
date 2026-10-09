@@ -34,7 +34,7 @@ impl WindowState {
 /// Single tmux call; tab-separated format string (7 fields):
 /// window_id, window_name, active, pane_count, zoomed_flag, last_flag, window_flags
 pub fn list_windows(session: &str) -> Result<Vec<WindowState>> {
-    let output = crate::tmux::bounded_output(
+    let output = crate::process::bounded_output(
         Command::new("tmux").args([
             "list-windows", "-t", session, "-F",
             "#{window_id}\t#{window_name}\t#{window_active}\t#{window_panes}\t#{window_zoomed_flag}\t#{window_last_flag}\t#{window_flags}",
@@ -71,7 +71,7 @@ pub fn list_windows(session: &str) -> Result<Vec<WindowState>> {
 /// Returns the pane ID of the new window (e.g. `%12`).
 pub fn create_job_window(session: &str, name: &str) -> Result<String> {
     // Silently kill any pre-existing window with that name.
-    let _ = crate::tmux::bounded_output(Command::new("tmux").args([
+    let _ = crate::process::bounded_output(Command::new("tmux").args([
         "kill-window",
         "-t",
         &format!("{}:{}", session, name),
@@ -80,7 +80,7 @@ pub fn create_job_window(session: &str, name: &str) -> Result<String> {
     // Use "session:" (trailing colon) so tmux picks the next available window
     // index rather than defaulting to 0 and colliding with existing windows.
     let target = format!("{}:", session);
-    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+    let output = crate::process::bounded_output(Command::new("tmux").args([
         "new-window",
         "-d",
         "-n",
@@ -103,7 +103,7 @@ pub fn create_job_window(session: &str, name: &str) -> Result<String> {
 /// Rename an existing tmux window.
 pub fn rename_window(session: &str, old_name: &str, new_name: &str) -> Result<()> {
     let target = format!("{}:{}", session, old_name);
-    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+    let output = crate::process::bounded_output(Command::new("tmux").args([
         "rename-window",
         "-t",
         &target,
@@ -123,7 +123,7 @@ pub fn rename_window(session: &str, old_name: &str, new_name: &str) -> Result<()
 
 /// Kill a background window by name.  Silently ignores missing windows.
 pub fn kill_job_window(session: &str, name: &str) -> Result<()> {
-    let _ = crate::tmux::bounded_output(Command::new("tmux").args([
+    let _ = crate::process::bounded_output(Command::new("tmux").args([
         "kill-window",
         "-t",
         &format!("{}:{}", session, name),
@@ -133,7 +133,7 @@ pub fn kill_job_window(session: &str, name: &str) -> Result<()> {
 
 /// Query the width of the window containing a pane in columns.
 pub fn query_window_width(pane_id: &str) -> Result<usize> {
-    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+    let output = crate::process::bounded_output(Command::new("tmux").args([
         "display-message",
         "-t",
         pane_id,

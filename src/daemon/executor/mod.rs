@@ -1895,7 +1895,7 @@ where
                 status: state.status.to_string(),
                 activity_age_secs: None,
                 is_target: false,
-                preview: crate::ai::filter::mask_sensitive(&crate::tmux::status::summarize(
+                preview: crate::ai::filter::mask_sensitive(&crate::shell::status::summarize(
                     state.status,
                     &state.buffer,
                 )),

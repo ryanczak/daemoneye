@@ -1,6 +1,7 @@
 use crate::daemon::session::with_sessions;
 use crate::daemon::utils::log_event;
 use crate::ipc::Response;
+use crate::process;
 use crate::tmux;
 
 // ---------------------------------------------------------------------------
@@ -52,7 +53,7 @@ pub async fn notify_job_completion(
     } else {
         let p = pane_id.clone();
         let out = logs_dir.join(format!("{}.log", win_name));
-        let archived = tmux::off_runtime("capture-pane-to-file", move || {
+        let archived = process::off_runtime("capture-pane-to-file", move || {
             tmux::pane::capture_pane_to_file(&p, &out)
         })
         .await
@@ -85,7 +86,7 @@ pub async fn notify_job_completion(
         );
         let s = session.clone();
         let w = win_name.clone();
-        let killed = tmux::off_runtime("kill-job-window", move || tmux::kill_job_window(&s, &w))
+        let killed = process::off_runtime("kill-job-window", move || tmux::kill_job_window(&s, &w))
             .await
             .unwrap_or_else(|| Err(anyhow::anyhow!("timed out killing window")));
         if let Err(e) = killed {

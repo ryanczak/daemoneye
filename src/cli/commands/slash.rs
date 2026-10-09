@@ -235,7 +235,7 @@ pub(super) fn render_shell_list(
             let mut state = match s.exited_unix {
                 Some(t) if now_unix >= t => format!(
                     "exited {} ago",
-                    crate::tmux::status::format_age(now_unix - t)
+                    crate::shell::status::format_age(now_unix - t)
                 ),
                 Some(_) => "exited".to_string(),
                 None => "live".to_string(),
@@ -247,7 +247,7 @@ pub(super) fn render_shell_list(
                 state.push_str(", dedicated");
             }
             let age = if s.started_unix > 0 && now_unix >= s.started_unix {
-                crate::tmux::status::format_age(now_unix - s.started_unix)
+                crate::shell::status::format_age(now_unix - s.started_unix)
             } else {
                 "?".to_string()
             };
@@ -371,7 +371,7 @@ fn render_log_list(logs: &[crate::ipc::ShellLogInfo], total: usize, now_unix: u6
         .iter()
         .map(|l| {
             let age = if now_unix >= l.started_unix {
-                crate::tmux::status::format_age(now_unix - l.started_unix)
+                crate::shell::status::format_age(now_unix - l.started_unix)
             } else {
                 "?".to_string()
             };

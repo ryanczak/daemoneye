@@ -6,6 +6,7 @@ use crate::daemon::run::{Briefing, RunId, RunKind, RunLogGuard, RunState};
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
 use crate::ipc::Response;
+use crate::process;
 use crate::runbook;
 use crate::scheduler::{ActionOn, JobStatus, ScheduleStore, ScheduledJob};
 use crate::scripts;
@@ -288,9 +289,10 @@ async fn run_scheduled_job_inner(
 
     let s = session.to_string();
     let t = temp_win_name.to_string();
-    let created = tmux::off_runtime("create-job-window", move || tmux::create_job_window(&s, &t))
-        .await
-        .unwrap_or_else(|| Err(anyhow::anyhow!("timed out creating window")));
+    let created =
+        process::off_runtime("create-job-window", move || tmux::create_job_window(&s, &t))
+            .await
+            .unwrap_or_else(|| Err(anyhow::anyhow!("timed out creating window")));
 
     let pane_id = match created {
         Ok(p) => p,
@@ -326,7 +328,7 @@ async fn run_scheduled_job_inner(
     let s = session.to_string();
     let t = temp_win_name.to_string();
     let r = final_win_name.clone();
-    let renamed = tmux::off_runtime("rename-window", move || tmux::rename_window(&s, &t, &r))
+    let renamed = process::off_runtime("rename-window", move || tmux::rename_window(&s, &t, &r))
         .await
         .unwrap_or_else(|| Err(anyhow::anyhow!("timed out renaming window")));
 
@@ -345,7 +347,7 @@ async fn run_scheduled_job_inner(
 
     // P7: keep the pane alive in a '<dead>' state so we can query pane_dead_status.
     let p = pane_id.clone();
-    let set = tmux::off_runtime("set-remain-on-exit", move || {
+    let set = process::off_runtime("set-remain-on-exit", move || {
         tmux::set_remain_on_exit(&p, true)
     })
     .await
@@ -355,7 +357,7 @@ async fn run_scheduled_job_inner(
     }
 
     let p = pane_id.clone();
-    let sent = tmux::off_runtime("send-keys", move || tmux::send_keys(&p, &wrapped))
+    let sent = process::off_runtime("send-keys", move || tmux::send_keys(&p, &wrapped))
         .await
         .unwrap_or_else(|| Err(anyhow::anyhow!("timed out sending keys")));
     if let Err(e) = sent {
@@ -380,7 +382,7 @@ async fn run_scheduled_job_inner(
 
     let exit_code = loop {
         let p = pane_id.clone();
-        let dead = tmux::off_runtime("pane-dead-status", move || tmux::pane_dead_status(&p))
+        let dead = process::off_runtime("pane-dead-status", move || tmux::pane_dead_status(&p))
             .await
             .flatten();
         if let Some(code) = dead {
@@ -395,7 +397,7 @@ async fn run_scheduled_job_inner(
                     && notified_pane == pane_id
                 {
                     let p = pane_id.clone();
-                    let dead = tmux::off_runtime("pane-dead-status", move || {
+                    let dead = process::off_runtime("pane-dead-status", move || {
                         tmux::pane_dead_status(&p)
                     })
                     .await
@@ -414,7 +416,7 @@ async fn run_scheduled_job_inner(
     crate::daemon::stats::finish_command(cmd_id, exit_code);
 
     let p = pane_id.clone();
-    let raw = tmux::off_runtime("capture-pane", move || tmux::capture_pane(&p, 5000))
+    let raw = process::off_runtime("capture-pane", move || tmux::capture_pane(&p, 5000))
         .await
         .and_then(|r| r.ok())
         .unwrap_or_default();

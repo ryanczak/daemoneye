@@ -615,7 +615,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     //
     // An empty session name means no tmux at all: no session, no global hooks,
     // no background-window GC.
-    let inside_session = crate::tmux::off_runtime("detect-session", detect_session)
+    let inside_session = crate::process::off_runtime("detect-session", detect_session)
         .await
         .flatten();
     let (initial_session, managed_session): (Option<String>, Option<String>) = if let Some(name) =
@@ -635,7 +635,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         let name = session_override.unwrap_or_else(|| startup_config.daemon.tmux_session.clone());
         let n = name.clone();
         let exists =
-            crate::tmux::off_runtime("session-exists", move || crate::tmux::session_exists(&n))
+            crate::process::off_runtime("session-exists", move || crate::tmux::session_exists(&n))
                 .await
                 .unwrap_or(false);
         if exists {
@@ -643,7 +643,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             (Some(name.clone()), Some(name))
         } else {
             let n = name.clone();
-            let created = crate::tmux::off_runtime("new-session", move || {
+            let created = crate::process::off_runtime("new-session", move || {
                 std::process::Command::new("tmux")
                     .args(["new-session", "-d", "-s", &n])
                     .output()
@@ -700,7 +700,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             hook_exe_path,
         );
         let c = global_notify_cmd.clone();
-        let res = crate::tmux::off_runtime("set-hook-pane-died", move || {
+        let res = crate::process::off_runtime("set-hook-pane-died", move || {
             std::process::Command::new("tmux")
                 .args(["set-hook", "-g", "pane-died", &c])
                 .output()
@@ -716,7 +716,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             hook_exe_path,
         );
         let c = session_created_cmd.clone();
-        let res = crate::tmux::off_runtime("set-hook-after-new-session", move || {
+        let res = crate::process::off_runtime("set-hook-after-new-session", move || {
             std::process::Command::new("tmux")
                 .args(["set-hook", "-g", "after-new-session", &c])
                 .output()
@@ -732,7 +732,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             hook_exe_path,
         );
         let c = client_attached_cmd.clone();
-        let res = crate::tmux::off_runtime("set-hook-client-attached", move || {
+        let res = crate::process::off_runtime("set-hook-client-attached", move || {
             std::process::Command::new("tmux")
                 .args(["set-hook", "-g", "client-attached", &c])
                 .output()
@@ -748,7 +748,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             hook_exe_path,
         );
         let c = client_detached_cmd.clone();
-        let res = crate::tmux::off_runtime("set-hook-client-detached", move || {
+        let res = crate::process::off_runtime("set-hook-client-detached", move || {
             std::process::Command::new("tmux")
                 .args(["set-hook", "-g", "client-detached", &c])
                 .output()
@@ -762,7 +762,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     if let Some(ref sn) = initial_session {
         let sn = sn.clone();
         let hp = hook_exe_path.clone();
-        let _ = crate::tmux::off_runtime("install-session-hooks", move || {
+        let _ = crate::process::off_runtime("install-session-hooks", move || {
             install_session_hooks(&sn, &hp)
         })
         .await;
@@ -838,7 +838,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // N7: seed the initial client viewport dimensions now that the cache exists.
     if let Some(ref sn) = initial_session {
         let s = sn.to_string();
-        let (w, h) = crate::tmux::off_runtime("client-dimensions", move || {
+        let (w, h) = crate::process::off_runtime("client-dimensions", move || {
             crate::tmux::client_dimensions(&s)
         })
         .await
@@ -1000,7 +1000,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                     // Unlocked phase: everything blocking happens out here.
                     for entry in &evicted {
                         let teardown = entry.bg_teardown();
-                        let _ = crate::tmux::off_runtime("bg-teardown", move || {
+                        let _ = crate::process::off_runtime("bg-teardown", move || {
                             crate::daemon::session::run_bg_teardown(teardown)
                         })
                         .await;
@@ -1100,7 +1100,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                     loop {
                         tokio::time::sleep(Duration::from_secs(60)).await;
                         let s = sessions_gc.clone();
-                        let _ = crate::tmux::off_runtime("gc-bg-windows", move || {
+                        let _ = crate::process::off_runtime("gc-bg-windows", move || {
                             crate::daemon::background::gc_bg_windows(&s)
                         })
                         .await;
@@ -1206,7 +1206,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         "client-detached",
     ] {
         let h = hook.to_string();
-        let res = crate::tmux::off_runtime("set-hook-unset", move || {
+        let res = crate::process::off_runtime("set-hook-unset", move || {
             std::process::Command::new("tmux")
                 .args(["set-hook", "-gu", &h])
                 .output()
@@ -1234,9 +1234,10 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         });
         for pane_id in &pipe_panes {
             let p = pane_id.clone();
-            let _ =
-                crate::tmux::off_runtime("stop-pipe-pane", move || crate::tmux::stop_pipe_pane(&p))
-                    .await;
+            let _ = crate::process::off_runtime("stop-pipe-pane", move || {
+                crate::tmux::stop_pipe_pane(&p)
+            })
+            .await;
         }
     }
 

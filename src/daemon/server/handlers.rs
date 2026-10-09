@@ -206,7 +206,7 @@ where
                 } else {
                     String::new()
                 };
-                let preview = crate::ai::filter::mask_sensitive(&crate::tmux::status::summarize(
+                let preview = crate::ai::filter::mask_sensitive(&crate::shell::status::summarize(
                     s.status, &s.buffer,
                 ));
                 PaneInfo {
@@ -233,7 +233,7 @@ where
         for candidate in panes_snapshot {
             let id = candidate.id.clone();
             let exists =
-                crate::tmux::off_runtime("pane-exists", move || crate::tmux::pane_exists(&id))
+                crate::process::off_runtime("pane-exists", move || crate::tmux::pane_exists(&id))
                     .await
                     .unwrap_or(false);
             if exists {

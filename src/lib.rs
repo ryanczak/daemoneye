@@ -10,6 +10,7 @@ pub mod cost;
 pub mod daemon;
 pub mod host;
 pub mod ipc;
+pub mod process;
 pub mod scheduler;
 pub mod scripts;
 pub mod session_store;

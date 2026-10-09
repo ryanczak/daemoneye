@@ -49,7 +49,7 @@ const CAST_SETTLE_POLL: Duration = Duration::from_millis(10);
 /// must strip control bytes before masking, or an escape embedded mid-token
 /// could split a secret past its regex.
 pub(super) fn format_for_model(raw: &str) -> String {
-    mask_sensitive(&normalize_output(&crate::tmux::annotate_output(raw)))
+    mask_sensitive(&normalize_output(&crate::process::annotate_output(raw)))
 }
 
 /// What one command produced, already fit for a model.

@@ -163,7 +163,7 @@ impl ShellScreen {
         last_activity: u64,
         now: u64,
     ) -> String {
-        let status = crate::tmux::status::classify(
+        let status = crate::shell::status::classify(
             dead,
             dead_status,
             has_bell,
@@ -171,7 +171,7 @@ impl ShellScreen {
             last_activity,
             now,
         );
-        crate::tmux::status::summarize(status, &self.contents())
+        crate::shell::status::summarize(status, &self.contents())
     }
 }
 
@@ -329,8 +329,8 @@ mod tests {
         let mut s = screen(3, 40);
         s.feed(b"cargo check\n\x1b[32mFinished\x1b[0m\r\n");
         let contents = s.contents();
-        let status = crate::tmux::status::classify(false, None, false, "vim", 0, 0);
-        let expected = crate::tmux::status::summarize(status, &contents);
+        let status = crate::shell::status::classify(false, None, false, "vim", 0, 0);
+        let expected = crate::shell::status::summarize(status, &contents);
         let actual = s.summary(false, None, false, "vim", 0, 0);
         assert_eq!(actual, expected);
         assert!(actual.ends_with("Finished"), "summary: {actual:?}");

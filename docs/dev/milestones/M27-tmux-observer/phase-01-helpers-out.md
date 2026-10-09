@@ -1,7 +1,7 @@
 # Phase 01: helpers-out — move the generic helpers out of `src/tmux/`
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** M26 (done)
 **Tags:** language=rust, kind=refactor, size=s
 
@@ -101,3 +101,10 @@ move the items, then fix the call sites by following `cargo build` errors.
 **Rationale:** the stall came from the spec's "same count as before"
 criterion, which sent the executor to derive a baseline instead of doing the
 move. Stating the baseline removes it, and there is no partial work to resume.
+
+### Update — 2026-10-09 01:56 (started)
+
+**Executor:** Claude Opus 5.5 (headless run). Status flipped `todo` →
+`in-progress`; milestone README row updated to match. Following the
+re-dispatch note: moving the helpers first, then fixing call sites from
+`cargo build` errors. No baseline measured.

@@ -246,13 +246,14 @@ where
     if let (Some(id), Some(ref pane_id)) = (session_id.as_deref(), pipe_candidate.as_deref()) {
         let pid = pane_id.to_string();
         let pid_clone = pid.clone();
-        let pane_alive =
-            crate::tmux::off_runtime("pane-exists", move || crate::tmux::pane_exists(&pid_clone))
-                .await
-                .unwrap_or(false);
+        let pane_alive = crate::process::off_runtime("pane-exists", move || {
+            crate::tmux::pane_exists(&pid_clone)
+        })
+        .await
+        .unwrap_or(false);
         let resolved = if pane_alive {
             let pid2 = pid.clone();
-            match crate::tmux::off_runtime("start-pipe-pane", move || {
+            match crate::process::off_runtime("start-pipe-pane", move || {
                 crate::tmux::start_pipe_pane(&pid2)
             })
             .await

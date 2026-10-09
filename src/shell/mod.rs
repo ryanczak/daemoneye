@@ -15,6 +15,7 @@ mod registry;
 mod sbx_backend;
 mod screen;
 mod session;
+pub mod status;
 
 pub use crate::daemon::utils::PromptKind;
 pub use backend::PtyBackend;

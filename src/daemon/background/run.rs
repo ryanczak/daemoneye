@@ -8,6 +8,7 @@ use crate::daemon::utils::{
     command_has_sudo, is_fingerprint_prompt, log_event, shell_escape_arg, sudo_auth_failed,
     wait_for_sudo_prompt_and_inject,
 };
+use crate::process;
 use crate::tmux;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -82,7 +83,8 @@ pub async fn run_background_in_window(
 
     let (s, t) = (session.to_string(), temp_name.clone());
     let pane_id =
-        match tmux::off_runtime("create-job-window", move || tmux::create_job_window(&s, &t)).await
+        match process::off_runtime("create-job-window", move || tmux::create_job_window(&s, &t))
+            .await
         {
             Some(Ok(p)) => p,
             Some(Err(e)) => return format!("Failed to create background window: {}", e),
@@ -97,26 +99,25 @@ pub async fn run_background_in_window(
     let cmd_slug = crate::daemon::utils::sanitize_cmd_for_window(cmd, 30);
     let final_name = format!("{}{}-{}-{}", prefix, pane_num, unix_ts, cmd_slug);
     let (s2, t2, f2) = (session.to_string(), temp_name.clone(), final_name.clone());
-    let win_name = match tmux::off_runtime("rename-window", move || {
-        tmux::rename_window(&s2, &t2, &f2)
-    })
-    .await
-    {
-        Some(Ok(())) => final_name,
-        Some(Err(e)) => {
-            log::warn!(
-                "Failed to rename bg window {} -> {}: {}",
-                temp_name,
-                final_name,
-                e
-            );
-            temp_name
-        }
-        None => {
-            // already logged by off_runtime
-            temp_name
-        }
-    };
+    let win_name =
+        match process::off_runtime("rename-window", move || tmux::rename_window(&s2, &t2, &f2))
+            .await
+        {
+            Some(Ok(())) => final_name,
+            Some(Err(e)) => {
+                log::warn!(
+                    "Failed to rename bg window {} -> {}: {}",
+                    temp_name,
+                    final_name,
+                    e
+                );
+                temp_name
+            }
+            None => {
+                // already logged by off_runtime
+                temp_name
+            }
+        };
 
     if let Ok(mut map) = BG_COMMAND_MAP
         .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
@@ -129,7 +130,7 @@ pub async fn run_background_in_window(
 
     // remain-on-exit lets us query pane_dead_status on shell crash (fallback path).
     let p = pane_id.clone();
-    match tmux::off_runtime("set-remain-on-exit", move || {
+    match process::off_runtime("set-remain-on-exit", move || {
         tmux::set_remain_on_exit(&p, true)
     })
     .await
@@ -141,7 +142,7 @@ pub async fn run_background_in_window(
 
     // Detect the shell to select the right exit-code variable.
     let p2 = pane_id.clone();
-    let shell_name = tmux::off_runtime("pane-current-command", move || {
+    let shell_name = process::off_runtime("pane-current-command", move || {
         tmux::pane_current_command(&p2)
     })
     .await
@@ -197,7 +198,7 @@ pub async fn run_background_in_window(
     // any scrollback cap.  Falls back silently if pipe-pane isn't available.
     let p3 = pane_id.clone();
     let pipe_log =
-        match tmux::off_runtime("start-pipe-pane", move || tmux::start_pipe_pane(&p3)).await {
+        match process::off_runtime("start-pipe-pane", move || tmux::start_pipe_pane(&p3)).await {
             Some(Ok(path)) => Some(path),
             Some(Err(e)) => {
                 log::warn!("Failed to start pipe-pane for {}: {}", pane_id, e);
@@ -208,27 +209,29 @@ pub async fn run_background_in_window(
 
     let p4 = pane_id.clone();
     let w4 = wrapped.clone();
-    match tmux::off_runtime("send-keys", move || tmux::send_keys(&p4, &w4)).await {
+    match process::off_runtime("send-keys", move || tmux::send_keys(&p4, &w4)).await {
         Some(Err(e)) => {
             if pipe_log.is_some() {
                 let p5 = pane_id.clone();
                 let _ =
-                    tmux::off_runtime("stop-pipe-pane", move || tmux::stop_pipe_pane(&p5)).await;
+                    process::off_runtime("stop-pipe-pane", move || tmux::stop_pipe_pane(&p5)).await;
             }
             let (s5, wn5) = (session.to_string(), win_name.clone());
-            let _ = tmux::off_runtime("kill-job-window", move || tmux::kill_job_window(&s5, &wn5))
-                .await;
+            let _ =
+                process::off_runtime("kill-job-window", move || tmux::kill_job_window(&s5, &wn5))
+                    .await;
             return format!("Failed to send command to window: {}", e);
         }
         None => {
             if pipe_log.is_some() {
                 let p5 = pane_id.clone();
                 let _ =
-                    tmux::off_runtime("stop-pipe-pane", move || tmux::stop_pipe_pane(&p5)).await;
+                    process::off_runtime("stop-pipe-pane", move || tmux::stop_pipe_pane(&p5)).await;
             }
             let (s5, wn5) = (session.to_string(), win_name.clone());
-            let _ = tmux::off_runtime("kill-job-window", move || tmux::kill_job_window(&s5, &wn5))
-                .await;
+            let _ =
+                process::off_runtime("kill-job-window", move || tmux::kill_job_window(&s5, &wn5))
+                    .await;
             return "Failed to send command to window: tmux timed out (server may be wedged)"
                 .to_string();
         }
@@ -251,7 +254,7 @@ pub async fn run_background_in_window(
             // Distinguish fingerprint-reader failures from plain timeouts so the
             // AI receives an actionable error rather than just a non-zero exit code.
             let p_snap = pane_id.clone();
-            let snap = tmux::off_runtime("capture-pane", move || {
+            let snap = process::off_runtime("capture-pane", move || {
                 crate::tmux::capture_pane(&p_snap, 10)
             })
             .await
@@ -264,7 +267,7 @@ pub async fn run_background_in_window(
                     cmd
                 );
                 let (s_kill, wn_kill) = (session.to_string(), win_name.clone());
-                let _ = tmux::off_runtime("kill-job-window", move || {
+                let _ = process::off_runtime("kill-job-window", move || {
                     tmux::kill_job_window(&s_kill, &wn_kill)
                 })
                 .await;
@@ -321,7 +324,7 @@ pub async fn run_background_in_window(
                     if let Ok(pid) = result
                         && pid == pane_id {
                             let p_dead = pane_id.clone();
-                            let code = tmux::off_runtime("pane-dead-status", move || tmux::pane_dead_status(&p_dead))
+                            let code = process::off_runtime("pane-dead-status", move || tmux::pane_dead_status(&p_dead))
                                 .await
                                 .flatten()
                                 .unwrap_or(-1);
@@ -339,7 +342,7 @@ pub async fn run_background_in_window(
             // tool result.  Do NOT call notify_session; the output is already here.
             if pipe_log.is_some() {
                 let p_pipe = pane_id.clone();
-                let _ = tmux::off_runtime("pipe-pane", move || {
+                let _ = process::off_runtime("pipe-pane", move || {
                     std::process::Command::new("tmux")
                         .args(["pipe-pane", "-t", &p_pipe])
                         .output()
@@ -349,7 +352,7 @@ pub async fn run_background_in_window(
             }
             let p = pane_id.to_string();
             let w = win_name.to_string();
-            let body = tmux::off_runtime("capture-and-archive", move || {
+            let body = process::off_runtime("capture-and-archive", move || {
                 capture_and_archive(&p, &w, pipe_log)
             })
             .await
@@ -392,7 +395,7 @@ pub async fn run_background_in_window(
                     }),
                 );
                 let (s_gc, wn_gc) = (session.to_string(), win_name.clone());
-                match tmux::off_runtime("kill-job-window", move || {
+                match process::off_runtime("kill-job-window", move || {
                     tmux::kill_job_window(&s_gc, &wn_gc)
                 })
                 .await
@@ -449,7 +452,7 @@ pub async fn run_background_in_window(
                                     if let Ok(pid) = result
                                         && pid == pane_id_bg {
                                             let p_dead_bg = pane_id_bg.clone();
-                                            let code = tmux::off_runtime("pane-dead-status", move || tmux::pane_dead_status(&p_dead_bg))
+                                            let code = process::off_runtime("pane-dead-status", move || tmux::pane_dead_status(&p_dead_bg))
                                                 .await
                                                 .flatten()
                                                 .unwrap_or(-1);
@@ -463,7 +466,7 @@ pub async fn run_background_in_window(
 
                 if pipe_log.is_some() {
                     let p_pipe_bg = pane_id_bg.clone();
-                    let _ = tmux::off_runtime("pipe-pane", move || {
+                    let _ = process::off_runtime("pipe-pane", move || {
                         std::process::Command::new("tmux")
                             .args(["pipe-pane", "-t", &p_pipe_bg])
                             .output()
@@ -475,7 +478,7 @@ pub async fn run_background_in_window(
                 let duration_ms = started_at.elapsed().as_millis() as u64;
                 let p = pane_id_bg.to_string();
                 let w = win_name_bg.to_string();
-                let body = tmux::off_runtime("capture-and-archive", move || {
+                let body = process::off_runtime("capture-and-archive", move || {
                     capture_and_archive(&p, &w, pipe_log)
                 })
                 .await
@@ -503,7 +506,7 @@ pub async fn run_background_in_window(
                         body: body.clone(),
                         pane_persists,
                     };
-                    let _ = tmux::off_runtime("notify-session", move || {
+                    let _ = process::off_runtime("notify-session", move || {
                         notify_session(&s_ns, &sid_ns, job)
                     })
                     .await;
@@ -524,7 +527,7 @@ pub async fn run_background_in_window(
                         }),
                     );
                     let (s_kill_bg, wn_kill_bg) = (session_bg.to_string(), win_name_bg.clone());
-                    match tmux::off_runtime("kill-job-window", move || {
+                    match process::off_runtime("kill-job-window", move || {
                         tmux::kill_job_window(&s_kill_bg, &wn_kill_bg)
                     })
                     .await
