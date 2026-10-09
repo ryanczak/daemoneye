@@ -46,9 +46,9 @@ doc comments. Don't edit any test's body; only its path and `use` lines.
       `src/shell/status.rs` exist.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` exits 0;
       `cargo fmt --all --check` exits 0.
-- [ ] *(Preservation)* `cargo test` reports `0 failed`, with the same passed
-      count as before the phase: the moved tests move, none are added or
-      removed. State both counts in the Update Log.
+- [ ] *(Preservation)* `cargo test` reports exactly `passed=2300 failed=0`,
+      the same as before the phase (2300 is the architect-measured baseline;
+      the moved tests move, none are added or removed).
 - [ ] *(Preservation)* `cargo test --test doc_truth` passes.
 - [ ] The Update Log entry contains the § End-to-end verification output,
       every line as printed, and a line `PASTE MATCH: yes`.
@@ -83,3 +83,21 @@ handling stay where they are for now.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-09 (refined re-dispatch)
+
+The previous run edited nothing. It spent its turns measuring a "before"
+test count, grepping the full `cargo test` output for `FAILED`, then looped.
+**Do not measure a baseline.** It is `passed=2300 failed=0`, measured by the
+architect on this tree. Only the `test result:` summary lines matter; do not
+grep the full test output.
+
+Start with the move itself: create `src/process.rs` and `src/shell/status.rs`,
+move the items, then fix the call sites by following `cargo build` errors.
+
+### Update — 2026-10-09 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the stall came from the spec's "same count as before"
+criterion, which sent the executor to derive a baseline instead of doing the
+move. Stating the baseline removes it, and there is no partial work to resume.
