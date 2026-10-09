@@ -53,7 +53,7 @@ is split further at drafting if it is more than one session.
 
 | # | Phase | Status |
 |---|---|---|
-| 01 | helpers-out ([phase-01-helpers-out.md](phase-01-helpers-out.md)) — move the generic helpers that only *live* in `src/tmux/` (`bounded_output`, the `status` classifiers, `format_age`, `annotate_output`) to neutral modules; no behaviour change | in-progress |
+| 01 | helpers-out ([phase-01-helpers-out.md](phase-01-helpers-out.md)) — move the generic helpers that only *live* in `src/tmux/` (`bounded_output`, the `status` classifiers, `format_age`, `annotate_output`) to neutral modules; no behaviour change | review      |
 | 02 | sched-pty — `ActionOn::Script` on a scheduler-owned PTY shell; `ActionOn::Command` loads and refuses to fire | todo |
 | 03 | catchup-reconnect — catch-up brief driven by chat client connect/disconnect | todo |
 | 04 | chat-no-tmux — `chat` / `ask` work outside tmux (session identity, width, palette) | todo |
