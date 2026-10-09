@@ -1,7 +1,7 @@
 # Phase 01: helpers-out — move the generic helpers out of `src/tmux/`
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** M26 (done)
 **Tags:** language=rust, kind=refactor, size=s
 
@@ -274,3 +274,28 @@ kill: (-1853169): No such process
 **Commit:** 4f5828a0097dab3251717050d583e1d233db4b1f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-09
+
+- **Verdict:** approved_after_1. The first run hard-failed on repetition
+  with an empty diff, because the spec asked it to measure a baseline. The
+  refined re-dispatch stated the baseline.
+- **Bounces:** 1 (no bug filed; the lever was a refined re-dispatch).
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark. The
+  re-dispatch took 218 turns, `65d5f002`.
+- **Scope deviations:** none.
+  - `src/shell/status.rs` is a pure git rename of `src/tmux/status.rs`.
+  - `src/process.rs` holds the removed `tmux/mod.rs` code line for line; the
+    only changed line is the explicit `crate::tmux::ansi::annotate_ansi`
+    path.
+  - There are no `tmux::` re-exports, and the CLAUDE.md rows are updated.
+  - The five `unwrap`s are inside moved tests; the same five lines were
+    removed.
+- **Reviewer re-run:** the grep prints nothing; the old `status.rs` is gone
+  and both new files exist; fmt, build and clippy are clean; `doc_truth`
+  passes 15/15; the full suite is exactly `passed=2300 failed=0`.
+- **Carried to row 05:** `process::annotate_output` still calls
+  `tmux::ansi::annotate_ansi`. When `src/tmux/` shrinks, `ansi` must move to
+  a neutral module or stay.
+- **Calibration:** do not ask the executor to measure a baseline the
+  architect knows (recorded in the `rexymcp-lean-specs` memory).
