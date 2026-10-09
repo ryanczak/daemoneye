@@ -4,7 +4,7 @@
 **Docker Sandboxes** (`sbx`) microVMs on the PTY substrate, and delete the
 M18/M19 `docker run` sandbox it supersedes.
 
-**Status:** in-progress. Rescoped 2026-10-05 from "tmux removal & 2.0 close";
+**Status:** done (closed 2026-10-09; every exit criterion verified live on pinky, § Retrospective). Rescoped 2026-10-05 from "tmux removal & 2.0 close";
 **PE signed off on scope 2026-10-05**, accepting every recommendation on the
 six questions (§ Decisions on the open questions).
 
@@ -86,9 +86,75 @@ drafted on demand and may split.
 | 09c | sbx-docs ([phase-09c-sbx-docs.md](phase-09c-sbx-docs.md)) — README (sandbox section, CLI table, config table, ghost prose), CLAUDE.md § Container sandbox, `security.md`, the seeded `ghost-shell-guide` memory, `docs/architecture.md`; `tests/doc_truth.rs` passes | done (approved_first_try, 2026-10-08) |
 | 10a | sbx-ready-probe ([phase-10a-sbx-ready-probe.md](phase-10a-sbx-ready-probe.md)) — found live: `await_ready`'s 200 ms per-probe reply timeout is shorter than an sbx `Status` round trip (0.24 s warm), so every sandbox shell is declared never-ready | done (approved_first_try, 2026-10-08) |
 | 10b | sbx-stage-resolved ([phase-10b-sbx-stage-resolved.md](phase-10b-sbx-stage-resolved.md)) — found live (run 4): the ghost path resolves a script to its absolute host path before the sandbox branch, and `parse_script_invocation` rejects absolute paths, so the script is never staged (exit 127 in the VM) | done (approved_after_1, 2026-10-08) |
-| 10 | live-close — architect-run live verification of every exit criterion on pinky | todo |
+| 10 | live-close — architect-run live verification of every exit criterion on pinky | done (architect-run, 2026-10-08/09) |
 
 ## Notes
+
+### Retrospective (2026-10-09)
+
+**Outcome.** M26 delivered agent isolation on Docker Sandboxes and removed
+the docker container runtime. Every exit criterion was verified live on
+pinky at the row-10 close (sbx v0.46.0): a ghost run in its own microVM with
+its approved script staged in and real exit codes back; `Ctrl+P` freezing
+the in-VM job (a 13.2 s gap in the recording with the counter stuck at 91,
+resuming at 92); egress denied (`curl example.com` → 403) and audited in the
+run log and `events.jsonl` before teardown; chat `wait: false` in a
+per-session sandbox with its dedicated shell closed after the completion
+message; fail-closed on an unusable `sbx` (refused, no host file, no shell);
+shells adopted across every daemon restart; `container.rs`, `containers/`,
+the lockfiles and `sandbox build` gone and the docs current.
+
+**Numbers.** 23 executor phases plus the architect-run live close. 18
+`approved_first_try`, 3 `approved_after_1` (03, 09a, 10b), 2 `escalated`
+(01b, 05a — both runaway evidence-collection loops, not spec defects). One
+bug doc (bug-03-1) plus bug-09a-1. Suite 2297 → 2300 after the two live-close
+fixes.
+
+**What the live close found that nothing else did.** Two defects invisible
+to unit tests and to the component-level live checks of 05b/06a:
+1. **10a** — `await_ready` waited 200 ms for a `Status` reply; an sbx host
+   answers through an in-VM `sbx exec` (0.24 s warm), so no sandbox shell
+   ever passed readiness. 05b verified the host directly, not through the
+   probe.
+2. **10b** — the ghost path resolves a script to its absolute host path
+   before the sandbox branch, and `parse_script_invocation` rejects absolute
+   paths, so no approved script was ever staged (exit 127 in the VM). 06d's
+   tests all used bare names.
+Lesson: an integration path is only verified when its *entry point* is
+driven, not its components. Deferring the 06c/07 live checks to row 10 was
+right; skipping them would have shipped both defects.
+
+**Process calibration.**
+- *Lean specs.* Matt flagged (2026-10-08) that the architect was
+  front-loading too much: pinned prose, trial deletions, measured probes.
+  10a, dispatched from a ~90-line spec that left the mechanism to the
+  executor, landed first try. 10b, which also left the *location* open,
+  stalled at 120 read-only calls with no edit; pinning the one function fixed
+  it in 35 turns. Rule adopted: lean on *how*, explicit on *where* once the
+  architect has traced it.
+- *Governor.* `read_only_stall_threshold` went 60 → 120 after 09c stalled
+  during verification with all edits already made; verify-heavy phases on
+  this executor legitimately exceed 60.
+- *Architect errors, recorded.* Two misjudgements of dead-code warnings under
+  `pub(crate) mod` (02 drafting, 09a); two wrong base commits in criteria
+  (09b draft caught at pre-dispatch, 09c caught at escalation); one wrong
+  reading of `parse_script_invocation` at the live close. The pre-dispatch
+  check caught the catchable ones.
+- *rexyMCP.* The cargo output filter stripping `test … ok` lines caused the
+  05a loop (issue #13 filed); `rexymcp status`'s diff stat omits deleted
+  files (read `git show --stat` for deletion phases); a `continue_phase`
+  call can outlive the MCP client's idle timeout while the server-side run
+  continues.
+
+**Observed, out of scope.** The ghost model (GLM-5.3-Flash) re-ran its
+script every turn despite the runbook's "once" and exhausted its budget; and
+after a `sandbox unavailable:` refusal naming a path, the chat model began
+investigating that path with foreground host commands. Both are model
+behaviour, worth a note in the runbook docs, not sandbox defects.
+
+**Carried forward.** M27 (tmux removal) per the renumbered roadmap. The Q2
+secrets mapping (per-service host lists) was never measured; sbx secret
+injection stays unconfigured, so no credential enters a sandbox.
 
 ### Why rescope (2026-10-05)
 
