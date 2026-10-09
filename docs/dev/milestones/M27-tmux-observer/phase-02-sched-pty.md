@@ -1,7 +1,7 @@
 # Phase 02: sched-pty — scheduled scripts run in a PTY shell; `Command` jobs refuse to fire
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** in-progress (bounced: bug-02-1)
 **Depends on:** phase-01
 **Tags:** language=rust, kind=feature, size=m
 
@@ -73,6 +73,9 @@ Constraint: no new `tmux::` call in `scheduled.rs`. The window path for
 
 ## Acceptance criteria
 
+- [ ] **(bug-02-1)** `scheduled_host_shell_is_not_marked_sandboxed` reports
+      `1 passed`: the host path's scheduler shell has `sandbox == None`.
+- [ ] **(bug-02-1)** `cargo test` reports exactly `passed=2305 failed=0`.
 - [ ] The four tests above each report `1 passed` alone. Today each reports
       `0 passed`.
 - [ ] `grep -n 'create_job_window\|kill_job_window' src/daemon/scheduled.rs`
@@ -300,3 +303,23 @@ kill: (-2037462): No such process
 **Commit:** 6c7ef2d45e809c7ed451774afef42aeaf530bc18
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-10-09 (re-dispatch after bug-02-1)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything else in this phase is approved: the `Command`
+refusal, the sandboxed path (`run_script_in_sandbox`), the teardown, the
+watchdog and notification handling, and the four tests.
+
+There is **one change left**, in `run_script_on_host`
+(`src/daemon/scheduled.rs`). It must not call `run_ghost_in_sandbox` with
+an empty sandbox name; that registers a host shell as `sandbox: Some("")`
+and makes the marker protocol use `sh` syntax for the user's login shell.
+Use the host helper the spec named, `run_ghost_remote` in
+`src/daemon/executor/ghost_remote.rs` with `HostId::Local`, widening its
+visibility to `pub(crate)` (authorized). Delete the unused `_max_per_owner`.
+Add `scheduled_host_shell_is_not_marked_sandboxed`.
+
+Finish condition: `passed=2305`, exactly one more than today's 2304.
+Before reporting, mutation-check it: put the empty-name call back, confirm
+the new test fails, restore it, and state both results.
