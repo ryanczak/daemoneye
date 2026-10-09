@@ -50,6 +50,8 @@ impl fmt::Display for ShellId {
 pub enum Owner {
     Chat(String),
     Ghost(String),
+    /// A scheduled job's shells (`ActionOn::Script`), keyed by the job id.
+    Scheduler(String),
     /// A shell adopted at daemon startup from a live host left behind by a
     /// previous daemon. Per the measured facts in phase-06b, nothing on disk
     /// records the original owner, and the owning session is gone by
@@ -67,6 +69,7 @@ impl Owner {
         match self {
             Owner::Chat(id) => format!("chat:{id}"),
             Owner::Ghost(id) => format!("ghost:{id}"),
+            Owner::Scheduler(id) => format!("scheduler:{id}"),
             Owner::Adopted => "adopted".to_string(),
             Owner::User => "user".to_string(),
         }

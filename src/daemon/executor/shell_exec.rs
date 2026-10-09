@@ -54,7 +54,7 @@ pub(super) fn format_for_model(raw: &str) -> String {
 
 /// What one command produced, already fit for a model.
 #[derive(Debug)]
-pub(super) struct ShellRunResult {
+pub(crate) struct ShellRunResult {
     /// Annotated, masked, normalized. Ready to send as the tool result.
     pub text: String,
     pub exit_code: i32,
@@ -84,7 +84,7 @@ fn applied_timeout_secs(timeout_secs: Option<u64>) -> Duration {
 /// `Request::CredentialResponse` over the caller's transport, exactly as the
 /// tmux path does.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn run_in_shell_with_prompts<'p, W, R, F, Fut>(
+pub(crate) async fn run_in_shell_with_prompts<'p, W, R, F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
     cmd: &str,

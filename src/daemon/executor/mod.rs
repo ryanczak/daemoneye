@@ -8,7 +8,7 @@ pub(crate) mod knowledge;
 pub mod sbx;
 pub mod sbx_lifecycle;
 mod schedule;
-mod shell_exec;
+pub(crate) mod shell_exec;
 
 use crate::ai::{PendingCall, next_tool_id};
 use crate::daemon::policy::GhostPolicy;
