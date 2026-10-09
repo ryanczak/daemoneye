@@ -1,11 +1,9 @@
 # NEXT
 
 **Active milestone: M27 — tmux becomes an optional observer; 2.0 close**
-([`README.md`](milestones/M27-tmux-observer/README.md)). **Active phase: 02 —
-sched-pty**, status `in-progress`, **bounced** on
-[bug-02-1](milestones/M27-tmux-observer/bugs/bug-02-1.md): the scheduler's
-host shell is registered as `sandbox: Some("")`. Re-dispatch with
-`/rexymcp:dispatch phase-02`.
+([`README.md`](milestones/M27-tmux-observer/README.md)). **Active phase: 03 —
+catchup-reconnect** ([phase doc](milestones/M27-tmux-observer/phase-03-catchup-reconnect.md)),
+status `todo`. Dispatch with `/rexymcp:dispatch phase-03`.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline

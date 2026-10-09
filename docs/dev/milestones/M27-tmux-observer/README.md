@@ -55,7 +55,7 @@ is split further at drafting if it is more than one session.
 |---|---|---|
 | 01 | helpers-out ([phase-01-helpers-out.md](phase-01-helpers-out.md)) — move the generic helpers that only *live* in `src/tmux/` (`bounded_output`, the `status` classifiers, `format_age`, `annotate_output`) to neutral modules; no behaviour change | done (approved_after_1, 2026-10-09) |
 | 02 | sched-pty ([phase-02-sched-pty.md](phase-02-sched-pty.md)) — `ActionOn::Script` on a scheduler-owned PTY shell; `ActionOn::Command` loads and refuses to fire | done (approved_after_1, 2026-10-09) |
-| 03 | catchup-reconnect — catch-up brief driven by chat client connect/disconnect | todo |
+| 03 | catchup-reconnect ([phase-03-catchup-reconnect.md](phase-03-catchup-reconnect.md)) — chat holds a presence connection; the brief fires on re-attach (`chat --resume <id>`) after ≥ 30 s away | todo |
 | 04 | chat-no-tmux — `chat` / `ask` work outside tmux (session identity, width, palette) | todo |
 | 03b | alerts-ipc — webhook and scheduled alerts are pushed to every connected chat client over IPC and rendered by the client; the tmux `display-message` overlay becomes an optional extra when tmux is present | todo |
 | 05 | tmux-readonly — delete the execution side (foreground send-keys, job windows, hooks, pipe-pane, `[execution]` flag, `notify`); keep capture/list, gated on `$TMUX` | todo |
@@ -84,6 +84,13 @@ is split further at drafting if it is more than one session.
    scheduled script runs in a per-run sandbox exactly as a ghost's command
    does, and fails closed otherwise. Sandboxes may become the default later;
    nothing in M27 may assume a scheduled job runs on the host.
+6. **Reconnect = chat presence + resume** (2026-10-09, at phase-03
+   drafting). Chat opens one IPC connection per `Ask` and mints a fresh
+   session id per process, so there was no reconnect to observe. Each
+   `daemoneye chat` now holds a long-lived `ChatAttach` connection. The
+   daemon stamps detach state when a session's last connection closes.
+   `chat --resume <id>` re-attaches, and the brief comes back in the attach
+   reply. Phase 03b pushes alerts down the same connection.
 
 ### Spec style for this milestone
 
