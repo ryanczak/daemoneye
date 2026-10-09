@@ -80,6 +80,10 @@ is split further at drafting if it is more than one session.
    every connected chat client, which renders it on screen (row 03b). The
    tmux overlay may stay as an optional extra when tmux is present. The
    `[notifications] on_alert` hook is unchanged.
+5. **Scheduled scripts support the sandbox.** With `[sandbox] enabled`, a
+   scheduled script runs in a per-run sandbox exactly as a ghost's command
+   does, and fails closed otherwise. Sandboxes may become the default later;
+   nothing in M27 may assume a scheduled job runs on the host.
 
 ### Spec style for this milestone
 

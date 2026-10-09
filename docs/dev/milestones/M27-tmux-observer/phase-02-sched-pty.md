@@ -39,11 +39,18 @@ loading from `schedules.json` but **refuses to fire**, with a logged reason.
   `ActionOn::Command is no longer supported; migrate the job to ActionOn::Script`,
   mark the job failed, and fire the same failure notification a failed job
   gets.
-- **Sandbox.** With `[sandbox] enabled`, a scheduled script must not quietly
-  run on the host. Either route it through the chat sandbox's staged-script
-  path, or refuse it with the existing `sandbox unavailable:`-style reason.
-  The architect's preference is **refuse**: scheduled jobs are unattended
-  and their policy is undecided. State which you chose in the Update Log.
+- **Sandbox.** With `[sandbox] enabled`, a scheduled script runs **inside a
+  sandbox**, never on the host (PE: sandboxes may become the default, so
+  scheduled jobs must support them now). Follow the sandboxed-ghost shape
+  in `run_background` (`src/daemon/executor/foreground.rs`) and
+  `src/daemon/executor/ghost_sandbox.rs`: `ensure_sandbox` with
+  `SandboxKind::Ghost` keyed by the job id (the per-run kind; a new kind is
+  not needed), the default profile, `stage_script` for the resolved script,
+  `run_ghost_in_sandbox`, and `forget_and_teardown` after the job, so the
+  sandbox lives exactly as long as the run. Fail closed: if `ensure_sandbox`
+  or staging fails, the job fails with that reason and nothing runs on the
+  host. With the sandbox disabled, the script runs in the scheduler-owned
+  host PTY shell described above.
 
 Constraint: no new `tmux::` call in `scheduled.rs`. The window path for
 `Script` and `Command` is deleted, not kept as a fallback.
@@ -59,17 +66,21 @@ Constraint: no new `tmux::` call in `scheduled.rs`. The window path for
   produces no shell and no spawned process, and returns the refusal reason.
 - `owner_scheduler_key_is_distinct`: `Owner::Scheduler("j1")` and
   `Owner::Ghost("j1")` have different `key()`s.
+- `scheduled_script_fails_closed_when_the_sandbox_is_unavailable`: with the
+  sandbox enabled and a fake `SbxRunner` whose preflight fails (see the
+  `ghost_sandbox.rs` test fixtures), the job fails with a reason starting
+  `sandbox unavailable:`, and no shell is spawned.
 
 ## Acceptance criteria
 
-- [ ] The three tests above each report `1 passed` alone. Today each reports
+- [ ] The four tests above each report `1 passed` alone. Today each reports
       `0 passed`.
 - [ ] `grep -n 'create_job_window\|kill_job_window' src/daemon/scheduled.rs`
       prints nothing. Today it prints lines.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` exits 0;
       `cargo fmt --all --check` exits 0.
-- [ ] `cargo test` reports `0 failed` and exactly `passed=2303`: today's 2300
-      plus the three new tests. If an existing test of the old window path
+- [ ] `cargo test` reports `0 failed` and exactly `passed=2304`: today's 2300
+      plus the four new tests. If an existing test of the old window path
       has to go, delete it, lower the count by one per deleted test, and
       list each deletion in the Update Log.
 - [ ] The Update Log entry contains the § End-to-end verification output,
@@ -78,7 +89,7 @@ Constraint: no new `tmux::` call in `scheduled.rs`. The window path for
 ## End-to-end verification
 
 ```sh
-for t in scheduled_script_runs_in_a_scheduler_pty_shell scheduled_command_job_refuses_to_fire owner_scheduler_key_is_distinct; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
+for t in scheduled_script_runs_in_a_scheduler_pty_shell scheduled_command_job_refuses_to_fire owner_scheduler_key_is_distinct scheduled_script_fails_closed_when_the_sandbox_is_unavailable; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
 grep -n 'create_job_window\|kill_job_window' src/daemon/scheduled.rs ; echo "grep_done"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
 cargo fmt --all --check; echo "fmt_exit=$?"
@@ -93,7 +104,8 @@ the `cargo test` lines; rexyMCP's output filter removes the individual
 ## Authorizations
 
 - [x] May edit `src/daemon/scheduled.rs` and `src/shell/registry.rs`, and
-      change the visibility of the shell helper in `ghost_remote.rs`.
+      change the visibility of helpers in `ghost_remote.rs` and
+      `ghost_sandbox.rs` so `scheduled.rs` can call them.
 
 ## Out of scope
 
