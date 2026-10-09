@@ -6,11 +6,10 @@ Rescoped 2026-10-05 from "tmux removal & 2.0 close" (now **M27**; later
 milestones are M28–M30, `docs/design/daemoneye-2.0.md` § 6). **PE signed off
 on scope 2026-10-05**, accepting all six recommendations.
 
-**Active phase: none.** M26 (sbx isolation) is **done** — closed 2026-10-09
-after the architect-run live close verified every exit criterion on pinky
-(`docs/dev/milestones/M26-sbx-isolation/README.md` § Retrospective). The next
-milestone, M27 (tmux removal), needs PE sign-off before `/rexymcp:architect`
-scopes it.
+**Active milestone: M27 — tmux becomes an optional observer; 2.0 close**
+([`README.md`](milestones/M27-tmux-observer/README.md)), scoped 2026-10-09 with
+PE decisions recorded. **Active phase: none drafted.** Next is row **01 —
+helpers-out**; `/rexymcp:architect next` drafts it. M26 is done.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline
