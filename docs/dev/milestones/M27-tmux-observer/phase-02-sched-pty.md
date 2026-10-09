@@ -1,7 +1,7 @@
 # Phase 02: sched-pty — scheduled scripts run in a PTY shell; `Command` jobs refuse to fire
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-01
 **Tags:** language=rust, kind=feature, size=m
 
@@ -656,3 +656,31 @@ kill: (-2383062): No such process
 **Commit:** ef7d047b2080222dd357d0b995f565a45081625f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-09
+
+- **Verdict:** approved_after_1. The first round's host path called
+  `run_ghost_in_sandbox` with an empty sandbox name, so the host shell was
+  registered as `sandbox: Some("")` (bug-02-1). A re-dispatch stalled
+  (NoProgressStall). The refined re-dispatch, with the fix inlined and the
+  masking test seam removed, landed it in `ef7d047b`.
+- **Bounces:** 1 (bug-02-1, major).
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark. The final
+  run (91 turns, `c88f722d`) only re-verified the committed fix.
+- **Scope deviations:** none in the fix round. The round-one host helper
+  substitution was the bounced deviation.
+- **Independent re-run:** `cargo fmt --all --check` exit 0, build clean,
+  clippy `-D warnings` exit 0, `cargo test` `passed=2305 failed=0`,
+  `create_job_window|kill_job_window` grep empty.
+- **Calibration:** (1) `scheduled_host_shell_is_not_marked_sandboxed` uses
+  `.find(…).and_then(|r| r.sandbox.clone())`, so a missing record also
+  yields `None`. The pasted mutation run shows it does fail on the real
+  defect, but an `expect`-the-record shape would be stricter. (2)
+  `scheduled_script_fails_closed_when_the_sandbox_is_unavailable` counts
+  shells in a fresh `ShellRegistry` nothing touched, so its "no shell
+  spawned" assertion is vacuous. The two-probe `SbxRunner` call count is
+  the real check there. Neither is a bounce. Note both for the test-shape
+  fold queue. (3) A test seam that copied the production path masked
+  bug-02-1 in round one. The refinement fixed that by deleting the seam,
+  which is worth folding as "seams take the spawn step, never a copy of the
+  path".

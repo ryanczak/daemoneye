@@ -54,7 +54,7 @@ is split further at drafting if it is more than one session.
 | # | Phase | Status |
 |---|---|---|
 | 01 | helpers-out ([phase-01-helpers-out.md](phase-01-helpers-out.md)) — move the generic helpers that only *live* in `src/tmux/` (`bounded_output`, the `status` classifiers, `format_age`, `annotate_output`) to neutral modules; no behaviour change | done (approved_after_1, 2026-10-09) |
-| 02 | sched-pty ([phase-02-sched-pty.md](phase-02-sched-pty.md)) — `ActionOn::Script` on a scheduler-owned PTY shell; `ActionOn::Command` loads and refuses to fire | review                          |
+| 02 | sched-pty ([phase-02-sched-pty.md](phase-02-sched-pty.md)) — `ActionOn::Script` on a scheduler-owned PTY shell; `ActionOn::Command` loads and refuses to fire | done (approved_after_1, 2026-10-09) |
 | 03 | catchup-reconnect — catch-up brief driven by chat client connect/disconnect | todo |
 | 04 | chat-no-tmux — `chat` / `ask` work outside tmux (session identity, width, palette) | todo |
 | 03b | alerts-ipc — webhook and scheduled alerts are pushed to every connected chat client over IPC and rendered by the client; the tmux `display-message` overlay becomes an optional extra when tmux is present | todo |
