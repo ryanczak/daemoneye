@@ -1,0 +1,317 @@
+//! Chat presence (M27 phase 03): `ChatAttach` holds one connection per chat
+//! client for the client's lifetime. Detach state is stamped when the last
+//! connection for a session closes; a later attach ≥ 30 s later receives the
+//! catch-up brief in the attach reply.
+
+use super::catchup::build_catchup_brief;
+use crate::daemon::session::{
+    SessionStore, presence_register, presence_unregister, record_chat_detach, with_sessions,
+};
+use crate::daemon::utils::send_response_split;
+use crate::ipc::Response;
+use anyhow::Result;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+/// Compute the catch-up brief for a session id at attach time, then clear the
+/// session's detach state.
+///
+/// Mirrors the `Ask`-time brief it replaces (M27 phase 03): when the entry
+/// has `last_detach`, the away time is measured from it and the brief is
+/// built over the messages added since `messages_at_detach`. The detach
+/// state is cleared whether or not a brief was produced. A session with no
+/// entry yields no brief — presence alone carries the attach.
+pub(crate) fn attach_brief_for(sessions: &SessionStore, session_id: &str) -> Option<String> {
+    with_sessions(sessions, |store| {
+        let entry = store.get_mut(session_id)?;
+        let brief = entry.last_detach.and_then(|detach| {
+            let away_secs = detach.elapsed().as_secs();
+            let new_msgs = &entry.messages[entry.messages_at_detach.min(entry.messages.len())..];
+            build_catchup_brief(new_msgs, away_secs, entry.detach_time_utc)
+        });
+        entry.last_detach = None;
+        entry.detach_time_utc = None;
+        entry.messages_at_detach = 0;
+        brief
+    })
+}
+
+/// Handle `ChatAttach { session_id }`.
+///
+/// Registers the connection as present for the session, replies with the
+/// catch-up brief (zero or one `SystemMsg`) and then `Ok`, then holds the
+/// connection: reads until EOF or error, ignoring whatever the client sends,
+/// and unregisters on close. When the unregistered connection was the
+/// session's last, detach state is stamped on the entry (if it exists) so a
+/// later re-attach can be briefed.
+pub(crate) async fn handle_chat_attach<R, W>(
+    sessions: SessionStore,
+    session_id: String,
+    rx: &mut R,
+    tx: &mut W,
+) -> Result<()>
+where
+    R: AsyncBufReadExt + Unpin,
+    W: AsyncWriteExt + Unpin,
+{
+    presence_register(&session_id);
+    log::info!("chat presence attached for session {session_id}");
+
+    if let Some(brief) = attach_brief_for(&sessions, &session_id) {
+        send_response_split(tx, Response::SystemMsg(brief)).await?;
+    }
+    send_response_split(tx, Response::Ok).await?;
+
+    // Hold the connection for the client's lifetime. Any bytes the client
+    // sends are read and discarded — the channel carries daemon→client
+    // traffic; the client talks over its other connections.
+    let mut discarded = String::new();
+    loop {
+        let n = rx.read_line(&mut discarded).await?;
+        if n == 0 {
+            break;
+        }
+        discarded.clear();
+    }
+
+    let was_last = presence_unregister(&session_id);
+    log::info!("chat presence detached for session {session_id} (last={was_last})");
+    if was_last {
+        record_chat_detach(&session_id, &sessions);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::Message;
+    use crate::daemon::session::{SessionEntry, presence_count};
+    use std::collections::HashSet;
+    use std::time::Instant;
+    use tokio::io::AsyncWriteExt;
+
+    fn entry(messages: Vec<Message>) -> SessionEntry {
+        SessionEntry {
+            messages,
+            last_accessed: Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: Vec::new(),
+            last_prompt_tokens: 0,
+            tmux_session: "test".to_string(),
+            last_detach: None,
+            detach_time_utc: None,
+            messages_at_detach: 0,
+            pipe_source_pane: None,
+            is_ghost: false,
+            ghost_config: None,
+            ghost_bg_prefix: "",
+            ghost_runbook_name: None,
+            started_at: chrono::Utc::now(),
+            turn_count: 0,
+            tool_calls_this_session: 0,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: Vec::new(),
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            loaded_tools: HashSet::new(),
+            cost_usd: 0.0,
+            cost_by_agent: std::collections::HashMap::new(),
+            has_untracked_cost: false,
+            token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
+        }
+    }
+
+    fn msg(content: &str) -> Message {
+        Message {
+            role: "system".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+            turn: None,
+        }
+    }
+
+    type ClientRx = tokio::io::BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>;
+    type ClientTx = tokio::io::WriteHalf<tokio::io::DuplexStream>;
+
+    /// Run `handle_chat_attach` over a duplex, with the daemon side in a task.
+    /// Returns the client's reader, writer half and the task handle.
+    async fn drive(
+        sessions: SessionStore,
+        session_id: &str,
+    ) -> (ClientRx, ClientTx, tokio::task::JoinHandle<Result<()>>) {
+        let (client, server) = tokio::io::duplex(1 << 16);
+        let (server_r, server_w) = tokio::io::split(server);
+        let sid = session_id.to_string();
+        let task = tokio::spawn(async move {
+            let mut rx = tokio::io::BufReader::new(server_r);
+            let mut tx = server_w;
+            handle_chat_attach(sessions, sid, &mut rx, &mut tx).await
+        });
+        let (client_r, client_w) = tokio::io::split(client);
+        (tokio::io::BufReader::new(client_r), client_w, task)
+    }
+
+    /// Read exactly `n` response lines from the client side, each within 5 s.
+    async fn read_responses(rx: &mut ClientRx, n: usize) -> Vec<Response> {
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            let mut line = String::new();
+            let read = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                AsyncBufReadExt::read_line(rx, &mut line),
+            )
+            .await
+            .expect("a response line within 5 s")
+            .expect("the attach handler is still writing");
+            assert!(read > 0, "the attach handler wrote a non-empty line");
+            out.push(serde_json::from_str(line.trim()).expect("a response line parses"));
+        }
+        out
+    }
+
+    /// Drop the client side, then wait for the handler to finish.
+    async fn close(client_w: &mut ClientTx, task: tokio::task::JoinHandle<Result<()>>) {
+        client_w.shutdown().await.unwrap();
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn last_presence_disconnect_records_detach_state() {
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert("s1".to_string(), entry(vec![msg("hello")]));
+        });
+
+        let (mut rx, mut client_w, task) = drive(sessions.clone(), "s1").await;
+        let replies = read_responses(&mut rx, 1).await;
+        assert!(
+            matches!(replies.as_slice(), [Response::Ok]),
+            "no detach state → Ok alone, got {replies:?}"
+        );
+        close(&mut client_w, task).await;
+
+        with_sessions(&sessions, |store| {
+            let e = store.get("s1").unwrap();
+            assert!(e.last_detach.is_some(), "the close stamps last_detach");
+            assert!(e.detach_time_utc.is_some());
+            assert_eq!(
+                e.messages_at_detach, 1,
+                "messages_at_detach is the message count at close"
+            );
+        });
+        assert_eq!(presence_count("s1"), 0, "presence unregistered on close");
+    }
+
+    #[tokio::test]
+    async fn presence_with_two_clients_detaches_only_on_last() {
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert("s2".to_string(), entry(vec![msg("hello")]));
+        });
+
+        let (mut rx1, mut client1, task1) = drive(sessions.clone(), "s2").await;
+        let _ = read_responses(&mut rx1, 1).await;
+        let (mut rx2, mut client2, task2) = drive(sessions.clone(), "s2").await;
+        let _ = read_responses(&mut rx2, 1).await;
+        assert_eq!(presence_count("s2"), 2, "two clients attached");
+
+        close(&mut client1, task1).await;
+        with_sessions(&sessions, |store| {
+            let e = store.get("s2").unwrap();
+            assert!(
+                e.last_detach.is_none(),
+                "one of two still attached → no detach stamp"
+            );
+        });
+
+        close(&mut client2, task2).await;
+        with_sessions(&sessions, |store| {
+            let e = store.get("s2").unwrap();
+            assert!(e.last_detach.is_some(), "the last close stamps the detach");
+            assert_eq!(e.messages_at_detach, 1);
+        });
+        assert_eq!(presence_count("s2"), 0);
+    }
+
+    #[tokio::test]
+    async fn reattach_after_30s_returns_catchup_brief() {
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            let mut e = entry(vec![
+                msg("user question"),
+                msg("[Background Task Completed] apt upgrade finished (exit 0)"),
+            ]);
+            e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
+            e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
+            e.messages_at_detach = 1;
+            store.insert("s3".to_string(), e);
+        });
+
+        let (mut rx, mut client_w, task) = drive(sessions.clone(), "s3").await;
+        let replies = read_responses(&mut rx, 2).await;
+        match replies.as_slice() {
+            [Response::SystemMsg(brief), Response::Ok] => {
+                assert!(
+                    brief.contains("[Catch-up]"),
+                    "brief must be the catch-up brief: {brief}"
+                );
+                assert!(
+                    brief.contains("[Background Task Completed] apt upgrade finished"),
+                    "brief must cover the message added after the detach: {brief}"
+                );
+            }
+            other => panic!("expected brief + Ok, got {other:?}"),
+        }
+        // Cleared by the attach itself — before the close below re-stamps it.
+        with_sessions(&sessions, |store| {
+            let e = store.get("s3").unwrap();
+            assert!(
+                e.last_detach.is_none(),
+                "detach state cleared after the brief"
+            );
+            assert!(e.detach_time_utc.is_none());
+            assert_eq!(e.messages_at_detach, 0);
+        });
+        close(&mut client_w, task).await;
+    }
+
+    #[tokio::test]
+    async fn reattach_within_30s_returns_no_brief() {
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            let mut e = entry(vec![
+                msg("user question"),
+                msg("[Background Task Completed] apt upgrade finished (exit 0)"),
+            ]);
+            e.last_detach = Some(Instant::now());
+            e.detach_time_utc = Some(chrono::Utc::now());
+            e.messages_at_detach = 1;
+            store.insert("s4".to_string(), e);
+        });
+
+        let (mut rx, mut client_w, task) = drive(sessions.clone(), "s4").await;
+        let replies = read_responses(&mut rx, 1).await;
+        assert!(
+            matches!(replies.as_slice(), [Response::Ok]),
+            "absence under 30 s → Ok with no SystemMsg, got {replies:?}"
+        );
+        // Cleared by the attach itself — before the close below re-stamps it.
+        with_sessions(&sessions, |store| {
+            let e = store.get("s4").unwrap();
+            assert!(
+                e.last_detach.is_none(),
+                "state cleared even when no brief was produced"
+            );
+            assert!(e.detach_time_utc.is_none());
+            assert_eq!(e.messages_at_detach, 0);
+        });
+        close(&mut client_w, task).await;
+    }
+}

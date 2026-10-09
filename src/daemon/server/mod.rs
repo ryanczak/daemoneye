@@ -4,6 +4,7 @@
 
 mod ask;
 mod catchup;
+mod chat_presence;
 mod handlers;
 mod shells;
 
@@ -315,20 +316,15 @@ pub async fn handle_client(
             crate::daemon::hook::handle_notify_session_created(&mut tx, session_name).await?;
         }
         Request::NotifyClientDetached { session_name } => {
-            crate::daemon::hook::handle_notify_client_detached(
-                sessions.clone(),
-                &mut tx,
-                session_name,
-            )
-            .await?;
+            crate::daemon::hook::handle_notify_client_detached(&mut tx, session_name).await?;
         }
         Request::NotifyClientAttached { session_name } => {
-            crate::daemon::hook::handle_notify_client_attached(
-                sessions.clone(),
-                &mut tx,
-                session_name,
-            )
-            .await?;
+            crate::daemon::hook::handle_notify_client_attached(&mut tx, session_name).await?;
+        }
+        Request::ChatAttach { session_id } => {
+            chat_presence::handle_chat_attach(sessions.clone(), session_id, &mut rx, &mut tx)
+                .await?;
+            return Ok(());
         }
         Request::NotifyResize { width, height, .. } => {
             crate::daemon::hook::handle_notify_resize(&cache, &mut tx, width, height).await?;

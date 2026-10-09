@@ -1,4 +1,3 @@
-use super::catchup::build_catchup_brief;
 use crate::ai::Message;
 use crate::ai::filter::mask_sensitive;
 use crate::config::{Config, load_named_prompt};
@@ -86,8 +85,9 @@ where
 
     // Upsert the session entry: create it with the client-resolved target pane if
     // new, or refresh chat_pane and adopt client_target_pane if not yet set.
-    // Also capture any pending catch-up brief (N15) and pane-drift notice to
-    // send after SessionInfo.
+    // Also capture any pending pane-drift notice to send after SessionInfo.
+    // The N15 catch-up brief is not sent here (M27 phase 03): chat presence
+    // delivers it in the `ChatAttach` reply instead.
     // Read persisted continuity state *before* taking the lock. It is a file read
     // and must not run inside a critical section. Only needed when the session is
     // not already resident — the probe below is a HashMap lookup, not blocking work.
@@ -101,7 +101,9 @@ where
         None
     };
 
-    let (catchup_brief, pane_drift_msg, session_cost_usd, has_untracked_cost, pipe_candidate): (
+    // Pane-drift notice only — the N15 catch-up brief moved to chat presence
+    // (M27 phase 03) and is no longer computed or sent at Ask time.
+    let (_catchup_brief, pane_drift_msg, session_cost_usd, has_untracked_cost, pipe_candidate): (
         Option<String>,
         Option<String>,
         f64,
@@ -221,22 +223,9 @@ where
                 None
             };
 
-            // N15: generate a catch-up brief if the client was detached and new
-            // messages arrived while no terminal was attached (background jobs,
-            // webhook alerts, watchdog results, etc.).
-            let brief = entry.last_detach.and_then(|detach_time| {
-                let away_secs = detach_time.elapsed().as_secs();
-                let new_msgs =
-                    &entry.messages[entry.messages_at_detach.min(entry.messages.len())..];
-                build_catchup_brief(new_msgs, away_secs, entry.detach_time_utc)
-            });
-
-            // Clear detach state regardless of whether we generated a brief.
-            entry.last_detach = None;
-
             let cost_usd = entry.cost_usd;
             let has_untracked = entry.has_untracked_cost;
-            (brief, drift_msg, cost_usd, has_untracked, pipe_candidate)
+            (None, drift_msg, cost_usd, has_untracked, pipe_candidate)
         })
     } else {
         (None, None, 0.0, false, None)
@@ -693,7 +682,7 @@ where
     .await?;
 
     // Notify the user when compaction occurred so the turn counter reset is
-    // not mysterious.  Sent before the catch-up brief so it appears first.
+    // not mysterious.  Sent before the pane-drift notice so it appears first.
     if needs_compaction {
         let ratio = pre_trim_len as f64 / post_trim_len.max(1) as f64;
         log::info!(
@@ -737,14 +726,10 @@ where
         send_response_split(tx, Response::SystemMsg(notice)).await?;
     }
 
-    // N15: send catch-up brief as a SystemMsg immediately after SessionInfo so
-    // it appears before any streaming tokens from the AI.
-    if let Some(ref brief) = catchup_brief {
-        send_response_split(tx, Response::SystemMsg(brief.clone())).await?;
-    }
-
     // Pane drift: notify the model when the foreground target changed since
     // the last turn so it doesn't keep using the stale pane ID.
+    // (The N15 catch-up brief used to be sent here; chat presence delivers it
+    // at attach since M27 phase 03.)
     if let Some(ref msg) = pane_drift_msg {
         send_response_split(tx, Response::SystemMsg(msg.clone())).await?;
     }

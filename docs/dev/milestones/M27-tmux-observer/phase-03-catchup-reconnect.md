@@ -1,7 +1,7 @@
 # Phase 03: catchup-reconnect — chat presence over IPC drives the catch-up brief
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02
 **Tags:** language=rust, kind=feature, size=m
 
@@ -133,3 +133,11 @@ the managed-session auto-attach in `run_chat_inner` (phase 04); docs
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-09 16:05 (started)
+
+**Executor:** GLM-5.3-Flash-NVFP4-Spark (headless run). Status flipped
+`todo` → `in-progress`; milestone README row updated to match. Starting
+with `Request::ChatAttach` in `src/ipc.rs`, then the presence registry and
+the attach handler in `src/daemon/server/`, the brief move off `Ask`, the
+`cleanup_pass` guard, the hook handlers, and the `chat --resume` client.

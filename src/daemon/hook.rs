@@ -6,7 +6,6 @@ use crate::tmux::cache::SessionCache;
 use crate::util::UnpoisonExt;
 use anyhow::Result;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::io::AsyncWriteExt;
 
 /// Handle NotifyActivity hook — broadcast pane activity on the BG_DONE_TX channel.
@@ -178,47 +177,29 @@ where
     Ok(())
 }
 
-/// Handle NotifyClientAttached hook — clear pending detach state.
-pub async fn handle_notify_client_attached<W>(
-    sessions: SessionStore,
-    tx: &mut W,
-    session_name: String,
-) -> Result<()>
+/// Handle NotifyClientAttached hook — reply `Ok` and do nothing else.
+///
+/// Detach state is owned by chat presence (M27 phase 03): the daemon stamps
+/// it when the last `ChatAttach` connection for a session closes and clears
+/// it on the next attach. The tmux client-attached hook no longer touches it.
+pub async fn handle_notify_client_attached<W>(tx: &mut W, session_name: String) -> Result<()>
 where
     W: AsyncWriteExt + Unpin,
 {
-    with_sessions(&sessions, |store| {
-        for entry in store.values_mut() {
-            if entry.tmux_session == session_name {
-                entry.last_detach = None;
-                entry.detach_time_utc = None;
-            }
-        }
-    });
+    let _ = session_name;
     send_response_split(tx, Response::Ok).await?;
     Ok(())
 }
 
-/// Handle NotifyClientDetached hook — record detach time for catch-up brief.
-pub async fn handle_notify_client_detached<W>(
-    sessions: SessionStore,
-    tx: &mut W,
-    session_name: String,
-) -> Result<()>
+/// Handle NotifyClientDetached hook — reply `Ok` and do nothing else.
+///
+/// Detach state is owned by chat presence (M27 phase 03), not by this hook;
+/// see `handle_notify_client_attached`.
+pub async fn handle_notify_client_detached<W>(tx: &mut W, session_name: String) -> Result<()>
 where
     W: AsyncWriteExt + Unpin,
 {
-    let now = Instant::now();
-    let now_utc = chrono::Utc::now();
-    with_sessions(&sessions, |store| {
-        for entry in store.values_mut() {
-            if entry.tmux_session == session_name {
-                entry.last_detach = Some(now);
-                entry.detach_time_utc = Some(now_utc);
-                entry.messages_at_detach = entry.messages.len();
-            }
-        }
-    });
+    let _ = session_name;
     send_response_split(tx, Response::Ok).await?;
     Ok(())
 }
@@ -236,4 +217,108 @@ where
     cache.set_client_size(width, height);
     send_response_split(tx, Response::Ok).await?;
     Ok(())
+}
+
+// The module's tests follow; they are the only place in this file that
+// names detach state — the handlers above no longer touch it (M27 phase 03).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::session::{SessionEntry, SessionStore, with_sessions};
+    use std::collections::HashSet;
+    use std::time::Instant;
+    use tokio::io::AsyncBufReadExt;
+
+    fn entry_with_detach(session_name: &str) -> SessionEntry {
+        SessionEntry {
+            messages: Vec::new(),
+            last_accessed: Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: Vec::new(),
+            last_prompt_tokens: 0,
+            tmux_session: session_name.to_string(),
+            last_detach: Some(Instant::now()),
+            detach_time_utc: Some(chrono::Utc::now()),
+            messages_at_detach: 3,
+            pipe_source_pane: None,
+            is_ghost: false,
+            ghost_config: None,
+            ghost_bg_prefix: "",
+            ghost_runbook_name: None,
+            started_at: chrono::Utc::now(),
+            turn_count: 1,
+            tool_calls_this_session: 0,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: Vec::new(),
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            loaded_tools: HashSet::new(),
+            cost_usd: 0.0,
+            cost_by_agent: std::collections::HashMap::new(),
+            has_untracked_cost: false,
+            token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn tmux_client_hooks_no_longer_touch_detach_state() {
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert("s1".to_string(), entry_with_detach("dev"));
+            store.insert("s2".to_string(), entry_with_detach("dev"));
+        });
+
+        for attach in [true, false] {
+            let (client, server) = tokio::io::duplex(1 << 16);
+            let (server_r, mut server_w) = tokio::io::split(server);
+            let name = "dev".to_string();
+            let task = tokio::spawn(async move {
+                let mut rx = tokio::io::BufReader::new(server_r);
+                let _ = &mut rx;
+                if attach {
+                    handle_notify_client_attached(&mut server_w, name).await
+                } else {
+                    handle_notify_client_detached(&mut server_w, name).await
+                }
+            });
+            let mut lines = tokio::io::BufReader::new(client);
+            let mut reply_line = String::new();
+            let read = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                AsyncBufReadExt::read_line(&mut lines, &mut reply_line),
+            )
+            .await
+            .expect("a reply within 5 s")
+            .expect("the handler replies");
+            assert!(read > 0, "the handler wrote a non-empty reply");
+            let reply: Response =
+                serde_json::from_str(reply_line.trim()).expect("a response parses");
+            assert!(
+                matches!(reply, Response::Ok),
+                "hook replies Ok, got {reply:?} (attach={attach})"
+            );
+            task.await.unwrap().unwrap();
+        }
+
+        with_sessions(&sessions, |store| {
+            for (id, e) in store.iter() {
+                assert!(
+                    e.last_detach.is_some(),
+                    "{id}: hooks must not clear last_detach"
+                );
+                assert!(e.detach_time_utc.is_some());
+                assert_eq!(
+                    e.messages_at_detach, 3,
+                    "{id}: hooks must not touch messages_at_detach"
+                );
+            }
+        });
+    }
 }

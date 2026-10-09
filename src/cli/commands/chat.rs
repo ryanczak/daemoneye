@@ -8,6 +8,7 @@ use crate::cli::render_ratatui::RatatuiRendererStdout;
 use crate::config::Config;
 
 use super::approval::SessionApproval;
+use super::chat_presence;
 use super::ipc_client::new_session_id;
 use super::pane::resolve_target_pane;
 use super::slash;
@@ -76,7 +77,10 @@ Tool output is capped at 10 lines on screen (… N more lines · ctrl+o opens th
 Up/Down navigate the input; at the top/bottom edge they recall history.
 ";
 
-pub(super) async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
+pub(super) async fn run_chat_inner(
+    session_override: Option<String>,
+    resume_id: Option<String>,
+) -> Result<()> {
     // ── Managed-session auto-attach ────────────────────────────────────────────
     // When the daemon is configured with a managed tmux session and `daemoneye chat`
     // is invoked from outside tmux, transparently open a chat window in that session
@@ -133,7 +137,11 @@ pub(super) async fn run_chat_inner(session_override: Option<String>) -> Result<(
     }
 
     let start_time = std::time::Instant::now();
-    let session_id = new_session_id();
+    // `--resume <id>` reuses the given id; a fresh chat mints one (M27 phase 03).
+    let session_id = match resume_id.as_deref() {
+        Some(id) => id.to_string(),
+        None => new_session_id(),
+    };
     // None = use daemon's configured default prompt; Some(name) = override.
     let current_prompt: Option<String> = None;
     let stdin = crate::cli::input::AsyncStdin::new()?;
@@ -204,13 +212,27 @@ pub(super) async fn run_chat_inner(session_override: Option<String>) -> Result<(
 
     // Ratatui path: create the inline-viewport renderer (enters raw mode
     // internally).
-    let renderer = match RatatuiRendererStdout::new(start_time) {
+    let mut renderer = match RatatuiRendererStdout::new(start_time) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to initialise ratatui renderer: {e}");
             return Err(e.into());
         }
     };
+
+    // Chat presence (M27 phase 03): attach before the first prompt. The reply
+    // carries the catch-up brief when the session was away ≥ 30 s; a failed
+    // attach must not stop chat from running.
+    let (attach_brief, presence) = match chat_presence::attach(&session_id).await {
+        Ok((brief, held)) => (brief, Some(held.park())),
+        Err(e) => {
+            log::warn!("chat presence attach failed (chat continues): {e}");
+            (None, None)
+        }
+    };
+    if let Some(brief) = attach_brief {
+        let _ = renderer.commit(&format!("\n⚙ {brief}\n"));
+    }
 
     let result = run_chat_inner_raw(
         InputHandles {
@@ -229,6 +251,7 @@ pub(super) async fn run_chat_inner(session_override: Option<String>) -> Result<(
         renderer,
     )
     .await;
+    drop(presence);
     // Ratatui renderer is consumed by run_chat_inner_raw (restores on exit).
     result
 }
@@ -778,6 +801,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
 
     renderer.restore();
     println!("\n\x1b[2mGoodbye.\x1b[0m");
+    println!("{}", super::resume_hint(&session_id));
     Ok(())
 }
 

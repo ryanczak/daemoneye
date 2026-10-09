@@ -38,6 +38,10 @@ enum Commands {
         /// and exec-attaches to it.
         #[arg(long, value_name = "NAME")]
         session: Option<String>,
+        /// Resume an existing session by id (the 16-hex id shown in the status bar)
+        /// instead of starting a fresh one.
+        #[arg(long, value_name = "ID")]
+        resume: Option<String>,
     },
     /// Ask the AI agent a question
     Ask {
@@ -421,8 +425,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             let path = log_file.unwrap_or_else(config::default_log_path);
             cli::run_logs(path)?;
         }
-        Commands::Chat { session } => {
-            cli::run_chat(session).await?;
+        Commands::Chat { session, resume } => {
+            cli::run_chat(session, resume).await?;
         }
         Commands::Ask { query, raw } => {
             cli::run_ask(query, raw).await?;

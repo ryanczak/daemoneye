@@ -725,8 +725,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
         log_hook_install_result("after-new-session", res);
 
-        // client-attached (N15): notify daemon when a terminal client re-attaches so it
-        // can clear pending detach state and suppress the catch-up brief.
+        // client-attached (N15): still installed until phase 05 deletes the
+        // tmux hooks; the daemon handler no longer touches detach state —
+        // chat presence owns it (M27 phase 03).
         let client_attached_cmd = format!(
             "run-shell -b '{} notify client-attached #{{q:session_name}}'",
             hook_exe_path,
@@ -741,8 +742,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
         log_hook_install_result("client-attached", res);
 
-        // client-detached (N15): notify daemon when the terminal client detaches so it
-        // can record the time and generate a catch-up brief on the next Ask.
+        // client-detached (N15): still installed until phase 05 deletes the
+        // tmux hooks; the daemon handler no longer stamps detach state —
+        // chat presence owns it (M27 phase 03).
         let client_detached_cmd = format!(
             "run-shell -b '{} notify client-detached #{{q:session_name}}'",
             hook_exe_path,

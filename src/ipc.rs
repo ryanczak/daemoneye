@@ -510,6 +510,15 @@ pub enum Request {
         /// What the resumed run should do differently.
         directive: String,
     },
+    /// Register this connection as a live chat presence for `session_id` (M27
+    /// phase 03). The daemon replies with zero or one `Response::SystemMsg`
+    /// (the catch-up brief) and then `Response::Ok`, then holds the
+    /// connection until the client closes it. When the last connection for
+    /// the session closes, detach state is stamped so a later re-attach can
+    /// be briefed.
+    ChatAttach {
+        session_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

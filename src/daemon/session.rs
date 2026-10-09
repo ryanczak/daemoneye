@@ -146,6 +146,77 @@ impl SessionStore {
 pub static BG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
     std::sync::OnceLock::new();
 
+/// Live chat-presence connection counts per session id (M27 phase 03).
+///
+/// One session may have several connections; detach state is stamped only
+/// when the last one closes. Counted by connection rather than on
+/// `SessionEntry`, because a fresh chat attaches before its first `Ask`
+/// creates the entry.
+pub static CHAT_PRESENCE: std::sync::OnceLock<Mutex<HashMap<String, usize>>> =
+    std::sync::OnceLock::new();
+
+fn presence_map() -> &'static Mutex<HashMap<String, usize>> {
+    CHAT_PRESENCE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Register one live presence connection for `session_id`, returning the new
+/// count for that session.
+pub fn presence_register(session_id: &str) -> usize {
+    let mut map = presence_map().lock().unwrap_or_log();
+    let n = map.entry(session_id.to_string()).or_insert(0);
+    *n += 1;
+    *n
+}
+
+/// Unregister one presence connection for `session_id`. Returns `true` when
+/// the count dropped to zero (this was the session's last connection). A
+/// close with no recorded presence simply reports "not last".
+pub fn presence_unregister(session_id: &str) -> bool {
+    let mut map = presence_map().lock().unwrap_or_log();
+    match map.get_mut(session_id) {
+        Some(n) => {
+            *n -= 1;
+            if *n == 0 {
+                map.remove(session_id);
+                true
+            } else {
+                false
+            }
+        }
+        None => false,
+    }
+}
+
+/// Live presence-connection count for the session.
+pub fn presence_count(session_id: &str) -> usize {
+    presence_map()
+        .lock()
+        .unwrap_or_log()
+        .get(session_id)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// Does the session have at least one live presence connection? Used by the
+/// eviction pass to spare a session a chat client is attached to.
+pub fn presence_live(session_id: &str) -> bool {
+    presence_count(session_id) > 0
+}
+
+/// Stamp detach state on the session's entry, when it exists. Called by the
+/// attach handler after `presence_unregister` reports the last close.
+pub fn record_chat_detach(session_id: &str, sessions: &SessionStore) {
+    let now = Instant::now();
+    let now_utc = chrono::Utc::now();
+    with_sessions(sessions, |store| {
+        if let Some(entry) = store.get_mut(session_id) {
+            entry.last_detach = Some(now);
+            entry.detach_time_utc = Some(now_utc);
+            entry.messages_at_detach = entry.messages.len();
+        }
+    });
+}
+
 /// Broadcast channel for background command completion via IPC.
 /// Carries `(pane_id, exit_code)` delivered directly by the command wrapper.
 pub static COMPLETE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<(String, i32)>> =
@@ -544,7 +615,9 @@ pub fn cleanup_pass(
     with_sessions(sessions, |store| {
         let expired: Vec<String> = store
             .iter()
-            .filter(|(_, v)| now.duration_since(v.last_accessed()) >= idle_after)
+            .filter(|(k, v)| {
+                now.duration_since(v.last_accessed()) >= idle_after && !presence_live(k)
+            })
             .map(|(k, _)| k.clone())
             .collect();
 
@@ -1378,5 +1451,96 @@ mod tests {
             0,
             "depth must reset to 0 after the closure returns"
         );
+    }
+
+    #[test]
+    fn presence_register_counts_up_and_unregister_counts_down() {
+        let sid = "presence-test-1";
+        assert_eq!(presence_count(sid), 0, "fresh session has no presence");
+        assert_eq!(presence_register(sid), 1);
+        assert_eq!(presence_register(sid), 2);
+        assert!(presence_live(sid));
+        assert!(!presence_unregister(sid), "first close is not the last");
+        assert_eq!(presence_count(sid), 1);
+        assert!(presence_unregister(sid), "second close is the last");
+        assert_eq!(presence_count(sid), 0);
+        assert!(!presence_live(sid));
+        assert!(
+            !presence_unregister(sid),
+            "a close for a session with no recorded presence is not an error"
+        );
+    }
+
+    #[test]
+    fn attached_session_is_not_evicted() {
+        let sessions: SessionStore = SessionStore::new();
+        let idle = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(3600))
+            .unwrap_or(Instant::now());
+        with_sessions(&sessions, |store| {
+            store.insert("attached".to_string(), entry_with(idle));
+            store.insert("idle-only".to_string(), entry_with(idle));
+        });
+        presence_register("attached");
+
+        let (evicted, active_ids) = cleanup_pass(
+            &sessions,
+            Instant::now(),
+            std::time::Duration::from_secs(1800),
+        );
+        assert_eq!(evicted.len(), 1, "only the session without presence goes");
+        assert!(
+            active_ids.contains("attached"),
+            "a session with a live presence connection survives the idle window"
+        );
+        assert!(
+            !active_ids.contains("idle-only"),
+            "the same session without presence is evicted past the idle window"
+        );
+        presence_unregister("attached");
+
+        let (evicted2, active_ids2) = cleanup_pass(
+            &sessions,
+            Instant::now(),
+            std::time::Duration::from_secs(1800),
+        );
+        assert_eq!(evicted2.len(), 1);
+        assert!(
+            !active_ids2.contains("attached"),
+            "after the presence closes, the session is evicted as usual"
+        );
+    }
+
+    #[test]
+    fn record_chat_detach_stamps_only_when_the_entry_exists() {
+        let sessions: SessionStore = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert("has-entry".to_string(), entry_with(Instant::now()));
+        });
+
+        record_chat_detach("no-entry", &sessions);
+        with_sessions(&sessions, |store| {
+            assert_eq!(
+                store.len(),
+                1,
+                "no entry must be created for the unknown id"
+            );
+        });
+
+        with_sessions(&sessions, |store| {
+            let entry = store.get_mut("has-entry").unwrap();
+            entry.messages.push(make_msg("user", "one"));
+            entry.messages.push(make_msg("assistant", "two"));
+        });
+        record_chat_detach("has-entry", &sessions);
+        with_sessions(&sessions, |store| {
+            let entry = store.get("has-entry").unwrap();
+            assert!(entry.last_detach.is_some(), "detach must be stamped");
+            assert!(entry.detach_time_utc.is_some());
+            assert_eq!(
+                entry.messages_at_detach, 2,
+                "messages_at_detach is the message count at close"
+            );
+        });
     }
 }

@@ -1279,3 +1279,16 @@ fn edit_file_prompt_root_flag_defaults_to_false() {
         _ => panic!("wrong variant"),
     }
 }
+
+#[test]
+fn chat_attach_request_round_trip() {
+    let req = Request::ChatAttach {
+        session_id: "0a1b2c3d4e5f6071".to_string(),
+    };
+    match roundtrip_req(&req) {
+        Request::ChatAttach { session_id } => {
+            assert_eq!(session_id, "0a1b2c3d4e5f6071");
+        }
+        _ => panic!("wrong variant"),
+    }
+}
