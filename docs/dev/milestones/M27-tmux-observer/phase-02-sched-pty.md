@@ -1,7 +1,7 @@
 # Phase 02: sched-pty — scheduled scripts run in a PTY shell; `Command` jobs refuse to fire
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** in-progress (bounced: bug-02-1)
+**Status:** review
 **Depends on:** phase-01
 **Tags:** language=rust, kind=feature, size=m
 
@@ -472,3 +472,187 @@ $ git diff --stat
 ```
 
 PASTE MATCH: yes
+
+### Update — 2026-10-09 21:41 (complete, server-authored)
+
+**Summary:** </think>Everything checks out. Let me do a final review of the state:
+
+1. The bug-02-1 fix is committed (`ef7d047b`): `run_script_on_host` now goes through `run_ghost_remote` with `HostId::Local`, `pub(crate)` visibility widened, test seam deleted, new test `scheduled_host_shell_is_not_marked_sandboxed` added.
+2. Fresh verification just ran:
+   - `cargo fmt --all` — ran clean
+   - `cargo build` — clean
+   - `cargo clippy --all-targets --all-features -- -D warnings` — exits 0
+   - `scheduled_host_shell_is_not_marked_sandboxed` — 1 passed
+   - Full suite: `passed=2305 failed=0` — matches the finish condition exactly
+   - `grep -n 'create_job_window\|kill_job_window' src/daemon/scheduled.rs` — no matches
+   - `cargo fmt --all --check` — exit 0
+   - `git status --short` — clean
+3. The mutation check evidence is already in the Update Log (from the prior resumed run).
+4. Working tree is clean — no uncommitted changes.
+
+Everything the refined re-dispatch asked for is on disk, committed, and verified. The phase doc remains at `in-progress` with the fix-applied entry already appended (from the resumed run). I should not write a `(complete)` entry — the server authors it.
+
+One question: should I append anything to the Update Log? The prior resumed run already appended the "(bug-02-1 fix applied, resuming run)" entry with the mutation check and the E2E paste. But wait — that entry was written by the prior run of *this same dispatch* (the refined re-dispatch). The commit `ef7d047b` includes the phase doc with those entries. So the Update Log already contains this round's evidence.
+
+Hmm, but there's one nuance: my fresh re-verification runs just now (clippy, full test suite, fmt check) confirm the committed state is green. The tree is clean and the last commit is the fix commit. There's nothing uncommitted, so no new commit is needed.
+
+Actually, wait — let me think about whether I need to do anything more. The contract says:
+
+- Step 7: git commit your code — done (ef7d047b).
+- Step 8: Signal completion with a Summary — that's my final message.
+
+The prior run in this same dispatch already wrote its Update Log entry and committed it. My job now is to confirm the state is green and emit the final Summary. The verification I just ran (fresh, on the committed tree) confirms:
+- clippy exits 0
+- fmt check exits 0
+- the new test passes alone (1 passed)
+- full suite: passed=2305 failed=0 — exactly the finish condition
+- grep prints nothing
+- tree clean
+
+So I'm done. Final message: Summary + Notes for review, 2-6 sentences, substantive.
+
+Actually, let me double-check one thing — the E2E verification block in the phase doc § End-to-end verification lists specific commands. The prior run captured them to `.rexymcp/output/e2e-phase-02-bug.txt` and pasted them. My fresh run re-confirmed the same results. The dispatch instructions said "Green gates and a clean tree are expected and are NOT evidence of done" — but the actual done state (all four edits applied + mutation check + E2E) is present in both the code and the Update Log.
+
+One more check per the executor contract: "Grep for spec-pinned literals before reporting complete" — the spec pins `sandbox == None` behavior (test asserts it), `scheduler:` key prefix (test asserts "scheduler:job-sched-1"), the refusal reason sentence (test asserts COMMAND_REFUSAL_REASON). All confirmed in the code I read.
+
+Also the phase's E2E requirement: "The Update Log entry contains the § End-to-end verification output, every line as printed, and a line `PASTE MATCH: yes`." — the "(bug-02-1 fix applied, resuming run)" entry contains the E2E output including the fifth test line and ends with `PASTE MATCH: yes`. ✓
+
+I'm confident the phase is complete. Writing the final Summary now.</think>
+All verification passes on the committed tree. Final confirmation of the finish condition:
+
+- `cargo test` full suite: **passed=2305 failed=0** — exactly one more than the 2304 the refinement said this round starts from, the fix-applied commit being the only change.
+- `scheduled_host_shell_is_not_marked_sandboxed` alone: `1 passed` (fresh run on the committed code).
+- `cargo clippy --all-targets --all-features -- -D warnings` exits 0; `cargo fmt --all --check` exits 0; `cargo fmt --all` re-run before staging (no staging needed — tree already clean).
+- `grep -n 'create_job_window\|kill_job_window' src/daemon/scheduled.rs` prints nothing; no `_max_per_owner` or `run_script_on_host_seam` remnants.
+- `git status --short` clean; `ef7d047b` is the last commit and includes every file this round touched.
+
+**Summary + Notes for review**
+
+Bug-02-1 is fixed and the phase is complete. `run_script_on_host`'s host path now runs through `run_ghost_remote(reg, owner, HostId::Local, cmd, "scheduled", spawn)` — the helper the spec named — so the scheduler's host shell registers with `sandbox: None` and the marker protocol uses the login shell's exit-variable syntax instead of a sandbox's pinned `sh`; the empty-sandbox-name call through `run_ghost_in_sandbox` is gone, and the unused `_max_per_owner` binding was deleted with it. Exactly the four edits the refined re-dispatch inlined were applied: the `pub(crate)` widening in `ghost_remote.rs`/`executor/mod.rs` (both authorized), the `run_script_on_host_with` seam plus production wrapper binding `spawn_detached_host(shell_id, &[], 24, 80)`, deletion of the masking `run_script_on_host_seam` (the PTY test now drives the production host path), and the new `scheduled_host_shell_is_not_marked_sandboxed` test. The mutation check was performed and both results are in the Update Log: with the empty-name call restored the new test reports `FAILED. 0 passed; 1 failed` (the assertion fired), and restored to `run_ghost_remote(…, HostId::Local, …)` it reports `ok. 1 passed`. End-to-end verification ran once as a single mechanical capture (`.rexymcp/output/e2e-phase-02-bug.txt`), pasted in full in the Update Log entry with `PASTE MATCH: yes`: all five phase tests report `1 passed` alone, the grep prints nothing, clippy and fmt-check exit 0, and the full suite reports exactly **passed=2305 failed=0**. One conventional commit (`ef7d047b fix: the scheduler host shell runs through run_ghost_remote, never a sandboxed one`), working tree clean, phase left at `in-progress` for the server's completion bookkeeping.
+
+**Notes for review:** the sandboxed `Script` arm, `Command` refusal, teardown, watchdog/notify tail and the original four tests were already approved last round and are untouched this round except for the approved call-site edit and the dangling-`name` cleanup clippy forced; the host arm is the only behavioral change. `scheduled_script_runs_in_a_scheduler_pty_shell` and the new test each take ~1.6 s because they run a real in-process PTY host — that is the spec's own test design, not a leak (each closes its owner's shells and the suite is green in parallel).
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (2382119): No such process
+kill: (-2383062): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+(none)
+
+**Commit:** ef7d047b2080222dd357d0b995f565a45081625f
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
