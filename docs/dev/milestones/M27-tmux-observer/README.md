@@ -14,18 +14,17 @@ there. Close DaemonEye 2.0 and tag `v2.0.0`.
 **Exit criteria:**
 
 - **No execution through tmux.** No code path calls `send-keys`, creates or
-  kills a window, sets a hook, or starts `pipe-pane`. The one write that
-  stays is the alert overlay (`display-message` on open chat panes), which
-  is a notification, not execution. The `de-bg-*` /
+  kills a window, sets a hook, or starts `pipe-pane`. The alert overlay
+  (`display-message` on chat panes) may remain **only** as an optional extra
+  when tmux is present; it is never the sole delivery path. The `de-bg-*` /
   `de-sj-*` / `de-gs-*` window machinery, `[execution] backend = "tmux"`,
   `hook.rs`, `cli/notify.rs` and the foreground send-keys path are deleted.
 - **Runs without tmux.** On a host with no tmux binary and no `$TMUX`,
   `daemoneye daemon`, `chat`, `ask`, ghosts (webhook and scheduled) and
-  scheduled scripts all work; nothing logs a tmux error. **Alert overlays
-  are the stated exception**: they require tmux (PE decision 4). Without it
-  the alert still lands in the session and still runs `[notifications]
-  on_alert`; the daemon logs once, at startup, that overlays are unavailable,
-  and `daemoneye doctor` says the same.
+  scheduled scripts all work; nothing logs a tmux error. **Alerts included**
+  (PE decision 4): a webhook or scheduled alert reaches every connected
+  `daemoneye chat` client on screen with no tmux involved, and still runs
+  `[notifications] on_alert`.
 - **Read-only awareness when present.** Inside tmux, the prompt's context
   still carries pane summaries for the user's session; outside tmux it
   carries the daemon's own shells only. The remaining tmux code is
@@ -58,7 +57,8 @@ is split further at drafting if it is more than one session.
 | 02 | sched-pty — `ActionOn::Script` on a scheduler-owned PTY shell; `ActionOn::Command` loads and refuses to fire | todo |
 | 03 | catchup-reconnect — catch-up brief driven by chat client connect/disconnect | todo |
 | 04 | chat-no-tmux — `chat` / `ask` work outside tmux (session identity, width, palette) | todo |
-| 05 | tmux-readonly — delete the execution side (foreground send-keys, job windows, hooks, pipe-pane, `[execution]` flag, `notify`); keep capture/list and the alert `display-message` overlay, gated on tmux being present | todo |
+| 03b | alerts-ipc — webhook and scheduled alerts are pushed to every connected chat client over IPC and rendered by the client; the tmux `display-message` overlay becomes an optional extra when tmux is present | todo |
+| 05 | tmux-readonly — delete the execution side (foreground send-keys, job windows, hooks, pipe-pane, `[execution]` flag, `notify`); keep capture/list, gated on `$TMUX` | todo |
 | 06 | docs-doctor — the docs above, `daemoneye doctor` | todo |
 | 07 | live-close — architect-run live verification on pinky, with and without tmux; tag `v2.0.0` | todo |
 
@@ -74,11 +74,12 @@ is split further at drafting if it is more than one session.
    refuse to fire it, and log why.
 3. **Catch-up brief:** trigger on **chat client reconnect** (≥ 30 s away),
    not tmux attach/detach.
-4. **Alerts require tmux.** The webhook/scheduled alert overlay
-   (`tmux display-message` on every open chat pane) stays as it is and is
-   documented as needing tmux. It is not replaced by another on-screen
-   mechanism in M27; the in-session message and the `on_alert` hook are the
-   no-tmux fallback.
+4. **tmux is NOT a requirement for alerts.** Today the webhook/scheduled
+   alert overlay is `tmux display-message` on every open chat pane. M27
+   gives alerts a tmux-free path: the daemon pushes the alert over IPC to
+   every connected chat client, which renders it on screen (row 03b). The
+   tmux overlay may stay as an optional extra when tmux is present. The
+   `[notifications] on_alert` hook is unchanged.
 
 ### Spec style for this milestone
 
