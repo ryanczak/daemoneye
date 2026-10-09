@@ -1,7 +1,7 @@
 # Phase 02: sched-pty — scheduled scripts run in a PTY shell; `Command` jobs refuse to fire
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01
 **Tags:** language=rust, kind=feature, size=m
 
@@ -115,3 +115,10 @@ the `cargo test` lines; rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-09 (started)
+
+**Executor:** GLM-5.3-Flash-NVFP4-Spark (headless run). Status flipped
+`todo` → `in-progress`; milestone README row updated to match. Starting
+with `Owner::Scheduler` in `src/shell/registry.rs`, then the `Script` and
+`Command` arms of `run_scheduled_job_inner`.
