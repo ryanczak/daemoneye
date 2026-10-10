@@ -1,7 +1,7 @@
 # Phase 03b: alerts-ipc — alerts are pushed to every attached chat over the presence connection
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** in-progress (bounced: bug-03b-1)
 **Depends on:** phase-03, phase-04
 **Tags:** language=rust, kind=feature, size=m
 
@@ -85,17 +85,29 @@ as an optional extra.
       reports `0 passed`.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` exits 0;
       `cargo fmt --all --check` exits 0.
-- [ ] `cargo test` reports exactly `passed=2329 failed=0`: today's
-      `passed=2323` (measured at the phase-04 review; no code has changed
-      since) plus the six new tests. If you add supporting tests, raise the
-      count by one each and name them in the Update Log.
+- [ ] **Bounce (bug-03b-1).** The six tests and the daemon half are
+      approved; green gates are expected and are NOT evidence the phase is
+      done. `chat_loop_setup_keeps_presence_held` reports `1 passed`; today
+      it reports `0 passed`. It shows that the chat loop keeps the presence
+      guard alive. Today `run_chat_ratatui` drops it before the first prompt.
+- [ ] The bug-03b-1 minor items are fixed:
+  - `grep -n 'noop_pushes' src/cli/commands/chat.rs` prints nothing.
+  - `grep -c 'handler locks this same store' src/daemon/session.rs` prints
+    `1`.
+  - `grep -rnE '^pub (async )?fn handle_chat_attach|pub use chat_presence' src/daemon/server/`
+    prints nothing.
+  - `presence_with_two_clients_detaches_only_on_last` asserts the count of
+    2 again.
+  - `notify_chat_panes_pushes_over_presence` observes delivery by content.
+- [ ] `cargo test` reports exactly `passed=2330 failed=0`: today's
+      `passed=2329` plus `chat_loop_setup_keeps_presence_held`.
 - [ ] The Update Log entry contains the § End-to-end verification output,
       every line as printed, and a line `PASTE MATCH: yes`.
 
 ## End-to-end verification
 
 ```sh
-for t in pushed_alert_reaches_every_attached_client push_to_a_dead_client_unregisters_it broadcast_with_no_clients_is_a_noop notify_chat_panes_pushes_over_presence scheduled_job_result_is_pushed_to_attached_clients parked_presence_forwards_every_push; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
+for t in chat_loop_setup_keeps_presence_held pushed_alert_reaches_every_attached_client push_to_a_dead_client_unregisters_it broadcast_with_no_clients_is_a_noop notify_chat_panes_pushes_over_presence scheduled_job_result_is_pushed_to_attached_clients parked_presence_forwards_every_push; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
 cargo fmt --all --check; echo "fmt_exit=$?"
 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
@@ -307,3 +319,12 @@ kill: (-3103446): No such process
 **Commit:** d377b3ed285e7139ebc5f37c68f7720df97fcde0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-10-10 (bounced)
+
+Gates re-run: fmt 0, build ok, clippy clean, `passed=2329 failed=0`. The
+daemon half and all six tests are sound. The blocker is
+`chat.rs:313-317`. `parked_presence.map(|(_, rx)| rx)` drops the
+`HeldPresenceGuard`, which aborts the parked task before the chat loop
+starts. A real chat therefore detaches immediately and receives no pushes.
+See [bug-03b-1](bugs/bug-03b-1.md) for that bug and six minor items.
