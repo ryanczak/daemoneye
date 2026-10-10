@@ -103,11 +103,17 @@ pub fn format_current_time_line() -> String {
 
 /// Build the first-turn prompt: full host context + terminal snapshot + query.
 pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
-    let session_summary = ctx
-        .cache
-        .get_labeled_context(ctx.client_pane, ctx.chat_pane);
-    let session_summary =
-        prepend_foreground_target(&session_summary, ctx.default_target_pane, ctx.cache);
+    let in_tmux = ctx.chat_pane.is_some();
+    let session_summary = if in_tmux {
+        let summary = ctx
+            .cache
+            .get_labeled_context(ctx.client_pane, ctx.chat_pane);
+        prepend_foreground_target(&summary, ctx.default_target_pane, ctx.cache)
+    } else {
+        crate::daemon::executor::knowledge::shells_only_context(&crate::shell::Owner::Chat(
+            ctx.session_id.unwrap_or_default().to_string(),
+        ))
+    };
     let sys_ctx = crate::sys_context::get_or_init_sys_context().format_for_ai();
     let daemon_host = crate::daemon::daemon_hostname();
     let environment = &ctx.config.context.environment;
@@ -133,7 +139,11 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
         .map(|content| format!("## Previous Session Summary\n{}\n\n", content))
         .unwrap_or_default();
     let current_time_line = format_current_time_line();
-    let pane_map = ctx.cache.pane_map_summary(ctx.chat_pane);
+    let pane_map = if in_tmux {
+        ctx.cache.pane_map_summary(ctx.chat_pane)
+    } else {
+        String::new()
+    };
     let shell_block = crate::daemon::executor::knowledge::shell_context_block(
         &crate::shell::Owner::Chat(ctx.session_id.unwrap_or_default().to_string()),
     );
@@ -211,12 +221,21 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         }
     };
     let budget_note = format!("[BUDGET] {}{}\n\n", parts.join(" · "), warning);
-    let fg_target_line = ctx.default_target_pane
-        .map(|tp| format!("[FOREGROUND TARGET] {} — target_pane=\"{}\" for run_terminal_command(background=false)\n", tp, tp))
-        .unwrap_or_default();
+    let fg_target_line = match (ctx.default_target_pane, ctx.chat_pane) {
+        (Some(tp), Some(_)) => format!(
+            "[FOREGROUND TARGET] {tp} — target_pane=\"{tp}\" for run_terminal_command(background=false)\n"
+        ),
+        // Outside tmux there is no pane to name — the line would point at a
+        // pane the user is not in (PE decision 1).
+        _ => String::new(),
+    };
 
     let current_time_line = format_current_time_line();
-    let pane_map = ctx.cache.pane_map_summary(ctx.chat_pane);
+    let pane_map = if ctx.chat_pane.is_some() {
+        ctx.cache.pane_map_summary(ctx.chat_pane)
+    } else {
+        String::new()
+    };
     let shell_block = crate::daemon::executor::knowledge::shell_context_block(
         &crate::shell::Owner::Chat(ctx.session_id.unwrap_or_default().to_string()),
     );
@@ -255,11 +274,16 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         .unwrap_or_default();
 
     if ctx.inject_snapshot {
-        let session_summary = ctx
-            .cache
-            .get_labeled_context(ctx.client_pane, ctx.chat_pane);
-        let session_summary =
-            prepend_foreground_target(&session_summary, ctx.default_target_pane, ctx.cache);
+        let session_summary = if ctx.chat_pane.is_some() {
+            let summary = ctx
+                .cache
+                .get_labeled_context(ctx.client_pane, ctx.chat_pane);
+            prepend_foreground_target(&summary, ctx.default_target_pane, ctx.cache)
+        } else {
+            crate::daemon::executor::knowledge::shells_only_context(&crate::shell::Owner::Chat(
+                ctx.session_id.unwrap_or_default().to_string(),
+            ))
+        };
         format!(
             "{budget_note}{fg_target_line}{hosts_block}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}\
              [Terminal snapshot — auto-refreshed (pane activity detected)]\n\
@@ -277,11 +301,60 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tmux::cache::PaneState;
 
-    fn ctx<'a>(cache: &'a SessionCache, config: &'a crate::config::Config) -> PromptCtx<'a> {
+    /// A prompt fixture cache that holds one pane the way a live refresh
+    /// would: a user shell in the adopted session, enough for
+    /// `get_labeled_context` to emit a pane block and `pane_map_summary` a
+    /// `[PANE MAP]` line. The buffer is non-empty so the pane's summary is
+    /// real text, not a fallback.
+    fn cache_with_one_pane(session: &str) -> SessionCache {
+        let c = SessionCache::new(session);
+        let mut pane = PaneState {
+            buffer: String::new(),
+            summary: String::new(),
+            current_cmd: String::new(),
+            current_path: String::new(),
+            pane_title: String::new(),
+            last_updated: std::time::Instant::now(),
+            scroll_position: 0,
+            history_size: 0,
+            in_copy_mode: false,
+            synchronized: false,
+            window_name: String::new(),
+            session_name: session.to_string(),
+            dead: false,
+            dead_status: None,
+            last_activity: 0,
+            start_cmd: String::new(),
+            pane_index: 0,
+            shell_pid: 0,
+            status: crate::shell::status::PaneStatus::Idle(0),
+        };
+        pane.buffer = "make build".to_string();
+        pane.summary = "running make".to_string();
+        pane.current_cmd = "bash".to_string();
+        pane.current_path = "/home/user".to_string();
+        pane.window_name = "editor".to_string();
+        pane.pane_index = 0;
+        c.panes
+            .write()
+            .unwrap_or_log()
+            .insert("%1".to_string(), pane);
+        c
+    }
+
+    fn ctx_with<'a>(
+        cache: &'a SessionCache,
+        config: &'a crate::config::Config,
+        chat_pane: Option<&'a str>,
+        client_pane: Option<&'a str>,
+        session_id: Option<&'a str>,
+        inject_snapshot: bool,
+    ) -> PromptCtx<'a> {
         PromptCtx {
-            client_pane: None,
-            chat_pane: None,
+            client_pane,
+            chat_pane,
             default_target_pane: None,
             cache,
             config,
@@ -291,14 +364,158 @@ mod tests {
             history_count: 0,
             this_turn_count: 0,
             ghost_turn_limit: None,
-            inject_snapshot: false,
+            inject_snapshot,
             memory_namespaces: &["global"],
-            session_id: None,
+            session_id,
             tool_policy: None,
             agent_name: None,
         }
     }
 
+    fn plain_config() -> crate::config::Config {
+        crate::config::Config::default()
+    }
+
+    /// PE decision 1, first turn: a chat outside tmux must see the daemon's
+    /// own shells, not the panes of a tmux session the user is not in.
+    #[test]
+    fn first_turn_prompt_without_chat_pane_carries_shells_only() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+        let reg = crate::shell::ShellRegistry::default();
+        let _swap = crate::daemon::executor::knowledge::open_shell_test_seam::swap_in(&reg);
+        crate::shell::with_shells(&reg, |store| {
+            store.insert(
+                "s0".to_string(),
+                crate::shell::ShellRecord {
+                    id: crate::shell::ShellId::from_index(0),
+                    owner: crate::shell::Owner::Chat("sess-a".to_string()),
+                    host: crate::host::HostId::Local,
+                    sandbox: None,
+                    started_unix: 1_788_470_000,
+                    interactive: false,
+                    dedicated: false,
+                    exited_unix: None,
+                },
+            );
+        });
+        let cache = cache_with_one_pane("home");
+        let prompt = build_first_turn_prompt(&ctx_with(
+            &cache,
+            &plain_config(),
+            None,
+            None,
+            Some("sess-a"),
+            false,
+        ));
+        assert!(
+            prompt.contains("[SHELLS] 1"),
+            "the shells block must count the fixture shell: {prompt}"
+        );
+        assert!(
+            !prompt.contains("PANE %"),
+            "no pane block may reach a pane-less chat: {prompt}"
+        );
+        // sre.toml's guidance prose names `[PANE MAP]` and `[SESSION TOPOLOGY]`
+        // in plain words, so the tags themselves cannot be asserted absent.
+        // Assert on the fixture's rendered pane data instead: pane `%1`, index
+        // 0, summary "running make", window 'editor' — none of it may appear.
+        assert!(
+            !prompt.contains("idx:0=%1"),
+            "no pane map entry may reach a pane-less chat: {prompt}"
+        );
+        assert!(
+            !prompt.contains("running make"),
+            "no fixture pane summary may reach a pane-less chat: {prompt}"
+        );
+        assert!(
+            !prompt.contains("[SESSION TOPOLOGY] 1 windows"),
+            "the fixture's window must not render as topology: {prompt}"
+        );
+    }
+
+    /// Preservation: with a chat pane, everything M12 built still ships.
+    #[test]
+    fn first_turn_prompt_with_chat_pane_keeps_tmux_context() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+        let cache = cache_with_one_pane("home");
+        let prompt = build_first_turn_prompt(&ctx_with(
+            &cache,
+            &plain_config(),
+            Some("%2"),
+            Some("%2"),
+            Some("sess-a"),
+            false,
+        ));
+        assert!(
+            prompt.contains("PANE %1"),
+            "the pane snapshot is still there with a chat pane: {prompt}"
+        );
+        assert!(
+            prompt.contains("[PANE MAP]"),
+            "the pane map is still there with a chat pane: {prompt}"
+        );
+    }
+
+    /// PE decision 1, subsequent turns: the auto-refreshed snapshot obeys the
+    /// same rule as the first turn.
+    #[test]
+    fn subsequent_turn_snapshot_without_chat_pane_carries_shells_only() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+        let reg = crate::shell::ShellRegistry::default();
+        let _swap = crate::daemon::executor::knowledge::open_shell_test_seam::swap_in(&reg);
+        crate::shell::with_shells(&reg, |store| {
+            store.insert(
+                "s0".to_string(),
+                crate::shell::ShellRecord {
+                    id: crate::shell::ShellId::from_index(0),
+                    owner: crate::shell::Owner::Chat("sess-a".to_string()),
+                    host: crate::host::HostId::Local,
+                    sandbox: None,
+                    started_unix: 1_788_470_000,
+                    interactive: false,
+                    dedicated: false,
+                    exited_unix: None,
+                },
+            );
+        });
+        let cache = cache_with_one_pane("home");
+        let prompt = build_subsequent_turn_prompt(&ctx_with(
+            &cache,
+            &plain_config(),
+            None,
+            None,
+            Some("sess-a"),
+            true,
+        ));
+        assert!(
+            prompt.contains("[SHELLS]"),
+            "the shells block replaces the pane snapshot: {prompt}"
+        );
+        assert!(
+            !prompt.contains("PANE %"),
+            "no pane block may reach a pane-less chat: {prompt}"
+        );
+        assert!(
+            !prompt.contains("[PANE MAP]"),
+            "no pane map may reach a pane-less chat: {prompt}"
+        );
+        assert!(
+            !prompt.contains("[FOREGROUND TARGET]"),
+            "no foreground-target line may reach a pane-less chat: {prompt}"
+        );
+    }
+
+    /// The pre-existing fixture: unchanged behavior for the hosts block,
+    /// driven through a dedicated `PromptCtx` built with a bare cache.
     #[test]
     fn prompts_carry_the_hosts_block() {
         let _home = crate::test_home_guard();
@@ -313,7 +530,9 @@ mod tests {
                 ..Default::default()
             },
         );
-        let prompt = build_subsequent_turn_prompt(&ctx(&cache, &config));
+        let mut base = ctx_with(&cache, &config, None, None, None, false);
+        base.safe_query = "hello";
+        let prompt = build_subsequent_turn_prompt(&base);
         assert!(prompt.contains("[HOSTS] local ("), "{prompt}");
         assert!(prompt.contains("pinky (ssh pinky, "), "{prompt}");
         assert!(
@@ -321,11 +540,12 @@ mod tests {
             "the block is in the context, ahead of the user's text: {prompt}"
         );
 
-        let first = build_first_turn_prompt(&ctx(&cache, &config));
+        let first = build_first_turn_prompt(&base);
         assert!(first.contains("pinky (ssh pinky, "), "{first}");
 
         let plain = crate::config::Config::default();
-        let without = build_subsequent_turn_prompt(&ctx(&cache, &plain));
+        let without =
+            build_subsequent_turn_prompt(&ctx_with(&cache, &plain, None, None, None, false));
         assert!(
             !without.contains("[HOSTS]"),
             "no hosts, no block: {without}"

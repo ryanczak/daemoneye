@@ -32,6 +32,11 @@ pub use shell::{
 /// this re-export. Not cfg(test)-gated: the chat path is production code.
 pub(crate) use shell::close_shell_with;
 
+/// The registry-swap seam for the same tests: point `open_shell` at a fixture
+/// registry for the test's duration. cfg(test)-gated for the same reason.
+#[cfg(test)]
+pub(crate) use shell::open_shell_test_seam;
+
 /// The 08c ghost teardown: close a ghost's shells when its turn ends. Only
 /// the owner's records are touched (test 6 pins that); wired `pub(crate)`
 /// because `daemon/ghost.rs` sits outside this module tree.

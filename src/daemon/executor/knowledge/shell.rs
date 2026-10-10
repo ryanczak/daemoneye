@@ -276,7 +276,11 @@ fn format_shell_context(rows: &[ShellRow], owner_key: &str, now_unix: u64) -> St
 /// with `None` collects exactly `caller`'s own rows, the same rows `list_shells`
 /// scope-"mine" shows, so the ambient block and the tool can never disagree on
 /// what the caller owns.
-fn shell_context_block_in(reg: &ShellRegistry, caller: &Owner, now_unix: u64) -> String {
+///
+/// `pub(crate)`: `prompt.rs`'s tests drive the same seam for the shells-only
+/// prompt path (M27 phase 04) — they must see the same formatting the real
+/// block does.
+pub(crate) fn shell_context_block_in(reg: &ShellRegistry, caller: &Owner, now_unix: u64) -> String {
     let key = caller.key();
     let rows = match resolve_scope(reg, None, caller, "shell_context") {
         Ok(rows) => rows,
@@ -293,7 +297,11 @@ fn shell_context_block_in(reg: &ShellRegistry, caller: &Owner, now_unix: u64) ->
 /// are re-exported, and a `pub(super)` item cannot be given wider visibility on
 /// re-export.
 pub fn shell_context_block(caller: &Owner) -> String {
-    shell_context_block_in(crate::shell::registry(), caller, now_unix())
+    #[cfg(test)]
+    let reg = open_shell_test_registry();
+    #[cfg(not(test))]
+    let reg = crate::shell::registry().clone();
+    shell_context_block_in(&reg, caller, now_unix())
 }
 
 /// Format the ambient hosts block: the implicit `local` host, then each
@@ -1893,7 +1901,7 @@ pub(crate) mod open_shell_test_seam {
     /// the returned guard is alive: dropping it puts back whatever `REPLACE`
     /// held before the swap, so nested swaps unwind in order and an outer
     /// test's registry survives an inner test's.
-    pub(super) fn swap_in(fresh: &crate::shell::ShellRegistry) -> SwapGuard {
+    pub(crate) fn swap_in(fresh: &crate::shell::ShellRegistry) -> SwapGuard {
         let previous = REPLACE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1902,7 +1910,7 @@ pub(crate) mod open_shell_test_seam {
     }
 
     /// The swapped-in registry, if any test currently holds one.
-    pub(super) fn swapped() -> Option<crate::shell::ShellRegistry> {
+    pub(crate) fn swapped() -> Option<crate::shell::ShellRegistry> {
         REPLACE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1911,7 +1919,7 @@ pub(crate) mod open_shell_test_seam {
 
     /// Restores the pre-swap contents of `REPLACE` when dropped. Holds the
     /// *previous* value rather than clearing, so nesting restores in order.
-    pub(super) struct SwapGuard {
+    pub(crate) struct SwapGuard {
         previous: Option<crate::shell::ShellRegistry>,
     }
 

@@ -77,65 +77,7 @@ Tool output is capped at 10 lines on screen (… N more lines · ctrl+o opens th
 Up/Down navigate the input; at the top/bottom edge they recall history.
 ";
 
-pub(super) async fn run_chat_inner(
-    session_override: Option<String>,
-    resume_id: Option<String>,
-) -> Result<()> {
-    // ── Managed-session auto-attach ────────────────────────────────────────────
-    // When the daemon is configured with a managed tmux session and `daemoneye chat`
-    // is invoked from outside tmux, transparently open a chat window in that session
-    // and exec-attach so the user lands in the right place.
-    //
-    // This is a no-op when:
-    //   - $TMUX_PANE is already set (already inside tmux), or
-    //   - no managed session is configured, or
-    //   - tmux is not available.
-    if std::env::var("TMUX_PANE").is_err() {
-        use std::os::unix::process::CommandExt as _;
-        let managed = session_override.clone().or_else(|| {
-            let cfg = Config::load().unwrap_or_default();
-            let s = cfg.daemon.tmux_session;
-            if s.is_empty() { None } else { Some(s) }
-        });
-        if let Some(ref sname) = managed {
-            if crate::tmux::session_exists(sname) {
-                // Open a chat window in the managed session.  The new window
-                // runs its own `daemoneye chat` invocation which will find
-                // $TMUX_PANE set and proceed normally.
-                let chat_cmd = std::env::current_exe()
-                    .map(|p| format!("{} chat", p.display()))
-                    .unwrap_or_else(|_| "daemoneye chat".to_string());
-                let _ = crate::process::bounded_output(std::process::Command::new("tmux").args([
-                    "new-window",
-                    "-t",
-                    sname,
-                    "-n",
-                    "chat",
-                    &chat_cmd,
-                ]));
-                // Replace this process with `tmux attach-session`.  The user's
-                // terminal is now "inside" the session where the chat window lives.
-                let err = std::process::Command::new("tmux")
-                    .args(["attach-session", "-t", sname])
-                    .exec();
-                // exec() only returns on error.
-                anyhow::bail!(
-                    "Failed to attach to managed tmux session '{}': {}",
-                    sname,
-                    err
-                );
-            } else {
-                eprintln!(
-                    "Managed tmux session '{}' does not exist yet.\n\
-                     Is the daemon running?  daemoneye daemon\n\
-                     Once it starts, run: tmux attach -t {}",
-                    sname, sname
-                );
-                anyhow::bail!("Managed session '{}' not found", sname);
-            }
-        }
-    }
-
+pub(super) async fn run_chat_inner(resume_id: Option<String>) -> Result<()> {
     let start_time = std::time::Instant::now();
     // `--resume <id>` reuses the given id; a fresh chat mints one (M27 phase 03).
     let session_id = match resume_id.as_deref() {
@@ -344,20 +286,25 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     let mut model = config.resolve_model(None).model.clone();
 
     // Wait for tmux client attachment.
-    loop {
-        let attached = crate::process::bounded_output(std::process::Command::new("tmux").args([
-            "display-message",
-            "-p",
-            "#{session_attached}",
-        ]))
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(1);
-        if attached > 0 {
-            break;
+    // Wait for tmux client attachment. Only meaningful inside tmux — outside
+    // there is no client to attach, and waiting would hang chat forever.
+    if tmux_session.is_some() {
+        loop {
+            let attached =
+                crate::process::bounded_output(std::process::Command::new("tmux").args([
+                    "display-message",
+                    "-p",
+                    "#{session_attached}",
+                ]))
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .unwrap_or(1);
+            if attached > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
     // Helper: re-draw the live region.

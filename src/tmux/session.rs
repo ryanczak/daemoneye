@@ -242,13 +242,36 @@ pub fn get_active_pane(session_name: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Return the name of the current tmux session, or `None` if not inside tmux.
-pub fn current_session_name() -> Option<String> {
+/// The client-side "am I in tmux / which session" decision, gated on the
+/// `$TMUX` environment value rather than on a tmux binary or server.
+///
+/// `None` / empty means the caller is not inside tmux: no session name is
+/// resolved and the caller must make no tmux call at all. Inside tmux the
+/// value is always `path,session,window` (or a bare session name on exotic
+/// setups), and the session is read with one `display-message -p '#S'`.
+///
+/// Pure over its parameter, so a test can drive it without touching the real
+/// environment. [`current_session_name`] is the caller-side entry point that
+/// reads `$TMUX` and delegates here.
+pub fn session_name_from_tmux_env(tmux_env: Option<&str>) -> Option<String> {
+    let value = tmux_env?;
+    if value.is_empty() {
+        return None;
+    }
     let out =
         crate::process::bounded_output(Command::new("tmux").args(["display-message", "-p", "#S"]))
             .ok()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if s.is_empty() { None } else { Some(s) }
+}
+
+/// Return the name of the current tmux session, or `None` if not inside tmux.
+///
+/// Gated on `$TMUX`: outside tmux this returns `None` without touching the
+/// tmux server, even when one is running — `display-message` outside tmux
+/// would name *some other* session, which is not this client's session.
+pub fn current_session_name() -> Option<String> {
+    session_name_from_tmux_env(std::env::var("TMUX").ok().as_deref())
 }
 
 /// Query the dimensions of the terminal client currently attached to `session`.
@@ -428,6 +451,44 @@ pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The client's session resolver is the `$TMUX` gate: absent or empty is
+    /// "not in tmux" and must return `None` without a tmux call. The tmux
+    /// server this test host may be running is invisible to the gate, which is
+    /// the point — `display-message` outside tmux would name *some other*
+    /// session and the client would describe panes the user is not in.
+    #[test]
+    fn tmux_session_requires_the_tmux_env() {
+        assert_eq!(
+            session_name_from_tmux_env(None),
+            None,
+            "no $TMUX at all — never in tmux, no tmux call"
+        );
+        assert_eq!(
+            session_name_from_tmux_env(Some("")),
+            None,
+            "an empty $TMUX is as good as absent — no tmux call"
+        );
+        // A present value resolves to a session name. When this test host has
+        // no tmux binary the subprocess fails and the result is `None`, which
+        // the assertion still accepts: the gate itself is what's pinned here.
+        if let Ok(out) = crate::process::bounded_output(Command::new("tmux").args([
+            "display-message",
+            "-p",
+            "#S",
+        ])) {
+            let expected = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            assert_eq!(
+                session_name_from_tmux_env(Some("/tmp/tmux-0/default,0,0")),
+                if expected.is_empty() {
+                    None
+                } else {
+                    Some(expected)
+                },
+                "a present $TMUX resolves the session the server reports"
+            );
+        }
+    }
 
     fn sess(name: &str, windows: usize, last_activity: u64, attached: bool) -> OtherSessionInfo {
         OtherSessionInfo {

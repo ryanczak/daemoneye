@@ -1243,6 +1243,14 @@ where
                     &Owner::Chat(session_id.unwrap_or_default().to_string()),
                 )));
             }
+            // PE decision 1: a caller outside tmux gets the daemon's own
+            // shells only — no pane blocks, no pane map, no foreground-target
+            // line naming a pane it is not in.
+            if chat_pane.is_none() {
+                return Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
+                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
+                )));
+            }
             let target_pane: Option<String> = session_id.and_then(|sid| {
                 with_sessions(sessions, |store| {
                     store.get(sid)?.default_target_pane.clone()
@@ -2228,6 +2236,76 @@ mod ghost_host_gate_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PE decision 1, at the tool: a caller outside tmux gets the daemon's own
+    /// shells only — no pane blocks, no pane map, no foreground-target line
+    /// naming a pane it is not in. Drives the GetShellContext arm of
+    /// `execute_tool_call` with `chat_pane: None` over a fixture registry.
+    #[tokio::test]
+    async fn get_shell_context_without_chat_pane_is_shells_only() {
+        let _guard = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+        let reg = crate::shell::ShellRegistry::default();
+        let _swap = crate::daemon::executor::knowledge::open_shell_test_seam::swap_in(&reg);
+        crate::shell::with_shells(&reg, |store| {
+            store.insert(
+                "s0".to_string(),
+                crate::shell::ShellRecord {
+                    id: crate::shell::ShellId::from_index(0),
+                    owner: crate::shell::Owner::Chat("sess-a".to_string()),
+                    host: crate::host::HostId::Local,
+                    sandbox: None,
+                    started_unix: 1_788_470_000,
+                    interactive: false,
+                    dedicated: false,
+                    exited_unix: None,
+                },
+            );
+        });
+        let store: SessionStore = SessionStore::new();
+        let call = PendingCall::GetShellContext {
+            id: "t1".to_string(),
+            thought_signature: None,
+            scope: None,
+        };
+        let (mut daemon_tx, _client_rx) = tokio::io::duplex(64 * 1024);
+        let (_client_tx, daemon_rx) = tokio::io::duplex(64 * 1024);
+        let mut daemon_rx = tokio::io::BufReader::new(daemon_rx);
+        let outcome = execute_tool_call(
+            &call,
+            &mut daemon_tx,
+            &mut daemon_rx,
+            SessionCtx {
+                session_id: Some("sess-a"),
+                session_name: "sess-a",
+                chat_pane: None,
+                sessions: &store,
+            },
+            &Arc::new(SessionCache::new("home")),
+            &Arc::new(crate::scheduler::ScheduleStore::new_empty()),
+        )
+        .await
+        .expect("get_shell_context must not error");
+        let text = match outcome {
+            ToolCallOutcome::Result(t) => t,
+            ToolCallOutcome::UserMessage(t) => format!("[redirected] {t}"),
+            ToolCallOutcome::SpawnGhostSession { tool_result, .. } => tool_result,
+        };
+        assert!(
+            text.contains("[SHELLS]"),
+            "the shells-only block replaces the pane context: {text}"
+        );
+        assert!(
+            !text.contains("PANE %"),
+            "no pane data may reach a pane-less caller: {text}"
+        );
+        assert!(
+            !text.contains("[FOREGROUND TARGET]"),
+            "no foreground-target line may reach a pane-less caller: {text}"
+        );
+    }
 
     #[test]
     fn prompt_classification_marks_the_users_shell() {

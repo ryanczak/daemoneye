@@ -76,7 +76,10 @@ pub fn detect_from_env() -> ColorDepth {
     let ov = std::env::var("DAEMONEYE_COLOR").ok();
     let ct = std::env::var("COLORTERM").ok();
     let t = std::env::var("TERM").ok();
-    let tmux_rgb = std::env::var_os("TMUX").is_some().then(tmux_rgb_cached);
+    // An empty `$TMUX` is as good as absent: both mean "not in tmux", and the
+    // tmux RGB probe must never reach a server the client is not inside.
+    let in_tmux = std::env::var("TMUX").ok().is_some_and(|v| !v.is_empty());
+    let tmux_rgb = in_tmux.then(tmux_rgb_cached);
     detect_color_depth(ov.as_deref(), ct.as_deref(), t.as_deref(), tmux_rgb)
 }
 

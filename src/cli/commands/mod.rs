@@ -53,11 +53,11 @@ pub fn resume_hint(id: &str) -> String {
     format!("To resume this session later:  daemoneye chat --resume {id}")
 }
 
-pub async fn run_chat(session_override: Option<String>, resume_id: Option<String>) -> Result<()> {
+pub async fn run_chat(resume_id: Option<String>) -> Result<()> {
     if let Some(ref id) = resume_id {
         validate_resume_id(id)?;
     }
-    let result = run_chat_inner(session_override, resume_id).await;
+    let result = run_chat_inner(resume_id).await;
     if let Err(ref e) = result {
         // AsyncStdin has been dropped by now; synchronous stdin is safe.
         use std::io::Write;

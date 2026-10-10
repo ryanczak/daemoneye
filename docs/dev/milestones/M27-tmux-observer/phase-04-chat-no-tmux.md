@@ -1,7 +1,7 @@
 # Phase 04: chat-no-tmux — chat runs in place outside tmux; its context is the daemon's shells
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03
 **Tags:** language=rust, kind=feature, size=m
 
@@ -99,7 +99,8 @@ the `cargo test` lines; rexyMCP's output filter removes the individual
 
 - [x] May edit `src/cli/commands/`, `src/cli/palette.rs`,
       `src/tmux/session.rs` (only to add the `$TMUX` gate),
-      `src/daemon/prompt.rs` and `src/daemon/executor/mod.rs`.
+      `src/daemon/prompt.rs`, `src/daemon/executor/mod.rs` and `src/main.rs`
+      (escalation: to drop the dead `chat --session` flag).
 
 ## Out of scope
 
@@ -111,3 +112,96 @@ the `cargo test` lines; rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-09 18:34 (started)
+
+Executor: opus-4.5 (headless run). Read the phase doc, STANDARDS and the
+touched sources (`src/cli/commands/chat.rs`, `ask.rs`, `stream.rs`,
+`src/tmux/session.rs`, `src/daemon/prompt.rs`, `src/daemon/executor/mod.rs`,
+`src/daemon/server/ask.rs`, `src/tmux/cache.rs`). Baseline `cargo test`
+reproduces `passed=2318 failed=0`. Implementing the Spec in order.
+
+### Update — 2026-10-10 (escalation)
+
+**Chosen lever:** resume.
+**Rationale:** The run hit a NoProgressStall (120 consecutive read-only
+calls) at turn 495, with the design right and almost all of it on disk.
+The architect's gate run on the partial tree found only four precise
+leftovers. That is a "nearly done, hit a wall" stall, not a spec gap.
+
+Architect gate run on the uncommitted tree: build clean.
+`tmux_session_requires_the_tmux_env`,
+`first_turn_prompt_with_chat_pane_keeps_tmux_context` and
+`subsequent_turn_snapshot_without_chat_pane_carries_shells_only` pass.
+`first_turn_prompt_without_chat_pane_carries_shells_only` FAILS on its own
+over-broad assertion. `get_shell_context_without_chat_pane_is_shells_only`
+does not exist yet. Clippy fails on one unused import.
+
+### Update — 2026-10-10 03:03 (resume, executor opus-4.5)
+
+Resumed per the architect's four-item list; nothing re-derived.
+
+1. `first_turn_prompt_without_chat_pane_carries_shells_only` — replaced the
+   tag-absence assertions with fixture-data assertions (`idx:0=%1`,
+   `running make`, `[SESSION TOPOLOGY] 1 windows`), keeping the
+   `[SHELLS] 1` positive. Now passes.
+2. Added `get_shell_context_without_chat_pane_is_shells_only` in
+   `executor/mod.rs`'s tests, driving the GetShellContext arm through
+   `execute_tool_call` with `chat_pane: None` over the swapped fixture
+   registry. Asserts `[SHELLS]` present, `PANE %` and
+   `[FOREGROUND TARGET]` absent. Passes.
+3. Clippy: deleted the unused cfg(test) re-export of
+   `shell_context_block_in` from `knowledge/mod.rs` (the prompt tests did
+   not end up needing it; `shell_context_block_in` stays `pub(crate)` —
+   the shell.rs tests drive it directly). Clippy clean, no `#[allow]`.
+4. Dropped the dead `_session_override` parameter from `run_chat` and
+   `run_chat_inner` and removed the now-meaningless `chat --session`
+   flag from `Commands::Chat` (authorized escalation); fixed the
+   `main.rs` call site.
+
+No supporting tests were added. Gate set: build clean (zero new
+warnings), clippy `-D warnings` exit 0, `cargo fmt --all --check`
+exit 0, full `cargo test` `passed=2323 failed=0`. End-to-end
+verification captured in the next entry.
+
+### Update — 2026-10-10 03:03 (end-to-end verification)
+
+Captured from the single § End-to-end verification run above (output
+redirected to /tmp/e2e_phase04.txt and pasted verbatim).
+
+```
+$ for t in tmux_session_requires_the_tmux_env first_turn_prompt_without_chat_pane_carries_shells_only first_turn_prompt_with_chat_pane_keeps_tmux_context subsequent_turn_snapshot_without_chat_pane_carries_shells_only get_shell_context_without_chat_pane_is_shells_only; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
+tmux_session_requires_the_tmux_env: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2268 filtered out; finished in 0.02s
+first_turn_prompt_without_chat_pane_carries_shells_only: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2268 filtered out; finished in 0.05s
+first_turn_prompt_with_chat_pane_keeps_tmux_context: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2268 filtered out; finished in 0.07s
+subsequent_turn_snapshot_without_chat_pane_carries_shells_only: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2268 filtered out; finished in 0.03s
+get_shell_context_without_chat_pane_is_shells_only: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2268 filtered out; finished in 0.00s
+
+$ grep -n 'attach-session\|new-window' src/cli/commands/chat.rs ; echo "grep_done"
+grep_done
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.90s
+
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2323 failed=0
+
+$ git diff --stat
+ docs/dev/milestones/M27-tmux-observer/README.md    |   2 +-
+ .../M27-tmux-observer/phase-04-chat-no-tmux.md     |  29 ++-
+ src/cli/commands/chat.rs                           |  91 ++-----
+ src/cli/commands/mod.rs                            |   4 +-
+ src/cli/palette.rs                                 |   5 +-
+ src/daemon/executor/knowledge/mod.rs               |   5 +
+ src/daemon/executor/knowledge/shell.rs             |  18 +-
+ src/daemon/executor/mod.rs                         |  78 ++++++
+ src/daemon/prompt.rs                               | 266 ++++++++++++++++++--
+ src/main.rs                                        |   9 +-
+ src/tmux/session.rs                                |  65 ++++-
+ 11 files changed, 457 insertions(+), 115 deletions(-)
+```
+
+PASTE MATCH: yes
