@@ -1,7 +1,7 @@
 # Phase 03: catchup-reconnect — chat presence over IPC drives the catch-up brief
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** in-progress (bounced: bug-03-1)
 **Depends on:** phase-02
 **Tags:** language=rust, kind=feature, size=m
 
@@ -87,25 +87,30 @@ stream (`tokio::io::duplex`); they need no daemon and no tmux.
 
 ## Acceptance criteria
 
-- [ ] Each of the eight tests above reports `1 passed` alone. Today each
-      reports `0 passed`.
+- [ ] **(bug-03-1)** `presence_unregisters_when_the_hold_ends_in_error`
+      reports `1 passed`: a hold that ends in an I/O error leaves
+      `presence_count` at 0 and stamps `last_detach`. Today it reports
+      `0 passed`.
+- [ ] **(bug-03-1)** `grep -n '_catchup_brief\|used to be sent here' src/daemon/server/ask.rs`
+      prints nothing. Today it prints lines.
+- [ ] **(bug-03-1)** `cargo test` reports exactly `passed=2318 failed=0`:
+      today's 2317 (the eight named tests plus the executor's four
+      supporting tests, all accepted) plus the one new test.
+- [ ] Each of the eight tests above reports `1 passed` alone.
 - [ ] `grep -n 'build_catchup_brief' src/daemon/server/ask.rs` prints
-      nothing. Today it prints lines.
-- [ ] `grep -n 'last_detach\|messages_at_detach' src/daemon/hook.rs` prints
-      nothing. Today it prints lines.
+      nothing.
+- [ ] `sed -n '1,/#\[cfg(test)\]/p' src/daemon/hook.rs | grep -c 'last_detach\|messages_at_detach'`
+      prints `0`. (The test module may name them.)
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` exits 0;
       `cargo fmt --all --check` exits 0.
-- [ ] `cargo test` reports exactly `passed=2313 failed=0`: today's
-      `passed=2305` (measured at the phase-02 review; no code has changed
-      since) plus the eight new tests.
 - [ ] The Update Log entry contains the § End-to-end verification output,
       every line as printed, and a line `PASTE MATCH: yes`.
 
 ## End-to-end verification
 
 ```sh
-for t in chat_attach_request_round_trip last_presence_disconnect_records_detach_state presence_with_two_clients_detaches_only_on_last reattach_after_30s_returns_catchup_brief reattach_within_30s_returns_no_brief attached_session_is_not_evicted chat_resume_rejects_a_malformed_id tmux_client_hooks_no_longer_touch_detach_state; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
-grep -n 'build_catchup_brief' src/daemon/server/ask.rs ; grep -n 'last_detach\|messages_at_detach' src/daemon/hook.rs ; echo "grep_done"
+for t in presence_unregisters_when_the_hold_ends_in_error chat_attach_request_round_trip last_presence_disconnect_records_detach_state presence_with_two_clients_detaches_only_on_last reattach_after_30s_returns_catchup_brief reattach_within_30s_returns_no_brief attached_session_is_not_evicted chat_resume_rejects_a_malformed_id tmux_client_hooks_no_longer_touch_detach_state; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /"; done
+grep -n 'build_catchup_brief\|_catchup_brief\|used to be sent here' src/daemon/server/ask.rs ; sed -n '1,/#\[cfg(test)\]/p' src/daemon/hook.rs | grep -c 'last_detach\|messages_at_detach' ; echo "grep_done"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
 cargo fmt --all --check; echo "fmt_exit=$?"
 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
@@ -399,3 +404,30 @@ kill: (-2573301): No such process
 **Commit:** 8ef92166169070cdd58284374c66496879828e9c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-10-10 (re-dispatch after bug-03-1)
+
+Everything else in the phase is approved. Do not touch the client side,
+the eviction change, the hook handlers or the eight tests. The remaining
+work is in `bugs/bug-03-1.md`:
+
+1. **Where the fix goes:** `handle_chat_attach` in
+   `src/daemon/server/chat_presence.rs`, only. Run the reply and the hold
+   loop as one inner fallible step (an inner `async` block or helper fn).
+   Then call `presence_unregister` and, if it was the last connection,
+   `record_chat_detach` **after** that step, whatever its result. Return
+   the step's result last. Nothing between `presence_register` and the
+   unregister may be able to skip the unregister.
+2. **The test** `presence_unregisters_when_the_hold_ends_in_error` goes
+   beside the existing duplex tests in that file. A reader over invalid
+   UTF-8 (e.g. `&[0xff, 0xfe, b'\n'][..]` wrapped in a `BufReader`) makes
+   `read_line` return `Err`. Use a fresh session id, so the global
+   `CHAT_PRESENCE` map is not shared with another test. Run it against
+   the unfixed code first and paste the `FAILED` `test result:` line, then
+   the fixed run.
+3. **Nit, `src/daemon/server/ask.rs`:** drop the always-`None`
+   `_catchup_brief` tuple slot and the comment about the removed brief
+   code.
+
+Finish condition: `cargo test` reports exactly `passed=2318 failed=0`.
+
