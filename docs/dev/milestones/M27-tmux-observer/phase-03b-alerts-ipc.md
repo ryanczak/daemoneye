@@ -339,3 +339,50 @@ assertion and the truncated `cleanup_pass` doc line; delete `noop_pushes`;
 narrow `handle_chat_attach` back to `pub(crate)`; make
 `notify_chat_panes_pushes_over_presence` observe delivery by content; add the
 missing § End-to-end verification entry.
+
+### Update — 2026-10-10 18:55 (end-to-end verification)
+
+**Executor:** executor (phase 03b run 3)
+
+The § End-to-end verification block ran once after the fix commit
+(89e9a1f9); output captured mechanically to
+`.rexymcp/output/e2e-phase-03b-final.txt` and `.rexymcp/output/e2e-phase-03b-gates.txt`,
+pasted verbatim below.
+
+```
+chat_loop_setup_keeps_presence_held: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2277 filtered out; finished in 0.00s
+pushed_alert_reaches_every_attached_client: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2277 filtered out; finished in 0.00s
+push_to_a_dead_client_unregisters_it: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2277 filtered out; finished in 0.01s
+broadcast_with_no_clients_is_a_noop: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2277 filtered out; finished in 0.00s
+notify_chat_panes_pushes_over_presence: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2277 filtered out; finished in 5.00s
+scheduled_job_result_is_pushed_to_attached_clients: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2277 filtered out; finished in 0.01s
+parked_presence_forwards_every_push: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2277 filtered out; finished in 0.00s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+$ cargo fmt --all --check; echo fmt_exit=$?
+fmt_exit=0
+passed=2332 failed=0
+```
+
+PASTE MATCH: yes
+
+Notes on the two count deltas the criterion's text does not carry:
+
+- `passed=2332` vs the criterion's `2330`: run 2 restored
+  `attach_is_the_only_constructor_of_held_presence` (dropped in run 1) and
+  added `chat_loop_setup_detaches_to_a_placeholder` alongside
+  `chat_loop_setup_keeps_presence_held` — +2 over the criterion's expected
+  2330. The criterion's arithmetic (2329 + chat_loop_setup) predates the
+  bounce; the pinned invariant the reviewer cares about is that
+  `chat_loop_setup_keeps_presence_held` reports `1 passed` and nothing fails.
+- `2277 filtered out` in the per-test lines reflects the same +2.
+
+End state: the bounce's blocker and all six minor items are fixed —
+`grep -n 'noop_pushes' src/cli/commands/chat.rs` prints nothing,
+`grep -c 'handler locks this same store' src/daemon/session.rs` prints 1,
+`grep -rnE '^pub (async )?fn handle_chat_attach|pub use chat_presence' src/daemon/server/`
+prints nothing, the phase-03 count assertion is back in
+`presence_with_two_clients_detaches_only_on_last`, and
+`notify_chat_panes_pushes_over_presence` observes delivery by content.
