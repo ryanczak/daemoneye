@@ -1,7 +1,7 @@
 # Phase 03: catchup-reconnect — chat presence over IPC drives the catch-up brief
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-02
 **Tags:** language=rust, kind=feature, size=m
 
@@ -662,3 +662,31 @@ kill: (-2616664): No such process
 **Commit:** 99f6a0032165a5a07364e97f3d1eaafe2718eed1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-10
+
+- **Verdict:** approved_after_1. Round one delivered the whole feature,
+  but `handle_chat_attach` left presence registered whenever the hold ended
+  in an I/O error (bug-03-1). The re-dispatch moved the unregister after
+  one inner fallible step, so every exit path unregisters exactly once, and
+  pinned that with `presence_unregisters_when_the_hold_ends_in_error`. The
+  test's FAILED run against the unfixed code is pasted.
+- **Bounces:** 1 (bug-03-1, major).
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark. Round one
+  took 358 turns (`b3b8f5b9`), the fix 122 turns (`c53040c2`).
+- **Scope deviations:** four supporting tests beyond the eight named ones,
+  accepted and re-pinned (2317 → 2318). Spec errors were mine: the "raw"
+  front end does not exist, and the hook.rs grep could not exclude the
+  test module the spec's own test lived in.
+- **Independent re-run:** fmt check exit 0, build clean, clippy
+  `-D warnings` exit 0, `cargo test` `passed=2318 failed=0`, the new test
+  `1 passed` alone, the ask.rs grep empty, the hook.rs non-test grep `0`.
+- **Calibration:** (1) A held-connection handler needs its cleanup
+  guaranteed around every fallible step. Pin an error-path test in any
+  phase that adds a long-lived IPC connection; 03b's push path is next.
+  (2) The re-dispatch retitled the original `(started)` Update Log heading
+  instead of appending a new one, so round one's started entry now sits
+  under the round-two heading. Cosmetic; noted for the rexyMCP log-append
+  contract. (3) The client's parked presence task ends on the first line
+  the daemon sends. That is harmless today (the daemon sends nothing after
+  `Ok`), but 03b must turn it into a read loop before pushing alerts.
