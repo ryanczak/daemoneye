@@ -704,9 +704,9 @@ mod tests {
 
         notify_chat_panes(&sessions, "WEBHOOK ALERT: disk usage at 95%");
 
-        let pushed = read_presence_responses(&mut rx, 1).await;
+        let pushed = read_until_text(&mut rx, "WEBHOOK ALERT: disk usage at 95%").await;
         assert!(
-            matches!(pushed.as_slice(), [Response::SystemMsg(m)] if m == "WEBHOOK ALERT: disk usage at 95%"),
+            matches!(pushed.last(), Some(Response::SystemMsg(m)) if m == "WEBHOOK ALERT: disk usage at 95%"),
             "the attached chat receives the alert line as a SystemMsg: {pushed:?}"
         );
 
@@ -760,5 +760,36 @@ mod tests {
             out.push(serde_json::from_str(line.trim()).expect("a response line parses"));
         }
         out
+    }
+
+    /// Read response lines until one carries `text` — a concurrent test's
+    /// global broadcast can interleave its own SystemMsg on this connection's
+    /// stream, so delivery is observed by content, not by count or position.
+    async fn read_until_text(
+        rx: &mut tokio::io::BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+        text: &str,
+    ) -> Vec<Response> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut out = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            assert!(
+                !left.is_zero(),
+                "the pushed line '{text}' never arrived within 5 s: {out:?}"
+            );
+            let mut line = String::new();
+            let read =
+                tokio::time::timeout(left, tokio::io::AsyncBufReadExt::read_line(rx, &mut line))
+                    .await
+                    .expect("a response line within the deadline")
+                    .expect("the attach handler is still writing");
+            assert!(read > 0, "the attach handler wrote a non-empty line");
+            let resp: Response = serde_json::from_str(line.trim()).expect("a response line parses");
+            let hit = matches!(&resp, Response::SystemMsg(m) if m == text);
+            out.push(resp);
+            if hit {
+                return out;
+            }
+        }
     }
 }

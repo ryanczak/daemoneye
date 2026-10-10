@@ -45,7 +45,7 @@ pub(crate) fn attach_brief_for(sessions: &SessionStore, session_id: &str) -> Opt
 /// write — unregisters the connection exactly once, and a last-close stamps
 /// detach state on the entry (if it exists) so a later re-attach can be
 /// briefed. The step's result is returned last.
-pub async fn handle_chat_attach<R, W>(
+pub(crate) async fn handle_chat_attach<R, W>(
     sessions: SessionStore,
     session_id: String,
     rx: &mut R,
@@ -375,6 +375,7 @@ mod tests {
         let _ = read_responses(&mut rx1, 1).await;
         let (mut rx2, mut client2, task2) = drive(sessions.clone(), "s2").await;
         let _ = read_responses(&mut rx2, 1).await;
+        assert_eq!(presence_count("s2"), 2, "two clients attached");
         close(&mut client1, task1).await;
         with_sessions(&sessions, |store| {
             let e = store.get("s2").unwrap();
@@ -392,6 +393,7 @@ mod tests {
         });
         assert_eq!(presence_count("s2"), 0);
     }
+
     #[tokio::test]
     async fn reattach_after_30s_returns_catchup_brief() {
         let sessions = SessionStore::new();

@@ -661,6 +661,7 @@ pub fn with_sessions<T>(
 /// Do not add a second `sessions.lock()` to this function or to its caller's
 /// iteration. `std::sync::Mutex` is not reentrant; a second acquisition while
 /// the first guard is alive deadlocks the whole daemon, because every IPC
+/// handler locks this same store. See `docs/design/daemon-stalls.md` § 1.5c.
 pub fn cleanup_pass(
     sessions: &SessionStore,
     now: std::time::Instant,

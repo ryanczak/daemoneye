@@ -166,10 +166,7 @@ pub(super) async fn run_chat_inner(resume_id: Option<String>) -> Result<()> {
     // carries the catch-up brief when the session was away ≥ 30 s; a failed
     // attach must not stop chat from running.
     let (attach_brief, parked) = match chat_presence::attach(&session_id).await {
-        Ok((brief, held)) => {
-            let (guard, pushes) = held.park();
-            (brief, Some((guard, pushes)))
-        }
+        Ok((brief, held)) => (brief, Some(held.park())),
         Err(e) => {
             log::warn!("chat presence attach failed (chat continues): {e}");
             (None, None)
@@ -232,10 +229,9 @@ struct RatatuiCtx<'a> {
     /// The parked presence connection (M27 phase 03b): its background task
     /// forwards every pushed `Response::SystemMsg` onto the channel; the chat
     /// loop selects on it and renders each push through the renderer it owns.
-    parked: Option<(
-        super::chat_presence::HeldPresenceGuard,
-        tokio::sync::mpsc::UnboundedReceiver<String>,
-    )>,
+    /// Kept whole (guard + receiver) so the presence hold lives exactly as
+    /// long as the loop — bug-03b-1.
+    parked: Option<super::chat_presence::ParkedPresence>,
 }
 
 /// Everything `run_chat_inner_raw` needs that is not a plain value: the input
@@ -248,10 +244,7 @@ struct RawChatArgs<'a> {
     approval: &'a mut SessionApproval,
     tmux: TmuxCtx,
     renderer: RatatuiRendererStdout,
-    parked: Option<(
-        super::chat_presence::HeldPresenceGuard,
-        tokio::sync::mpsc::UnboundedReceiver<String>,
-    )>,
+    parked: Option<super::chat_presence::ParkedPresence>,
 }
 
 async fn run_chat_inner_raw(
@@ -306,15 +299,16 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         approval,
         tmux_session,
         mut target_pane,
-        parked: mut parked_presence,
+        parked: parked_presence,
     } = ctx;
-    // Drop the guard (ends the hold and stamps detach state) when the loop
-    // exits, whatever the exit path.
-    let _presence_guard = parked_presence.as_mut().map(|(g, _)| g);
-    // The push channel the parked task forwards into; taken out of the option
-    // so the input loop can select on it. `None` when attach failed — the loop
-    // then simply never sees pushes.
-    let mut pushes = parked_presence.map(|(_, rx)| rx);
+    // The parked connection is kept whole for the loop's lifetime: the hold
+    // ends when the loop drops it (stamping detach state), and the push
+    // channel feeds the input loop. Splitting hold and receiver into separate
+    // bindings let a by-value move discard the hold and kill the task before
+    // the first prompt — bug-03b-1. A failed attach parks a detached
+    // placeholder, so the loop still selects on a channel nobody sends to.
+    let mut held_presence = super::chat_presence::chat_loop_setup(parked_presence);
+    let pushes = held_presence.pushes();
     let mut last_ctrl_c: Option<std::time::Instant> = None;
     let mut daemon_up = false;
     let mut prompt_tokens: u32 = 0;
@@ -449,12 +443,6 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     let help_text = HELP_TEXT;
 
     let user_host = local_user_host();
-
-    // A no-receiver placeholder so the input loop always has a channel to
-    // select on; when presence attached, `pushes` is the real one.
-    let mut noop_pushes = tokio::sync::mpsc::unbounded_channel::<String>().1;
-    let pushes = pushes.get_or_insert_with(|| tokio::sync::mpsc::unbounded_channel::<String>().1);
-    let _ = &mut noop_pushes;
 
     loop {
         // Read input using the existing key handler but render via ratatui.

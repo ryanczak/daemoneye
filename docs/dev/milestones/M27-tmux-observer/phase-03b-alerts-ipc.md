@@ -328,3 +328,14 @@ daemon half and all six tests are sound. The blocker is
 `HeldPresenceGuard`, which aborts the parked task before the chat loop
 starts. A real chat therefore detaches immediately and receives no pushes.
 See [bug-03b-1](bugs/bug-03b-1.md) for that bug and six minor items.
+
+### Update — 2026-10-10 18:34 (resumed run 3)
+
+**Executor:** executor (phase 03b run 3)
+**Status:** fixing bug-03b-1 on top of the committed daemon half (d377b3ed):
+hold the parked `(guard, receiver)` as one struct through the chat loop so a
+real `daemoneye chat` stays attached; restore the weakened phase-03 count
+assertion and the truncated `cleanup_pass` doc line; delete `noop_pushes`;
+narrow `handle_chat_attach` back to `pub(crate)`; make
+`notify_chat_panes_pushes_over_presence` observe delivery by content; add the
+missing § End-to-end verification entry.

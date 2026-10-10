@@ -68,14 +68,11 @@ impl HeldPresence {
     /// selects on. The task never writes to stdout — the ratatui renderer owns
     /// the screen; rendering happens in the loop that owns it.
     ///
-    /// The returned guard ends the hold when dropped (chat exiting), closing
-    /// the connection and stamping detach state daemon-side.
-    pub(crate) fn park(
-        self,
-    ) -> (
-        HeldPresenceGuard,
-        tokio::sync::mpsc::UnboundedReceiver<String>,
-    ) {
+    /// The returned [`ParkedPresence`] bundles the guard with the push
+    /// receiver. The chat loop keeps the whole bundle for its lifetime: the
+    /// hold ends when *it* drops the bundle (chat exiting), closing the
+    /// connection and stamping detach state daemon-side.
+    pub(crate) fn park(self) -> ParkedPresence {
         let (mut rx, mut tx) = (self.rx, self.tx);
         let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
         let (push_tx, push_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -107,23 +104,65 @@ impl HeldPresence {
             }
             let _ = tx.shutdown().await;
         });
-        (
-            HeldPresenceGuard {
-                done_tx: Some(done_tx),
-                task: Some(task),
-            },
-            push_rx,
-        )
+        ParkedPresence {
+            done_tx: Some(done_tx),
+            task: Some(task),
+            pushes: push_rx,
+        }
     }
 }
 
-/// Owns the parked presence task; dropping it ends the hold.
-pub(crate) struct HeldPresenceGuard {
+/// What the chat loop keeps from a parked presence connection, whole: the
+/// hold (the done signal and the parked task) and the push receiver. Dropping
+/// the bundle ends the hold — closing the connection and stamping detach
+/// state daemon-side. Splitting the hold out of the bundle into a separate
+/// binding is exactly what let bug-03b-1 drop it before the first prompt.
+pub(crate) struct ParkedPresence {
     done_tx: Option<tokio::sync::oneshot::Sender<()>>,
     task: Option<tokio::task::JoinHandle<()>>,
+    pushes: tokio::sync::mpsc::UnboundedReceiver<String>,
 }
 
-impl Drop for HeldPresenceGuard {
+impl ParkedPresence {
+    /// The channel the parked task forwards pushed `SystemMsg`s onto, for the
+    /// chat loop to select on. Borrowed, not taken: the hold must stay owned
+    /// by `self` for the loop's lifetime, since dropping `self` ends it.
+    pub(crate) fn pushes(&mut self) -> &mut tokio::sync::mpsc::UnboundedReceiver<String> {
+        &mut self.pushes
+    }
+
+    /// A bundle whose channel nobody sends on: for a chat that failed to
+    /// attach, so the loop always selects on a real channel. Dropping it does
+    /// nothing — there is no hold to end.
+    pub(crate) fn detached() -> Self {
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        Self {
+            done_tx: None,
+            task: None,
+            pushes: rx,
+        }
+    }
+
+    /// Whether the hold is still owned by this bundle.
+    #[cfg(test)]
+    pub(crate) fn holds_presence(&self) -> bool {
+        self.done_tx.is_some() && self.task.is_some()
+    }
+}
+
+/// The chat loop's setup step for the parked presence connection: the split
+/// of the parked bundle happens here, in one function a test can call. It
+/// returns the bundle **whole** — hold and push receiver together — with a
+/// detached placeholder for a chat that failed to attach. The caller keeps
+/// what it returns for the loop's lifetime and reads pushes through
+/// [`ParkedPresence::pushes`]; the hold ends when that caller drops the
+/// bundle. Returning a bare receiver instead would drop the hold before the
+/// first prompt — bug-03b-1.
+pub(crate) fn chat_loop_setup(parked: Option<ParkedPresence>) -> ParkedPresence {
+    parked.unwrap_or_else(ParkedPresence::detached)
+}
+
+impl Drop for ParkedPresence {
     fn drop(&mut self) {
         if let Some(tx) = self.done_tx.take() {
             let _ = tx.send(());
@@ -139,16 +178,35 @@ mod tests {
     use super::*;
     use tokio::net::UnixStream;
 
-    /// Park a `HeldPresence` against a fake daemon: the daemon side speaks the
-    /// wire format (one JSON `Response` per line) on `b` and then shuts its end
-    /// down, so the parked task's read on `a` sees EOF. The write half the
-    /// guard shuts down is `a`'s; its peer has no reader, which is harmless.
-    async fn park_with_daemon(
-        daemon_lines: Vec<String>,
-    ) -> (
-        HeldPresenceGuard,
-        tokio::sync::mpsc::UnboundedReceiver<String>,
-    ) {
+    /// Park a `HeldPresence` against a fake daemon that keeps its end open
+    /// (it does not shut down), so the hold is still live when the caller
+    /// inspects it. The daemon side speaks the wire format (one JSON
+    /// `Response` per line) on `b`. The write half the guard shuts down is
+    /// `a`'s; its peer has no reader, which is harmless.
+    async fn park_with_daemon_held(daemon_lines: Vec<String>) -> ParkedPresence {
+        let (a, b) = UnixStream::pair().expect("a socketpair");
+        let (unix_r, unix_w) = tokio::io::split(b);
+        let (a_r, a_w) = a.into_split();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut w = unix_w;
+            for line in daemon_lines {
+                let _ = w.write_all(line.as_bytes()).await;
+            }
+            // The daemon keeps its end open — no shutdown here.
+            drop(unix_r);
+        });
+        let held = HeldPresence {
+            rx: BufReader::new(a_r),
+            tx: a_w,
+        };
+        held.park()
+    }
+
+    /// Park a `HeldPresence` against a fake daemon that shuts its end down
+    /// after the lines, so the parked task's read on `a` sees EOF and the
+    /// parked task ends — the EOF shape of `parked_presence_forwards_every_push`.
+    async fn park_with_daemon_shutdown(daemon_lines: Vec<String>) -> ParkedPresence {
         let (a, b) = UnixStream::pair().expect("a socketpair");
         let (unix_r, unix_w) = tokio::io::split(b);
         let (a_r, a_w) = a.into_split();
@@ -172,11 +230,12 @@ mod tests {
 
     #[tokio::test]
     async fn parked_presence_forwards_every_push() {
-        let (guard, mut pushes) = park_with_daemon(vec![
+        let mut parked = park_with_daemon_held(vec![
             "{\"SystemMsg\":\"ALERT one\"}\n".to_string(),
             "{\"SystemMsg\":\"ALERT two\"}\n".to_string(),
         ])
         .await;
+        let pushes = parked.pushes();
         let first = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the first push within 5 s");
@@ -189,12 +248,51 @@ mod tests {
             Some("ALERT two"),
             "the second push is forwarded too, not just the first"
         );
+        assert!(
+            parked.holds_presence(),
+            "the guard is still live after the pushes"
+        );
+    }
+
+    #[tokio::test]
+    async fn parked_presence_ends_on_eof() {
+        let mut parked =
+            park_with_daemon_shutdown(vec!["{\"SystemMsg\":\"ALERT gone\"}\n".to_string()]).await;
+        let pushes = parked.pushes();
+        let first = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+            .await
+            .expect("the push within 5 s");
+        assert_eq!(first.as_deref(), Some("ALERT gone"));
         // EOF: the channel closes once the parked task ends.
         let end = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the channel closes within 5 s of EOF");
         assert!(end.is_none(), "the channel closes after EOF");
-        drop(guard);
+    }
+
+    /// The chat loop's setup step keeps the parked bundle whole: a `SystemMsg`
+    /// the fake daemon pushes after setup arrives on the channel the loop
+    /// would select on. With the old two-binding split the hold died at
+    /// setup time and the push never arrived — bug-03b-1.
+    #[tokio::test]
+    async fn chat_loop_setup_keeps_presence_held() {
+        let parked =
+            park_with_daemon_held(vec!["{\"SystemMsg\":\"ALERT after setup\"}\n".to_string()])
+                .await;
+        let mut held = super::chat_loop_setup(Some(parked));
+        assert!(
+            held.holds_presence(),
+            "the setup keeps the hold alive, not dropped before the loop"
+        );
+        let pushes = held.pushes();
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+            .await
+            .expect("the pushed SystemMsg within 5 s");
+        assert_eq!(
+            msg.as_deref(),
+            Some("ALERT after setup"),
+            "the push reaches the channel the loop selects on"
+        );
     }
 
     /// `HeldPresence` is built only by `attach()`; the parked lifecycle is
@@ -205,6 +303,15 @@ mod tests {
         assert!(
             !std::any::type_name::<HeldPresence>().is_empty(),
             "the type exists; only attach() can build it"
+        );
+    }
+
+    #[test]
+    fn chat_loop_setup_detaches_to_a_placeholder() {
+        let parked = super::chat_loop_setup(None);
+        assert!(
+            !parked.holds_presence(),
+            "no parked connection → no hold, but the bundle still exists"
         );
     }
 }

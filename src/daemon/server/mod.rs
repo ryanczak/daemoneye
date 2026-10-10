@@ -11,7 +11,8 @@ mod shells;
 // Re-exported for the webhook side's presence-push test (M27 phase 03b): the
 // test drives the real attach path over a duplex, not a fake.
 pub(crate) use catchup::is_valid_pane_id;
-pub use chat_presence::handle_chat_attach;
+#[cfg(test)]
+pub(crate) use chat_presence::handle_chat_attach;
 
 use ask::handle_ask;
 use handlers::*;
