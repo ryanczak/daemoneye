@@ -139,7 +139,20 @@ the managed-session auto-attach in `run_chat_inner` (phase 04); docs
 
 <!-- entries appended below this line -->
 
-### Update — 2026-10-09 16:05 (started)
+### Update — 2026-10-10 00:33 (started, resume after bug-03-1)
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (headless run,
+re-dispatch). Status already `in-progress (bounced: bug-03-1)` — left as
+found; the milestone README row already matches. Scoping to
+`bugs/bug-03-1.md`: guarantee the unregister around every way the hold
+ends in `handle_chat_attach`, add
+`presence_unregisters_when_the_hold_ends_in_error` (run against the
+unfixed code first to capture its FAILED line), and drop the dead
+`_catchup_brief` slot and stale comment from `ask.rs`. The client side,
+the eviction change, the hook handlers and the eight named tests are
+untouched.
+
+<!-- rexyMCP: append log entries below -->
 
 **Executor:** GLM-5.3-Flash-NVFP4-Spark (headless run). Status flipped
 `todo` → `in-progress`; milestone README row updated to match. Starting
@@ -430,4 +443,80 @@ work is in `bugs/bug-03-1.md`:
    code.
 
 Finish condition: `cargo test` reports exactly `passed=2318 failed=0`.
+
+
+### Update — 2026-10-10 00:45 (bug-03-1 fix)
+
+**Fix:** `handle_chat_attach` (`src/daemon/server/chat_presence.rs`) now
+runs the reply+hold as one inner fallible block (`let held = async { … }`)
+and does `presence_unregister` → `record_chat_detach` after it, whatever
+its result, returning the step's result last. Nothing between
+`presence_register` and the unregister can skip the unregister: a failed
+brief write, a failed `Ok` write, and a hold ending in a read error all
+unregister, and a last-close still stamps `last_detach` /
+`detach_time_utc` / `messages_at_detach`. **Nit:** the always-`None`
+`_catchup_brief` tuple slot and both "used to be sent here" comments are
+gone from `ask.rs` (the 5-tuple is now a 4-tuple of drift/cost/pipe
+values).
+
+**New test:** `presence_unregisters_when_the_hold_ends_in_error` beside
+the duplex tests in `chat_presence.rs` — fresh session id `s-io` (own
+`CHAT_PRESENCE` slot), an entry with one message, attach replies `Ok`,
+then the client writes `&[0xff, 0xfe, b'\n']` so the hold's `read_line`
+returns `Err(InvalidData)`. Asserts the handler returned `Err`,
+`presence_count == 0`, and detach state is stamped with
+`messages_at_detach == 1`.
+
+**Ran against the unfixed code first** (reverted the fix, kept the test):
+`test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2263
+filtered out; finished in 0.00s` — `left: 1, right: 0` on the count, as
+the bug describes. Then re-applied the fix.
+
+### Update — 2026-10-10 00:47 (end-to-end verification, bug-03-1)
+
+Captured mechanically: the per-test loop to
+`.rexymcp/output/e2e-phase-03-rebug-tests.txt`, the rest to
+`.rexymcp/output/e2e-phase-03-rebug-rest.txt`, concatenated to
+`.rexymcp/output/e2e-phase-03-rebug.txt`. Pasted verbatim, every line as
+printed:
+
+```
+presence_unregisters_when_the_hold_ends_in_error: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+chat_attach_request_round_trip: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+last_presence_disconnect_records_detach_state: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+presence_with_two_clients_detaches_only_on_last: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+reattach_after_30s_returns_catchup_brief: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+reattach_within_30s_returns_no_brief: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+attached_session_is_not_evicted: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+chat_resume_rejects_a_malformed_id: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+tmux_client_hooks_no_longer_touch_detach_state: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+0
+grep_done
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+fmt_exit=0
+passed=2318 failed=0
+ .../phase-03-catchup-reconnect.md                  | 15 +++-
+ src/daemon/server/ask.rs                           | 13 +--
+ src/daemon/server/chat_presence.rs                 | 95 +++++++++++++++++-----
+ 3 files changed, 93 insertions(+), 30 deletions(-)
+=== UNFIXED/FAILED capture (against the pre-fix tree):
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+=== FIXED capture:
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+```
+
+- `presence_unregisters_when_the_hold_ends_in_error` reports `1 passed`
+  alone; the FAILED line above is the same test against the unfixed
+  tree (captured before the fix was re-applied). ✓
+- `grep -n 'build_catchup_brief|_catchup_brief|used to be sent here'
+  src/daemon/server/ask.rs` prints nothing (first line after the tests is
+  the hook.rs count). ✓
+- The hook.rs head-of-file grep prints `0`. ✓
+- clippy `-D warnings` finished clean; `fmt_exit=0`. ✓
+- `passed=2318 failed=0` — the previously accepted 2317 + the one new
+  test, exactly as the finish condition pins. ✓
+- `git diff --stat` shows only this fix's files (the capture ran before
+  the commit). ✓
+
+`PASTE MATCH: yes`
 

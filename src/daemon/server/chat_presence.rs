@@ -39,10 +39,11 @@ pub(crate) fn attach_brief_for(sessions: &SessionStore, session_id: &str) -> Opt
 ///
 /// Registers the connection as present for the session, replies with the
 /// catch-up brief (zero or one `SystemMsg`) and then `Ok`, then holds the
-/// connection: reads until EOF or error, ignoring whatever the client sends,
-/// and unregisters on close. When the unregistered connection was the
-/// session's last, detach state is stamped on the entry (if it exists) so a
-/// later re-attach can be briefed.
+/// connection: reads until EOF or error, ignoring whatever the client sends.
+/// Every way the hold ends — clean EOF, a read error, or a failed reply
+/// write — unregisters the connection exactly once, and a last-close stamps
+/// detach state on the entry (if it exists) so a later re-attach can be
+/// briefed. The step's result is returned last.
 pub(crate) async fn handle_chat_attach<R, W>(
     sessions: SessionStore,
     session_id: String,
@@ -56,29 +57,36 @@ where
     presence_register(&session_id);
     log::info!("chat presence attached for session {session_id}");
 
-    if let Some(brief) = attach_brief_for(&sessions, &session_id) {
-        send_response_split(tx, Response::SystemMsg(brief)).await?;
-    }
-    send_response_split(tx, Response::Ok).await?;
-
-    // Hold the connection for the client's lifetime. Any bytes the client
-    // sends are read and discarded — the channel carries daemon→client
-    // traffic; the client talks over its other connections.
-    let mut discarded = String::new();
-    loop {
-        let n = rx.read_line(&mut discarded).await?;
-        if n == 0 {
-            break;
+    // One fallible step: reply, then hold until EOF or error. Nothing after
+    // `presence_register` may skip the unregister, so this runs to completion
+    // (either way) before the bookkeeping below.
+    let held = async {
+        if let Some(brief) = attach_brief_for(&sessions, &session_id) {
+            send_response_split(tx, Response::SystemMsg(brief)).await?;
         }
-        discarded.clear();
-    }
+        send_response_split(tx, Response::Ok).await?;
+
+        // Hold the connection for the client's lifetime. Any bytes the client
+        // sends are read and discarded — the channel carries daemon→client
+        // traffic; the client talks over its other connections. EOF, a read
+        // error, or a failed write above all end the hold.
+        let mut discarded = String::new();
+        loop {
+            let n = rx.read_line(&mut discarded).await?;
+            if n == 0 {
+                return Ok(());
+            }
+            discarded.clear();
+        }
+    };
+    let result = held.await;
 
     let was_last = presence_unregister(&session_id);
     log::info!("chat presence detached for session {session_id} (last={was_last})");
     if was_last {
         record_chat_detach(&session_id, &sessions);
     }
-    Ok(())
+    result
 }
 
 #[cfg(test)]
@@ -313,5 +321,54 @@ mod tests {
             assert_eq!(e.messages_at_detach, 0);
         });
         close(&mut client_w, task).await;
+    }
+
+    #[tokio::test]
+    async fn presence_unregisters_when_the_hold_ends_in_error() {
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert("s-io".to_string(), entry(vec![msg("hello")]));
+        });
+
+        let (client, server) = tokio::io::duplex(1 << 16);
+        let (server_r, server_w) = tokio::io::split(server);
+        let store = sessions.clone();
+        let sid = "s-io".to_string();
+        let task = tokio::spawn(async move {
+            let mut rx = tokio::io::BufReader::new(server_r);
+            let mut tx = server_w;
+            handle_chat_attach(store, sid, &mut rx, &mut tx).await
+        });
+        let (client_r, mut client_w) = tokio::io::split(client);
+        let mut rx = tokio::io::BufReader::new(client_r);
+        let replies = read_responses(&mut rx, 1).await;
+        assert!(
+            matches!(replies.as_slice(), [Response::Ok]),
+            "no detach state → Ok alone, got {replies:?}"
+        );
+
+        // Non-UTF-8 bytes make the hold's `read_line` return `Err(InvalidData)`.
+        client_w.write_all(&[0xff, 0xfe, b'\n']).await.unwrap();
+        client_w.shutdown().await.unwrap();
+
+        let result = task.await.unwrap();
+        assert!(result.is_err(), "the hold ends in an I/O error: {result:?}");
+        assert_eq!(
+            presence_count("s-io"),
+            0,
+            "an I/O error during the hold must unregister the connection"
+        );
+        with_sessions(&sessions, |store| {
+            let e = store.get("s-io").unwrap();
+            assert!(
+                e.last_detach.is_some(),
+                "an I/O error on the last connection stamps last_detach"
+            );
+            assert!(e.detach_time_utc.is_some());
+            assert_eq!(
+                e.messages_at_detach, 1,
+                "messages_at_detach is the message count at close"
+            );
+        });
     }
 }

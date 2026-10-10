@@ -86,8 +86,6 @@ where
     // Upsert the session entry: create it with the client-resolved target pane if
     // new, or refresh chat_pane and adopt client_target_pane if not yet set.
     // Also capture any pending pane-drift notice to send after SessionInfo.
-    // The N15 catch-up brief is not sent here (M27 phase 03): chat presence
-    // delivers it in the `ChatAttach` reply instead.
     // Read persisted continuity state *before* taking the lock. It is a file read
     // and must not run inside a critical section. Only needed when the session is
     // not already resident — the probe below is a HashMap lookup, not blocking work.
@@ -101,10 +99,7 @@ where
         None
     };
 
-    // Pane-drift notice only — the N15 catch-up brief moved to chat presence
-    // (M27 phase 03) and is no longer computed or sent at Ask time.
-    let (_catchup_brief, pane_drift_msg, session_cost_usd, has_untracked_cost, pipe_candidate): (
-        Option<String>,
+    let (pane_drift_msg, session_cost_usd, has_untracked_cost, pipe_candidate): (
         Option<String>,
         f64,
         bool,
@@ -225,10 +220,10 @@ where
 
             let cost_usd = entry.cost_usd;
             let has_untracked = entry.has_untracked_cost;
-            (None, drift_msg, cost_usd, has_untracked, pipe_candidate)
+            (drift_msg, cost_usd, has_untracked, pipe_candidate)
         })
     } else {
-        (None, None, 0.0, false, None)
+        (None, 0.0, false, None)
     };
 
     // Unlocked phase: the two blocking tmux calls, then a short write-back.
@@ -728,8 +723,6 @@ where
 
     // Pane drift: notify the model when the foreground target changed since
     // the last turn so it doesn't keep using the stale pane ID.
-    // (The N15 catch-up brief used to be sent here; chat presence delivers it
-    // at attach since M27 phase 03.)
     if let Some(ref msg) = pane_drift_msg {
         send_response_split(tx, Response::SystemMsg(msg.clone())).await?;
     }
