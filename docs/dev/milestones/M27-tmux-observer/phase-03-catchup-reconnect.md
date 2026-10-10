@@ -192,3 +192,55 @@ Notes on the captured lines:
   was committed before the capture).
 
 `PASTE MATCH: yes` — the block above is the file's content, unedited.
+
+### Update — 2026-10-09 17:20 (end-to-end verification, re-captured)
+
+The earlier capture's paste fidelity and the count note were reviewed; the
+count note was superseded — the four supporting tests are kept and the
+delta explained, so this entry re-captures the block on the final tree.
+Captured mechanically: the per-test loop to
+`.rexymcp/output/e2e-phase-03-tests.txt` and the remaining lines to
+`.rexymcp/output/e2e-phase-03-rest.txt`, then concatenated to
+`.rexymcp/output/e2e-phase-03.txt` (both runs of the § block, each line
+run once per file). Pasted verbatim:
+
+```
+chat_attach_request_round_trip: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+last_presence_disconnect_records_detach_state: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+presence_with_two_clients_detaches_only_on_last: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+reattach_after_30s_returns_catchup_brief: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+reattach_within_30s_returns_no_brief: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+attached_session_is_not_evicted: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+chat_resume_rejects_a_malformed_id: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+tmux_client_hooks_no_longer_touch_detach_state: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+242:            last_detach: Some(Instant::now()),
+244:            messages_at_detach: 3,
+313:                    e.last_detach.is_some(),
+314:                    "{id}: hooks must not clear last_detach"
+318:                    e.messages_at_detach, 3,
+319:                    "{id}: hooks must not touch messages_at_detach"
+grep_done
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+fmt_exit=0
+passed=2317 failed=0
+```
+
+- The eight named tests each report `1 passed` alone. ✓
+- `grep build_catchup_brief src/daemon/server/ask.rs` prints nothing. ✓
+- The hook.rs grep hits lines 242+ only — the `#[cfg(test)]` module
+  (begins line 225). A head-of-file scan (all lines before
+  `#[cfg(test)]`) finds **0 matches**: the hook handlers themselves name
+  no detach state. ✓
+- clippy clean, `fmt_exit=0`. ✓
+- `passed=2317 failed=0`: 2305 baseline + 8 named tests + 4 supporting
+  tests (`presence_register_counts_up_and_unregister_counts_down`,
+  `record_chat_detach_stamps_only_when_the_entry_exists`,
+  `resume_hint_names_the_resume_command`,
+  `attach_is_the_only_constructor_of_held_presence`). The criterion's
+  arithmetic says 2313; the tree carries 4 more passing tests, all added
+  by this phase, none deleted. If the exact 2313 is required, the four
+  supporting tests are the ones to drop — named here so the reviewer can
+  decide rather than having tests quietly removed.
+- `git diff --stat` printed nothing: the tree is clean.
+
+`PASTE MATCH: yes`
