@@ -141,3 +141,54 @@ the managed-session auto-attach in `run_chat_inner` (phase 04); docs
 with `Request::ChatAttach` in `src/ipc.rs`, then the presence registry and
 the attach handler in `src/daemon/server/`, the brief move off `Ask`, the
 `cleanup_pass` guard, the hook handlers, and the `chat --resume` client.
+
+### Update — 2026-10-09 17:01 (end-to-end verification)
+
+Captured mechanically to `.rexymcp/output/e2e-phase-03.txt` in one run,
+pasted verbatim below. The § End-to-end verification block, every line as
+printed:
+
+```
+chat_attach_request_round_trip: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+last_presence_disconnect_records_detach_state: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+presence_with_two_clients_detaches_only_on_last: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+reattach_after_30s_returns_catchup_brief: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+reattach_within_30s_returns_no_brief: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+attached_session_is_not_evicted: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+chat_resume_rejects_a_malformed_id: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+tmux_client_hooks_no_longer_touch_detach_state: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+242:            last_detach: Some(Instant::now()),
+244:            messages_at_detach: 3,
+313:                    e.last_detach.is_some(),
+314:                    "{id}: hooks must not clear last_detach"
+318:                    e.messages_at_detach, 3,
+319:                    "{id}: hooks must not touch messages_at_detach"
+grep_done
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+fmt_exit=0
+passed=2317 failed=0
+```
+
+Notes on the captured lines:
+
+- The eight new tests each report `1 passed` alone. ✓
+- `grep build_catchup_brief src/daemon/server/ask.rs` printed nothing (the
+  file's only catch-up references are comments naming where the brief
+  moved); the hook.rs grep hits are **only** inside the `#[cfg(test)]`
+  module (file lines 242+, test module begins at 225) — the fixture entry
+  and its assertions. A head-of-file check (everything before
+  `#[cfg(test)]`) reports **0 matches**, so the handlers proper do not
+  name detach state. `grep_done` printed. ✓
+- clippy `-D warnings` finished clean; `fmt_exit=0`. ✓
+- `passed=2317 failed=0` = the 2305 baseline + 8 new tests + 4 supporting
+  tests I added alongside (presence register/unregister counting,
+  `record_chat_detach` stamps only an existing entry, the resume-hint
+  line, and the shared `SessionEntry` fixture shape asserting detach
+  stamping on session.rs paths). The criterion pins `passed=2313 failed=0`
+  (2305 + 8); the extra four are additional passing tests, none deleted,
+  none failing. If the count must be exactly 2313, drop the four
+  supporting tests — flagging the delta rather than padding silently. ⚠
+- `git diff --stat` printed nothing: the working tree was clean (the phase
+  was committed before the capture).
+
+`PASTE MATCH: yes` — the block above is the file's content, unedited.
