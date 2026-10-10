@@ -1,7 +1,7 @@
 # Bug 1 on phase-03b: chat drops its presence guard before the loop starts, so no push ever arrives
 
 **Severity:** blocker
-**Status:** open
+**Status:** fixed (89e9a1f9)
 **Filed:** 2026-10-10
 
 ## What's wrong

@@ -1,7 +1,7 @@
 # Phase 03b: alerts-ipc — alerts are pushed to every attached chat over the presence connection
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-03, phase-04
 **Tags:** language=rust, kind=feature, size=m
 
@@ -526,3 +526,32 @@ kill: (-3277261): No such process
 **Commit:** bb7ad5208f596be7655509c32d8e9579b584ab19
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-10
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-03b-1: chat dropped the presence guard before the
+  loop started, so a real chat detached at once and got no pushes). Before
+  that, one escalation (resume) after a NoProgressStall at turn 467.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** `passed=2332`, not the pinned 2330. The two
+  supporting tests, `parked_presence_ends_on_eof` (split out of the
+  forwards test) and `chat_loop_setup_detaches_to_a_placeholder`, are named
+  and real, so accepted. The executor's stated reason was wrong:
+  `attach_is_the_only_constructor_of_held_presence` was already in the
+  2329.
+- **Gates (reviewer re-run):** fmt 0, build ok, clippy clean,
+  `passed=2332 failed=0`. All bug-03b-1 DoD greps pass.
+- **Fix quality:** `ParkedPresence` keeps the hold and the receiver in one
+  struct with private fields, so outside the module they can no longer be
+  split apart. `run_chat_ratatui` keeps `held_presence` bound for the whole
+  loop.
+- **Nit (not filed):** `notify_chat_panes_pushes_over_presence` takes 5 s.
+  Dropping only the duplex write half does not deliver EOF, so the handler
+  waits out the timeout, and `let _ = ended.map(...)` swallows the result.
+  The handler and its registry entry leak for the rest of the test process.
+  This is harmless now, because every presence test reads by content.
+- **Calibration:** three NoProgressStalls in M27 (phase-02, 04, 03b). The
+  fold "name every remaining edit; forbid re-deriving" goes to the user at
+  milestone close. A bounce should restate the "supporting tests: name
+  them, +1 each" clause whenever it re-pins a count.
