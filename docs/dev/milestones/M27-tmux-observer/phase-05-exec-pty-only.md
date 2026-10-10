@@ -1,7 +1,7 @@
 # Phase 05: exec-pty-only — no command ever runs through tmux
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02, phase-04
 **Tags:** language=rust, kind=refactor, size=l
 
@@ -67,6 +67,55 @@ read-only capture gating are phase 05b. Leave them alone here.
     delete it when no such text survives.
 - **Tests that exercised only a deleted path** are deleted with it. Name
   every deleted test in the Update Log.
+
+## Edit order (escalation, 2026-10-10) — read this before anything else
+
+Run 1 spent 216 turns reading and made **zero source edits**. This is a
+deletion phase, so the compiler finds the call sites for you. **Your first
+edit lands within 15 turns. Do not open a file unless `cargo build` names
+it, or this list does.** Do these steps in order. Run `cargo build` after
+steps 1 to 4, and let its errors drive the rest.
+
+1. `git rm -r src/daemon/background/`, and delete the line `pub mod
+   background;` in `src/daemon/mod.rs`.
+   Leave `src/daemon/context/mod.rs`'s `pub mod background;` alone. It is a
+   different module.
+2. In `src/tmux/` (`pane.rs`, `window.rs`, `session.rs`), delete the 11
+   functions named in § Spec, together with their tests.
+3. In `src/daemon/executor/foreground.rs`:
+   - Move `LOCAL_CMD_TIMEOUT` and `exit_status_annotation` into
+     `shell_exec.rs`, and update its two `foreground::` references.
+   - Delete `run_foreground` and every private helper that only it uses.
+   - In `run_background`, keep the three ghost PTY branches: remote host,
+     `ghost_sandbox_pty` and `ghost_local_pty`. Replace everything after the
+     `ghost_local_pty` branch with a refusal: send a `Response::ToolResult`
+     whose output says the command has no PTY route, and name the
+     unresolved `ssh_target` when there is one. Return it as
+     `ToolCallOutcome::Result`.
+4. In `src/config/types.rs`:
+   - Delete `uses_pty()`.
+   - `validate()` warns once when the normalised backend is `"tmux"`
+     ("the tmux backend was removed; commands run in PTY shells"), and keeps
+     the existing invalid-value warning.
+   - Delete the `uses_pty` tests in `src/config/mod.rs`.
+5. `cargo build`. For every error:
+   - **Delete the dead caller.** Never restore the deleted function.
+   - Where a call site passed `uses_pty`, it is now always `true`. Drop the
+     parameter from `ghost_remote_host`, `ghost_local_pty` and
+     `ghost_sandbox_pty`.
+   - In `executor/mod.rs`, the `PendingCall::Foreground` fall-through after
+     the PTY branch becomes the same refusal as in step 3.
+6. In `src/daemon/ghost.rs`, delete `ghost_tmux_session`, the
+   `ensure_incident_session` call, `ghost_session_alive` and the per-turn
+   `session_exists` check, along with their tests. In
+   `src/daemon/utils/sudo.rs`, delete the `send_keys` injection branch.
+   `cargo build` again.
+7. `tests/doc_truth.rs`: delete the `BACKGROUND_RUN_SRC` constant and the
+   test that uses it. `tests/isolation.rs`: delete the
+   `ensure_incident_session` test.
+8. Run `cargo clippy`. Fix only what it names.
+9. Add the § Tests. Then run § End-to-end verification **once** and paste
+   the output.
 
 ## Tests
 
@@ -136,3 +185,23 @@ full test output.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-10 20:33 (started)
+
+Executor dispatched for phase 05 (exec-pty-only). Status flipped to
+`in-progress` here and in the M27 README phase table. Plan: make the refusal
+front in `PendingCall::Foreground`/`PendingCall::Background` dispatch, delete
+`foreground::run_foreground`/`run_background`'s tmux tail and the
+`src/daemon/background/` module, drop the ghost incident session and the
+per-turn `session_exists` check, remove the tmux sudo injection, delete the
+named `src/tmux/` functions, retire `[execution] backend = "tmux"` with a
+startup warning, then add the three § Tests.
+
+### Update — 2026-10-10 (escalation)
+
+**Chosen lever:** refined re-dispatch.
+**Rationale:** NoProgressStall after 216 turns, with no source edits, so
+there is no partial work to resume. The spec described *what* to delete but
+not a way in. The executor tried to understand the whole call graph before
+its first edit. The refinement is the § Edit order block: an ordered,
+compiler-driven deletion recipe with a 15-turn first-edit rule.
