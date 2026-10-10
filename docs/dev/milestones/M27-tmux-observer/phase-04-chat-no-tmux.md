@@ -1,7 +1,7 @@
 # Phase 04: chat-no-tmux — chat runs in place outside tmux; its context is the daemon's shells
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-03
 **Tags:** language=rust, kind=feature, size=m
 
@@ -344,3 +344,37 @@ kill: (-2746749): No such process
 **Commit:** 7d82b47dc7d8ff927022f19d63ebf8b6f9689664
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-10
+
+- **Verdict:** approved_after_1. The first run hard-failed at turn 495 on a
+  NoProgressStall (120 consecutive read-only calls). Its design was right
+  and nearly complete. The architect's gate run found one over-broad test
+  assertion, one missing test, one unused re-export and a dead
+  `_session_override` shim. A `continue_phase` resume with those four edits
+  named finished in 100 turns.
+- **Bounces:** 1 (no bug filed; the lever was resume).
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark. Run one
+  `bbbd50f7` (495 turns, hard_fail); resume session `6ac9aafb` (100 turns,
+  complete). The resume's Update Log heading labels the executor
+  "opus-4.5". That is the model mislabelling itself; `rexymcp status`
+  confirms GLM.
+- **Scope deviations:** none unauthorized. The `chat --session` flag was
+  removed under the escalation's widened authorization. The executor also
+  gated chat's tmux attach-wait loop on being inside tmux; outside tmux,
+  with a detached server running, that loop could have hung chat. It is in
+  scope (a client tmux call) and correct.
+- **Independent re-run:** fmt check exit 0, build clean, clippy
+  `-D warnings` exit 0, `cargo test` `passed=2323 failed=0`, the
+  `attach-session|new-window` grep empty. The new `unwrap`/`expect` calls
+  are all in test modules.
+- **Calibration:** (1) An absence assertion on a tag like `[PANE MAP]`
+  also matches the prompt's own guidance prose. Pin fixture-specific
+  rendered data (`idx:0=%1`) in specs, never a tag literal. This was the
+  architect's test description, not the executor's choice. (2)
+  `continue_phase` blocks the MCP client and hit Claude Code's 1800 s idle
+  timeout. The run itself finished server-side; check `rexymcp status
+  --repo .` before assuming a lost run. (3) This is the second
+  NoProgressStall in M27 (phase-02's re-dispatch was the first), both after
+  long read-only sweeps. One more makes it a fold candidate: "name the
+  remaining edits; forbid re-deriving".
