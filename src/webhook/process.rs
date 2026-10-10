@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use crate::ai::{AiEvent, Message};
 use crate::daemon::ghost::GhostManager;
-use crate::daemon::session::{SessionStore, append_session_message, with_sessions};
+use crate::daemon::session::{
+    SessionStore, append_session_message, presence_broadcast, with_sessions,
+};
 use crate::daemon::utils::{UnpoisonExt, fire_notification, log_event};
 
 use super::*;
@@ -195,7 +197,10 @@ pub(crate) fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
     }
 }
 
-/// Send a one-line alert notification to every active chat pane.
+/// Send a one-line alert notification to every active chat pane, and push the
+/// same line to every chat attached over the presence connection (M27 phase
+/// 03b). The tmux overlay stays as the optional extra — an attached chat
+/// without tmux still sees the alert.
 pub(crate) fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
     let panes: Vec<String> = with_sessions(sessions, |store| {
         store.values().filter_map(|e| e.chat_pane.clone()).collect()
@@ -207,6 +212,7 @@ pub(crate) fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
             .args(["display-message", "-d", "8000", "-t", pane, msg])
             .output();
     }
+    presence_broadcast(msg);
 }
 
 /// Inject a ghost shell lifecycle event into all active user sessions and
@@ -536,6 +542,7 @@ async fn maybe_analyze_alert(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ipc::Response;
 
     // ── Severity ranking ──────────────────────────────────────────────────
 
@@ -681,5 +688,77 @@ mod tests {
         let (act, reason) = evaluate_watchdog_response("GHOST_TRIGGER: YES", true);
         assert!(act);
         assert_eq!(reason, "GHOST_TRIGGER: YES");
+    }
+
+    // ── presence push (M27 phase 03b) ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn notify_chat_panes_pushes_over_presence() {
+        let sessions = SessionStore::new();
+        let (mut rx, _client_w, task) = drive_presence(sessions.clone(), "webhook-notify-1").await;
+        let replies = read_presence_responses(&mut rx, 1).await;
+        assert!(
+            matches!(replies.as_slice(), [Response::Ok]),
+            "no detach state → Ok alone, got {replies:?}"
+        );
+
+        notify_chat_panes(&sessions, "WEBHOOK ALERT: disk usage at 95%");
+
+        let pushed = read_presence_responses(&mut rx, 1).await;
+        assert!(
+            matches!(pushed.as_slice(), [Response::SystemMsg(m)] if m == "WEBHOOK ALERT: disk usage at 95%"),
+            "the attached chat receives the alert line as a SystemMsg: {pushed:?}"
+        );
+
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            drop(_client_w);
+            task.await
+        })
+        .await;
+        let _ = ended.map(|r| r.expect("handler joins").expect("clean EOF"));
+    }
+
+    /// Attach one live presence connection over a duplex, with the daemon side
+    /// in a task. Unique session id per test; delivery is observed by reading
+    /// the client.
+    async fn drive_presence(
+        sessions: SessionStore,
+        session_id: &str,
+    ) -> (
+        tokio::io::BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<anyhow::Result<()>>,
+    ) {
+        let (client, server) = tokio::io::duplex(1 << 16);
+        let (server_r, server_w) = tokio::io::split(server);
+        let sid = session_id.to_string();
+        let task = tokio::spawn(async move {
+            let mut rx = tokio::io::BufReader::new(server_r);
+            let mut tx = server_w;
+            crate::daemon::server::handle_chat_attach(sessions, sid, &mut rx, &mut tx).await
+        });
+        let (client_r, client_w) = tokio::io::split(client);
+        (tokio::io::BufReader::new(client_r), client_w, task)
+    }
+
+    /// Read exactly `n` response lines from the client side, each within 5 s.
+    async fn read_presence_responses(
+        rx: &mut tokio::io::BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+        n: usize,
+    ) -> Vec<Response> {
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            let mut line = String::new();
+            let read = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::io::AsyncBufReadExt::read_line(rx, &mut line),
+            )
+            .await
+            .expect("a response line within 5 s")
+            .expect("the attach handler is still writing");
+            assert!(read > 0, "the attach handler wrote a non-empty line");
+            out.push(serde_json::from_str(line.trim()).expect("a response line parses"));
+        }
+        out
     }
 }

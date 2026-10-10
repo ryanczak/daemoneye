@@ -5,7 +5,8 @@
 
 use super::catchup::build_catchup_brief;
 use crate::daemon::session::{
-    SessionStore, presence_register, presence_unregister, record_chat_detach, with_sessions,
+    PresenceConnection, SessionStore, presence_register, presence_unregister, record_chat_detach,
+    with_sessions,
 };
 use crate::daemon::utils::send_response_split;
 use crate::ipc::Response;
@@ -44,7 +45,7 @@ pub(crate) fn attach_brief_for(sessions: &SessionStore, session_id: &str) -> Opt
 /// write — unregisters the connection exactly once, and a last-close stamps
 /// detach state on the entry (if it exists) so a later re-attach can be
 /// briefed. The step's result is returned last.
-pub(crate) async fn handle_chat_attach<R, W>(
+pub async fn handle_chat_attach<R, W>(
     sessions: SessionStore,
     session_id: String,
     rx: &mut R,
@@ -54,7 +55,9 @@ where
     R: AsyncBufReadExt + Unpin,
     W: AsyncWriteExt + Unpin,
 {
-    presence_register(&session_id);
+    let (push_tx, mut push_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let conn = PresenceConnection { push: push_tx };
+    presence_register(&session_id, conn.clone());
     log::info!("chat presence attached for session {session_id}");
 
     // One fallible step: reply, then hold until EOF or error. Nothing after
@@ -68,20 +71,32 @@ where
 
         // Hold the connection for the client's lifetime. Any bytes the client
         // sends are read and discarded — the channel carries daemon→client
-        // traffic; the client talks over its other connections. EOF, a read
-        // error, or a failed write above all end the hold.
+        // traffic; the client talks over its other connections. Pushes queued
+        // by `presence_broadcast` are written ahead of the reads, with the
+        // read parked until one arrives so a quiet connection costs nothing.
+        // EOF, a read error, or a failed write (reply or push) all end the
+        // hold.
         let mut discarded = String::new();
         loop {
-            let n = rx.read_line(&mut discarded).await?;
-            if n == 0 {
-                return Ok(());
-            }
+            let line = tokio::select! {
+                n = rx.read_line(&mut discarded) => {
+                    // EOF or a read error both end the hold; `?` propagates
+                    // the error, EOF returns Ok.
+                    if n? == 0 {
+                        return Ok(());
+                    }
+                    None
+                }
+                Some(msg) = push_rx.recv() => Some(msg),
+            };
+            let Some(msg) = line else { continue };
+            send_response_split(tx, Response::SystemMsg(msg)).await?;
             discarded.clear();
         }
     };
     let result = held.await;
 
-    let was_last = presence_unregister(&session_id);
+    let was_last = presence_unregister(&session_id, &conn);
     log::info!("chat presence detached for session {session_id} (last={was_last})");
     if was_last {
         record_chat_detach(&session_id, &sessions);
@@ -93,8 +108,12 @@ where
 mod tests {
     use super::*;
     use crate::ai::Message;
-    use crate::daemon::session::{SessionEntry, presence_count};
+    use crate::daemon::session::{
+        SessionEntry, presence_broadcast, presence_broadcast_in, presence_count,
+    };
+    use std::collections::HashMap;
     use std::collections::HashSet;
+    use std::sync::Mutex;
     use std::time::Instant;
     use tokio::io::AsyncWriteExt;
 
@@ -166,6 +185,14 @@ mod tests {
         (tokio::io::BufReader::new(client_r), client_w, task)
     }
 
+    /// The dead-client shape: drop the vanished client's reader and writer
+    /// halves together. The daemon's next read sees EOF and the hold ends
+    /// through the same exit path as an I/O error.
+    async fn drop_client_entirely(rx: ClientRx, tx: ClientTx) {
+        drop(rx);
+        drop(tx);
+    }
+
     /// Read exactly `n` response lines from the client side, each within 5 s.
     async fn read_responses(rx: &mut ClientRx, n: usize) -> Vec<Response> {
         let mut out = Vec::with_capacity(n);
@@ -184,10 +211,70 @@ mod tests {
         out
     }
 
+    /// Read response lines until one carries `text` — a concurrent test's
+    /// global broadcast can interleave its own SystemMsg on this connection's
+    /// stream, so delivery is observed by content, not by count.
+    async fn read_until_text(rx: &mut ClientRx, text: &str) -> Vec<Response> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut out = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            assert!(
+                !left.is_zero(),
+                "the pushed line '{text}' never arrived within 5 s: {out:?}"
+            );
+            let mut line = String::new();
+            let read = tokio::time::timeout(left, AsyncBufReadExt::read_line(rx, &mut line))
+                .await
+                .expect("a response line within the deadline")
+                .expect("the attach handler is still writing");
+            assert!(read > 0, "the attach handler wrote a non-empty line");
+            let resp: Response = serde_json::from_str(line.trim()).expect("a response line parses");
+            let hit = matches!(&resp, Response::SystemMsg(m) if m == text);
+            out.push(resp);
+            if hit {
+                return out;
+            }
+        }
+    }
+
     /// Drop the client side, then wait for the handler to finish.
     async fn close(client_w: &mut ClientTx, task: tokio::task::JoinHandle<Result<()>>) {
         client_w.shutdown().await.unwrap();
         task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn pushed_alert_reaches_every_attached_client() {
+        let sessions = SessionStore::new();
+        let (mut rx1, mut client1, task1) = drive(sessions.clone(), "push-1").await;
+        let _ = read_responses(&mut rx1, 1).await;
+        let (mut rx2, mut client2, task2) = drive(sessions.clone(), "push-2").await;
+        let _ = read_responses(&mut rx2, 1).await;
+
+        // The alert reaches both clients, regardless of any other test's
+        // live connections in the process-global registry.
+        presence_broadcast("ALERT: disk usage at 95%");
+        assert_eq!(presence_count("push-1"), 1);
+        assert_eq!(presence_count("push-2"), 1);
+
+        let got1 = read_until_text(&mut rx1, "ALERT: disk usage at 95%").await;
+        let got2 = read_until_text(&mut rx2, "ALERT: disk usage at 95%").await;
+        // Other tests' global broadcasts can interleave on this stream; the
+        // pinned assertion is that this test's own alert line arrived last.
+        assert!(
+            matches!(got1.last(), Some(Response::SystemMsg(m)) if m == "ALERT: disk usage at 95%"),
+            "client 1 receives the alert as a SystemMsg: {got1:?}"
+        );
+        assert!(
+            matches!(got2.last(), Some(Response::SystemMsg(m)) if m == "ALERT: disk usage at 95%"),
+            "client 2 receives the alert as a SystemMsg: {got2:?}"
+        );
+
+        close(&mut client1, task1).await;
+        close(&mut client2, task2).await;
+        assert_eq!(presence_count("push-1"), 0);
+        assert_eq!(presence_count("push-2"), 0);
     }
 
     #[tokio::test]
@@ -196,7 +283,6 @@ mod tests {
         with_sessions(&sessions, |store| {
             store.insert("s1".to_string(), entry(vec![msg("hello")]));
         });
-
         let (mut rx, mut client_w, task) = drive(sessions.clone(), "s1").await;
         let replies = read_responses(&mut rx, 1).await;
         assert!(
@@ -218,6 +304,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn push_to_a_dead_client_unregisters_it() {
+        let sessions = SessionStore::new();
+        let (rx1, _client1, task1) = drive(sessions.clone(), "push-dead").await;
+        let (mut rx2, mut client2, task2) = drive(sessions.clone(), "push-dead").await;
+        let _ = read_responses(&mut rx2, 1).await;
+        assert_eq!(presence_count("push-dead"), 2);
+
+        // The dead client: drop the whole client side (its stream holder) —
+        // the daemon's next read sees EOF and the hold ends through the same
+        // exit path as an I/O error.
+        drop_client_entirely(rx1, _client1).await;
+        while presence_count("push-dead") == 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(
+            presence_count("push-dead"),
+            1,
+            "the dead connection's handler unregistered it"
+        );
+        let hold_end = task1
+            .await
+            .expect("the dead client's handler join must not panic");
+        let io_only = match &hold_end {
+            Ok(()) => true,
+            Err(e) => e.downcast_ref::<std::io::Error>().is_some(),
+        };
+        assert!(
+            io_only,
+            "the dead client's hold ends Ok (EOF) or with an I/O error; got {hold_end:?}"
+        );
+        // The dead client's earlier `read_responses` call left the BufReader
+        // holding no buffered data, but the duplex may still carry a stray
+        // push from a concurrent test; read rx2 only after the broadcast of
+        // this test's own text.
+        presence_broadcast("ALERT: after one client died");
+        // The dead connection may still hold one queued push from before it
+        // died; drain until this test's own alert line arrives.
+        let got = read_until_text(&mut rx2, "ALERT: after one client died").await;
+        assert!(
+            matches!(got.last(), Some(Response::SystemMsg(m)) if m == "ALERT: after one client died"),
+            "the live client still gets the alert: {got:?}"
+        );
+
+        close(&mut client2, task2).await;
+        assert_eq!(presence_count("push-dead"), 0);
+    }
+
+    #[tokio::test]
+    async fn broadcast_with_no_clients_is_a_noop() {
+        let map: Mutex<HashMap<String, Vec<PresenceConnection>>> = Mutex::new(HashMap::new());
+        let start = std::time::Instant::now();
+        let pushed = presence_broadcast_in(&map, "ALERT: nobody listening");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "a broadcast with no clients returns promptly: {:?}",
+            start.elapsed()
+        );
+        assert_eq!(pushed, 0, "delivered to nobody");
+    }
+
+    #[tokio::test]
     async fn presence_with_two_clients_detaches_only_on_last() {
         let sessions = SessionStore::new();
         with_sessions(&sessions, |store| {
@@ -228,8 +375,6 @@ mod tests {
         let _ = read_responses(&mut rx1, 1).await;
         let (mut rx2, mut client2, task2) = drive(sessions.clone(), "s2").await;
         let _ = read_responses(&mut rx2, 1).await;
-        assert_eq!(presence_count("s2"), 2, "two clients attached");
-
         close(&mut client1, task1).await;
         with_sessions(&sessions, |store| {
             let e = store.get("s2").unwrap();
@@ -247,7 +392,6 @@ mod tests {
         });
         assert_eq!(presence_count("s2"), 0);
     }
-
     #[tokio::test]
     async fn reattach_after_30s_returns_catchup_brief() {
         let sessions = SessionStore::new();

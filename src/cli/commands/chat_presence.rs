@@ -3,8 +3,8 @@
 //! One held IPC connection per chat client, opened right after the session id
 //! is chosen and kept until the process exits. The attach reply carries the
 //! catch-up brief (zero or one `Response::SystemMsg`) before `Response::Ok`;
-//! after that the daemon holds the connection and the client ignores it until
-//! exit. Phase 03b will push alerts down the same connection.
+//! after that the daemon pushes alerts down the connection and the client
+//! forwards each one to the chat loop (phase 03b).
 
 use anyhow::Result;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -63,33 +63,57 @@ pub(crate) struct HeldPresence {
 }
 
 impl HeldPresence {
-    /// Park the connection in a background task that holds it (reading and
-    /// discarding) until the returned guard is dropped or the process exits.
-    /// The daemon pushes nothing down this connection yet (phase 03b will);
-    /// reading here keeps the socket drained so nothing blocks the daemon.
-    pub(crate) fn park(self) -> HeldPresenceGuard {
+    /// Park the connection in a background task that reads pushed alerts until
+    /// the connection closes, forwarding each one to the channel the chat loop
+    /// selects on. The task never writes to stdout — the ratatui renderer owns
+    /// the screen; rendering happens in the loop that owns it.
+    ///
+    /// The returned guard ends the hold when dropped (chat exiting), closing
+    /// the connection and stamping detach state daemon-side.
+    pub(crate) fn park(
+        self,
+    ) -> (
+        HeldPresenceGuard,
+        tokio::sync::mpsc::UnboundedReceiver<String>,
+    ) {
         let (mut rx, mut tx) = (self.rx, self.tx);
         let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
+        let (push_tx, push_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let task = tokio::spawn(async move {
             let mut discarded = String::new();
-            tokio::select! {
-                // Drain whatever the daemon pushes (ignored for now).
-                res = rx.read_line(&mut discarded) => {
-                    // EOF or error both end the hold; the detach is stamped
-                    // daemon-side either way.
-                    let _ = res;
-                    let _ = tx.shutdown().await;
+            loop {
+                let got_line = tokio::select! {
+                    res = rx.read_line(&mut discarded) => {
+                        // EOF or a read error both end the hold; the detach is
+                        // stamped daemon-side either way.
+                        let n = res.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        true
+                    }
+                    _ = &mut done_rx => {
+                        // Guard dropped — close cleanly.
+                        break;
+                    }
+                };
+                if got_line
+                    && let Ok(Response::SystemMsg(msg)) =
+                        serde_json::from_str::<Response>(discarded.trim())
+                {
+                    let _ = push_tx.send(msg);
                 }
-                _ = &mut done_rx => {
-                    // Guard dropped — close cleanly.
-                    let _ = tx.shutdown().await;
-                }
+                discarded.clear();
             }
+            let _ = tx.shutdown().await;
         });
-        HeldPresenceGuard {
-            done_tx: Some(done_tx),
-            task: Some(task),
-        }
+        (
+            HeldPresenceGuard {
+                done_tx: Some(done_tx),
+                task: Some(task),
+            },
+            push_rx,
+        )
     }
 }
 
@@ -113,12 +137,69 @@ impl Drop for HeldPresenceGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::UnixStream;
 
-    // park() over a real daemon socket cannot run hermetically here —
-    // HeldPresence is built only by attach(), which needs a live daemon.
-    // The lifecycle is exercised end-to-end by every chat run (drop of the
-    // guard after the loop); the detach-stamping behaviour daemon-side is
-    // covered by the server chat_presence tests over a duplex stream.
+    /// Park a `HeldPresence` against a fake daemon: the daemon side speaks the
+    /// wire format (one JSON `Response` per line) on `b` and then shuts its end
+    /// down, so the parked task's read on `a` sees EOF. The write half the
+    /// guard shuts down is `a`'s; its peer has no reader, which is harmless.
+    async fn park_with_daemon(
+        daemon_lines: Vec<String>,
+    ) -> (
+        HeldPresenceGuard,
+        tokio::sync::mpsc::UnboundedReceiver<String>,
+    ) {
+        let (a, b) = UnixStream::pair().expect("a socketpair");
+        let (unix_r, unix_w) = tokio::io::split(b);
+        let (a_r, a_w) = a.into_split();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut w = unix_w;
+            for line in daemon_lines {
+                let _ = w.write_all(line.as_bytes()).await;
+            }
+            // Shut the daemon side down: the client's read sees EOF.
+            let _ = w.shutdown().await;
+            drop(w);
+            drop(unix_r);
+        });
+        let held = HeldPresence {
+            rx: BufReader::new(a_r),
+            tx: a_w,
+        };
+        held.park()
+    }
+
+    #[tokio::test]
+    async fn parked_presence_forwards_every_push() {
+        let (guard, mut pushes) = park_with_daemon(vec![
+            "{\"SystemMsg\":\"ALERT one\"}\n".to_string(),
+            "{\"SystemMsg\":\"ALERT two\"}\n".to_string(),
+        ])
+        .await;
+        let first = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+            .await
+            .expect("the first push within 5 s");
+        assert_eq!(first.as_deref(), Some("ALERT one"), "first push forwarded");
+        let second = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+            .await
+            .expect("the second push within 5 s");
+        assert_eq!(
+            second.as_deref(),
+            Some("ALERT two"),
+            "the second push is forwarded too, not just the first"
+        );
+        // EOF: the channel closes once the parked task ends.
+        let end = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+            .await
+            .expect("the channel closes within 5 s of EOF");
+        assert!(end.is_none(), "the channel closes after EOF");
+        drop(guard);
+    }
+
+    /// `HeldPresence` is built only by `attach()`; the parked lifecycle is
+    /// exercised by the test above, and detach stamping daemon-side by the
+    /// server chat_presence tests.
     #[test]
     fn attach_is_the_only_constructor_of_held_presence() {
         assert!(

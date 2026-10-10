@@ -1,7 +1,7 @@
 # Phase 03b: alerts-ipc — alerts are pushed to every attached chat over the presence connection
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03, phase-04
 **Tags:** language=rust, kind=feature, size=m
 
@@ -43,6 +43,15 @@ as an optional extra.
   `notify_job_result` also broadcasts its message, so scheduled-job results
   and `ActionOn::Alert` reach attached chats. `fire_notification` /
   `[notifications] on_alert` is unchanged everywhere.
+- **Test isolation (escalation, 2026-10-10).** The presence registry is
+  process-global and cargo runs tests in parallel. Tests must never clear
+  it, and must never assert on a global broadcast count. Give the broadcast
+  an inner form over an explicit registry (the `…_in(&registry, …)` seam
+  shape this codebase already uses, e.g. `shell_context_block_in`) with the
+  global wrapper on top. Count assertions use a fresh registry; delivery
+  tests that go through `handle_chat_attach` use a unique session id and
+  observe delivery by reading the client. No test-only helper may be `pub`
+  in production code.
 - **Client.** The parked presence task currently ends on the first line the
   daemon sends. It must instead read in a loop until EOF. Each pushed
   `SystemMsg` goes to the chat loop through a channel, and the chat loop
@@ -114,3 +123,42 @@ the `cargo test` lines; rexyMCP's output filter removes the individual
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-09 21:45 (started)
+
+**Executor:** executor (phase 03b run 1)
+**Status:** flipped `todo → in-progress`; implementing the Spec in order.
+**Plan:** registry gains a per-connection push sender beside its count; the
+attach hold multiplexes its read loop against the pushes; `notify_chat_panes`
+and `notify_job_result` gain a broadcast; the client's parked presence task
+becomes a read loop that forwards `SystemMsg` pushes to the chat loop.
+
+### Update — 2026-10-10 (escalation)
+
+**Chosen lever:** resume.
+**Rationale:** NoProgressStall at turn 467, with the daemon push half on
+disk and sound. The wall was a test-isolation hazard the spec failed to
+name, plus one test bug. The spec now names the isolation rule. The rest
+of the phase is untouched, mechanical work.
+
+Architect gate run on the uncommitted tree: two tests pass,
+`pushed_alert_reaches_every_attached_client` and
+`broadcast_with_no_clients_is_a_noop`. `push_to_a_dead_client_unregisters_it`
+FAILS: after the dead client unregisters, the test reads `rx2` for an alert
+it never broadcasts, so the read times out at 5 s. The remaining three tests
+do not exist. Clippy fails on an unused `task1`. `src/lib.rs` gained a
+`pub fn presence_test_drain()` that exists only for tests.
+
+
+### Update — 2026-10-10 07:45 (resumed run)
+
+**Executor:** executor (phase 03b run 2)
+**Status:** continuing from run 1's on-disk daemon half, per the resume block.
+**Plan:** fix the dead-client test (broadcast the string it reads for, join
+`task1`); apply the test-isolation rule (`presence_broadcast_in` seam over an
+explicit registry, no `clear_registry`, no `pub` test drain); add the two
+caller tests (`notify_chat_panes_pushes_over_presence`,
+`scheduled_job_result_is_pushed_to_attached_clients`); convert the client's
+parked task to a read loop that forwards every push through a channel
+(`parked_presence_forwards_every_push`), and render pushes in the chat loop
+that owns the renderer.

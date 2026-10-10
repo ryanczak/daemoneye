@@ -146,37 +146,51 @@ impl SessionStore {
 pub static BG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
     std::sync::OnceLock::new();
 
-/// Live chat-presence connection counts per session id (M27 phase 03).
+/// Live chat-presence connections per session id (M27 phase 03).
 ///
 /// One session may have several connections; detach state is stamped only
 /// when the last one closes. Counted by connection rather than on
 /// `SessionEntry`, because a fresh chat attaches before its first `Ask`
 /// creates the entry.
-pub static CHAT_PRESENCE: std::sync::OnceLock<Mutex<HashMap<String, usize>>> =
+pub static CHAT_PRESENCE: std::sync::OnceLock<Mutex<HashMap<String, Vec<PresenceConnection>>>> =
     std::sync::OnceLock::new();
 
-fn presence_map() -> &'static Mutex<HashMap<String, usize>> {
+/// One live presence connection's push channel (M27 phase 03b).
+///
+/// The attach handler clones the sender into the registry and keeps the
+/// receiver, so the broadcast path queues and never awaits the handler: a
+/// full or closed per-connection queue drops that push for that client while
+/// the others still get the message.
+#[derive(Clone)]
+pub struct PresenceConnection {
+    pub push: tokio::sync::mpsc::UnboundedSender<String>,
+}
+
+fn presence_map() -> &'static Mutex<HashMap<String, Vec<PresenceConnection>>> {
     CHAT_PRESENCE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Register one live presence connection for `session_id`, returning the new
 /// count for that session.
-pub fn presence_register(session_id: &str) -> usize {
+pub fn presence_register(session_id: &str, conn: PresenceConnection) -> usize {
     let mut map = presence_map().lock().unwrap_or_log();
-    let n = map.entry(session_id.to_string()).or_insert(0);
-    *n += 1;
-    *n
+    let conns = map.entry(session_id.to_string()).or_default();
+    conns.push(conn);
+    conns.len()
 }
 
-/// Unregister one presence connection for `session_id`. Returns `true` when
-/// the count dropped to zero (this was the session's last connection). A
-/// close with no recorded presence simply reports "not last".
-pub fn presence_unregister(session_id: &str) -> bool {
+/// Unregister one presence connection for `session_id` — the one whose push
+/// sender names. Returns `true` when the count dropped to zero (this was the
+/// session's last connection). A close with no recorded presence simply
+/// reports "not last".
+pub fn presence_unregister(session_id: &str, conn: &PresenceConnection) -> bool {
     let mut map = presence_map().lock().unwrap_or_log();
     match map.get_mut(session_id) {
-        Some(n) => {
-            *n -= 1;
-            if *n == 0 {
+        Some(conns) => {
+            if let Some(pos) = conns.iter().position(|c| c.push.same_channel(&conn.push)) {
+                conns.swap_remove(pos);
+            }
+            if conns.is_empty() {
                 map.remove(session_id);
                 true
             } else {
@@ -193,14 +207,55 @@ pub fn presence_count(session_id: &str) -> usize {
         .lock()
         .unwrap_or_log()
         .get(session_id)
-        .copied()
+        .map(Vec::len)
         .unwrap_or(0)
 }
 
-/// Does the session have at least one live presence connection? Used by the
-/// eviction pass to spare a session a chat client is attached to.
+/// True when the session has at least one live chat-presence connection.
 pub fn presence_live(session_id: &str) -> bool {
     presence_count(session_id) > 0
+}
+
+/// Push `msg` to every connection in an explicit presence registry — the seam
+/// tests drive with a fresh map, since `CHAT_PRESENCE` is process-global and
+/// cargo runs tests in parallel. The global [`presence_broadcast`] calls this
+/// with [`presence_map`].
+///
+/// Called from the webhook handler and the scheduler, so it must not await a
+/// slow client: each push is queued on a per-connection unbounded channel and
+/// never awaited. A closed queue drops that push for that client (logged at
+/// `debug`) while the others still get the message. Delivering to nobody is
+/// the normal no-chat-attached case, not an error. Returns how many live
+/// connections the push reached.
+pub fn presence_broadcast_in(
+    map: &Mutex<HashMap<String, Vec<PresenceConnection>>>,
+    msg: &str,
+) -> usize {
+    let map = map.lock().unwrap_or_log();
+    let mut pushed = 0;
+    for conns in map.values() {
+        for conn in conns {
+            if conn.push.send(msg.to_string()).is_ok() {
+                pushed += 1;
+            } else {
+                log::debug!("chat presence push dropped: connection closed");
+            }
+        }
+    }
+    pushed
+}
+
+/// Push `msg` to every live presence connection, across all sessions.
+pub fn presence_broadcast(msg: &str) -> usize {
+    presence_broadcast_in(presence_map(), msg)
+}
+
+#[cfg(test)]
+impl PresenceConnection {
+    pub fn test_conn() -> Self {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        PresenceConnection { push: tx }
+    }
 }
 
 /// Stamp detach state on the session's entry, when it exists. Called by the
@@ -606,7 +661,6 @@ pub fn with_sessions<T>(
 /// Do not add a second `sessions.lock()` to this function or to its caller's
 /// iteration. `std::sync::Mutex` is not reentrant; a second acquisition while
 /// the first guard is alive deadlocks the whole daemon, because every IPC
-/// handler locks this same store. See `docs/design/daemon-stalls.md` § 1.5c.
 pub fn cleanup_pass(
     sessions: &SessionStore,
     now: std::time::Instant,
@@ -647,7 +701,6 @@ mod tests {
             turn: None,
         }
     }
-
     fn make_msg_with_tool_results(role: &str, content: &str, results: Vec<ToolResult>) -> Message {
         Message {
             role: role.to_string(),
@@ -1456,17 +1509,25 @@ mod tests {
     #[test]
     fn presence_register_counts_up_and_unregister_counts_down() {
         let sid = "presence-test-1";
+        let conn_a = PresenceConnection::test_conn();
+        let conn_b = PresenceConnection::test_conn();
         assert_eq!(presence_count(sid), 0, "fresh session has no presence");
-        assert_eq!(presence_register(sid), 1);
-        assert_eq!(presence_register(sid), 2);
+        assert_eq!(presence_register(sid, conn_a.clone()), 1);
+        assert_eq!(presence_register(sid, conn_b.clone()), 2);
         assert!(presence_live(sid));
-        assert!(!presence_unregister(sid), "first close is not the last");
+        assert!(
+            !presence_unregister(sid, &conn_a),
+            "first close is not the last"
+        );
         assert_eq!(presence_count(sid), 1);
-        assert!(presence_unregister(sid), "second close is the last");
+        assert!(
+            presence_unregister(sid, &conn_b),
+            "second close is the last"
+        );
         assert_eq!(presence_count(sid), 0);
         assert!(!presence_live(sid));
         assert!(
-            !presence_unregister(sid),
+            !presence_unregister(sid, &conn_a),
             "a close for a session with no recorded presence is not an error"
         );
     }
@@ -1481,7 +1542,8 @@ mod tests {
             store.insert("attached".to_string(), entry_with(idle));
             store.insert("idle-only".to_string(), entry_with(idle));
         });
-        presence_register("attached");
+        let conn = PresenceConnection::test_conn();
+        presence_register("attached", conn.clone());
 
         let (evicted, active_ids) = cleanup_pass(
             &sessions,
@@ -1497,7 +1559,7 @@ mod tests {
             !active_ids.contains("idle-only"),
             "the same session without presence is evicted past the idle window"
         );
-        presence_unregister("attached");
+        presence_unregister("attached", &conn);
 
         let (evicted2, active_ids2) = cleanup_pass(
             &sessions,

@@ -56,7 +56,9 @@ fn resolve_failure(job_name: &str, reason: &str) -> String {
 
 /// Send the job's result to any listening chat client and fire
 /// `[notifications] on_alert`. The one notify tail a scheduled job has, so
-/// the success, failure and refusal paths cannot diverge on it.
+/// the success, failure and refusal paths cannot diverge on it. The message
+/// is also broadcast to every attached chat over the presence connection
+/// (M27 phase 03b); delivering to nobody is the normal no-chat case.
 async fn notify_job_result(
     job_name: &str,
     msg: String,
@@ -72,6 +74,7 @@ async fn notify_job_result(
             e
         );
     }
+    presence_broadcast(&msg);
     fire_notification(job_name, &msg, config);
 }
 
@@ -551,6 +554,125 @@ async fn run_watchdog(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::session::presence_count;
+    use crate::ipc::Response as IpcResponse;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    /// Attach one live presence connection over a duplex under a unique
+    /// session id, with the daemon side in a task. Delivery is observed by
+    /// reading the client.
+    async fn drive_sched_presence(
+        session_id: &str,
+    ) -> (
+        BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<anyhow::Result<()>>,
+    ) {
+        let sessions = SessionStore::new();
+        let (client, server) = tokio::io::duplex(1 << 16);
+        let (server_r, server_w) = tokio::io::split(server);
+        let sid = session_id.to_string();
+        let task = tokio::spawn(async move {
+            let mut rx = BufReader::new(server_r);
+            let mut tx = server_w;
+            crate::daemon::server::handle_chat_attach(sessions, sid, &mut rx, &mut tx).await
+        });
+        let (client_r, client_w) = tokio::io::split(client);
+        (BufReader::new(client_r), client_w, task)
+    }
+
+    /// Read one response line from the client side within 5 s.
+    async fn read_one(
+        rx: &mut BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+    ) -> IpcResponse {
+        let mut line = String::new();
+        let read = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            AsyncBufReadExt::read_line(rx, &mut line),
+        )
+        .await
+        .expect("a response line within 5 s")
+        .expect("the attach handler is still writing");
+        assert!(read > 0, "the attach handler wrote a non-empty line");
+        serde_json::from_str(line.trim()).expect("a response line parses")
+    }
+
+    #[tokio::test]
+    async fn scheduled_job_result_is_pushed_to_attached_clients() {
+        let (mut rx, mut client_w, task) = drive_sched_presence("sched-notify-1").await;
+        let replies = read_one(&mut rx).await;
+        assert!(
+            matches!(replies, IpcResponse::Ok),
+            "no detach state → Ok alone, got {replies:?}"
+        );
+        assert_eq!(presence_count("sched-notify-1"), 1);
+
+        let config = Config::default();
+        let notify_tx: Option<tokio::sync::mpsc::UnboundedSender<IpcResponse>> = None;
+        notify_job_result(
+            "nightly-backup",
+            "Watchdog alert: nightly-backup".to_string(),
+            &config,
+            &notify_tx,
+        )
+        .await;
+
+        let pushed = read_until_text(&mut rx, "Watchdog alert: nightly-backup").await;
+        assert!(
+            matches!(pushed.last(), Some(IpcResponse::SystemMsg(m)) if m == "Watchdog alert: nightly-backup"),
+            "the attached chat receives the job's message as a SystemMsg: {pushed:?}"
+        );
+
+        client_w
+            .shutdown()
+            .await
+            .expect("the client write half shuts down cleanly");
+        // The hold ends on the next select! wake; the client write-half is
+        // gone, so EOF arrives promptly. Wait for the count to drop rather
+        // than joining: the abort/await ordering is not the behaviour under
+        // test.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while presence_count("sched-notify-1") == 1 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        // Either the count dropped to 0 (unregister ran) or the handler is
+        // wedged waiting on something else — abort it and report what the
+        // count actually was, so the failure names the state.
+        let final_count = presence_count("sched-notify-1");
+        assert_eq!(final_count, 0, "presence must unregister after EOF");
+        task.abort();
+    }
+
+    /// Read response lines until one carries `text` (a concurrent test's
+    /// global broadcast can interleave its own SystemMsg on this stream), or
+    /// 5 s elapses.
+    async fn read_until_text(
+        rx: &mut BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+        text: &str,
+    ) -> Vec<IpcResponse> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut out = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            assert!(
+                !left.is_zero(),
+                "the pushed line '{text}' never arrived within 5 s: {out:?}"
+            );
+            let mut line = String::new();
+            let read = tokio::time::timeout(left, AsyncBufReadExt::read_line(rx, &mut line))
+                .await
+                .expect("a response line within the deadline")
+                .expect("the attach handler is still writing");
+            assert!(read > 0, "the attach handler wrote a non-empty line");
+            let resp: IpcResponse =
+                serde_json::from_str(line.trim()).expect("a response line parses");
+            let hit = matches!(&resp, IpcResponse::SystemMsg(m) if m == text);
+            out.push(resp);
+            if hit {
+                return out;
+            }
+        }
+    }
 
     fn hard_fail_blocker(state: &RunState) -> Option<String> {
         match state {

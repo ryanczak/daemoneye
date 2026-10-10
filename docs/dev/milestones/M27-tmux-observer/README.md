@@ -57,7 +57,7 @@ is split further at drafting if it is more than one session.
 | 02 | sched-pty ([phase-02-sched-pty.md](phase-02-sched-pty.md)) — `ActionOn::Script` on a scheduler-owned PTY shell; `ActionOn::Command` loads and refuses to fire | done (approved_after_1, 2026-10-09) |
 | 03 | catchup-reconnect ([phase-03-catchup-reconnect.md](phase-03-catchup-reconnect.md)) — chat holds a presence connection; the brief fires on re-attach (`chat --resume <id>`) after ≥ 30 s away | done (approved_after_1, 2026-10-10) |
 | 04 | chat-no-tmux ([phase-04-chat-no-tmux.md](phase-04-chat-no-tmux.md)) — chat runs in place outside tmux (no auto-attach, every client tmux call gated on `$TMUX`); a pane-less Ask gets the daemon's shells as context | done (approved_after_1, 2026-10-10) |
-| 03b | alerts-ipc ([phase-03b-alerts-ipc.md](phase-03b-alerts-ipc.md)) — every alert (webhook, analysis, ghost events, scheduled results) is pushed to every attached chat over the presence connection; the tmux overlay stays as an optional extra | todo |
+| 03b | alerts-ipc ([phase-03b-alerts-ipc.md](phase-03b-alerts-ipc.md)) — every alert (webhook, analysis, ghost events, scheduled results) is pushed to every attached chat over the presence connection; the tmux overlay stays as an optional extra | in-progress |
 | 05 | tmux-readonly — delete the execution side (foreground send-keys, job windows, hooks, pipe-pane, `[execution]` flag, `notify`); keep capture/list, gated on `$TMUX` | todo |
 | 06 | docs-doctor — the docs above, `daemoneye doctor` | todo |
 | 07 | live-close — architect-run live verification on pinky, with and without tmux; tag `v2.0.0` | todo |

@@ -165,8 +165,11 @@ pub(super) async fn run_chat_inner(resume_id: Option<String>) -> Result<()> {
     // Chat presence (M27 phase 03): attach before the first prompt. The reply
     // carries the catch-up brief when the session was away ≥ 30 s; a failed
     // attach must not stop chat from running.
-    let (attach_brief, presence) = match chat_presence::attach(&session_id).await {
-        Ok((brief, held)) => (brief, Some(held.park())),
+    let (attach_brief, parked) = match chat_presence::attach(&session_id).await {
+        Ok((brief, held)) => {
+            let (guard, pushes) = held.park();
+            (brief, Some((guard, pushes)))
+        }
         Err(e) => {
             log::warn!("chat presence attach failed (chat continues): {e}");
             (None, None)
@@ -177,23 +180,25 @@ pub(super) async fn run_chat_inner(resume_id: Option<String>) -> Result<()> {
     }
 
     let result = run_chat_inner_raw(
-        InputHandles {
-            state: &mut input_state,
-            stdin: &stdin,
-            sigwinch: &mut sigwinch,
-        },
-        TerminalCtx { chat_width },
         session_id,
         current_prompt,
-        &mut approval,
-        TmuxCtx {
-            session: tmux_session,
-            pane: target_pane,
+        RawChatArgs {
+            handles: InputHandles {
+                state: &mut input_state,
+                stdin: &stdin,
+                sigwinch: &mut sigwinch,
+            },
+            term: TerminalCtx { chat_width },
+            approval: &mut approval,
+            tmux: TmuxCtx {
+                session: tmux_session,
+                pane: target_pane,
+            },
+            renderer,
+            parked,
         },
-        renderer,
     )
     .await;
-    drop(presence);
     // Ratatui renderer is consumed by run_chat_inner_raw (restores on exit).
     result
 }
@@ -224,17 +229,44 @@ struct RatatuiCtx<'a> {
     approval: &'a mut SessionApproval,
     tmux_session: Option<String>,
     target_pane: Option<String>,
+    /// The parked presence connection (M27 phase 03b): its background task
+    /// forwards every pushed `Response::SystemMsg` onto the channel; the chat
+    /// loop selects on it and renders each push through the renderer it owns.
+    parked: Option<(
+        super::chat_presence::HeldPresenceGuard,
+        tokio::sync::mpsc::UnboundedReceiver<String>,
+    )>,
+}
+
+/// Everything `run_chat_inner_raw` needs that is not a plain value: the input
+/// handles, the terminal width, the tmux context and the parked presence
+/// connection. Grouped so the function stays at seven arguments (clippy's
+/// `too_many_arguments`), which phase 04 left it at.
+struct RawChatArgs<'a> {
+    handles: InputHandles<'a>,
+    term: TerminalCtx,
+    approval: &'a mut SessionApproval,
+    tmux: TmuxCtx,
+    renderer: RatatuiRendererStdout,
+    parked: Option<(
+        super::chat_presence::HeldPresenceGuard,
+        tokio::sync::mpsc::UnboundedReceiver<String>,
+    )>,
 }
 
 async fn run_chat_inner_raw(
-    handles: InputHandles<'_>,
-    term: TerminalCtx,
     session_id: String,
     current_prompt: Option<String>,
-    approval: &mut SessionApproval,
-    tmux: TmuxCtx,
-    renderer: RatatuiRendererStdout,
+    args: RawChatArgs<'_>,
 ) -> Result<()> {
+    let RawChatArgs {
+        handles,
+        term,
+        approval,
+        tmux,
+        renderer,
+        parked,
+    } = args;
     let InputHandles {
         state: input_state,
         stdin,
@@ -257,6 +289,7 @@ async fn run_chat_inner_raw(
         approval,
         tmux_session,
         target_pane,
+        parked,
     })
     .await
 }
@@ -273,7 +306,15 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         approval,
         tmux_session,
         mut target_pane,
+        parked: mut parked_presence,
     } = ctx;
+    // Drop the guard (ends the hold and stamps detach state) when the loop
+    // exits, whatever the exit path.
+    let _presence_guard = parked_presence.as_mut().map(|(g, _)| g);
+    // The push channel the parked task forwards into; taken out of the option
+    // so the input loop can select on it. `None` when attach failed — the loop
+    // then simply never sees pushes.
+    let mut pushes = parked_presence.map(|(_, rx)| rx);
     let mut last_ctrl_c: Option<std::time::Instant> = None;
     let mut daemon_up = false;
     let mut prompt_tokens: u32 = 0;
@@ -409,6 +450,12 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
 
     let user_host = local_user_host();
 
+    // A no-receiver placeholder so the input loop always has a channel to
+    // select on; when presence attached, `pushes` is the real one.
+    let mut noop_pushes = tokio::sync::mpsc::unbounded_channel::<String>().1;
+    let pushes = pushes.get_or_insert_with(|| tokio::sync::mpsc::unbounded_channel::<String>().1);
+    let _ = &mut noop_pushes;
+
     loop {
         // Read input using the existing key handler but render via ratatui.
         let line_opt = read_input_line_inner_ratatui(RatatuiInputCtx {
@@ -427,6 +474,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
             has_untracked,
             last_ctrl_c: &mut last_ctrl_c,
             transcript: &transcript,
+            pushes,
         })
         .await?;
 
@@ -769,6 +817,10 @@ struct RatatuiInputCtx<'a> {
     has_untracked: bool,
     last_ctrl_c: &'a mut Option<std::time::Instant>,
     transcript: &'a crate::cli::transcript::Transcript,
+    /// Pushes from the parked presence connection (M27 phase 03b). Rendered
+    /// here — not in the background task — because the renderer owns the
+    /// screen and only this loop may write to it.
+    pushes: &'a mut tokio::sync::mpsc::UnboundedReceiver<String>,
 }
 
 async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Result<Option<String>> {
@@ -788,9 +840,29 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
         has_untracked,
         last_ctrl_c,
         transcript,
+        pushes,
     } = ctx;
     loop {
         tokio::select! {
+            Some(msg) = pushes.recv() => {
+                // An alert pushed over the presence connection. Rendered here,
+                // by the loop that owns the renderer — never from the
+                // background task (a stray stdout write would corrupt the
+                // ratatui screen).
+                let _ = renderer.commit(&format!("\n⚙ {msg}\n"));
+                let sb = StatusBarState {
+                    session_id,
+                    approval_hint: &approval.hint(),
+                    model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                    tools_total: 0,
+                    cost_usd,
+                    has_untracked,
+                };
+                let _ = renderer.draw(state.current_line(), &sb);
+            }
             _ = sigwinch.recv() => {
                 *chat_width = terminal_width();
                 renderer.reanchor();

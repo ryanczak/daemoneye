@@ -124,7 +124,6 @@ pub(crate) fn build_catchup_brief(
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::ai::Message;
