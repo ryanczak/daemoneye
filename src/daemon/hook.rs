@@ -219,8 +219,8 @@ where
     Ok(())
 }
 
-// The module's tests follow; they are the only place in this file that
-// names detach state — the handlers above no longer touch it (M27 phase 03).
+// The module's tests follow; the hook handlers above no longer touch
+// detach state (M27 phase 03) — chat presence owns it.
 
 #[cfg(test)]
 mod tests {
