@@ -1,7 +1,7 @@
 # Phase 03: catchup-reconnect — chat presence over IPC drives the catch-up brief
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-02
 **Tags:** language=rust, kind=feature, size=m
 
@@ -244,3 +244,158 @@ passed=2317 failed=0
 - `git diff --stat` printed nothing: the tree is clean.
 
 `PASTE MATCH: yes`
+
+### Update — 2026-10-10 00:18 (complete, server-authored)
+
+**Summary:** Phase 03 complete. Summary for review:
+
+**Summary**
+
+I implemented M27 phase 03 (catchup-reconnect): chat presence over IPC now drives the catch-up brief. `Request::ChatAttach { session_id }` (`src/ipc.rs`) is dispatched from `handle_client` to `chat_presence::handle_chat_attach` (`src/daemon/server/chat_presence.rs`), which registers the connection in a process-wide presence map keyed by session id (`presence_register`/`presence_unregister`/`presence_live` in `src/daemon/session.rs` — not on `SessionEntry`, so a fresh chat attaches before its first `Ask` creates the entry and the later entry creation cannot reset the count), replies zero-or-one `SystemMsg` (the brief, computed by `attach_brief_for` with `build_catchup_brief` exactly as `ask.rs` did) then `Ok`, holds the connection reading-and-discarding until EOF, and stamps `last_detach`/`detach_time_utc`/`messages_at_detach` on the last close only when the count drops to zero and only if the entry exists. The `Ask`-time brief block is deleted (`grep build_catchup_brief src/daemon/server/ask.rs` prints nothing); `cleanup_pass` spares sessions with live presence; the tmux client-attached/detached hook handlers now only reply `Ok` (hooks, CLI subcommands, and installation kept for phase 05); `daemoneye chat` attaches right after the session id is chosen in the ratatui front end, renders the brief before the first prompt, parks the connection in a background task until exit, and a failed attach only logs and continues; `daemoneye chat --resume <id>` (`src/main.rs`) validates the 16-lowercase-hex shape before any connection and refuses otherwise naming the id, and chat prints the resume command on exit. End-to-end verification was captured mechanically (`.rexymcp/output/e2e-phase-03-tests.txt` + `e2e-phase-03-rest.txt`, concatenated to `e2e-phase-03.txt`, pasted in the phase doc's end-to-end entry): all eight named tests report `1 passed` alone, the ask.rs grep is empty, the hook.rs grep hits only the test module (0 matches above `#[cfg(test)]`), clippy `-D warnings` and `fmt --check` exit 0, and the full suite reports **passed=2317 failed=0**. Working tree clean; phase left at `in-progress` with only my started entry — the server authors the completion tail.
+
+**Notes for review**
+
+- **Test-count delta:** the criterion pins `passed=2313` (2305 + 8); the tree reports 2317 because I added four supporting tests beyond the eight named ones (`presence_register_counts_up_and_unregister_counts_down`, `record_chat_detach_stamps_only_when_the_entry_exists`, `resume_hint_names_the_resume_command`, `attach_is_the_only_constructor_of_held_presence`). None deleted, none failing — if the exact 2313 is required, those four are the ones to drop; I named them rather than quietly removing them.
+- **"Raw" front end:** the spec says chat attaches "in both front ends (ratatui and raw)". The repo has no raw chat front end — `run_chat_inner_raw` is the ratatui *raw-mode* path (M2 retired the legacy renderer; only `ask` has a `--raw` flag, and chat's CLI has no raw variant). I attached in the single chat path that exists; no second front end to touch.
+- **Duplex tests:** all daemon-side tests drive `handle_chat_attach` / the hook handlers over `tokio::io::duplex`, no daemon, no tmux; the reattach tests backdate `last_detach` by 60 s (or 0 s) rather than sleeping.
+- The `attach_brief_for` helper clears detach state before `Ok` is sent, so the tests assert clearing after the attach reply and before the close (the close of a subsequent sole connection re-stamps, which is the next detach — that ordering is asserted in the tests).
+- No TODOs, no new dependencies, no `unsafe`; one commit for the feature plus two small doc/test commits (grep-note clarification, HeldPresence constructor pin), all conventional.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.54s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test readme_documents_every_chat_slash_command ... ok
+test seeded_config_template_documents_every_config_field ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test ipc_ask_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (2572574): No such process
+kill: (-2573301): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M27-tmux-observer/README.md` — +1 -1
+- `docs/dev/milestones/M27-tmux-observer/phase-03-catchup-reconnect.md` — +112 -1
+- `src/cli/commands/chat.rs` — +27 -3
+- `src/cli/commands/chat_presence.rs` — +129 -0
+- `src/cli/commands/mod.rs` — +60 -2
+- `src/daemon/hook.rs` — +117 -32
+- `src/daemon/mod.rs` — +6 -4
+- `src/daemon/server/ask.rs` — +10 -25
+- `src/daemon/server/chat_presence.rs` — +317 -0
+- `src/daemon/server/mod.rs` — +8 -12
+- `src/daemon/session.rs` — +165 -1
+- `src/ipc.rs` — +9 -0
+- `src/ipc_tests.rs` — +13 -0
+- `src/main.rs` — +6 -2
+
+**Commit:** 8ef92166169070cdd58284374c66496879828e9c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
