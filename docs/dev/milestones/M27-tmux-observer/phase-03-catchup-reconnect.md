@@ -1,7 +1,7 @@
 # Phase 03: catchup-reconnect — chat presence over IPC drives the catch-up brief
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** in-progress (bounced: bug-03-1)
+**Status:** review
 **Depends on:** phase-02
 **Tags:** language=rust, kind=feature, size=m
 
@@ -520,3 +520,145 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; f
 
 `PASTE MATCH: yes`
 
+### Update — 2026-10-10 00:53 (complete, server-authored)
+
+**Summary:** </think>Working tree is clean. All verification done. Final summary.</think>
+**Summary**
+
+Fixed bug-03-1. `handle_chat_attach` in `src/daemon/server/chat_presence.rs` now runs the reply (brief + `Ok`) and the hold loop as one inner fallible block; `presence_unregister` and, when it was the last connection, `record_chat_detach` execute unconditionally after that block, and the block's result is returned last — so a failed brief write, a failed `Ok` write, or a hold ending in a read error all unregister exactly once and still stamp detach state on last close. Added `presence_unregisters_when_the_hold_ends_in_error` beside the existing duplex tests (fresh session id `s-io`, entry with one message; the client writes `[0xff, 0xfe, b'\n']` so the hold's `read_line` returns `Err(InvalidData)`); per the bug note I ran it against the unfixed code first — it reported `FAILED. 0 passed; 1 failed` (`presence_count` stuck at 1) — then re-applied the fix. Nit done: the always-`None` `_catchup_brief` slot and both "used to be sent here" comments are gone from `ask.rs` (the tuple is now drift/cost/untracked/pipe, 4 elements). Client side, eviction, hook handlers and the eight named tests were not touched.
+
+**End-to-end verification** (captured mechanically to `.rexymcp/output/e2e-phase-03-rebug.txt`, pasted in the phase doc's new end-to-end entry, `PASTE MATCH: yes`): the new test reports `1 passed` alone; all eight named tests still report `1 passed` alone; `grep -n 'build_catchup_brief\|_catchup_brief\|used to be sent here' src/daemon/server/ask.rs` prints nothing; the hook.rs head-of-file grep prints `0`; clippy `-D warnings` exits 0; `cargo fmt --all --check` exits 0 (`fmt_exit=0`); full `cargo test` reports **passed=2318 failed=0** — exactly the pinned finish condition (2317 accepted + the one new test).
+
+**Notes for review**
+
+- I hit a transient mess while deleting the `_catchup_brief` tuple slot in `ask.rs` (a couple of duplicated lines landed during line-range edits); the verifier caught the resulting type errors, and I repaired them in place — the final `ask.rs` diff is exactly the intended deletion: two comments removed, 5-tuple → 4-tuple, plus the stale comment at the old brief send site.
+- The catch was run after every gate was green on the fixed tree, so the final captures reflect the committed tree; the FAILED line in the Update Log is the pre-fix capture, stored separately (`.rexymcp/output/bug-03-1-unfixed.txt` vs `-fixed.txt`).
+- One commit (`fix:`, `99f6a003`) contains the handler change, the new test, the `ask.rs` nit, and the phase-doc Update Log entries; `git status --short` is clean; phase left at `in-progress (bounced: bug-03-1)` for the server's completion tail.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.37s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (2615735): No such process
+kill: (-2616664): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M27-tmux-observer/phase-03-catchup-reconnect.md` — +90 -1
+- `src/daemon/server/ask.rs` — +3 -10
+- `src/daemon/server/chat_presence.rs` — +76 -19
+
+**Commit:** 99f6a0032165a5a07364e97f3d1eaafe2718eed1
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).

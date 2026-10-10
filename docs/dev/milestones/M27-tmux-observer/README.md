@@ -55,7 +55,7 @@ is split further at drafting if it is more than one session.
 |---|---|---|
 | 01 | helpers-out ([phase-01-helpers-out.md](phase-01-helpers-out.md)) — move the generic helpers that only *live* in `src/tmux/` (`bounded_output`, the `status` classifiers, `format_age`, `annotate_output`) to neutral modules; no behaviour change | done (approved_after_1, 2026-10-09) |
 | 02 | sched-pty ([phase-02-sched-pty.md](phase-02-sched-pty.md)) — `ActionOn::Script` on a scheduler-owned PTY shell; `ActionOn::Command` loads and refuses to fire | done (approved_after_1, 2026-10-09) |
-| 03 | catchup-reconnect ([phase-03-catchup-reconnect.md](phase-03-catchup-reconnect.md)) — chat holds a presence connection; the brief fires on re-attach (`chat --resume <id>`) after ≥ 30 s away | in-progress (bounced: bug-03-1) |
+| 03 | catchup-reconnect ([phase-03-catchup-reconnect.md](phase-03-catchup-reconnect.md)) — chat holds a presence connection; the brief fires on re-attach (`chat --resume <id>`) after ≥ 30 s away | review                          |
 | 04 | chat-no-tmux — `chat` / `ask` work outside tmux (session identity, width, palette) | todo |
 | 03b | alerts-ipc — webhook and scheduled alerts are pushed to every connected chat client over IPC and rendered by the client; the tmux `display-message` overlay becomes an optional extra when tmux is present | todo |
 | 05 | tmux-readonly — delete the execution side (foreground send-keys, job windows, hooks, pipe-pane, `[execution]` flag, `notify`); keep capture/list, gated on `$TMUX` | todo |
