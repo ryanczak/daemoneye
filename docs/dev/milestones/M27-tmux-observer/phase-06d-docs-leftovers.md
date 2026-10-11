@@ -95,6 +95,18 @@ followed by `PASTE MATCH: yes`. The server does not write it for you.
 
 ## Update Log
 
+### Update — 2026-10-11 21:37 (progress, bounce 1 — executor, dispatch 2)
+
+bug-06d-1 fixed: README's audit-log sample records went back to
+`mode=background pane=-` / `mode=foreground pane=%3` and the
+`Fields for command records:` line to its pre-4593e8ae text (`background`
+or `foreground` · tmux pane ID · `approved` / `denied` / `timeout` /
+`send-failed`), copied verbatim from `git show 4593e8ae~1:README.md` per
+the bounce note — nothing invented, the `ai_cost` line untouched.
+`grep -n 'shell=s1\|shell id ·' README.md` → nothing;
+`git diff 4593e8ae~1 -- README.md | grep -c 'mode=background pane=-'` → 0.
+Full suite `passed=2309 failed=0`.
+
 <!-- entries appended below this line -->
 
 ### Update — 2026-10-11 14:14 (progress)
