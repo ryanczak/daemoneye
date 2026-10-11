@@ -256,21 +256,6 @@ WantedBy=default.target
     println!("# If you already have a bind-key that uses the bare name 'daemoneye',");
     println!("# replace it with the full path above — the tmux session may not");
     println!("# inherit ~/.cargo/bin in its PATH.");
-    println!();
-    println!("# To enable accurate exit-code tracking for foreground commands,");
-    println!("# add the appropriate snippet to your shell config:");
-    println!();
-    println!("# bash (~/.bashrc):");
-    println!(
-        "_de_exit_trap() {{ tmux set-environment \"DE_EXIT_${{TMUX_PANE#%}}\" \"$?\" 2>/dev/null; }}"
-    );
-    println!("PROMPT_COMMAND=\"_de_exit_trap${{PROMPT_COMMAND:+; $PROMPT_COMMAND}}\"");
-    println!();
-    println!("# zsh (~/.zshrc):");
-    println!(
-        "_de_precmd() {{ tmux set-environment \"DE_EXIT_${{TMUX_PANE#%}}\" \"$?\" 2>/dev/null; }}"
-    );
-    println!("precmd_functions+=(_de_precmd)");
 
     println!();
     println!("# ── Server / systemd use ────────────────────────────────────────────────────");

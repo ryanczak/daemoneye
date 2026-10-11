@@ -30,7 +30,6 @@ pub(super) struct AskContext<'a> {
     pub cache: Arc<SessionCache>,
     pub sessions: &'a SessionStore,
     pub schedule_store: Arc<ScheduleStore>,
-    pub bg_session: Arc<std::sync::Mutex<String>>,
     pub config: &'a Config,
 }
 
@@ -58,16 +57,15 @@ where
         cache,
         sessions,
         schedule_store,
-        bg_session,
         config,
     } = ctx;
     // Derive the tmux session name: prefer what the client told us, fall back
-    // to whatever the daemon adopted at startup.
+    // to the configured default session.
     let session_name: String = client_tmux_session
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| bg_session.lock().unwrap_or_log().clone());
+        .unwrap_or_else(|| config.daemon.tmux_session.clone());
 
     // Load existing message history for this session (if any).
     // Fast path: in-memory store (same daemon run).
@@ -99,171 +97,96 @@ where
         None
     };
 
-    let (pane_drift_msg, session_cost_usd, has_untracked_cost, pipe_candidate): (
-        Option<String>,
-        f64,
-        bool,
-        Option<String>,
-    ) = if let Some(ref id) = session_id {
-        with_sessions(sessions, |store| {
-            let entry = store.entry(id.clone()).or_insert_with(|| {
-                // Try to restore continuity state from persisted meta.
-                let meta = restored_meta;
-                let (
-                    started_at,
-                    turn_count,
-                    last_prompt_tokens,
-                    tool_calls_this_session,
-                    token_scale,
-                    saved_name,
-                ) = match meta {
-                    Some(m) => (
-                        m.started_at,
-                        m.turn_count,
-                        m.last_prompt_tokens,
-                        m.tool_calls_this_session,
-                        m.token_scale,
-                        m.saved_name,
-                    ),
-                    None => (chrono::Utc::now(), 0, 0, 0, 1.5, None),
-                };
-                SessionEntry {
-                    messages: Vec::new(),
-                    last_accessed: Instant::now(),
-                    chat_pane: chat_pane.clone(),
-                    default_target_pane: client_target_pane.clone(),
-                    bg_windows: Vec::new(),
-                    last_prompt_tokens,
-                    tmux_session: session_name.clone(),
-                    last_detach: None,
-                    detach_time_utc: None,
-                    messages_at_detach: 0,
-                    pipe_source_pane: None,
-                    is_ghost: false,
-                    ghost_config: None,
-                    ghost_runbook_name: None,
-                    ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
-                    started_at,
-                    turn_count,
-                    tool_calls_this_session,
-                    active_model: None,
-                    last_snapshot_activity: 0,
-                    saved_name,
-                    dirty: false,
-                    artifacts_created: Vec::new(),
-                    auto_name_suggested: false,
-                    ghost_task_message: None,
-                    loaded_tools: std::collections::HashSet::new(),
-                    cost_usd: 0.0,
-                    cost_by_agent: std::collections::HashMap::new(),
-                    has_untracked_cost: false,
-                    token_scale,
-                    compaction_in_flight: false,
-                    pending_compaction_notice: None,
-                }
-            });
-            entry.chat_pane = chat_pane.clone();
-            entry.tmux_session = session_name.clone();
+    let (pane_drift_msg, session_cost_usd, has_untracked_cost): (Option<String>, f64, bool) =
+        if let Some(ref id) = session_id {
+            with_sessions(sessions, |store| {
+                let entry = store.entry(id.clone()).or_insert_with(|| {
+                    // Try to restore continuity state from persisted meta.
+                    let meta = restored_meta;
+                    let (
+                        started_at,
+                        turn_count,
+                        last_prompt_tokens,
+                        tool_calls_this_session,
+                        token_scale,
+                        saved_name,
+                    ) = match meta {
+                        Some(m) => (
+                            m.started_at,
+                            m.turn_count,
+                            m.last_prompt_tokens,
+                            m.tool_calls_this_session,
+                            m.token_scale,
+                            m.saved_name,
+                        ),
+                        None => (chrono::Utc::now(), 0, 0, 0, 1.5, None),
+                    };
+                    SessionEntry {
+                        messages: Vec::new(),
+                        last_accessed: Instant::now(),
+                        chat_pane: chat_pane.clone(),
+                        default_target_pane: client_target_pane.clone(),
+                        bg_windows: Vec::new(),
+                        last_prompt_tokens,
+                        tmux_session: session_name.clone(),
+                        last_detach: None,
+                        detach_time_utc: None,
+                        messages_at_detach: 0,
+                        is_ghost: false,
+                        ghost_config: None,
+                        ghost_runbook_name: None,
+                        ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
+                        started_at,
+                        turn_count,
+                        tool_calls_this_session,
+                        active_model: None,
+                        last_snapshot_activity: 0,
+                        saved_name,
+                        dirty: false,
+                        artifacts_created: Vec::new(),
+                        auto_name_suggested: false,
+                        ghost_task_message: None,
+                        loaded_tools: std::collections::HashSet::new(),
+                        cost_usd: 0.0,
+                        cost_by_agent: std::collections::HashMap::new(),
+                        has_untracked_cost: false,
+                        token_scale,
+                        compaction_in_flight: false,
+                        pending_compaction_notice: None,
+                    }
+                });
+                entry.chat_pane = chat_pane.clone();
+                entry.tmux_session = session_name.clone();
 
-            // Detect pane drift: the client resolved a different target pane than
-            // what was stored.  Announce the change to the model as a SystemMsg so
-            // it doesn't keep using the old pane ID.  Always adopt the new value —
-            // resolve_target_pane() on the client already respects pane_prefs.json,
-            // so if the user pinned a pane via /pane it will persist correctly.
-            let drift_msg = match (&entry.default_target_pane, &client_target_pane) {
-                (Some(old), Some(new)) if old != new => {
-                    let old_clone = old.clone();
-                    entry.default_target_pane = Some(new.clone());
-                    Some(format!(
-                        "[Pane target changed] Foreground target is now {} (was {}). \
+                // Detect pane drift: the client resolved a different target pane than
+                // what was stored.  Announce the change to the model as a SystemMsg so
+                // it doesn't keep using the old pane ID.  Always adopt the new value —
+                // resolve_target_pane() on the client already respects pane_prefs.json,
+                // so if the user pinned a pane via /pane it will persist correctly.
+                let drift_msg = match (&entry.default_target_pane, &client_target_pane) {
+                    (Some(old), Some(new)) if old != new => {
+                        let old_clone = old.clone();
+                        entry.default_target_pane = Some(new.clone());
+                        Some(format!(
+                            "[Pane target changed] Foreground target is now {} (was {}). \
                              Use target_pane=\"{}\" for run_terminal_command(background=false).",
-                        new, old_clone, new
-                    ))
-                }
-                (None, Some(new)) => {
-                    entry.default_target_pane = Some(new.clone());
-                    None // first assignment — no drift to announce
-                }
-                _ => None,
-            };
+                            new, old_clone, new
+                        ))
+                    }
+                    (None, Some(new)) => {
+                        entry.default_target_pane = Some(new.clone());
+                        None // first assignment — no drift to announce
+                    }
+                    _ => None,
+                };
 
-            // R1: start pipe-pane for the source pane on the first Ask so we can
-            // capture full terminal output history (including content that has scrolled
-            // past the tmux scrollback buffer).  Best-effort — falls back to
-            // capture-pane silently if pipe-pane is unavailable.
-            //
-            // `pipe_source_pane = Some("")` is used as a "don't retry" sentinel:
-            // it means we attempted and failed (or deliberately skipped), so we
-            // fall back to capture-pane for all subsequent turns without retrying.
-            //
-            // `pane_exists` and `start_pipe_pane` are blocking subprocess spawns
-            // and run after the lock is released.  The same-as-chat-pane case needs
-            // no probe, so it is settled here.
-            let pipe_candidate: Option<String> = if entry.pipe_source_pane.is_none()
-                && let Some(ref pane_id) = client_pane
-            {
-                // Skip if client_pane == chat_pane: the chat pane runs the
-                // daemoneye UI, not the user's work.  Piping it is useless and
-                // can transiently fail immediately after split-window creates the
-                // pane (pty not yet fully initialized) causing repeated log noise.
-                let is_chat_pane = chat_pane.as_deref() == Some(pane_id.as_str());
-                if is_chat_pane {
-                    log::debug!("R1: skipping pipe-pane for {} — same as chat pane", pane_id);
-                    entry.pipe_source_pane = Some(String::new()); // don't retry
-                    None
-                } else {
-                    Some(pane_id.clone())
-                }
-            } else {
-                None
-            };
-
-            let cost_usd = entry.cost_usd;
-            let has_untracked = entry.has_untracked_cost;
-            (drift_msg, cost_usd, has_untracked, pipe_candidate)
-        })
-    } else {
-        (None, 0.0, false, None)
-    };
-
-    // Unlocked phase: the two blocking tmux calls, then a short write-back.
-    if let (Some(id), Some(ref pane_id)) = (session_id.as_deref(), pipe_candidate.as_deref()) {
-        let pid = pane_id.to_string();
-        let pid_clone = pid.clone();
-        let pane_alive = crate::process::off_runtime("pane-exists", move || {
-            crate::tmux::pane_exists(&pid_clone)
-        })
-        .await
-        .unwrap_or(false);
-        let resolved = if pane_alive {
-            let pid2 = pid.clone();
-            match crate::process::off_runtime("start-pipe-pane", move || {
-                crate::tmux::start_pipe_pane(&pid2)
+                let cost_usd = entry.cost_usd;
+                let has_untracked = entry.has_untracked_cost;
+                (drift_msg, cost_usd, has_untracked)
             })
-            .await
-            .unwrap_or_else(|| Err(anyhow::anyhow!("timed out starting pipe-pane")))
-            {
-                Ok(_) => pid,
-                Err(e) => {
-                    // Pane existed at check time but was gone by the time
-                    // pipe-pane ran (TOCTOU race) — don't retry this session.
-                    log::debug!("R1: could not start pipe-pane for {}: {}", pid, e);
-                    String::new() // don't retry
-                }
-            }
         } else {
-            log::debug!(
-                "R1: skipping pipe-pane for {} — pane no longer exists",
-                pane_id
-            );
-            String::new() // don't retry
+            (None, 0.0, false)
         };
-        with_sessions(sessions, |store| {
-            if let Some(entry) = store.get_mut(id) {
-                entry.pipe_source_pane = Some(resolved);
-            }
-        });
-    }
 
     // Read the session's active model override once so it stays consistent for
     // the whole turn (including the budget line and every AI loop iteration).

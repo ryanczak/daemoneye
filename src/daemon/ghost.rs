@@ -298,7 +298,6 @@ impl GhostManager {
             last_detach: None,
             detach_time_utc: None,
             messages_at_detach: 0,
-            pipe_source_pane: None,
             is_ghost: true,
             ghost_config: Some(gc),
             ghost_runbook_name: Some(runbook.name.clone()),

@@ -10,7 +10,6 @@ mod shells;
 
 // Re-exported for the webhook side's presence-push test (M27 phase 03b): the
 // test drives the real attach path over a duplex, not a fake.
-pub(crate) use catchup::is_valid_pane_id;
 #[cfg(test)]
 pub(crate) use chat_presence::handle_chat_attach;
 
@@ -120,8 +119,6 @@ pub async fn handle_client(
     cache: Arc<SessionCache>,
     sessions: SessionStore,
     schedule_store: Arc<ScheduleStore>,
-    bg_session: Arc<std::sync::Mutex<String>>,
-    managed_session: Arc<Option<String>>,
 ) -> Result<()> {
     // C1: refuse connections from any process not owned by the daemon user.
     // Must happen before parsing a single byte so a foreign attacker cannot
@@ -291,47 +288,10 @@ pub async fn handle_client(
             handle_rename_saved_session(&mut tx, &sessions, old_name, new_name).await?;
         }
 
-        Request::NotifyActivity { pane_id, .. } => {
-            crate::daemon::hook::handle_notify_activity(&mut tx, &pane_id).await?;
-        }
-        Request::NotifyComplete {
-            pane_id, exit_code, ..
-        } => {
-            crate::daemon::hook::handle_notify_complete(&mut tx, &pane_id, exit_code).await?;
-        }
-        Request::NotifyFocus { pane_id, .. } => {
-            crate::daemon::hook::handle_notify_focus(&cache, &mut tx, &pane_id).await?;
-        }
-        Request::NotifyWindowChanged { .. } => {
-            crate::daemon::hook::handle_notify_window_changed(&cache, &mut tx).await?;
-        }
-        Request::NotifySessionClosed { session_name } => {
-            crate::daemon::hook::handle_notify_session_closed(
-                sessions.clone(),
-                Arc::clone(&cache),
-                Arc::clone(&managed_session),
-                Arc::clone(&bg_session),
-                &mut tx,
-                session_name,
-            )
-            .await?;
-        }
-        Request::NotifySessionCreated { session_name } => {
-            crate::daemon::hook::handle_notify_session_created(&mut tx, session_name).await?;
-        }
-        Request::NotifyClientDetached { session_name } => {
-            crate::daemon::hook::handle_notify_client_detached(&mut tx, session_name).await?;
-        }
-        Request::NotifyClientAttached { session_name } => {
-            crate::daemon::hook::handle_notify_client_attached(&mut tx, session_name).await?;
-        }
         Request::ChatAttach { session_id } => {
             chat_presence::handle_chat_attach(sessions.clone(), session_id, &mut rx, &mut tx)
                 .await?;
             return Ok(());
-        }
-        Request::NotifyResize { width, height, .. } => {
-            crate::daemon::hook::handle_notify_resize(&cache, &mut tx, width, height).await?;
         }
         Request::Ask {
             query,
@@ -358,7 +318,6 @@ pub async fn handle_client(
                 cache,
                 sessions: &sessions,
                 schedule_store,
-                bg_session,
                 config: &config,
             };
             handle_ask(req, ctx, &mut tx, &mut rx).await?;

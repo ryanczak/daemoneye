@@ -129,7 +129,6 @@ mod tests {
             last_detach: None,
             detach_time_utc: None,
             messages_at_detach: 0,
-            pipe_source_pane: None,
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",

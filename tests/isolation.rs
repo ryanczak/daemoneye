@@ -82,21 +82,14 @@ fn daemon_boots_in_throwaway_root() {
     );
 }
 
-/// The daemon's global hooks land on the private server.
+/// The daemon installs no tmux hooks anywhere.
 ///
-/// After `start_daemon`, the private server carries hooks whose **values**
-/// invoke `daemoneye notify`. This is the positive half — proving the daemon
-/// really did reach a tmux server, so that the negative half below is not
-/// passing vacuously.
-///
-/// We assert on the hook's value (not just its name) because `show-hooks -g
-/// <name>` echoes the name even when the hook is unset. A set hook renders as
-/// `pane-died[0] run-shell -b '.../daemoneye notify activity ...'`.
-///
-/// We also check `client-attached`, which appears in the general `show-hooks -g`
-/// listing, to verify via a second hook that does appear in the full listing.
+/// M27 phase 05b removed every hook install: the daemon is a read-only
+/// observer. A private tmux server that existed before the daemon started
+/// (started here by the fixture) must still carry no `daemoneye notify`
+/// hooks after the daemon boots.
 #[test]
-fn hooks_land_on_private_server() {
+fn daemon_installs_no_tmux_hooks() {
     if !tmux_available() {
         eprintln!("SKIP: tmux not available");
         return;
@@ -105,29 +98,15 @@ fn hooks_land_on_private_server() {
     let mut env = IsolatedEnv::new();
     env.start_daemon("de-test-hooks");
 
-    // Check pane-died hook value on the private server (while daemon is live).
-    let pane_died_out = env
-        .tmux(&["show-hooks", "-g", "pane-died"])
+    let out = env
+        .tmux(&["show-hooks", "-g"])
         .output()
-        .expect("run show-hooks -g pane-died");
-    let pane_died = String::from_utf8_lossy(&pane_died_out.stdout);
+        .expect("run show-hooks -g");
+    let hooks = String::from_utf8_lossy(&out.stdout);
     assert!(
-        pane_died.contains("pane-died[") && pane_died.contains("daemoneye notify"),
-        "private server pane-died hook does not contain daemoneye notify:\n{}",
-        pane_died
-    );
-
-    // Check client-attached hook value on the private server (while daemon is live).
-    let client_attached_out = env
-        .tmux(&["show-hooks", "-g", "client-attached"])
-        .output()
-        .expect("run show-hooks -g client-attached");
-    let client_attached = String::from_utf8_lossy(&client_attached_out.stdout);
-    assert!(
-        client_attached.contains("client-attached[")
-            && client_attached.contains("daemoneye notify"),
-        "private server client-attached hook does not contain daemoneye notify:\n{}",
-        client_attached
+        !hooks.contains("daemoneye notify"),
+        "the daemon installed hooks: {}",
+        hooks
     );
 }
 
@@ -802,10 +781,10 @@ fn held_port_cannot_be_rebound() {
 
 /// An empty `--session` starts no tmux server at all.
 ///
-/// `--session ""` means no tmux: no managed session is created or adopted, so
-/// no tmux server is started under the private `TMUX_TMPDIR` and the four
-/// global hooks are never installed (no "Failed to register" errors). The
-/// daemon itself still boots and answers `ping`.
+/// `--session ""` means no tmux: the daemon adopts nothing and never runs
+/// `tmux new-session`, so no tmux server is started under the private
+/// `TMUX_TMPDIR` and no hooks are installed. The daemon itself still boots
+/// and answers `ping`.
 ///
 /// Deliberately has **no** `tmux_available()` guard: with no tmux installed
 /// there is trivially no server, and the daemon must still boot and answer.
@@ -838,14 +817,10 @@ fn an_empty_session_starts_no_tmux_server() {
         "an empty session name must not start a tmux server, found {tmux_dirs:?}"
     );
 
-    // No hook-install noise in the daemon log.
+    // The startup path logged that it adopted nothing.
     let log = env.daemon_log();
     assert!(
-        log.contains("tmux_session is empty"),
-        "daemon.log should say tmux_session is empty:\n{log}"
-    );
-    assert!(
-        !log.contains("Failed to register global tmux"),
-        "daemon.log must not contain hook-install failures:\n{log}"
+        log.contains("No tmux session to adopt"),
+        "daemon.log should say no tmux session was adopted:\n{log}"
     );
 }

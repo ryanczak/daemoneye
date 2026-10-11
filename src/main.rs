@@ -104,11 +104,6 @@ enum Commands {
         #[command(subcommand)]
         cmd: SandboxCommands,
     },
-    /// Internal out-of-band notifications (e.g. from tmux hooks)
-    Notify {
-        #[command(subcommand)]
-        cmd: NotifyCommands,
-    },
     /// Install a NOPASSWD sudoers rule for a script in ~/.daemoneye/scripts/.
     ///
     /// Grants the current user sudo access to the named script without a password,
@@ -225,69 +220,6 @@ enum RunCommands {
         run: String,
         /// What the resumed run should do differently
         directive: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum NotifyCommands {
-    /// Notify that a monitored pane has produced output
-    Activity {
-        /// Target pane ID (e.g. %3)
-        pane_id: String,
-        /// The integer index of the alert-activity hook
-        hook_index: usize,
-        /// Target session name where the hook was set
-        session_name: String,
-    },
-    /// Notify that a background command finished (carries exit code)
-    Complete {
-        /// Target pane ID (e.g. %3)
-        pane_id: String,
-        /// Exit code of the finished command
-        exit_code: i32,
-        /// Target session name
-        session_name: String,
-    },
-    /// Notify that a pane received focus (pane-focus-in hook, N1)
-    Focus {
-        /// Pane that received focus (e.g. %3)
-        pane_id: String,
-        /// Session name
-        session_name: String,
-    },
-    /// Notify that the active window changed (session-window-changed hook, N2)
-    WindowChanged {
-        /// Session name
-        session_name: String,
-    },
-    /// Notify that a new tmux session was created (after-new-session hook, N14)
-    SessionCreated {
-        /// Name of the newly created session
-        session_name: String,
-    },
-    /// Notify that a tmux session was destroyed (session-closed hook, A6)
-    SessionClosed {
-        /// Name of the closed session
-        session_name: String,
-    },
-    /// Notify that a tmux client attached to a session (client-attached hook, N15)
-    ClientAttached {
-        /// Session name
-        session_name: String,
-    },
-    /// Notify that a tmux client detached from a session (client-detached hook, N15)
-    ClientDetached {
-        /// Session name
-        session_name: String,
-    },
-    /// Notify that the terminal was resized (client-resized hook, N8)
-    Resize {
-        /// New terminal width in columns
-        width: u16,
-        /// New terminal height in rows
-        height: u16,
-        /// Session name
-        session_name: String,
     },
 }
 
@@ -486,50 +418,6 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Commands::Sandbox { cmd } => match cmd {
             SandboxCommands::Status => {
                 cli::run_sandbox_status().await?;
-            }
-        },
-        Commands::Notify { cmd } => match cmd {
-            NotifyCommands::Activity {
-                pane_id,
-                hook_index,
-                session_name,
-            } => {
-                cli::run_notify_activity(pane_id, hook_index, session_name).await?;
-            }
-            NotifyCommands::Complete {
-                pane_id,
-                exit_code,
-                session_name,
-            } => {
-                cli::run_notify_complete(pane_id, exit_code, session_name).await?;
-            }
-            NotifyCommands::Focus {
-                pane_id,
-                session_name,
-            } => {
-                cli::run_notify_focus(pane_id, session_name).await?;
-            }
-            NotifyCommands::WindowChanged { session_name } => {
-                cli::run_notify_window_changed(session_name).await?;
-            }
-            NotifyCommands::SessionCreated { session_name } => {
-                cli::run_notify_session_created(session_name).await?;
-            }
-            NotifyCommands::SessionClosed { session_name } => {
-                cli::run_notify_session_closed(session_name).await?;
-            }
-            NotifyCommands::ClientAttached { session_name } => {
-                cli::run_notify_client_attached(session_name).await?;
-            }
-            NotifyCommands::ClientDetached { session_name } => {
-                cli::run_notify_client_detached(session_name).await?;
-            }
-            NotifyCommands::Resize {
-                width,
-                height,
-                session_name,
-            } => {
-                cli::run_notify_resize(width, height, session_name).await?;
             }
         },
         Commands::InstallSudoers { script_name } => {
@@ -785,4 +673,29 @@ fn run_agent_briefing(name: &str, clear: bool) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::Parser;
+
+    #[test]
+    fn notify_subcommand_is_gone() {
+        let err = match Cli::try_parse_from(["daemoneye", "notify", "activity", "%3", "0", "dev"]) {
+            Ok(_) => panic!("notify must no longer parse"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("unrecognized subcommand"),
+            "expected a clap usage error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn status_subcommand_still_parses() {
+        let cli = Cli::try_parse_from(["daemoneye", "status"]).expect("status must still parse");
+        assert!(matches!(cli.command, Commands::Status));
+    }
 }

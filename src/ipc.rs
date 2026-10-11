@@ -372,57 +372,6 @@ pub enum Request {
         id: String,
         approved: bool,
     },
-    /// Notify the daemon of an event (e.g. background pane activity from a tmux hook).
-    NotifyActivity {
-        pane_id: String,
-        hook_index: usize,
-        session_name: String,
-    },
-    /// Notify the daemon that a background command finished.
-    /// Carries the exit code directly so no scrollback scan is needed.
-    NotifyComplete {
-        pane_id: String,
-        exit_code: i32,
-        session_name: String,
-    },
-    /// Notify the daemon that a pane received focus (`pane-focus-in` hook, N1).
-    /// Allows instant active-pane tracking without waiting for the 2 s poll.
-    NotifyFocus {
-        pane_id: String,
-        session_name: String,
-    },
-    /// Notify the daemon that the active window changed (`session-window-changed` hook, N2).
-    /// Triggers a targeted window-list refresh so `[SESSION TOPOLOGY]` stays current.
-    NotifyWindowChanged {
-        session_name: String,
-    },
-    /// Notify the daemon that a new tmux session was created (`after-new-session` hook, N14).
-    /// The daemon installs per-session hooks for the new session automatically.
-    NotifySessionCreated {
-        session_name: String,
-    },
-    /// Notify the daemon that a tmux session was destroyed (`session-closed` hook, A6).
-    /// The daemon cleans up bg windows and pipe-pane logs for that session.
-    NotifySessionClosed {
-        session_name: String,
-    },
-    /// Notify the daemon that a tmux client attached to a session (`client-attached` hook, N15).
-    /// Clears any pending detach state so the catch-up brief is not shown.
-    NotifyClientAttached {
-        session_name: String,
-    },
-    /// Notify the daemon that a tmux client detached from a session (`client-detached` hook, N15).
-    /// The daemon records the detach time; the next `Ask` will include a catch-up brief.
-    NotifyClientDetached {
-        session_name: String,
-    },
-    /// Notify the daemon that the attached terminal was resized (`client-resized` hook, N8).
-    /// Updates the cached client viewport so the AI knows the current terminal dimensions.
-    NotifyResize {
-        width: u16,
-        height: u16,
-        session_name: String,
-    },
     /// Switch the active model for the given session.
     /// The daemon validates the name against configured models and responds with
     /// `Response::ModelChanged` on success or `Response::Error` if unknown.

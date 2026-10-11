@@ -173,56 +173,6 @@ pub fn capture_pane_at_scroll_with_escapes(
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-// ---------------------------------------------------------------------------
-// R1 — pipe-pane selective capture
-// ---------------------------------------------------------------------------
-
-/// Derive the pipe log path for a given pane ID.
-///
-/// The pane ID (e.g. `%3`) is sanitised to a plain number so the path is a
-/// valid filename on every filesystem: `%3` → `~/.daemoneye/var/log/pipe/de-pipe-3.log`.
-pub fn pipe_log_path(pane_id: &str) -> std::path::PathBuf {
-    let safe = pane_id.trim_start_matches('%');
-    crate::config::pipe_log_dir().join(format!("de-pipe-{}.log", safe))
-}
-
-/// Start piping all output from `pane_id` to its log file.
-///
-/// Uses `-O` to capture pane output only (not stdin keystrokes).  If a pipe
-/// is already running for the pane, tmux replaces it — the log is append-only
-/// so no content is lost.  Returns the log path on success.
-pub fn start_pipe_pane(pane_id: &str) -> Result<std::path::PathBuf> {
-    let path = pipe_log_path(pane_id);
-    let cmd = format!("cat >> {}", path.to_string_lossy());
-    let out = crate::process::bounded_output(std::process::Command::new("tmux").args([
-        "pipe-pane",
-        "-O",
-        "-t",
-        pane_id,
-        &cmd,
-    ]))?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "pipe-pane failed for {}: {}",
-            pane_id,
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-    Ok(path)
-}
-
-/// Stop the pipe for `pane_id` and delete its log file.
-///
-/// An empty shell-command argument stops the pipe without error.
-pub fn stop_pipe_pane(pane_id: &str) {
-    let _ = crate::process::bounded_output(std::process::Command::new("tmux").args([
-        "pipe-pane",
-        "-t",
-        pane_id,
-    ]));
-    let _ = std::fs::remove_file(pipe_log_path(pane_id));
-}
-
 /// Get the global window ID (`#{window_id}`, e.g. `@3`) of the window containing a pane.
 pub fn pane_window_id(pane_id: &str) -> Result<String> {
     let output = crate::process::bounded_output(Command::new("tmux").args([

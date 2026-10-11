@@ -2249,7 +2249,6 @@ mod tests {
             last_detach: None,
             detach_time_utc: None,
             messages_at_detach: 0,
-            pipe_source_pane: None,
             is_ghost: true,
             ghost_config: Some(crate::ipc::GhostConfig {
                 agent: Some("analyst".to_string()),
@@ -2349,7 +2348,6 @@ mod tests {
             last_detach: None,
             detach_time_utc: None,
             messages_at_detach: 0,
-            pipe_source_pane: None,
             is_ghost: true,
             ghost_config: Some(crate::ipc::GhostConfig {
                 agent: Some("test-agent".to_string()),

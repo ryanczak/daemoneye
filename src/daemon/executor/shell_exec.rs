@@ -28,9 +28,8 @@ use crate::shell::{
 use crate::shell::{CommandRecord, marked_inner_range};
 use std::sync::atomic::AtomicUsize;
 
-/// Per-invocation sudo sentinel source for the PTY path, the analogue of the
-/// tmux path's `FG_HOOK_COUNTER`: a fresh index per command is what makes the
-/// exact-match property meaningful.
+/// Per-invocation sudo sentinel source for the PTY path: a fresh index per
+/// command is what makes the exact-match property meaningful.
 static PTY_SENTINEL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// How long a fresh host may take to come up and answer `Status`.

@@ -227,3 +227,108 @@ the partial tree could be trusted. Resume would have carried that tree
 forward, so the tree was reset instead. The spec gap was the edit
 mechanism, not the design: the executor's choices (pure `startup_session`,
 the deletion set) were right.
+
+### Update — 2026-10-11 02:58 (started)
+
+**Executor:** executor run 2 (fresh tree after run 1's reset).
+**Plan:** follow § Edit order in full — `delete_file` for `hook.rs` and
+`cli/notify.rs`, then the `Notify*` variants, then `main.rs`, then the named
+`mod.rs` blocks one `patch` each, then `session.rs`, pipe-pane, `setup.rs`,
+tests, evidence. `cargo build` after steps 3 and 6 to name dangling callers.
+No `patch_lines` anywhere in this phase.
+**Baseline at HEAD:** `cargo test` reports `passed=2302 failed=0`; the grep
+criterion prints 52 lines; the `set-environment` grep prints 2 lines; the
+`run_daemon` preservation grep counts 4.
+
+### Update — 2026-10-11 (escalation 2)
+
+**Chosen lever:** resume.
+**Rationale:** Run 2 hit NoProgressStall at turn 228 with no source edit.
+It wrote its "started" entry ending in two blank lines; a `cat -A` then
+showed `$ (x2)`, which is rexyMCP's output deduplication marker for two
+identical consecutive lines, not file content. The executor spent 120+
+calls trying to find and delete a `(x2)` that is not in the file. Not a
+spec gap and not the run-1 failure class; the spec and the clean tree are
+right, so resume with that one fact.
+
+### Update — 2026-10-11 03:45 (resumed run 3, mid-progress)
+
+**Executor:** executor run 3 (resume of run 2's clean start).
+**Progress:** § Edit order steps 1–6 are done. `src/daemon/hook.rs` and
+`src/cli/notify.rs` are deleted; the `Notify*` `Request` variants, their
+server arms, `Commands::Notify`/`NotifyCommands`, the per-session and
+global hook installs, the `set-hook -gu` uninstall loop, the pipe-pane
+startup/shutdown path, `BgTeardown`/`run_bg_teardown`, `BG_DONE_TX`,
+`bg_done_subscribe`, `FG_HOOK_COUNTER`, `read_pipe_log`,
+`start_pipe_pane`/`stop_pipe_pane`/`pipe_log_path`, and
+`SessionEntry::pipe_source_pane` are all gone. Startup now resolves the
+session through the pure `startup_session(inside, configured, exists)`
+(adopt-only) and logs `No tmux session to adopt; the daemon starts
+tmux-free.` when it adopts nothing. The `_de_exit_trap`/`_de_precmd`
+`tmux set-environment` snippets are deleted from `setup.rs`. The hook
+grep criterion prints `0`; the `set-environment` grep prints nothing;
+`run_daemon`'s listener/signal preservation grep still counts `4`.
+Remaining: the two § Tests were added (`startup_session_never_creates`
+replacing my five first-cut cases, `notify_subcommand_is_gone` plus
+`status_subcommand_still_parses`); § End-to-end verification is captured
+in the next entry, then the `refactor:` commit.
+**Deleted tests:** `hooks_land_on_private_server` (hook installs are gone
+— replaced by `daemon_installs_no_tmux_hooks`, which asserts the negative
+of what it asserted), `request_notify_activity_roundtrip`,
+`request_notify_complete_roundtrip`,
+`request_notify_client_attached_roundtrip`,
+`request_notify_client_detached_roundtrip`,
+`request_notify_session_closed_roundtrip`,
+`request_notify_resize_roundtrip` (build the deleted `Notify*` variants),
+`accepts_normal_names`, `rejects_single_quote`,
+`rejects_control_characters` (lived in the deleted `src/cli/notify.rs`),
+`tmux_client_hooks_no_longer_touch_detach_state` (lived in the deleted
+`src/daemon/hook.rs`).
+**Moved tests:** none — no test whose subject survived needed moving; the
+closest candidate, `an_empty_session_starts_no_tmux_server` in
+`tests/isolation.rs`, keeps its subject and stays where it is; only its
+log assertion moved to the new adoption message.
+**Test math:** baseline 2302 = 2295 now + 7 to account for. Deleted:
+11 (the list above). Added: 3
+(`startup_session_never_creates`, `notify_subcommand_is_gone`,
+`status_subcommand_still_parses`). 2295 = 2302 − 11 + 3 + 1, where the
++1 is `hooks_land_on_private_server` → `daemon_installs_no_tmux_hooks`
+counted as deleted-and-replaced once, not twice; net −7.
+
+### Update — 2026-10-11 03:50 (end-to-end verification)
+
+§ End-to-end verification, run once via `/tmp/e2e.sh` (each line executed
+exactly once, output redirected to `/tmp/e2e.txt`, pasted below verbatim):
+
+```
+hook_rs=1
+0
+startup_session_never_creates: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2238 filtered out; finished in 0.00s
+notify_subcommand_is_gone: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+error: unrecognized subcommand 'notify'
+notify_exit=2
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+fmt_exit=0
+passed=2295 failed=0
+PASTE MATCH: yes
+```
+
+Every expected value matches: `hook_rs=1`; the hook grep prints `0`; each
+§ Test reports `1 passed` alone; `daemoneye notify …` is a clap usage
+error (`error: unrecognized subcommand 'notify'`, `notify_exit=2`);
+clippy exits 0; `fmt_exit=0`; `passed=2295 failed=0`.
+**New total: 2302 − 11 deleted + 3 added = 2294; measured 2295** — the
+one extra pass is `daemon_installs_no_tmux_hooks`, the replacement for
+the deleted `hooks_land_on_private_server`, counted once as deleted-and-
+replaced in the −11 and once here as an added pass. No test calls a
+function that still exists: every deleted test named only deleted
+symbols (`Notify*` variants, `run_notify_*`,
+`validate_hook_session_name`, `hooks_land_on_private_server`'s hook
+installs, hook.rs's detach-state test), or was itself replaced by a test
+of the surviving subject (`daemon_installs_no_tmux_hooks`).
+Preservation: the `run_daemon` grep
+(`UnixListener::bind` / `accept()` / `sigterm` / `sigint` arms) counts
+`4`; `git diff HEAD -- src/daemon/session.rs` touches no line inside
+`with_sessions` or its doc comment (grep for `with_sessions` on removed
+lines: `0`).

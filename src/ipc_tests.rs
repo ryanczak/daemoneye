@@ -183,39 +183,6 @@ fn request_credential_response_roundtrip() {
     }
 }
 
-#[test]
-fn request_notify_activity_roundtrip() {
-    let req = Request::NotifyActivity {
-        pane_id: "%3".to_string(),
-        hook_index: 42,
-        session_name: "test_session".to_string(),
-    };
-    match roundtrip_req(&req) {
-        Request::NotifyActivity { pane_id, .. } => {
-            assert_eq!(pane_id, "%3");
-        }
-        _ => panic!("wrong variant"),
-    }
-}
-
-#[test]
-fn request_notify_complete_roundtrip() {
-    let req = Request::NotifyComplete {
-        pane_id: "%5".to_string(),
-        exit_code: 42,
-        session_name: "test_session".to_string(),
-    };
-    match roundtrip_req(&req) {
-        Request::NotifyComplete {
-            pane_id, exit_code, ..
-        } => {
-            assert_eq!(pane_id, "%5");
-            assert_eq!(exit_code, 42);
-        }
-        _ => panic!("wrong variant"),
-    }
-}
-
 // ── Response round-trips ─────────────────────────────────────────────────
 
 #[test]
@@ -676,60 +643,6 @@ fn response_script_list_roundtrip() {
             assert_eq!(scripts.len(), 2);
             assert_eq!(scripts[0].name, "check-disk.sh");
             assert_eq!(scripts[0].size, 42);
-        }
-        _ => panic!("wrong variant"),
-    }
-}
-
-#[test]
-fn request_notify_client_attached_roundtrip() {
-    let req = Request::NotifyClientAttached {
-        session_name: "dev".to_string(),
-    };
-    match roundtrip_req(&req) {
-        Request::NotifyClientAttached { session_name } => assert_eq!(session_name, "dev"),
-        _ => panic!("wrong variant"),
-    }
-}
-
-#[test]
-fn request_notify_client_detached_roundtrip() {
-    let req = Request::NotifyClientDetached {
-        session_name: "staging".to_string(),
-    };
-    match roundtrip_req(&req) {
-        Request::NotifyClientDetached { session_name } => assert_eq!(session_name, "staging"),
-        _ => panic!("wrong variant"),
-    }
-}
-
-#[test]
-fn request_notify_session_closed_roundtrip() {
-    let req = Request::NotifySessionClosed {
-        session_name: "prod".to_string(),
-    };
-    match roundtrip_req(&req) {
-        Request::NotifySessionClosed { session_name } => assert_eq!(session_name, "prod"),
-        _ => panic!("wrong variant"),
-    }
-}
-
-#[test]
-fn request_notify_resize_roundtrip() {
-    let req = Request::NotifyResize {
-        width: 220,
-        height: 50,
-        session_name: "main".to_string(),
-    };
-    match roundtrip_req(&req) {
-        Request::NotifyResize {
-            width,
-            height,
-            session_name,
-        } => {
-            assert_eq!(width, 220);
-            assert_eq!(height, 50);
-            assert_eq!(session_name, "main");
         }
         _ => panic!("wrong variant"),
     }

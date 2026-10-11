@@ -46,9 +46,6 @@ pub struct SessionEntry {
     /// Number of messages in `messages` at the time of `last_detach`.
     /// Used to identify messages injected while no client was present (N15).
     pub messages_at_detach: usize,
-    /// The source pane that has `pipe-pane` active for this session (R1).
-    /// `None` before the first Ask or when pipe-pane is not available.
-    pub pipe_source_pane: Option<String>,
     /// True if this session is autonomous (no attached human user).
     pub is_ghost: bool,
     /// Settings for autonomous execution (inherited from the triggering runbook).
@@ -142,9 +139,6 @@ impl SessionStore {
         self.0.try_lock()
     }
 }
-
-pub static BG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
-    std::sync::OnceLock::new();
 
 /// Live chat-presence connections per session id (M27 phase 03).
 ///
@@ -276,20 +270,6 @@ pub fn record_chat_detach(session_id: &str, sessions: &SessionStore) {
 /// Carries `(pane_id, exit_code)` delivered directly by the command wrapper.
 pub static COMPLETE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<(String, i32)>> =
     std::sync::OnceLock::new();
-
-/// Monotonically-incrementing counter used to generate unique `pane-title-changed`
-/// hook slot names (`@de_fg_N`) for concurrent foreground command executions.
-/// Using a counter avoids the timestamp-modulo collision risk.
-pub static FG_HOOK_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-pub fn bg_done_subscribe() -> tokio::sync::broadcast::Receiver<String> {
-    BG_DONE_TX
-        .get_or_init(|| {
-            let (tx, _) = tokio::sync::broadcast::channel(32);
-            tx
-        })
-        .subscribe()
-}
 
 pub fn complete_subscribe() -> tokio::sync::broadcast::Receiver<(String, i32)> {
     COMPLETE_TX
@@ -548,35 +528,6 @@ impl SessionEntry {
     pub fn last_accessed(&self) -> std::time::Instant {
         self.last_accessed
     }
-
-    /// Owned snapshot of everything [`run_bg_teardown`] needs.
-    ///
-    /// `SessionEntry` is not `Clone`, so `&self`
-    /// cannot cross `spawn_blocking`. This hands the teardown its data by value
-    /// so the caller can wrap it in `off_runtime`.
-    pub fn bg_teardown(&self) -> BgTeardown {
-        BgTeardown {
-            pipe_source_pane: self.pipe_source_pane.clone(),
-        }
-    }
-}
-
-/// Owned teardown data for a session being evicted. See [`SessionEntry::bg_teardown`].
-pub struct BgTeardown {
-    /// The pipe-pane source, if one was started for this session.
-    pub pipe_source_pane: Option<String>,
-}
-
-/// The blocking half of session teardown: `stop_pipe_pane`. Takes owned data so
-/// it can run on the blocking pool.
-pub fn run_bg_teardown(teardown: BgTeardown) {
-    // R1: stop pipe-pane and remove the log file if one was started for this session.
-    // An empty string is the "failed / skipped" sentinel — nothing to clean up.
-    if let Some(ref pane_id) = teardown.pipe_source_pane
-        && !pane_id.is_empty()
-    {
-        crate::tmux::stop_pipe_pane(pane_id);
-    }
 }
 
 thread_local! {
@@ -777,7 +728,6 @@ mod tests {
             last_detach: None,
             detach_time_utc: None,
             messages_at_detach: 0,
-            pipe_source_pane: None,
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",
@@ -817,7 +767,6 @@ mod tests {
             last_detach: None,
             detach_time_utc: None,
             messages_at_detach: 0,
-            pipe_source_pane: None,
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",
@@ -867,7 +816,6 @@ mod tests {
             last_detach: None,
             detach_time_utc: None,
             messages_at_detach: 0,
-            pipe_source_pane: None,
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",
@@ -919,7 +867,6 @@ mod tests {
             last_detach: None,
             detach_time_utc: None,
             messages_at_detach: 0,
-            pipe_source_pane: None,
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",
@@ -1205,7 +1152,6 @@ mod tests {
             last_detach: None,
             detach_time_utc: None,
             messages_at_detach: 0,
-            pipe_source_pane: None,
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
@@ -1355,7 +1301,6 @@ mod tests {
             last_detach: None,
             detach_time_utc: None,
             messages_at_detach: 0,
-            pipe_source_pane: None,
             is_ghost: false,
             ghost_config: None,
             ghost_bg_prefix: "",

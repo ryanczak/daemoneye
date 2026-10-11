@@ -7,29 +7,11 @@ use chrono::Local;
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
-/// Maximum bytes to read from the tail of a pipe log when using it as the
-/// active-pane content source (R1).
-const PIPE_LOG_MAX_BYTES: usize = 51_200; // 50 KB
-
-/// When a pipe log grows beyond this size, truncate it to the last
-/// `PIPE_LOG_MAX_BYTES` bytes after each read (A7). tmux's `cat` process
-/// holds the file open with `O_APPEND`, so subsequent writes go to the
-/// new end — no data is corrupted, and at most ~2 s of output is lost.
-const PIPE_LOG_ROTATE_THRESHOLD: usize = 10 * 1024 * 1024; // 10 MB
-
 /// Fresh content for the active pane.
 ///
-/// R1: prefer the pipe log over capture-pane when the pane is not scrolled
-/// and the log has content.  The pipe log covers all output since the chat
-/// session started, including content that has scrolled past the tmux
-/// scrollback buffer.  When the user is actively looking at a different
-/// scroll position (R3) we still use capture-pane since the user's viewport
-/// is the meaningful reference point.
 /// R2: use ANSI-escape-aware capture so colour codes are converted to
-/// semantic markers ([ERROR:], [WARN:], [OK:]).  The pipe log already
-/// contains raw ANSI (R1) and goes through annotate_ansi() in
-/// read_pipe_log().  For capture-pane paths we use the `-e` variant which
-/// asks tmux to preserve escape sequences.
+/// semantic markers ([ERROR:], [WARN:], [OK:]).  The `-e` variant asks tmux
+/// to preserve escape sequences.
 fn active_pane_content(pane_id: &str, scroll_pos: usize) -> String {
     // Unit tests must be hermetic: a live tmux server on the host must not
     // leak real pane content into fake-cache tests (the pane ids the tests
@@ -48,67 +30,10 @@ fn active_pane_content(pane_id: &str, scroll_pos: usize) -> String {
             })
             .unwrap_or_else(|_| "(pane unavailable)".to_string())
     } else {
-        let pipe_content = read_pipe_log(pane_id);
-        if pipe_content.is_empty() {
-            crate::tmux::capture_pane_with_escapes(pane_id, 200)
-                .map(|s| annotate_ansi(&s))
-                .unwrap_or_else(|_| "(pane unavailable)".to_string())
-        } else {
-            pipe_content
-        }
+        crate::tmux::capture_pane_with_escapes(pane_id, 200)
+            .map(|s| annotate_ansi(&s))
+            .unwrap_or_else(|_| "(pane unavailable)".to_string())
     }
-}
-
-/// Read the last [`PIPE_LOG_MAX_BYTES`] of the pipe log for `pane_id`,
-/// annotating ANSI colour escapes as semantic markers.  Returns an empty
-/// string if the log does not exist, is empty, or cannot be read.
-fn read_pipe_log(pane_id: &str) -> String {
-    use std::io::{Read, Seek, SeekFrom, Write};
-    let path = tmux::pipe_log_path(pane_id);
-    let Ok(mut file) = std::fs::File::open(&path) else {
-        return String::new();
-    };
-    let Ok(meta) = file.metadata() else {
-        return String::new();
-    };
-    let file_size = meta.len() as usize;
-    if file_size == 0 {
-        return String::new();
-    }
-    let offset = file_size.saturating_sub(PIPE_LOG_MAX_BYTES);
-    if offset > 0 && file.seek(SeekFrom::Start(offset as u64)).is_err() {
-        return String::new();
-    }
-    let mut buf = Vec::new();
-    if file.read_to_end(&mut buf).is_err() {
-        return String::new();
-    }
-
-    // A7: rotate — if the file has grown beyond the threshold, truncate it to
-    // just the tail we already hold. The tmux `cat` process keeps the file
-    // open with O_APPEND, so future writes land at the new end cleanly.
-    if file_size > PIPE_LOG_ROTATE_THRESHOLD {
-        drop(file);
-        if let Ok(mut wfile) = std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&path)
-        {
-            if let Err(e) = wfile.write_all(&buf) {
-                log::warn!("Failed to rotate pipe log {}: {}", path.display(), e);
-            } else {
-                log::debug!(
-                    "Rotated pipe log {} ({} MB → {} KB)",
-                    path.display(),
-                    file_size / (1024 * 1024),
-                    buf.len() / 1024
-                );
-            }
-        }
-    }
-
-    let raw = String::from_utf8_lossy(&buf).into_owned();
-    annotate_ansi(&raw)
 }
 
 /// Cached state for a single tmux pane, refreshed every 2 seconds.
