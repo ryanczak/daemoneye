@@ -38,6 +38,16 @@ optional alert overlay.
 2. The repo is clean. Port 19418 is free. `brain:8000` is reachable.
 3. **Rehearse every block once** before the PE run, and fold any block fix
    into this doc. M23's live close needed three rehearsals.
+4. **Harness rules from rehearsal 1.** The architect's Bash tool runs
+   *inside the PE's tmux*, so `$TMUX` is set, and tmux prefers it over
+   `TMUX_TMPDIR`. Every harness tmux call uses an explicit `-S <socket>`
+   with `TMUX` unset. Run A's PATH holds **no tmux at all**: a symlink farm
+   of `/usr/bin` minus `tmux`. The logging shim is for run B only. Run B's
+   chat waits for an attached client (`chat.rs`), so attach a headless
+   read-only client with `script -qfc "tmux -S … attach -r"`. Poll for the
+   approval panel (`pprove for`) and answer within the 60 s
+   `APPROVAL_TIMEOUT`. In a persistent PTY shell, test exit codes with
+   `sh -c 'exit N'`, never a bare `exit N`, which kills the shell.
 
 ## Spec
 
@@ -60,7 +70,9 @@ emulator's own calls stay out of the shim log.
   1. Ask it to run `echo hi; exit 3` and approve with `y`. The result
      reports exit code 3.
   2. Ask it to run `sleep 5; echo done` with `wait: false`. A
-     `[Background Task Completed]` message with exit 0 arrives on screen.
+     `[Background Task Completed]` message with exit 0 is injected into the
+     session for the model's next turn. It is not drawn on screen; that is
+     by design.
   3. Schedule `exit3.sh` once, 20 s out, with `schedule_command`. Its
      result event carries exit code 3.
   4. Add one legacy entry to `schedules.json` with the shape
@@ -77,8 +89,9 @@ emulator's own calls stay out of the shim log.
   a private server, session `obs`, with two panes, one of them running
   `top`. Stop the run-A daemon. Start the daemon and `chat` **inside**
   `obs`. Record the window count before. Ask "what is running in my other
-  pane?" The answer names `top`, and the turn log's context carries
-  `[PANE MAP]`. Run one command and approve it. Then check: the window
+  pane?" The first-turn context in the session log carries the `top` pane's
+  contents and `[PANE MAP] … (top, …)`. Check the context, not the model's
+  answer: in rehearsal 1 the model misread a correct context. Run one command and approve it. Then check: the window
   count is unchanged, `show-hooks -g` lists no `daemoneye`, and the shim
   log's write verbs since S3 are 0. List the read verbs as evidence.
 - **S3b — remote host (zoidberg).** The throwaway config also carries
@@ -119,7 +132,7 @@ emulator's own calls stay out of the shim log.
       logged reason. The alert shows on screen. The ghost completes. No tmux
       error appears in `daemon.log`. The shim log has **0** write verbs.
 - [ ] Catch-up brief shown after `chat --resume` following ≥ 30 s away.
-- [ ] Run B: the pane answer names `top`. `[PANE MAP]` is in the context. The
+- [ ] Run B: the context carries the `top` pane and `[PANE MAP]`. The
       window count is unchanged. No daemoneye hook is set. The shim log has
       **0** write verbs.
 - [ ] S3b: the remote command reports `zoidberg` and exit code 4.
@@ -147,3 +160,56 @@ emulator's own calls stay out of the shim log.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-11 (rehearsal 1, architect)
+
+The blocks were rehearsed end to end on pinky against `47d3c5ea`. The harness
+fixes are folded into Pre-flight 4 and the S1/S3 wording above. **What
+passed:**
+- Run A, no tmux on PATH: `doctor` reports `tmux: not installed (optional)`
+  and exits 0. The waited command reported exit 3 in PTY shell `s0`.
+  `wait: false` ran on dedicated shell `s1`, and `[Background Task
+  Completed] … exit code 0` was injected. The legacy `ActionOn::Command` job
+  was refused with a logged reason. A webhook alert went through analysis to
+  a ghost, which completed in 2 turns. A fresh chat showed
+  `⚙ [FIRING] LiveTicks …` on screen.
+- Run B, private tmux: the context carried the `top` pane and `[PANE MAP]`.
+  The window count was unchanged. No daemoneye hooks were set.
+- S3b: `host: "zoidberg"` ran through PTY shell `s2` over a ControlMaster,
+  printed `zoidberg` and exit 4. zoidberg's `tmux ls` was unchanged (no
+  server).
+- S4: `doc_truth` passed 16 of 16.
+
+**What failed. The tag is blocked.** Rehearsal findings follow, verbatim
+from the run notes:
+
+- F1 (minor): `exit 3` kills the PTY shell. The error then reads "command exceeded the 45s limit … socket closed", but the close was immediate, not a timeout. Misleading message.
+- F2 (major): the model (GLM) sends `{"background": false|true}` to run_terminal_command. The dispatcher silently ignores the unknown arg, so `wait` defaults to true. Four wasted calls before the model found `wait`. Unknown args should be refused with an error naming `wait`.
+- F3 (blocker): the scheduler loop (`src/daemon/mod.rs`, ~line 616) `continue`s while the startup tmux session name `sn` is empty, and `sn` never changes. With no tmux, no scheduled job ever fires. This breaks the exit criteria "Runs without tmux" and "Scheduled scripts run in PTY shells".
+- obs: the audit record is JSON: `{"cmd","event":"command","exit","mode":"shell","out","pane":"s0",…}`. That is the ground truth for README's sample (S5b).
+- obs: daemon.log still says "foreground command approved" / "background command approved". `JobStatus::Failed` doc says "the tmux window `de-<id>` is left open" (stale comment).
+- obs: `[Background Task Completed]` is injected into the session for the model's next turn, not shown on screen. Change the criterion wording; the behaviour is by design.
+- F4 (major): after the daemon restarts, a running `daemoneye chat` stays up with no notice. It never re-establishes its presence connection, so it silently gets no alerts. The first S1f alert never reached it. A fresh chat got the second alert at once.
+- fixture: the ghost runbook used `exit 0`, which hit F1 (the shell died; "300s limit" message). Use `echo ghost-ran`.
+- F4 mechanism: `HeldPresence::park` (src/cli/commands/chat_presence.rs) breaks out of its read loop on EOF. It never reconnects and never tells the user.
+- F5 (blocker): there is no catch-up brief after `chat --resume`. In the live run the session 7888bd89 presence detached at 22:13:21 (last=true). A `[Webhook Alert]` was injected into the session file while away. The attach came at 22:14:49 (88 s away). No `⚙ [Catch-up]` appeared on screen or in 2000 lines of scrollback. The client renders a brief at chat.rs:175, so the daemon side (`attach_brief_for`) most likely returned None. Candidates: the in-memory entry was evicted or replaced between detach and attach, or the injected alert landed outside `entry.messages`. This breaks the exit criterion "Catch-up on reconnect".
+- F6 (major): `daemoneye chat` inside tmux runs `tmux set -g focus-events on` (src/cli/commands/chat.rs ~146). That is a global option write on the user's server, against the "read-only observer" exit criterion. It was caught by the shim in run B.
+- HARNESS GOTCHA: the architect's Bash tool runs inside the PE's real tmux, so `$TMUX` is set. tmux prefers `$TMUX` over `TMUX_TMPDIR`. Rehearsal 1 created the `obs` session in the PE's real server (killed afterwards; the PE's session `0` was untouched). Every tmux invocation in the harness must use an explicit `-S <socket>` with `TMUX` unset.
+- F7 (minor): after the daemon's 60 s APPROVAL_TIMEOUT expires, the chat client still shows the approval panel. The next typed line is sent as a redirect answer on the dead connection and fails with '✗ Broken pipe (os error 32)'. The panel should close and say the approval timed out.
+- S5a: remote script streaming is real, but only for ghost shells running a daemon-host script on their remote host (foreground.rs ~243). README's paragraph describes a foreground command sent to an SSH'd pane, which no longer exists. Goes to 07a.
+- S5b: the audit-log ground truth is JSON, `{"cmd","event":"command","exit","mode":"shell","out","pane":"s0","session","status","ts","pid"}`. Goes to 07a.
+- S5c: FR-1.2.2 (c) is accurate as written (legacy de-* filter and classification still exist). No change.
+- obs: inside tmux, the other pane is labelled `[ACTIVE PANE %1]` while the user's selected pane is %0. Labelling quirk, minor.
+- obs: assets/memory/session/pane-referencing-convention.md still says "if the target pane for a foreground command is ambiguous, ask first". This is stale foreground-pane guidance in a seeded memory.
+
+
+**Harness incident.** The first run-B attempt created session `obs` in
+the PE's real tmux server, because of `$TMUX`; see Pre-flight 4. It was
+killed after its creation time was checked. The PE's session `0` was
+untouched. The chat client's `set -g focus-events on` (F6) also reached
+the real server. The PE's own `daemoneye chat` sets the same option on
+every start, so it was left as is.
+
+**Next.** F3 and F5 break exit criteria. F6 breaks "read-only". F2 and F4
+are major. These need code phases before the PE run. S5's (a) and (b) go
+to 07a. The PE run and S6 wait for all of them.
