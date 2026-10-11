@@ -63,6 +63,8 @@ is split further at drafting if it is more than one session.
 | 06 | doctor ([phase-06-doctor.md](phase-06-doctor.md)) — `daemoneye doctor`: one line per readiness check (config, api key, shell, daemon, sandbox, hosts, tmux), exit 1 only on a `FAIL`; tmux is optional and never fails | done (approved_first_try, 2026-10-11) |
 | 06b | runtime-docs ([phase-06b-runtime-docs.md](phase-06b-runtime-docs.md)) — the seeded prompts and memories, README and CLAUDE.md describe PTY execution and optional read-only tmux; doctor documented; a `doc_truth` gate keeps the retired terms out | done (approved_after_1, 2026-10-11) |
 | 06c | design-docs ([phase-06c-design-docs.md](phase-06c-design-docs.md)) — `architecture.md`, `PRODUCT_DEFINITION.md` (no "embeds into tmux"), `REQUIREMENTS.md`, `security.md`; also the two stale passages 06b carried: CLAUDE.md's `run_terminal_command` row ("user pane"/"daemon host window") and README's `[daemon] tmux_session` row (creates a session, registers hooks) | done (approved_first_try, 2026-10-11) |
+| 06e | no-fg-target ([phase-06e-no-fg-target.md](phase-06e-no-fg-target.md)) — the prompt stops naming a foreground pane: no `[FOREGROUND TARGET]`, no `[Pane target changed]`, no `background=true/false` in model-facing text; **dispatch before 06d** | todo |
+| 06d | docs-leftovers ([phase-06d-docs-leftovers.md](phase-06d-docs-leftovers.md)) — the stale passages 06c carried (FR-1.2.2/6/17, `chat --session`, chat attach, pane targeting) and the foreground-pane terms added to the `doc_truth` gate | todo |
 | 07 | live-close — architect-run live verification on pinky, with and without tmux; tag `v2.0.0` | todo |
 
 ## Notes
