@@ -128,3 +128,46 @@ drift message, the `## Execution Context` `background=` lines, and the other
 (`default_target_pane`, `/pane`, `pane_prefs.json`, activity refresh) stays.
 Flipping the status to `review` and writing the completion entry is the
 server's job; I leave both alone.
+
+### Update — 2026-10-11 20:45 (end-to-end verification)
+
+`PromptCtx.default_target_pane` was removed along with the text (clippy
+dead_code, per the Gotcha), so `ask.rs`'s cost tuple also dropped the
+drift slot and `bg_shell.rs`'s refusal test now asserts the wait-free
+alternative. All other state is untouched.
+
+End-to-end verification, each line run once (transcript in
+`.rexymcp/output/06e-e2e-*.txt`):
+
+```
+$ grep -rn 'background=\(true\|false\)\|Pane target changed' src assets | grep -v src/ai/backends/gemini.rs | wc -l
+0
+
+$ grep -rn 'FOREGROUND TARGET' assets | wc -l
+0
+
+$ cargo test no_prompt_names_a_foreground_target 2>&1 | grep -E '^test result: ok. 1 passed'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2251 filtered out; finished in 0.10s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target (s in 0.16s
+
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2309 failed=0
+
+$ cargo test --test doc_truth 2>&1 | tail -2
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+```
+
+PASTE MATCH: yes
+
+Tests added: `daemon::prompt::tests::no_prompt_names_a_foreground_target`
+(1). Tests changed to assert absence, none deleted:
+`daemon::executor::bg_shell::tests::bg_start_refuses_an_interactive_command`
+(names the wait-free alternative instead of "foreground"). 2308 before →
+2309 after. The remaining `FOREGROUND TARGET` hits under `src/` are the
+three `#[cfg(test)]` absence assertions (prompt.rs ×2, executor/mod.rs ×1);
+the gemini.rs parser fixtures keep their `background=` strings by spec.
