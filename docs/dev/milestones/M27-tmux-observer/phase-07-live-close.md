@@ -81,6 +81,14 @@ emulator's own calls stay out of the shim log.
   `[PANE MAP]`. Run one command and approve it. Then check: the window
   count is unchanged, `show-hooks -g` lists no `daemoneye`, and the shim
   log's write verbs since S3 are 0. List the read verbs as evidence.
+- **S3b — remote host (zoidberg).** The throwaway config also carries
+  `[hosts.zoidberg] ssh = "zoidberg"`. Record `ssh zoidberg tmux ls` before.
+  In the run-B chat, ask it to run `hostname; exit 4` with
+  `host: "zoidberg"`, and approve with `y`. The result names `zoidberg` and
+  reports exit code 4. Then check: `ssh zoidberg tmux ls` is unchanged, so
+  the daemon created no remote session. The shim log's write verbs since
+  S3 are still 0. The daemon's ControlMaster socket under
+  `$R/.daemoneye/var/run/ssh/` was used.
 - **S4 — gates.** `cargo test --test doc_truth`, all green. Run
   `daemoneye doctor` against the real `~/.daemoneye` for the record.
 - **S5 — carried items, decide each.**
@@ -114,6 +122,9 @@ emulator's own calls stay out of the shim log.
 - [ ] Run B: the pane answer names `top`. `[PANE MAP]` is in the context. The
       window count is unchanged. No daemoneye hook is set. The shim log has
       **0** write verbs.
+- [ ] S3b: the remote command reports `zoidberg` and exit code 4.
+      zoidberg's `tmux ls` is unchanged. The shim log still has **0** write
+      verbs.
 - [ ] `doctor` exits 0 with tmux absent. `doc_truth` is all green.
 - [ ] S5's three items are each decided in the Update Log. Any stale one is
       fixed by `07a` before S6.
