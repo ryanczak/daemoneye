@@ -29,13 +29,6 @@ Call `get_shell_context(scope?)` for a fresh snapshot mid-turn when needed.
 Resolve user phrases like "pane 1" or "the second pane" here. Legacy daemon-managed \
 `de-*` windows are excluded.
 
-`[FOREGROUND TARGET] %N (cmd, 'window')` — authoritative pane for foreground \
-commands this turn. The daemon resolves the pane itself — do not infer from \
-topology. **If absent: do not guess; ask the user.**
-
-`[Pane target changed] now %N (was %M)` — designation moved mid-conversation. \
-Switch immediately; stop using the old ID.
-
 Refer to panes in user-facing text by window and command ("pane 1 in 'main' (bash)"), \
 never by raw `%N`. On a stale-pane error, re-read the `[PANE MAP]` context block \
 (retrieve the context with `get_shell_context` if it is not current) and match by \

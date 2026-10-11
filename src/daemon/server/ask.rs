@@ -83,7 +83,6 @@ where
 
     // Upsert the session entry: create it with the client-resolved target pane if
     // new, or refresh chat_pane and adopt client_target_pane if not yet set.
-    // Also capture any pending pane-drift notice to send after SessionInfo.
     // Read persisted continuity state *before* taking the lock. It is a file read
     // and must not run inside a critical section. Only needed when the session is
     // not already resident — the probe below is a HashMap lookup, not blocking work.
@@ -97,96 +96,87 @@ where
         None
     };
 
-    let (pane_drift_msg, session_cost_usd, has_untracked_cost): (Option<String>, f64, bool) =
-        if let Some(ref id) = session_id {
-            with_sessions(sessions, |store| {
-                let entry = store.entry(id.clone()).or_insert_with(|| {
-                    // Try to restore continuity state from persisted meta.
-                    let meta = restored_meta;
-                    let (
-                        started_at,
-                        turn_count,
-                        last_prompt_tokens,
-                        tool_calls_this_session,
-                        token_scale,
-                        saved_name,
-                    ) = match meta {
-                        Some(m) => (
-                            m.started_at,
-                            m.turn_count,
-                            m.last_prompt_tokens,
-                            m.tool_calls_this_session,
-                            m.token_scale,
-                            m.saved_name,
-                        ),
-                        None => (chrono::Utc::now(), 0, 0, 0, 1.5, None),
-                    };
-                    SessionEntry {
-                        messages: Vec::new(),
-                        last_accessed: Instant::now(),
-                        chat_pane: chat_pane.clone(),
-                        default_target_pane: client_target_pane.clone(),
-                        bg_windows: Vec::new(),
-                        last_prompt_tokens,
-                        tmux_session: session_name.clone(),
-                        last_detach: None,
-                        detach_time_utc: None,
-                        messages_at_detach: 0,
-                        is_ghost: false,
-                        ghost_config: None,
-                        ghost_runbook_name: None,
-                        ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
-                        started_at,
-                        turn_count,
-                        tool_calls_this_session,
-                        active_model: None,
-                        last_snapshot_activity: 0,
-                        saved_name,
-                        dirty: false,
-                        artifacts_created: Vec::new(),
-                        auto_name_suggested: false,
-                        ghost_task_message: None,
-                        loaded_tools: std::collections::HashSet::new(),
-                        cost_usd: 0.0,
-                        cost_by_agent: std::collections::HashMap::new(),
-                        has_untracked_cost: false,
-                        token_scale,
-                        compaction_in_flight: false,
-                        pending_compaction_notice: None,
-                    }
-                });
-                entry.chat_pane = chat_pane.clone();
-                entry.tmux_session = session_name.clone();
-
-                // Detect pane drift: the client resolved a different target pane than
-                // what was stored.  Announce the change to the model as a SystemMsg so
-                // it doesn't keep using the old pane ID.  Always adopt the new value —
-                // resolve_target_pane() on the client already respects pane_prefs.json,
-                // so if the user pinned a pane via /pane it will persist correctly.
-                let drift_msg = match (&entry.default_target_pane, &client_target_pane) {
-                    (Some(old), Some(new)) if old != new => {
-                        let old_clone = old.clone();
-                        entry.default_target_pane = Some(new.clone());
-                        Some(format!(
-                            "[Pane target changed] Foreground target is now {} (was {}). \
-                             Use target_pane=\"{}\" for run_terminal_command(background=false).",
-                            new, old_clone, new
-                        ))
-                    }
-                    (None, Some(new)) => {
-                        entry.default_target_pane = Some(new.clone());
-                        None // first assignment — no drift to announce
-                    }
-                    _ => None,
+    let (session_cost_usd, has_untracked_cost): (f64, bool) = if let Some(ref id) = session_id {
+        with_sessions(sessions, |store| {
+            let entry = store.entry(id.clone()).or_insert_with(|| {
+                // Try to restore continuity state from persisted meta.
+                let meta = restored_meta;
+                let (
+                    started_at,
+                    turn_count,
+                    last_prompt_tokens,
+                    tool_calls_this_session,
+                    token_scale,
+                    saved_name,
+                ) = match meta {
+                    Some(m) => (
+                        m.started_at,
+                        m.turn_count,
+                        m.last_prompt_tokens,
+                        m.tool_calls_this_session,
+                        m.token_scale,
+                        m.saved_name,
+                    ),
+                    None => (chrono::Utc::now(), 0, 0, 0, 1.5, None),
                 };
+                SessionEntry {
+                    messages: Vec::new(),
+                    last_accessed: Instant::now(),
+                    chat_pane: chat_pane.clone(),
+                    default_target_pane: client_target_pane.clone(),
+                    bg_windows: Vec::new(),
+                    last_prompt_tokens,
+                    tmux_session: session_name.clone(),
+                    last_detach: None,
+                    detach_time_utc: None,
+                    messages_at_detach: 0,
+                    is_ghost: false,
+                    ghost_config: None,
+                    ghost_runbook_name: None,
+                    ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
+                    started_at,
+                    turn_count,
+                    tool_calls_this_session,
+                    active_model: None,
+                    last_snapshot_activity: 0,
+                    saved_name,
+                    dirty: false,
+                    artifacts_created: Vec::new(),
+                    auto_name_suggested: false,
+                    ghost_task_message: None,
+                    loaded_tools: std::collections::HashSet::new(),
+                    cost_usd: 0.0,
+                    cost_by_agent: std::collections::HashMap::new(),
+                    has_untracked_cost: false,
+                    token_scale,
+                    compaction_in_flight: false,
+                    pending_compaction_notice: None,
+                }
+            });
+            entry.chat_pane = chat_pane.clone();
+            entry.tmux_session = session_name.clone();
 
-                let cost_usd = entry.cost_usd;
-                let has_untracked = entry.has_untracked_cost;
-                (drift_msg, cost_usd, has_untracked)
-            })
-        } else {
-            (None, 0.0, false)
-        };
+            // Detect pane drift: the client resolved a different target pane
+            // than what was stored. The state is kept so the activity-based
+            // snapshot refresh still keys on the right pane; nothing is sent
+            // to the model — commands run in PTY shells, not in a pane.
+            match (&entry.default_target_pane, &client_target_pane) {
+                (Some(old), Some(new)) if old != new => {
+                    entry.default_target_pane = Some(new.clone());
+                }
+                (None, Some(new)) => {
+                    entry.default_target_pane = Some(new.clone());
+                }
+                _ => {}
+            };
+
+            let cost_usd = entry.cost_usd;
+            let has_untracked = entry.has_untracked_cost;
+            (cost_usd, has_untracked)
+        })
+    } else {
+        (0.0, false)
+    };
 
     // Read the session's active model override once so it stays consistent for
     // the whole turn (including the budget line and every AI loop iteration).
@@ -442,10 +432,9 @@ where
 
     let safe_query = mask_sensitive(&initial_query);
 
-    // Read the default foreground target pane for this session so we can inject
-    // an explicit [FOREGROUND TARGET] line into the context block.  This tells the
-    // model exactly which pane ID to pass to run_terminal_command(background=false)
-    // without needing to infer it from the topology.
+    // Read the default target pane for this session so the activity-based
+    // snapshot refresh keys on the pane whose activity matters. Nothing is
+    // sent to the model — commands run in PTY shells, not in a pane.
     let default_target_pane: Option<String> = session_id
         .as_ref()
         .and_then(|id| with_sessions(sessions, |store| store.get(id)?.default_target_pane.clone()));
@@ -554,7 +543,6 @@ where
     let prompt_ctx = PromptCtx {
         client_pane: client_pane.as_deref(),
         chat_pane: chat_pane.as_deref(),
-        default_target_pane: default_target_pane.as_deref(),
         cache: &cache,
         config,
         chat_width,
@@ -642,12 +630,6 @@ where
     });
     if let Some(notice) = pending_notice {
         send_response_split(tx, Response::SystemMsg(notice)).await?;
-    }
-
-    // Pane drift: notify the model when the foreground target changed since
-    // the last turn so it doesn't keep using the stale pane ID.
-    if let Some(ref msg) = pane_drift_msg {
-        send_response_split(tx, Response::SystemMsg(msg.clone())).await?;
     }
 
     // ── Conversation loop ─────────────────────────────────────────────────────

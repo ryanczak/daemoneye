@@ -1,4 +1,4 @@
-//! A chat turn's `run_terminal_command(background=true)` on the PTY shell
+//! A chat turn's `run_terminal_command(wait: false)` on the PTY shell
 //! substrate (M24 phase 05b): start the command on a **dedicated** shell and
 //! return immediately, then deliver its real exit code later as a
 //! `[Background Task Completed]` message injected into the session.
@@ -62,9 +62,9 @@ where
 {
     if crate::daemon::utils::is_interactive_command(cmd) {
         anyhow::bail!(
-            "`{cmd}` is an interactive command and cannot run with background=true — \
-             a background ssh/mosh session can never be typed into. Run it in the \
-             foreground instead (background=false)."
+            "`{cmd}` is an interactive command and cannot run with `wait: false` — \
+             a background ssh/mosh session can never be typed into. Run it \
+             without `wait: false` instead."
         );
     }
     let run_id = RunId::new();
@@ -158,9 +158,9 @@ where
 {
     if crate::daemon::utils::is_interactive_command(cmd) {
         anyhow::bail!(
-            "`{cmd}` is an interactive command and cannot run with background=true — \
-             a background ssh/mosh session can never be typed into. Run it in the \
-             foreground instead (background=false)."
+            "`{cmd}` is an interactive command and cannot run with `wait: false` — \
+             a background ssh/mosh session can never be typed into. Run it \
+             without `wait: false` instead."
         );
     }
     let run_id = RunId::new();
@@ -681,8 +681,8 @@ mod tests {
         let err = result.expect_err("an interactive command must be refused, not started");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("foreground"),
-            "the refusal must name the foreground alternative: {msg}"
+            msg.contains("without `wait: false`"),
+            "the refusal must name the wait-free alternative: {msg}"
         );
         let guard = reg.try_lock().expect("registry test peek");
         assert!(

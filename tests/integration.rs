@@ -1339,7 +1339,6 @@ fn g4_briefing_injects_on_next_run() {
     let ctx = PromptCtx {
         client_pane: None,
         chat_pane: None,
-        default_target_pane: None,
         cache: &cache,
         config: &config,
         chat_width: None,

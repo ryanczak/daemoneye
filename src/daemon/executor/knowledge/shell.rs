@@ -1396,7 +1396,7 @@ pub(super) async fn watch_shell_with(
         Ok(WatchOutcome::NothingRunning) => format!(
             "watch_shell {shell}: nothing was running in it for {} s, so there was \
              no command to wait for. Start the command (run_terminal_command with \
-             background=true creates a dedicated shell), then watch it. This \
+             `wait: false` creates a dedicated shell), then watch it. This \
              tool watches output that arrives after the call — read_shell reads \
              what was already recorded.",
             capped_secs

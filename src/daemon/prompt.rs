@@ -1,5 +1,4 @@
 use crate::tmux::cache::SessionCache;
-use crate::util::UnpoisonExt;
 
 /// Build an `## Available Agents` block for the system prompt.
 ///
@@ -31,7 +30,6 @@ pub fn format_available_agents() -> String {
 pub struct PromptCtx<'a> {
     pub client_pane: Option<&'a str>,
     pub chat_pane: Option<&'a str>,
-    pub default_target_pane: Option<&'a str>,
     pub cache: &'a SessionCache,
     pub config: &'a crate::config::Config,
     pub chat_width: Option<usize>,
@@ -53,40 +51,6 @@ pub struct PromptCtx<'a> {
     pub agent_name: Option<&'a str>,
 }
 
-/// Prepend a `[FOREGROUND TARGET]` line to the session context block.
-///
-/// This pins the model to a specific pane ID for foreground execution so it
-/// never has to infer the target from topology.  If `target_pane` is `None`
-/// or the pane is not in the cache, returns the context unchanged.
-pub fn prepend_foreground_target(
-    ctx: &str,
-    target_pane: Option<&str>,
-    cache: &SessionCache,
-) -> String {
-    let Some(pane_id) = target_pane else {
-        return ctx.to_string();
-    };
-    let (cmd, window) = {
-        let panes = cache.panes.read().unwrap_or_log();
-        if let Some(p) = panes.get(pane_id) {
-            (p.current_cmd.clone(), p.window_name.clone())
-        } else {
-            (String::new(), String::new())
-        }
-    };
-    let detail = if !cmd.is_empty() && !window.is_empty() {
-        format!(" ({}, '{}')", cmd, window)
-    } else if !cmd.is_empty() {
-        format!(" ({})", cmd)
-    } else {
-        String::new()
-    };
-    format!(
-        "[FOREGROUND TARGET] {}{} — for run_terminal_command(background=false), always pass target_pane=\"{}\"\n{}",
-        pane_id, detail, pane_id, ctx
-    )
-}
-
 /// Format the current time line injected on every turn.
 pub fn format_current_time_line() -> String {
     use chrono::Local;
@@ -105,10 +69,8 @@ pub fn format_current_time_line() -> String {
 pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
     let in_tmux = ctx.chat_pane.is_some();
     let session_summary = if in_tmux {
-        let summary = ctx
-            .cache
-            .get_labeled_context(ctx.client_pane, ctx.chat_pane);
-        prepend_foreground_target(&summary, ctx.default_target_pane, ctx.cache)
+        ctx.cache
+            .get_labeled_context(ctx.client_pane, ctx.chat_pane)
     } else {
         crate::daemon::executor::knowledge::shells_only_context(&crate::shell::Owner::Chat(
             ctx.session_id.unwrap_or_default().to_string(),
@@ -156,8 +118,9 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
          - Daemon host: {daemon_host}\n\
          - User's terminal pane: {pane_location}\
          {width_hint}\n\
-         - background=true  → runs on DAEMON HOST ({daemon_host})\n\
-         - background=false → runs in USER'S PANE ({pane_location})\n\n\
+         - Commands run in daemon-owned PTY shells on the daemon host. \
+         `wait: false` returns at once. `host` runs the command on a configured \
+         `[hosts.*]` host.\n\n\
          {tool_restriction_block}\
          {briefing_block}\
          {memory_block}\
@@ -221,14 +184,6 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         }
     };
     let budget_note = format!("[BUDGET] {}{}\n\n", parts.join(" · "), warning);
-    let fg_target_line = match (ctx.default_target_pane, ctx.chat_pane) {
-        (Some(tp), Some(_)) => format!(
-            "[FOREGROUND TARGET] {tp} — target_pane=\"{tp}\" for run_terminal_command(background=false)\n"
-        ),
-        // Outside tmux there is no pane to name — the line would point at a
-        // pane the user is not in (PE decision 1).
-        _ => String::new(),
-    };
 
     let current_time_line = format_current_time_line();
     let pane_map = if ctx.chat_pane.is_some() {
@@ -275,24 +230,22 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
 
     if ctx.inject_snapshot {
         let session_summary = if ctx.chat_pane.is_some() {
-            let summary = ctx
-                .cache
-                .get_labeled_context(ctx.client_pane, ctx.chat_pane);
-            prepend_foreground_target(&summary, ctx.default_target_pane, ctx.cache)
+            ctx.cache
+                .get_labeled_context(ctx.client_pane, ctx.chat_pane)
         } else {
             crate::daemon::executor::knowledge::shells_only_context(&crate::shell::Owner::Chat(
                 ctx.session_id.unwrap_or_default().to_string(),
             ))
         };
         format!(
-            "{budget_note}{fg_target_line}{hosts_block}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}\
+            "{budget_note}{hosts_block}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}\
              [Terminal snapshot — auto-refreshed (pane activity detected)]\n\
              ```\n{session_summary}\n```\n\nUser: {}",
             ctx.safe_query
         )
     } else {
         format!(
-            "{budget_note}{fg_target_line}{hosts_block}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}User: {}",
+            "{budget_note}{hosts_block}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}User: {}",
             ctx.safe_query
         )
     }
@@ -302,6 +255,7 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
 mod tests {
     use super::*;
     use crate::tmux::cache::PaneState;
+    use crate::util::UnpoisonExt;
 
     /// A prompt fixture cache that holds one pane the way a live refresh
     /// would: a user shell in the adopted session, enough for
@@ -355,7 +309,6 @@ mod tests {
         PromptCtx {
             client_pane,
             chat_pane,
-            default_target_pane: None,
             cache,
             config,
             chat_width: None,
@@ -460,6 +413,44 @@ mod tests {
             prompt.contains("[PANE MAP]"),
             "the pane map is still there with a chat pane: {prompt}"
         );
+    }
+
+    /// The model is never told to pass a `target_pane`: commands run in
+    /// daemon-owned PTY shells, so there is no foreground pane to name, even
+    /// when a pane context is present.
+    #[test]
+    fn no_prompt_names_a_foreground_target() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+        let cache = cache_with_one_pane("home");
+        let first = build_first_turn_prompt(&ctx_with(
+            &cache,
+            &plain_config(),
+            Some("%2"),
+            Some("%2"),
+            Some("sess-a"),
+            false,
+        ));
+        let subsequent = build_subsequent_turn_prompt(&ctx_with(
+            &cache,
+            &plain_config(),
+            Some("%2"),
+            Some("%2"),
+            Some("sess-a"),
+            true,
+        ));
+        for (label, prompt) in [("first turn", first), ("subsequent turn", subsequent)] {
+            assert!(
+                !prompt.contains("FOREGROUND TARGET"),
+                "{label} must not name a foreground target: {prompt}"
+            );
+            assert!(
+                !prompt.contains("target_pane="),
+                "{label} must not tell the model to pass a target_pane: {prompt}"
+            );
+        }
     }
 
     /// PE decision 1, subsequent turns: the auto-refreshed snapshot obeys the

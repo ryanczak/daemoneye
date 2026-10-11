@@ -1,7 +1,7 @@
 # Phase 06e: no-fg-target — the prompt stops naming a foreground pane
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06c
 **Tags:** language=rust, kind=bugfix, size=s
 
@@ -114,3 +114,17 @@ followed by `PASTE MATCH: yes`. The server does not write it for you.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-11 20:30 (started)
+
+**Executor:** Claude (Sonnet 4.5, headless)
+
+Starting phase 06e: remove every model-facing foreground-target reference
+(`prepend_foreground_target`, the `fg_target_line`, the `[Pane target changed]`
+drift message, the `## Execution Context` `background=` lines, and the other
+`background=true/false` strings in `bg_shell.rs`, `executor/mod.rs`,
+`knowledge/shell.rs` and `ask.rs`), plus the `[FOREGROUND TARGET]` /
+`[Pane target changed]` paragraphs in `assets/prompts/sre.toml`. State
+(`default_target_pane`, `/pane`, `pane_prefs.json`, activity refresh) stays.
+Flipping the status to `review` and writing the completion entry is the
+server's job; I leave both alone.

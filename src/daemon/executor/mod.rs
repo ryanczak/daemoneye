@@ -442,7 +442,7 @@ where
                 return Ok(ToolCallOutcome::Result(
                     "Foreground execution is not sandboxed and is denied for ghost \
                      shells while the container sandbox is enabled. Re-issue this \
-                     command with background=true so it runs in a container."
+                     command with `wait: false` so it runs in a container."
                         .to_string(),
                 ));
             }
@@ -1234,38 +1234,23 @@ where
                 )));
             }
             // PE decision 1: a caller outside tmux gets the daemon's own
-            // shells only — no pane blocks, no pane map, no foreground-target
-            // line naming a pane it is not in.
+            // shells only — no pane blocks, no pane map.
             if chat_pane.is_none() {
                 return Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
                     &Owner::Chat(session_id.unwrap_or_default().to_string()),
                 )));
             }
-            let target_pane: Option<String> = session_id.and_then(|sid| {
-                with_sessions(sessions, |store| {
-                    store.get(sid)?.default_target_pane.clone()
-                })
-            });
             let ctx_scope = match breadth {
                 knowledge::ContextBreadth::All => crate::tmux::cache::ContextScope::All,
                 _ => crate::tmux::cache::ContextScope::Session,
             };
             let ctx = cache.get_labeled_context_scoped(chat_pane, chat_pane, ctx_scope);
             let pane_map = cache.pane_map_summary(chat_pane);
-            let fg_line = target_pane
-                .as_deref()
-                .map(|tp| {
-                    format!(
-                        "[FOREGROUND TARGET] {tp} — the pane daemon-resolved foreground \
-                         commands run in\n",
-                    )
-                })
-                .unwrap_or_default();
             let shells_line = knowledge::shell_context_block(&Owner::Chat(
                 session_id.unwrap_or_default().to_string(),
             ));
             Ok(ToolCallOutcome::Result(format!(
-                "{shells_line}{fg_line}{ctx}\n{pane_map}"
+                "{shells_line}{ctx}\n{pane_map}"
             )))
         }
 
