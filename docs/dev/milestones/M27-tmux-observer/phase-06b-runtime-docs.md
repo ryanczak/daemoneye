@@ -1,7 +1,7 @@
 # Phase 06b: runtime-docs — what the model and the user read says tmux is optional
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-06
 **Tags:** language=markdown, kind=docs, size=m
 
@@ -640,3 +640,23 @@ kill: (-4033070): No such process
 **Commit:** 25505d1d025d4bc6edee0877d197eccc710c894a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-11
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bugs: bug-06b-1 — major)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** `src/config/` (`path_audit.rs`, `lifecycle.rs`,
+  `runtime_tree.rs`) marks `var/log/pipe` `PathStatus::Legacy`, outside the
+  docs-only authorization. The asset's own gates forced it, and it changes no
+  behaviour, so it is accepted. The bug-06b-1 fix (`25505d1d`) landed before
+  the final dispatch, which re-verified it and returned an empty diff.
+  Carried to 06c: two stale passages the spec never named. CLAUDE.md's
+  `run_terminal_command` row still says "Foreground (user pane) or background
+  (daemon host window)". README's `[daemon] tmux_session` row says the daemon
+  creates a session and registers tmux hooks.
+- **Calibration:** the executor inferred a host-sandboxing claim that
+  § What is true now never stated (`spec_bug`: the spec did not fence the rewrite to its facts). A rewrite spec should say "state
+  only these facts; drop any claim they don't cover". The final run's
+  completion summary leaked `</think>` reasoning into the server-authored
+  Update Log entry (a rexyMCP runtime issue, not the phase's).

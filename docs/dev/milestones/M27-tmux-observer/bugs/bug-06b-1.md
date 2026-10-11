@@ -1,7 +1,7 @@
 # Bug 1 on phase-06b: the rewrite claims host commands are sandboxed, and README describes a pane archive nothing writes
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (25505d1d)
 **Filed:** 2026-10-11
 
 ## What's wrong

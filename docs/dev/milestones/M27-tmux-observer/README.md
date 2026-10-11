@@ -61,8 +61,8 @@ is split further at drafting if it is more than one session.
 | 05 | exec-pty-only ([phase-05-exec-pty-only.md](phase-05-exec-pty-only.md)) — delete the tmux execution fallback (foreground send-keys, `de-bg-*`/`de-gs-*` windows, `src/daemon/background/`, ghost incident session, tmux sudo injection, `[execution] backend = "tmux"`); anything without a PTY route is refused | done (escalated: architect takeover, 2026-10-10) |
 | 05b | hooks-notify ([phase-05b-hooks-notify.md](phase-05b-hooks-notify.md)) — the daemon writes nothing into tmux: delete `hook.rs`, the `Notify*` IPC, every `set-hook` install, pipe-pane, managed `new-session`, and the shell `DE_EXIT` hook; and `daemoneye notify` itself | done (approved_after_1, 2026-10-11) |
 | 06 | doctor ([phase-06-doctor.md](phase-06-doctor.md)) — `daemoneye doctor`: one line per readiness check (config, api key, shell, daemon, sandbox, hosts, tmux), exit 1 only on a `FAIL`; tmux is optional and never fails | done (approved_first_try, 2026-10-11) |
-| 06b | runtime-docs ([phase-06b-runtime-docs.md](phase-06b-runtime-docs.md)) — the seeded prompts and memories, README and CLAUDE.md describe PTY execution and optional read-only tmux; doctor documented; a `doc_truth` gate keeps the retired terms out | review      |
-| 06c | design-docs — `architecture.md`, `PRODUCT_DEFINITION.md` (no "embeds into tmux"), `REQUIREMENTS.md`, `security.md` | todo |
+| 06b | runtime-docs ([phase-06b-runtime-docs.md](phase-06b-runtime-docs.md)) — the seeded prompts and memories, README and CLAUDE.md describe PTY execution and optional read-only tmux; doctor documented; a `doc_truth` gate keeps the retired terms out | done (approved_after_1, 2026-10-11) |
+| 06c | design-docs — `architecture.md`, `PRODUCT_DEFINITION.md` (no "embeds into tmux"), `REQUIREMENTS.md`, `security.md`; also the two stale passages 06b carried: CLAUDE.md's `run_terminal_command` row ("user pane"/"daemon host window") and README's `[daemon] tmux_session` row (creates a session, registers hooks) | todo |
 | 07 | live-close — architect-run live verification on pinky, with and without tmux; tag `v2.0.0` | todo |
 
 ## Notes
