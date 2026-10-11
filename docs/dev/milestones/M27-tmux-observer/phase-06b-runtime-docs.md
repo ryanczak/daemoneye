@@ -1,7 +1,7 @@
 # Phase 06b: runtime-docs — what the model and the user read says tmux is optional
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06
 **Tags:** language=markdown, kind=docs, size=m
 
@@ -20,6 +20,12 @@ stays true. The design docs (`architecture.md`, `PRODUCT_DEFINITION.md`,
 `REQUIREMENTS.md`, `security.md`) are phase 06c.
 
 ### What is true now (write from this)
+
+> **This list was verified against the source by the architect on
+> 2026-10-11. It is the source of truth for this phase. Do not open any
+> file under `src/` to re-check it.** Run 1 spent its whole budget doing
+> exactly that (75 `grep`s and 21 `sed` reads across `chat.rs`,
+> `scheduled.rs`, `sbx.rs` and others) and never made an edit.
 
 - **Commands.** Chat commands run in the session's PTY shell
   (`run_terminal_command` → `executor/shell_exec.rs`). `wait: false` runs
@@ -105,6 +111,39 @@ stays true. The design docs (`architecture.md`, `PRODUCT_DEFINITION.md`,
 - ` (x2)` at the end of a line of tool output is the output filter's
   marker for a repeated line. It is never in the file.
 
+## Edit order (escalation, 2026-10-11) — read this before anything else
+
+Your first edit lands within **10 turns**: it is step 1. You only ever
+open the file you are about to edit. After each file, run the gate
+(`cargo test --test doc_truth runtime_docs`) and move to the next file it
+names.
+
+1. **The gate.** Copy the structure of the existing
+   `seeded_assets_name_no_retired_tools` test in `tests/doc_truth.rs`:
+   same `walk_files(ASSETS_DIR…)` loop, plus `CLAUDE.md` and `README.md`
+   read from the repo root, with the retired list from Spec 1 in place of
+   `RETIRED_TOOL_NAMES`, and one violation line per hit as
+   `<file>:<line>: <term>`. Run it. It must fail.
+2. **Work list.** Today's hits, by file (occurrences of each term):
+
+   | File | Terms |
+   |---|---|
+   | `assets/prompts/sre.toml` | `send-keys` ×2, `de-bg-` ×2, `de-gs-` ×2, `de-sj-` ×1 |
+   | `assets/prompts/ghost-shell.txt` | `de-gs-` ×1 |
+   | `assets/memory/knowledge/ghost-shell-guide.md` | `de-gs-` ×2 |
+   | `assets/memory/knowledge/scheduling-guide.md` | `de-gs-` ×1, `de-sj-` ×1 |
+   | `assets/memory/knowledge/agent-runtime-layout.md` | `pipe-pane` ×1 |
+   | `README.md` | `de-gs-` ×4, `de-bg-` ×1, `de-sj-` ×1, `pipe-pane` ×1, `daemoneye notify` ×1 |
+   | `CLAUDE.md` | `de-gs-` ×6, `hook.rs` ×4, `de-bg-` ×3, `de-sj-` ×1, `send-keys` ×1, `send_keys` ×1, `pane-died` ×1, `BG_DONE_TX` ×1, `FG_HOOK_COUNTER` ×1, `daemon/background` ×1, ``into `tmux` `` ×1 |
+
+   Do the files in this order. For each, read it, rewrite each flagged
+   passage from § What is true now in one `patch`, and re-run the gate.
+3. **The non-term items in Spec 4 and 5**: the README doctor row and
+   "Required for hook support", and CLAUDE.md's `src/cli/doctor.rs` row
+   and lifecycle steps 1–5. The acceptance greps tell you when each is
+   done.
+4. Full `cargo test`, clippy, fmt, § End-to-end verification once, commit.
+
 ## Tests
 
 - `runtime_docs_describe_no_tmux_execution` (`tests/doc_truth.rs`): fails
@@ -160,3 +199,23 @@ Each line runs **once**.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-11
+
+Run 1 stalled at turn 135 without a single edit outside this doc. It read
+§ What is true now and then tried to verify every bullet against `src/`.
+Those facts were already verified by the architect, so that work was
+wasted. The refinement marks them as authoritative, forbids opening
+`src/`, pins the first edit to step 1 within 10 turns, names the existing
+test to copy for the gate, and lists today's hits per file so nothing
+needs to be searched for. Your Update Log entry names the executor model
+from your own configuration; run 1 wrote a wrong one.
+
+### Update — 2026-10-11 (escalation)
+
+**Chosen lever:** refined re-dispatch.
+**Rationale:** NoProgressStall at turn 135 (105 `bash`, 26 `read_file`,
+zero edits to the target files). The spec gave facts to write from but
+did not say they were authoritative, so the executor re-derived them from
+the source. A spec gap, not a model limit, and the first failure on this
+phase.
