@@ -1,7 +1,7 @@
 # Phase 06c: design-docs — the design docs say commands run in PTY shells and tmux only observes
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-06b
 **Tags:** language=markdown, kind=docs, size=m
 
@@ -401,3 +401,33 @@ kill: (-4168986): No such process
 **Commit:** c2b2b5eb19723f24f3eacdf25801d0634443f590
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-11
+
+- **Verdict:** approved_first_try
+- **Bounces:** none. One escalation: run 1 hit `NoProgressStall` and was
+  re-dispatched with a refined spec.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** in `security.md`, the argv bullet's
+  "(tmux, background, foreground, remote panes)" parenthetical was also
+  dropped. That is harmless, though it was not on the work list. FR-1.2.10
+  kept the original's "returned to the AI" meaning with the real exit code.
+  That is not an invented claim.
+- **Findings, not bounced:** (1) The Update Log has no pasted § End-to-end
+  verification output or `PASTE MATCH: yes` line. The executor deferred it to
+  the server, which did not write it. The reviewer re-ran every line: doc_truth
+  16 passed; the four greps print 0, 0, 0 and 0; clippy and fmt are clean;
+  `passed=2308 failed=0`. (2) CLAUDE.md's `run_terminal_command` cell now
+  reads "Runs a command in a PTY shell. `wait?` selects between them". The
+  "them" refers to nothing, because the architect's dictated replacement
+  dropped what it pointed to.
+- **Carried (stale text outside this phase's table, listed by the
+  executor):** FR-1.2.2's `capture-pane`/`/pane` detail, FR-1.2.17(b)'s
+  `de-incident-…` ghost window, architecture.md §5's "Foreground/background
+  execution" capability bullet, README's `[daemon]` chat-attach sentence,
+  and finding (2).
+- **Calibration:** the per-line work list turned a 240-call stall into a
+  clean run. On a prose-rewrite phase, the GLM executor needs every edit
+  enumerated, with the meaning to write. That is the second occurrence,
+  after 06b run 1. The executor contract and server disagree about who
+  pastes the end-to-end evidence. That is a rexyMCP issue.
