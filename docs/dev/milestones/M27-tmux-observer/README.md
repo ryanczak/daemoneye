@@ -59,7 +59,7 @@ is split further at drafting if it is more than one session.
 | 04 | chat-no-tmux ([phase-04-chat-no-tmux.md](phase-04-chat-no-tmux.md)) — chat runs in place outside tmux (no auto-attach, every client tmux call gated on `$TMUX`); a pane-less Ask gets the daemon's shells as context | done (approved_after_1, 2026-10-10) |
 | 03b | alerts-ipc ([phase-03b-alerts-ipc.md](phase-03b-alerts-ipc.md)) — every alert (webhook, analysis, ghost events, scheduled results) is pushed to every attached chat over the presence connection; the tmux overlay stays as an optional extra | done        |
 | 05 | exec-pty-only ([phase-05-exec-pty-only.md](phase-05-exec-pty-only.md)) — delete the tmux execution fallback (foreground send-keys, `de-bg-*`/`de-gs-*` windows, `src/daemon/background/`, ghost incident session, tmux sudo injection, `[execution] backend = "tmux"`); anything without a PTY route is refused | done (escalated: architect takeover, 2026-10-10) |
-| 05b | hooks-notify ([phase-05b-hooks-notify.md](phase-05b-hooks-notify.md)) — the daemon writes nothing into tmux: delete `hook.rs`, the `Notify*` IPC, every `set-hook` install, pipe-pane, managed `new-session`, and the shell `DE_EXIT` hook; `daemoneye notify` stays as an inert hidden shim for hooks an older daemon left | todo |
+| 05b | hooks-notify ([phase-05b-hooks-notify.md](phase-05b-hooks-notify.md)) — the daemon writes nothing into tmux: delete `hook.rs`, the `Notify*` IPC, every `set-hook` install, pipe-pane, managed `new-session`, and the shell `DE_EXIT` hook; and `daemoneye notify` itself | todo |
 | 06 | docs-doctor — the docs above, `daemoneye doctor` | todo |
 | 07 | live-close — architect-run live verification on pinky, with and without tmux; tag `v2.0.0` | todo |
 

@@ -35,12 +35,13 @@ rebuilt here:
    `install_session_hooks`, `log_hook_install_result`, the four global
    `set-hook -g` installs at startup and the `set-hook -gu` uninstall loop
    at shutdown.
-3. **Make `daemoneye notify` inert** — a user's tmux server can still hold
-   hooks an older daemon installed, and they call `daemoneye notify …`. Keep
-   `notify` as a **hidden** subcommand that accepts any trailing arguments,
-   exits 0 and prints nothing. It never connects to the daemon. Delete
-   `src/cli/notify.rs`, the `NotifyCommands` enum and the `run_notify_*`
-   functions.
+3. **Delete `daemoneye notify`** — delete the `Notify` variant of
+   `Commands` and the `NotifyCommands` enum in `src/main.rs`, its match arm,
+   `src/cli/notify.rs` and the `run_notify_*` functions. The subcommand is
+   gone: `daemoneye notify …` is a clap usage error. (A tmux server can
+   still hold hooks an older daemon installed; they then fail inside tmux
+   until the user restarts tmux, which is acceptable — the daemon never
+   installs them again.)
 4. **Delete pipe-pane** — delete `start_pipe_pane`, `stop_pipe_pane` and
    `pipe_log_path` in `src/tmux/pane.rs`, the R1 block in
    `src/daemon/server/ask.rs` that starts it, the shutdown loop in
@@ -86,11 +87,9 @@ rebuilt here:
   - A configured name that exists: returns it.
   - A configured name that does not exist: returns `None`.
   - An empty configured name: returns `None`.
-- `notify_subcommand_is_inert` (`src/main.rs`): `Cli::try_parse_from` on
-  `["daemoneye", "notify", "activity", "%3", "0", "dev"]` and on
-  `["daemoneye", "notify", "client-detached", "x"]` both parse. The handler
-  returns `Ok(())` without touching the socket. Call it with no daemon
-  running.
+- `notify_subcommand_is_gone` (`src/main.rs`): `Cli::try_parse_from` on
+  `["daemoneye", "notify", "activity", "%3", "0", "dev"]` returns `Err`.
+  Negative: `["daemoneye", "status"]` still parses.
 
 ## Acceptance criteria
 
@@ -102,7 +101,7 @@ rebuilt here:
       fixture. Leave those alone.)
 - [ ] `grep -n 'tmux set-environment' src/cli/commands/setup.rs` prints
       nothing. Today it prints two lines.
-- [ ] `startup_session_never_creates` and `notify_subcommand_is_inert` each
+- [ ] `startup_session_never_creates` and `notify_subcommand_is_gone` each
       report `1 passed` alone.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` exits 0;
       `cargo fmt --all --check` exits 0.
@@ -118,15 +117,16 @@ rebuilt here:
 ```sh
 test -f src/daemon/hook.rs; echo "hook_rs=$?"
 grep -rnE '"(set-hook|pipe-pane|new-session|set-environment)"|start_pipe_pane|install_session_hooks|BG_DONE_TX|FG_HOOK_COUNTER|NotifyActivity|run_notify_' src/daemon src/tmux src/cli src/main.rs src/ipc.rs src/ipc_tests.rs | wc -l
-for t in startup_session_never_creates notify_subcommand_is_inert; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | sed "s/^/$t: /"; done
-cargo build 2>&1 | tail -1 && ./target/debug/daemoneye notify activity %3 0 dev; echo "notify_exit=$?"
+for t in startup_session_never_creates notify_subcommand_is_gone; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | sed "s/^/$t: /"; done
+cargo build 2>&1 | tail -1 && ./target/debug/daemoneye notify activity %3 0 dev 2>&1 | head -1; echo "notify_exit=${PIPESTATUS[0]}"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
 cargo fmt --all --check; echo "fmt_exit=$?"
 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
 ```
 
-Each line runs **once**. Expect `hook_rs=1`, `0`, one line per test,
-`notify_exit=0` with nothing printed before it, and `failed=0`.
+Each line runs **once**. Expect `hook_rs=1`, `0`, one line per test, a
+clap `error: unrecognized subcommand 'notify'` line followed by
+`notify_exit=2`, and `failed=0`.
 
 ## Authorizations
 
