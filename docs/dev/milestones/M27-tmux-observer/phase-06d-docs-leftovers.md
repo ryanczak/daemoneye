@@ -93,3 +93,59 @@ followed by `PASTE MATCH: yes`. The server does not write it for you.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-11 14:14 (progress)
+
+Started phase 06d (executor, dispatch 1). Added the four retired terms
+(`FOREGROUND TARGET`, `Pane target changed`, `background=false`,
+`de-incident`) to `RETIRED_TMUX_EXECUTION_TERMS` and confirmed the
+`runtime_docs_describe_no_tmux_execution` gate went red naming rows 2, 5,
+6 and 8 before they were fixed; then made rows 2–10 and re-ran the gate
+green. Status flipped to `in-progress` here and in the milestone README.
+
+Extra stale passages found while verifying (not in the work list, now
+fixed under the same authorization):
+- `README.md` ~279: "`/panes` … with the pinned foreground target marked"
+  → "with the pinned pane marked".
+- `README.md` `/pane` slash-command row: "pins the foreground target"
+  → "pins the pane whose activity refreshes the context snapshot" (same
+  meaning row 2's rewrite gives).
+- `README.md` ~1425: the audit-log sample still showed `mode=background
+  pane=-` / `mode=foreground pane=%3` and a "send-failed" status; now
+  `shell=s1/s2` and a "shell id" field, per phase 06e's PTY-only audit
+  records.
+
+### Update — 2026-10-11 14:20 (end-to-end verification)
+
+Run once against the tree this dispatch produced (`/tmp/e2e-06d.txt`):
+
+```
+== doc_truth full ==
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+== runtime_docs_describe_no_tmux_execution alone ==
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.03s
+== retired terms in the list ==
+771:    "de-incident",
+775:    "FOREGROUND TARGET",
+776:    "Pane target changed",
+777:    "background=false",
+== README stale terms ==
+0
+== CLAUDE wait wording ==
+0
+== architecture replacement note ==
+308:  (replaced by PTY shells in 2.0).
+== clippy ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+== fmt ==
+fmt_exit=0
+== full test suite ==
+passed=2309 failed=0
+```
+
+PASTE MATCH: yes
+
+The `runtime_docs` gate was also seen red before the doc rows were fixed
+(7 hits: README 197/200, PRODUCT_DEFINITION 42, REQUIREMENTS 51 and 22
+×3), so the four new terms demonstrably bite. Full suite passed=2309,
+failed=0 — 06e's count carried forward unchanged, no new test added.
