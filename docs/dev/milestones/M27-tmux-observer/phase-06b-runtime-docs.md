@@ -1,7 +1,7 @@
 # Phase 06b: runtime-docs — what the model and the user read says tmux is optional
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06
 **Tags:** language=markdown, kind=docs, size=m
 
@@ -319,3 +319,145 @@ PASTE MATCH: yes
   README.
 - clippy exited 0; fmt check exited 0; full suite `passed=2308 failed=0`
   (2307 before + the one new test, as the spec pins).
+
+### Update — 2026-10-11 16:03 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Phase 06b (runtime-docs) is implemented and committed as `130d294b` (12 files, +240/−74); the phase doc's Status and the M27 README row remain `in-progress` as instructed, and no `(complete)` entry was written. I added the `runtime_docs_describe_no_tmux_execution` gate to `tests/doc_truth.rs` (modelled on `seeded_assets_name_no_retired_tools`; it first failed naming all 35 hits, then went green after the rewrites), rewrote the seeded prompts (`sre.toml`, `ghost-shell.txt`) and the three knowledge memories, and updated README (optional tmux row, `notify`→`doctor` rows, PTY-shell diagram/tool/prose/troubleshooting, `pipes/` tree line removed) and CLAUDE.md (overview + lifecycle 1–5, `hook.rs`/`background/` rows deleted, `ghost.rs` fixed, `src/cli/doctor.rs` added, `BG_DONE_TX`/`FG_HOOK_COUNTER` dropped, legacy-`de-*` note, sandbox refusal bullet) from § What is true now. **Deviation to review:** deleting the memory's `var/log/pipe/` line broke three `src/config` gates that tie that memory to `RUNTIME_TREE`/`POLICY_TABLE`/the path-audit inventory, so the line stays as a *legacy* entry and `var/log/pipe` is marked `PathStatus::Legacy` in `path_audit.rs` — the only `src/` touch, no behaviour change; also `CLAUDE.md`'s two `webhook.rs` references became `webhook/process.rs` because `hook.rs` and its old path are gone. **End-to-end verification** (captured verbatim in the phase doc's Update Log, `PASTE MATCH: yes`): `doc_truth` 16 passed, `grep -c 'daemoneye doctor' README.md` = 1, `grep -c 'src/cli/doctor.rs' CLAUDE.md` = 1, `Required for hook support` = 0 hits, clippy exit 0, `fmt_exit=0`, full `cargo test` `passed=2308 failed=0` (2307 + the one new test); `git status --short` is clean.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.23s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+iled; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 16 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_tools_tables_match_the_code ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (3960006): No such process
+kill: (-3960728): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +18 -17
+- `README.md` — +17 -27
+- `assets/memory/knowledge/agent-runtime-layout.md` — +1 -3
+- `assets/memory/knowledge/ghost-shell-guide.md` — +2 -4
+- `assets/memory/knowledge/scheduling-guide.md` — +11 -7
+- `assets/prompts/ghost-shell.txt` — +2 -2
+- `assets/prompts/sre.toml` — +7 -9
+- `docs/dev/milestones/M27-tmux-observer/phase-06b-runtime-docs.md` — +100 -0
+- `src/config/lifecycle.rs` — +2 -1
+- `src/config/path_audit.rs` — +3 -1
+- `src/config/runtime_tree.rs` — +1 -1
+- `tests/doc_truth.rs` — +74 -0
+
+**Commit:** 130d294b1ee9d1cb7a703193f8a493192765522b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
