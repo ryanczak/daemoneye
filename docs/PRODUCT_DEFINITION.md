@@ -39,7 +39,7 @@ The AI sees your terminal -- scrollback, environment variables, running processe
 
 - **Three-option approval**: Approve once, approve the command class for the session, or deny. Sudo commands have a separate approval scope.
 - **Visual confirmation**: The target pane highlights blue during the approval window so you always know where a command will land.
-- **Pinned pane targeting**: Every AI turn includes a `[FOREGROUND TARGET]` line naming the exact pane where foreground commands will run. Use `/pane` to list options or `/pane %N` to change it. If the target shifts (pane closed, focus moved), the daemon announces the change before the AI responds.
+- **Pane references**: Inside tmux, the AI sees a `[PANE MAP]` and can talk about panes by window and command. `/pane %N` pins the pane whose activity refreshes the context. Commands never run in a pane.
 - **Mid-stream redirect**: Instead of approving or denying, type a message to redirect the AI's approach entirely -- no synthetic errors, no wasted context.
 
 This is where every team starts. The AI is useful from minute one: reading error logs, suggesting commands, explaining failures. But it cannot act without your say-so.

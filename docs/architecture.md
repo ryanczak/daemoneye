@@ -304,7 +304,8 @@ speculation.
   mode, dead-pane status, activity timestamps, client viewport, cross-session
   context.
 - **Foreground/background execution** — hook-based completion, PID-based local
-  completion, respawn-pane retry, persistent background windows.
+  completion, respawn-pane retry, persistent background windows
+  (replaced by PTY shells in 2.0).
 - **Knowledge system** — runbooks, persistent memory (with a BM25-ranked FTS5
   index and per-agent namespacing), repository search, named agents with tool
   policies and persistent briefings.

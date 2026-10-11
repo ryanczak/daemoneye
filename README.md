@@ -192,12 +192,10 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 
 **Visual Anchors:** During the command approval window the target pane is highlighted with a dark-blue background (`colour17`) so you always know exactly where a command will land before you commit.
 
-**Pane Targeting:** DaemonEye resolves the foreground target for every turn itself — the AI never names a pane when running a command.
+**Pane references:** Commands run in PTY shells, never in a tmux pane.
 
-- **`[FOREGROUND TARGET]`** — injected into every AI turn, names the exact `%N` pane ID foreground commands run in. The daemon selects the pane and tells the AI which one was used. When absent (first chat with no sibling panes), the AI asks before acting rather than guessing.
-- **`[PANE MAP]`** — also present every turn, mapping window-relative indices to pane IDs (`idx:0=%3* bash | idx:1=%7 vim`) with the active pane marked `*`. Used by the AI to translate user references like "pane 1" when discussing panes with the user.
-- **`/pane`** — type this at the chat prompt to list available panes and see which one is the current target. Use `/pane %N` to pin a specific pane; the preference is saved to `pane_prefs.json` and survives daemon restarts. The daemon picks the pinned pane up immediately.
-- **Drift detection** — if the foreground target changes between turns (pane closed, user moved focus), the daemon sends a `[Pane target changed]` system message before the first AI token so the model updates its mental model without manual intervention.
+- **`[PANE MAP]`** — present inside tmux, mapping window-relative indices to pane IDs (`idx:0=%3* bash | idx:1=%7 vim`) with the active pane marked `*`. Used by the AI to translate user references like "pane 1" when discussing panes with the user.
+- **`/pane`** — lists the session's panes. Use `/pane %N` to pin the pane whose new activity triggers a fresh context snapshot; the preference is saved to `pane_prefs.json` and survives daemon restarts.
 
 **Remote script streaming** — When a foreground command is sent to a pane that is SSH'd or mosh'd to a remote host and the command names a daemon-host script (one stored in `~/.daemoneye/scripts/`), DaemonEye automatically detects that the bare filename does not exist on the remote and streams the script's content instead: the script is hex-encoded and piped into the remote interpreter's stdin (`python3`/`perl` decode → `bash /dev/stdin <args>`), so the script runs on the remote with no disk write and no remote-side setup. A local pane or a command that is not a managed script is sent verbatim, unchanged. Running a daemon-host script under `sudo` on a remote interactive pane is not supported on this path (a NOPASSWD sudoers rule must authorize a fixed file path, which streaming cannot provide); DaemonEye returns an advisory pointing at the Ghost Shell `ssh_target` mechanism for that case.
 
@@ -278,7 +276,7 @@ The agent sees your whole tmux world, not just the pane you are typing in.
 - **Live status per pane.** Each pane is classified every 2 s — `Running`, `Idle 4m`, `AwaitingInput`, `Bell`, `Dead(1)` — and that status shows up everywhere panes are listed. An idle shell is never mistaken for a prompt waiting on input.
 - **Any pane's contents, one call away.** `get_shell_context` returns the current context block on demand — a live snapshot with panes and recent output — so "which pane has the error?" is one call instead of a hunt when the ambient block has gone stale.
 - **Navigation is read-only by design.** The agent sees every pane but no longer steers your tmux: the pane-manipulation tools were removed in favor of a see-everything / act-on-nothing boundary, so what you are looking at stays yours.
-- **`/panes` is worth reading.** A window-grouped inspector: cwd, status, activity age and a preview line per pane, with the pinned foreground target marked.
+- **`/panes` is worth reading.** A window-grouped inspector: cwd, status, activity age and a preview line per pane, with the pinned pane marked.
 
 ---
 
@@ -399,7 +397,6 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye status` | Daemon status: uptime, sessions, ghost shells, cost today, redactions, circuit state |
 | `daemoneye logs` | Tail `daemon.log` |
 | `daemoneye chat` | Start an interactive multi-turn chat session |
-| `daemoneye chat --session NAME` | Open a chat window in a specific tmux session and attach to it |
 | `daemoneye ask <query>` | Send a single question to the AI |
 | `daemoneye setup` | Initialise `~/.daemoneye/`, install the binary, write the systemd service, print tmux config |
 | `daemoneye setup --overwrite-bin` | Re-copy the current binary to `~/.daemoneye/bin/daemoneye` |
@@ -436,7 +433,7 @@ Both `reindex` and `audit-prompts` run without a daemon. `reindex` is safe to ru
 | `/refresh` | Resync host context |
 | `/model` | List or switch the active model (alias: `/models`) |
 | `/prompt` | List or switch the system prompt |
-| `/pane` | Window-grouped pane inspector — cwd, status, activity age and a preview line per pane; `/pane %N` or `/pane <n>` pins the foreground target (alias: `/panes`) |
+| `/pane` | Window-grouped pane inspector — cwd, status, activity age and a preview line per pane; `/pane %N` or `/pane <n>` pins the pane whose activity refreshes the context snapshot (alias: `/panes`) |
 | `/approvals` | Inspect approval state; `on`/`off` toggle commands, `revoke` gates everything (alias: `/approval`) |
 | `/limits` | Show active limits and live session counters; `/limits reset` |
 | `/session` | `save`/`load`/`list`/`delete`/`rename`/`diff`/`tag` (alias: `/sessions`) |
@@ -1053,7 +1050,7 @@ Controls daemon startup and session ownership. Use this when running DaemonEye a
 |---|---|---|---|
 | `tmux_session` | string | `"daemoneye"` | Name of an existing tmux session the daemon observes when launched **outside** tmux. The daemon never creates it. When launched inside tmux, the current session is used and this setting is ignored. `""` means no tmux at all. |
 
-When `tmux_session` is set, `daemoneye chat` invoked **outside** of tmux will open a new chat window inside the managed session and exec-attach to it, dropping the user straight into the right place.
+`daemoneye chat` runs in place and never attaches to a tmux window.
 
 ### `[sessions]` section
 
@@ -1427,12 +1424,12 @@ Agent configs cannot be written by AI tools without user approval (the same gate
 Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in a dated segment under `~/.daemoneye/var/log/events/` (`events-YYYYMMDD.jsonl`, UTC). AI cost records are written to the same segment after each completed turn:
 
 ```
-[1748000000] session=abc123 mode=background pane=- status=approved cmd=ps aux --sort=-%mem out=USER PID ...
-[1748000001] session=abc123 mode=foreground pane=%3 status=denied cmd=sudo rm -rf /tmp/old out=
+[1748000000] session=abc123 shell=s1 status=approved cmd=ps aux --sort=-%mem out=USER PID ...
+[1748000001] session=abc123 shell=s2 status=denied cmd=sudo rm -rf /tmp/old out=
 {"event":"ai_cost","ts":"2026-05-16T10:23:01Z","agent_name":"chat","provider":"anthropic","cost":{"total_cost_usd":0.0847},...}
 ```
 
-Fields for command records: Unix timestamp · session ID · `background` or `foreground` · tmux pane ID · `approved` / `denied` / `timeout` / `send-failed` · command · first 200 chars of output.
+Fields for command records: Unix timestamp · session ID · shell id · `approved` / `denied` / `timeout` · command · first 200 chars of output.
 
 Segments older than `[events] retention_days` (default 90) are swept automatically by the daemon. A pre-rotation `var/log/events.jsonl` is still read by every consumer (`daemoneye costs`, `daemoneye status`, `search_repository`, epoch tallies) and is never rotated or deleted — date-ranged reads span the legacy file and the segments transparently.
 
