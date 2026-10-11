@@ -1,7 +1,7 @@
 # Phase 05b: hooks-notify — the daemon writes nothing into tmux
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-05
 **Tags:** language=rust, kind=refactor, size=m
 
@@ -332,3 +332,152 @@ Preservation: the `run_daemon` grep
 `4`; `git diff HEAD -- src/daemon/session.rs` touches no line inside
 `with_sessions` or its doc comment (grep for `with_sessions` on removed
 lines: `0`).
+
+### Update — 2026-10-11 03:43 (complete, server-authored)
+
+**Summary:** Summary + Notes for review:
+
+**What I built (resumed run 3):** Completed all 8 spec tasks of phase 05b — deleted `src/daemon/hook.rs` and `src/cli/notify.rs` with their module wiring, all ten `Request::Notify*` variants plus their server match arms and `ipc_tests` round-trips, `Commands::Notify`/`NotifyCommands` (`daemoneye notify` is now a clap usage error), every `set-hook` install and the shutdown `set-hook -gu` loop, the whole pipe-pane path (`start_pipe_pane`/`stop_pipe_pane`/`pipe_log_path`/`read_pipe_log`/`pipe_source_pane`/`BgTeardown`), `BG_DONE_TX`/`bg_done_subscribe`/`FG_HOOK_COUNTER`, and the `_de_exit_trap`/`_de_precmd` `tmux set-environment` snippets in `setup.rs`. Startup resolves the session through the new pure `startup_session(inside, configured, exists)` — adopt-only, never fatal, never `new-session` — logging `No tmux session to adopt; the daemon starts tmux-free.` when it adopts nothing; `AskContext` fell back to `config.daemon.tmux_session` for the session-name default. Added `startup_session_never_creates`, `notify_subcommand_is_gone`, and the negative control `status_subcommand_still_parses`; replaced `hooks_land_on_private_server` with `daemon_installs_no_tmux_hooks` (asserts the negative of what it did) and retargeted `an_empty_session_starts_no_tmux_server`'s log assertion to the new adoption message.
+
+**Deviations:** `Ask`'s fallback session name now comes from `config.daemon.tmux_session` instead of the deleted `bg_session` mutex — the spec deletes `bg_session` as dead plumbing and the config key is still live (naming a session to adopt). One incidental non-source edit: removed a stale comment in `shell_exec.rs` that referenced the deleted `FG_HOOK_COUNTER` (it tripped the hook grep criterion); flagged as a name-only comment fix, no behavior.
+
+**E2E:** ran § End-to-end verification once — `hook_rs=1`, hook grep `0`, both § Tests report `1 passed` alone, `error: unrecognized subcommand 'notify'` + `notify_exit=2`, clippy exit 0, `fmt_exit=0`, `passed=2295 failed=0`; all preserved in the phase doc's end-to-end Update Log with `PASTE MATCH: yes`. Test math: 2302 − 11 deleted + 3 added (−11 includes the one delete-and-replace pair), measured 2295 passes with the replaced test counted again. Preservation checks hold: the `run_daemon` listener/signal grep counts 4, and `git diff HEAD -- src/daemon/session.rs` touches no `with_sessions` line or its doc comment. No `patch_lines` was used anywhere; every deletion was a whole-block `patch` or `delete_file`. One `refactor:` commit `16d9da66`; working tree clean. Status left at `in-progress` with no `(complete)` entry, per the split bookkeeping.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+s_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_tools_tables_match_the_code ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (3614499): No such process
+kill: (-3615220): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M27-tmux-observer/phase-05b-hooks-notify.md` — +82 -0
+- `src/cli/commands/setup.rs` — +0 -15
+- `src/cli/mod.rs` — +0 -2
+- `src/daemon/executor/shell_exec.rs` — +2 -3
+- `src/daemon/ghost.rs` — +0 -1
+- `src/daemon/mod.rs` — +69 -352
+- `src/daemon/server/ask.rs` — +86 -163
+- `src/daemon/server/mod.rs` — +0 -41
+- `src/daemon/session.rs` — +0 -55
+- `src/ipc.rs` — +0 -51
+- `src/ipc_tests.rs` — +0 -87
+- `src/main.rs` — +25 -112
+- `src/tmux/cache.rs` — +5 -80
+- `src/tmux/pane.rs` — +0 -50
+- `tests/isolation.rs` — +20 -45
+
+**Commit:** 16d9da66f578f99f52bf8da867d49578cb0302d8
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
