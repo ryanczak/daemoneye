@@ -1,7 +1,7 @@
 # Phase 05b: hooks-notify — the daemon writes nothing into tmux
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-05
 **Tags:** language=rust, kind=refactor, size=m
 
@@ -481,3 +481,25 @@ kill: (-3615220): No such process
 **Commit:** 16d9da66f578f99f52bf8da867d49578cb0302d8
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-11
+
+- **Verdict:** approved_after_1
+- **Bounces:** one refined re-dispatch (run 1, `patch_lines` corruption,
+  tree reset); one resume (run 2, chased rexyMCP's ` (x2)` dedupe marker,
+  rexyMCP #17). No review bounce.
+- **Executor:** GLM-5.3-Flash (run 3 completed every task, commit `16d9da66`)
+- **Scope deviations:** `Ask`'s fallback session name comes from
+  `[daemon] tmux_session` instead of the deleted `bg_session` mutex, so a
+  client outside tmux no longer inherits the session the daemon adopted.
+  Accepted: it matches phase 04's out-of-tmux context. One stale comment in
+  `shell_exec.rs` removed.
+- **Calibration:** Reviewer gates matched the executor's: fmt, build (0
+  warnings), clippy clean, `passed=2295 failed=0 ignored=13`. Every
+  criterion verified, including both preservation checks: `run_daemon`
+  grep = 4, and no `with_sessions` line removed. The count explanation is
+  muddled in prose. The correct statement is 2302 − 11 deleted + 4 added =
+  2295; the fourth added test is `daemon_installs_no_tmux_hooks`, which
+  replaces `hooks_land_on_private_server`. The named-block edit order with
+  `patch_lines` banned worked: run 3 made every deletion as a whole-block
+  `patch` and kept the live code intact.

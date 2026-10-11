@@ -1,9 +1,9 @@
 # NEXT
 
 **Active milestone: M27 — tmux becomes an optional observer; 2.0 close**
-([`README.md`](milestones/M27-tmux-observer/README.md)). **Active phase: 05b — hooks-notify**
-([phase doc](milestones/M27-tmux-observer/phase-05b-hooks-notify.md)), status
-`todo`. Dispatch with `/rexymcp:dispatch phase-05b`.
+([`README.md`](milestones/M27-tmux-observer/README.md)). **Active phase:** none drafted. Phase 05b
+(hooks-notify) is done; next is 06 (docs-doctor). Draft it with
+`/rexymcp:architect next`.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
 in-VM `Ctrl-p`); the `ghost-shell-guide` memory rewrite; pause-vs-deadline
