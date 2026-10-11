@@ -1,7 +1,7 @@
 # Phase 05b: hooks-notify — the daemon writes nothing into tmux
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05
 **Tags:** language=rust, kind=refactor, size=m
 
@@ -70,6 +70,13 @@ rebuilt here:
 
 ### Gotchas
 
+- **Never use `patch_lines` in this phase.** Run 1 made 301 `patch_lines`
+  edits. Each deletion shifted the line numbers of the code below it, so
+  later edits cut the wrong lines. Run 1 silently deleted the socket bind,
+  the signal setup and the accept loop of `run_daemon`, plus unrelated doc
+  comments in `session.rs`. Use `patch` with an `old_str` that is the
+  **whole** block or function you are removing, copied from a fresh
+  `read_file`, or use `delete_file`. Re-read the file before every `patch`.
 - Phase 05 deleted ten tests whose code survived, and wrote two tests that
   hung. Before deleting a test, check whether the function it calls still
   exists. A test that writes a response must use `tokio::io::sink()` as its
@@ -78,6 +85,48 @@ rebuilt here:
   `bash`.
 - This is a deletion phase. Delete the leaf first (`hook.rs`, then the
   `Notify*` variants), then let `cargo build` name each dangling caller.
+
+## Edit order (escalation, 2026-10-10) — read this before anything else
+
+Do the edits in this order. After steps 3 and 6, run `cargo build` and let
+its errors name what is left. Each `src/daemon/mod.rs` block below is
+named by text you can search for. Delete each whole block in **one**
+`patch`.
+
+1. `delete_file` `src/daemon/hook.rs` and `src/cli/notify.rs`. Remove
+   their `mod` / `pub use` lines.
+2. In `src/ipc.rs`, delete every `Notify*` variant of `Request`. In
+   `src/ipc_tests.rs`, delete the tests that build one. In
+   `src/daemon/server/mod.rs`, delete their match arms.
+3. In `src/main.rs`, delete the `Notify` command variant, the
+   `NotifyCommands` enum and its match arm. `cargo build`.
+4. In `src/daemon/mod.rs`, one `patch` per block:
+   - The function starting `pub fn install_session_hooks(`.
+   - The function starting `fn log_hook_install_result(`.
+   - The block starting `// pane-died is a global hook` through the end
+     of `if initial_session.is_some() { … }`.
+   - The block starting `// Install per-session hooks if we already know
+     the session.`
+   - The block starting `// 2. Uninstall global tmux hooks`. Delete only
+     that `for hook in &[…] { … }` loop.
+   - The block whose first line contains `let pipe_panes: Vec<String>`,
+     together with its enclosing `{ … }` and the `stop_pipe_pane` loop.
+   - Replace the block from `// Determine the initial tmux session` to
+     the end of the `let (initial_session, managed_session) = …;`
+     statement with a call to the new pure `startup_session` (Spec 5).
+     Put `startup_session` next to `tmux_wanted` and keep `detect_session`
+     and the `session_exists` probe as its inputs.
+5. In `src/daemon/session.rs`, delete `BG_DONE_TX`, `FG_HOOK_COUNTER`,
+   `bg_done_subscribe`, `bg_teardown`, `BgTeardown`, `run_bg_teardown` and
+   the `pipe_source_pane` field, each in its own `patch`. Do not touch
+   `with_sessions` or its doc comment.
+6. Pipe-pane: `src/tmux/pane.rs`, `src/tmux/cache.rs` (`read_pipe_log` and
+   its caller fall back to the capture), and the R1 block in
+   `src/daemon/server/ask.rs`. `cargo build`, then fix only what it names.
+7. `src/cli/commands/setup.rs`: delete the two `tmux set-environment`
+   snippets.
+8. Add the § Tests, run `cargo clippy` and `cargo fmt --all`, run
+   § End-to-end verification once, then commit.
 
 ## Tests
 
@@ -109,6 +158,9 @@ rebuilt here:
       Update Log states the new total as `2302 − deleted + added`, and names
       every deleted, moved and added test.
 - [ ] No deleted test calls a function that still exists after the phase.
+- [ ] *Preservation:* `grep -cE 'let listener = UnixListener::bind\(&socket_path\)|result = listener\.accept\(\) =>|_ = sigterm\.recv\(\) =>|_ = sigint\.recv\(\) =>' src/daemon/mod.rs`
+      prints `4`, as it does today. Also, `git diff HEAD -- src/daemon/session.rs`
+      removes no line inside `with_sessions` or its doc comment.
 - [ ] The Update Log contains the § End-to-end verification output, every
       line as printed, and a line `PASTE MATCH: yes`.
 
@@ -152,3 +204,26 @@ clap `error: unrecognized subcommand 'notify'` line followed by
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-10
+
+Run 1 reached the 1000-turn budget with the tree not compiling. Its
+`patch_lines` edits had cut the socket bind, the signal setup and the
+accept loop out of `run_daemon`, and doc comments out of `session.rs`.
+The architect saved run 1's diff and **reset the tree to HEAD**, so you
+start clean. Two refinements: the Gotcha forbidding `patch_lines`, and
+§ Edit order, which names every `mod.rs` block by searchable text so each
+one is deleted in a single `patch`. A preservation criterion now checks
+that `run_daemon`'s listener and signal arms survive.
+
+### Update — 2026-10-10 (escalation)
+
+**Chosen lever:** refined re-dispatch.
+**Rationale:** `budget_exceeded` after 1000 turns: 566 `bash`, 301
+`patch_lines` (242 on `src/daemon/mod.rs`). The build was broken by
+`unexpected closing delimiter` in `run_daemon`. The edits had drifted and
+deleted unrelated live code in `mod.rs` and `session.rs`, so no file in
+the partial tree could be trusted. Resume would have carried that tree
+forward, so the tree was reset instead. The spec gap was the edit
+mechanism, not the design: the executor's choices (pure `startup_session`,
+the deletion set) were right.
