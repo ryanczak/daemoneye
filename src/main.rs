@@ -69,6 +69,8 @@ enum Commands {
     },
     /// Show daemon status (uptime, sessions, provider, circuit breaker)
     Status,
+    /// Report whether this host can run DaemonEye (config, api key, shell, daemon, sandbox, hosts, tmux)
+    Doctor,
     /// Stop the background daemon, or cancel one run by id
     Stop {
         /// Run id to cancel. Omit to stop the daemon.
@@ -375,6 +377,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Status => {
             cli::run_status().await?;
+        }
+        Commands::Doctor => {
+            cli::run_doctor().await?;
         }
         Commands::Stop { run } => match run {
             Some(id) => {

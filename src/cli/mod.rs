@@ -3,6 +3,7 @@
 pub mod attach;
 pub mod commands;
 pub(crate) mod diff;
+pub mod doctor;
 pub mod input;
 pub mod local_cmds;
 pub mod markdown;
@@ -15,6 +16,7 @@ pub mod transcript;
 pub mod viewer;
 
 pub use commands::*;
+pub use doctor::{DoctorInputs, run_doctor};
 pub use local_cmds::*;
 pub use status::*;
 
