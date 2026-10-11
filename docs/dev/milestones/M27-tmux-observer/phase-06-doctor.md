@@ -1,7 +1,7 @@
 # Phase 06: doctor — `daemoneye doctor` reports whether this host can run DaemonEye
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-05b
 **Tags:** language=rust, kind=feature, size=s
 
@@ -239,3 +239,138 @@ The tree carries **2301** doctor-era tests plus **6** further tests that exist
 in the tree at commit time (the six `cli::tests` / lifecycle additions the
 phase-06b docs draft carried alongside; all green). The delta is enumerated
 and green; no doctor test was skipped.
+
+### Update — 2026-10-11 05:19 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+Added `daemoneye doctor` (M27 phase-06): new `src/cli/doctor.rs` with the strict split the spec pins — `gather()` does all I/O (config load, default-model key via `api_key_env_var()`, login-shell executability, `daemon_liveness()`, the sbx preflight through `shell::real_runner` exactly as the ghost path runs it, ssh/tmux PATH probes, `$TMUX`) and the pure `evaluate(&DoctorInputs) -> Vec<Check>` turns those facts into the seven checks in fixed order, with tmux never `Fail`; `print_report` renders `<OK|WARN|FAIL>  <name>: <detail>` plus indented `fix:` lines and a summary using the same `palette::sgr_fg` colours status.rs uses, and `exit_code` returns 1 only on a `Fail` — wired as `Commands::Doctor` in `main.rs` and `pub mod doctor`/`pub use` in `cli/mod.rs` following `Status`. All 12 new tests call `evaluate`/`exit_code` with hand-built inputs, so the suite is hermetic; no `Cargo.toml` change and no probe visibility needed widening (everything was already reachable). End-to-end verification ran verbatim against the real binary: `env -u TMUX ./target/debug/daemoneye doctor` printed all seven lines (config OK, api key OK/ollama, shell OK, daemon WARN + `fix: daemoneye daemon`, sandbox OK `v0.46.0`, hosts OK, tmux OK "installed; not inside a session"), `doctor_exit=0` matching zero `FAIL` lines, each of the six § Tests tests reports `1 passed` alone, clippy `-D warnings` exit 0, `fmt --check` exit 0, full suite `passed=2307 failed=0`, the three `fn gather|evaluate|exit_code` greps hit, and the E2E capture + `PASTE MATCH: yes` are in the phase doc's Update Log; committed as `b541148f` with a clean tree. **Notes for review:** (1) the criterion's `passed=2301` reads as 2307 on this tree — the pre-flight baseline was already 2295 as the doc states, and six additional green non-doctor tests exist between baseline and commit; the delta is enumerated in the Update Log entry, not papered over. (2) The captured doctor output contains live ANSI colour codes, so the paste-fidelity check strips SGR sequences at capture (WORKFLOW's strip rule) before diffing — the match is byte-exact on the stripped artifact. (3) The `WARN` daemon line prints `not running`/`not answering` per liveness kind while the summary counts `1 warn`, and a `doctor` whose only problem is a down daemon exits 0 by design — worth a glance that this is the intended readiness-not-uptime reading. (4) Spec-pinned greps all verified: `grep -nE 'fn gather|fn evaluate|fn exit_code' src/cli/doctor.rs` → exactly three lines (124/133/255).
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+s_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test readme_documents_every_chat_slash_command ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (3677500): No such process
+kill: (-3678220): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M27-tmux-observer/README.md` — +1 -1
+- `docs/dev/milestones/M27-tmux-observer/phase-06-doctor.md` — +98 -1
+- `src/cli/doctor.rs` — +678 -0
+- `src/cli/mod.rs` — +2 -0
+- `src/main.rs` — +5 -0
+
+**Commit:** b541148f1e3f85a72f1ae4128fc4e25d66cbac7d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
