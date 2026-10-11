@@ -11,11 +11,13 @@
 > requirements see [`PRODUCT_DEFINITION.md`](PRODUCT_DEFINITION.md),
 > [`REQUIREMENTS.md`](REQUIREMENTS.md), and [`ROADMAP.md`](ROADMAP.md).
 
-DaemonEye is a Rust daemon that embeds an AI assistant directly into `tmux`. It
-runs in the background, watches the user's terminal panes, and lets the user
-converse with an LLM that can *see* the terminal context and *act* on it by
-running commands, editing files, scheduling jobs, and delegating to autonomous
-"ghost shells."
+DaemonEye is a Rust daemon that runs an AI assistant beside your terminal. It
+runs in the background, reads the terminal context around the user, and lets the
+user converse with an LLM that can *see* that context and *act* on it by running
+commands in daemon-owned PTY shells, editing files, scheduling jobs, and
+delegating to autonomous "ghost shells." tmux is an optional read-only observer:
+when the user is inside a tmux session the daemon captures pane summaries from
+it, but tmux is never the place commands run.
 
 Its organizing principle is a **trust spectrum**: autonomy is not binary. The
 same engine operates across four levels of earned trust —
@@ -44,7 +46,7 @@ The daemon lifecycle and client↔daemon wire protocol.
   `libc::fork()` can run *before* the tokio runtime starts (a hard invariant —
   forking inside an async context is unsound). Routes subcommands.
 - **`src/daemon/mod.rs`** — `run_daemon`, the global statics (`DAEMON_START`,
-  `BG_DONE_TX`, `FG_HOOK_COUNTER`, `BUFFER_COUNTER`), and `supervise()` — an
+  `BUFFER_COUNTER`), and `supervise()` — an
   exponential-backoff task supervisor (1→2→…→30 s cap, resets after 60 s stable)
   that keeps the four critical tasks (cache poller, scheduler, session cleanup,
   webhook) alive across panics.
@@ -76,13 +78,8 @@ The brain: turns a `Request::Ask` into an AI conversation that can act.
   `PromptCtx`; tiered memory injection (stable ambient block + dynamic
   turn-relevant block).
 - **`executor/`** — tool-call dispatch and the approval gate (`ToolCallOutcome`);
-  coordinates background vs foreground execution; `ArtifactCtx` stamps
-  session-origin onto created artifacts.
-- **`background.rs`** — background command execution in dedicated `de-bg-*` tmux
-  windows on the daemon host, with `pane-died`-hook completion detection and GC.
-- **`hook.rs`** — handlers for the tmux-hook IPC notifications (`NotifyActivity`,
-  `NotifyComplete`, `NotifyFocus`, `NotifyWindowChanged`, `NotifyResize`,
-  client attach/detach, session-created, …).
+  coordinates PTY-shell execution routes; `ArtifactCtx` stamps session-origin
+  onto created artifacts.
 - **`ghost.rs`** / **`policy.rs`** / **`briefing.rs`** — the Ghost Shell
   subsystem (see §3).
 - **`digest.rs`** / **`auto_name.rs`** — conversation compaction driven by
@@ -140,8 +137,9 @@ runtime via `/model`.
   `header.rs` (artifact frontmatter / comment-header injection).
 - **`agents/`** — named agents: config CRUD, `ToolPolicy` (allow/deny tool
   lists), and the mailbox for agent-to-agent delegation.
-- **`webhook.rs`** — axum 0.8 HTTP alert ingestion (Alertmanager / Grafana /
-  generic), dedup, masking, and AI-watchdog routing into ghost shells.
+- **`webhook/`** (`server.rs`, `process.rs`) — axum 0.8 HTTP alert ingestion
+  (Alertmanager / Grafana / generic), dedup, masking, and AI-watchdog routing
+  into ghost shells.
 
 ---
 
@@ -157,10 +155,10 @@ runtime via `/model`.
 3. On a tool call the daemon sends `Response::ToolCallPrompt`; the client shows
    the target pane (highlighted) and prompts `[Y]es / [A]pprove session / [N]o /
    or type a message to redirect`.
-4. Approved commands run **background** (daemon-host `de-bg-*` window) or
-   **foreground** (injected into the user's pane via `send-keys`, with a
-   three-way completion detection: interactive-prompt pattern, remote
-   output-stability poll, or local PID-change poll).
+4. Approved commands run in a PTY shell: the session's own by default, a
+   dedicated one for `wait: false` (the session's sbx sandbox when
+   `[sandbox] enabled`), or one on a configured `[hosts.*]` host. Real exit
+   codes come from the PTY marker protocol.
 5. The daemon returns `Response::ToolResult`; the loop continues until the model
    produces a final answer.
 
@@ -252,8 +250,8 @@ the highest-risk subsystem and carry the most guardrails:
 - **Lifecycle events** (`[Ghost Shell Started/Completed/Failed/Skipped]`) are
   injected into all sessions for catch-up visibility, and a mailbox carries the
   final result back to a delegating coordinator.
-- **Window prefixes** (`de-gs-bg-*`, `de-gs-sj-*`, `de-gs-ir-*`) segregate ghost
-  windows for GC and listing.
+- **Legacy window filter**: `de-*` windows left behind by an older daemon are
+  filtered out of context and listed by `daemoneye schedule windows`.
 
 ---
 
@@ -304,7 +302,7 @@ speculation.
 
 - **Pane/session context** — topology inventory, CWD/title/env, scroll & copy
   mode, dead-pane status, activity timestamps, client viewport, cross-session
-  context, pipe-pane logging.
+  context.
 - **Foreground/background execution** — hook-based completion, PID-based local
   completion, respawn-pane retry, persistent background windows.
 - **Knowledge system** — runbooks, persistent memory (with a BM25-ranked FTS5
@@ -347,7 +345,7 @@ Each has a retrospective in its `docs/dev/milestones/M<n>-<slug>/README.md`.
 - **M3 — Polish & Maintenance** (10 phases, complete 2026-06-28). Correctness and
   hermeticity fixes (`TEST_HOME_LOCK` discipline), UX papercuts (one approval-prompt
   format, no `{:?}` error leak, ellipsis truncation markers, completed `/help`),
-  and codebase health (the `daemon/utils.rs` + `webhook.rs` splits, the 7
+  and codebase health (the `daemon/utils.rs` + webhook-module splits, the 7
   `TODO(M2)` signature consolidations, and first-ever unit coverage for the
   `executor/knowledge/` handlers). No behavior regressions.
 
@@ -509,6 +507,5 @@ of tmux panes:
   still registered. The two are independent lifecycles on different clocks.
 
 Still **not** delivered by the shell engine (flagged for later milestones):
-background execution on the substrate (the `de-bg-*` tmux path remains),
-ghost sessions on PTYs, SSH/remote targets, and client key bindings / an
-attach UI.
+client key bindings / an attach UI. (Background execution, ghost sessions and
+SSH/remote targets on PTY shells have since shipped.)

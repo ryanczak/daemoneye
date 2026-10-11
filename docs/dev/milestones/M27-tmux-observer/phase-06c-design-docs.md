@@ -223,3 +223,45 @@ derive anything.
 
 Task 1 first: widen the `doc_truth` gate to the four design docs, run it, and
 use its hits as the work list.
+
+### Update — 2026-10-11 19:07 (progress)
+
+**Executor:** Executor (rexyMCP headless run)
+
+Work-list rows done in order, one file at a time, gate re-run after each:
+
+- `architecture.md`: all nine rows (opening sentence, statics list,
+  module bullets, `webhook/` split, §2 step 4, window-prefixes bullet,
+  pipe-pane removal, webhook-module split line, "not delivered" paragraph).
+- `PRODUCT_DEFINITION.md`: opening sentence + the two Dual-Execution-Mode
+  bullets.
+- `REQUIREMENTS.md`: FR-1.1.2, FR-1.1.3, FR-1.1.6 (`var/log/` list),
+  FR-1.1.8, FR-1.2.2 parenthetical, FR-1.2.4, FR-1.2.7, FR-1.2.10,
+  FR-1.2.15, FR-1.2.17 (k), FR-1.4.3, FR-1.4.4. FR-1.1.8's sub-bullets
+  (a)/(b), the session-recreate sentence and the `chat`-attach/systemd
+  sentences described removed machinery only; replaced by the one-clause
+  replacement the work list specifies, with "runs in place and never
+  attaches" appended from the fact list.
+- `security.md`: §6 — dropped the hook/notify bullet and both Sources.
+- `README.md` (~779 sample comment, ~1054 table row) and
+  `assets/etc/config.toml` (~297): `tmux_session` descriptions.
+- `src/config/types.rs`: `DaemonConfig::tmux_session` `///` doc comment
+  only (no code change).
+- `CLAUDE.md`: `run_terminal_command` opening clause only.
+
+`cargo test --test doc_truth runtime_docs` reports `1 passed` after each
+file; the whole `doc_truth` suite is 16 passed / 0 failed.
+
+Out of scope (left alone, per the work list's rules):
+- `REQUIREMENTS.md` FR-1.2.2 still names `capture-pane`/`tmux
+  show-environment`/`[FOREGROUND TARGET] %N`/`/pane` pinning and
+  `run_terminal_command(background=false)` — unflagged, not in the table.
+- `REQUIREMENTS.md` FR-1.2.6, FR-1.2.16 and FR-1.2.17 (b) still describe
+  remote-pane detection, `[OTHER SESSIONS]`, and a ghost running in a
+  "dedicated headless tmux window (`de-incident-…`)" — unflagged.
+- `architecture.md`'s "Foreground/background execution — hook-based
+  completion, PID-based local completion, respawn-pane retry, persistent
+  background windows" bullet in the §5 capability list — unflagged.
+- `README.md`'s sentence under the `[daemon]` table ("`daemoneye chat`
+  … will open a new chat window inside the managed session and
+  exec-attach to it") — unflagged by the gate and outside the table rows.

@@ -355,15 +355,11 @@ impl Default for ApprovalsConfig {
 /// Daemon startup and session management configuration.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DaemonConfig {
-    /// Tmux session name the daemon creates or adopts at startup.
+    /// Name of an existing tmux session the daemon observes when launched
+    /// outside tmux. The daemon never creates it.
     ///
-    /// Used when the daemon is launched outside of tmux (e.g. as a systemd service).
-    /// If the named session already exists it is adopted; if not, the daemon creates
-    /// it with `tmux new-session -d -s <name>` so ghost shells, scheduled jobs, and
-    /// webhook-triggered automation are available immediately.
-    ///
-    /// When the daemon is launched from *inside* an active tmux session, it adopts
-    /// that session directly and this setting is ignored.
+    /// When launched inside tmux, the current session is used and this setting
+    /// is ignored. `""` means no tmux at all.
     ///
     /// Default: `"daemoneye"`.
     #[serde(default = "default_tmux_session")]

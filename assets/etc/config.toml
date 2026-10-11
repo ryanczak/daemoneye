@@ -294,7 +294,7 @@ prompt = "sre"
 # ── Daemon ───────────────────────────────────────────────────────────────────
 
 # [daemon]
-# tmux_session = "daemoneye"   # session the daemon creates/adopts when launched outside tmux; "" = no tmux at all
+# tmux_session = "daemoneye"   # existing tmux session the daemon observes when launched outside tmux (never created); "" = no tmux
 #                              # (default is "daemoneye"; override to use a different name)
 
 # ── Digest ───────────────────────────────────────────────────────────────────

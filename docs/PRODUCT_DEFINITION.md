@@ -10,7 +10,7 @@ DaemonEye closes that gap.
 
 ## What DaemonEye Is
 
-DaemonEye is a Linux daemon that embeds AI operators directly into your terminal workflow via tmux. It pairs human experts with AI agents across a trust spectrum -- from fully supervised pair-programming to fully autonomous incident response -- with every point in between available and every action logged.
+DaemonEye is a Linux daemon that runs AI operators beside your terminal (tmux optional). It pairs human experts with AI agents across a trust spectrum -- from fully supervised pair-programming to fully autonomous incident response -- with every point in between available and every action logged.
 
 The key insight: **autonomy is not binary**. A team that starts with "approve every command" can progressively grant the AI more authority -- per-command-class, per-script, per-runbook -- as trust is earned through observable, measurable behavior. DaemonEye makes this progression natural, safe, and reversible.
 
@@ -94,8 +94,8 @@ DaemonEye doesn't just read your current pane. It understands the full topology 
 
 ### Dual Execution Modes
 
-- **Background mode**: Commands run in dedicated daemon-host windows (`de-bg-*`), returning immediately with a pane ID. Output is archived. Windows are named `de-bg-<pane_num>-<unix_ts>-<cmd_slug>` (e.g. `de-bg-42-1712937600-cargo-build`) so `tmux list-windows` is immediately readable. A 60-second GC task automatically reclaims dead, idle-completed, and orphaned windows. The AI can chain follow-up commands in the same environment.
-- **Foreground mode**: Commands are injected into your active terminal pane via `send-keys`. Completion is detected via PID tracking (local panes) or output stability (remote panes). Interactive commands like `ssh` and `mosh` are handled as a special case -- the daemon returns once the connection is established. The target pane is pinned at session start and injected as `[FOREGROUND TARGET]` on every AI turn so the agent never has to guess where a command will land. Use `/pane` to list targets or `/pane %N` to pin a different one; the AI is notified on the next turn automatically.
+- **Waiting (default)**: The command runs in the session's PTY shell and the result returns when it exits, with its real exit code.
+- **`wait: false`**: It runs in a dedicated PTY shell, or the sbx sandbox, and returns at once. Completion arrives as a `[Background Task Completed]` message.
 
 ### Knowledge System
 

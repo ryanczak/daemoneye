@@ -91,19 +91,14 @@ steps are unchanged.
 
 ### 6. Shell-string hygiene
 
-- Every subprocess invocation uses argv arrays — no `sh -c` anywhere
-  (tmux, background, foreground, remote panes).
+- Every subprocess invocation uses argv arrays — no `sh -c` anywhere.
 - Pane-remote shell strings single-quote interpolated values and escape `'`
   (`sq_escape`). A newline inside single quotes cannot break out (verified).
 - `read_file`/`edit_file` reject control characters in paths/patterns.
 - `read_file`/`edit_file` block well-known credential paths (not a boundary —
   see note below).
-- tmux hook bodies single-quote `#{{session_name}}`/`#{{pane_id}}`, and
-  `daemoneye notify` re-validates session names at runtime (rejects `'` and
-  control characters) as defense-in-depth against hostile session names.
 
-Sources: `src/daemon/executor/file_ops/mod.rs`, `src/daemon/executor/foreground.rs`,
-`src/daemon/mod.rs` (global hooks), `src/cli/notify.rs`.
+Sources: `src/daemon/executor/file_ops/mod.rs`, `src/daemon/executor/foreground.rs`.
 
 ### 7. Masking (AI egress only)
 

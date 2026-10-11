@@ -816,8 +816,7 @@ fn runtime_docs_describe_no_tmux_execution() {
         "docs/REQUIREMENTS.md",
         "docs/security.md",
     ] {
-        let text = std::fs::read_to_string(format!("{REPO_ROOT}{doc}"))
-            .expect("read runtime doc");
+        let text = std::fs::read_to_string(format!("{REPO_ROOT}{doc}")).expect("read runtime doc");
         for term in RETIRED_TMUX_EXECUTION_TERMS {
             for (i, line) in text.lines().enumerate() {
                 if line.contains(term) {
