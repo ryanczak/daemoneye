@@ -40,15 +40,19 @@ schedule_command(
 ```
 Runs a pre-vetted script from `~/.daemoneye/scripts/` on a schedule. Output is captured and appended to the session context.
 
-### Raw command (deprecated — use script jobs instead)
-Raw `command` strings without `is_script=true` still work for backwards compatibility but are discouraged. Prefer named scripts for auditability and ghost-shell compatibility.
+### Raw command (deprecated — refused)
+Raw `command` strings without `is_script=true` still **load** from old
+`schedules.json` files but are refused when they fire, with a logged reason.
+Prefer named scripts for auditability and ghost-shell compatibility.
 
-## tmux Window Naming
+## Where scheduled work runs
 
-| Prefix | Created by |
-|---|---|
-| `de-sj-*` | Regular scheduled jobs (Script / Command) |
-| `de-gs-sj-*` | Ghost Shell scheduled jobs (`ghost_runbook`) |
+Each job's script runs in a scheduler-owned PTY shell with a real exit code
+(the shell's recording stays in `~/.daemoneye/var/log/shells/`). A scheduled
+ghost job (`ghost_runbook`) follows the ghost-shell rules: the ghost's own
+PTY shell — its sbx sandbox when enabled, otherwise the daemon host or the
+configured `[hosts]` entry its runbook's `ssh_target` names. A configured host
+overrides the sandbox only when the ghost is explicitly granted that host.
 
 ## Managing Schedules
 

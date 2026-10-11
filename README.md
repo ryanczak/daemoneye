@@ -4,7 +4,7 @@ DaemonEye is a lightweight background daemon that integrates an AI-powered syste
 
 I wrote DaemonEye after discovering OpenClaw and being completely blown away by its agency and power — and then turning it off because I was afraid of it running amok. DaemonEye is the result of wanting that power with boundaries I trust. It limits command execution to what is explicitly allowed, provides mechanisms to make complex tasks autonomous (even those requiring root access), and tracks exactly what it spends on your behalf.
 
-**Linux only.** DaemonEye uses `fork(2)`, Unix domain sockets, and Linux-specific tmux hooks — it will not build or run on macOS or Windows.
+**Linux only.** DaemonEye uses `fork(2)` and Unix domain sockets — it will not build or run on macOS or Windows. tmux is optional (see [Requirements](#requirements)).
 
 > **Where this is going.** `v1.0.0` is the last tmux-based release. DaemonEye
 > 2.0 replaces the tmux substrate with daemon-owned PTY shells (local, and
@@ -60,9 +60,9 @@ Then `tmux source-file ~/.tmux.conf`. The bind-key uses the full path so it work
 
 | Dependency | Notes |
 |---|---|
-| Linux | `fork(2)`, Unix domain sockets, Linux-specific tmux hooks |
+| Linux | `fork(2)`, Unix domain sockets |
 | Rust 1.79+ | Required by Rust edition 2024 |
-| tmux 2.6+ | Required for hook support (`pane-focus-in`, `client-attached`, `after-new-session`). Optional with `tmux_session = ""`: the daemon then starts no tmux, and `daemoneye chat` runs in any terminal |
+| tmux 2.6+ | Optional. When you run `daemoneye` inside tmux, the prompt carries read-only pane summaries for your session (capture and list only). Outside tmux everything works with no tmux installed: commands run in daemon-owned PTY shells, `daemoneye chat` runs in any terminal, and alerts reach connected chat clients over IPC. The daemon never creates a tmux session unless `[daemon] tmux_session` names one that should exist |
 
 ```sh
 sudo apt install tmux      # Debian/Ubuntu
@@ -89,8 +89,9 @@ you type ──→ chat client ──→ daemon
                     [Y]es  [A]pprove for session  [N]o  ·  or type a redirect
                                │
                      approved  ▼
-                    command runs — foreground in your pane,
-                    or background in a dedicated de-bg-* window
+                    command runs in a daemon-owned PTY shell —
+                    in this session's shell, a dedicated one for
+                    `wait: false`, or a sandbox when enabled
                                │
                                ▼
                     output captured → back to the model → loop
@@ -259,11 +260,11 @@ With it:
 - **Pause means pause.** `Ctrl+P` on an attached ghost stops the job
   inside the VM, not just the client.
 
-Foreground commands — the ones injected into your own pane — stay on the
+Foreground commands — the ones run in your session's PTY shell — stay on the
 host by design: they are visible, approved, and run in your shell.
 Commands on a configured `[hosts.<name>]` host run there, not in a sandbox.
-While the sandbox is enabled, `[execution] backend = "tmux"` is refused,
-because a tmux window is outside it.
+`[execution] backend = "tmux"` still loads, with a startup warning that the
+tmux backend was removed; commands run in PTY shells as usual.
 
 Design of record: [`docs/design/daemoneye-2.0.md`](docs/design/daemoneye-2.0.md) § 2.9.
 
@@ -363,7 +364,7 @@ Long sessions don't get truncated at an arbitrary message count — DaemonEye ma
 
 - **Flexible Scheduling** — Run commands or Ghost Shell tasks once at a specific time, on a repeating interval, or on a full cron expression.
 - **Watchdog Monitors** — Active monitors use AI-powered analysis to evaluate system state on a schedule and trigger remediation when something looks wrong.
-- **Failure Isolation** — Each job runs in its own dedicated tmux window (`de-sj-*`), left open on failure for manual inspection and cleaned up automatically on success.
+- **Failure Isolation** — Each job runs in its own scheduler-owned PTY shell with a real exit code recorded in the shell's log; the shell is swept when the job is done.
 - **Bell Recovery** — Every 2-second poll checks `#{window_flags}` for uncleared bells (`!`) and unseen activity (`#`) on all windows. Newly-discovered bells are logged to `events.jsonl` so notifications missed during a daemon restart are recovered automatically.
 
 ---
@@ -421,7 +422,7 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye install-sudoers <script>` | Write a NOPASSWD sudoers drop-in for `~/.daemoneye/scripts/<script>` |
 | `daemoneye reindex` | Rebuild the memory search index from the memory files on disk; reports rows before and after |
 | `daemoneye audit-prompts` | Audit installed prompt and knowledge memory files for stale path references; exits non-zero on findings, never writes |
-| `daemoneye notify` | Internal — out-of-band notifications from tmux hooks; not intended for direct use |
+| `daemoneye doctor` | One line per readiness check (config, api key, shell, daemon, sandbox, hosts, tmux); exit 1 only on a FAIL; tmux is optional and never fails it |
 
 Both `reindex` and `audit-prompts` run without a daemon. `reindex` is safe to run while one is up: the rebuild is a single transaction, so a concurrent search sees the old index or the new one, never a half-empty one.
 
@@ -529,7 +530,7 @@ Tools marked **⚠** require explicit user approval before they execute.
 
 | Tool | What it does |
 |---|---|
-| `run_terminal_command` **⚠** | Run a bash command — foreground in your pane, or background in a dedicated tmux window. `wait?` picks the mode: omitted or `true` waits (the default, foreground); `wait: false` is what `background: true` was — it returns immediately with the shell id, which you then follow with `watch_shell` or `read_shell`. `shell?` targets a PTY shell (`"s3"` from `list_shells`, or `"new"` for one fresh shell; omitted, the command reuses this session's lowest-numbered open shell and another session's shell is refused); `host?` runs it on a configured `[hosts.<name>]` host (omitted or `"local"` = the daemon host; a shell id on a different host is refused, never relocated); `timeout_secs?` bounds the wait (default 45 s, capped 3600) |
+| `run_terminal_command` **⚠** | Run a command in a PTY shell. `wait?` picks the mode: omitted or `true` waits and returns the captured output with the real exit code; `wait: false` returns immediately with the shell id, which you then follow with `watch_shell` or `read_shell` (the outcome arrives as a `[Background Task Completed]` message). `shell?` targets a PTY shell (`"s3"` from `list_shells`, or `"new"` for one fresh shell; omitted, the command reuses this session's lowest-numbered open shell and another session's shell is refused); `host?` runs it on a configured `[hosts.<name>]` host (omitted or `"local"` = the daemon host; a shell id on a different host is refused, never relocated); `timeout_secs?` bounds the wait (default 45 s, capped 3600) |
 | `edit_file` **⚠** | Create, edit, delete, or copy a file; shows a coloured unified diff before approval. `host?` writes on a configured `[hosts.<name>]` host — omitted or `"local"` = the daemon host; the operation runs in a shell there after the same approval prompt; `sudo: true` edits a root-owned file on that host (`edit` only), with the password asked in the chat and no session approval |
 | `write_script` **⚠** | Create or update a script in `~/.daemoneye/scripts/` (written `chmod 700`) |
 | `delete_script` **⚠** | Delete a script |
@@ -633,8 +634,7 @@ On first run all seeded files (binary, memories, prompt) are written automatical
         <id>.archive.jsonl ← append-only archive of every message (source for recall_context)
         <id>.epochs.jsonl ← epoch + chapter records (compaction summaries and tallies)
         <id>.meta.json    ← session continuity state (turn counters, token calibration)
-      panes/              ← archived background-command output (one .log per job window)
-      pipes/              ← pipe-pane capture logs (raw terminal output, runtime only)
+      panes/              ← archived background-command output (one .log per job)
     run/
       daemoneye.sock      ← Unix domain socket (created when the daemon starts)
       pane_prefs.json     ← per-session target-pane preferences
@@ -648,7 +648,7 @@ On first run all seeded files (binary, memories, prompt) are written automatical
 
 `daemoneye setup` writes `~/.config/systemd/user/daemoneye.service` — a user-scoped service that runs `~/.daemoneye/bin/daemoneye daemon --console` automatically on login. The `--console` flag is required for `Type=simple` systemd services: without it the daemon forks, the parent exits, and systemd loses track of the process.
 
-When running as a systemd service the daemon starts outside tmux and automatically creates (and owns) a tmux session named `"daemoneye"` — ghost shells, scheduled jobs, and webhook-triggered automation are available immediately with no interactive client connection required.
+When running as a systemd service the daemon starts outside tmux. Every command — chat, ghosts, scheduled jobs, webhook automation — runs in daemon-owned PTY shells, so the service is fully functional with no interactive client connection and no tmux at all. If a `[daemon] tmux_session` name is configured, the daemon adopts a tmux session by that name when one already exists (useful if you want its read-only pane context) and creates none itself.
 
 To use a different session name, add a `[daemon]` section to `~/.daemoneye/etc/config.toml`:
 
@@ -1094,7 +1094,7 @@ Artifacts (runbooks, scripts, memories) created during a named session are tagge
 
 ## Ghost Shells & Autonomous Remediation
 
-Ghost Shells are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost shell investigates the alert and executes pre-approved remediation steps — all without a human present. The ghost itself runs headless inside the daemon. Its commands run in a PTY shell the ghost owns — on the daemon host, or on a configured `[hosts]` entry its runbook's `ssh_target` names — reused for its later commands and closed when the ghost exits; the recording stays, for `/logs` and `/log`. No tmux server is needed. With the sandbox enabled, a ghost's local commands run in its own Docker Sandboxes microVM instead (see the sandbox section above). Two cases still use tmux windows on the daemon host, prefixed `de-gs-bg-*` (webhook- and interactively-triggered) or `de-gs-sj-*` (scheduler-triggered): `[execution] backend = "tmux"`, and an `ssh_target` that names no configured host (wrapped as `ssh <target> <cmd>`) — and both are refused while the sandbox is enabled. Start, completion, and failure events appear in the next catch-up brief when you re-attach.
+Ghost Shells are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost shell investigates the alert and executes pre-approved remediation steps — all without a human present. The ghost itself runs headless inside the daemon. Its commands run in a PTY shell the ghost owns — in its sbx sandbox when one is enabled, otherwise on the daemon host or on a configured `[hosts]` entry its runbook's `ssh_target` names — reused for its later commands and closed when the ghost exits; the recording stays, for `/logs` and `/log`. An `ssh_target` that names no configured host is refused before the ghost starts, in every mode. Start, completion, and failure events appear in the next catch-up brief when you re-attach.
 
 ### How it works end-to-end
 
@@ -1319,14 +1319,9 @@ curl -s -X POST http://localhost:9393/webhook \
 
 Watch the ghost shell in real time from `daemoneye chat`: `/agents` lists the
 live agent shells (ghosts first); `Enter` attaches, `Ctrl+P` pauses and
-resumes, `Ctrl+D` detaches. `/tail <id>` follows a shell read-only. With
-`backend = "tmux"`, the commands run in tmux windows
-instead:
+resumes, `Ctrl+D` detaches. `/tail <id>` follows a shell read-only.
 
 ```bash
-tmux list-windows -a | grep de-gs-
-tmux select-window -t <window-name>
-
 # Or just watch daemon.log
 daemoneye logs
 ```
@@ -1359,12 +1354,7 @@ Cost (today)
 ```
 
 List the ghost shells currently open with `/shells` in `daemoneye chat`
-(owner `ghost:…`). With `backend = "tmux"`, list the
-command windows instead:
-
-```bash
-tmux list-windows -a | grep de-gs-
-```
+(owner `ghost:…`).
 
 ### Security considerations
 

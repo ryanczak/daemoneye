@@ -21,16 +21,16 @@ The project compiles cleanly — `cargo clippy --all-targets -- -D warnings` exi
 
 ## Architecture Overview
 
-DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks into the background, binds a Unix domain socket (`~/.daemoneye/var/run/daemoneye.sock`, resolved via `config::default_socket_path()`), and communicates with CLI clients via newline-delimited JSON.
+DaemonEye is a Rust daemon that runs an AI assistant beside your terminal. It forks into the background, binds a Unix domain socket (`~/.daemoneye/var/run/daemoneye.sock`, resolved via `config::default_socket_path()`), and communicates with CLI clients via newline-delimited JSON. Commands the AI runs execute in daemon-owned PTY shells; tmux, when present, is an optional read-only observer (pane summaries for the user's session), never an execution substrate.
 
 ### Request/Response lifecycle
 
-1. User runs `daemoneye chat` or `daemoneye ask` — the CLI client reads `$TMUX_PANE`, connects to the socket, and sends a `Request::Ask`. If the tmux client was previously detached for ≥ 30 s and new event messages arrived (background completions, webhook alerts, watchdog results, watch-pane outcomes), the daemon sends a `Response::SystemMsg` catch-up brief immediately after `Response::SessionInfo` and before the first AI token (N15).
-2. The daemon captures the user's pane via `tmux capture-pane`, applies the masking filter (`ai/filter.rs`), assembles the system prompt + context snapshot, and streams tokens from the configured LLM.
-3. When the AI emits a tool call the daemon sends `Response::ToolCallPrompt` back to the client. For foreground commands the prompt includes a `target_pane` hint (computed synchronously from the cache before the approval wait) so the client can show the window-relative pane index and apply a visual highlight (`tmux select-pane -P bg=colour17`) to the target pane during the approval window; focus is immediately returned to the chat pane via a second `select-pane` call so the user is not displaced. The client prompts the user: `[Y]es / [A]pprove session / [N]o / or type a message to redirect`. The client returns `Request::ToolCallResponse`.
+1. User runs `daemoneye chat` or `daemoneye ask` — the CLI client connects to the socket (the chat client holds a long-lived presence connection) and sends a `Request::Ask`. If the client re-attached (`chat --resume <id>`) after ≥ 30 s away and new event messages arrived (background completions, webhook alerts, watchdog results), the daemon sends a `Response::SystemMsg` catch-up brief immediately after `Response::SessionInfo` and before the first AI token (N15).
+2. The daemon assembles the system prompt + context snapshot — the user's tmux pane summaries when the client runs inside tmux (read-only: capture and list only), otherwise the daemon's own PTY shells — applies the masking filter (`ai/filter.rs`), and streams tokens from the configured LLM.
+3. When the AI emits a tool call the daemon sends `Response::ToolCallPrompt` back to the client. The client prompts the user: `[Y]es / [A]pprove session / [N]o / or type a message to redirect`. The client returns `Request::ToolCallResponse`.
    - **Y / A / N**: standard approve/session-approve/deny flow.
    - **Typed message**: `approved: false` with `user_message: Some(text)`. The daemon aborts the entire pending tool chain (omitting it from history), injects the text as a plain user turn, and re-enters the AI loop so the model can course-correct without seeing a synthetic tool error.
-4. Approved commands run in one of two modes: **background** (dedicated `de-bg-*` tmux window on the daemon host, monitored via `pane-died` hook) or **foreground** (injected into the user's active pane via `send-keys`, completion detected via a three-way branch: interactive commands like `ssh`/`mosh`/`telnet`/`screen` use prompt-pattern detection and return immediately once connected; remote panes use output-stability polling; local panes poll `pane_current_command`). During foreground execution the target pane is visually highlighted (`select-pane -P bg=colour17`) from `send_keys` until `capture_pane`; focus is immediately returned to the chat pane after each style change so the user is not displaced. The highlight is removed on denial or after capture.
+4. An approved `run_terminal_command` runs in a PTY shell (`executor/shell_exec.rs`): by default this session's shell; with `wait: false` a dedicated PTY shell (or the session's sbx sandbox when `[sandbox] enabled`) whose outcome arrives as a `[Background Task Completed]` message; with `host?` a shell on the configured `[hosts.<name>]` host, in its sandbox when one is configured there. A call with no PTY route is refused with the reason. Real exit codes come from the PTY marker protocol; output is masked and ANSI-annotated.
 5. The daemon sends `Response::ToolResult` with captured output, the LLM continues, and the loop repeats until the LLM produces a final answer.
 
 ### Key files
@@ -43,7 +43,6 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/mod.rs` | Window-prefix constants + D6 predicates (`is_daemon_window`, `is_ghost_window`, `is_targetable_pane`) |
 | `src/daemon/ready.rs` | Fork readiness handshake — child reports `READY` / `ERR <msg>` to the parent over a pipe |
 | `src/daemon/server/` | IPC server, split by concern: `mod.rs` client dispatch (`handle_client`), `ask.rs` the `handle_ask` orchestrator, `handlers.rs` the simple request handlers (`handle_ping`, `handle_shutdown`, `handle_refresh`, `handle_set_model`), `shells.rs` the shell IPC relay (`handle_shell_list`, `handle_shell_input`, `handle_shell_resize`), `catchup.rs` the catch-up brief (`build_catchup_brief`, `is_valid_pane_id`) |
-| `src/daemon/hook.rs` | 9 IPC hook notification handlers (`NotifyActivity`, `NotifyComplete`, `NotifyFocus`, etc.) |
 | `src/daemon/auto_name.rs` | Session auto-naming (`suggest_session_name`, `diff_sessions_summary`) |
 | `src/daemon/prompt.rs` | Prompt assembly via `PromptCtx` (`build_first_turn_prompt`, `build_subsequent_turn_prompt`) |
 | `src/daemon/stream.rs` | AI event streaming loop (`run_conversation_loop`); tool execution; response persistence |
@@ -53,10 +52,9 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/executor/ghost_sandbox.rs` | A ghost run's sandbox: `ensure_sandbox` (fail-closed, created once per run), `run_ghost_in_sandbox`, `stage_script`, `forget_and_teardown`, `is_created` |
 | `src/daemon/executor/chat_sandbox.rs` | A chat session's sandbox for `wait: false`: `ensure_chat_sandbox`, the idle reaper (`reap_idle_chat_sandboxes`, 600 s grace) |
 | `src/shell/sbx_backend.rs` | `SbxBackend`: a shell host whose child is `sbx exec`, routing STOP/CONT/close into the VM and sending INT/TERM as a PTY `^C` |
-| `src/daemon/background/` | Background execution: `run.rs` `run_background_in_window()`, `gc.rs` `notify_job_completion()` + `gc_bg_windows()` + `OwnedJobInfo`, `helpers.rs` output capture/archive and session notification |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
 | `src/daemon/digest.rs` | Session digest: structured compaction of conversation history at 30 messages; scans events.jsonl + filesystem for artifacts |
-| `src/daemon/ghost.rs` | `GhostManager::start_session()` — allocates `de-gs-bg-*` / `de-gs-sj-*` / `de-gs-ir-*` windows for autonomous remediation; briefing generation on clean exit |
+| `src/daemon/ghost.rs` | `GhostManager::start_session()` — autonomous remediation runs headless in the daemon; briefing generation on clean exit |
 | `src/daemon/briefing.rs` | G4 briefing generation: `generate_and_save_briefing()`, `read_briefing()`, `clear_briefing()`; AI summarization + masking + file I/O |
 | `src/daemon/policy.rs` | `GhostPolicy` — runtime enforcement of `auto_approve_scripts` / `auto_approve_read_only` for ghost shells |
 | `src/daemon/utils/` | Daemon helpers, one file per concern: `event_log.rs` `log_event()` + dated-segment readers + `sweep_event_segments()`, `log_rotation.rs` `rotate_log_file()` + `reattach_log_fds()`, `warnings.rs` `retention_warnings()`, `shell.rs` escaping + `is_interactive_command()`/`interactive_destination()`, `sudo.rs` `command_has_sudo()` + fingerprint-prompt detection, `output.rs` `normalize_output()`, `response.rs` IPC response senders + `fire_notification()`, `host.rs` `daemon_hostname()`, `keepalive.rs` the turn-wide keepalive contract (`maybe_keepalive`/`keepalive` helpers). `mod.rs` also holds `sweep_session_archives()`, `sweep_pane_logs()`, `sweep_agent_mailboxes()`, `sweep_shell_logs()` |
@@ -92,15 +90,14 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/memory_prompt.rs` | G5 tiered memory prompt: stable ambient block + dynamic turn-relevant block |
 | `src/header.rs` | Inline header parser/renderer for all artifact types; `inject_yaml_session_origin()` / `inject_comment_session_origin()` |
 | `src/sys_context.rs` | One-shot host audit (OS, uptime, memory, processes, shell history); `OnceLock` |
-| `src/cli/` | Terminal rendering, readline input, session-level approval state, chat/ask/notify commands; `/panes` inspector (`render_pane_inspector`) |
+| `src/cli/` | Terminal rendering, readline input, session-level approval state, chat/ask commands; `/panes` inspector (`render_pane_inspector`) |
+| `src/cli/doctor.rs` | `daemoneye doctor` — one line per readiness check (config, api key, shell, daemon, sandbox, hosts, tmux); exit 1 only on a FAIL; tmux is optional and never fails it |
 | `src/agents/mod.rs` | Named agents: `AgentConfig`, CRUD, validation, `apply_agent_to_ghost_config()` |
 | `src/agents/policy.rs` | `ToolPolicy` — agent-level allow/deny tool lists, `permits()`, `format_tool_restriction_block()` |
 | `src/agents/mailbox.rs` | G5 mailbox: `MailboxResult`, `write_mailbox()`, `read_mailbox()` for agent-to-agent delegation |
 
 ### Global statics in daemon
 
-- `BG_DONE_TX`: `OnceLock<broadcast::Sender<String>>` — sends pane_id on activity; shared by foreground completion watchers.
-- `FG_HOOK_COUNTER`: `AtomicUsize` — unique `alert-activity[N]` hook slot per concurrent watcher.
 - `DAEMON_START`: `OnceLock<Instant>` — recorded at daemon startup; used by `daemon_uptime_secs()` for `daemoneye status`.
 
 ### Session context format
@@ -205,7 +202,10 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
   the file is diagnostic payload only — never branch on it. Holding the lock is
   what authorizes unlinking a socket at `default_socket_path()`.
 - All mutex lock sites use `.unwrap_or_log()` (the `UnpoisonExt` trait from `src/util.rs`) to recover from poisoned locks — do not change these to `.unwrap()`. The trait logs an ERROR before returning the inner value so poison events are visible in `daemon.log`.
-- tmux window names for daemon-managed windows use the format `{prefix}{pane_num}-{unix_ts}-{cmd_slug}`, e.g. `de-bg-42-1712937600-cargo-build`. Prefixes: `de-bg-*` (interactive background execution), `de-sj-*` (regular scheduled jobs), `de-gs-bg-*` (ghost shell background commands, webhook/interactive), `de-gs-sj-*` (ghost shell background commands, scheduler-triggered), `de-gs-ir-*` (ghost shell incident-response main windows). Prefixes are used for GC filtering and listing. The pane number (`%42` → `42`) uniquely identifies the tmux pane; the unix timestamp replaces the old `YYYYMMDDHHMMSS` format; the command slug is the sanitized basename of the first meaningful command word (max 30 chars).
+- Legacy `de-*` tmux windows (e.g. from a daemon older than 2.0) are still
+  filtered out of context by `is_daemon_window` (`src/daemon/mod.rs`), and
+  `daemoneye schedule windows` lists the leftovers. The daemon creates no
+  windows of its own.
 - Liveness probes (`daemon_liveness()`) are reports, never authorizations. No
   code may unlink a socket or remove a file based on a `DaemonLiveness` variant
   — instance ownership is decided only by the `InstanceLock` flock.
@@ -219,12 +219,12 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 
 ### Ghost Shell conventions
 
-- **Detection signal**: `watchdog_system_prompt()` (`runbook.rs`) asks the watchdog model to emit `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` as the final line of its response. `parse_ghost_trigger()` in `webhook.rs` parses this (case-insensitive, last matching line wins) with fallback to legacy `ALERT` keyword check. `evaluate_watchdog_response()` (also in `webhook.rs`) is the shared helper used by both webhooks and scheduled jobs.
+- **Detection signal**: `watchdog_system_prompt()` (`runbook.rs`) asks the watchdog model to emit `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` as the final line of its response. `parse_ghost_trigger()` in `webhook/process.rs` parses this (case-insensitive, last matching line wins) with fallback to legacy `ALERT` keyword check. `evaluate_watchdog_response()` (same file) is the shared helper used by both webhooks and scheduled jobs.
 - **Turn loop**: `trigger_ghost_turn()` in `ghost.rs` runs the ghost AI loop. Each iteration creates a **fresh** `(ai_tx, ai_rx)` channel — the sender is moved (not cloned) into the spawned task so the channel closes when the task exits and `recv()` unblocks. A `timeout_at` guard prevents hung turns.
 - **Turn budget**: `GhostConfig.max_ghost_turns` (runbook frontmatter `max_ghost_turns: N`; 0 = use daemon default of 20). Enforced in `trigger_ghost_turn`; a warning is logged if the limit is hit.
 - **Policy enforcement**: `GhostPolicy` (from `GhostConfig`) is passed through `execute_tool_call()`. Ghost shells without a policy return an error rather than proceeding. `ToolPolicy` (agent-level) is also enforced — both must pass independently.
 - **Concurrency cap**: `check_ghost_capacity()` (`daemon/ghost.rs`) returns false when `stats::get_ghosts_active() >= config.ghost.max_concurrent_ghosts`. Default cap is 3; set `max_concurrent_ghosts = 0` in `[ghost]` config to disable. Checked before spawning from both webhooks and scheduled jobs.
-- **Lifecycle events**: `inject_ghost_event()` in `webhook.rs` injects `[Ghost Shell Started]` / `[Ghost Shell Completed]` / `[Ghost Shell Failed]` / `[Ghost Shell Skipped]` into all active sessions so they appear in catch-up briefs.
+- **Lifecycle events**: `inject_ghost_event()` in `webhook/process.rs` injects `[Ghost Shell Started]` / `[Ghost Shell Completed]` / `[Ghost Shell Failed]` / `[Ghost Shell Skipped]` into all active sessions so they appear in catch-up briefs.
 - **Session validation**: `session_exists()` (`tmux/session.rs`, wraps `tmux has-session -t`) is called before the AI loop to guard against stale session names.
 - **Scheduled ghost jobs**: `ActionOn::Ghost { runbook }` in `scheduler.rs` routes scheduled jobs through `GhostManager::start_session()` + `trigger_ghost_turn()`. The `schedule_command` AI tool accepts a `ghost_runbook` param to schedule these jobs. Old `ActionOn::Command` entries in `schedules.json` are still loaded (backwards-compat) but deprecated.
 - **Sudoers installation**: `daemoneye install-sudoers <script-name>` writes a NOPASSWD rule to `/etc/sudoers.d/daemoneye-<name>` allowing the current user to run the script without a password. Required for ghost shells and scheduled jobs that need sudo access to pre-vetted scripts.
@@ -266,8 +266,9 @@ sandbox is always sbx — and docker-only keys warn at load.
 - **Signals:** pause/resume act inside the VM; cancel is a PTY `^C`.
 - **Startup** adopts sandbox shells (sidecar) and sweeps only `de-*`
   sandboxes no live record owns.
-- **Not sandboxed:** foreground commands, `[hosts.*]` commands, and
-  broker-native tools. **Refused while enabled:** anything that would run
-  in a tmux window (`backend = "tmux"`, an unresolved ghost `ssh_target`).
+- **Not sandboxed:** foreground commands and broker-native tools. Commands on
+  a configured `[hosts.*]` host run there, in that host's own sandbox when
+  one is configured. **Refused:** an unresolved ghost `ssh_target` — a
+  runbook target that names no configured host — in every mode.
 
 @REXYMCP.md

@@ -149,7 +149,8 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         intent: LifecycleIntent::ClearAtStartup,
         config_key: None,
         implemented: ImplementationStatus::Implemented,
-        note: "cleared at daemon start; no persistence expected",
+        note: "legacy tmux pipe-pane capture dir (the daemon installs none); the startup \
+               sweep only removes de-pipe-*.log leftovers from an older daemon",
         lazy: false,
     },
     // ── Derived indexes ────────────────────────────────────────────────────────

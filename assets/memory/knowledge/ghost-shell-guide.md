@@ -78,10 +78,8 @@ later commands and closed when the ghost exits:
   named after the ghost's agent (default: no egress). A refused command's
   result starts `sandbox unavailable:` — do not retry it on the host.
 - **Sandbox off:** on the daemon host, or on the configured `[hosts]`
-  entry the runbook's `ssh_target` names.
-- **`backend = "tmux"`** (opt-out) and an `ssh_target` naming no
-  configured host use tmux windows `de-gs-bg-*` (webhook/interactive) and
-  `de-gs-sj-*` (scheduled) — both refused while the sandbox is enabled.
+  entry the runbook's `ssh_target` names. An `ssh_target` that names no
+  configured host is refused before the ghost starts, in every mode.
 
 `list_shells` / `read_shell` show a ghost's shells (owner `ghost:…`).
 

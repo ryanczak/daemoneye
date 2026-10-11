@@ -54,7 +54,7 @@ automation, configuration, and logs live under it.
         events-<date>.jsonl  ← structured event log (dated segments, searchable via search_repository)
       panes/                 ← archived background-window scrollback (.log files)
       shells/                ← asciicast shell recordings (*.cast)
-      pipe/                  ← live pipe-pane capture logs (ephemeral, ANSI-stripped)
+      pipe/                  ← legacy tmux capture dir, swept at startup
       sessions/
         <id>.jsonl           ← per-session JSONL conversation history (ephemeral)
       runs/                  ← per-run turn logs (<run-id>.jsonl, M24)
@@ -88,8 +88,6 @@ Use dedicated CRUD tools for all daemoneye-managed artifacts:
   use `read_file` for raw tail or line-range reads.
 - `var/log/daemon.log` — daemon internals; useful for debugging stuck commands or
   missed hooks.
-- `var/log/pipe/<id>.log` — live terminal capture for the active foreground pane.
-  Up to 50 KB, ANSI-stripped. Used by `read_file` with a local `target_pane`.
 - `var/log/sessions/<id>.jsonl` — ephemeral per-session history. Importable with
   `daemoneye session import <id> --name <name>`.
 - `var/run/schedules.json` — raw schedule store; prefer `list_schedules` tool.

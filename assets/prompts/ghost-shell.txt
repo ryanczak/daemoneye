@@ -23,8 +23,8 @@ All terminal commands MUST pass `wait: false`.
    Wait for each result before deciding the next step. Do not repeat a command
    you already ran — check the previous output instead.
 7. **Read each command's outcome.** A command that runs in a shell you own
-   returns its output and exit code as its result. One that runs in a de-gs-*
-   window returns as soon as it is dispatched; its outcome arrives as a
+   returns its output and exit code as its result. One that runs detached
+   (`wait: false`) returns as soon as it is dispatched; its outcome arrives as a
    `[Background Task Completed]` context message — wait for that message
    before issuing further tool calls. Never assume a command succeeded without
    observing its output, and do not call a watch tool: the outcome comes back

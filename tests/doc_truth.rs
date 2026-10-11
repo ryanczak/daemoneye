@@ -756,6 +756,80 @@ fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Wording from the tmux-execution design phases 01–06 removed. Runtime docs
+/// that still use one describe a system that no longer exists: commands run in
+/// PTY shells, tmux is an optional read-only observer, and there is no daemon
+/// hook, background window or notify path to document. The generic `de-*`
+/// (the legacy-window filter and `schedule windows`) is deliberately NOT on
+/// this list.
+const RETIRED_TMUX_EXECUTION_TERMS: &[&str] = &[
+    "send-keys",
+    "send_keys",
+    "de-bg-",
+    "de-gs-",
+    "de-sj-",
+    "pipe-pane",
+    "set-hook",
+    "pane-died",
+    "daemoneye notify",
+    "hook.rs",
+    "notify.rs",
+    "daemon/background",
+    "BG_DONE_TX",
+    "FG_HOOK_COUNTER",
+    "into `tmux`",
+    "into tmux",
+];
+
+#[test]
+fn runtime_docs_describe_no_tmux_execution() {
+    let mut files = Vec::new();
+    walk_files(ASSETS_DIR.as_ref(), &mut files).expect("walk assets/");
+    assert!(
+        !files.is_empty(),
+        "the asset walk found nothing — `{ASSETS_DIR}` is missing or empty"
+    );
+    files.sort();
+
+    let mut violations: Vec<String> = Vec::new();
+    for path in &files {
+        let text = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("read asset {}: {e}", path.display()));
+        let rel = path
+            .strip_prefix(ASSETS_DIR)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| path.display().to_string());
+        for term in RETIRED_TMUX_EXECUTION_TERMS {
+            for (i, line) in text.lines().enumerate() {
+                if line.contains(term) {
+                    violations.push(format!("assets/{rel}:{}: {term}", i + 1));
+                }
+            }
+        }
+    }
+
+    for doc in ["CLAUDE.md", "README.md"] {
+        let text = std::fs::read_to_string(format!("{REPO_ROOT}{doc}")).expect("read runtime doc");
+        for term in RETIRED_TMUX_EXECUTION_TERMS {
+            for (i, line) in text.lines().enumerate() {
+                if line.contains(term) {
+                    violations.push(format!("{doc}:{}: {term}", i + 1));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "runtime docs still describe tmux execution ({} hits):\n{}\n\
+         Commands run in PTY shells; tmux is an optional read-only observer. \
+         Rewrite these passages to what runs now instead of naming the removed \
+         machinery.",
+        violations.len(),
+        violations.join("\n")
+    );
+}
+
 #[test]
 fn seeded_assets_name_no_retired_tools() {
     let mut files = Vec::new();

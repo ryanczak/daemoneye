@@ -309,7 +309,7 @@ pub static RUNTIME_TREE: TreeNode = TreeNode {
                         },
                         TreeNode {
                             name: "pipe/",
-                            note: Some("live pipe-pane capture logs (ephemeral, ANSI-stripped)"),
+                            note: Some("legacy tmux capture dir, swept at startup"),
                             blank_before: false,
                             children: &[],
                         },
