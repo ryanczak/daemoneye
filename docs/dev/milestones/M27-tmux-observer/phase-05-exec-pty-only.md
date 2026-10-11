@@ -1,7 +1,7 @@
 # Phase 05: exec-pty-only — no command ever runs through tmux
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** in-progress
+**Status:** done
 **Depends on:** phase-02, phase-04
 **Tags:** language=rust, kind=refactor, size=l
 
@@ -205,3 +205,141 @@ there is no partial work to resume. The spec described *what* to delete but
 not a way in. The executor tried to understand the whole call graph before
 its first edit. The refinement is the § Edit order block: an ordered,
 compiler-driven deletion recipe with a 15-turn first-edit rule.
+
+### Update — 2026-10-10 (escalation 2)
+
+**Chosen lever:** resume.
+**Rationale:** Run 2 followed the edit order and did most of the phase
+(−2,638 lines over 16 files, `src/daemon/background/` deleted, and
+`cargo build` clean). Then it tripped NoProgressStall at turn 322 while it
+was still editing. Its edits were python heredocs run through `bash`, and
+the governor counts every `bash` call as read-only, so this was a false
+stall.
+
+Architect gates on the partial tree:
+- build: ok.
+- clippy: fails on the `include_str!` in `doc_truth.rs`, a duplicate
+  `#[test]` at `executor/mod.rs:2211`, a type error in the
+  `run_foreground` refusal test (`ReadHalf<SimplexStream>` is not
+  `AsyncBufRead`), and `manifest_tests.rs` calling the deleted
+  `related_knowledge_hints`.
+- fmt: fails.
+- The criterion grep still hits 10 lines.
+
+**Scope accepted:** removing `related_knowledge_hints` (dead after
+`run_foreground`) and `BG_COMMAND_MAP` in `hook.rs` (dead after
+`background/`). Both were compiler-driven.
+
+### Update — 2026-10-10 (escalation 3)
+
+**Chosen lever:** session takeover.
+**Rationale:** Third NoProgressStall on this phase (turn 387), after a
+refined re-dispatch and a resume with exact guidance. This one was genuine:
+after its last edit at call 266 the executor spent 115 `bash` greps looking
+for a fixture to drive `run_background` for the ghost `ssh_target` test, and
+made no edit. Same class after refinement is the takeover row. What remained
+was small: two tests, the evidence block, the commit.
+
+Architect gates on the partial tree before takeover:
+- fmt, build, clippy: clean. Criterion grep: no hits. `background/`: gone.
+- Two § Tests missing (`old_tmux_backend_config_still_loads`,
+  `ghost_unresolved_ssh_target_is_refused_without_sandbox`).
+- The executor's two refusal tests in `foreground.rs` **hung forever**: they
+  wrote the refusal into a 64-byte `tokio::io::simplex` whose read half was
+  dropped.
+- `get_pane_remote_host_still_has_its_callers` failed: it pinned the
+  `foreground.rs` caller that `run_foreground` took with it.
+- Ten deleted tests covered code that survives: the four-test
+  `refusal_gate_tests` module (`run_background`'s `hosts:` fence and
+  `sudo_scripts` gate, no tmux needed), the three `exit_status_annotation`
+  tests (function moved to `shell_exec.rs`), and the three `is_shell_prompt`
+  tests (function lives in `shell/status.rs`). Count noted below.
+
+### Update — 2026-10-10 (takeover complete)
+
+**Executor:** Claude (direct), on top of the executor's run-3 tree.
+**Commit:** `d6e9667e` refactor: no command runs through tmux (M27 phase-05).
+
+What the takeover added to the executor's work:
+- `old_tmux_backend_config_still_loads` (`src/config/mod.rs`): an old
+  `backend = "tmux"` config parses, keeps the value, validates without
+  panicking, and the executor no longer reads `execution.backend`.
+- `ghost_unresolved_ssh_target_is_refused_without_sandbox`
+  (`foreground.rs`): with the sandbox off, an unresolved `ssh_target` takes
+  none of the three PTY branches, and the tail's refusal names the target.
+  The tail's text is now the pure `no_pty_route_refusal`, so the test needs
+  no config, approval or stats. Mutation check: making the function ignore
+  `ssh_target` turns the test red (`FAILED. 0 passed; 1 failed`); restored.
+- `chat_command_without_session_is_refused` is reachable: `refuse_foreground`
+  handles a chat call with no `session_id`. Kept.
+- Fixed the hang in the executor's two refusal tests (`tokio::io::sink()`
+  in place of a dropped-reader `simplex`).
+- `get_pane_remote_host_still_has_its_callers` now pins the one live caller
+  (`prompt.rs`) and the absence of the deleted `foreground.rs` one.
+- Restored the ten tests whose code survives (see escalation 3).
+
+**Count.** `2332 − 42 + 12 = 2302` passed; ignored 13 before and after.
+Taken from `cargo test -- --list` at the parent commit and at `d6e9667e`.
+
+Moved or renamed (6 + 2, counted in both columns):
+- `foreground::tests::exit_status_annotation_{nonzero_notes_code,unknown_is_silent,zero_is_silent}`
+  → `shell_exec::tests::…`
+- `foreground::tests::is_shell_prompt_{recognises_common_shells,rejects_commands,trims_whitespace}`
+  → `shell::status::tests::…`
+- `ghost_remote::tests::a_ghost_reaches_the_pty_path_only_on_a_resolved_host_with_the_pty_backend`
+  → `a_ghost_reaches_the_remote_pty_only_on_a_resolved_host`
+- `ghost_remote::tests::a_local_ghost_reaches_the_pty_path_only_unsandboxed_with_the_pty_backend`
+  → `a_local_ghost_reaches_the_pty_only_unsandboxed_and_unresolved`
+
+Deleted with their code (34):
+- `config::tests::execution_invalid_value_falls_back_to_the_default`,
+  `execution_tmux_is_the_only_opt_out` (`uses_pty`).
+- `background::gc::tests::` × 8 (`gc_*`), `background::helpers::tests::`
+  × 4 (`trim_*`), `background::run::tests::tmux_window_refusal_names_the_fix`.
+- `foreground::run_background_resolves_ghost_script_paths` (drove a tmux
+  window), `foreground::tests::looks_like_shell_prompt_*` × 7.
+- `executor::tests::exclude_chat_pane_sorts_by_id`,
+  `excludes_chat_pane_from_selection`, `keeps_all_panes_when_no_chat_pane`
+  (`find_best_target_pane`).
+- `ghost::tests::an_empty_tmux_session_is_never_checked`,
+  `ghost_tmux_session_starts_no_tmux_when_tmux_is_off`.
+- `manifest::tests::hints_matches_summary_text`, `related_hints_*` × 5
+  (`related_knowledge_hints`).
+
+New (4): `old_tmux_backend_config_still_loads`,
+`ghost_unresolved_ssh_target_is_refused_without_sandbox`,
+`chat_command_without_session_is_refused`,
+`ghost_turn_without_a_pty_shell_is_refused`.
+
+**End-to-end verification** (run once, against `d6e9667e`):
+
+```
+background_dir=1
+0
+old_tmux_backend_config_still_loads: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2247 filtered out; finished in 0.00s
+ghost_unresolved_ssh_target_is_refused_without_sandbox: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2247 filtered out; finished in 0.00s
+chat_command_without_session_is_refused: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2247 filtered out; finished in 0.04s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+fmt_exit=0
+passed=2302 failed=0
+ 27 files changed, 400 insertions(+), 3817 deletions(-)
+```
+
+PASTE MATCH: yes
+
+### Review verdict — 2026-10-10
+
+- **Verdict:** escalated
+- **Bounces:** none (three escalations: refined re-dispatch, resume, takeover)
+- **Executor:** GLM-5.3-Flash (runs 1–3), then Claude (direct)
+- **Scope deviations:** `related_knowledge_hints` and `BG_COMMAND_MAP`
+  removed (compiler-driven, accepted at escalation 2).
+- **Calibration:** Run 3's stall was genuine: the executor could not find a
+  way to drive `run_background` for a unit test and searched for 115 calls.
+  The spec named the test's behaviour but not its seam; "extract the
+  refusal text and test the predicates" would have been one sentence. The
+  executor also deleted ten tests whose code survives, and wrote two tests
+  that hang. A deletion phase needs a criterion that pins "tests of
+  surviving code are moved, not deleted". Runs 1 and 2 were the spec gap
+  and the governor bug (rexyMCP #14). Every run also had an empty task list
+  (rexyMCP #15).
