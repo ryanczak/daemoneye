@@ -266,9 +266,8 @@ sandbox is always sbx — and docker-only keys warn at load.
 - **Signals:** pause/resume act inside the VM; cancel is a PTY `^C`.
 - **Startup** adopts sandbox shells (sidecar) and sweeps only `de-*`
   sandboxes no live record owns.
-- **Not sandboxed:** foreground commands and broker-native tools. Commands on
-  a configured `[hosts.*]` host run there, in that host's own sandbox when
-  one is configured. **Refused:** an unresolved ghost `ssh_target` — a
+- **Not sandboxed:** foreground commands, `[hosts.*]` commands, and
+  broker-native tools. **Refused:** an unresolved ghost `ssh_target` — a
   runbook target that names no configured host — in every mode.
 
 @REXYMCP.md

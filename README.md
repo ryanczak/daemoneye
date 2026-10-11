@@ -634,7 +634,7 @@ On first run all seeded files (binary, memories, prompt) are written automatical
         <id>.archive.jsonl ← append-only archive of every message (source for recall_context)
         <id>.epochs.jsonl ← epoch + chapter records (compaction summaries and tallies)
         <id>.meta.json    ← session continuity state (turn counters, token calibration)
-      panes/              ← archived background-command output (one .log per job)
+      panes/              ← legacy; swept at startup (nothing writes here now)
     run/
       daemoneye.sock      ← Unix domain socket (created when the daemon starts)
       pane_prefs.json     ← per-session target-pane preferences
