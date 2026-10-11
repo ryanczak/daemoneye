@@ -1,7 +1,7 @@
 # Bug 1 on phase-06d: the audit-log sample was rewritten to a record format the code does not write
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (18ef4184)
 **Filed:** 2026-10-11
 
 ## What's wrong

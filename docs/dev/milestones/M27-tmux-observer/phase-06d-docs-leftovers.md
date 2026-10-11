@@ -1,7 +1,7 @@
 # Phase 06d: docs-leftovers — the last stale tmux and foreground-pane text
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-06e (dispatch 06e first)
 **Tags:** language=markdown, kind=docs, size=s
 
@@ -459,3 +459,26 @@ kill: (-167903): No such process
 **Commit:** 18ef41841353335567fcef52813e537f6d12629a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-11
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bugs: bug-06d-1, major)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** two accurate README extras were kept: the `/panes`
+  bullet ("pinned pane marked") and the `/pane` slash-command row. The third
+  extra invented an audit-log record format and was reverted under bug-06d-1
+  (`18ef4184`, three lines, exactly the pre-phase text). Reviewer re-run:
+  fmt, build, clippy clean; `passed=2309 failed=0`; gate 1 passed; every
+  acceptance grep passes.
+- **Carried to 07:** README's audit-log sample is pre-existing fiction. It
+  shows `[ts] key=value` lines, but `log_command` writes a JSON `command`
+  event (`session`, `mode`, `pane`, …). README's "Remote script streaming"
+  paragraph may also be unreachable, and the live check decides it.
+  FR-1.2.2 (c)'s `[BACKGROUND PANE]` / `de-*` classification also remains,
+  as the executor noted.
+- **Calibration:** a work list that says "edit only these rows" still drew
+  three unlisted edits, and one of them invented a fact. That is the third
+  inferred-claim defect in M27 (bug-06b-1, bug-06d-1, plus 06c's near miss).
+  Candidate fold: a docs-phase spec should say "any edit outside the table is
+  a bounce", not "list it in the Update Log".
