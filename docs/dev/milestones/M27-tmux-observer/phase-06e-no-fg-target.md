@@ -1,7 +1,7 @@
 # Phase 06e: no-fg-target — the prompt stops naming a foreground pane
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-06c
 **Tags:** language=rust, kind=bugfix, size=s
 
@@ -312,3 +312,24 @@ kill: (-92493): No such process
 **Commit:** d5e8669628e61836fa2c2e0f9571f1de0c8e034b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-11
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark. The
+  "Claude (Sonnet 4.5, headless)" in the started entry is wrong; the
+  executor misnamed itself.
+- **Scope deviations:** `PromptCtx.default_target_pane` was removed once it
+  went dead, as the Gotcha allowed. As a result,
+  `no_prompt_names_a_foreground_target` cannot set a target pane. It guards
+  the prompt strings with a pane context present, which still catches a
+  regression that reintroduces the text. Reviewer re-run: fmt, build, clippy
+  clean; `passed=2309 failed=0`; both acceptance greps print 0; the three
+  remaining `FOREGROUND TARGET` hits in `src/` are absence assertions.
+- **Nit, not bounced:** both arms of the drift `match` in `ask.rs` now just
+  adopt `client_target_pane`. It could be written as
+  `if let Some(new) = &client_target_pane`. The behaviour is identical.
+- **Calibration:** 176 turns for a size=s code phase. The executor pasted
+  the end-to-end transcript itself because the spec told it the server
+  would not. Keep that sentence in future specs.
