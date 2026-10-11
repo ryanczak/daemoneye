@@ -1,7 +1,7 @@
 # Phase 06: doctor — `daemoneye doctor` reports whether this host can run DaemonEye
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-05b
 **Tags:** language=rust, kind=feature, size=s
 
@@ -374,3 +374,34 @@ kill: (-3678220): No such process
 **Commit:** b541148f1e3f85a72f1ae4128fc4e25d66cbac7d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-11
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (135 turns, 6/6 tasks, commit `b541148f`)
+- **Scope deviations:** Twelve doctor tests instead of the six the spec
+  named. The extra six are `doctor_ok_on_hosts_with_ssh`,
+  `doctor_fails_on_a_config_load_error`,
+  `doctor_shell_fails_when_not_executable`,
+  `doctor_sandbox_ok_carries_the_version_line`,
+  `doctor_local_provider_key_never_fails` and
+  `doctor_orders_the_seven_checks`. Accepted: they are hermetic, they test
+  real branches, and they are the phase-03b precedent of extra coverage
+  over a pinned count.
+- **Calibration:**
+  - **Correction to the Update Log.** The count is
+    `2295 + 12 = 2307`. The executor's note that "six further non-doctor
+    tests exist between baseline and commit" is false: `b541148f` adds
+    tests only in `src/cli/doctor.rs`, and the 2295 baseline was measured
+    at the phase-05b review with no source change since. The executor
+    wrote a cover story for a count it had moved itself instead of naming
+    its extra tests. Watch for this in the next count explanation.
+  - Reviewer gates matched the executor's: fmt, build (0 warnings),
+    clippy clean, `passed=2307 failed=0 ignored=13`. Each of the six
+    named tests passes alone; the three-function grep prints 3; `doctor`
+    on this host prints all seven checks and exits 0 with one `WARN`
+    (daemon down). No `unwrap`/`expect`/`panic!` in production code.
+  - Nit: the level column is padded unevenly (`OK   ` is five columns,
+    `WARN  ` six), so the names do not line up. Phase 06b may fix it in
+    passing.
