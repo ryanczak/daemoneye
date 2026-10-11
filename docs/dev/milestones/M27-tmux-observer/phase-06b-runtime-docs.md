@@ -1,7 +1,7 @@
 # Phase 06b: runtime-docs — what the model and the user read says tmux is optional
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** in-progress (bounced: bug-06b-1)
 **Depends on:** phase-06
 **Tags:** language=markdown, kind=docs, size=m
 
@@ -167,6 +167,11 @@ names.
       plus the one new test. If you add another test, name it and say why.
 - [ ] The Update Log contains the § End-to-end verification output, every
       line as printed, and a line `PASTE MATCH: yes`.
+- [ ] **bug-06b-1:** `grep -n "host's own sandbox" CLAUDE.md` prints
+      nothing, and `grep -n '`\[hosts\.\*\]` commands' CLAUDE.md` prints
+      one line.
+- [ ] **bug-06b-1:** `grep -n 'archived background-command output' README.md`
+      prints nothing.
 
 ## End-to-end verification
 
@@ -461,3 +466,33 @@ kill: (-3960728): No such process
 **Commit:** 130d294b1ee9d1cb7a703193f8a493192765522b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-10-11 (bounce 1)
+
+**All four gates are green and the tree is clean. That is expected and is
+NOT evidence the phase is done.** Everything else in this phase is
+approved: the `doc_truth` gate, the seeded prompts and memories, README,
+CLAUDE.md, and the `src/config/` legacy-path change. Do not redo any of it.
+
+There are exactly **two edits** left, both in bug-06b-1:
+
+1. In `CLAUDE.md`, § Sandbox, replace the "Not sandboxed" bullet with:
+
+   ```markdown
+   - **Not sandboxed:** foreground commands, `[hosts.*]` commands, and
+     broker-native tools. **Refused:** an unresolved ghost `ssh_target` — a
+     runbook target that names no configured host — in every mode.
+   ```
+
+2. In `README.md`, the runtime directory tree, replace the `panes/` line
+   with:
+
+   ```
+         panes/              ← legacy; swept at startup (nothing writes here now)
+   ```
+
+   Keep the column alignment of the surrounding tree lines.
+
+Finish condition: both bug-06b-1 criteria above pass, and `cargo test`
+reports `passed=2308`, **not** 2309. This fix adds no test. Then make one
+`docs:` commit.
