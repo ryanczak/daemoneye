@@ -1,7 +1,7 @@
 # Phase 06d: docs-leftovers — the last stale tmux and foreground-pane text
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** in-progress (bounced: bug-06d-1)
 **Depends on:** phase-06e (dispatch 06e first)
 **Tags:** language=markdown, kind=docs, size=s
 
@@ -61,6 +61,9 @@ Then: full gates, § End-to-end verification once, one `docs:` commit.
       This phase adds no test.
 - [ ] The Update Log has § End-to-end verification's output and
       `PASTE MATCH: yes`.
+- [ ] **bug-06d-1:** `grep -n 'shell=s1\|shell id ·' README.md` prints
+      nothing, and `git diff 4593e8ae~1 -- README.md | grep -c 'mode=background pane=-'`
+      prints `0`. The audit-log sample is back to its pre-phase text.
 
 ## End-to-end verification
 
@@ -289,3 +292,20 @@ kill: (-125765): No such process
 **Commit:** 3cc74d27eb1443c87ab0cf4688dff226e0e0b363
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-10-11 (bounce 1)
+
+**All gates are green and the tree is clean. That is expected and is NOT
+evidence the phase is done.** Rows 1–10 are approved. So are your
+`/panes` and `/pane` row wording extras. Do not redo any of them.
+
+There is exactly **one edit** left (bug-06d-1). In `README.md`'s audit-log
+section, put back the pre-phase text of the two sample command records and
+the `Fields for command records:` line. Do not invent a new format. Copy
+the lines out of `git show 4593e8ae~1:README.md`: the sample lines start
+`[1748000000] session=abc123 mode=background pane=-` and
+`[1748000001] session=abc123 mode=foreground pane=%3`. Leave the `ai_cost`
+line between them alone.
+
+Finish condition: both bug-06d-1 criteria above pass, and `cargo test`
+reports `passed=2309`, **not** 2310. Then make one `docs:` commit.
