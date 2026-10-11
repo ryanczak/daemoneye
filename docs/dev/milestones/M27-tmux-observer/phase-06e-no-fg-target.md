@@ -150,7 +150,7 @@ $ cargo test no_prompt_names_a_foreground_target 2>&1 | grep -E '^test result: o
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2251 filtered out; finished in 0.10s
 
 $ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
-    Finished `dev` profile [unoptimized + debuginfo] target (s in 0.16s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
 
 $ cargo fmt --all --check; echo "fmt_exit=$?"
 fmt_exit=0
