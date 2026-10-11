@@ -1,7 +1,7 @@
 # Phase 06c: design-docs — the design docs say commands run in PTY shells and tmux only observes
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06b
 **Tags:** language=markdown, kind=docs, size=m
 
@@ -265,3 +265,139 @@ Out of scope (left alone, per the work list's rules):
 - `README.md`'s sentence under the `[daemon]` table ("`daemoneye chat`
   … will open a new chat window inside the managed session and
   exec-attach to it") — unflagged by the gate and outside the table rows.
+
+### Update — 2026-10-11 19:24 (complete, server-authored)
+
+**Summary:** **Summary:** Executed the § Work list in order: confirmed the kept gate edit (task 1, the `doc_truth` widening was already on disk — I ran the gate, got 32 hits, and used them as the checklist), then rewrote all rows one file at a time — architecture.md (9 rows), PRODUCT_DEFINITION.md (opening sentence + both execution-mode bullets), REQUIREMENTS.md (12 FRs, IDs preserved, FR-1.1.3/FR-1.4.4 retired in one line), security.md §6, README + seeded config + `DaemonConfig::tmux_session` doc comment (comment only), and CLAUDE.md's `run_terminal_command` opening clause. Ran `cargo fmt --all` before staging and committed everything in one `docs:` commit (`c2b2b5eb`); the tree is clean. E2E, run once: `doc_truth` 16 passed/0 failed with the gate naming all four design docs; embeds-grep 0 lines (was 2), creates-grep 0 (was 3), `new-session` grep 0 (was 1), CLAUDE.md row hits 0 (was 1); clippy `-D warnings` and `cargo fmt --all --check` exit 0; `cargo test` passed=2308 failed=0, unchanged. **Notes for review:** the per-line work list was exhaustive and I added no rewrites beyond it; leftover stale passages that the gate does not catch and the table does not list are enumerated in the phase doc's Update Log progress entry (FR-1.2.2's `capture-pane`/`/pane` detail, FR-1.2.17(b)'s `de-incident-…` ghost window, architecture's §5 "Foreground/background execution" capability bullet, README's `[daemon]` chat-attach sentence) — they need a future phase, not this one. The completion bookkeeping (status flip to `review`, completion Update Log entry, end-to-end verification entry with `PASTE MATCH: yes`) is authored by the server, as the contract assigns it.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+iled; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 16 tests
+test approval_gated_tools_all_exist ... ok
+test claude_md_tools_table_counts_are_accurate ... ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test readme_documents_every_chat_slash_command ... ok
+test docs_document_the_reindex_command ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test config_pricing_round_trip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_injects_on_next_run ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (4168210): No such process
+kill: (-4168986): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +2 -2
+- `assets/etc/config.toml` — +1 -1
+- `docs/PRODUCT_DEFINITION.md` — +3 -3
+- `docs/REQUIREMENTS.md` — +13 -18
+- `docs/architecture.md` — +23 -26
+- `docs/dev/milestones/M27-tmux-observer/phase-06c-design-docs.md` — +42 -0
+- `docs/security.md` — +2 -7
+- `src/config/types.rs` — +4 -8
+
+**Commit:** c2b2b5eb19723f24f3eacdf25801d0634443f590
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
