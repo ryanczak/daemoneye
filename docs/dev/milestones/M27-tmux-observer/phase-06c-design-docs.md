@@ -205,7 +205,8 @@ calls. It landed the gate (step 1, kept) and then read `src/` to check
 pane-target behaviour in `architecture.md`. The spec had asked it to judge
 about 40 rewrites against a fact list that did not cover most of them. The
 refinement adds § Work list: every edit, with its line range and the
-meaning to write. Read nothing else.
+meaning to write. Read nothing else. The kept gate edit is not
+`cargo fmt` clean yet, so run `cargo fmt --all` once before the final gates.
 
 ### Update — 2026-10-11 (escalation)
 
