@@ -10,15 +10,14 @@ pub mod sbx_lifecycle;
 mod schedule;
 pub(crate) mod shell_exec;
 
-use crate::ai::{PendingCall, next_tool_id};
+use crate::ai::PendingCall;
 use crate::daemon::policy::GhostPolicy;
 use crate::daemon::session::{SessionStore, with_sessions};
 use crate::daemon::utils::send_response_split;
-use crate::ipc::{PaneInfo, Request, Response};
+use crate::ipc::{Request, Response};
 use crate::scheduler::ScheduleStore;
 use crate::shell::Owner;
 use crate::tmux::cache::SessionCache;
-use crate::util::UnpoisonExt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -496,15 +495,9 @@ where
                 .await?;
                 return Ok(ToolCallOutcome::Result(msg));
             }
-            // The PTY shell substrate, the default. A ghost session or
-            // `backend = "tmux"` (the opt-out) falls through to
-            // `run_foreground` unchanged, so the opt-out behaviour is
-            // byte-for-byte today's.
-            let uses_pty = crate::config::Config::load()
-                .unwrap_or_default()
-                .execution
-                .uses_pty();
-            if uses_pty && !is_ghost && session_id.is_some() {
+            // The PTY shell substrate, the only substrate. A ghost session
+            // falls through to `refuse_foreground`, which refuses.
+            if !is_ghost && session_id.is_some() {
                 match prompt_and_await_approval(
                     ApprovalRequest {
                         id,
@@ -749,10 +742,9 @@ where
                 }
             }
 
-            foreground::run_foreground(
+            foreground::refuse_foreground(
                 foreground::FgArgs { id, cmd },
                 ctx,
-                cache,
                 GhostCtx {
                     policy: ghost_policy.as_ref(),
                     is_ghost,
@@ -764,17 +756,11 @@ where
         }
 
         PendingCall::Background { id, cmd, host, .. } => {
-            // The PTY shell substrate, the default, for a **chat**
+            // The PTY shell substrate, the only substrate, for a **chat**
             // session's plain background command. A ghost session (no
             // substrate shell of its own and sandboxed away from the host)
-            // or `backend = "tmux"` (the opt-out) falls through to
-            // `run_background` unchanged, so the opt-out behaviour is
-            // byte-for-byte today's.
-            let uses_pty = crate::config::Config::load()
-                .unwrap_or_default()
-                .execution
-                .uses_pty();
-            if uses_pty && !is_ghost && session_id.is_some() {
+            // falls through to the refusal, which names the missing route.
+            if !is_ghost && session_id.is_some() {
                 match prompt_and_await_approval(
                     ApprovalRequest {
                         id,
@@ -910,6 +896,10 @@ where
                 }
             }
 
+            // The PTY shell substrate, the only substrate, for a **ghost**:
+            // its remote-host, sandboxed and local PTY branches each live in
+            // `foreground::run_background`, and a ghost that fits none of
+            // them gets the refusal tail naming the missing route.
             foreground::run_background(
                 id,
                 cmd,
@@ -1849,120 +1839,6 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Pane selection — shared by the foreground execution path.
-// ---------------------------------------------------------------------------
-
-/// Build the user-facing pane-selection list, excluding the chat pane (a command
-/// must never be offered to run in the conversation pane). Sorted by pane id for a
-/// stable display order.
-fn exclude_chat_pane(mut panes: Vec<PaneInfo>, chat_pane: Option<&str>) -> Vec<PaneInfo> {
-    panes.retain(|p| chat_pane != Some(p.id.as_str()));
-    panes.sort_by(|a, b| a.id.cmp(&b.id));
-    panes
-}
-
-async fn find_best_target_pane<W, R>(
-    chat_pane: Option<&str>,
-    cache: &Arc<SessionCache>,
-    sessions: &SessionStore,
-    session_id: Option<&str>,
-    tx: &mut W,
-    rx: &mut R,
-) -> anyhow::Result<String>
-where
-    W: tokio::io::AsyncWriteExt + Unpin,
-    R: tokio::io::AsyncBufReadExt + Unpin,
-{
-    // Check for a user-selected default target pane in the session.
-    let default_target: Option<String> = session_id.and_then(|sid| {
-        with_sessions(sessions, |store| {
-            store.get(sid)?.default_target_pane.clone()
-        })
-    });
-    if let Some(dtp) = default_target
-        && chat_pane != Some(dtp.as_str())
-        && cache.is_home_pane(&dtp)
-    {
-        return Ok(dtp);
-    }
-
-    let home = cache.session_name.read().unwrap_or_log().clone();
-    let pane_list: Vec<PaneInfo> = {
-        let panes = cache.panes.read().unwrap_or_log();
-        let raw: Vec<PaneInfo> = panes
-            .iter()
-            .filter(|(_, state)| state.session_name == home)
-            .map(|(pid, state)| PaneInfo {
-                id: pid.clone(),
-                idx: state.pane_index,
-                window: state.window_name.clone(),
-                session: state.session_name.clone(),
-                cmd: state.current_cmd.clone(),
-                cwd: state.current_path.clone(),
-                title: crate::ai::filter::mask_sensitive(&state.pane_title),
-                status: state.status.to_string(),
-                activity_age_secs: None,
-                is_target: false,
-                preview: crate::ai::filter::mask_sensitive(&crate::shell::status::summarize(
-                    state.status,
-                    &state.buffer,
-                )),
-            })
-            .collect();
-        exclude_chat_pane(raw, chat_pane)
-    };
-
-    if pane_list.is_empty() {
-        send_response_split(tx, Response::Error("No tmux panes available".to_string())).await?;
-        return Err(anyhow::anyhow!("No active pane found."));
-    }
-
-    let prompt_id = next_tool_id();
-    send_response_split(
-        tx,
-        Response::PaneSelectPrompt {
-            id: prompt_id.clone(),
-            panes: pane_list,
-        },
-    )
-    .await?;
-
-    let mut pane_line = String::new();
-    match tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut pane_line)).await {
-        Ok(r) => {
-            r?;
-        }
-        Err(_elapsed) => {
-            send_response_split(
-                tx,
-                Response::Error("Pane selection timed out after 120s".to_string()),
-            )
-            .await?;
-            return Err(anyhow::anyhow!("Pane selection timed out after 120s"));
-        }
-    };
-    match serde_json::from_str::<Request>(pane_line.trim()) {
-        Ok(Request::PaneSelectResponse { pane_id, .. }) => {
-            if let Some(sid) = session_id {
-                with_sessions(sessions, |store| {
-                    if let Some(entry) = store.get_mut(sid) {
-                        entry.default_target_pane = Some(pane_id.clone());
-                    }
-                });
-            }
-            Ok(pane_id)
-        }
-        _ => {
-            send_response_split(
-                tx,
-                Response::Error("Expected PaneSelectResponse".to_string()),
-            )
-            .await?;
-            Err(anyhow::anyhow!("User aborted or invalid response"))
-        }
-    }
-}
-
 #[cfg(test)]
 mod send_input_gate_tests {
     use super::ghost_may_send_input;
@@ -2332,150 +2208,6 @@ mod tests {
         let store: SessionStore = SessionStore::new();
         let ns = build_memory_namespaces(Some("any-sid"), &store, false);
         assert_eq!(ns, vec!["global".to_string()]);
-    }
-
-    #[test]
-    fn excludes_chat_pane_from_selection() {
-        let panes = vec![
-            PaneInfo {
-                id: "%1".into(),
-                idx: 0,
-                window: "main".into(),
-                session: "de".into(),
-                cmd: String::new(),
-                cwd: String::new(),
-                title: String::new(),
-                status: String::new(),
-                activity_age_secs: None,
-                is_target: false,
-                preview: String::new(),
-            },
-            PaneInfo {
-                id: "%2".into(),
-                idx: 1,
-                window: "main".into(),
-                session: "de".into(),
-                cmd: String::new(),
-                cwd: String::new(),
-                title: String::new(),
-                status: String::new(),
-                activity_age_secs: None,
-                is_target: false,
-                preview: String::new(),
-            },
-            PaneInfo {
-                id: "%3".into(),
-                idx: 2,
-                window: "main".into(),
-                session: "de".into(),
-                cmd: String::new(),
-                cwd: String::new(),
-                title: String::new(),
-                status: String::new(),
-                activity_age_secs: None,
-                is_target: false,
-                preview: String::new(),
-            },
-        ];
-        let result = exclude_chat_pane(panes, Some("%2"));
-        let ids: Vec<&str> = result.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["%1", "%3"]);
-    }
-
-    #[test]
-    fn keeps_all_panes_when_no_chat_pane() {
-        let panes = vec![
-            PaneInfo {
-                id: "%1".into(),
-                idx: 0,
-                window: "main".into(),
-                session: "de".into(),
-                cmd: String::new(),
-                cwd: String::new(),
-                title: String::new(),
-                status: String::new(),
-                activity_age_secs: None,
-                is_target: false,
-                preview: String::new(),
-            },
-            PaneInfo {
-                id: "%2".into(),
-                idx: 1,
-                window: "main".into(),
-                session: "de".into(),
-                cmd: String::new(),
-                cwd: String::new(),
-                title: String::new(),
-                status: String::new(),
-                activity_age_secs: None,
-                is_target: false,
-                preview: String::new(),
-            },
-            PaneInfo {
-                id: "%3".into(),
-                idx: 2,
-                window: "main".into(),
-                session: "de".into(),
-                cmd: String::new(),
-                cwd: String::new(),
-                title: String::new(),
-                status: String::new(),
-                activity_age_secs: None,
-                is_target: false,
-                preview: String::new(),
-            },
-        ];
-        let result = exclude_chat_pane(panes, None);
-        let ids: Vec<&str> = result.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["%1", "%2", "%3"]);
-    }
-
-    #[test]
-    fn exclude_chat_pane_sorts_by_id() {
-        let panes = vec![
-            PaneInfo {
-                id: "%3".into(),
-                idx: 0,
-                window: "main".into(),
-                session: "de".into(),
-                cmd: String::new(),
-                cwd: String::new(),
-                title: String::new(),
-                status: String::new(),
-                activity_age_secs: None,
-                is_target: false,
-                preview: String::new(),
-            },
-            PaneInfo {
-                id: "%1".into(),
-                idx: 1,
-                window: "main".into(),
-                session: "de".into(),
-                cmd: String::new(),
-                cwd: String::new(),
-                title: String::new(),
-                status: String::new(),
-                activity_age_secs: None,
-                is_target: false,
-                preview: String::new(),
-            },
-            PaneInfo {
-                id: "%2".into(),
-                idx: 2,
-                window: "main".into(),
-                session: "de".into(),
-                cmd: String::new(),
-                cwd: String::new(),
-                title: String::new(),
-                status: String::new(),
-                activity_age_secs: None,
-                is_target: false,
-                preview: String::new(),
-            },
-        ];
-        let result = exclude_chat_pane(panes, None);
-        let ids: Vec<&str> = result.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["%1", "%2", "%3"]);
     }
 
     #[test]

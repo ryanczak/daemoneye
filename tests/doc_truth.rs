@@ -62,10 +62,6 @@ const RETIRED_TOOL_NAMES: &[&str] = &[
 const SRE_PROMPT_ASSET: &str = include_str!("../assets/prompts/sre.toml");
 const GHOST_SHELL_ASSET: &str = include_str!("../assets/prompts/ghost-shell.txt");
 
-/// The background-run result text, which must never name a follow-up parameter
-/// that no tool accepts.
-const BACKGROUND_RUN_SRC: &str = include_str!("../src/daemon/background/run.rs");
-
 #[test]
 fn prompt_assets_name_no_retired_tools() {
     use daemoneye::ai::tools::TOOLS;
@@ -735,8 +731,7 @@ fn seeded_config_template_has_no_phantom_keys() {
 
 /// One line naming each gate this phase adds, asserted to match the pinned
 /// values, so the tail of a `--nocapture` run is itself the evidence.
-const PASTE_MATCH_SENTINEL: &str =
-    "tool=watch_shell retired_in_prompts=0 headings_live=11 phantom_target_param=0";
+const PASTE_MATCH_SENTINEL: &str = "tool=watch_shell retired_in_prompts=0 headings_live=11";
 
 /// The repo root the tests walk, so the same tree is gated on any host.
 const REPO_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/");
@@ -905,11 +900,9 @@ fn e2e_prompt_asset_tool_hygiene() {
         .collect();
     let headings_live = headings.len() - dead_heads.len();
 
-    let phantom_target_param = BACKGROUND_RUN_SRC.matches("Use target=").count();
-
     println!(
         "PASTE MATCH >>>\ntool=watch_shell retired_in_prompts={retired_in_prompts} \
-         headings_live={headings_live} phantom_target_param={phantom_target_param}\n<<<"
+         headings_live={headings_live}\n<<<"
     );
 
     assert!(
@@ -925,14 +918,10 @@ fn e2e_prompt_asset_tool_hygiene() {
         11,
         "expected 11 `###` tool headings in sre.toml"
     );
-    assert_eq!(
-        phantom_target_param, 0,
-        "run.rs still tells the model to pass `target=`, which no tool accepts"
-    );
 
     let printed = format!(
         "tool=watch_shell retired_in_prompts={retired_in_prompts} \
-         headings_live={headings_live} phantom_target_param={phantom_target_param}"
+         headings_live={headings_live}"
     );
     assert_eq!(
         printed, PASTE_MATCH_SENTINEL,

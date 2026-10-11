@@ -24,23 +24,7 @@ pub fn daemon_uptime_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Whether this daemon runs with no tmux at all: launched outside tmux with an
-/// empty `tmux_session`. Recorded once at startup; unrecorded (tests, the CLI)
-/// reads as `false`, today's behaviour.
-static TMUX_OFF: OnceLock<bool> = OnceLock::new();
-
-/// Record the daemon's tmux mode. The first call wins.
-pub(crate) fn record_tmux_off(off: bool) {
-    let _ = TMUX_OFF.set(off);
-}
-
-/// Whether the daemon runs with no tmux at all. See [`record_tmux_off`].
-pub(crate) fn tmux_off() -> bool {
-    TMUX_OFF.get().copied().unwrap_or(false)
-}
-
 pub mod auto_name;
-pub mod background;
 pub mod briefing;
 pub mod context;
 pub mod digest;
@@ -669,8 +653,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         }
     };
 
-    record_tmux_off(initial_session.is_none());
-
     log_event(
         "daemon_start",
         serde_json::json!({
@@ -783,10 +765,8 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     // The live shell registry: clear dead hosts' leftovers out of the shells
     // directory, then re-register the shells that survived a daemon restart.
-    // Gated on the PTY backend — with the default `tmux` this block is
-    // skipped entirely and startup behaves byte-for-byte as before: no
-    // registry at all, and nothing touches the shells directory.
-    let _shells = if startup_config.execution.uses_pty() {
+    // The PTY substrate is the only substrate, so this always runs.
+    let _shells = {
         let swept = crate::shell::sweep_stale(&crate::config::shells_dir());
         if !swept.is_empty() {
             let ids: Vec<&str> = swept.iter().map(|id| id.as_str()).collect();
@@ -833,8 +813,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             });
         }
         Some(reg)
-    } else {
-        None
     };
 
     // N7: seed the initial client viewport dimensions now that the cache exists.
@@ -1087,30 +1065,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             }
         },
     ));
-
-    // Periodic GC of background windows: kills dead, idle-completed, and orphaned windows.
-    // With no managed session (empty name, outside tmux) there are no `de-bg-*`
-    // windows, so skip the GC entirely rather than WARN every 60 s.
-    if initial_session.is_some() {
-        let sessions_gc_sup = sessions.clone();
-        tokio::spawn(supervise(
-            "bg-window-gc",
-            Arc::clone(&shutdown),
-            move || {
-                let sessions_gc = sessions_gc_sup.clone();
-                async move {
-                    loop {
-                        tokio::time::sleep(Duration::from_secs(60)).await;
-                        let s = sessions_gc.clone();
-                        let _ = crate::process::off_runtime("gc-bg-windows", move || {
-                            crate::daemon::background::gc_bg_windows(&s)
-                        })
-                        .await;
-                    }
-                }
-            },
-        ));
-    }
 
     let socket_path: PathBuf = default_socket_path();
 

@@ -121,6 +121,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn is_shell_prompt_recognises_common_shells() {
+        for sh in &[
+            "bash", "zsh", "fish", "sh", "ksh", "csh", "tcsh", "dash", "nu",
+        ] {
+            assert!(is_shell_prompt(sh), "{sh} should be a shell prompt");
+        }
+    }
+
+    #[test]
+    fn is_shell_prompt_rejects_commands() {
+        for cmd in &["top", "vim", "python3", "node"] {
+            assert!(!is_shell_prompt(cmd), "{cmd} should not be a shell prompt");
+        }
+    }
+
+    #[test]
+    fn is_shell_prompt_trims_whitespace() {
+        assert!(is_shell_prompt("  bash  "));
+        assert!(is_shell_prompt("\tzsh\n"));
+    }
+
+    #[test]
     fn classify_dead_wins_over_bell_and_command() {
         let status = classify(true, Some(2), true, "vim", 1000, 1120);
         assert_eq!(status, PaneStatus::Dead(Some(2)));

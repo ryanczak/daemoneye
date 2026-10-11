@@ -315,10 +315,12 @@ async fn daemon_webhook_returns_200() {
 /// This test is **deterministic** — it awaits the handle rather than
 /// sleeping or polling, satisfying STANDARDS.md §3.3.
 ///
-/// It sets both `HOME` and `TMUX_TMPDIR` under `test_home_guard()` to ensure
-/// the ghost's `ensure_incident_session()` shells out to a private tmux server,
-/// not the operator's. The guard is held through all environment-dependent work
-/// and dropped at the end; both variables are restored afterwards.
+/// It sets both `HOME` and `TMUX_TMPDIR` under `test_home_guard()` so any tmux
+/// subprocess the daemon itself may shell out to lands in a private server,
+/// not the operator's. Ghosts start no tmux session of their own; what this
+/// guards is `TMUX_TMPDIR` isolation. The guard is held through all
+/// environment-dependent work and dropped at the end; both variables are
+/// restored afterwards.
 #[test]
 fn webhook_ghost_e2e_deterministic() {
     use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
@@ -801,10 +803,9 @@ fn held_port_cannot_be_rebound() {
 /// An empty `--session` starts no tmux server at all.
 ///
 /// `--session ""` means no tmux: no managed session is created or adopted, so
-/// no tmux server is started under the private `TMUX_TMPDIR`, the four global
-/// hooks are never installed (no "Failed to register" errors) and the
-/// background-window GC never runs (no `gc_bg_windows` warnings). The daemon
-/// itself still boots and answers `ping`.
+/// no tmux server is started under the private `TMUX_TMPDIR` and the four
+/// global hooks are never installed (no "Failed to register" errors). The
+/// daemon itself still boots and answers `ping`.
 ///
 /// Deliberately has **no** `tmux_available()` guard: with no tmux installed
 /// there is trivially no server, and the daemon must still boot and answer.
@@ -837,7 +838,7 @@ fn an_empty_session_starts_no_tmux_server() {
         "an empty session name must not start a tmux server, found {tmux_dirs:?}"
     );
 
-    // No hook-install noise and no GC noise in the daemon log.
+    // No hook-install noise in the daemon log.
     let log = env.daemon_log();
     assert!(
         log.contains("tmux_session is empty"),
@@ -846,9 +847,5 @@ fn an_empty_session_starts_no_tmux_server() {
     assert!(
         !log.contains("Failed to register global tmux"),
         "daemon.log must not contain hook-install failures:\n{log}"
-    );
-    assert!(
-        !log.contains("gc_bg_windows"),
-        "daemon.log must not contain background-window GC noise:\n{log}"
     );
 }

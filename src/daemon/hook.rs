@@ -30,13 +30,6 @@ where
     W: AsyncWriteExt + Unpin,
 {
     if is_valid_pane_id(pane_id) {
-        if let Ok(mut map) = crate::daemon::background::BG_COMMAND_MAP
-            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-            .lock()
-            && let Some(cmd_id) = map.remove(pane_id)
-        {
-            crate::daemon::stats::finish_command(cmd_id, exit_code);
-        }
         let sender = crate::daemon::session::COMPLETE_TX.get_or_init(|| {
             let (tx, _) = tokio::sync::broadcast::channel(32);
             tx

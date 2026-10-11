@@ -10,7 +10,6 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use super::foreground;
 use super::send_response_split;
 use crate::ai::mask_sensitive;
 use crate::daemon::utils::{
@@ -45,6 +44,22 @@ const CAST_SETTLE_TIMEOUT: Duration = Duration::from_secs(2);
 /// How often the settle loop re-reads the cast file length between polls.
 const CAST_SETTLE_POLL: Duration = Duration::from_millis(10);
 
+/// Default wall-clock cap on one command run in a PTY shell, when the caller
+/// gives no `timeout_secs`.
+pub(super) const LOCAL_CMD_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// Build the trailing annotation appended to a local command's captured output so
+/// the model can see a failure. Returns `None` for unknown (`None`, hook absent)
+/// and clean (`Some(0)`) — neither is annotated, so a clean or
+/// exit-code-unknown command reads exactly as its output. A non-zero code yields
+/// a one-line note.
+pub(super) fn exit_status_annotation(exit_status: Option<i32>) -> Option<String> {
+    match exit_status {
+        Some(code) if code != 0 => Some(format!("\n[command exited with status {code}]")),
+        _ => None,
+    }
+}
+
 /// Annotate, mask, then normalize. The order matters (F3): the annotation step
 /// must strip control bytes before masking, or an escape embedded mid-token
 /// could split a secret past its regex.
@@ -70,7 +85,7 @@ pub(super) const RUN_MAX_TIMEOUT_SECS: u64 = 3600;
 fn applied_timeout_secs(timeout_secs: Option<u64>) -> Duration {
     let secs = timeout_secs
         .filter(|s| *s > 0)
-        .unwrap_or(foreground::LOCAL_CMD_TIMEOUT.as_secs())
+        .unwrap_or(LOCAL_CMD_TIMEOUT.as_secs())
         .min(RUN_MAX_TIMEOUT_SECS);
     Duration::from_secs(secs)
 }
@@ -418,7 +433,7 @@ async fn finish_run(
     index_command_output(reg, cmd, id, outcome, before).await;
     let raw = String::from_utf8_lossy(&outcome.output);
     let mut text = format_for_model(&raw);
-    if let Some(note) = foreground::exit_status_annotation(Some(outcome.exit_code)) {
+    if let Some(note) = exit_status_annotation(Some(outcome.exit_code)) {
         text.push_str(&note);
     }
     Ok((
@@ -912,6 +927,23 @@ mod tests {
     use crate::test_home_guard;
     use anyhow::Context;
     use std::sync::Arc;
+
+    #[test]
+    fn exit_status_annotation_unknown_is_silent() {
+        assert!(exit_status_annotation(None).is_none());
+    }
+
+    #[test]
+    fn exit_status_annotation_zero_is_silent() {
+        assert!(exit_status_annotation(Some(0)).is_none());
+    }
+
+    #[test]
+    fn exit_status_annotation_nonzero_notes_code() {
+        let s = exit_status_annotation(Some(2));
+        assert!(s.is_some());
+        assert!(s.as_ref().unwrap().contains("2"));
+    }
 
     /// The PTY geometry every shell host is spawned with, matching the
     /// detached `spawn_detached_host` production spawn (24×80).

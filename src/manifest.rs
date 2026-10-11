@@ -3,7 +3,6 @@
 //! Three public functions:
 //! - `build_knowledge_manifest()` — compact text index of all stored knowledge (Phase 1)
 //! - `auto_search_context(query, pane)` — auto-load matching knowledge for first turn (Phase 4)
-//! - `related_knowledge_hints(output)` — hint lines appended to tool results (Phase 5)
 
 use crate::ai::filter::mask_sensitive;
 use crate::memory::{MemoryCategory, MemoryInfo, list_memories_with_tags, read_memory};
@@ -396,84 +395,6 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
     }
 
     format!("## Auto-loaded Knowledge\n{}\n\n", sections.join("\n"))
-}
-
-// ---------------------------------------------------------------------------
-// Phase 5: Related knowledge hints
-// ---------------------------------------------------------------------------
-
-/// Scan command output for terms matching stored knowledge.
-/// Returns a `[Related knowledge: ...]` hint line, or empty string on no matches.
-/// Excludes scripts (operational, not informational).
-pub fn related_knowledge_hints(output: &str) -> String {
-    let corpus = output.to_lowercase();
-
-    let e = load_all_entries();
-
-    let mut hints: Vec<String> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for rb in &e.runbooks {
-        if hints.len() >= 3 {
-            break;
-        }
-        let name_lc = rb.name.to_lowercase();
-        if corpus.contains(&name_lc) && seen.insert(format!("runbook:{}", rb.name)) {
-            hints.push(format!("runbook \"{}\"", rb.name));
-            continue;
-        }
-        for tag in &rb.tags {
-            let tag_lc = tag.to_lowercase();
-            if !tag_lc.is_empty()
-                && corpus.contains(&tag_lc)
-                && seen.insert(format!("runbook:{}", rb.name))
-            {
-                hints.push(format!("runbook \"{}\"", rb.name));
-                break;
-            }
-        }
-    }
-
-    for mem in &e.knowledge {
-        if hints.len() >= 3 {
-            break;
-        }
-        let key_lc = mem.key.to_lowercase();
-        if corpus.contains(&key_lc) && seen.insert(format!("memory:{}", mem.key)) {
-            hints.push(format!("memory \"{}\"", mem.key));
-            continue;
-        }
-        // Match on summary text
-        if let Some(ref s) = mem.summary {
-            let summary_lc = s.to_lowercase();
-            let summary_words: Vec<&str> = summary_lc
-                .split_whitespace()
-                .filter(|w| w.len() >= 4)
-                .collect();
-            if summary_words.iter().any(|w| corpus.contains(*w))
-                && seen.insert(format!("memory:{}", mem.key))
-            {
-                hints.push(format!("memory \"{}\"", mem.key));
-                continue;
-            }
-        }
-        for tag in &mem.tags {
-            let tag_lc = tag.to_lowercase();
-            if !tag_lc.is_empty()
-                && corpus.contains(&tag_lc)
-                && seen.insert(format!("memory:{}", mem.key))
-            {
-                hints.push(format!("memory \"{}\"", mem.key));
-                break;
-            }
-        }
-    }
-
-    if hints.is_empty() {
-        return String::new();
-    }
-
-    format!("[Related knowledge: {}]", hints.join(", "))
 }
 
 // ---------------------------------------------------------------------------

@@ -378,51 +378,6 @@ fn terminfo_advertises_rgb(infocmp_output: &str) -> bool {
     })
 }
 
-/// Default name for the headless tmux session used to host ghost incidents.
-pub const INCIDENT_SESSION_NAME: &str = "daemoneye-incidents";
-
-/// Ensure a tmux session exists to host an incident window.
-///
-/// Returns the name of an existing active session if available,
-/// otherwise creates a new detached session named `daemoneye-incidents`
-/// and returns that name.
-pub fn ensure_incident_session() -> Result<String> {
-    let sessions = list_sessions();
-
-    // 1. Try to find the most recently active attached session.
-    if let Some(s) = sessions
-        .iter()
-        .filter(|s| s.attached)
-        .max_by_key(|s| s.last_activity)
-    {
-        return Ok(s.name.clone());
-    }
-
-    // 2. Try to find any existing session (even detached).
-    if let Some(s) = sessions.iter().max_by_key(|s| s.last_activity) {
-        return Ok(s.name.clone());
-    }
-
-    // 3. Fallback: create a new detached session.
-    log::info!(
-        "No active tmux sessions found. Creating detached session: {}",
-        INCIDENT_SESSION_NAME
-    );
-    let out = crate::process::bounded_output(Command::new("tmux").args([
-        "new-session",
-        "-d",
-        "-s",
-        INCIDENT_SESSION_NAME,
-    ]))?;
-
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        anyhow::bail!("Failed to create incident session: {}", err);
-    }
-
-    Ok(INCIDENT_SESSION_NAME.to_string())
-}
-
 /// Return `true` if a tmux session with this name currently exists.
 pub fn session_exists(name: &str) -> bool {
     crate::process::bounded_output(Command::new("tmux").args(["has-session", "-t", name]))

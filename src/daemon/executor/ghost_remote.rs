@@ -8,8 +8,8 @@
 //! host, and opened with `-o BatchMode=yes` so ssh never prompts: a host
 //! that wants a password or an unknown key fails in milliseconds (08b's
 //! exit detection reports it, 08f's wording names the unanswerable prompt).
-//! An `ssh_target` that did not resolve keeps the 1.x tmux wrap, and so does
-//! `[execution] backend = "tmux"`.
+//! An `ssh_target` that did not resolve is refused by the executor's tail
+//! (phase 05): no tmux wrap exists any more.
 //!
 //! A **local** ghost (no `ssh_target`) runs the same way on the daemon host
 //! when the sandbox is off ([`ghost_local_pty`]), so its shell is one
@@ -29,12 +29,8 @@ pub(super) const GHOST_REMOTE_TIMEOUT_SECS: u64 = 300;
 /// Pure. The sandbox is deliberately **not** an input: the PTY branch runs
 /// before the sandboxed local dispatch, and a remote ghost command never
 /// executes on the daemon host — the runbook's `hosts:` list is the fence.
-pub(super) fn ghost_remote_host(
-    is_ghost: bool,
-    uses_pty: bool,
-    policy: Option<&GhostPolicy>,
-) -> Option<HostId> {
-    if !is_ghost || !uses_pty {
+pub(super) fn ghost_remote_host(is_ghost: bool, policy: Option<&GhostPolicy>) -> Option<HostId> {
+    if !is_ghost {
         return None;
     }
     policy.and_then(|p| p.remote_host.clone())
@@ -42,17 +38,16 @@ pub(super) fn ghost_remote_host(
 
 /// Whether a ghost's command runs in a PTY shell on the **daemon host**.
 ///
-/// Pure. True for a ghost with the PTY backend, the sandbox off, and no
-/// `ssh_target` (a resolved one took [`ghost_remote_host`]'s branch already;
-/// an unresolved one keeps the 1.x `ssh <target>` wrap in a tmux window).
-/// The sandboxed local command keeps its container in a tmux window.
+/// Pure. True for a ghost with the sandbox off and no `ssh_target` (a
+/// resolved one took [`ghost_remote_host`]'s branch already; an unresolved
+/// one is refused by the executor's tail, which names the target). The
+/// sandboxed local command takes [`ghost_sandbox_pty`]'s branch instead.
 pub(super) fn ghost_local_pty(
     is_ghost: bool,
-    uses_pty: bool,
     sandbox_enabled: bool,
     policy: Option<&GhostPolicy>,
 ) -> bool {
-    is_ghost && uses_pty && !sandbox_enabled && policy.is_some_and(|p| p.ssh_target.is_none())
+    is_ghost && !sandbox_enabled && policy.is_some_and(|p| p.ssh_target.is_none())
 }
 
 /// Run one approved ghost command in a PTY shell on `host`, synchronously.
@@ -172,28 +167,23 @@ mod tests {
     }
 
     #[test]
-    fn a_ghost_reaches_the_pty_path_only_on_a_resolved_host_with_the_pty_backend() {
+    fn a_ghost_reaches_the_remote_pty_only_on_a_resolved_host() {
         let policy = resolved_policy();
         let unresolved = GhostPolicy {
             remote_host: None,
             ..GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
         };
-        let got = ghost_remote_host(true, true, Some(&policy));
+        let got = ghost_remote_host(true, Some(&policy));
         assert_eq!(
             got,
             Some(HostId::parse("db01").unwrap()),
-            "a ghost with the PTY backend and a resolved host takes the branch"
+            "a ghost with a resolved host takes the branch"
         );
-        let got = ghost_remote_host(true, false, Some(&policy));
-        assert_eq!(
-            got, None,
-            "backend = \"tmux\" keeps the 1.x wrap: no remote PTY"
-        );
-        let got = ghost_remote_host(true, true, Some(&unresolved));
-        assert_eq!(got, None, "an unresolved ssh_target keeps the 1.x wrap");
-        let got = ghost_remote_host(false, true, Some(&policy));
+        let got = ghost_remote_host(true, Some(&unresolved));
+        assert_eq!(got, None, "an unresolved ssh_target takes no remote branch");
+        let got = ghost_remote_host(false, Some(&policy));
         assert_eq!(got, None, "chat never routes through this module");
-        let got = ghost_remote_host(true, true, None);
+        let got = ghost_remote_host(true, None);
         assert_eq!(got, None, "no policy, no remote host");
     }
 
@@ -237,35 +227,28 @@ mod tests {
     }
 
     #[test]
-    fn a_local_ghost_reaches_the_pty_path_only_unsandboxed_with_the_pty_backend() {
+    fn a_local_ghost_reaches_the_pty_only_unsandboxed_and_unresolved() {
         let local = GhostPolicy::from_config(&crate::ipc::GhostConfig::default());
         assert!(
-            ghost_local_pty(true, true, false, Some(&local)),
-            "a local ghost with the PTY backend and no sandbox takes the branch"
+            ghost_local_pty(true, false, Some(&local)),
+            "a local ghost with the sandbox off takes the branch"
         );
         assert!(
-            !ghost_local_pty(true, false, false, Some(&local)),
-            "backend = \"tmux\" keeps the tmux window"
+            !ghost_local_pty(true, true, Some(&local)),
+            "the sandbox takes its own branch, not this one"
         );
         assert!(
-            !ghost_local_pty(true, true, true, Some(&local)),
-            "a sandboxed command keeps its container in a tmux window"
-        );
-        assert!(
-            !ghost_local_pty(false, true, false, Some(&local)),
+            !ghost_local_pty(false, false, Some(&local)),
             "chat never routes through this module"
         );
-        assert!(
-            !ghost_local_pty(true, true, false, None),
-            "no policy, no shell"
-        );
+        assert!(!ghost_local_pty(true, false, None), "no policy, no shell");
         let unresolved = GhostPolicy {
             ssh_target: Some("matt@db01.lan".to_string()),
             ..GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
         };
         assert!(
-            !ghost_local_pty(true, true, false, Some(&unresolved)),
-            "an unresolved ssh_target keeps the ssh wrap"
+            !ghost_local_pty(true, false, Some(&unresolved)),
+            "an unresolved ssh_target is refused, not run locally"
         );
     }
 

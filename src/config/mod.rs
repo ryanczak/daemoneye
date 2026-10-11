@@ -959,52 +959,32 @@ mod tests {
     fn execution_backend_defaults_to_pty() {
         let exec = ExecutionConfig::default();
         assert_eq!(exec.backend, "pty");
-        assert!(Config::default().execution.uses_pty());
     }
 
+    /// A config written before phase 05 still says `backend = "tmux"`. It
+    /// must load, keep the value for the startup warning, and validate
+    /// without panicking. Nothing reads the value for routing any more:
+    /// every command takes the PTY substrate.
     #[test]
-    fn execution_tmux_is_the_only_opt_out() {
-        for value in ["tmux", " TMUX ", "Tmux"] {
-            assert!(
-                !ExecutionConfig {
-                    backend: value.to_string()
-                }
-                .uses_pty(),
-                "value {value:?} should opt out of pty"
-            );
-        }
-        for value in ["pty", "PTY", " pty "] {
-            assert!(
-                ExecutionConfig {
-                    backend: value.to_string()
-                }
-                .uses_pty(),
-                "value {value:?} should use pty"
-            );
-        }
+    fn old_tmux_backend_config_still_loads() {
+        let old: Config = toml::from_str("[execution]\nbackend = \"tmux\"\n")
+            .expect("an old tmux-backend config must still parse");
+        assert_eq!(old.execution.backend, "tmux");
+        old.execution.validate();
+        let src = include_str!("../daemon/executor/mod.rs");
+        assert!(
+            !src.contains("execution.backend"),
+            "the executor must not branch on the backend value"
+        );
     }
 
     #[test]
     fn execution_config_parses_from_toml() {
         let with_pty: Config = toml::from_str("[execution]\nbackend = \"pty\"\n").unwrap();
-        assert!(with_pty.execution.uses_pty());
+        assert_eq!(with_pty.execution.backend, "pty");
 
         let empty: Config = toml::from_str("").unwrap();
         assert_eq!(empty.execution.backend, "pty");
-    }
-
-    #[test]
-    fn execution_invalid_value_falls_back_to_the_default() {
-        for value in ["ptty", "tmxu", ""] {
-            let exec = ExecutionConfig {
-                backend: value.to_string(),
-            };
-            assert!(
-                exec.uses_pty(),
-                "invalid value {value:?} should route to the default, pty"
-            );
-            exec.validate(); // must not panic
-        }
     }
 
     #[test]

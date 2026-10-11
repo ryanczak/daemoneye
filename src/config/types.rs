@@ -706,21 +706,19 @@ impl Default for ExecutionConfig {
 }
 
 impl ExecutionConfig {
-    /// True iff the backend value is not `"tmux"` after trimming and
-    /// case-folding: `"tmux"` is the one opt-out, and both the default `"pty"`
-    /// and any unrecognised value route to the PTY substrate.
-    pub fn uses_pty(&self) -> bool {
-        !self.backend.trim().eq_ignore_ascii_case("tmux")
-    }
-
-    /// Warn when the normalised backend is neither `"tmux"` nor `"pty"`.
-    /// Never panics and never returns a value.
+    /// Warn about the retired tmux backend and any unrecognised value. Never
+    /// panics and never returns a value.
     pub fn validate(&self) {
         let normalised = self.backend.trim().to_ascii_lowercase();
-        if normalised != "tmux" && normalised != "pty" {
+        if normalised == "tmux" {
             log::warn!(
-                "[execution] backend = {:?} is invalid — supported values are \"tmux\" and \
-                 \"pty\". Falling back to the default, \"pty\".",
+                "[execution] backend = \"tmux\" was removed — commands run in PTY shells. \
+                 Delete the `backend` line or set it to \"pty\"."
+            );
+        } else if normalised != "pty" {
+            log::warn!(
+                "[execution] backend = {:?} is invalid — supported value is \"pty\". \
+                 Falling back to the default, \"pty\".",
                 self.backend
             );
         }

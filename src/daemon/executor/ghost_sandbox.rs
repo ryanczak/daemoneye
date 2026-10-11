@@ -17,16 +17,15 @@ fn created() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
     CREATED.get_or_init(Default::default)
 }
 
-/// True for a ghost on the PTY backend whose command runs locally (no
-/// `ssh_target`) while the sandbox is enabled. The runtime field is ignored:
-/// an enabled sandbox always runs on sbx.
+/// True for a ghost whose command runs locally (no `ssh_target`) while the
+/// sandbox is enabled: its shell lives inside the sbx sandbox. The runtime
+/// field is ignored: an enabled sandbox always runs on sbx.
 pub fn ghost_sandbox_pty(
     is_ghost: bool,
-    uses_pty: bool,
     sandbox: &crate::config::SandboxConfig,
     policy: Option<&crate::daemon::policy::GhostPolicy>,
 ) -> bool {
-    is_ghost && uses_pty && sandbox.enabled && policy.is_some_and(|p| p.ssh_target.is_none())
+    is_ghost && sandbox.enabled && policy.is_some_and(|p| p.ssh_target.is_none())
 }
 
 /// Whether the process-wide created set holds `name`: true for every sandbox
@@ -355,36 +354,27 @@ mod tests {
     #[test]
     fn ghost_sandbox_pty_only_for_a_local_sbx_ghost() {
         assert!(
-            ghost_sandbox_pty(true, true, &enabled_sbx(), Some(&local_policy())),
-            "a local ghost on the PTY backend with sbx enabled takes the branch"
+            ghost_sandbox_pty(true, &enabled_sbx(), Some(&local_policy())),
+            "a local ghost with sbx enabled takes the branch"
         );
         assert!(
-            !ghost_sandbox_pty(false, true, &enabled_sbx(), Some(&local_policy())),
+            !ghost_sandbox_pty(false, &enabled_sbx(), Some(&local_policy())),
             "chat never routes through this module"
         );
         assert!(
-            !ghost_sandbox_pty(true, false, &enabled_sbx(), Some(&local_policy())),
-            "backend = \"tmux\" keeps the tmux window"
-        );
-        assert!(
-            !ghost_sandbox_pty(true, true, &sbx_config("sbx", false), Some(&local_policy())),
+            !ghost_sandbox_pty(true, &sbx_config("sbx", false), Some(&local_policy())),
             "the sandbox off keeps the plain local PTY"
         );
         assert!(
-            ghost_sandbox_pty(
-                true,
-                true,
-                &sbx_config("docker", true),
-                Some(&local_policy())
-            ),
+            ghost_sandbox_pty(true, &sbx_config("docker", true), Some(&local_policy())),
             "runtime is ignored: an enabled sandbox is always sbx"
         );
         assert!(
-            !ghost_sandbox_pty(true, true, &enabled_sbx(), Some(&resolved_policy())),
+            !ghost_sandbox_pty(true, &enabled_sbx(), Some(&resolved_policy())),
             "an ssh_target ghost runs where its runbook names, not in a sandbox"
         );
         assert!(
-            !ghost_sandbox_pty(true, true, &enabled_sbx(), None),
+            !ghost_sandbox_pty(true, &enabled_sbx(), None),
             "no policy, no sandbox route"
         );
     }

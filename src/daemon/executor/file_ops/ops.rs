@@ -1900,24 +1900,18 @@ mod tests {
         );
     }
 
-    /// Test 11, the deletion negative: `get_pane_remote_host` survives with
-    /// its two live callers — the tmux foreground path in `prompt.rs` and
-    /// `foreground.rs`, which file ops never owned.
+    /// `get_pane_remote_host` keeps its one live caller, the read-only tmux
+    /// context in `prompt.rs`. Its other caller, the tmux foreground path in
+    /// `foreground.rs`, was deleted in M27 phase 05; file ops never owned it.
     #[test]
     fn get_pane_remote_host_still_has_its_callers() {
-        let src = [
-            include_str!("../../prompt.rs"),
-            include_str!("../../executor/foreground.rs"),
-        ];
-        let mut callers = 0;
-        for file in src {
-            if file.contains("get_pane_remote_host") {
-                callers += 1;
-            }
-        }
-        assert_eq!(
-            callers, 2,
-            "get_pane_remote_host keeps exactly its two live callers (prompt.rs, foreground.rs)"
+        assert!(
+            include_str!("../../prompt.rs").contains("get_pane_remote_host"),
+            "prompt.rs keeps its live caller"
+        );
+        assert!(
+            !include_str!("../../executor/foreground.rs").contains("get_pane_remote_host"),
+            "the tmux foreground caller was deleted in M27 phase 05"
         );
         let helper = include_str!("../../utils/host.rs");
         assert!(

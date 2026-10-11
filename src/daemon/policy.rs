@@ -256,7 +256,8 @@ impl GhostPolicy {
 
     /// Wrap an approved command for remote SSH execution when `ssh_target` is set.
     ///
-    /// Called after policy approval, immediately before `run_background_in_window`.
+    /// Called after policy approval, immediately before the background PTY
+    /// shell is started.
     /// Commands that already begin with `ssh ` are returned unchanged to prevent
     /// double-wrapping if the AI emits an explicit SSH invocation despite instructions.
     pub fn wrap_remote(&self, cmd: &str) -> String {

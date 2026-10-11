@@ -304,90 +304,6 @@ fn auto_search_max_three_items() {
 // --- Phase 5 tests ---
 
 #[test]
-fn related_hints_matches_runbook_name() {
-    let tmp = TmpHome::new();
-    with_home(&tmp, || {
-        crate::runbook::write_runbook("high-disk-usage", SAMPLE_RUNBOOK).unwrap();
-        let hints = related_knowledge_hints(
-            "Disk usage is at 95% on /dev/sda1. high-disk-usage threshold exceeded.",
-        );
-        assert!(
-            hints.contains("runbook \"high-disk-usage\""),
-            "hint missing: {hints}"
-        );
-        assert!(
-            hints.starts_with("[Related knowledge:"),
-            "wrong format: {hints}"
-        );
-    });
-}
-
-#[test]
-fn related_hints_matches_tags() {
-    let tmp = TmpHome::new();
-    with_home(&tmp, || {
-        crate::runbook::write_runbook(
-            "disk-check",
-            "---\ntags: [disk, storage]\n---\n# Runbook: disk-check\n\n## Alert Criteria\n- usage > 90%\n",
-        ).unwrap();
-        let hints = related_knowledge_hints("disk usage is high on the storage volume");
-        assert!(
-            hints.contains("runbook \"disk-check\""),
-            "tag-based hint missing: {hints}"
-        );
-    });
-}
-
-#[test]
-fn related_hints_caps_at_three() {
-    let tmp = TmpHome::new();
-    with_home(&tmp, || {
-        for i in 0..5 {
-            crate::memory::add_memory(
-                &format!("key-{i}"),
-                "v",
-                crate::memory::MemoryCategory::Knowledge,
-                "global",
-            )
-            .unwrap();
-        }
-        let output = "key-0 key-1 key-2 key-3 key-4";
-        let hints = related_knowledge_hints(output);
-        // Count occurrences of "memory \""
-        let count = hints.matches("memory \"").count();
-        assert!(
-            count <= 3,
-            "hints should cap at 3 items, got {count}: {hints}"
-        );
-    });
-}
-
-#[test]
-fn related_hints_empty_on_no_match() {
-    let tmp = TmpHome::new();
-    with_home(&tmp, || {
-        crate::runbook::write_runbook("memory-leak-check", SAMPLE_RUNBOOK).unwrap();
-        let hints = related_knowledge_hints("some unrelated command output");
-        assert!(hints.is_empty(), "expected no hints: {hints}");
-    });
-}
-
-#[test]
-fn related_hints_excludes_scripts() {
-    let tmp = TmpHome::new();
-    with_home(&tmp, || {
-        crate::scripts::write_script("cleanup-logs.sh", "#!/bin/bash\necho done").unwrap();
-        let hints = related_knowledge_hints("cleanup-logs.sh ran successfully");
-        assert!(
-            !hints.contains("script"),
-            "scripts should be excluded from hints: {hints}"
-        );
-    });
-}
-
-// --- Phase 6 tests (tag-aware) ---
-
-#[test]
 fn manifest_shows_memory_tags() {
     let tmp = TmpHome::new();
     with_home(&tmp, || {
@@ -505,26 +421,6 @@ fn auto_search_follows_relates_to_links() {
         assert!(
             result.contains("db-quirks"),
             "relates_to link not followed: {result}"
-        );
-    });
-}
-
-#[test]
-fn hints_matches_summary_text() {
-    let tmp = TmpHome::new();
-    with_home(&tmp, || {
-        let dir = crate::config::config_dir().join("memory").join("knowledge");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("redis-config.md"),
-            "---\nsummary: Redis cluster failover procedure\n---\nDetails here.\n",
-        )
-        .unwrap();
-        // Output contains a word from the summary
-        let hints = related_knowledge_hints("redis failover detected in cluster logs");
-        assert!(
-            hints.contains("redis-config"),
-            "summary-based hint missing: {hints}"
         );
     });
 }
