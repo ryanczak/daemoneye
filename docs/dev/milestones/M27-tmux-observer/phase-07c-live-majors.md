@@ -1,7 +1,7 @@
 # Phase 07c: live-majors — chat survives a daemon restart, the model's `background` habit works, expired approvals close, honest shell-exit errors, a gate that sees abbreviations
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-07b
 **Tags:** language=rust, kind=bugfix, size=m
 
@@ -58,26 +58,26 @@ confirm it fails, and revert. Paste the failing line.
 
 ## Acceptance criteria
 
-- [ ] `cargo test run_terminal_command_maps_legacy_background_to_wait`,
+- [x] `cargo test run_terminal_command_maps_legacy_background_to_wait`,
       `cargo test socket_close_mid_command_reports_shell_exit`,
       `cargo test approval_read_times_out`,
       `cargo test parked_presence_reconnects_after_eof` and
       `cargo test gate_catches_an_abbreviated_write` each report `1 passed`.
       None of them exists today.
-- [ ] `cargo test parked_presence_ends_on_eof` reports `0 passed` (renamed).
+- [x] `cargo test parked_presence_ends_on_eof` reports `0 passed` (renamed).
       `cargo test --test tmux_read_only` is all green.
-- [ ] **bug-07c-1:** `cargo test --test tmux_read_only gate_catches_a_multi_line_write`
+- [x] **bug-07c-1:** `cargo test --test tmux_read_only gate_catches_a_multi_line_write`
       reports `1 passed` (today the test does not exist), and `cargo test`
       reports `passed=2318`.
-- [ ] **bug-07c-2:** `cargo test --test tmux_read_only gate_catches_a_chained_write`
+- [x] **bug-07c-2:** `cargo test --test tmux_read_only gate_catches_a_chained_write`
       reports `1 passed` (today the test does not exist), and `cargo test`
       reports `passed=2319`.
-- [ ] `grep -c 'bind-key T split-window' src/cli/commands/setup.rs` prints
+- [x] `grep -c 'bind-key T split-window' src/cli/commands/setup.rs` prints
       `1`. Today it prints `0`.
-- [ ] clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
-- [ ] `cargo test` reports `failed=0`. `passed` is today's 2313 plus the
+- [x] clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
+- [x] `cargo test` reports `failed=0`. `passed` is today's 2313 plus the
       tests you add (the rename is net zero); name them in the Update Log.
-- [ ] The Update Log has the mutation-check failing line, § End-to-end
+- [x] The Update Log has the mutation-check failing line, § End-to-end
       verification's output, and `PASTE MATCH: yes`. The server does not
       write it for you.
 
@@ -513,15 +513,15 @@ kill: (-484370): No such process
 
 ```
 
-### Update — 2026-10-12 03:20 (started, resume on bounce 2)
+**Files changed:**
 
-**Executor:** Claude (phase-07c run, bounce 2)
-**Plan:** bug-07c-2 only — let `tmux_write_hits` find the first `.args(` /
-`.arg(` opener on any line of the span window after `Command::new("tmux")`,
-balance brackets from there, add `gate_catches_a_chained_write`, mutation
-check, then the gate set and the end-to-end block. All prior work, including
-the bug-07c-1 fix, stays untouched per the bounce note. Status is already
-`in-progress`; the completion tail stays with the server.
+- `tests/tmux_read_only.rs` — +65 -5
+
+**Commit:** 0db1440b9aa75d179e9e989767898d6f8d1247c9
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-10-11 (bounce 2)
 
 **All gates are green and the tree is clean. That is expected and is NOT
 evidence the phase is done.** Everything else is approved, including your
@@ -541,6 +541,18 @@ let src = "let _ = std::process::Command::new(\"tmux\")\n    .args([\"send-keys\
 
 **Mutation check:** restrict the opener search to the first line again,
 confirm the new test fails, then restore. Paste the failing line.
+
+**Finish condition:** `passed=2319`, **not** 2318. One `fix:` commit.
+
+### Update — 2026-10-12 03:20 (started, resume on bounce 2)
+
+**Executor:** Claude (phase-07c run, bounce 2)
+**Plan:** bug-07c-2 only — let `tmux_write_hits` find the first `.args(` /
+`.arg(` opener on any line of the span window after `Command::new("tmux")`,
+balance brackets from there, add `gate_catches_a_chained_write`, mutation
+check, then the gate set and the end-to-end block. All prior work, including
+the bug-07c-1 fix, stays untouched per the bounce note. Status is already
+`in-progress`; the completion tail stays with the server.
 
 ### Update — 2026-10-12 03:35 (end-to-end verification)
 
@@ -857,3 +869,21 @@ kill: (-761961): No such process
 **Commit:** 08c74b98d869a2040a96a3cd58d5975efae53a93
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-12
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2. bug-07c-1: the gate skipped multi-line arg lists. bug-07c-2:
+  the gate skipped `.args(` on the line after `Command::new("tmux")`. bug-07c-2
+  was a spec gap: the bug-07c-1 DoD pinned only the multi-line case.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (bounce 2, 30 turns)
+- **Reviewer re-run:** fmt, build and clippy clean; `passed=2319 failed=0`;
+  `tmux_read_only` 4/4. The four chained call sites the gate now scans carry
+  `display-message` and `load-buffer`, which are not write verbs, so
+  `source_issues_no_tmux_write_verbs` stays green honestly.
+- **Scope deviations:** none in code. The executor's "started" entry overwrote
+  three Update Log items: the previous completion tail, the bounce-2 Notes
+  header and the finish-condition line. The reviewer restored them.
+- **Calibration:** a gate's DoD should pin every layout the prose names
+  (single-line, multi-line, chained). One probe per layout, written by the
+  architect before dispatch, would have caught bug-07c-2 a bounce earlier.

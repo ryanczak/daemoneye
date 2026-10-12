@@ -66,7 +66,7 @@ is split further at drafting if it is more than one session.
 | 06e | no-fg-target ([phase-06e-no-fg-target.md](phase-06e-no-fg-target.md)) — the prompt stops naming a foreground pane: no `[FOREGROUND TARGET]`, no `[Pane target changed]`, no `background=true/false` in model-facing text; **dispatch before 06d** | done (approved_first_try, 2026-10-11) |
 | 06d | docs-leftovers ([phase-06d-docs-leftovers.md](phase-06d-docs-leftovers.md)) — the stale passages 06c carried (FR-1.2.2/6/17, `chat --session`, chat attach, pane targeting) and the foreground-pane terms added to the `doc_truth` gate | done (approved_after_1, 2026-10-11) |
 | 07b | live-blockers ([phase-07b-live-blockers.md](phase-07b-live-blockers.md)) — rehearsal findings that break exit criteria: scheduled jobs fire without tmux (F3), catch-up sees events injected while away (F5), the client writes nothing to tmux (F6) | done (approved_first_try, 2026-10-11) |
-| 07c | live-majors ([phase-07c-live-majors.md](phase-07c-live-majors.md)) — chat reconnects after a daemon restart (F4), `background` maps to `wait` (F2), expired approvals close (F7), shell exit reported honestly (F1), the tmux-write gate sees abbreviations | review                           |
+| 07c | live-majors ([phase-07c-live-majors.md](phase-07c-live-majors.md)) — chat reconnects after a daemon restart (F4), `background` maps to `wait` (F2), expired approvals close (F7), shell exit reported honestly (F1), the tmux-write gate sees abbreviations | done                             |
 | 07 | live-close ([phase-07-live-close.md](phase-07-live-close.md)) — architect-run live verification on pinky, with and without tmux; tag `v2.0.0` | todo |
 
 ## Notes

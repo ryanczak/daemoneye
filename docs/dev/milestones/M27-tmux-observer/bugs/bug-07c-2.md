@@ -1,7 +1,7 @@
 # Bug 2 on phase-07c: the tmux-write gate misses chained calls whose `.args(` starts on the next line
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (08c74b98)
 **Filed:** 2026-10-11
 
 ## What's wrong
