@@ -1,7 +1,7 @@
 # Phase 07a: docs-truth — the stale passages the live rehearsal found
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-07c (done)
 **Tags:** language=markdown, kind=docs, size=s
 
@@ -46,20 +46,20 @@ Then: full gates, § End-to-end verification once, one `docs:` commit.
 
 ## Acceptance criteria
 
-- [ ] `grep -c 'foreground command is sent to a pane' README.md` prints `0`.
+- [x] `grep -c 'foreground command is sent to a pane' README.md` prints `0`.
       Today `1`.
-- [ ] `grep -c 'session=abc123' README.md` prints `0`. Today `2`.
-- [ ] `grep -c '"mode":"shell"' README.md` prints `1`. Today `0`.
-- [ ] `grep -c 'as before. Daemon-host' README.md` prints `0`. Today `1`.
-- [ ] `grep -c 'tmux panes as before' README.md` prints `0`. Today `1`.
-- [ ] `grep -c 'explicit opt-out' assets/etc/config.toml src/config/types.rs`
+- [x] `grep -c 'session=abc123' README.md` prints `0`. Today `2`.
+- [x] `grep -c '"mode":"shell"' README.md` prints `1`. Today `0`.
+- [x] `grep -c 'as before. Daemon-host' README.md` prints `0`. Today `1`.
+- [x] `grep -c 'tmux panes as before' README.md` prints `0`. Today `1`.
+- [x] `grep -c 'explicit opt-out' assets/etc/config.toml src/config/types.rs`
       prints `0` for both files. Today `2` and `1`.
-- [ ] `grep -c 'tmux window' src/scheduler.rs` prints `0`. Today `1`.
-- [ ] `grep -c 'foreground' assets/memory/session/pane-referencing-convention.md`
+- [x] `grep -c 'tmux window' src/scheduler.rs` prints `0`. Today `1`.
+- [x] `grep -c 'foreground' assets/memory/session/pane-referencing-convention.md`
       prints `0`. Today `2`.
-- [ ] *Preservation:* `cargo test --test doc_truth` reports `failed=0`.
-- [ ] clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
-- [ ] `cargo test` reports `passed=2319 failed=0`. This phase adds no tests,
+- [x] *Preservation:* `cargo test --test doc_truth` reports `failed=0`.
+- [x] clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
+- [x] `cargo test` reports `passed=2319 failed=0`. This phase adds no tests,
       so a different `passed` count is scope creep.
 
 ## End-to-end verification
@@ -283,3 +283,17 @@ kill: (-808691): No such process
 **Commit:** 58aa749c5501cc8d37885f46bdd45da57ab06f4a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-12
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (55 turns). Its
+  "started" entry names "Claude Opus 4.6", which is a self-label error.
+- **Reviewer re-run:** fmt, build and clippy clean; `passed=2319 failed=0`;
+  all eight acceptance greps match.
+- **Scope deviations:** one, accepted. The executor also rewrote the
+  `[execution]` section intro in README (~993), which carried the same
+  "explicit opt-out" claim as row 2. The spec should have listed it; this is
+  the architect's gap.
+- **Calibration:** none
