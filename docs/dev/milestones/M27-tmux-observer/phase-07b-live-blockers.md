@@ -136,9 +136,9 @@ scope ("find and remove"), and F5's mechanism left for the executor to
 choose. That is the same stall shape as 06c run 1, where the same treatment
 (a per-site edit table) worked.
 
-### Update — 2026-10-12 00:35 (progress)
+### Update — 2026-10-12 00:35 (progress, run 2 — GLM)
 
-Executed all six rows of the edit table (run 2):
+Executed all six rows of the edit table:
 
 - **Row 1 (F6):** deleted the `tmux set -g focus-events on` block and its
   comment from `src/cli/commands/chat.rs`.
