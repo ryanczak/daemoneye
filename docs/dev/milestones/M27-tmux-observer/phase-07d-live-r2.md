@@ -1,7 +1,7 @@
 # Phase 07d: live-r2 — alerts reach a reconnected chat's history; mistyped tool arguments get an error, not a silent drop
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-07a, 07b, 07c (all done)
 **Tags:** language=rust, kind=fix, size=s
 
@@ -201,3 +201,166 @@ $ cargo fmt --all && cargo clippy --all-targets --all-features -- -D warnings &&
 ```
 
 **PASTE MATCH: yes.** The live check is phase 07 rehearsal 3 (architect).
+
+### Update — 2026-10-12 18:23 (complete, server-authored)
+
+**Summary:** </think>All the spec-pinned literals landed. Working tree is clean, status is `in-progress`, no `(complete)` entry hand-written, all gates pass. Let me do a final completion checklist:
+
+- [x] Phase doc's Status: line still says `in-progress` ✓ (line 4)
+- [x] Milestone README's phase-table row still says `in-progress` ✓
+- [x] No hand-written `(complete)` entry ✓ (I wrote `started` and `end-to-end verification` entries only)
+- [x] `cargo fmt --all` run before final commit ✓
+- [x] All verification commands ran clean ✓ (fmt, clippy -D warnings, build zero new warnings, test passed=2322 failed=0)
+- [x] Three pinned tests each `1 passed` ✓
+- [x] Mutation checks captured ✓
+- [x] Gear grep prints 0 ✓
+- [x] Preservation tests failed=0 ✓
+- [x] Full suite passed=2322 ✓
+- [x] git status clean ✓
+- [x] Final message: Summary + Notes for review — now.
+
+One more consideration: the phase's acceptance criterion says `cargo test` reports `passed=2322` — confirmed. Clippy and fmt exit 0 — confirmed.
+
+I should write the final Summary + Notes for review now. Keep it 2-6 sentences, substantive.</think>
+**Summary + Notes for review**
+
+Implemented all 9 rows of phase 07d: `presence_session_ids()` exposes the live presence registry (row 1); `inject_into_sessions` appends to the session file for the union of resident store keys and presence-attached ids, each id once, while the in-memory push stays resident-only and no store entry is created for a presence-only id (row 2); `AiEvent::InvalidToolArgs` and `PendingCall::InvalidArgs` carry the raw arguments so history shows the call exactly as the model made it (rows 3, 6, 7); `invalid_args_event` enumerates every missing required param and mistyped param type from the `ToolDef`'s `ParamDef`s, ending with the expected parameter list, and `None`s only for names not in `TOOLS` (row 4); the three backend drain loops (anthropic, openai, gemini — not the `has_dispatchable`-era predicates, which no longer exist) try `invalid_args_event` first and only fall back to the unknown-tool path when it returns `None` (row 5); the executor returns the listed mistakes as a tool result that runs nothing and prompts nothing (row 8); the two reconnect notices dropped their leading gear, count now 0 (row 9). End-to-end verification: the three pinned tests each report `1 passed`; both mutation checks (env-gated early `None` in `invalid_args_event`, env-gated union skip in `inject_into_sessions`) produced failing runs whose lines are pasted verbatim in the Update Log, then were reverted; `grep -c '"⚙ '` prints `0`; `tmux_read_only` (4 passed) and `doc_truth` (16 passed) report `failed=0`; full `cargo test` reports `passed=2322 failed=0` — today's 2319 plus the three new tests, matching the criterion exactly. fmt, clippy `-D warnings`, and build all exit 0 with no new warnings; committed as `025a1684` (code) and `94ef5560` (evidence); working tree clean; phase status left at `in-progress` for the server's completion tail. Notes for review: (1) the mutation checks were done with temporary env-gated code paths rather than hand edits, both reverted before the final suite run — if you prefer hand-edit capture, the pasted lines still show the real failure modes; (2) `ParamTy::as_str` was widened from private to `pub(crate)` so `invalid_args_event` can name types — the only file touched beyond the rows' named files plus the compiler-mandated `match` extensions (pending.rs `id`/`summary`/`tool_name` arms, ghost.rs's `AiEvent` match, stream.rs, executor); (3) `invalid_args_event` does not consult the model's `loaded` tool set — a call to a known-but-deferred tool with bad args gets the invalid-args error rather than the unknown-tool notice, which I judged correct since the tool exists; (4) gemini's early `has_dispatchable`-style call site at line 39 was left alone per the row's "drain loop, not the predicate" rule.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+st readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (920288): No such process
+kill: (-920997): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-a6c1d042be279283)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M27-tmux-observer/README.md` — +1 -1
+- `docs/dev/milestones/M27-tmux-observer/phase-07d-live-r2.md` — +103 -1
+- `src/ai/backends/anthropic.rs` — +5 -2
+- `src/ai/backends/gemini.rs` — +12 -2
+- `src/ai/backends/openai.rs` — +9 -1
+- `src/ai/tools/dispatch.rs` — +149 -0
+- `src/ai/tools/mod.rs` — +1 -1
+- `src/ai/tools/schema.rs` — +1 -1
+- `src/ai/types/events.rs` — +10 -0
+- `src/ai/types/pending.rs` — +54 -0
+- `src/cli/commands/chat_presence.rs` — +4 -5
+- `src/daemon/executor/mod.rs` — +17 -0
+- `src/daemon/ghost.rs` — +15 -0
+- `src/daemon/session.rs` — +14 -0
+- `src/daemon/stream.rs` — +15 -0
+- `src/webhook/process.rs` — +65 -3
+
+**Commit:** 94ef55600ce94d754129407d211048764278f7b2
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
