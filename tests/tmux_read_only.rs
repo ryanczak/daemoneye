@@ -42,9 +42,10 @@ const WRITE_VERBS: &[&str] = &[
     "setw",
 ];
 
-/// The span a `Command::new("tmux")` line opens: from that line up to the
-/// first `])` or `)` that closes the `.args([...])` / `.arg(...)` call that
-/// follows, scanning at most 15 further lines.
+/// From a `Command::new("tmux")` line to the close of the `.args([…])` /
+/// `.arg(…)` call that follows — at most 15 lines later. The close is the
+/// bracket that balances the opener, and it may sit on a later line; when
+/// the opener closes on its own line, the span is that line alone.
 fn tmux_write_hits(src: &str) -> Vec<(usize, String)> {
     let lines: Vec<&str> = src.lines().collect();
     let mut hits = Vec::new();
@@ -54,10 +55,35 @@ fn tmux_write_hits(src: &str) -> Vec<(usize, String)> {
         }
         let end = (i + 15).min(lines.len());
         let mut span = String::new();
-        for next in &lines[i..end] {
+        // The kind and remaining depth of the opener's open bracket, when it
+        // closes on a later line. `None` once the call is closed.
+        let mut open: Option<(char, i32)> = None;
+        for (n, next) in lines[i..end].iter().enumerate() {
             span.push_str(next);
             span.push('\n');
-            if next.contains("])") || next.contains(')') {
+            if n == 0 {
+                if let Some(at) = next.find(".args([") {
+                    open = opener(next, at, '[');
+                } else if let Some(at) = next.find(".arg(") {
+                    open = opener(next, at, '(');
+                }
+                if open.is_none() {
+                    break;
+                }
+                continue;
+            }
+            if let Some((kind, depth)) = open.as_mut() {
+                for c in next.chars() {
+                    if c == *kind {
+                        *depth += 1;
+                    } else if c == close_for(*kind) {
+                        *depth -= 1;
+                    }
+                }
+                if *depth <= 0 {
+                    break;
+                }
+            } else {
                 break;
             }
         }
@@ -71,6 +97,24 @@ fn tmux_write_hits(src: &str) -> Vec<(usize, String)> {
         }
     }
     hits
+}
+
+/// The open bracket that carries past the opener line, with its remaining
+/// depth: `None` when the call already closed on that line.
+fn opener(line: &str, from: usize, kind: char) -> Option<(char, i32)> {
+    let mut depth: i32 = 0;
+    for c in line[from..].chars() {
+        if c == kind {
+            depth += 1;
+        } else if c == close_for(kind) {
+            depth -= 1;
+        }
+    }
+    if depth > 0 { Some((kind, depth)) } else { None }
+}
+
+fn close_for(kind: char) -> char {
+    if kind == '[' { ']' } else { ')' }
 }
 
 /// Every double-quoted literal in `src`, in order. Naive but sufficient for
@@ -161,5 +205,21 @@ fn gate_catches_an_abbreviated_write() {
     assert!(
         help.is_empty(),
         "a printed help line is not a tmux call: {help:?}"
+    );
+}
+
+#[test]
+fn gate_catches_a_multi_line_write() {
+    let src = "let _ = Command::new(\"tmux\").args([\n    \"split-window\",\n    \"-h\",\n]);";
+    let hits = tmux_write_hits(src);
+    assert_eq!(hits.len(), 1, "the multi-line write is flagged: {hits:?}");
+    assert_eq!(hits[0].1, "split-window");
+
+    // A call that closes on its own line is still one hit, not two.
+    let one_line = tmux_write_hits("let _ = Command::new(\"tmux\").arg(\"killw\");");
+    assert_eq!(
+        one_line.len(),
+        1,
+        "the single-line write is still flagged once: {one_line:?}"
     );
 }

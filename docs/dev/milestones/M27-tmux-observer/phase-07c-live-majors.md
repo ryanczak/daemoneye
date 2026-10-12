@@ -340,3 +340,48 @@ restore it. Paste the failing line.
 
 **Finish condition:** `cargo test` reports `passed=2318`, **not** 2317. One
 `fix:` commit.
+
+### Update — 2026-10-12 02:46 (started, resume on bounce 1)
+
+**Executor:** Claude (phase-07c run, bounce 1)
+**Plan:** bug-07c-1 only — make `tmux_write_hits`'s span run from the
+`.args([`/`.arg(` opener to its matching close (may be lines later), add
+`gate_catches_a_multi_line_write`, run `source_issues_no_tmux_write_verbs`
+on the real tree, mutation check, then the gate set and the end-to-end
+block. Rows 1–6 stay untouched per the bounce note. Status is already
+`in-progress`; the completion tail stays with the server.
+
+### Update — 2026-10-12 02:52 (end-to-end verification)
+
+**Executor:** Claude (phase-07c run, bounce 1)
+```
+run_terminal_command_maps_legacy_background_to_wait: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.00s
+socket_close_mid_command_reports_shell_exit: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.00s
+approval_read_times_out: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.02s
+parked_presence_reconnects_after_eof: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.00s
+gate_catches_an_abbreviated_write: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+gate_catches_a_multi_line_write: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+cargo test parked_presence_ends_on_eof → test result: ok. 0 passed; 0 failed; … (renamed; filtered out in every target)
+cargo test --test tmux_read_only → test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+grep -c 'bind-key T split-window' src/cli/commands/setup.rs → 1
+clippy -D warnings → Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s (exit 0)
+cargo fmt --all --check → fmt_exit=0
+cargo test (full, /tmp/full_test.log) → test result lines: 2248/2/6/16/32/11/3/0 — passed=2318 failed=0
+```
+
+PASTE MATCH: yes
+
+**Mutation check (bug-07c-1).** Replaced `open = opener(next, at, '[');`
+with `open = opener(next, at, '[').and(None);` — the opener never carries
+past its own line, the pre-fix behavior:
+
+```
+test gate_catches_a_multi_line_write ... FAILED
+thread 'gate_catches_a_multi_line_write' (474148) panicked at tests/tmux_read_only.rs:223:5:
+assertion `left == right` failed: the multi-line write is flagged: []
+  left: 0
+ right: 1
+```
+
+Reverted; the test passes again. (`source_issues_no_tmux_write_verbs`
+stays green with the fixed scanner: no real production hit.)
