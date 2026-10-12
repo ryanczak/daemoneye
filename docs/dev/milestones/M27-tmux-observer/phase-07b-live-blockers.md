@@ -1,7 +1,7 @@
 # Phase 07b: live-blockers — scheduled jobs fire without tmux, catch-up sees what arrived while away, the client writes nothing to tmux
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-06e
 **Tags:** language=rust, kind=bugfix, size=m
 
@@ -392,3 +392,34 @@ kill: (-345488): No such process
 **Commit:** 50a0c68d31f79476065751a804a1320c469a540c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-11
+
+- **Verdict:** approved_first_try
+- **Bounces:** none. One escalation: run 1 was stopped by the PE at turn 257
+  with no source edits, then re-dispatched with a per-site edit table.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (run 2, 337 turns)
+- **Reviewer re-run:** fmt, build and clippy clean; `passed=2313 failed=0`; the
+  four new tests report `1 passed` each; the three-verb grep prints 0; the
+  mutation check is pasted (gate re-inserted, the test failed at
+  `scheduled.rs:1016`). Row 5 matches the existing `bg_shell.rs` idiom (disk
+  append plus in-memory push). An inject that lands while a turn is in
+  flight is overwritten in memory but kept on disk; that is pre-existing and
+  shared with `[Background Task Completed]`.
+- **Scope deviations, accepted:** removed `query_window_width` and
+  `list_pane_ids_in_session` once they were orphaned. Reworded six
+  comments and strings the gate named.
+- **Carried to 07c:**
+  1. The gate matches whole-name literals only. To pass it, the executor
+     changed two printed help lines to tmux abbreviations (`splitw`,
+     `killw`), and a `Command::new("tmux").args(["splitw", …])` would evade
+     it the same way. Make the gate check the args passed to
+     `Command::new("tmux")`, including abbreviations (`splitw`, `send`,
+     `neww`, `killw`, `resizep`, `set`), and restore the spelled-out names in
+     help text.
+  2. `sync_read_line` was rewritten outside the table. Its behaviour is the
+     same, but a "Restore original flags" comment now sits above the *save*.
+- **Calibration:** the per-site edit table fixed the survey stall again.
+  That is the second time (06c run 1 → run 2, 07b run 1 → run 2). The
+  candidate WORKFLOW fold is "a code-phase spec names every edit site; never
+  'find and remove all X'". Held at two occurrences.
