@@ -1,7 +1,7 @@
 # Phase 07c: live-majors — chat survives a daemon restart, the model's `background` habit works, expired approvals close, honest shell-exit errors, a gate that sees abbreviations
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** in-progress (bounced: bug-07c-1)
 **Depends on:** phase-07b
 **Tags:** language=rust, kind=bugfix, size=m
 
@@ -66,6 +66,9 @@ confirm it fails, and revert. Paste the failing line.
       None of them exists today.
 - [ ] `cargo test parked_presence_ends_on_eof` reports `0 passed` (renamed).
       `cargo test --test tmux_read_only` is all green.
+- [ ] **bug-07c-1:** `cargo test --test tmux_read_only gate_catches_a_multi_line_write`
+      reports `1 passed` (today the test does not exist), and `cargo test`
+      reports `passed=2318`.
 - [ ] `grep -c 'bind-key T split-window' src/cli/commands/setup.rs` prints
       `1`. Today it prints `0`.
 - [ ] clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
@@ -308,3 +311,32 @@ kill: (-451417): No such process
 **Commit:** 3729096d34d5901bed0fb95ed2b652d97dead7ed
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-10-11 (bounce 1)
+
+**All gates are green and the tree is clean. That is expected and is NOT
+evidence the phase is done.** Rows 1–6 are approved: F2, F1, F7 with
+`read_byte_by`, F4 reconnect, the help strings and the `sync_read_line`
+comment. Do not touch them.
+
+There is exactly **one fix** left (bug-07c-1), in `tests/tmux_read_only.rs`
+only. `tmux_write_hits` ends its span on the `Command::new("tmux")` line
+itself, because that line contains `)`. So a multi-line `.args([` list is
+never scanned. Make the span run from the `.args([` / `.arg(` opener to its
+**matching** close, which may be lines later. Then add
+`gate_catches_a_multi_line_write`:
+
+```rust
+let src = "let _ = Command::new(\"tmux\").args([\n    \"split-window\",\n    \"-h\",\n]);";
+// tmux_write_hits(src) == one hit, verb "split-window"
+```
+
+Keep `gate_catches_an_abbreviated_write` as it is. Run
+`source_issues_no_tmux_write_verbs`. If it now names a real hit, write the
+file:line in the Update Log and leave the file alone.
+
+**Mutation check:** revert your span fix, confirm the new test fails, then
+restore it. Paste the failing line.
+
+**Finish condition:** `cargo test` reports `passed=2318`, **not** 2317. One
+`fix:` commit.
