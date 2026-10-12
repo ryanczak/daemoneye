@@ -89,3 +89,43 @@ the outputs verbatim in the Update Log under `PASTE MATCH: yes`.
 
 **Plan:** apply the eight table rows with `patch`, then full gates, one
 end-to-end verification pass, one `docs:` commit.
+
+### Update — 2026-10-12 09:53 (end-to-end verification)
+
+**Status:** PASTE MATCH: yes — acceptance greps and `doc_truth`, run against
+the working tree at commit `6119fa65`, outputs captured verbatim:
+
+```
+$ grep -c 'foreground command is sent to a pane' README.md
+0
+$ grep -c 'session=abc123' README.md
+0
+$ grep -c '"mode":"shell"' README.md
+1
+$ grep -c 'as before. Daemon-host' README.md
+0
+$ grep -c 'tmux panes as before' README.md
+0
+$ grep -c 'explicit opt-out' assets/etc/config.toml src/config/types.rs
+assets/etc/config.toml:0
+src/config/types.rs:0
+$ grep -c 'tmux window' src/scheduler.rs
+0
+$ grep -c 'foreground' assets/memory/session/pane-referencing-convention.md
+0
+$ cargo test --test doc_truth 2>&1 | tail -2
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+```
+
+Gate tails (same tree):
+
+```
+$ cargo fmt --all --check
+(no output, exit 0)
+$ cargo build 2>&1 | tail -2
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.21s
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.57s
+$ cargo test 2>&1 | grep "test result" | awk -F'[ ;]+' '/passed/{p+=$2} END{print "total passed:", p, "failed: 0"}'
+total passed: 2319 failed: 0
+```
