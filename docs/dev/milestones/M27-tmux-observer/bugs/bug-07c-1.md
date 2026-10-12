@@ -1,7 +1,7 @@
 # Bug 1 on phase-07c: the tmux-write gate never scans a multi-line arg list
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (0db1440b)
 **Filed:** 2026-10-11
 
 ## What's wrong

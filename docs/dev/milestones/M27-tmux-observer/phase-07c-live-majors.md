@@ -1,7 +1,7 @@
 # Phase 07c: live-majors — chat survives a daemon restart, the model's `background` habit works, expired approvals close, honest shell-exit errors, a gate that sees abbreviations
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** in-progress (bounced: bug-07c-2)
 **Depends on:** phase-07b
 **Tags:** language=rust, kind=bugfix, size=m
 
@@ -69,6 +69,9 @@ confirm it fails, and revert. Paste the failing line.
 - [ ] **bug-07c-1:** `cargo test --test tmux_read_only gate_catches_a_multi_line_write`
       reports `1 passed` (today the test does not exist), and `cargo test`
       reports `passed=2318`.
+- [ ] **bug-07c-2:** `cargo test --test tmux_read_only gate_catches_a_chained_write`
+      reports `1 passed` (today the test does not exist), and `cargo test`
+      reports `passed=2319`.
 - [ ] `grep -c 'bind-key T split-window' src/cli/commands/setup.rs` prints
       `1`. Today it prints `0`.
 - [ ] clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
@@ -517,3 +520,26 @@ kill: (-484370): No such process
 **Commit:** 0db1440b9aa75d179e9e989767898d6f8d1247c9
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-10-11 (bounce 2)
+
+**All gates are green and the tree is clean. That is expected and is NOT
+evidence the phase is done.** Everything else is approved, including your
+bug-07c-1 fix, which the reviewer's probe confirmed. Do not touch it.
+
+There is exactly **one fix** left (bug-07c-2), in `tests/tmux_read_only.rs`
+only. `tmux_write_hits` looks for the `.args(` / `.arg(` opener only on the
+`Command::new("tmux")` line. rustfmt puts it on the next line in 4 real call
+sites. Find the first opener **on any line of the span window** after
+`Command::new("tmux")`, then balance brackets from there, as you already do.
+Add `gate_catches_a_chained_write`:
+
+```rust
+let src = "let _ = std::process::Command::new(\"tmux\")\n    .args([\"send-keys\", \"-t\", \"x\"])\n    .output();";
+// tmux_write_hits(src) == one hit, verb "send-keys"
+```
+
+**Mutation check:** restrict the opener search to the first line again,
+confirm the new test fails, then restore. Paste the failing line.
+
+**Finish condition:** `passed=2319`, **not** 2318. One `fix:` commit.
