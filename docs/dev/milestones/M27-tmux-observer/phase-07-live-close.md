@@ -48,6 +48,11 @@ optional alert overlay.
    approval panel (`pprove for`) and answer within the 60 s
    `APPROVAL_TIMEOUT`. In a persistent PTY shell, test exit codes with
    `sh -c 'exit N'`, never a bare `exit N`, which kills the shell.
+5. **Harness rules from rehearsal 2.** `[approvals] commands` defaults to
+   `true`, so send `/approvals off` as each chat's first input, or no
+   approval panel appears. Send nothing until the greeting turn is idle; a
+   line typed mid-stream is dropped. Match the panel on `pprove for` only:
+   a bare `pprove` also matches an earlier `✓ approved`.
 
 ## Spec
 
@@ -123,7 +128,11 @@ emulator's own calls stay out of the shim log.
   with the `-c` identity. Create an annotated tag `v2.0.0`. **Push only on
   the PE's explicit go-ahead.**
 - **S7 — clean up.** Stop the throwaway daemon, kill the emulator and the
-  private server, and `rm -rf $R`. No `daemoneye` process is left from `$R`.
+  private server, and `rm -rf $R`. Shell-hosts and the ssh ControlMaster
+  outlive `daemoneye stop` by design: kill every process whose
+  `/proc/<pid>/environ` holds `HOME=$R` or whose argv names `$R`. No
+  `daemoneye` process is left from `$R`. Rehearsal 1 missed this, and two of
+  its shell-hosts were still alive at rehearsal 2.
 
 ## Acceptance criteria
 
@@ -213,3 +222,66 @@ every start, so it was left as is.
 **Next.** F3 and F5 break exit criteria. F6 breaks "read-only". F2 and F4
 are major. These need code phases before the PE run. S5's (a) and (b) go
 to 07a. The PE run and S6 wait for all of them.
+
+### Update — 2026-10-12 (rehearsal 2, architect)
+
+Rehearsed against `b972f127` (07a/07b/07c done). The harness fixes are
+folded into Pre-flight 5 and S7. **What passed:**
+- Run A, no tmux on PATH: `doctor` → `OK tmux: not installed (optional)`,
+  exit 0. A waited `echo hi; sh -c 'exit 3'` reported exit 3 in `s0`.
+  `wait: false` ran on `s1` behind an approval panel; `[Background Task
+  Completed] … exit code 0` was injected. Zero tmux calls, zero tmux
+  warn/error lines in `daemon.log`.
+- **F3 fixed:** with no tmux, scheduled `exit3.sh` fired: `failed: exit code
+  3`. The legacy `Command` job was refused with `scheduled_job_refused` and
+  a WARN.
+- **F4 fixed:** across the S1d restart the open chat showed `⚙ daemon
+  connection lost — reconnecting…` then `⚙ reconnected`, and then
+  received the refusal and the `exit3.sh` result live.
+- Webhook: `⚙ [FIRING] LiveTicks` on screen; the ghost ran `echo ghost-ran`
+  and completed in 2 turns (`ghost_complete`).
+- **F5 fixed:** `/exit`, 43 s away, an alert, `chat --resume` →
+  `⚙ [Catch-up] 1 event while you were away (43s): • [Webhook Alert]`
+  before the first token.
+- Run B, private tmux, shim in pass mode: 248 tmux calls, **0 write verbs**
+  (capture-pane 79, display-message 47, list-panes 42, list-windows 40,
+  show-environment 39, list-sessions 1). **F6 fixed:** no `set -g
+  focus-events`. Window count 1 → 1, no daemoneye hook. The context carried
+  the `top` pane and `[PANE MAP] idx:1=%1 (top, 'main')`.
+- S3b: `hostname; sh -c 'exit 4'` on zoidberg → `zoidberg`, exit 4, shell
+  `s3` over a ControlMaster; zoidberg `tmux ls` unchanged (no server).
+- S4: `doc_truth` 16/16; `doctor` on the PE's real home exits 0.
+
+**What failed. The PE run is blocked on F8 and F10:**
+
+- F8 (major): after a daemon restart, a reconnected chat is not resident in
+  the session store until it sends its next message. `inject_into_sessions`
+  (`src/webhook/process.rs`) writes only to resident sessions, so in that
+  window alerts, ghost lifecycle events and scheduled results reach the
+  screen (presence broadcast) but not the model's history. Observed: after
+  the S1d restart, alert 1 and both ghost events were missing from the
+  session file, and the model said none had arrived. Alert 2, posted once
+  the session was resident again, was injected, and the model named it.
+  This breaks "the model sees the alert on its next turn" after any
+  restart.
+- F10 (major): every tool's `from_value` is `serde_json::from_value(..).ok()`
+  (`src/ai/tools/args.rs`), and `dispatch_tool_event` turns that `None`
+  into "unknown tool". So a known tool with one mistyped argument is
+  logged as `model called unknown tool 'run_terminal_command' — call
+  dropped`. The model gets no error to correct from, and the turn ends with
+  "The model returned an empty reply". It happened twice in a row at S3b.
+  The raw arguments are not logged anywhere. On the third try (through a
+  logging proxy) GLM sent only `command` and `host`, and the call ran.
+  Rehearsal 1's S3b passing was luck.
+- F9 (minor): the chat's own pane is left out of the context, and the
+  remaining pane is labelled `[ACTIVE PANE %1]`. The model then reads the
+  `top` pane as the user's own and answers "there's no other pane". Seen in
+  both rehearsals.
+- nit: the reconnect lines render with a doubled gear (`⚙ ⚙ daemon
+  connection lost`).
+- obs: a second alert with the same `alertname` inside `dedup_window_secs`
+  is injected but not analysed and starts no ghost. By design.
+
+**Next.** F8 and F10 need a code phase (07d) before the PE run. F9 and the
+nit can ride along. Then rehearsal 3 covers S1e after a restart and S3b
+again, and the PE run follows.
