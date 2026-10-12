@@ -106,8 +106,7 @@ impl HeldPresence {
                     if n == 0 {
                         // EOF: the daemon restart or dropped its end. Report
                         // it, then keep the chat alive by re-attaching.
-                        let _ =
-                            push_tx.send("⚙ daemon connection lost — reconnecting…".to_string());
+                        let _ = push_tx.send("daemon connection lost — reconnecting…".to_string());
                         break;
                     }
                     if let Ok(Response::SystemMsg(msg)) =
@@ -135,7 +134,7 @@ impl HeldPresence {
                 let (next_rx, next_tx) = (held.rx, held.tx);
                 rx = next_rx;
                 tx = next_tx;
-                let _ = push_tx.send("⚙ reconnected".to_string());
+                let _ = push_tx.send("reconnected".to_string());
                 if let Some(brief) = brief {
                     let _ = push_tx.send(brief);
                 }
@@ -349,13 +348,13 @@ mod tests {
             .expect("the connection-lost push within 5 s");
         assert_eq!(
             second.as_deref(),
-            Some("⚙ daemon connection lost — reconnecting…"),
+            Some("daemon connection lost — reconnecting…"),
             "EOF is announced, not swallowed"
         );
         let third = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the reconnected push within 5 s");
-        assert_eq!(third.as_deref(), Some("⚙ reconnected"));
+        assert_eq!(third.as_deref(), Some("reconnected"));
         let brief = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the brief within 5 s");

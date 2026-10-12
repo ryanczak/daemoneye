@@ -421,6 +421,23 @@ where
     let tool_start = Instant::now();
 
     let outcome = match call {
+        PendingCall::InvalidArgs {
+            id, name, error, ..
+        } => {
+            let msg = format!(
+                "Error: invalid arguments for {name}: {error}. Fix the arguments and call {name} again."
+            );
+            log::warn!("model sent invalid arguments for tool '{name}': {error}");
+            send_response_split(
+                tx,
+                Response::ToolResult {
+                    tool_call_id: id.to_string(),
+                    output: msg.clone(),
+                },
+            )
+            .await?;
+            Ok(ToolCallOutcome::Result(msg))
+        }
         PendingCall::Foreground {
             id,
             cmd,

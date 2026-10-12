@@ -4,7 +4,7 @@ use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::tools::{dispatch_tool_event, get_tool_definition};
+use crate::ai::tools::{dispatch_tool_event, get_tool_definition, invalid_args_event};
 use crate::ai::types::{AiEvent, Message, TokenBreakdown};
 use crate::ai::{AiClient, http, send_with_retry};
 
@@ -65,7 +65,10 @@ fn flush_tool_call(
     };
     match serde_json::from_str::<Value>(args_str) {
         Ok(args) => {
-            if let Some(ev) = dispatch_tool_event(tool_id, tool_name, &args, thought_sig) {
+            if let Some(ev) = dispatch_tool_event(tool_id, tool_name, &args, thought_sig.clone()) {
+                let _ = tx.send(ev);
+            } else if let Some(ev) = invalid_args_event(tool_id, tool_name, &args, thought_sig) {
+                log::warn!("model sent invalid arguments for tool '{tool_name}': {args}");
                 let _ = tx.send(ev);
             } else {
                 log::warn!("model called unknown tool '{tool_name}' — call dropped");

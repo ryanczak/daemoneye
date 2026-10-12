@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::ai::{AiEvent, Message};
 use crate::daemon::ghost::GhostManager;
 use crate::daemon::session::{
-    SessionStore, append_session_message, presence_broadcast, with_sessions,
+    SessionStore, append_session_message, presence_broadcast, presence_session_ids, with_sessions,
 };
 use crate::daemon::utils::{UnpoisonExt, fire_notification, log_event};
 
@@ -186,12 +186,22 @@ pub async fn process_alert(
 /// file and the in-memory entry (so it appears in the next AI turn regardless
 /// of whether the session was idle or active).
 pub(crate) fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
-    let ids: Vec<String> = with_sessions(sessions, |store| store.keys().cloned().collect());
+    // The union of the store's resident ids and every session with a live
+    // presence connection. A chat that re-attached after a daemon restart is
+    // present over presence but has no in-memory entry until it asks again —
+    // its history still lands in the session file, where `handle_ask` reads
+    // it. Without this union an alert fired in that window shows on screen
+    // and vanishes from the record.
+    let mut ids: Vec<String> = with_sessions(sessions, |store| store.keys().cloned().collect());
+    ids.extend(presence_session_ids());
+    ids.sort();
+    ids.dedup();
 
     // `handle_ask` takes the in-memory history whenever the session is
     // resident and only re-reads the file when it is not, so the resident
     // entries must see the injected message too or the next turn silently
-    // misses the alert.
+    // misses the alert. A presence-only id must NOT get a store entry: the
+    // empty resident history would win over the file on the next ask.
     for sid in &ids {
         append_session_message(sid, msg);
     }
@@ -766,6 +776,58 @@ mod tests {
                 "the alert is the last message"
             );
         });
+    }
+
+    #[test]
+    fn inject_reaches_a_presence_attached_session_that_is_not_resident() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        std::fs::create_dir_all(crate::config::sessions_dir()).unwrap();
+        let sessions = SessionStore::new();
+
+        let (push_tx, mut push_rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = crate::daemon::session::PresenceConnection {
+            push: push_tx.clone(),
+        };
+        let sid = "reconnected-after-restart";
+        assert_eq!(
+            crate::daemon::session::presence_register(sid, conn.clone()),
+            1,
+            "the reconnected chat is attached over presence"
+        );
+        assert!(
+            !with_sessions(&sessions, |store| store.contains_key(sid)),
+            "precondition: the reattached chat has no in-memory entry yet"
+        );
+
+        let alert = msg("[Webhook Alert] disk usage at 95%");
+        inject_into_sessions(&sessions, &alert);
+
+        let file = crate::config::sessions_dir().join(format!("{sid}.jsonl"));
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("the session file {file:?} exists: {e}"));
+        assert!(
+            text.contains("[Webhook Alert] disk usage at 95%"),
+            "the alert lands in the session file of the non-resident reattached chat"
+        );
+        assert!(
+            with_sessions(&sessions, |store| !store.contains_key(sid)),
+            "no empty in-memory entry is created — handle_ask would read it instead of the file"
+        );
+        assert!(
+            push_rx.try_recv().is_err(),
+            "inject_into_sessions does not push over presence; notify_chat_panes does"
+        );
+
+        assert!(
+            crate::daemon::session::presence_unregister(sid, &conn),
+            "the presence connection is released"
+        );
+        assert!(
+            !crate::daemon::session::presence_session_ids().contains(&sid.to_string()),
+            "this test's presence connection is released"
+        );
     }
 
     #[tokio::test]

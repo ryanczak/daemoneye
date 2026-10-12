@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::tools::{dispatch_tool_event, get_gemini_tool_definition};
+use crate::ai::tools::{dispatch_tool_event, get_gemini_tool_definition, invalid_args_event};
 use crate::ai::types::{AiEvent, Message, TokenBreakdown};
 use crate::ai::{AiClient, http, next_tool_id, send_with_retry};
 
@@ -381,11 +381,21 @@ impl AiClient for GeminiClient {
                                                         &id,
                                                         fn_name,
                                                         &args,
-                                                        thought_sig,
+                                                        thought_sig.clone(),
                                                     ) {
                                                         if !first_token_seen {
                                                             first_token_seen = true;
                                                         }
+                                                        let _ = tx.send(ev);
+                                                    } else if let Some(ev) = invalid_args_event(
+                                                        &id,
+                                                        fn_name,
+                                                        &args,
+                                                        thought_sig,
+                                                    ) {
+                                                        log::warn!(
+                                                            "model sent invalid arguments for tool '{fn_name}': {args}"
+                                                        );
                                                         let _ = tx.send(ev);
                                                     } else {
                                                         log::warn!(

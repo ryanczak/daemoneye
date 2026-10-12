@@ -1297,6 +1297,21 @@ async fn do_ghost_turn(
                             timeout_secs,
                         });
                     }
+                    AiEvent::InvalidToolArgs {
+                        id,
+                        name,
+                        arguments,
+                        error,
+                        thought_signature,
+                    } => {
+                        pending_calls.push(PendingCall::InvalidArgs {
+                            id,
+                            name,
+                            arguments,
+                            error,
+                            thought_signature,
+                        });
+                    }
                     AiEvent::Done(usage) => {
                         let pricing = model_entry.pricing().unwrap_or(crate::config::Pricing {
                             input_per_mtok: 0.0,

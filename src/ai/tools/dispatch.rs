@@ -1,4 +1,6 @@
 use super::args::*;
+use super::schema::{ParamTy, ToolDef};
+use crate::ai::tools::defs::TOOLS;
 use crate::ai::types::AiEvent;
 use serde_json::Value;
 
@@ -95,6 +97,106 @@ pub fn dispatch_tool_event(
         "await_agent_result" => dispatch::<AwaitAgentResultArgs>(id, args, ts),
         _ => None,
     }
+}
+
+/// A tool call to a **known** tool whose arguments do not match its schema:
+/// list every mistake in `error` instead of letting the call drop as an
+/// "unknown tool" notice (M27 phase-07d, F10). `None` for a name that is not
+/// in `TOOLS` — those keep the unknown-tool path.
+///
+/// `ts` carries the provider's thought signature so the retry loop can keep
+/// interleaved-thinking state consistent, exactly as `dispatch_tool_event`
+/// does.
+pub fn invalid_args_event(
+    id: &str,
+    name: &str,
+    args: &Value,
+    ts: Option<String>,
+) -> Option<AiEvent> {
+    let def = TOOLS.iter().find(|t| t.name == name)?;
+    let mut problems = Vec::new();
+
+    for param in def.params {
+        match args.get(param.name) {
+            None => {
+                if param.required {
+                    problems.push(format!(
+                        "missing required parameter '{} ({}, required)'",
+                        param.name,
+                        param.ty.as_str()
+                    ));
+                }
+            }
+            Some(value) => {
+                let actual = json_type_name(value);
+                let expected = match param.ty {
+                    ParamTy::Str => "string",
+                    ParamTy::Bool => "boolean",
+                    ParamTy::Int => "integer",
+                };
+                if actual != expected {
+                    problems.push(format!(
+                        "parameter '{} ({}, optional)' is {actual}, expected {expected}",
+                        param.name,
+                        param.ty.as_str()
+                    ));
+                }
+            }
+        }
+    }
+
+    let error = if problems.is_empty() {
+        format!(
+            "the arguments do not match the schema; expected: {}",
+            expected_params(def)
+        )
+    } else {
+        format!(
+            "{}; expected: {}",
+            problems.join("; "),
+            expected_params(def)
+        )
+    };
+
+    Some(AiEvent::InvalidToolArgs {
+        id: id.to_string(),
+        name: def.name,
+        arguments: args.to_string(),
+        error,
+        thought_signature: ts,
+    })
+}
+
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(n) => {
+            if n.is_i64() || n.is_u64() {
+                "integer"
+            } else {
+                "float"
+            }
+        }
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn expected_params(def: &ToolDef) -> String {
+    def.params
+        .iter()
+        .map(|p| {
+            format!(
+                "{} ({}, {})",
+                p.name,
+                p.ty.as_str(),
+                if p.required { "required" } else { "optional" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,5 +1157,52 @@ mod tests {
             }
             other => panic!("expected AiEvent::EditFile, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn invalid_args_event_names_the_mistyped_param() {
+        let ev = invalid_args_event(
+            "tc_1",
+            "run_terminal_command",
+            &json!({"command": "x", "wait": "true"}),
+            None,
+        )
+        .expect("a known tool always yields an event");
+        let AiEvent::InvalidToolArgs {
+            id,
+            name,
+            arguments,
+            error,
+            thought_signature,
+        } = ev
+        else {
+            panic!("expected InvalidToolArgs, got {ev:?}");
+        };
+        assert_eq!(id, "tc_1");
+        assert_eq!(name, "run_terminal_command", "the tool is named exactly");
+        assert_eq!(
+            arguments, r#"{"command":"x","wait":"true"}"#,
+            "the raw arguments are kept for history"
+        );
+        assert_eq!(thought_signature, None);
+        assert!(
+            error.contains("wait") && error.contains("boolean"),
+            "the mistyped param is named: {error}"
+        );
+
+        let ev = invalid_args_event("tc_2", "run_terminal_command", &json!({"wait": true}), None)
+            .expect("a known tool always yields an event");
+        let AiEvent::InvalidToolArgs { error, .. } = ev else {
+            panic!("expected InvalidToolArgs");
+        };
+        assert!(
+            error.contains("command"),
+            "the missing required param is named: {error}"
+        );
+
+        assert!(
+            invalid_args_event("tc_3", "no_such_tool", &json!({}), None).is_none(),
+            "an unknown tool keeps the unknown-tool path"
+        );
     }
 }

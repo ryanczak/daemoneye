@@ -12,6 +12,16 @@ pub enum AiEvent {
         host: Option<String>,
         timeout_secs: Option<u64>,
     },
+    /// A call to a **known** tool whose arguments do not match its schema.
+    /// Nothing is executed; the model gets the mistakes as a tool result it
+    /// can retry against (M27 phase-07d, F10).
+    InvalidToolArgs {
+        id: String,
+        name: &'static str,
+        arguments: String,
+        error: String,
+        thought_signature: Option<String>,
+    },
     ScheduleCommand {
         id: String,
         name: String,

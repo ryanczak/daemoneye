@@ -13,7 +13,7 @@ pub enum ParamTy {
 }
 
 impl ParamTy {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             ParamTy::Str => "string",
             ParamTy::Bool => "boolean",

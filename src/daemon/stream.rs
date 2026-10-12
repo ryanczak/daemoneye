@@ -348,6 +348,21 @@ where
                         });
                     }
                 }
+                AiEvent::InvalidToolArgs {
+                    id,
+                    name,
+                    arguments,
+                    error,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::InvalidArgs {
+                        id,
+                        name,
+                        arguments,
+                        error,
+                        thought_signature,
+                    });
+                }
                 AiEvent::ScheduleCommand {
                     id,
                     name,

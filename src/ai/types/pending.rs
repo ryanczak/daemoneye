@@ -32,6 +32,17 @@ pub enum PendingCall {
         /// 5-field cron expression (e.g. `*/5 * * * *`). Mutually exclusive with `interval`.
         cron: Option<String>,
     },
+    /// A call to a known tool whose arguments failed schema validation
+    /// (M27 phase-07d, F10). The raw arguments are kept so history shows the
+    /// call exactly as the model made it; the executor returns the listed
+    /// mistakes as the tool result and runs nothing.
+    InvalidArgs {
+        id: String,
+        name: &'static str,
+        arguments: String,
+        error: String,
+        thought_signature: Option<String>,
+    },
     /// Load a deferred group of tools into the active set for this session.
     LoadTools {
         id: String,
@@ -408,6 +419,18 @@ impl PendingCall {
                 thought_signature: thought_signature.clone(),
                 name: "list_schedules".to_string(),
                 arguments: "{}".to_string(),
+            },
+            PendingCall::InvalidArgs {
+                id,
+                name,
+                arguments,
+                thought_signature,
+                ..
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: name.to_string(),
+                arguments: arguments.clone(),
             },
             PendingCall::LoadTools {
                 id,
@@ -912,6 +935,7 @@ impl PendingCall {
             PendingCall::Foreground { id, .. } => id,
             PendingCall::Background { id, .. } => id,
             PendingCall::ScheduleCommand { id, .. } => id,
+            PendingCall::InvalidArgs { id, .. } => id,
             PendingCall::ListSchedules { id, .. } => id,
             PendingCall::LoadTools { id, .. } => id,
             PendingCall::CancelSchedule { id, .. } => id,
@@ -1144,6 +1168,7 @@ impl PendingCall {
             PendingCall::GetTurn { run_id, turn, .. } => {
                 format!("turn {turn} of {run_id}")
             }
+            PendingCall::InvalidArgs { name, .. } => format!("invalid arguments for {name}"),
             _ => String::new(),
         }
     }
@@ -1195,6 +1220,7 @@ impl PendingCall {
             PendingCall::RunLogTail { .. } => "run_log_tail",
             PendingCall::RunLogSearch { .. } => "run_log_search",
             PendingCall::GetTurn { .. } => "get_turn",
+            PendingCall::InvalidArgs { name, .. } => name,
         }
     }
 }
@@ -1594,6 +1620,13 @@ mod tests {
                 ghost_runbook: None,
                 cron: None,
             },
+            PendingCall::InvalidArgs {
+                id: x(),
+                name: "read_file",
+                arguments: "{}".to_string(),
+                error: "missing required parameter".to_string(),
+                thought_signature: None,
+            },
             PendingCall::LoadTools {
                 id: x(),
                 groups: vec!["memory".to_string()],
@@ -1787,5 +1820,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn invalid_args_pending_call_keeps_the_raw_call() {
+        let call = PendingCall::InvalidArgs {
+            id: "tc_9".to_string(),
+            name: "run_terminal_command",
+            arguments: r#"{"command":"x","wait":"true"}"#.to_string(),
+            error: "parameter 'wait' is string, expected boolean".to_string(),
+            thought_signature: Some("sig".to_string()),
+        };
+        assert_eq!(call.tool_name(), "run_terminal_command");
+        assert_eq!(call.id(), "tc_9");
+        let tool_call = call.to_tool_call();
+        assert_eq!(tool_call.name, "run_terminal_command", "the name is kept");
+        assert_eq!(
+            tool_call.arguments, r#"{"command":"x","wait":"true"}"#,
+            "history shows the call exactly as the model made it"
+        );
+        assert_eq!(tool_call.id, "tc_9");
+        assert_eq!(tool_call.thought_signature.as_deref(), Some("sig"));
     }
 }

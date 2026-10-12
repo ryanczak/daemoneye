@@ -1,7 +1,7 @@
 # Phase 07d: live-r2 — alerts reach a reconnected chat's history; mistyped tool arguments get an error, not a silent drop
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07a, 07b, 07c (all done)
 **Tags:** language=rust, kind=fix, size=s
 
@@ -99,3 +99,8 @@ the grep, and the full-suite totals verbatim in the Update Log with
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-12 17:45 (started)
+
+**Executor:** Claude (executor run). Status flipped to `in-progress`; README
+phase-table row updated to match. Starting the 9-row work list in order.

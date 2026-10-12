@@ -205,6 +205,20 @@ pub fn presence_count(session_id: &str) -> usize {
         .unwrap_or(0)
 }
 
+/// The session ids that have at least one live presence connection.
+///
+/// A chat that re-attaches after a daemon restart is present here before its
+/// first `Ask` creates its in-memory `SessionEntry`, so injection must reach
+/// it even though the store does not know it yet.
+pub fn presence_session_ids() -> Vec<String> {
+    presence_map()
+        .lock()
+        .unwrap_or_log()
+        .keys()
+        .cloned()
+        .collect()
+}
+
 /// True when the session has at least one live chat-presence connection.
 pub fn presence_live(session_id: &str) -> bool {
     presence_count(session_id) > 0
