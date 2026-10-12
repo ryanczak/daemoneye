@@ -285,3 +285,40 @@ folded into Pre-flight 5 and S7. **What passed:**
 **Next.** F8 and F10 need a code phase (07d) before the PE run. F9 and the
 nit can ride along. Then rehearsal 3 covers S1e after a restart and S3b
 again, and the PE run follows.
+
+### Update — 2026-10-12 (rehearsal 3, architect)
+
+Rehearsed against `5c903551` (07d done), focused on rehearsal 2's blockers.
+**All checks passed; no new defect.**
+
+- Run A, no tmux: `doctor` exits 0; the approved `echo hi; sh -c 'exit 3'`
+  reported exit 3 in `s0`.
+- **F8 fixed, live:** the daemon was restarted. The chat showed `⚙ daemon
+  connection lost — reconnecting…`, then `⚙ reconnected` (one gear, so the
+  nit is fixed too). An alert was posted **before the chat sent anything**.
+  The session file then held `[Webhook Alert]`, `[Ghost Shell Started]` and
+  `[Ghost Shell Completed]`. Asked without tools, the model named the
+  `LiveTicks` alert and both ghost events.
+- Run B, private tmux, shim in pass mode: 98 tmux calls, 0 write verbs.
+  Window count 1 → 1, no daemoneye hook.
+- S3b: `hostname; sh -c 'exit 4'` on zoidberg → `zoidberg`, exit 4, shell
+  `s2`, first try. zoidberg `tmux ls` unchanged (no server).
+- **F10 fixed, live:** asked to pass `timeout_secs` as the string `"30"`, GLM
+  sent `{"command":"echo typed","timeout_secs":"30"}`. The daemon logged
+  `model sent invalid arguments for tool 'run_terminal_command': …` with the
+  raw arguments, and returned the error naming `timeout_secs … is string,
+  expected integer`. GLM retried with `"timeout_secs": 30`, and the command
+  ran (`typed`, exit 0). No "unknown tool" line.
+- S7: the harness's shell-hosts, ControlMaster and proxy were all killed by
+  the `HOME=$R` rule. No process is left, and the PE's shells are untouched.
+
+- nit: the invalid-args error hard-codes `optional` in the mistyped-param
+  label (`'timeout_secs (integer, optional)'`), even for a required
+  param. Cosmetic; a later milestone.
+- Harness: a wait loop must match an event message at its start
+  (`"content":"[Ghost Shell Completed`). The bare phrase also appears inside
+  seeded memory text in the session file.
+
+**Next.** The rehearsals are complete. The PE run (S0–S5 with the PE
+watching), then S6: 2.0.0 bump, CHANGELOG, gates, the annotated tag `v2.0.0`.
+Push only on the PE's go-ahead.
