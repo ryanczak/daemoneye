@@ -1,7 +1,7 @@
 # Phase 07c: live-majors — chat survives a daemon restart, the model's `background` habit works, expired approvals close, honest shell-exit errors, a gate that sees abbreviations
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07b
 **Tags:** language=rust, kind=bugfix, size=m
 
@@ -104,3 +104,22 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-11 (escalation)
+
+**Chosen lever:** resume (continue_phase), with the remaining work listed.
+**Rationale:** NoProgressStall at 120 consecutive read-only calls, after
+about 440 lines of correct work. The architect re-ran the gates on the
+partial tree. Rows 1–2 are done with tests. Row 3's code is done but its
+test is missing. Row 4 is done except the push order, so
+`parked_presence_reconnects_after_eof` fails with the brief arriving before
+`⚙ reconnected`. clippy has 4 `let…else` → `?` lints in `stream.rs` plus an
+unused `park_with_daemon_shutdown`. Rows 5–6 are not started. The spec was
+fine and the work is on disk, so this is a resume, not a re-dispatch.
+
+### Update — 2026-10-11 18:22 (started)
+
+**Executor:** Claude (phase-07c run)
+**Plan:** rows 1–6 in order, tests per spec, mutation check on row 1, then the
+gate set and the end-to-end block. Status flipped to in-progress; the
+completion tail stays with the server.
