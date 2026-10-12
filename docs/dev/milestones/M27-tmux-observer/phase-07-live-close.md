@@ -322,3 +322,129 @@ Rehearsed against `5c903551` (07d done), focused on rehearsal 2's blockers.
 **Next.** The rehearsals are complete. The PE run (S0–S5 with the PE
 watching), then S6: 2.0.0 bump, CHANGELOG, gates, the annotated tag `v2.0.0`.
 Push only on the PE's go-ahead.
+
+### Update — 2026-10-12 (PE run, architect, PE present)
+
+Ran S0–S4 against `31fb7075` with the PE watching read-only. Every check
+passed **except S2**, which found a new defect, **F11**.
+
+- S1.1: approved `sh -c 'echo hi; exit 3'` → `[command exited with status 3]`.
+- S1.2: `wait: false` → `[Background Task Completed] … finished with exit
+  code 0`, output `done`.
+- S1.3: the chat scheduled `exit3.sh` (approved on the second ask; the
+  first ask timed out because the harness matched `pprove for`, while the
+  schedule prompt reads `Approve?`). `schedule list` → `failed: exit code 3`.
+- S1.4: the legacy `Command` job → `scheduled_job_refused` event plus a WARN
+  line; `df -h` never ran.
+- S1.5: the alert and both ghost events appeared on screen; `ghost_complete`
+  after 2 turns.
+- S1.6: daemon.log names tmux twice, both INFO "starts tmux-free"; the shim
+  log has 0 calls and 0 write verbs.
+- **S2, F11 (major):** no `[Catch-up]` brief. The S1.4 restart happened
+  after the chat's last ask, so the session never became resident again.
+  The chat re-attached by presence, then quit. `record_chat_detach` found
+  no store entry, so no detach state was stamped, and `attach_brief_for`
+  returned `None` at `store.get_mut(id)?`. The second alert *did* reach the
+  history (F8's disk path), and the model summarized both alerts in its
+  greeting, but the brief the exit criterion requires was missing. A rerun
+  with the session resident (after the greeting turn) showed `⚙ [Catch-up]
+  1 event while you were away (44s): • [Webhook Alert]`. So the defect is
+  the residency gap F8 closed for injection, still open on the catch-up
+  path.
+- S3: the context carries `[PANE MAP] idx:1=%1 (top, 'main')` and the top
+  pane's contents. 1121 tmux calls, 0 write verbs (capture-pane,
+  display-message, list-panes, list-sessions, list-windows,
+  show-environment). Window count 1 → 1, no daemoneye hook. F9 seen again
+  (deferred).
+- S3b: zoidberg → `zoidberg`, `[command exited with status 4]`, first try.
+  zoidberg `tmux ls` unchanged (no server). Write verbs still 0. The
+  ControlMaster socket was used.
+- S4: `doc_truth` 16 passed. `doctor` on the real `~/.daemoneye` exits 0
+  (the daemon was stopped, which is a WARN).
+- S5: decided in 07a.
+- S7: done. No `$R` process is left, `$R` and the emulator socket are
+  removed, and the PE's shells are untouched.
+
+Harness: the schedule prompt reads `Approve?`, so a schedule step must wait
+for `AI wants to schedule` and then answer. The `/proc` sweep must skip
+unreadable entries quietly (`pgrep -u $USER`).
+
+`$A` verbatim:
+
+```
+== PE S0 BUILD-FIXTURES ==
+31fb7075
+    Finished `release` profile [optimized] target(s)
+build exit=0
+setup exit=0
+notmux-path: tmux-not-found
+fixtures: shim=ok runbook=1 script=1 hosts=1
+== PE S1a START (tmux absent) ==
+daemon-start exit=0
+Daemon is running.
+doctor exit=0
+OK   tmux: not installed (optional)
+doctor-FAIL-lines=0
+emulator exit=0
+client-banner=1
+== PE S1.1 == exit-3 reported: 1
+== PE S1.2 == bg-complete: /tmp/de07-live/.daemoneye/var/log/sessions/19d9d0ade3cbf2e2.jsonl:finished with exit code 0
+== PE S1.3 ==
+  6e8a3ee3  exit3-one-shot  once at 2026-10-12 15:18 -07:00  failed: exit code 3  2026-10-12 22:18
+== PE S1.4 LEGACY COMMAND ==
+daemon-restart exit=0
+  00000000  live-legacy     once at 2026-10-12 15:19 -07:00  pending       2026-10-12 22:19
+  00000000  live-legacy     once at 2026-10-12 15:19 -07:00  failed: refused: ActionOn::Command is no longer supported; migrate the job to ActionOn::Script  2026-10-12 22:19
+{"event":"scheduled_job_refused","job_id":"00000000-0000-4000-8000-000000000002","job_name":"live-legacy","pid":1019632,"reason":"ActionOn::Command is no longer supported; migrate the job to ActionOn::Script","ts":"2026-10-12T22:19:58.530359910+00:00"}
+2026-10-12T22:19:58Z WARN  Scheduled job 'live-legacy' refused to fire: ActionOn::Command is no longer supported; migrate the job to ActionOn::Script
+2026-10-12T22:19:58Z INFO  Job 'live-legacy' (ID: 00000000) finished. Status: failed: refused: ActionOn::Command is no longer supported; migrate the job to ActionOn::Script
+== PE S1.5 ==
+alert-on-screen=1
+ghost_complete=1
+== PE S1.6 ==
+tmux-mentions=2
+tmux-err-warn=0
+shim-calls=0 write-verbs=0
+== PE S2 CATCH-UP (after restart, session not resident) ==
+catchup-lines=0
+tick2-in-history=2
+rerun-resident: ⚙ [Catch-up] 1 event while you were away (44s):
+== PE S3 RUN-B (tmux present, shim pass) ==
+obs-server exit=0
+windows-before=1
+windows-after-start=1
+clients=1
+== PE S3 CHECKS ==
+pane-map: [PANE MAP] idx:1=%1  (top, 'main')
+top-contents-in-context=1
+windows-after=1
+daemoneye-hooks=0
+shim-calls=1121 write-verbs=0
+read-verbs:     370 capture-pane     192 display-message     187 list-panes       2 list-sessions     186 list-windows     184 show-environment 
+== PE S3b ZOIDBERG ==
+result:   zoidberg   [command exited with status 4] 
+tmux-ls-before: error connecting to /tmp/tmux-1000/default (No such file or directory)
+tmux-ls-after:  error connecting to /tmp/tmux-1000/default (No such file or directory)
+zoidberg-tmux-unchanged=yes
+write-verbs=0 (before S3b: 0)
+controlmaster: 57a8e0777767cc3d790b947716c6a467d187c1ec 
+== PE S4 GATES ==
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+OK   config: loaded
+OK   api key: set (ollama)
+OK   shell: /bin/bash
+WARN  daemon: not running
+         fix: daemoneye daemon
+OK   sandbox: v0.46.0
+OK   hosts: none configured
+OK   tmux: read-only pane context available
+
+6 ok  1 warn  0 failed
+doctor(real) exit=0
+```
+
+PASTE MATCH: yes
+
+**Next.** F11 needs a small code phase (07e): a catch-up brief for a session
+that is not resident when its chat detaches or re-attaches. Then re-run S2
+live, then S6.
