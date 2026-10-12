@@ -123,3 +123,13 @@ fine and the work is on disk, so this is a resume, not a re-dispatch.
 **Plan:** rows 1–6 in order, tests per spec, mutation check on row 1, then the
 gate set and the end-to-end block. Status flipped to in-progress; the
 completion tail stays with the server.
+
+### Update — 2026-10-11 (escalation 2)
+
+**Chosen lever:** refined resume, chosen by the PE over a takeover.
+**Rationale:** resume 1 fixed row 4 and clippy, and the suite is green at 2315.
+It then stalled at 120 read-only calls while reading ratatui crate sources,
+looking for a way to fake a terminal for `approval_read_times_out`. The
+spec gave no test seam. The resume now names the seam (a pure
+`read_byte_by` helper, tested with `std::future::pending()`) and lists
+rows 5–6 as exact edits.
