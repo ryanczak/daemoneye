@@ -42,10 +42,11 @@ const WRITE_VERBS: &[&str] = &[
     "setw",
 ];
 
-/// From a `Command::new("tmux")` line to the close of the `.args([…])` /
-/// `.arg(…)` call that follows — at most 15 lines later. The close is the
-/// bracket that balances the opener, and it may sit on a later line; when
-/// the opener closes on its own line, the span is that line alone.
+/// From the first `.args([…])` / `.arg(…)` call within 15 lines after a
+/// `Command::new("tmux")` line to the bracket that balances it. The close may
+/// sit on a later line; when the call closes on the opener's own line, the
+/// span is that line alone. Lines before the opener are outside the arg list
+/// and are not scanned.
 fn tmux_write_hits(src: &str) -> Vec<(usize, String)> {
     let lines: Vec<&str> = src.lines().collect();
     let mut hits = Vec::new();
@@ -54,19 +55,17 @@ fn tmux_write_hits(src: &str) -> Vec<(usize, String)> {
             continue;
         }
         let end = (i + 15).min(lines.len());
+        let Some((n, at, kind)) = find_opener(&lines[i..end]) else {
+            continue;
+        };
         let mut span = String::new();
         // The kind and remaining depth of the opener's open bracket, when it
         // closes on a later line. `None` once the call is closed.
-        let mut open: Option<(char, i32)> = None;
-        for (n, next) in lines[i..end].iter().enumerate() {
+        let mut open: Option<(char, i32)> = opener(lines[i + n], at, kind);
+        for (m, next) in lines[i + n..end].iter().enumerate() {
             span.push_str(next);
             span.push('\n');
-            if n == 0 {
-                if let Some(at) = next.find(".args([") {
-                    open = opener(next, at, '[');
-                } else if let Some(at) = next.find(".arg(") {
-                    open = opener(next, at, '(');
-                }
+            if m == 0 {
                 if open.is_none() {
                     break;
                 }
@@ -97,6 +96,21 @@ fn tmux_write_hits(src: &str) -> Vec<(usize, String)> {
         }
     }
     hits
+}
+
+/// The first `.args([` or `.arg(` in the window after `Command::new("tmux")`,
+/// as (line offset, char offset, open bracket). rustfmt chains the builder
+/// call onto its own line, so the opener may sit below the constructor.
+fn find_opener(window: &[&str]) -> Option<(usize, usize, char)> {
+    for (n, line) in window.iter().enumerate() {
+        if let Some(at) = line.find(".args([") {
+            return Some((n, at, '['));
+        }
+        if let Some(at) = line.find(".arg(") {
+            return Some((n, at, '('));
+        }
+    }
+    None
 }
 
 /// The open bracket that carries past the opener line, with its remaining
@@ -222,4 +236,12 @@ fn gate_catches_a_multi_line_write() {
         1,
         "the single-line write is still flagged once: {one_line:?}"
     );
+}
+
+#[test]
+fn gate_catches_a_chained_write() {
+    let src = "let _ = std::process::Command::new(\"tmux\")\n    .args([\"send-keys\", \"-t\", \"x\"])\n    .output();";
+    let hits = tmux_write_hits(src);
+    assert_eq!(hits.len(), 1, "the chained write is flagged: {hits:?}");
+    assert_eq!(hits[0].1, "send-keys");
 }

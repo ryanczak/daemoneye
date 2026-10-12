@@ -513,15 +513,15 @@ kill: (-484370): No such process
 
 ```
 
-**Files changed:**
+### Update — 2026-10-12 03:20 (started, resume on bounce 2)
 
-- `tests/tmux_read_only.rs` — +65 -5
-
-**Commit:** 0db1440b9aa75d179e9e989767898d6f8d1247c9
-
-**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
-
-### Notes for executor — 2026-10-11 (bounce 2)
+**Executor:** Claude (phase-07c run, bounce 2)
+**Plan:** bug-07c-2 only — let `tmux_write_hits` find the first `.args(` /
+`.arg(` opener on any line of the span window after `Command::new("tmux")`,
+balance brackets from there, add `gate_catches_a_chained_write`, mutation
+check, then the gate set and the end-to-end block. All prior work, including
+the bug-07c-1 fix, stays untouched per the bounce note. Status is already
+`in-progress`; the completion tail stays with the server.
 
 **All gates are green and the tree is clean. That is expected and is NOT
 evidence the phase is done.** Everything else is approved, including your
@@ -542,4 +542,41 @@ let src = "let _ = std::process::Command::new(\"tmux\")\n    .args([\"send-keys\
 **Mutation check:** restrict the opener search to the first line again,
 confirm the new test fails, then restore. Paste the failing line.
 
-**Finish condition:** `passed=2319`, **not** 2318. One `fix:` commit.
+### Update — 2026-10-12 03:35 (end-to-end verification)
+
+**Executor:** Claude (phase-07c run, bounce 2)
+```
+run_terminal_command_maps_legacy_background_to_wait: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.00s
+socket_close_mid_command_reports_shell_exit: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.00s
+approval_read_times_out: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.02s
+parked_presence_reconnects_after_eof: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.00s
+gate_catches_an_abbreviated_write: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+gate_catches_a_chained_write: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+cargo test parked_presence_ends_on_eof → test result: ok. 0 passed; 0 failed; … (renamed; filtered out in every target)
+cargo test --test tmux_read_only → test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+grep -c 'bind-key T split-window' src/cli/commands/setup.rs → 1
+clippy -D warnings → Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.23s (exit 0)
+cargo fmt --all --check → fmt_exit=0
+cargo test (full, /tmp/full_test.log) → test result lines: 2248/2/6/16/32/11/4/0 — passed=2319 failed=0
+```
+
+PASTE MATCH: yes
+
+**Mutation check (bug-07c-2).** Restricted `find_opener`'s search to the
+first line of the span window again (`window.iter().take(1)`), restoring
+the pre-fix behavior:
+
+```
+test gate_catches_a_chained_write ... FAILED
+thread 'gate_catches_a_chained_write' (745431) panicked at tests/tmux_read_only.rs:244:5:
+assertion `left == right` failed: the chained write is flagged: []
+  left: 0
+ right: 1
+```
+
+Reverted; the test passes again. (`source_issues_no_tmux_write_verbs`
+stays green with the fixed scanner: no real production hit to report.)
+
+**Tests added this run:** `gate_catches_a_chained_write` (tmux_read_only.rs)
+is the only new test; every other named test is from a prior run and
+untouched.
