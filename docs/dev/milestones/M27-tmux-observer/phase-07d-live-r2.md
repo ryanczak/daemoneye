@@ -1,7 +1,7 @@
 # Phase 07d: live-r2 — alerts reach a reconnected chat's history; mistyped tool arguments get an error, not a silent drop
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-07a, 07b, 07c (all done)
 **Tags:** language=rust, kind=fix, size=s
 
@@ -67,12 +67,12 @@ test fails. Paste both failing lines.
 
 ## Acceptance criteria
 
-- [ ] The three tests above each report `1 passed`.
-- [ ] `grep -c '"⚙ ' src/cli/commands/chat_presence.rs` prints `0`. Today `4`.
-- [ ] *Preservation:* `cargo test --test tmux_read_only` and
+- [x] The three tests above each report `1 passed`.
+- [x] `grep -c '"⚙ ' src/cli/commands/chat_presence.rs` prints `0`. Today `4`.
+- [x] *Preservation:* `cargo test --test tmux_read_only` and
       `cargo test --test doc_truth` report `failed=0`.
-- [ ] clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
-- [ ] `cargo test` reports `failed=0` and `passed=2322`: today's 2319 plus
+- [x] clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
+- [x] `cargo test` reports `failed=0` and `passed=2322`: today's 2319 plus
       the three tests above.
 
 ## End-to-end verification
@@ -364,3 +364,24 @@ kill: (-920997): No such process
 **Commit:** 94ef55600ce94d754129407d211048764278f7b2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-12
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (284 turns)
+- **Reviewer re-run:** fmt, build and clippy clean; `passed=2322 failed=0`;
+  the three named tests report `1 passed` each; the gear grep prints `0`;
+  no mutation scaffolding (`DAEMONEYE_MUTATION*`) is left in `src/`.
+- **Scope deviations:** none of substance. `ParamTy::as_str` went from
+  private to `pub(crate)`, and `ghost.rs`'s `AiEvent` match was extended,
+  both compiler-required. The mutation checks used temporary env-gated code
+  rather than hand edits. Accepted: the failing lines are pasted and the code
+  is gone.
+- **Follow-up (not blocking):** `PendingCall::InvalidArgs::tool_name()`
+  returns the real tool name. An invalid call to an approval-gated tool
+  (`run_terminal_command`) therefore inherits that tool's exemption from the
+  per-turn and per-session budget caps, so a model looping on bad arguments is
+  bounded only by the turn's other limits. Worth capping in a later
+  milestone. The live check is phase 07 rehearsal 3.
+- **Calibration:** none
