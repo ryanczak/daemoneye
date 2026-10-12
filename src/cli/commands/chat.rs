@@ -110,16 +110,7 @@ pub(super) async fn run_chat_inner(resume_id: Option<String>) -> Result<()> {
     };
     let mut chat_width: usize;
     if let Some(ref pane_id) = pane_id_opt {
-        let target_w = crate::tmux::query_window_width(pane_id)
-            .map(|w| (w * 25 / 100).max(20))
-            .unwrap_or(100);
-        let current_w = crate::tmux::query_pane_width(pane_id).unwrap_or(0);
-        if current_w < target_w {
-            let _ = crate::tmux::resize_pane_width(pane_id, target_w);
-            chat_width = crate::tmux::query_pane_width(pane_id).unwrap_or(target_w);
-        } else {
-            chat_width = current_w;
-        }
+        chat_width = crate::tmux::query_pane_width(pane_id).unwrap_or_else(|_| terminal_width());
     } else {
         chat_width = terminal_width();
     }
@@ -136,20 +127,13 @@ pub(super) async fn run_chat_inner(resume_id: Option<String>) -> Result<()> {
             .is_ok()
         {
             // Another resize — update dims and restart the quiet timer.
-            chat_width = terminal_width();
+            chat_width = match &pane_id_opt {
+                Some(pid) => {
+                    crate::tmux::query_pane_width(pid).unwrap_or_else(|_| terminal_width())
+                }
+                None => terminal_width(),
+            };
         } // stable for SETTLE_MS — proceed
-    }
-    // Ask tmux to forward focus events to applications (DEC mode 1004) so the
-    // chat process is notified (ESC[I) when the user switches back to this pane
-    // and can re-pin the input box to the bottom.  Best-effort; harmless if tmux
-    // is absent or the option is already set.
-    if pane_id_opt.is_some() {
-        let _ = crate::process::bounded_output(std::process::Command::new("tmux").args([
-            "set",
-            "-g",
-            "focus-events",
-            "on",
-        ]));
     }
 
     // Ratatui path: create the inline-viewport renderer (enters raw mode

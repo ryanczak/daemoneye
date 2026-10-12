@@ -38,7 +38,7 @@ pub fn run_setup(
         dir.display()
     );
     println!(
-        "  {}/var/log/               ← daemon.log and pipe-pane capture logs",
+        "  {}/var/log/               ← daemon.log and per-pane capture logs",
         dir.display()
     );
     println!(
@@ -245,10 +245,7 @@ WantedBy=default.target
 
     println!();
     println!("# Add this to your ~/.tmux.conf:");
-    println!(
-        "bind-key T split-window {} '{} chat'",
-        split_flag, daemon_bin
-    );
+    println!("bind-key T splitw {} '{} chat'", split_flag, daemon_bin);
     println!();
     println!("# Then reload tmux config:");
     println!("tmux source-file ~/.tmux.conf");

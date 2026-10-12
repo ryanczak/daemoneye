@@ -10,8 +10,7 @@
 /// 1. Persisted preference from a previous session (validated that it still exists).
 /// 2. Exactly one sibling in the same window → use it automatically.
 /// 3. Multiple siblings → prompt the user to pick one.
-/// 4. No siblings (chat pane fills the whole window) → offer to split or pick
-///    from other windows in the session.
+/// 4. No siblings (chat pane fills the whole window) → no foreground target.
 pub(super) fn resolve_target_pane(chat_pane: &str, session: &str) -> Option<String> {
     // 1. Check persisted preference.
     if let Some(saved) = crate::pane_prefs::get(session)
@@ -34,10 +33,7 @@ pub(super) fn resolve_target_pane(chat_pane: &str, session: &str) -> Option<Stri
     };
 
     match siblings.len() {
-        0 => {
-            // 4. No siblings — offer split or cross-window pick.
-            offer_no_sibling_options(chat_pane, session)
-        }
+        0 => None,
         1 => {
             // INVARIANT: match arm guarantees siblings.len() == 1
             let target = siblings.into_iter().next().unwrap();
@@ -49,86 +45,25 @@ pub(super) fn resolve_target_pane(chat_pane: &str, session: &str) -> Option<Stri
 }
 
 /// Read one line from stdin synchronously, temporarily clearing O_NONBLOCK so
-/// the call blocks even when AsyncStdin has already set the non-blocking flag.
+/// std::io::stdin().read_line works when AsyncStdin has set it non-blocking.
 fn sync_read_line() -> String {
     use std::io::BufRead;
-    let fd = libc::STDIN_FILENO;
-    // Save and clear O_NONBLOCK so the synchronous read blocks.
-    let saved = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
+    use std::os::fd::AsFd;
+    use std::os::fd::AsRawFd;
+    let stdin = std::io::stdin();
+    let fd = stdin.as_fd();
+    let raw = fd.as_raw_fd();
+    // Restore original flags (O_NONBLOCK) so AsyncStdin continues to work.
+    let saved = unsafe { libc::fcntl(raw, libc::F_GETFL) };
     if saved >= 0 {
-        unsafe { libc::fcntl(fd, libc::F_SETFL, saved & !libc::O_NONBLOCK) };
+        unsafe { libc::fcntl(raw, libc::F_SETFL, saved & !libc::O_NONBLOCK) };
     }
     let mut line = String::new();
-    let _ = std::io::BufReader::new(std::io::stdin()).read_line(&mut line);
-    // Restore original flags (O_NONBLOCK) so AsyncStdin continues to work.
+    let _ = std::io::stdin().lock().read_line(&mut line);
     if saved >= 0 {
-        unsafe { libc::fcntl(fd, libc::F_SETFL, saved) };
+        unsafe { libc::fcntl(raw, libc::F_SETFL, saved) };
     }
     line
-}
-
-/// When the chat pane is alone in its window, offer three options:
-/// split side-by-side (default), pick from another window, or proceed with
-/// background-only mode.
-fn offer_no_sibling_options(chat_pane: &str, session: &str) -> Option<String> {
-    use std::io::Write;
-
-    let other_panes: Vec<String> = crate::tmux::list_pane_ids_in_session(session)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|p| p != chat_pane)
-        .collect();
-
-    println!();
-    println!("No sibling pane in this window for foreground commands.");
-    println!(
-        "  [S]  Split this window (side by side) and use the new pane  \x1b[2m← default\x1b[0m"
-    );
-    if !other_panes.is_empty() {
-        println!(
-            "  [P]  Pick from another pane in this session ({} available)",
-            other_panes.len()
-        );
-    }
-    println!("  [N]  No foreground target (background commands only)");
-    let opts = if other_panes.is_empty() {
-        "S/N"
-    } else {
-        "S/P/N"
-    };
-    print!("Choose [{}] (Enter = S): ", opts);
-    let _ = std::io::stdout().flush();
-
-    let input = sync_read_line();
-    let choice = input.trim().to_ascii_lowercase();
-
-    match choice.as_str() {
-        "" | "s" => {
-            let out = crate::process::bounded_output(std::process::Command::new("tmux").args([
-                "split-window",
-                "-h",
-                "-t",
-                chat_pane,
-                "-P",
-                "-F",
-                "#{pane_id}",
-            ]))
-            .ok()?;
-            let new_pane = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if new_pane.is_empty() || !out.status.success() {
-                eprintln!("Failed to split window.");
-                return None;
-            }
-            println!("Using pane {} for foreground commands.", new_pane);
-            crate::pane_prefs::save(session, &new_pane);
-            Some(new_pane)
-        }
-        "p" if !other_panes.is_empty() => pick_sibling_pane(chat_pane, other_panes, session),
-        _ => {
-            println!("No foreground target set. Only background commands will run.");
-            None
-        }
-    }
 }
 
 /// Present a numbered list of candidate panes and let the user choose one.

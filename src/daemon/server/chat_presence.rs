@@ -516,4 +516,51 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn attach_brief_includes_an_alert_injected_while_away() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert(
+                "away-1".to_string(),
+                entry(vec![msg("hello"), msg("hi again")]),
+            );
+        });
+
+        record_chat_detach("away-1", &sessions);
+
+        let alert = msg("[Webhook Alert] disk usage at 95%");
+        crate::webhook::inject_into_sessions(&sessions, &alert);
+
+        with_sessions(&sessions, |store| {
+            let entry = store.get_mut("away-1").unwrap();
+            entry.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
+        });
+
+        let brief = attach_brief_for(&sessions, "away-1");
+        assert!(
+            brief.is_some(),
+            "an alert injected while away produces a brief"
+        );
+        assert!(
+            brief
+                .as_deref()
+                .unwrap_or_default()
+                .contains("[Webhook Alert]"),
+            "the brief names the alert: {brief:?}"
+        );
+
+        with_sessions(&sessions, |store| {
+            let entry = store.get("away-1").unwrap();
+            assert!(
+                entry.last_detach.is_none(),
+                "the attach clears the detach state"
+            );
+        });
+    }
 }

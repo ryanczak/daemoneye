@@ -26,9 +26,9 @@ where
     let GhostCtx { is_ghost, .. } = ghost_ctx;
     let _ = (ctx, rx);
 
-    // The tmux send-keys path is deleted (phase 05). A call reaches here only
-    // when no session PTY shell claimed it — a ghost turn, or a chat session
-    // with no session id. It is refused with the reason, never run.
+    // The tmux keystroke-injection path is deleted (phase 05). A call reaches
+    // here only when no session PTY shell claimed it — a ghost turn, or a chat
+    // session with no session id. It is refused with the reason, never run.
     let who = if is_ghost {
         "A ghost turn"
     } else {

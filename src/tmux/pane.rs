@@ -234,18 +234,3 @@ pub fn query_pane_width(pane_id: &str) -> Result<usize> {
         .parse::<usize>()
         .map_err(|e| anyhow::anyhow!("Could not parse pane width: {}", e))
 }
-
-/// Resize a pane to the given number of columns.
-pub fn resize_pane_width(pane_id: &str, width: usize) -> Result<()> {
-    let output = crate::process::bounded_output(Command::new("tmux").args([
-        "resize-pane",
-        "-t",
-        pane_id,
-        "-x",
-        &width.to_string(),
-    ]))?;
-    if !output.status.success() {
-        anyhow::bail!("Failed to resize pane '{}'", pane_id);
-    }
-    Ok(())
-}

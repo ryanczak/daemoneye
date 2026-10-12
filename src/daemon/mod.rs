@@ -613,10 +613,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                 let mut tick = tokio::time::interval(Duration::from_secs(1));
                 loop {
                     tick.tick().await;
-                    if sn.is_empty() {
-                        continue; // No session adopted yet; skip until a client connects.
-                    }
-                    let due = store.take_due();
+                    let due = scheduled::due_jobs_for_tick(&store, &sn);
                     for job in due {
                         let store2 = Arc::clone(&store);
                         let sn2 = sn.clone();

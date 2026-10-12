@@ -64,21 +64,3 @@ pub fn list_windows(session: &str) -> Result<Vec<WindowState>> {
     }
     Ok(windows)
 }
-
-/// Query the width of the window containing a pane in columns.
-pub fn query_window_width(pane_id: &str) -> Result<usize> {
-    let output = crate::process::bounded_output(Command::new("tmux").args([
-        "display-message",
-        "-t",
-        pane_id,
-        "-p",
-        "#{window_width}",
-    ]))?;
-    if !output.status.success() {
-        anyhow::bail!("Failed to query window width for '{}'", pane_id);
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<usize>()
-        .map_err(|e| anyhow::anyhow!("Could not parse window width: {}", e))
-}

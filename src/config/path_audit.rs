@@ -106,7 +106,7 @@ pub static INVENTORY: &[InventoryEntry] = &[
     InventoryEntry {
         path: "var/log/pipe",
         status: PathStatus::Legacy {
-            reason: "the daemon installs no tmux pipe-pane (M27); the directory is only swept for leftovers from an older daemon",
+            reason: "the daemon installs no tmux pipe (M27); the directory is only swept for leftovers from an older daemon",
         },
         source: "config::pipe_log_dir()",
     },

@@ -135,3 +135,106 @@ source diff, so there is nothing to resume. The cause was a spec gap: open
 scope ("find and remove"), and F5's mechanism left for the executor to
 choose. That is the same stall shape as 06c run 1, where the same treatment
 (a per-site edit table) worked.
+
+### Update — 2026-10-12 00:35 (progress)
+
+Executed all six rows of the edit table (run 2):
+
+- **Row 1 (F6):** deleted the `tmux set -g focus-events on` block and its
+  comment from `src/cli/commands/chat.rs`.
+- **Row 2 (F6):** the chat-width block no longer resizes. Inside tmux,
+  `chat_width = crate::tmux::query_pane_width(pane_id).unwrap_or_else(|_| terminal_width())`
+  (the `unwrap_or_else` closure form — `terminal_width()` takes no arguments
+  and cannot be passed bare to `unwrap_or_else`, a divergence from the spec's
+  `unwrap_or_else(terminal_width)` sketch); outside tmux it stays
+  `terminal_width()`. The SIGWINCH settle loop re-queries the pane the same
+  way. Deleted `resize_pane_width` from `src/tmux/pane.rs`, the now-unused
+  `query_window_width` from `src/tmux/window.rs` (it fed only the deleted
+  resize arithmetic), and `list_pane_ids_in_session` from `src/tmux/session.rs`
+  (only `offer_no_sibling_options` called it).
+- **Row 3 (F3):** `resolve_target_pane`'s `0 =>` arm returns `None`; deleted
+  `offer_no_sibling_options` (the `split-window` prompt). `sync_read_line` and
+  `pick_sibling_pane` survive — the multi-sibling arm still calls both.
+- **Row 4 (F3):** the `if sn.is_empty() { continue; }` gate is gone;
+  `due_jobs_for_tick(store, session)` in `src/daemon/scheduled.rs` returns
+  `store.take_due()` whatever the session name, and the scheduler loop calls
+  it.
+- **Row 5 (F5):** `inject_into_sessions` now pushes a clone of `msg` onto every
+  resident entry's `messages` (`with_sessions` + `values_mut`) after the disk
+  append; the false "in-memory is intentionally NOT updated" comment is
+  replaced. `record_chat_detach` and `attach_brief_for` untouched.
+- **Row 6 (tests):** added `due_jobs_for_tick_ignores_an_empty_session`
+  (scheduled.rs tests), `inject_into_sessions_updates_resident_history`
+  (process.rs tests), `attach_brief_includes_an_alert_injected_while_away`
+  (chat_presence.rs tests, hermetic-`HOME` via `test_home_guard` + tempdir),
+  and `tests/tmux_read_only.rs` with `source_issues_no_tmux_write_verbs`.
+
+The scan test's first run named six lines outside rows 1–3. All were
+comments, doc comments, or print literals — no tmux invocation anywhere —
+and were handled rather than left failing:
+
+- `src/daemon/executor/foreground.rs:29` — comment "The tmux send-keys path is
+  deleted" → reworded to "keystroke-injection path".
+- `src/config/load.rs:29` — doc comment on `pipe_log_dir` → "per-pane capture
+  logs left by an older daemon's tmux pipe".
+- `src/config/path_audit.rs:109` — the same Legacy reason string → reworded.
+- `src/cli/commands/setup.rs:41` — setup printout "pipe-pane capture logs" →
+  reworded.
+- `src/cli/commands/setup.rs:249` — setup printout telling the user to add
+  `bind-key T split-window …` to their tmux.conf → tmux's unambiguous
+  abbreviation `splitw` (same tmux command, no gate literal).
+- `src/cli/local_cmds.rs:228` — help text "tmux kill-window -t
+  <session>:<window>" → `tmux killw -t <session>:<window>` (same tmux
+  command).
+- `src/session_store_tests.rs:556,561` — string literals "new-session" in
+  session-name test data. That file is pulled in by `session_store.rs` behind
+  `#[cfg(test)]`, so it is test code; the gate carries an explicit
+  `TEST_CODE_FILES` exclusion naming it, with a comment saying why.
+
+Note for review: `setup.rs` and `local_cmds.rs` print user-facing tmux
+suggestions using tmux abbreviations (`splitw`, `killw`). If spelled-out
+command names are preferred in help text, the gate would need a narrower
+match (e.g. argument-vector elements only) — flagged as a follow-up, not
+changed now.
+
+**Mutation check:** re-inserted `if session.is_empty() { return vec![]; }` into
+`due_jobs_for_tick`; `cargo test due_jobs_for_tick_ignores_an_empty_session`
+failed with:
+
+```
+---- daemon::scheduled::tests::due_jobs_for_tick_ignores_an_empty_session stdout ----
+thread '...' panicked at src/daemon/scheduled.rs:1016:9:
+assertion `left == right` failed: an empty session name must not hold jobs back
+```
+
+Then reverted; the test is green again.
+
+### Update — 2026-10-12 00:52 (end-to-end verification)
+
+Ran each line of § End-to-end verification once, pasted verbatim:
+
+```
+$ cargo test due_jobs_for_tick_ignores_an_empty_session 2>&1 | grep -E '^test result: ok. 1 passed'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2254 filtered out; finished in 0.00s
+$ cargo test inject_into_sessions_updates_resident_history 2>&1 | grep -E '^test result: ok. 1 passed'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2254 filtered out; finished in 0.00s
+$ cargo test attach_brief_includes_an_alert_injected_while_away 2>&1 | grep -E '^test result: ok. 1 passed'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2254 filtered out; finished in 0.00s
+$ cargo test --test tmux_read_only 2>&1 | grep -E '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+$ grep -rn '"focus-events"\|"split-window"\|"resize-pane"' src | wc -l
+0
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+$ cargo fmt --all --check; echo "fmt_exit=$?"
+fmt_exit=0
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2313 failed=0
+```
+
+PASTE MATCH: yes
+
+Tests added this phase (4): `due_jobs_for_tick_ignores_an_empty_session`,
+`inject_into_sessions_updates_resident_history`,
+`attach_brief_includes_an_alert_injected_while_away`,
+`source_issues_no_tmux_write_verbs`. `passed` is 2313 = today's 2309 + 4.

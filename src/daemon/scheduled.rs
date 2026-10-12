@@ -91,6 +91,15 @@ async fn fail_job(
     notify_job_result(&job.name, reason, config, notify_tx).await;
 }
 
+/// Jobs due this tick, whatever the daemon's adopted session name is.
+///
+/// An empty session name is normal: the daemon can run without any chat
+/// client connected, and script/ghost jobs fire anyway (a live rehearsal on
+/// pinky proved the webhook ghost path does).
+pub(crate) fn due_jobs_for_tick(store: &ScheduleStore, _session: &str) -> Vec<ScheduledJob> {
+    store.take_due()
+}
+
 /// Run a single scheduled job.
 ///
 /// - `ActionOn::Ghost`: spawns a full Ghost Shell session using the named runbook.
@@ -989,6 +998,24 @@ mod tests {
             created_at: chrono::Utc::now(),
             last_run: None,
         }
+    }
+
+    #[test]
+    fn due_jobs_for_tick_ignores_an_empty_session() {
+        let job = test_job(
+            "tick-job",
+            ActionOn::Script("noop".to_string()),
+            "job-due-1",
+        );
+        let store = ScheduleStore::new_empty();
+        store.add(job.clone()).expect("the store accepts the job");
+        let due = due_jobs_for_tick(&store, "");
+        assert_eq!(
+            due.len(),
+            1,
+            "an empty session name must not hold jobs back"
+        );
+        assert_eq!(due[0].id, "job-due-1");
     }
 
     fn test_store(job: &ScheduledJob) -> Arc<ScheduleStore> {

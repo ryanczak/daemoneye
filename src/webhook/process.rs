@@ -188,13 +188,18 @@ pub async fn process_alert(
 pub(crate) fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
     let ids: Vec<String> = with_sessions(sessions, |store| store.keys().cloned().collect());
 
-    // In-memory is intentionally NOT updated here — the next Ask request
-    // will re-read from disk when the in-memory history is stale.
-    // For sessions currently in flight this means the alert appears in the
-    // turn after the one already in progress, which is acceptable.
+    // `handle_ask` takes the in-memory history whenever the session is
+    // resident and only re-reads the file when it is not, so the resident
+    // entries must see the injected message too or the next turn silently
+    // misses the alert.
     for sid in &ids {
         append_session_message(sid, msg);
     }
+    with_sessions(sessions, |store| {
+        for entry in store.values_mut() {
+            entry.messages.push(msg.clone());
+        }
+    });
 }
 
 /// Send a one-line alert notification to every active chat pane, and push the
@@ -542,6 +547,7 @@ async fn maybe_analyze_alert(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::session::SessionEntry;
     use crate::ipc::Response;
 
     // ── Severity ranking ──────────────────────────────────────────────────
@@ -691,6 +697,76 @@ mod tests {
     }
 
     // ── presence push (M27 phase 03b) ─────────────────────────────────────
+
+    fn msg(content: &str) -> Message {
+        Message {
+            role: "system".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+            turn: None,
+        }
+    }
+
+    #[test]
+    fn inject_into_sessions_updates_resident_history() {
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert(
+                "resident-1".to_string(),
+                SessionEntry {
+                    messages: vec![msg("first"), msg("second")],
+                    last_accessed: std::time::Instant::now(),
+                    chat_pane: None,
+                    default_target_pane: None,
+                    bg_windows: Vec::new(),
+                    last_prompt_tokens: 0,
+                    tmux_session: "test".to_string(),
+                    last_detach: None,
+                    detach_time_utc: None,
+                    messages_at_detach: 0,
+                    is_ghost: false,
+                    ghost_config: None,
+                    ghost_bg_prefix: "",
+                    ghost_runbook_name: None,
+                    started_at: chrono::Utc::now(),
+                    turn_count: 0,
+                    tool_calls_this_session: 0,
+                    active_model: None,
+                    last_snapshot_activity: 0,
+                    saved_name: None,
+                    dirty: false,
+                    artifacts_created: Vec::new(),
+                    auto_name_suggested: false,
+                    ghost_task_message: None,
+                    loaded_tools: std::collections::HashSet::new(),
+                    cost_usd: 0.0,
+                    cost_by_agent: std::collections::HashMap::new(),
+                    has_untracked_cost: false,
+                    token_scale: 1.5,
+                    compaction_in_flight: false,
+                    pending_compaction_notice: None,
+                },
+            );
+        });
+
+        let alert = msg("[Webhook Alert] disk usage at 95%");
+        inject_into_sessions(&sessions, &alert);
+
+        with_sessions(&sessions, |store| {
+            let entry = store.get("resident-1").expect("the entry is resident");
+            assert_eq!(
+                entry.messages.len(),
+                3,
+                "the injected alert lands in the resident history"
+            );
+            assert_eq!(
+                entry.messages.last().map(|m| m.content.as_str()),
+                Some("[Webhook Alert] disk usage at 95%"),
+                "the alert is the last message"
+            );
+        });
+    }
 
     #[tokio::test]
     async fn notify_chat_panes_pushes_over_presence() {

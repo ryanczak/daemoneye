@@ -385,24 +385,6 @@ pub fn session_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// List all pane IDs in a tmux session (across all windows).
-pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
-    let out = crate::process::bounded_output(Command::new("tmux").args([
-        "list-panes",
-        "-s",
-        "-t",
-        session,
-        "-F",
-        "#{pane_id}",
-    ]))?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    Ok(stdout
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

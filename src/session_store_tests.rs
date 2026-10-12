@@ -1,3 +1,5 @@
+// Included by `session_store.rs` behind `#[cfg(test)]`, so this file is test
+// code even though it has no `#[cfg(test)]` of its own.
 use super::*;
 use crate::session_store::SaveSessionArgs;
 

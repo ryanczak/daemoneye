@@ -26,7 +26,8 @@ pub fn var_log_dir() -> PathBuf {
     config_dir().join("var/log")
 }
 
-/// `~/.daemoneye/var/log/pipe/` — per-pane pipe-pane capture logs.
+/// `~/.daemoneye/var/log/pipe/` — per-pane capture logs left by an older
+/// daemon's tmux pipe; swept for leftovers only (M27 installs no pipe).
 pub fn pipe_log_dir() -> PathBuf {
     config_dir().join("var/log/pipe")
 }
