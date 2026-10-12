@@ -197,7 +197,7 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 - **`[PANE MAP]`** — present inside tmux, mapping window-relative indices to pane IDs (`idx:0=%3* bash | idx:1=%7 vim`) with the active pane marked `*`. Used by the AI to translate user references like "pane 1" when discussing panes with the user.
 - **`/pane`** — lists the session's panes. Use `/pane %N` to pin the pane whose new activity triggers a fresh context snapshot; the preference is saved to `pane_prefs.json` and survives daemon restarts.
 
-**Remote script streaming** — When a foreground command is sent to a pane that is SSH'd or mosh'd to a remote host and the command names a daemon-host script (one stored in `~/.daemoneye/scripts/`), DaemonEye automatically detects that the bare filename does not exist on the remote and streams the script's content instead: the script is hex-encoded and piped into the remote interpreter's stdin (`python3`/`perl` decode → `bash /dev/stdin <args>`), so the script runs on the remote with no disk write and no remote-side setup. A local pane or a command that is not a managed script is sent verbatim, unchanged. Running a daemon-host script under `sudo` on a remote interactive pane is not supported on this path (a NOPASSWD sudoers rule must authorize a fixed file path, which streaming cannot provide); DaemonEye returns an advisory pointing at the Ghost Shell `ssh_target` mechanism for that case.
+**Remote script streaming** — A **Ghost Shell** that runs a daemon-host script (one in `~/.daemoneye/scripts/`) on its remote `ssh_target` host streams the script instead of copying it: the script is hex-encoded and piped into the remote interpreter's stdin (`python3`/`perl` decode → `bash /dev/stdin <args>`), so it runs on the remote with no remote disk write and no remote-side setup. Under `sudo` the script is written to its `~/.daemoneye/scripts/<name>` path on the remote instead, because a NOPASSWD sudoers rule must name a fixed path. See the `ssh_target` row of the runbook fields table.
 
 **Remote hosts — first connection** — The first connection to a configured `[hosts]` entry is made **before any shell opens there**: if no ControlMaster is running for the host, the daemon runs `ssh -M -N -f` itself and handles what comes back. A password or key-passphrase prompt is asked **in the chat** (never typed into a shell, so a shell's first command can never be eaten by ssh's own prompt); an unknown host key is refused — accept the fingerprint once from your own terminal, and later connections reuse it. Shells opened after that reuse the master for 10 minutes (`ControlPersist=10m`) without asking again. A Ghost Shell never asks: its connections run with `BatchMode=yes`, so a host that wants a credential fails for it at once with a clear error instead of hanging.
 
@@ -993,13 +993,13 @@ Periodic sweeps for the two artifact directories that otherwise grow without bou
 
 ### `[execution]` section
 
-Selects the substrate `run_terminal_command` runs on. The default is the PTY
-shell engine; `"tmux"` is the explicit opt-out for sites that have not
-migrated.
+Selects the substrate `run_terminal_command` runs on. `"pty"` is the only
+substrate: the daemon's PTY shells. `"tmux"` was removed in 2.0; it still
+loads, with a startup warning, and commands run in PTY shells.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `backend` | string | `"pty"` | `"pty"` routes commands through the daemon's PTY shell engine: daemon-owned shells recorded as asciicast v2 logs in `~/.daemoneye/var/log/shells/`. `"tmux"` runs them in tmux panes as before. Anything other than `"tmux"`/`"pty"` falls back to `"pty"` with a startup warning. |
+| `backend` | string | `"pty"` | `"pty"` is the only substrate: the daemon's PTY shells, recorded as asciicast v2 logs in `~/.daemoneye/var/log/shells/`. `"tmux"` was removed in 2.0: it still loads, with a startup warning, and commands run in PTY shells. Any other value falls back to `"pty"` with a warning. |
 
 ### `[shells]` section
 
@@ -1245,7 +1245,7 @@ captures the error log for post-incident review.
 | `run_with_sudo` | bool | `false` | Auto-prepend `sudo` when executing scripts listed in `auto_approve_scripts`. The ghost AI can then write `script.sh` instead of `sudo script.sh`. Does **not** grant permission to run arbitrary sudo commands — the `auto_approve_scripts` whitelist is always enforced. Each approved script still requires a NOPASSWD sudoers rule via `daemoneye install-sudoers`. |
 | `max_ghost_turns` | integer | `0` | Per-runbook turn cap. Clamped to the daemon ceiling (`ghost.max_ghost_turns` in `config.toml`). `0` means use the daemon ceiling. |
 | `model` | string | *(agent or default)* | Model key for this ghost shell. Beats the agent-level model if both are set. |
-| `ssh_target` | string | *(none)* | SSH destination (e.g. `user@host` or `host`) for remote execution. When the value resolves to a configured `[hosts]` entry (see below), the ghost's commands run in a PTY shell **on that host** — the same substrate chat uses — opened with `-o BatchMode=yes` (key auth only: a host that asks for a password or presents an unknown key fails at once, with the prompt cancelled and named), reused for the ghost's later commands on that host, capped at 300 s per command, and closed when the ghost ends. When the value does not resolve to a configured host, commands are wrapped in `ssh <target> <cmd>` as before. Daemon-host scripts are **streamed** to the remote via hex-decode → interpreter stdin by default (no remote disk write); when `sudo` is required the script is materialized to its `~/.daemoneye/scripts/<name>` path on the remote (a NOPASSWD sudoers rule must cover that path). At ghost start the value is resolved against `[hosts]` in `config.toml`: a value naming a `[hosts.<name>]` key, or matching exactly one entry's `ssh` destination, resolves to that host (recorded as `ghost_ssh_target_resolved`), and that host's `sudo_scripts` — when non-empty — limits which scripts may run under sudo there; a value matching two or more destinations resolves to none. A non-empty `hosts:` list must grant the resolved host, or every command is refused. The AI is instructed not to SSH manually — omit this field for local-only execution. |
+| `ssh_target` | string | *(none)* | SSH destination (e.g. `user@host` or `host`) for remote execution. When the value resolves to a configured `[hosts]` entry (see below), the ghost's commands run in a PTY shell **on that host** — the same substrate chat uses — opened with `-o BatchMode=yes` (key auth only: a host that asks for a password or presents an unknown key fails at once, with the prompt cancelled and named), reused for the ghost's later commands on that host, capped at 300 s per command, and closed when the ghost ends. A value that resolves to no configured host is refused — the ghost's commands do not run. Daemon-host scripts are **streamed** to the remote via hex-decode → interpreter stdin by default (no remote disk write); when `sudo` is required the script is materialized to its `~/.daemoneye/scripts/<name>` path on the remote (a NOPASSWD sudoers rule must cover that path). At ghost start the value is resolved against `[hosts]` in `config.toml`: a value naming a `[hosts.<name>]` key, or matching exactly one entry's `ssh` destination, resolves to that host (recorded as `ghost_ssh_target_resolved`), and that host's `sudo_scripts` — when non-empty — limits which scripts may run under sudo there; a value matching two or more destinations resolves to none. A non-empty `hosts:` list must grant the resolved host, or every command is refused. The AI is instructed not to SSH manually — omit this field for local-only execution. |
 | `auto_approve_commands` | bool | `false` | Explicitly tell the ghost shell it may run non-sudo investigation commands freely. Non-sudo commands are always permitted by OS permissions regardless of this flag; setting it to `true` makes that explicit in the system prompt so the model does not withhold useful investigation commands. Can also be enabled daemon-wide via `[approvals] ghost_commands = true` in `config.toml`; the two sources are OR-ed together. |
 
 ### Step 4 — Enable the webhook and configure Alertmanager
@@ -1424,12 +1424,12 @@ Agent configs cannot be written by AI tools without user approval (the same gate
 Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in a dated segment under `~/.daemoneye/var/log/events/` (`events-YYYYMMDD.jsonl`, UTC). AI cost records are written to the same segment after each completed turn:
 
 ```
-[1748000000] session=abc123 mode=background pane=- status=approved cmd=ps aux --sort=-%mem out=USER PID ...
-[1748000001] session=abc123 mode=foreground pane=%3 status=denied cmd=sudo rm -rf /tmp/old out=
+{"cmd":"ps aux --sort=-%mem","event":"command","exit":0,"mode":"shell","out":"USER PID ...","pane":"s0","session":"abc123","status":"approved","ts":"2026-05-16T10:22:58Z","pid":41237}
+{"cmd":"sudo rm -rf /tmp/old","event":"command","mode":"foreground","out":"","pane":"","session":"abc123","status":"denied","ts":"2026-05-16T10:22:59Z","pid":41237}
 {"event":"ai_cost","ts":"2026-05-16T10:23:01Z","agent_name":"chat","provider":"anthropic","cost":{"total_cost_usd":0.0847},...}
 ```
 
-Fields for command records: Unix timestamp · session ID · `background` or `foreground` · tmux pane ID · `approved` / `denied` / `timeout` / `send-failed` · command · first 200 chars of output.
+A command that ran has `mode` `shell`, `pane` = the PTY shell id, and `exit` = its real exit code. An approval decision that ran nothing has `mode` `foreground` (waited) or `background` (`wait: false`) and an empty `pane`. `status` is `approved` / `denied` / `timeout` / `refused`, or a path-specific failure. `out` is the first 200 characters of output.
 
 Segments older than `[events] retention_days` (default 90) are swept automatically by the daemon. A pre-rotation `var/log/events.jsonl` is still read by every consumer (`daemoneye costs`, `daemoneye status`, `search_repository`, epoch tallies) and is never rotated or deleted — date-ranged reads span the legacy file and the segments transparently.
 

@@ -1,7 +1,7 @@
 # Phase 07a: docs-truth — the stale passages the live rehearsal found
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07c (done)
 **Tags:** language=markdown, kind=docs, size=s
 
@@ -82,3 +82,10 @@ the outputs verbatim in the Update Log under `PASTE MATCH: yes`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-12 09:48 (started, executor)
+
+**Status:** in-progress — executor (Claude Opus 4.6) started phase 07a.
+
+**Plan:** apply the eight table rows with `patch`, then full gates, one
+end-to-end verification pass, one `docs:` commit.

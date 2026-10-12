@@ -272,9 +272,9 @@ prompt = "sre"
 # ── Execution ────────────────────────────────────────────────────────────────
 
 # [execution]
-# Execution substrate for agent shells: "pty" (the default, the daemon's PTY
-# shell engine) or "tmux" (the explicit opt-out, today's tmux panes).
-# backend = "pty"             # "pty" (default) or "tmux" (the explicit opt-out)
+# Execution substrate for agent shells: "pty" is the only substrate — the
+# daemon's PTY shells. "tmux" was removed in 2.0 and loads with a warning.
+# backend = "pty"             # the only supported value
 
 # ── Shells ───────────────────────────────────────────────────────────────────
 

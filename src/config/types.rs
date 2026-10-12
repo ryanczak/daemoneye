@@ -680,11 +680,11 @@ impl SandboxConfig {
 }
 
 /// Execution backend selection (`[execution]`).
-/// `backend` defaults to `"pty"`, the 2.0 substrate; `"tmux"` is the explicit
-/// opt-out for sites that have not migrated.
+/// `backend` defaults to `"pty"`, the only substrate; `"tmux"` was removed in
+/// 2.0 and is accepted only so old configs load (`validate` warns).
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ExecutionConfig {
-    /// `"pty"` (default, the 2.0 substrate) or `"tmux"` (the explicit opt-out).
+    /// `"pty"` (the only supported value).
     #[serde(default = "default_execution_backend")]
     pub backend: String,
 }

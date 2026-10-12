@@ -166,7 +166,7 @@ pub enum JobStatus {
     Running,
     /// Completed successfully (for `Every` jobs this transitions back to `Pending`).
     Succeeded,
-    /// Failed; the tmux window `de-<id>` is left open for inspection.
+    /// Failed, with the error message.
     Failed(String),
     /// Cancelled by the user.
     Cancelled,
