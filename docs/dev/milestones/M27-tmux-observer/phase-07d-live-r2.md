@@ -104,3 +104,100 @@ the grep, and the full-suite totals verbatim in the Update Log with
 
 **Executor:** Claude (executor run). Status flipped to `in-progress`; README
 phase-table row updated to match. Starting the 9-row work list in order.
+
+### Update — 2026-10-12 18:20 (end-to-end verification)
+
+All three pinned tests, both mutation checks, the gear grep, and the full
+suite were captured mechanically in one pass each; the transcripts below are
+pasted verbatim from those runs. Commit `025a1684` carries the code; the
+working tree is clean.
+
+**The three pinned tests** (`cargo test --lib <name>` each):
+
+```
+test webhook::process::tests::inject_reaches_a_presence_attached_session_that_is_not_resident ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2260 filtered out; finished in 0.00s
+
+test ai::tools::dispatch::tests::invalid_args_event_names_the_mistyped_param ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2260 filtered out; finished in 0.00s
+
+test ai::types::pending::tests::invalid_args_pending_call_keeps_the_raw_call ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2260 filtered out; finished in 0.00s
+```
+
+**Mutation check 1 — `invalid_args_event` forced to `None`** (an env-gated
+early `return None` at the top of the function, run with
+`DAEMONEYE_MUTATION_CHECK=1`): the pinned dispatch test fails on its first
+expect, exactly as required.
+
+```
+test ai::tools::dispatch::tests::invalid_args_event_names_the_mistyped_param ... FAILED
+
+thread 'ai::tools::dispatch::tests::invalid_args_event_names_the_mistyped_param' (907738) panicked at src/ai/tools/dispatch.rs:1174:10:
+a known tool always yields an event
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2260 filtered out; finished in 0.00s
+```
+
+**Mutation check 2 — presence ids dropped from the union** (an env-gated
+`if !union_blocked { ids.extend(presence_session_ids()) }`, run with
+`DAEMONEYE_MUTATION_CHECK_INJECT=1`): the pinned inject test fails on the
+session-file read.
+
+```
+test webhook::process::tests::inject_reaches_a_presence_attached_session_that_is_not_resident ... FAILED
+
+thread 'webhook::process::tests::inject_reaches_a_presence_attached_session_that_is_not_resident' (908791) panicked at src/webhook/process.rs:812:33:
+the session file "/tmp/.tmpyu2OhO/.daemoneye/var/log/sessions/reconnected-after-restart.jsonl" exists: No such file or directory (os error 2)
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2260 filtered out; finished in 0.00s
+```
+
+Both mutations were reverted after capture (`git diff --stat` returned
+empty before the final full-suite run, which is the run below).
+
+**Gear grep** — `grep -c '"⚙ ' src/cli/commands/chat_presence.rs`:
+
+```
+0
+```
+
+(grep exits 1 on a zero count; the count printed is the evidence. It was 4
+before this phase.)
+
+**Preservation:**
+
+```
+$ cargo test --test tmux_read_only
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+$ cargo test --test doc_truth
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+```
+
+**Full suite** (`cargo test`, one run, tee'd to a file and summed
+mechanically — `awk '{p+=$4; f+=$6} END {print "passed="p" failed="f}'`
+over the pasted result lines):
+
+```
+test result: ok. 2251 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 64.23s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+passed=2322 failed=0
+```
+
+**Gate commands:**
+
+```
+$ cargo fmt --all && cargo clippy --all-targets --all-features -- -D warnings && cargo build
+    Checking daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.36s
+   Compiling daemoneye v1.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.94s
+```
+
+**PASTE MATCH: yes.** The live check is phase 07 rehearsal 3 (architect).
