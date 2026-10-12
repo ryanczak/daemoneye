@@ -44,8 +44,8 @@ pub(super) fn resolve_target_pane(chat_pane: &str, session: &str) -> Option<Stri
     }
 }
 
-/// Read one line from stdin synchronously, temporarily clearing O_NONBLOCK so
-/// std::io::stdin().read_line works when AsyncStdin has set it non-blocking.
+/// Read one line from stdin, clearing O_NONBLOCK around the blocking read
+/// and restoring it after.
 fn sync_read_line() -> String {
     use std::io::BufRead;
     use std::os::fd::AsFd;
@@ -53,13 +53,13 @@ fn sync_read_line() -> String {
     let stdin = std::io::stdin();
     let fd = stdin.as_fd();
     let raw = fd.as_raw_fd();
-    // Restore original flags (O_NONBLOCK) so AsyncStdin continues to work.
     let saved = unsafe { libc::fcntl(raw, libc::F_GETFL) };
     if saved >= 0 {
         unsafe { libc::fcntl(raw, libc::F_SETFL, saved & !libc::O_NONBLOCK) };
     }
     let mut line = String::new();
     let _ = std::io::stdin().lock().read_line(&mut line);
+    // Restore original flags (O_NONBLOCK) so AsyncStdin continues to work.
     if saved >= 0 {
         unsafe { libc::fcntl(raw, libc::F_SETFL, saved) };
     }

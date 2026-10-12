@@ -474,10 +474,15 @@ where
             }
         };
         if n == 0 {
-            anyhow::bail!(
-                "shell socket at {} closed while running {cmd:?}",
-                sock.display()
-            );
+            return Err(ShellExited {
+                cmd: cmd.to_string(),
+            })
+            .with_context(|| {
+                format!(
+                    "shell socket at {} closed while running {cmd:?}",
+                    sock.display()
+                )
+            });
         }
         let frame = match serde_json::from_slice::<ShellResponse>(&line) {
             Ok(frame) => frame,

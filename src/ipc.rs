@@ -1,4 +1,12 @@
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+/// How long a user has to approve or deny a foreground/background tool call.
+///
+/// Both sides of the approval exchange bound themselves with this: the daemon
+/// gives up on the user after it, and the client's read (F7) gives up on the
+/// panel at the same instant so the panel never outlives the daemon's wait.
+pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// One sandboxed container this daemon owns (M19 phase-05).
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

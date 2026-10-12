@@ -133,3 +133,42 @@ looking for a way to fake a terminal for `approval_read_times_out`. The
 spec gave no test seam. The resume now names the seam (a pure
 `read_byte_by` helper, tested with `std::future::pending()`) and lists
 rows 5–6 as exact edits.
+
+### Update — 2026-10-12 (end-to-end verification)
+
+**Executor:** Claude (phase-07c resume, rows 3–6 + mutation check)
+```
+run_terminal_command_maps_legacy_background_to_wait: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.00s
+socket_close_mid_command_reports_shell_exit: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.00s
+approval_read_times_out: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.02s
+parked_presence_reconnects_after_eof: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2257 filtered out; finished in 0.00s
+gate_catches_an_abbreviated_write: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+cargo test parked_presence_ends_on_eof → test result: ok. 0 passed; 0 failed; … (renamed; 2258 filtered out)
+cargo test --test tmux_read_only → test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+grep -c 'bind-key T split-window' src/cli/commands/setup.rs → 1
+clippy -D warnings → Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.97s (exit 0)
+cargo fmt --all --check → fmt_exit=0
+cargo test (full) → test result: ok. 2248 passed … / 2 / 6 / 16 / 32 / 11 / 2 / 0 — total passed=2317 failed=0
+```
+
+PASTE MATCH: yes
+
+**Mutation check (row 1).** Deleted `.or(self.background.map(|b| !b))` in
+`src/ai/tools/args.rs`, leaving `wait: self.wait,`:
+
+```
+test ai::tools::dispatch::tests::run_terminal_command_maps_legacy_background_to_wait ... FAILED
+thread 'ai::tools::dispatch::tests::run_terminal_command_maps_legacy_background_to_wait' panicked at src/ai/tools/dispatch.rs:977:9:
+assertion `left == right` failed: background: true means don't wait
+  left: None
+ right: Some(false)
+```
+
+Reverted; the test passes again.
+
+**Tests added/renamed this run:** `approval_read_times_out` (stream.rs) and
+`gate_catches_an_abbreviated_write` (tmux_read_only.rs) are new; rows 1–4's
+tests and the `parked_presence_ends_on_eof` → `parked_presence_reconnects_after_eof`
+rename are from the prior run and untouched.

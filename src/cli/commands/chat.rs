@@ -150,7 +150,10 @@ pub(super) async fn run_chat_inner(resume_id: Option<String>) -> Result<()> {
     // carries the catch-up brief when the session was away ≥ 30 s; a failed
     // attach must not stop chat from running.
     let (attach_brief, parked) = match chat_presence::attach(&session_id).await {
-        Ok((brief, held)) => (brief, Some(held.park())),
+        Ok((brief, held)) => (
+            brief,
+            Some(held.park_with_default_reconnect(session_id.to_string())),
+        ),
         Err(e) => {
             log::warn!("chat presence attach failed (chat continues): {e}");
             (None, None)

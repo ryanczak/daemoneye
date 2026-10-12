@@ -68,37 +68,76 @@ impl HeldPresence {
     /// selects on. The task never writes to stdout — the ratatui renderer owns
     /// the screen; rendering happens in the loop that owns it.
     ///
+    /// On EOF (F4) the task does **not** end: it pushes the connection-lost
+    /// notice, retries `reconnect` every 2 s until it succeeds, then pushes
+    /// the reconnect notice, forwards any catch-up brief the new attach
+    /// returned, and keeps reading on the new connection. `session_id` is what
+    /// the retry attaches with; `reconnect` is the injectable attach step
+    /// (the production impl is `attach(session_id)`), so tests can fake the
+    /// daemon.
+    ///
     /// The returned [`ParkedPresence`] bundles the guard with the push
     /// receiver. The chat loop keeps the whole bundle for its lifetime: the
     /// hold ends when *it* drops the bundle (chat exiting), closing the
     /// connection and stamping detach state daemon-side.
-    pub(crate) fn park(self) -> ParkedPresence {
+    pub(crate) fn park<F>(self, session_id: String, reconnect: F) -> ParkedPresence
+    where
+        F: Fn(
+                String,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<(Option<String>, HeldPresence)>> + Send,
+                >,
+            > + Send
+            + 'static,
+    {
         let (mut rx, mut tx) = (self.rx, self.tx);
         let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
         let (push_tx, push_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let task = tokio::spawn(async move {
             let mut discarded = String::new();
-            loop {
-                let got_line = tokio::select! {
-                    res = rx.read_line(&mut discarded) => {
-                        // EOF or a read error both end the hold; the detach is
-                        // stamped daemon-side either way.
-                        let n = res.unwrap_or(0);
-                        if n == 0 {
-                            break;
-                        }
-                        true
-                    }
-                    _ = &mut done_rx => {
-                        // Guard dropped — close cleanly.
+            'hold: loop {
+                loop {
+                    let read = tokio::select! {
+                        res = rx.read_line(&mut discarded) => res,
+                        _ = &mut done_rx => break 'hold,
+                    };
+                    let n = read.unwrap_or(0);
+                    if n == 0 {
+                        // EOF: the daemon restart or dropped its end. Report
+                        // it, then keep the chat alive by re-attaching.
+                        let _ =
+                            push_tx.send("⚙ daemon connection lost — reconnecting…".to_string());
                         break;
                     }
-                };
-                if got_line
-                    && let Ok(Response::SystemMsg(msg)) =
+                    if let Ok(Response::SystemMsg(msg)) =
                         serde_json::from_str::<Response>(discarded.trim())
-                {
-                    let _ = push_tx.send(msg);
+                    {
+                        let _ = push_tx.send(msg);
+                    }
+                    discarded.clear();
+                }
+                discarded.clear();
+
+                // Retry the attach every 2 s until it succeeds or the chat
+                // loop drops the guard.
+                let (brief, held) = loop {
+                    match reconnect(session_id.clone()).await {
+                        Ok(pair) => break pair,
+                        Err(_) => {
+                            if done_rx.try_recv().is_ok() {
+                                break 'hold;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        }
+                    }
+                };
+                let (next_rx, next_tx) = (held.rx, held.tx);
+                rx = next_rx;
+                tx = next_tx;
+                let _ = push_tx.send("⚙ reconnected".to_string());
+                if let Some(brief) = brief {
+                    let _ = push_tx.send(brief);
                 }
                 discarded.clear();
             }
@@ -109,6 +148,14 @@ impl HeldPresence {
             task: Some(task),
             pushes: push_rx,
         }
+    }
+
+    /// `park` with the production reconnect step: attach to the named session
+    /// on the daemon's IPC socket.
+    pub(crate) fn park_with_default_reconnect(self, session_id: String) -> ParkedPresence {
+        self.park(session_id, |session_id| {
+            Box::pin(async move { attach(&session_id).await })
+        })
     }
 }
 
@@ -176,6 +223,7 @@ impl Drop for ParkedPresence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
     use tokio::net::UnixStream;
 
     /// Park a `HeldPresence` against a fake daemon that keeps its end open
@@ -200,32 +248,7 @@ mod tests {
             rx: BufReader::new(a_r),
             tx: a_w,
         };
-        held.park()
-    }
-
-    /// Park a `HeldPresence` against a fake daemon that shuts its end down
-    /// after the lines, so the parked task's read on `a` sees EOF and the
-    /// parked task ends — the EOF shape of `parked_presence_forwards_every_push`.
-    async fn park_with_daemon_shutdown(daemon_lines: Vec<String>) -> ParkedPresence {
-        let (a, b) = UnixStream::pair().expect("a socketpair");
-        let (unix_r, unix_w) = tokio::io::split(b);
-        let (a_r, a_w) = a.into_split();
-        tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            let mut w = unix_w;
-            for line in daemon_lines {
-                let _ = w.write_all(line.as_bytes()).await;
-            }
-            // Shut the daemon side down: the client's read sees EOF.
-            let _ = w.shutdown().await;
-            drop(w);
-            drop(unix_r);
-        });
-        let held = HeldPresence {
-            rx: BufReader::new(a_r),
-            tx: a_w,
-        };
-        held.park()
+        held.park_with_default_reconnect("test-session".to_string())
     }
 
     #[tokio::test]
@@ -254,20 +277,105 @@ mod tests {
         );
     }
 
+    /// After EOF the hold does not end: the receiver sees the connection-lost
+    /// notice, then — once the injectable reconnect succeeds — the reconnect
+    /// notice and any brief the new attach carried, and a push sent on the
+    /// new connection is forwarded. Fake daemon #1 shuts down after one push
+    /// (EOF); the injectable reconnect hands back a `HeldPresence` whose peer
+    /// (#2) pushes the reconnect evidence and keeps its end open.
     #[tokio::test]
-    async fn parked_presence_ends_on_eof() {
-        let mut parked =
-            park_with_daemon_shutdown(vec!["{\"SystemMsg\":\"ALERT gone\"}\n".to_string()]).await;
+    async fn parked_presence_reconnects_after_eof() {
+        // Fake daemon #1: pushes one alert, then closes its end so the parked
+        // task's read sees EOF.
+        let (a1, b1) = UnixStream::pair().expect("a socketpair");
+        let (a1_r, a1_w) = a1.into_split();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut w = b1;
+            let _ = w.write_all(b"{\"SystemMsg\":\"ALERT gone\"}\n").await;
+            // Shut the daemon side down: the client's read sees EOF.
+            let _ = w.shutdown().await;
+        });
+
+        // Fake daemon #2: the reconnect step's peer. It pushes the reconnect
+        // evidence and keeps its end open, so the hold stays live.
+        let (a2, b2) = UnixStream::pair().expect("a second socketpair");
+        let (a2_r, a2_w) = a2.into_split();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut w = b2;
+            let _ = w
+                .write_all(b"{\"SystemMsg\":\"ALERT on the new connection\"}\n")
+                .await;
+            // The daemon keeps its end open: the hold stays live.
+        });
+
+        let held = HeldPresence {
+            rx: BufReader::new(a1_r),
+            tx: a1_w,
+        };
+        // The reconnect closure may run more than once, so the halves come
+        // from an Option that is taken on each call. Any further call fails
+        // fast rather than panicking inside the parked task.
+        let reconnect = Arc::new(Mutex::new(Some((a2_r, a2_w))));
+        let mut parked = held.park("test-session".to_string(), move |_session_id| {
+            let reconnect = Arc::clone(&reconnect);
+            Box::pin(async move {
+                let halves = {
+                    let mut slot = reconnect.lock().expect("the reconnect slot");
+                    slot.take()
+                };
+                let Some((a2_r, a2_w)) = halves else {
+                    return Err(anyhow::anyhow!(
+                        "the reconnect step ran after its fixture was spent"
+                    ));
+                };
+                Ok((
+                    Some("brief: caught up 3 events".to_string()),
+                    HeldPresence {
+                        rx: BufReader::new(a2_r),
+                        tx: a2_w,
+                    },
+                ))
+            })
+        });
         let pushes = parked.pushes();
         let first = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
-            .expect("the push within 5 s");
+            .expect("the push on the first connection within 5 s");
         assert_eq!(first.as_deref(), Some("ALERT gone"));
-        // EOF: the channel closes once the parked task ends.
-        let end = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+        let second = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
-            .expect("the channel closes within 5 s of EOF");
-        assert!(end.is_none(), "the channel closes after EOF");
+            .expect("the connection-lost push within 5 s");
+        assert_eq!(
+            second.as_deref(),
+            Some("⚙ daemon connection lost — reconnecting…"),
+            "EOF is announced, not swallowed"
+        );
+        let third = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+            .await
+            .expect("the reconnected push within 5 s");
+        assert_eq!(third.as_deref(), Some("⚙ reconnected"));
+        let brief = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+            .await
+            .expect("the brief within 5 s");
+        assert_eq!(
+            brief.as_deref(),
+            Some("brief: caught up 3 events"),
+            "the catch-up brief the new attach returned is forwarded"
+        );
+        let fourth = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+            .await
+            .expect("the push on the new connection within 5 s");
+        assert_eq!(
+            fourth.as_deref(),
+            Some("ALERT on the new connection"),
+            "pushes keep flowing on the reconnected hold"
+        );
+        assert!(
+            parked.holds_presence(),
+            "the guard is still live after the reconnect"
+        );
     }
 
     /// The chat loop's setup step keeps the parked bundle whole: a `SystemMsg`

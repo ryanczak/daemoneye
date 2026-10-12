@@ -66,6 +66,24 @@ pub(super) fn format_for_model(raw: &str) -> String {
     mask_sensitive(&normalize_output(&crate::process::annotate_output(raw)))
 }
 
+/// The context a command's failure carries when it reaches `map_err`: a
+/// `ShellExited` in the chain says the shell died, everything else reads as
+/// the command overrunning `applied_timeout`. Named so the mapping is
+/// testable without a socket.
+pub(super) fn map_run_command_error(
+    e: anyhow::Error,
+    applied_timeout: Duration,
+    shell: &str,
+) -> anyhow::Error {
+    if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
+        e.context(format!("shell {shell} exited before the command finished"))
+    } else {
+        e.context(format!(
+            "command exceeded the {applied_timeout:#?} limit in shell {shell}"
+        ))
+    }
+}
+
 /// What one command produced, already fit for a model.
 #[derive(Debug)]
 pub(crate) struct ShellRunResult {
@@ -374,19 +392,7 @@ where
     let Some(prompts) = prompts else {
         let outcome = run_command(&socket, cmd, &marker, applied_timeout)
             .await
-            .map_err(|e| {
-                if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
-                    e.context(format!(
-                        "shell {} exited before the command finished",
-                        id.as_str()
-                    ))
-                } else {
-                    e.context(format!(
-                        "command exceeded the {applied_timeout:#?} limit in shell {}",
-                        id.as_str()
-                    ))
-                }
-            })?;
+            .map_err(|e| map_run_command_error(e, applied_timeout, id.as_str()))?;
         return finish_run(reg, cmd, &id, &outcome, before).await;
     };
 
@@ -2437,6 +2443,44 @@ mod tests {
         std::mem::forget(lock);
         std::mem::forget(dir);
         Ok(cast)
+    }
+
+    /// A dead shell's error, dressed exactly as the socket-close path leaves
+    /// it, must map to "exited before the command finished" — never to the
+    /// timeout wording the old inline closure gave it.
+    #[test]
+    fn socket_close_mid_command_reports_shell_exit() {
+        let err = crate::shell::ShellExited {
+            cmd: "sleep 60".to_string(),
+        };
+        let closed = anyhow::Error::new(err).context(
+            "shell socket at /run/user/1000/daemoneye/shells/s9.sock closed while \
+             running \"sleep 60\"",
+        );
+        let mapped = map_run_command_error(closed, Duration::from_secs(45), "s9");
+        let text = format!("{mapped:#}");
+        assert!(
+            text.contains("exited before the command finished"),
+            "the mapping says the shell exited: {text}"
+        );
+        assert!(
+            !text.contains("exceeded"),
+            "a closed socket exceeded no limit: {text}"
+        );
+        assert!(
+            mapped
+                .chain()
+                .any(|c| c.downcast_ref::<crate::shell::ShellExited>().is_some()),
+            "the typed error stays in the chain: {mapped:#?}"
+        );
+
+        let timeout_err = anyhow::anyhow!("timed out after 45s waiting for command output");
+        let mapped = map_run_command_error(timeout_err, Duration::from_secs(45), "s9");
+        let text = format!("{mapped:#}");
+        assert!(
+            text.contains("command exceeded the 45s limit in shell s9"),
+            "a genuine timeout keeps its wording: {text}"
+        );
     }
 
     /// An exited shell must be *reported as exited*, not dressed up as a

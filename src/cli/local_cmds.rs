@@ -225,7 +225,7 @@ pub fn run_sched_windows() -> Result<()> {
                     println!("  \x1b[96m{}\x1b[0m", w);
                 }
                 println!();
-                println!("Kill a window:  tmux killw -t <session>:<window>");
+                println!("Kill a window:  tmux kill-window -t <session>:<window>");
             }
         }
         Err(e) => {

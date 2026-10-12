@@ -14,7 +14,7 @@ use crate::ai::PendingCall;
 use crate::daemon::policy::GhostPolicy;
 use crate::daemon::session::{SessionStore, with_sessions};
 use crate::daemon::utils::send_response_split;
-use crate::ipc::{Request, Response};
+use crate::ipc::{APPROVAL_TIMEOUT, Request, Response};
 use crate::scheduler::ScheduleStore;
 use crate::shell::Owner;
 use crate::tmux::cache::SessionCache;
@@ -93,8 +93,6 @@ pub enum ToolCallOutcome {
 // Timing constants used by the approval gate (sub-modules have their own).
 // ---------------------------------------------------------------------------
 
-/// How long a user has to approve or deny a foreground/background tool call.
-const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long a user has to respond to a credential or write prompt (sudo password, schedule, script).
 const USER_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
 

@@ -10,7 +10,7 @@ use tokio::io::BufReader;
 use crate::cli::input::*;
 use crate::cli::markdown::MarkdownRenderer;
 use crate::cli::render::*;
-use crate::ipc::{Request, Response};
+use crate::ipc::{APPROVAL_TIMEOUT, Request, Response};
 
 use super::approval::SessionApproval;
 use super::interrupt::{InterruptAction, InterruptState};
@@ -943,6 +943,16 @@ fn parse_approval_response(input: &str) -> (bool, bool, Option<String>) {
     }
 }
 
+/// One bounded stdin read: `None` at the deadline, `None` at EOF, `Some(b)`
+/// when a byte arrives in time. Named so the deadline behavior is testable
+/// without a terminal.
+pub(crate) async fn read_byte_by<F>(deadline: tokio::time::Instant, fut: F) -> Option<u8>
+where
+    F: std::future::Future<Output = Option<u8>>,
+{
+    tokio::time::timeout_at(deadline, fut).await.ok().flatten()
+}
+
 /// Read a single keypress or full line under crossterm raw mode, rendering
 /// the prompt and input in the live region (not scrollback).
 ///
@@ -950,12 +960,19 @@ fn parse_approval_response(input: &str) -> (bool, bool, Option<String>) {
 /// immediately.  Otherwise reads the full line using the input editor,
 /// redrawing the live region on each keystroke so the user sees their
 /// typed text in place.
+///
+/// The read is bounded by `deadline`: past it the function returns `None`
+/// (F7) so the caller can commit the timeout, send nothing, and return to the
+/// response loop before the daemon's own timeout lands. Without the bound the
+/// panel outlives the daemon's wait and the next line typed fails with
+/// `Broken pipe`.
 async fn read_approval_input(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
     prompt_text: &str,
     status: &crate::cli::render::StatusBarState<'_>,
-) -> String {
+    deadline: tokio::time::Instant,
+) -> Option<String> {
     use crate::cli::input::InputLine;
 
     // Initial draw with empty input.
@@ -963,54 +980,49 @@ async fn read_approval_input(
     let _ = renderer.draw_prompt(prompt_text, &line, status);
 
     // Read the first byte to decide: single-key shortcut vs. full line edit.
-    if let Some(first) = stdin.read_byte().await {
-        let ch = first as char;
-        match ch.to_ascii_lowercase() {
-            'y' | 'n' | 'a' => {
-                // Show the key the user pressed in the input box, then return.
-                line.insert(ch);
-                let _ = renderer.draw_prompt(prompt_text, &line, status);
-                ch.to_string()
-            }
-            '\r' | '\n' => {
-                // Empty input (Enter pressed immediately)
-                String::new()
-            }
-            _ => {
-                // Start of a typed message — use the input editor.
-                line.insert(ch);
-                let _ = renderer.draw_prompt(prompt_text, &line, status);
+    let first = read_byte_by(deadline, stdin.read_byte()).await?;
+    let ch = first as char;
+    match ch.to_ascii_lowercase() {
+        'y' | 'n' | 'a' => {
+            // Show the key the user pressed in the input box, then return.
+            line.insert(ch);
+            let _ = renderer.draw_prompt(prompt_text, &line, status);
+            Some(ch.to_string())
+        }
+        '\r' | '\n' => {
+            // Empty input (Enter pressed immediately)
+            Some(String::new())
+        }
+        _ => {
+            // Start of a typed message — use the input editor.
+            line.insert(ch);
+            let _ = renderer.draw_prompt(prompt_text, &line, status);
 
-                loop {
-                    match stdin.read_byte().await {
-                        Some(b'\r' | b'\n') => {
-                            return line.as_str();
-                        }
-                        Some(b'\x7f' | b'\x08') => {
-                            line.backspace();
+            loop {
+                let b = read_byte_by(deadline, stdin.read_byte()).await?;
+                match b {
+                    b'\r' | b'\n' => return Some(line.as_str()),
+                    b'\x7f' | b'\x08' => {
+                        line.backspace();
+                        let _ = renderer.draw_prompt(prompt_text, &line, status);
+                    }
+                    b'\x03' => {
+                        // Ctrl+C — cancel, return empty
+                        return Some(String::new());
+                    }
+                    b'\x1b' => {
+                        // Escape — cancel, return empty
+                        return Some(String::new());
+                    }
+                    b => {
+                        if b >= 0x20 {
+                            line.insert(b as char);
                             let _ = renderer.draw_prompt(prompt_text, &line, status);
                         }
-                        Some(b'\x03') => {
-                            // Ctrl+C — cancel, return empty
-                            return String::new();
-                        }
-                        Some(b'\x1b') => {
-                            // Escape — cancel, return empty
-                            return String::new();
-                        }
-                        Some(b) => {
-                            if b >= 0x20 {
-                                line.insert(b as char);
-                                let _ = renderer.draw_prompt(prompt_text, &line, status);
-                            }
-                        }
-                        None => return line.as_str(),
                     }
                 }
             }
         }
-    } else {
-        String::new()
     }
 }
 
@@ -1022,7 +1034,8 @@ async fn read_approval_input_panel(
     title: &str,
     session_label: &str,
     status: &crate::cli::render::StatusBarState<'_>,
-) -> String {
+    deadline: tokio::time::Instant,
+) -> Option<String> {
     use crate::cli::input::InputLine;
 
     // Initial draw with empty input.
@@ -1030,60 +1043,50 @@ async fn read_approval_input_panel(
     let _ = renderer.draw_approval_panel(title, session_label, &line, status);
 
     // Read the first byte to decide: single-key shortcut vs. full line edit.
-    if let Some(first) = stdin.read_byte().await {
-        let ch = first as char;
-        match ch.to_ascii_lowercase() {
-            'y' | 'n' | 'a' => {
-                // Show the key the user pressed in the input box, then return.
-                line.insert(ch);
-                let _ = renderer.draw_approval_panel(title, session_label, &line, status);
-                ch.to_string()
-            }
-            '\r' | '\n' => {
-                // Empty input (Enter pressed immediately)
-                String::new()
-            }
-            _ => {
-                // Start of a typed message — use the input editor.
-                line.insert(ch);
-                let _ = renderer.draw_approval_panel(title, session_label, &line, status);
+    let first = read_byte_by(deadline, stdin.read_byte()).await?;
+    let ch = first as char;
+    match ch.to_ascii_lowercase() {
+        'y' | 'n' | 'a' => {
+            // Show the key the user pressed in the input box, then return.
+            line.insert(ch);
+            let _ = renderer.draw_approval_panel(title, session_label, &line, status);
+            Some(ch.to_string())
+        }
+        '\r' | '\n' => {
+            // Empty input (Enter pressed immediately)
+            Some(String::new())
+        }
+        _ => {
+            // Start of a typed message — use the input editor.
+            line.insert(ch);
+            let _ = renderer.draw_approval_panel(title, session_label, &line, status);
 
-                loop {
-                    match stdin.read_byte().await {
-                        Some(b'\r' | b'\n') => {
-                            return line.as_str();
-                        }
-                        Some(b'\x7f' | b'\x08') => {
-                            line.backspace();
+            loop {
+                let b = read_byte_by(deadline, stdin.read_byte()).await?;
+                match b {
+                    b'\r' | b'\n' => return Some(line.as_str()),
+                    b'\x7f' | b'\x08' => {
+                        line.backspace();
+                        let _ = renderer.draw_approval_panel(title, session_label, &line, status);
+                    }
+                    b'\x03' => {
+                        // Ctrl+C — cancel, return empty
+                        return Some(String::new());
+                    }
+                    b'\x1b' => {
+                        // Escape — cancel, return empty
+                        return Some(String::new());
+                    }
+                    b => {
+                        if b >= 0x20 {
+                            line.insert(b as char);
                             let _ =
                                 renderer.draw_approval_panel(title, session_label, &line, status);
                         }
-                        Some(b'\x03') => {
-                            // Ctrl+C — cancel, return empty
-                            return String::new();
-                        }
-                        Some(b'\x1b') => {
-                            // Escape — cancel, return empty
-                            return String::new();
-                        }
-                        Some(b) => {
-                            if b >= 0x20 {
-                                line.insert(b as char);
-                                let _ = renderer.draw_approval_panel(
-                                    title,
-                                    session_label,
-                                    &line,
-                                    status,
-                                );
-                            }
-                        }
-                        None => return line.as_str(),
                     }
                 }
             }
         }
-    } else {
-        String::new()
     }
 }
 
@@ -1101,7 +1104,12 @@ async fn prompt_with_session_approve(
         let _ = renderer.commit(&format!("{}\n", line));
     }
     // Read the decision in the live region.
-    let input = read_approval_input(renderer, stdin, prompt_text, status).await;
+    let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
+    let Some(input) = read_approval_input(renderer, stdin, prompt_text, status, deadline).await
+    else {
+        let _ = renderer.commit("  ⏱ approval timed out — the command was not run\n");
+        return (false, false, None);
+    };
     parse_approval_response(&input)
 }
 
@@ -1137,8 +1145,20 @@ pub(super) async fn prompt_tool_call_ratatui(
         classification,
         crate::ipc::Classification::Command | crate::ipc::Classification::RemoteShell { .. }
     );
-    let input =
-        read_approval_input_panel(renderer, stdin, "approve command", &session_label, status).await;
+    let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
+    let Some(input) = read_approval_input_panel(
+        renderer,
+        stdin,
+        "approve command",
+        &session_label,
+        status,
+        deadline,
+    )
+    .await
+    else {
+        let _ = renderer.commit("  ⏱ approval timed out — the command was not run\n");
+        return Ok((false, None));
+    };
     let (approved, is_session, user_msg) = parse_approval_response(&input);
     let is_session = is_session && offer_session;
 
@@ -1289,7 +1309,10 @@ pub(super) async fn prompt_pane_select_ratatui(
         ));
     }
     let prompt_text = "  Select pane › ";
-    let input = read_approval_input(renderer, stdin, prompt_text, status).await;
+    let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
+    let input = read_approval_input(renderer, stdin, prompt_text, status, deadline)
+        .await
+        .unwrap_or_default();
     input
         .trim()
         .parse::<usize>()
@@ -1307,7 +1330,10 @@ pub(super) async fn prompt_yes_no_ratatui(
 ) -> bool {
     let _ = renderer.commit(&format!("\n  ⚙ {}\n", info));
     let full_prompt = format!("  {} [y/N] › ", prompt_text);
-    let input = read_approval_input(renderer, stdin, &full_prompt, status).await;
+    let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
+    let input = read_approval_input(renderer, stdin, &full_prompt, status, deadline)
+        .await
+        .unwrap_or_default();
     input.trim().to_lowercase() == "y" || input.trim().to_lowercase() == "yes"
 }
 
@@ -1478,6 +1504,27 @@ pub(super) async fn prompt_edit_file_ratatui(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── read_byte_by ────────────────────────────────────────────────────
+
+    /// The deadline seam behind the approval reads (F7): a stdin that never
+    /// sends a byte yields `None` once the deadline passes, and a byte that
+    /// arrives in time passes through.
+    #[tokio::test]
+    async fn approval_read_times_out() {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(20);
+        let never = std::future::pending::<Option<u8>>();
+        assert_eq!(read_byte_by(deadline, never).await, None);
+        let late = async { Some(b'y') };
+        assert_eq!(
+            read_byte_by(
+                tokio::time::Instant::now() + std::time::Duration::from_secs(5),
+                late
+            )
+            .await,
+            Some(b'y')
+        );
+    }
 
     // ── parse_approval_decision ─────────────────────────────────────────
 

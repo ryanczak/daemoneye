@@ -16,6 +16,9 @@ pub(super) trait ToolArgs: Sized {
 pub(super) struct RunTerminalCommandArgs {
     command: String,
     wait: Option<bool>,
+    // GLM sends `background` from its priors; the schema never mentions it,
+    // so serde must keep it or it silently degrades to a waited call.
+    background: Option<bool>,
     shell: Option<String>,
     host: Option<String>,
     timeout_secs: Option<u64>,
@@ -321,7 +324,7 @@ impl ToolArgs for RunTerminalCommandArgs {
         AiEvent::ToolCall {
             id: id.to_string(),
             cmd: self.command,
-            wait: self.wait,
+            wait: self.wait.or(self.background.map(|b| !b)),
             thought_signature: ts,
             shell: self.shell,
             host: self.host,

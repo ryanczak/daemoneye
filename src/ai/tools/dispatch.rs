@@ -959,6 +959,62 @@ mod tests {
         );
     }
 
+    /// GLM's legacy `background` habit: the schema never names it, so the
+    /// args struct must still keep it and invert it into `wait`. An explicit
+    /// `wait` wins when both arrive.
+    #[test]
+    fn run_terminal_command_maps_legacy_background_to_wait() {
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "run_terminal_command",
+            &json!({"command": "echo bg", "background": true}),
+            None,
+        )
+        .expect("background: true must still dispatch");
+        let AiEvent::ToolCall { wait, .. } = ev else {
+            panic!("expected AiEvent::ToolCall, got {ev:?}")
+        };
+        assert_eq!(wait, Some(false), "background: true means don't wait");
+
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "run_terminal_command",
+            &json!({"command": "echo bg", "background": false}),
+            None,
+        )
+        .expect("background: false must still dispatch");
+        let AiEvent::ToolCall { wait, .. } = ev else {
+            panic!("expected AiEvent::ToolCall, got {ev:?}")
+        };
+        assert_eq!(wait, Some(true), "background: false means wait");
+
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "run_terminal_command",
+            &json!({"command": "echo bg", "wait": true, "background": true}),
+            None,
+        )
+        .expect("the wait/background pair must still dispatch");
+        let AiEvent::ToolCall { wait, .. } = ev else {
+            panic!("expected AiEvent::ToolCall, got {ev:?}")
+        };
+        assert_eq!(
+            wait,
+            Some(true),
+            "an explicit wait wins over the legacy background"
+        );
+
+        let def = TOOLS
+            .iter()
+            .find(|t| t.name == "run_terminal_command")
+            .unwrap_or_else(|| panic!("run_terminal_command is in TOOLS"));
+        assert!(
+            !def.params.iter().any(|p| p.name == "background"),
+            "background must stay out of the tool schema — it is a legacy alias, \
+             not a surface the model is told about"
+        );
+    }
+
     /// The root-edit flag on the tool surface: the schema carries it, and a
     /// dispatch carries it through to the event — present as `Some(true)`,
     /// absent as `None`, never a silent default.
