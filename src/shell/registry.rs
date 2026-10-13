@@ -8,6 +8,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::shell::foreground::Foreground;
 use crate::util::UnpoisonExt;
 
 /// A canonical shell id: `s` followed by 1–9 ASCII digits. The grammar is
@@ -122,6 +123,27 @@ pub struct ShellRecord {
     /// `[shells] exited_retention_secs` after this, so an operator can still
     /// see that the shell existed.
     pub exited_unix: Option<u64>,
+    /// The most recent `Foreground` the daemon observed on this shell, with
+    /// the unix second it was observed at. Written by every `Status`-probing
+    /// read (`read_shell_screen` today), never asserted — the classification
+    /// is an observation the prompt block and phase 02's decisions read, and
+    /// decisions always probe live rather than trust it.
+    pub last_foreground: Option<(Foreground, u64)>,
+    /// The marker-wrapped command the daemon currently has outstanding on
+    /// this shell, and the unix second it started. Set immediately before a
+    /// wrapped command is written and cleared on every way the run ends, so
+    /// it is the daemon's own "this shell is busy with *this*" fact; a
+    /// transport shell's classification reads it (D3) because the local
+    /// terminal cannot say anything there.
+    pub in_flight: Option<InFlight>,
+}
+
+/// A wrapped command the daemon has outstanding on a shell: what it is and
+/// when it was written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InFlight {
+    pub cmd: String,
+    pub started_unix: u64,
 }
 
 /// Shared registry of live shells.
@@ -170,7 +192,65 @@ pub fn mark_interactive(reg: &ShellRegistry, id: &ShellId) {
     });
 }
 
-/// Lowest unused index, starting at 0. Fills holes: `{0, 1, 3}` yields `2`.
+/// Record that `cmd` is now outstanding on `id`'s shell: called immediately
+/// before the wrapped command is written. A no-op when the id is not in the
+/// registry.
+pub fn set_in_flight(reg: &ShellRegistry, id: &ShellId, cmd: &str, started_unix: u64) {
+    with_shells(reg, |store| {
+        if let Some(record) = store.get_mut(id.as_str()) {
+            record.in_flight = Some(InFlight {
+                cmd: cmd.to_string(),
+                started_unix,
+            });
+        }
+    });
+}
+
+/// Clear the outstanding-command mark on `id`'s shell. A no-op when the id is
+/// not in the registry.
+pub fn clear_in_flight(reg: &ShellRegistry, id: &ShellId) {
+    with_shells(reg, |store| {
+        if let Some(record) = store.get_mut(id.as_str()) {
+            record.in_flight = None;
+        }
+    });
+}
+
+/// A guard holding `in_flight` on one shell: set on construction, cleared on
+/// **every** exit — including an early `?` — by its `Drop`, so no run can end
+/// with the mark still set.
+pub struct InFlightGuard<'a> {
+    reg: &'a ShellRegistry,
+    id: ShellId,
+}
+
+impl<'a> InFlightGuard<'a> {
+    pub fn new(reg: &'a ShellRegistry, id: ShellId, cmd: &str, started_unix: u64) -> Self {
+        set_in_flight(reg, &id, cmd, started_unix);
+        Self { reg, id }
+    }
+
+    /// The shell this guard holds the mark on.
+    pub fn id(&self) -> &ShellId {
+        &self.id
+    }
+}
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        clear_in_flight(self.reg, &self.id);
+    }
+}
+
+/// The current unix second, `0` if the clock is somehow before the epoch.
+pub fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// The lowest unused index, starting at 0. Fills holes: `{0, 1, 3}` yields `2`.
 pub fn allocate_index(occupied: &HashSet<u32>) -> u32 {
     let mut candidate = 0;
     while occupied.contains(&candidate) {
@@ -308,6 +388,8 @@ where
                 interactive: false,
                 dedicated,
                 exited_unix: None,
+                last_foreground: None,
+                in_flight: None,
             },
         );
         Ok(id)
@@ -461,6 +543,8 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
                     // command.
                     dedicated,
                     exited_unix: None,
+                    last_foreground: None,
+                    in_flight: None,
                 },
             );
         }
@@ -609,6 +693,8 @@ mod tests {
             interactive: false,
             dedicated: false,
             exited_unix: None,
+            last_foreground: None,
+            in_flight: None,
         }
     }
 

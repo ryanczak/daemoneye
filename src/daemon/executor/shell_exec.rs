@@ -21,7 +21,7 @@ use crate::ipc::{Request, Response};
 use crate::shell::PromptReply;
 use crate::shell::{
     CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, await_ready, host_entry_or_bare,
-    mark_interactive, marker_shell_name, master_running, meta_path_for, run_command,
+    mark_interactive, marker_shell_name, master_running, meta_path_for, now_unix, run_command,
     run_command_with_prompts, shell_for_owner, socket_path, spawn_for_on_host, which_ssh,
     with_shells,
 };
@@ -387,8 +387,12 @@ where
         .map(|m| m.len())
         .ok();
 
-    // Task 3, step 1: a command without sudo takes the plain path. Everything
-    // about the call is identical to what shipped before this phase.
+    // `in_flight` spans the whole run — set now, cleared by the guard's Drop
+    // on every way the run ends (outcome, timeout, prompt given up, shell
+    // exited, error), so an early `?` cannot leave the mark behind.
+    let _in_flight = crate::shell::InFlightGuard::new(reg, id.clone(), cmd, now_unix());
+
+    // A command without sudo takes the plain path.
     let Some(prompts) = prompts else {
         let outcome = run_command(&socket, cmd, &marker, applied_timeout)
             .await
@@ -1426,6 +1430,89 @@ mod tests {
         assert!(
             !msg.contains("45s"),
             "the error must name the applied 1 s, not the 45 s default: {msg}"
+        );
+    }
+
+    /// While a command runs, the record's `in_flight` names it; once the
+    /// call returns the guard has cleared it — the run path's Drop, not any
+    /// epilogue, is what leaves the shell free. The mid-run observation
+    /// comes from a side task polling the registry while the command runs.
+    #[tokio::test]
+    async fn in_flight_is_set_while_a_command_runs_and_cleared_after() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let in_reg = reg.clone();
+        let owner = Owner::Chat("in-flight".into());
+        let cmd = "sleep 1";
+        let seen: Arc<std::sync::Mutex<Option<crate::shell::InFlight>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let seen_in = Arc::clone(&seen);
+        tokio::spawn(async move {
+            loop {
+                let now = with_shells(&in_reg, |store| {
+                    store
+                        .values()
+                        .find(|record| record.in_flight.is_some())
+                        .and_then(|record| record.in_flight.clone())
+                });
+                if let Some(flight) = now {
+                    *seen_in.lock().expect("seen lock") = Some(flight);
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+        let (id, _) = run_in_shell_for_test(&reg, owner, cmd, 5, None, None, spawn_in_process_host)
+            .await
+            .expect("the sleep runs");
+        let watched = seen.lock().expect("seen lock").clone();
+        assert!(
+            watched.as_ref().is_some_and(|f| f.cmd == cmd),
+            "in_flight must name the running command while it runs: {watched:?}"
+        );
+        let after = with_shells(&reg, |store| {
+            store
+                .get(id.as_str())
+                .and_then(|record| record.in_flight.clone())
+        });
+        assert!(
+            after.is_none(),
+            "in_flight must be cleared once the run returns: {after:?}"
+        );
+    }
+
+    /// A command that times out ends the run the ordinary way — through the
+    /// guard's Drop — so the shell must not be left marked busy by a failure.
+    #[tokio::test]
+    async fn in_flight_is_cleared_when_the_command_times_out() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("in-flight-timeout".into());
+        let err = run_in_shell_for_test(
+            &reg,
+            owner,
+            "sleep 4",
+            5,
+            None,
+            Some(1),
+            spawn_in_process_host,
+        )
+        .await
+        .expect_err("a command outliving its timeout must be an error");
+        assert!(
+            format!("{err:#}").contains("timed out"),
+            "the failure is the timeout: {err:#}"
+        );
+        let still_marked: Vec<String> = with_shells(&reg, |store| {
+            store
+                .values()
+                .filter(|record| record.in_flight.is_some())
+                .map(|record| record.id.as_str().to_string())
+                .collect()
+        });
+        assert!(
+            still_marked.is_empty(),
+            "no shell may stay marked in flight after a timeout: {still_marked:?}"
         );
     }
 

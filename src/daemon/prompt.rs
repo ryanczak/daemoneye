@@ -351,6 +351,8 @@ mod tests {
                     interactive: false,
                     dedicated: false,
                     exited_unix: None,
+                    last_foreground: None,
+                    in_flight: None,
                 },
             );
         });
@@ -475,6 +477,8 @@ mod tests {
                     interactive: false,
                     dedicated: false,
                     exited_unix: None,
+                    last_foreground: None,
+                    in_flight: None,
                 },
             );
         });

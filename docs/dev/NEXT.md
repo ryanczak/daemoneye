@@ -5,7 +5,8 @@
 [`README.md`](milestones/M28-interactive-shells/README.md).
 
 **Active phase:** [phase-01b-screen-tool](milestones/M28-interactive-shells/phase-01b-screen-tool.md)
-— todo. Dispatch with `/rexymcp:dispatch phase-01b-screen-tool`. Phase 01
+— in-progress (re-scoped: record fields only; the tool is phase 01c).
+Re-dispatch with `/rexymcp:dispatch phase-01b-screen-tool`. Phase 01
 (host-truth) is done.
 
 M27 closed 2026-10-12 (`v2.0.0`). The roadmap's former M28–M30 are now

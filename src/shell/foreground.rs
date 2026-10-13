@@ -7,6 +7,7 @@
 //! [`classify_transport_matches_the_design_matrix`] pin.
 
 use crate::shell::proto::{ShellResponse, ShellState};
+use crate::shell::registry::ShellRecord;
 
 /// What holds a shell's terminal.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,7 +74,44 @@ pub fn classify(status: Option<&ShellResponse>) -> Foreground {
             cmd,
             tui: *raw_mode || *alt_screen == Some(true),
         },
-        ShellState::Exited => unreachable!("handled above"),
+        // The early return above already answered `Exited`; this arm is real
+        // code, not a proof the match is exhaustive.
+        ShellState::Exited => Foreground::Exited,
+    }
+}
+
+/// A record's one routing rule: transport records (`host` named or a
+/// `sandbox` set) go through [`classify_transport`] — the daemon's own
+/// bookkeeping, since the local terminal cannot say anything over ssh or
+/// sbx — and every other record goes through [`classify`], the host's
+/// `Status` reply. `status` is the reply to a `Status` probe (a missing
+/// probe answers `None`, which a transport record classifies from
+/// `in_flight`/`last_line` alone and a local record reads `Unknown`); the
+/// last non-blank rendered row of a `Screen` read is what a transport
+/// record's prompt test reads.
+///
+/// Pure, so both the classification and its tests are.
+pub fn classify_record(
+    record: &ShellRecord,
+    status: Option<&ShellResponse>,
+    last_line: Option<&str>,
+) -> Foreground {
+    let transport =
+        record.sandbox.is_some() || matches!(record.host, crate::host::HostId::Named(_));
+    let state = match status {
+        Some(ShellResponse::Status { state, .. }) => Some(*state),
+        // Not a `Status` reply at all: the terminal says nothing either way.
+        Some(_) => None,
+        None => None,
+    };
+    if transport {
+        let in_flight = record.in_flight.as_ref().map(|f| f.cmd.as_str());
+        match state {
+            Some(state) => classify_transport(state, in_flight, last_line),
+            None => Foreground::Unknown,
+        }
+    } else {
+        classify(status)
     }
 }
 
@@ -131,7 +169,9 @@ fn is_prompt_line(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shell::proto::ShellResponse;
+    use crate::host::HostId;
+    use crate::shell::ShellRecord;
+    use crate::shell::registry::{Owner, ShellId};
 
     fn status(
         state: ShellState,
@@ -285,5 +325,100 @@ mod tests {
         for line in ["Progress 50%", "Password:", "Continue? (y/n)", "", "   "] {
             assert!(!is_prompt_line(line), "must NOT match: {line:?}");
         }
+    }
+
+    /// The record's placement decides the rule: a transport record (a named
+    /// host or a sandbox) classifies from `in_flight` / the last row, a
+    /// local record from the terminal's `Status` reply — with the same
+    /// reply, the same last row and the same `in_flight`.
+    #[test]
+    fn classify_record_routes_transport_records_to_the_transport_rule() {
+        let named_host = ShellRecord {
+            id: ShellId::from_index(0),
+            owner: Owner::Chat("r".into()),
+            host: HostId::Named("zoidberg".into()),
+            sandbox: None,
+            started_unix: 1000,
+            interactive: false,
+            dedicated: false,
+            exited_unix: None,
+            last_foreground: None,
+            in_flight: Some(crate::shell::InFlight {
+                cmd: "ssh zoidberg".into(),
+                started_unix: 1000,
+            }),
+        };
+        let sandboxed = ShellRecord {
+            host: HostId::Local,
+            sandbox: Some("sbx1".into()),
+            in_flight: None,
+            id: named_host.id.clone(),
+            owner: named_host.owner.clone(),
+            started_unix: named_host.started_unix,
+            interactive: named_host.interactive,
+            dedicated: named_host.dedicated,
+            exited_unix: named_host.exited_unix,
+            last_foreground: named_host.last_foreground.clone(),
+        };
+        let local = ShellRecord {
+            host: HostId::Local,
+            sandbox: None,
+            in_flight: None,
+            id: named_host.id.clone(),
+            owner: named_host.owner.clone(),
+            started_unix: named_host.started_unix,
+            interactive: named_host.interactive,
+            dedicated: named_host.dedicated,
+            exited_unix: named_host.exited_unix,
+            last_foreground: named_host.last_foreground.clone(),
+        };
+
+        let reply = status(ShellState::Running, Some(true), Some(false), Some("ssh"));
+        let last_line = Some("claude> thinking");
+
+        // Transport: the terminal's facts are ignored; `in_flight` names the
+        // daemon's own command, `tui: false` even though the local terminal
+        // reports raw mode.
+        assert_eq!(
+            classify_record(&named_host, Some(&reply), last_line,),
+            Foreground::Program {
+                cmd: "ssh zoidberg".into(),
+                tui: false
+            },
+            "a named-host record with in_flight classifies by in_flight"
+        );
+        assert_eq!(
+            classify_record(&sandboxed, Some(&reply), Some("matt@sbx:~$ ")),
+            Foreground::Prompt,
+            "a sandbox record at a remote prompt classifies Prompt"
+        );
+        // A transport record with no `Status` answer at all cannot say
+        // anything: `Unknown`, never a guess.
+        assert_eq!(
+            classify_record(&named_host, None, last_line),
+            Foreground::Unknown,
+            "a missing Status reply is Unknown for a transport record"
+        );
+
+        // Local: the same reply classifies from the terminal — the record's
+        // `in_flight` and the last row play no part in the rule.
+        assert_eq!(
+            classify_record(&local, Some(&reply), last_line),
+            classify(Some(&reply)),
+            "a local record classifies from the terminal, not its in_flight"
+        );
+        assert_eq!(
+            classify_record(&local, Some(&reply), last_line),
+            Foreground::Program {
+                cmd: "ssh".into(),
+                tui: true
+            },
+            "raw mode on the local terminal is tui: true"
+        );
+        assert_eq!(
+            classify_record(&local, None, last_line),
+            Foreground::Unknown,
+            "a missing Status reply is Unknown for a local record too"
+        );
     }
 }

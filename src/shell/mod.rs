@@ -24,7 +24,7 @@ pub use client::{
     CommandHandle, PromptGivenUp, PromptReply, ShellExited, close_or_term, run_command,
     run_command_with_prompts, screen, send_input, send_resize, send_signal, spawn_command, status,
 };
-pub use foreground::{Foreground, classify, classify_transport};
+pub use foreground::{Foreground, classify, classify_record, classify_transport};
 pub use host::{ShellBackend, bind, serve, serve_until_exit};
 pub use launch::{
     await_ready, cast_path, lock_path, resolve_cast, run_host, socket_path, spawn_detached,
@@ -42,8 +42,9 @@ pub use pty::{
 #[cfg(test)]
 pub(crate) use pty::{test_begin_marker, test_end_marker};
 pub use registry::{
-    Owner, ShellId, ShellRecord, ShellRegistry, adopt_at_startup, allocate_index, check_owner_cap,
-    host_is_alive, is_user_shell, mark_interactive, parse_cast_name, reap_exited, scan_shell_ids,
+    InFlight, InFlightGuard, Owner, ShellId, ShellRecord, ShellRegistry, adopt_at_startup,
+    allocate_index, check_owner_cap, clear_in_flight, host_is_alive, is_user_shell,
+    mark_interactive, now_unix, parse_cast_name, reap_exited, scan_shell_ids, set_in_flight,
     spawn_for, spawn_for_in_sandbox, spawn_for_on_host, sweep_stale, with_shells,
 };
 pub use sbx_backend::{SbxBackend, SbxRunner, VmRun, real_runner};

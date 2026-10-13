@@ -137,6 +137,10 @@ where
             .map(|record| crate::shell::marker_shell_name(&record.host))
     })
     .unwrap_or_else(|| crate::shell::marker_shell_name(&host));
+    // `in_flight` spans the wrapped command: set before it is written, and
+    // cleared by the guard's Drop on every way the run ends.
+    let _in_flight =
+        crate::shell::InFlightGuard::new(reg, id.clone(), cmd, crate::shell::now_unix());
     let outcome = run_command(
         &socket,
         cmd,

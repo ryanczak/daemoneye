@@ -665,6 +665,8 @@ mod tests {
                     interactive: false,
                     dedicated: false,
                     exited_unix: None,
+                    last_foreground: None,
+                    in_flight: None,
                 },
             );
         });
@@ -717,6 +719,8 @@ mod tests {
                     interactive: false,
                     dedicated: false,
                     exited_unix: None,
+                    last_foreground: None,
+                    in_flight: None,
                 },
             );
         });
@@ -769,6 +773,8 @@ mod tests {
                     interactive: false,
                     dedicated: false,
                     exited_unix: None,
+                    last_foreground: None,
+                    in_flight: None,
                 },
             );
             store.insert(
@@ -782,6 +788,8 @@ mod tests {
                     interactive: false,
                     dedicated: false,
                     exited_unix: None,
+                    last_foreground: None,
+                    in_flight: None,
                 },
             );
         });
@@ -927,6 +935,8 @@ mod tests {
                     interactive: false,
                     dedicated: true,
                     exited_unix: None,
+                    last_foreground: None,
+                    in_flight: None,
                 },
             );
         });
@@ -1115,6 +1125,8 @@ mod tests {
             interactive: false,
             dedicated: false,
             exited_unix: None,
+            last_foreground: None,
+            in_flight: None,
         };
         let plain = ShellRecord {
             id: ShellId::from_index(10),
@@ -1125,6 +1137,8 @@ mod tests {
             interactive: false,
             dedicated: false,
             exited_unix: None,
+            last_foreground: None,
+            in_flight: None,
         };
         with_fish_shell(|| {
             assert_eq!(
