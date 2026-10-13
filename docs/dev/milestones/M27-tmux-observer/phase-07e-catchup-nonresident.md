@@ -1,7 +1,7 @@
 # Phase 07e: catchup-nonresident — the catch-up brief reaches a chat whose session is not resident
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07d (done)
 **Tags:** language=rust, kind=fix, size=s
 
@@ -94,5 +94,15 @@ daemon restart with no ask before quitting.
 - Making a session resident on presence attach.
 
 ## Update Log
+
+### Update — 2026-10-13 00:44 (progress)
+
+Started phase 07e. Plan: row 1 (the non-resident detach registry in
+`src/daemon/session.rs`, in the shape of `presence_map`), row 2
+(`record_chat_detach` writes a record there when the store has no entry),
+row 3 (`attach_brief_for` consumes the record and builds the brief over the
+disk-history tail), then the two pinned tests in
+`src/daemon/server/chat_presence.rs`, the mutation check, and the evidence
+entry.
 
 <!-- entries appended below this line -->

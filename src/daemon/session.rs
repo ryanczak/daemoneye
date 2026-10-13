@@ -258,6 +258,59 @@ pub fn presence_broadcast(msg: &str) -> usize {
     presence_broadcast_in(presence_map(), msg)
 }
 
+/// Detach records for sessions with no resident `SessionEntry` (M27 phase 07e).
+///
+/// After a daemon restart a re-attached chat has no in-memory entry until its
+/// next `Ask`, so `record_chat_detach` finds nothing to stamp. The catch-up
+/// brief then has no detach state to read. This registry holds what the
+/// resident stamp would have held — the detach `Instant`, its UTC time, and
+/// the session's disk-history length at detach — keyed by session id, until
+/// the next `attach_brief_for` consumes it. It exists only for the
+/// non-resident branch: a resident detach is stamped on the entry, and an
+/// entry is never inserted here to make one.
+pub static NON_RESIDENT_DETACHES: std::sync::OnceLock<Mutex<HashMap<String, NonResidentDetach>>> =
+    std::sync::OnceLock::new();
+
+/// One non-resident detach record: what `SessionEntry`'s detach fields hold
+/// for a resident session, with the message count taken from the disk
+/// history instead of the in-memory one.
+#[derive(Clone, Copy)]
+pub struct NonResidentDetach {
+    /// Monotonic time of the detach; measures the away seconds.
+    pub detach_instant: Instant,
+    /// UTC wall-clock time of the detach; queries cost events.
+    pub detach_time_utc: chrono::DateTime<chrono::Utc>,
+    /// Number of messages in the session's disk history at detach.
+    pub messages_at_detach: usize,
+}
+
+fn non_resident_detach_map() -> &'static Mutex<HashMap<String, NonResidentDetach>> {
+    NON_RESIDENT_DETACHES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Record a detach for a session id with no resident `SessionEntry`.
+/// Called by [`record_chat_detach`] on its non-resident branch.
+fn record_non_resident_detach(session_id: &str) {
+    let record = NonResidentDetach {
+        detach_instant: Instant::now(),
+        detach_time_utc: chrono::Utc::now(),
+        messages_at_detach: read_session_file(session_id, None).len(),
+    };
+    non_resident_detach_map()
+        .lock()
+        .unwrap_or_log()
+        .insert(session_id.to_string(), record);
+}
+
+/// Take the session's non-resident detach record, if one is recorded,
+/// removing it — the record is consumed by the attach that reads it.
+pub fn take_non_resident_detach(session_id: &str) -> Option<NonResidentDetach> {
+    non_resident_detach_map()
+        .lock()
+        .unwrap_or_log()
+        .remove(session_id)
+}
+
 #[cfg(test)]
 impl PresenceConnection {
     pub fn test_conn() -> Self {
@@ -278,6 +331,9 @@ pub fn record_chat_detach(session_id: &str, sessions: &SessionStore) {
             entry.messages_at_detach = entry.messages.len();
         }
     });
+    if !with_sessions(sessions, |store| store.contains_key(session_id)) {
+        record_non_resident_detach(session_id);
+    }
 }
 
 /// Broadcast channel for background command completion via IPC.
