@@ -448,3 +448,15 @@ PASTE MATCH: yes
 **Next.** F11 needs a small code phase (07e): a catch-up brief for a session
 that is not resident when its chat detaches or re-attaches. Then re-run S2
 live, then S6.
+
+### Update — 2026-10-12 (S2 re-run after 07e, architect, PE present)
+
+Against `c93ae1ed`, with a fresh harness. The daemon restarted, the chat
+reconnected, and the chat quit with no ask. 38 s later a `LiveTicks` alert
+was posted, then `chat --resume d1f66f1f57c93374`. **Failed:** no
+`[Catch-up]`, and `[Webhook Alert]` was absent from the session file.
+At post time the session was neither resident nor presence-attached, so
+`inject_into_sessions` wrote it nowhere. Filed bug-07e-1 and reopened 07e.
+The PE run's original S2 history count (`live tick 2` → 2) came from the
+model's own `search_repository` text, not from an injected alert. S7 is
+done; no `$R` process is left.

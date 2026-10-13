@@ -1,7 +1,7 @@
 # Phase 07e: catchup-nonresident — the catch-up brief reaches a chat whose session is not resident
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** done
+**Status:** in-progress (bounced: bug-07e-1)
 **Depends on:** phase-07d (done)
 **Tags:** language=rust, kind=fix, size=s
 
@@ -66,15 +66,47 @@ Mutation check: in `attach_brief_for`, skip the non-resident branch so it
 returns `None`. Confirm the first test fails, then restore it. Paste the
 failing line.
 
+## Bounce 1 — one edit and one test (bug-07e-1)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Rows 1–3 and both tests above are approved; do not redo
+them. The live re-run found that an alert posted *after* the chat quit is
+written to no session. `inject_into_sessions` targets the store's keys plus
+`presence_session_ids()`, and a quit, non-resident chat is in neither.
+
+| # | File · symbol | Change |
+|---|---|---|
+| 4 | `src/daemon/session.rs` | Add `non_resident_detach_ids() -> Vec<String>`: the ids that have a record in the non-resident detach registry. |
+| 5 | `src/webhook/process.rs` · `inject_into_sessions` | Add those ids to the union of disk targets, each id once. The in-memory push is unchanged, and no store entry is created. |
+
+Pinned test, in `src/daemon/server/chat_presence.rs`:
+`catchup_brief_names_an_alert_posted_after_the_chat_left`. Follow the
+**production order**:
+1. Register a presence connection for an id that is not resident, and
+   give it a disk history.
+2. **Unregister it.**
+3. Call `record_chat_detach`. This is the order `handle_chat_attach` uses.
+4. With no presence and no store entry, call `inject_into_sessions` with a
+   `[Webhook Alert] …` message.
+5. Backdate the record by 60 s.
+
+`attach_brief_for` returns a brief containing `[Webhook Alert]`, and the
+store still has no entry for the id.
+
+Mutation check: drop the row-5 ids from the union and confirm this test
+fails. Restore the line, then paste the failing line.
+
 ## Acceptance criteria
 
+- [ ] `catchup_brief_names_an_alert_posted_after_the_chat_left` reports
+      `1 passed`.
 - [ ] The two tests above each report `1 passed`.
 - [ ] *Preservation:* the existing `away-1` attach-brief test, and
       `inject_reaches_a_presence_attached_session_that_is_not_resident`,
       both report `1 passed`.
 - [ ] clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
-- [ ] `cargo test` reports `failed=0` and `passed=2324`: 07d's 2322 plus
-      the two tests above.
+- [ ] `cargo test` reports `failed=0` and `passed=2325`: 07d's 2322, plus the
+      two tests above, plus the bounce-1 test.
 
 ## End-to-end verification
 
@@ -85,7 +117,8 @@ daemon restart with no ask before quitting.
 
 ## Authorizations
 
-- [ ] Edit `src/daemon/session.rs` and `src/daemon/server/chat_presence.rs`.
+- [ ] Edit `src/daemon/session.rs`, `src/daemon/server/chat_presence.rs` and
+      (bounce 1) `src/webhook/process.rs` · `inject_into_sessions`.
 
 ## Out of scope
 
@@ -330,3 +363,12 @@ kill: (-1116284): No such process
   detach record for a session that never re-attaches is never consumed, a
   small leak bounded by the number of sessions; (2) `NON_RESIDENT_DETACHES`
   is `pub` only so the test can backdate it, and `pub(crate)` would do.
+
+### Update — 2026-10-12 (bounce 1, architect)
+
+The live S2 re-run against `c93ae1ed` failed. The restart, then the chat
+reconnecting and quitting without an ask, then an alert 38 s later, then
+`chat --resume` gave no `[Catch-up]`. The session file held no
+`[Webhook Alert]`. See bug-07e-1. The pinned test injected while presence
+was still registered, which was the architect's spec error. Re-dispatch:
+rows 4–5 and one test. Finish condition: `passed=2325`, not 2324.

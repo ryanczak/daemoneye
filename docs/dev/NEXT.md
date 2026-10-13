@@ -1,9 +1,9 @@
 # NEXT
 
 **Active milestone: M27 — tmux becomes an optional observer; 2.0 close**
-([`README.md`](milestones/M27-tmux-observer/README.md)). **Active phase: 07 — live-close** (07e done)
-([phase doc](milestones/M27-tmux-observer/phase-07-live-close.md)), status
-`todo`. Architect-run: the S2
+([`README.md`](milestones/M27-tmux-observer/README.md)). **Active phase: 07e — catchup-nonresident** (bounced: bug-07e-1)
+([phase doc](milestones/M27-tmux-observer/phase-07e-catchup-nonresident.md)), status
+`in-progress`. Re-dispatch with `/rexymcp:dispatch phase-07e`, then the S2
 re-run (live, after a restart) and S6.
 
 Carried from M23 into M26: the sandboxed ghost in a PTY shell (now sbx, with
