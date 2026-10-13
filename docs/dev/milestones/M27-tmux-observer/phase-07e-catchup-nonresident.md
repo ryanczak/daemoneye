@@ -1,7 +1,7 @@
 # Phase 07e: catchup-nonresident — the catch-up brief reaches a chat whose session is not resident
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-07d (done)
 **Tags:** language=rust, kind=fix, size=s
 
@@ -316,3 +316,17 @@ kill: (-1116284): No such process
 **Commit:** dedb54339622006a7cb104abb8f9d63580a07fc5
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-12
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (171 turns)
+- **Scope deviations:** none. Both preservation tests pass; no store entry
+  is created for a non-resident id (asserted twice).
+- **Calibration:** none. Reviewer re-run: fmt, build and clippy exit 0, and
+  `cargo test` gives `passed=2324 failed=0`, matching the pin. Two
+  follow-ups for a later milestone, neither blocking: (1) a non-resident
+  detach record for a session that never re-attaches is never consumed, a
+  small leak bounded by the number of sessions; (2) `NON_RESIDENT_DETACHES`
+  is `pub` only so the test can backdate it, and `pub(crate)` would do.
