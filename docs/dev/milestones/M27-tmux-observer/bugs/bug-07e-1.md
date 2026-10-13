@@ -1,7 +1,7 @@
 # Bug 1 on phase-07e: an alert posted after the chat left never reaches the history, so the brief is empty
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (14fe16b6)
 **Filed:** 2026-10-12
 
 ## What's wrong

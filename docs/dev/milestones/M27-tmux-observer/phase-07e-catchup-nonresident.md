@@ -1,7 +1,7 @@
 # Phase 07e: catchup-nonresident — the catch-up brief reaches a chat whose session is not resident
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** review
+**Status:** done
 **Depends on:** phase-07d (done)
 **Tags:** language=rust, kind=fix, size=s
 
@@ -618,3 +618,18 @@ kill: (-1155556): No such process
 **Commit:** a19d5aa883df24fb77ee65f35459455b39f6bcf2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-12 (bounce 1)
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-07e-1, failure class `spec_gap`). The architect's
+  test wording injected while presence was still registered, an order
+  production never runs.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (129 turns)
+- **Scope deviations:** none. `inject_into_sessions` now adds
+  `non_resident_detach_ids()` to its union. The in-memory push is
+  unchanged, and the test asserts no store entry is created.
+- **Calibration:** none. Reviewer re-run: fmt, build and clippy exit 0, and
+  `cargo test` gives `passed=2325 failed=0`, matching the pin. The mutation
+  check was a real hand edit, and its failing assert is pasted. The live
+  check is phase 07's S2 re-run.
