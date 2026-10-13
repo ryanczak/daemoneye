@@ -1,7 +1,7 @@
 # Phase 01b: record-truth — what the shell record knows
 
 **Milestone:** M28 — Interactive shells
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-01
 **Estimated diff:** ~150 lines (on top of the ~140 already on disk)
 **Tags:** language=rust, kind=feature, size=s
@@ -212,3 +212,146 @@ the PTY teardown racing the grep, not a test failure — the suites' own
 re-run above is clean).
 
 Self-check: `diff /tmp/pasted-01b.txt /tmp/e2e-01b.txt` → `PASTE MATCH`.
+
+### Update — 2026-10-13 23:09 (complete, server-authored)
+
+**Summary:** </think>Everything is in place. Status is still `in-progress`, README row says in-progress, I did not write a (complete) entry, the commit is in, working tree is clean. Let me do a final sanity check that the tree is clean and give the summary.</think>
+All checks pass and the tree is clean. Final verification state:
+
+- `cargo fmt --all --check` → exit 0
+- `cargo clippy --all-targets --all-features -- -D warnings` → clean
+- `cargo test` → **passed=2343 failed=0** (2340 + the three this phase adds)
+- `grep -c 'unreachable!' src/shell/foreground.rs` → 0
+- End-to-end capture pasted into the phase doc; self-check → `PASTE MATCH`
+- Phase doc `Status:` still `in-progress`; no hand-written `(complete)` entry (server authors it); working tree clean after commit `fd865b09`
+
+**Summary + Notes for review**
+
+Completed the re-scoped phase 01b (record-truth): `ShellRecord` now carries `last_foreground` and `in_flight` (Tasks 1–2 were already on disk and green), I added Task 3's two `in_flight` guard tests and Task 4's pure `classify_record` router plus its routing test. `classify_record` sends a record with a named `host` or a `sandbox` through `classify_transport` (reading `record.in_flight`'s command and the last rendered row) and every other record through `classify`; a missing `Status` reply is `Unknown` for both routes. All five acceptance criteria are met verbatim, including the end-to-end evidence block and `PASTE MATCH`. Deviations to note: (1) the mid-run `in_flight` observation in `in_flight_is_set_while_a_command_runs_and_cleared_after` is a polling side task rather than an in-spawn check — the guard is set *after* the spawn step returns, so the only reliable mid-run window is a concurrent poll; it is deterministic (10 ms poll, 1 s command) and hermetic. (2) `classify_record` is exported from `src/shell/mod.rs` to keep the dead-code warning away without any `#[allow]`. (3) The earlier `failed=1` grep artifact was the shell's `kill:` teardown line racing the awk pass, not a test failure — the same run's per-suite `test result` lines all read `0 failed`, and a clean single re-run is what the pasted evidence records. No files outside the two named (`shell_exec.rs`, `foreground.rs`) were touched by this run's edits beyond the pre-existing Task 1–3 work already on disk.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ readme_tools_tables_match_the_code ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1317d86dbab8a67a)
+kill: (2324826): No such process
+kill: (-2325551): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58e4c018b6115a52)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa77b3165037b91b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-b44e63b56dae5611)
+     Running tests/integration.rs (target/debug/deps/integration-cc4ec88fa7c13534)
+     Running tests/isolation.rs (target/debug/deps/isolation-91fd5762b61d94c8)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-62d50a1c46611977)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M28-interactive-shells/phase-01b-screen-tool.md` — +33 -0
+- `src/daemon/executor/shell_exec.rs` — +83 -0
+- `src/shell/foreground.rs` — +134 -1
+- `src/shell/mod.rs` — +1 -1
+
+**Commit:** fd865b09f548a4b75ff181143fb3e3e5efbbefa7
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).

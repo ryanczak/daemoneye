@@ -48,7 +48,7 @@ phases are split further where one is more than a session.
 | # | Phase | Status |
 |---|---|---|
 | 01 | host-truth ([phase-01-host-truth.md](phase-01-host-truth.md)) — the host's `Screen` frame with `[SEL: …]` markers, the three `Status` foreground facts, the pure `Foreground` classifier (local and transport); no daemon behaviour change | done (approved_first_try, 2026-10-13) |
-| 01b | record-truth ([phase-01b-screen-tool.md](phase-01b-screen-tool.md)) — `last_foreground` and `in_flight` on `ShellRecord`, `classify_record`; the `unreachable!` carried from 01. *Re-scoped 2026-10-13 after two stalls: the tool moved to 01c* | in-progress |
+| 01b | record-truth ([phase-01b-screen-tool.md](phase-01b-screen-tool.md)) — `last_foreground` and `in_flight` on `ShellRecord`, `classify_record`; the `unreachable!` carried from 01. *Re-scoped 2026-10-13 after two stalls: the tool moved to 01c* | review      |
 | 01c | screen-tool ([phase-01c-screen-tool.md](phase-01c-screen-tool.md)) — `read_shell_screen` (no waits yet), prompt asset, tool tables | todo |
 | 02 | safety — live probes in shell reuse and the explicit path, the busy refusal, the static flag removed, `send_input` `\r` + `keys` + `paste` + guard + panel + ghost refusal (split at drafting) | todo |
 | 03 | launch-wait — `interactive: true`, the ssh auto-upgrade, screen waits, `[shells] rows`/`cols`; live close (split at drafting) | todo |
