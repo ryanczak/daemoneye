@@ -311,6 +311,20 @@ pub fn take_non_resident_detach(session_id: &str) -> Option<NonResidentDetach> {
         .remove(session_id)
 }
 
+/// The session ids that have a non-resident detach record.
+///
+/// A quit while non-resident leaves the id in neither the store nor the
+/// presence registry, so injection must learn the target from here: the
+/// record survives until the next attach consumes it.
+pub fn non_resident_detach_ids() -> Vec<String> {
+    non_resident_detach_map()
+        .lock()
+        .unwrap_or_log()
+        .keys()
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 impl PresenceConnection {
     pub fn test_conn() -> Self {

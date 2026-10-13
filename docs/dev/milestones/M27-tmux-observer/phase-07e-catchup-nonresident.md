@@ -372,3 +372,18 @@ reconnecting and quitting without an ask, then an alert 38 s later, then
 `[Webhook Alert]`. See bug-07e-1. The pinned test injected while presence
 was still registered, which was the architect's spec error. Re-dispatch:
 rows 4–5 and one test. Finish condition: `passed=2325`, not 2324.
+
+### Update — 2026-10-13 02:07 (progress)
+
+Resumed phase 07e on bounce 1 (bug-07e-1). Rows 1–3 and their two pinned
+tests are already approved and stay untouched. Plan: row 4
+(`non_resident_detach_ids()` next to `take_non_resident_detach` in
+`src/daemon/session.rs`), row 5 (the inject union in
+`src/webhook/process.rs` also takes the registry's ids, each once, still no
+store entry), then the pinned test
+`catchup_brief_names_an_alert_posted_after_the_chat_left` in
+`src/daemon/server/chat_presence.rs` following the production order —
+presence registered with a disk history, unregistered, then
+`record_chat_detach`, then the inject with no presence and no store entry —
+the mutation check on the row-5 line, the mechanically captured evidence
+entry, and the gates. Finish condition `passed=2325`.

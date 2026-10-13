@@ -718,4 +718,94 @@ mod tests {
             "the presence connection is released"
         );
     }
+
+    #[test]
+    fn catchup_brief_names_an_alert_posted_after_the_chat_left() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+
+        let sessions = SessionStore::new();
+        let sid = "post-quit-alert";
+
+        // Production order, as `handle_chat_attach` runs it: the chat is
+        // attached over presence with a disk history, then it quits — the
+        // presence connection closes first, then the detach is stamped.
+        let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = crate::daemon::session::PresenceConnection { push: push_tx };
+        assert_eq!(
+            crate::daemon::session::presence_register(sid, conn.clone()),
+            1,
+            "the chat is attached over presence"
+        );
+        crate::daemon::session::append_session_message(
+            sid,
+            &msg("[Background Task Completed] deploy finished (exit 0)"),
+        );
+        assert!(
+            crate::daemon::session::presence_unregister(sid, &conn),
+            "the chat quit: its last presence connection closed"
+        );
+        assert!(
+            !crate::daemon::session::presence_session_ids().contains(&sid.to_string()),
+            "precondition: no presence connection for the id any more"
+        );
+        assert!(
+            !with_sessions(&sessions, |store| store.contains_key(sid)),
+            "precondition: the session is not resident"
+        );
+        record_chat_detach(sid, &sessions);
+        assert!(
+            crate::daemon::session::non_resident_detach_ids().contains(&sid.to_string()),
+            "the quit recorded a non-resident detach"
+        );
+
+        // The alert arrives after the chat left: no presence, no store entry —
+        // the recorded detach is the only trace of the id.
+        let alert = msg("[Webhook Alert] LiveTicks: ticks resumed");
+        crate::webhook::inject_into_sessions(&sessions, &alert);
+
+        let file = crate::config::sessions_dir().join(format!("{sid}.jsonl"));
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("the session file {file:?} exists: {e}"));
+        assert!(
+            text.contains("[Webhook Alert] LiveTicks: ticks resumed"),
+            "the alert posted after the chat left lands in its session file: {text}"
+        );
+
+        // Backdate the record 60 s, the way the `away-1` test backdates
+        // `last_detach` — the detach must look ≥ 30 s away.
+        let mut detached = crate::daemon::session::NON_RESIDENT_DETACHES
+            .get()
+            .expect("record_chat_detach initialized the registry")
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let record = detached
+            .get(sid)
+            .expect("the non-resident detach left a record");
+        assert_eq!(
+            record.messages_at_detach, 1,
+            "one message was in the history at detach"
+        );
+        let mut backdated = *record;
+        backdated.detach_instant = record.detach_instant - std::time::Duration::from_secs(60);
+        backdated.detach_time_utc = record.detach_time_utc - chrono::Duration::seconds(60);
+        detached.insert(sid.to_string(), backdated);
+        drop(detached);
+
+        let brief = attach_brief_for(&sessions, sid);
+        assert!(
+            brief
+                .as_deref()
+                .unwrap_or_default()
+                .contains("[Webhook Alert]"),
+            "the catch-up brief names the alert posted after the chat left: {brief:?}"
+        );
+        assert!(
+            !with_sessions(&sessions, |store| store.contains_key(sid)),
+            "no store entry may be created for a non-resident id — handle_ask \
+             would read the empty history instead of the file"
+        );
+    }
 }

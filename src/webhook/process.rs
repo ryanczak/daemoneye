@@ -3,7 +3,8 @@ use std::sync::Arc;
 use crate::ai::{AiEvent, Message};
 use crate::daemon::ghost::GhostManager;
 use crate::daemon::session::{
-    SessionStore, append_session_message, presence_broadcast, presence_session_ids, with_sessions,
+    SessionStore, append_session_message, non_resident_detach_ids, presence_broadcast,
+    presence_session_ids, with_sessions,
 };
 use crate::daemon::utils::{UnpoisonExt, fire_notification, log_event};
 
@@ -194,6 +195,10 @@ pub(crate) fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
     // and vanishes from the record.
     let mut ids: Vec<String> = with_sessions(sessions, |store| store.keys().cloned().collect());
     ids.extend(presence_session_ids());
+    // A chat that quit while non-resident left a detach record: it is in
+    // neither the store nor the presence registry, but the record survives
+    // until its next attach, so the alert must land in its file too.
+    ids.extend(non_resident_detach_ids());
     ids.sort();
     ids.dedup();
 
