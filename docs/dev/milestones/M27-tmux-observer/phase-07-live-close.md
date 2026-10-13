@@ -1,7 +1,7 @@
 # Phase 07: live-close — DaemonEye 2.0 runs with no tmux, observes tmux read-only when present, and is tagged `v2.0.0`
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** todo
+**Status:** done
 **Depends on:** 01–06e (all `done`)
 **Estimated diff:** `Cargo.toml` / `Cargo.lock` version, `CHANGELOG.md`, this doc's Update Log, the milestone README row
 **Tags:** language=rust, kind=verification, size=m, architect-run
@@ -136,23 +136,23 @@ emulator's own calls stay out of the shim log.
 
 ## Acceptance criteria
 
-- [ ] Run A: exit code 3 reported. The `wait: false` completion arrives. The
+- [x] Run A: exit code 3 reported. The `wait: false` completion arrives. The
       scheduled script reports exit 3. The legacy `Command` is refused with a
       logged reason. The alert shows on screen. The ghost completes. No tmux
       error appears in `daemon.log`. The shim log has **0** write verbs.
-- [ ] Catch-up brief shown after `chat --resume` following ≥ 30 s away.
-- [ ] Run B: the context carries the `top` pane and `[PANE MAP]`. The
+- [x] Catch-up brief shown after `chat --resume` following ≥ 30 s away.
+- [x] Run B: the context carries the `top` pane and `[PANE MAP]`. The
       window count is unchanged. No daemoneye hook is set. The shim log has
       **0** write verbs.
-- [ ] S3b: the remote command reports `zoidberg` and exit code 4.
+- [x] S3b: the remote command reports `zoidberg` and exit code 4.
       zoidberg's `tmux ls` is unchanged. The shim log still has **0** write
       verbs.
-- [ ] `doctor` exits 0 with tmux absent. `doc_truth` is all green.
-- [ ] S5's three items are each decided in the Update Log. Any stale one is
+- [x] `doctor` exits 0 with tmux absent. `doc_truth` is all green.
+- [x] S5's three items are each decided in the Update Log. Any stale one is
       fixed by `07a` before S6.
-- [ ] `Cargo.toml` reads `version = "2.0.0"`. `git tag -l v2.0.0` prints
+- [x] `Cargo.toml` reads `version = "2.0.0"`. `git tag -l v2.0.0` prints
       `v2.0.0`. All four gates are green at the tagged commit.
-- [ ] The Update Log carries `$A` verbatim with `PASTE MATCH: yes`.
+- [x] The Update Log carries `$A` verbatim with `PASTE MATCH: yes`.
 
 ## Authorizations
 
@@ -491,3 +491,20 @@ PASTE MATCH: yes
 
 **Next.** S6, on the PE's go-ahead: the 2.0.0 bump, CHANGELOG, gates, and
 the annotated tag `v2.0.0`. Push only on the PE's go-ahead.
+
+### Update — 2026-10-12 (S6 close, architect, PE go-ahead)
+
+The PE gave the go-ahead for S6 and asked that the README rewrite be folded
+into the release commit.
+- `Cargo.toml` → `version = "2.0.0"`; `Cargo.lock` updated by the build.
+- `CHANGELOG.md` has a `[2.0.0]` entry covering M20–M24 and M26–M27.
+- The README was rewritten for 2.0: a new description, a "What's new in 2.0"
+  section, a PTY Shells & Remote Hosts section, and an "Inside tmux
+  (optional)" section that holds every remaining tmux-only behaviour. The
+  colour17 highlight, the `DE_EXIT` shell hook and the ghost "tmux session"
+  step are removed; the code no longer does any of them.
+- Gates: `cargo fmt --all --check` exits 0, build exits 0, clippy
+  `-D warnings` exits 0, and `cargo test` gives `passed=2325 failed=0`
+  (`doc_truth` 16 passed).
+- The annotated tag `v2.0.0` is created on this commit. **Not pushed**; push
+  waits for the PE's explicit go-ahead.

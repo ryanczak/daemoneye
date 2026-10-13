@@ -70,7 +70,7 @@ is split further at drafting if it is more than one session.
 | 07a | docs-truth ([phase-07a-docs-truth.md](phase-07a-docs-truth.md)) — the stale passages rehearsal 1 found: remote script streaming (ghost-only), the JSON audit-log sample, the removed `tmux` backend, an unresolved `ssh_target` is refused, and stale comments and seeded memory | done (approved_first_try, 2026-10-12) |
 | 07d | live-r2 ([phase-07d-live-r2.md](phase-07d-live-r2.md)) — rehearsal-2 majors: alerts reach a reconnected (non-resident) chat's history (F8); a mistyped argument to a known tool returns an error to the model instead of an "unknown tool" drop (F10); the doubled reconnect gear | done (approved_first_try, 2026-10-12) |
 | 07e | catchup-nonresident ([phase-07e-catchup-nonresident.md](phase-07e-catchup-nonresident.md)) — PE-run major F11: the catch-up brief reaches a chat whose session is not resident after a daemon restart | done (approved_after_1, 2026-10-12) |
-| 07 | live-close ([phase-07-live-close.md](phase-07-live-close.md)) — architect-run live verification on pinky, with and without tmux; tag `v2.0.0` | todo |
+| 07 | live-close ([phase-07-live-close.md](phase-07-live-close.md)) — architect-run live verification on pinky, with and without tmux; tag `v2.0.0` | done (2026-10-12, tag v2.0.0) |
 
 ## Notes
 

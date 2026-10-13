@@ -1,17 +1,33 @@
 # DaemonEye: Agentic Operator
 
-DaemonEye is a lightweight background daemon that integrates an AI-powered systems, software, and security expert directly into your tmux session. It understands your full terminal state — scrollback buffer, environment variables, running programs, command history, pane topology — and can act on it. Ghost Shells let it autonomously investigate and remediate incidents while you sleep. Named Agents give those ghost shells persistent identities: a specialist's system prompt, a dedicated model, a scoped memory pool, and a daemon-enforced tool policy that carries across every invocation. Webhooks wire it into Prometheus, Grafana, and any service that can POST JSON.
+DaemonEye is a Linux daemon that puts an AI systems, software, and security operator beside your terminal. Ask it something from any terminal and it investigates the way you would: it runs commands on this host, or on your configured remote hosts over SSH, in shells the daemon owns. Every byte of those shells is recorded, and every action waits at an approval gate you control. When an alert fires at 3 a.m. it can work the problem on its own. **Ghost Shells** run unattended remediation under a policy you wrote. **Named Agents** give them persistent specialist identities, each with its own model, memory and tool policy. A **coordinator agent** fans the work out to specialists in parallel. **Docker Sandboxes** microVMs keep agent work off your host. Webhooks wire it into Prometheus, Grafana, and any service that can POST JSON.
 
 I wrote DaemonEye after discovering OpenClaw and being completely blown away by its agency and power — and then turning it off because I was afraid of it running amok. DaemonEye is the result of wanting that power with boundaries I trust. It limits command execution to what is explicitly allowed, provides mechanisms to make complex tasks autonomous (even those requiring root access), and tracks exactly what it spends on your behalf.
 
-**Linux only.** DaemonEye uses `fork(2)` and Unix domain sockets — it will not build or run on macOS or Windows. tmux is optional (see [Requirements](#requirements)).
+**Linux only.** DaemonEye uses `fork(2)`, PTYs and Unix domain sockets. It will not build or run on macOS or Windows. It needs no tmux: it works from any terminal (see [Requirements](#requirements)).
 
-> **Where this is going.** `v1.0.0` is the last tmux-based release. DaemonEye
-> 2.0 replaces the tmux substrate with daemon-owned PTY shells (local, and
-> SSH to remote hosts), works from any terminal, and ports the run/turn model,
-> governor and structured turn logs proven in rexyMCP. The plan of record is
-> [`docs/design/daemoneye-2.0.md`](docs/design/daemoneye-2.0.md); this README
-> describes 1.x until each 2.0 milestone lands and is updated with it.
+---
+
+## What's new in 2.0
+
+DaemonEye 1.x drove your tmux panes. 2.0 runs its own shells, reaches remote hosts directly, and can isolate agents in microVMs. Design of record: [`docs/design/daemoneye-2.0.md`](docs/design/daemoneye-2.0.md).
+
+- **Any terminal, no tmux.** `daemoneye chat` runs in any terminal, and nothing the daemon runs goes through tmux. Inside tmux the agent can still *read* your pane summaries for context. It never types into, creates, or changes a pane. See [Inside tmux (optional)](#-inside-tmux-optional).
+- **Daemon-owned PTY shells.** Commands run in PTY shells hosted by detached `shell-host` processes, so they survive a daemon restart. A marker protocol reports each command's real exit code. Every shell is recorded byte for byte as an asciicast v2 log that you or the agent can replay later. See [PTY Shells & Remote Hosts](#-pty-shells--remote-hosts).
+- **Remote hosts as first-class targets.** Declare a host once in `[hosts.<name>]`. The AI can then open a shell there and run commands, read files and edit files on it with `host: "<name>"`. Connections reuse one SSH ControlMaster per host. Password, passphrase and remote `sudo` prompts are asked in the chat and never reach a log.
+- **Multi-agent orchestration.** A coordinator ghost can spawn specialist agents in parallel, on this host or on a remote one, and collect their results with `await_agent_result`. The daemon enforces each agent's model, memory namespace and tool policy, and caps delegation at two levels. See [Named Agents](#-named-agents--multi-agent-orchestration).
+- **Docker Sandboxes isolation.** With `[sandbox] enabled = true`, each ghost run gets its own `sbx` microVM, and chat background commands run in a per-session microVM. Sandboxes have no network by default, their egress is audited, and they fail closed. See [Sandboxed Agents](#-sandboxed-agents--docker-sandboxes-opt-in).
+- **One run model.** A chat turn, a ghost, a scheduled job and a delegated agent are all *runs*. Each run has its own turn log, a structured result and a briefing. Cancel any run with `daemoneye stop <run-id>` or `/stop`. Resume a finished ghost with new instructions using `daemoneye run resume`.
+- **Watch and join your agents.** `/shells` and `/tail` follow any shell live. `/agents` attaches to a running ghost so you can pause it, resume it, interrupt it, or type into it. `/logs` and `/log` replay finished recordings. `/hosts` lists the configured hosts, and `/shell` opens a shell of your own.
+- **Shell tools for the AI.** New tools: `list_shells`, `read_shell`, `find_in_shells`, `open_shell`, `close_shell`, `watch_shell` and `send_input`. There is also a deferred `history` group, `list_shell_logs` and `read_shell_log`, for reading past shell recordings.
+- **Alerts reach every chat, live.** Webhook alerts, ghost lifecycle events and background completions are pushed to every connected chat and written to each session's history. A chat reconnects by itself after a daemon restart. `chat --resume` opens with a `[Catch-up]` brief of everything that happened while you were away.
+- **Tool calls that correct themselves.** When the model sends a mistyped argument to a real tool, the error names the bad parameter and the model retries. Before, the call was silently dropped.
+- **`daemoneye doctor`.** Prints one line per readiness check: config, API key, shell, daemon, sandbox, hosts and tmux.
+
+**Upgrading from 1.x.**
+- `[execution] backend = "tmux"` still loads, with a startup warning, and commands run in PTY shells.
+- A scheduled job with the retired `Command` action is refused with a logged reason. Recreate it as a script job.
+- `daemoneye schedule windows` lists any `de-*` tmux windows 1.x left behind.
 
 ---
 
@@ -22,20 +38,21 @@ I wrote DaemonEye after discovering OpenClaw and being completely blown away by 
 git clone <repo> && cd daemoneye
 cargo build --release
 
-# 2. Install — creates ~/.daemoneye/, copies the binary, writes a systemd
-#    user service, and prints the tmux keybinding to add
+# 2. Install — creates ~/.daemoneye/, copies the binary and writes a
+#    systemd user service
 ./target/release/daemoneye setup
 
 # 3. Add your API key
 $EDITOR ~/.daemoneye/etc/config.toml     # set [models.default] api_key
 
-# 4. Start the daemon
+# 4. Start the daemon, and check the host is ready
 daemoneye daemon
+daemoneye doctor
 
 # 5. Ask it something
 daemoneye ask "why is nginx returning 502?"
 
-# …or open an interactive chat pane inside tmux
+# …or open an interactive chat, in any terminal
 daemoneye chat
 ```
 
@@ -46,28 +63,17 @@ systemctl --user daemon-reload
 systemctl --user enable --now daemoneye
 ```
 
-Add the printed keybinding to `~/.tmux.conf` so you can summon a chat pane with `Ctrl+b T`:
-
-```sh
-bind-key T split-window -v '~/.daemoneye/bin/daemoneye chat'
-```
-
-Then `tmux source-file ~/.tmux.conf`. The bind-key uses the full path so it works even when `~/.cargo/bin` is not in the `PATH` tmux inherits.
-
 ---
 
 ## Requirements
 
 | Dependency | Notes |
 |---|---|
-| Linux | `fork(2)`, Unix domain sockets |
+| Linux | `fork(2)`, PTYs, Unix domain sockets |
 | Rust 1.79+ | Required by Rust edition 2024 |
-| tmux 2.6+ | Optional. When you run `daemoneye` inside tmux, the prompt carries read-only pane summaries for your session (capture and list only). Outside tmux everything works with no tmux installed: commands run in daemon-owned PTY shells, `daemoneye chat` runs in any terminal, and alerts reach connected chat clients over IPC. The daemon never creates a tmux session unless `[daemon] tmux_session` names one that should exist |
-
-```sh
-sudo apt install tmux      # Debian/Ubuntu
-sudo dnf install tmux      # Fedora
-```
+| OpenSSH client | Optional. Needed only for `[hosts.<name>]` remote hosts |
+| Docker Sandboxes (`sbx`) | Optional. Needed only with `[sandbox] enabled = true`; `daemoneye sandbox status` checks it |
+| tmux 2.6+ | Optional. When you run `daemoneye` inside tmux, the prompt carries read-only pane summaries for your session (capture and list only). Without it everything else works the same. The daemon never creates a tmux session |
 
 To install the binary into `~/.cargo/bin` instead of building in place: `cargo install --path .`
 
@@ -79,13 +85,13 @@ DaemonEye runs as a background daemon holding a Unix domain socket. The chat cli
 
 ```
 you type ──→ chat client ──→ daemon
-                               │  captures your pane, masks secrets,
+                               │  gathers context, masks secrets,
                                │  assembles context, streams from the model
                                ▼
                           model wants to run something
                                │
                                ▼
-                    approval prompt in your chat pane
+                    approval prompt in your chat
                     [Y]es  [A]pprove for session  [N]o  ·  or type a redirect
                                │
                      approved  ▼
@@ -120,7 +126,7 @@ Full walkthrough: [Ghost Shells & Autonomous Remediation](#ghost-shells--autonom
 
 ---
 
-### 🤖 Named Agents
+### 🤖 Named Agents & Multi-Agent Orchestration
 
 Named Agents give ghost shells a persistent executor identity. Where a runbook defines *what* to do, an agent defines *who does it* — the role, the model, the memory namespace, and the tool policy that carry across every separate invocation.
 
@@ -146,7 +152,7 @@ Manage them from the CLI with `daemoneye agent list|show|create|delete|briefing`
 
 **Daemon-enforced tool policy.** Specify an allowlist or denylist of AI tools — the daemon rejects out-of-scope tool calls at the IPC layer, before they execute. A read-only analyst genuinely cannot call `run_terminal_command` or `edit_file`, regardless of what the model is instructed to do.
 
-**Coordinator pattern.** A coordinator agent can spawn specialist sub-agents in parallel. Each specialist writes its result to a mailbox file; the coordinator synthesises all results and writes a consolidated report. Total elapsed time is the longest specialist, not their sum. Spawn depth is capped at 2 (coordinator + specialists) — the daemon enforces this; the model cannot override it.
+**Coordinator pattern.** A coordinator agent can spawn specialist sub-agents in parallel with `spawn_ghost_shell`, each on the daemon host or on a configured remote host (`host?`). Each specialist writes its result to a mailbox file. The coordinator collects the results with `await_agent_result`, then writes a consolidated report. Total elapsed time is the longest specialist, not their sum. Spawn depth is capped at 2 (coordinator + specialists) — the daemon enforces this; the model cannot override it.
 
 ```
 security-coordinator  (depth 0)
@@ -190,12 +196,7 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 
 **Script headers:** Scripts carry an inline comment header immediately after the shebang (`# --- daemoneye ---` … `# --- /daemoneye ---`) that holds `tags`, `summary`, and `relates_to` fields. The field names are identical to memory YAML frontmatter, so the same mental model applies to all three artifact types. Tags are indexed by `list_scripts` and `search_repository` without any sidecar files.
 
-**Visual Anchors:** During the command approval window the target pane is highlighted with a dark-blue background (`colour17`) so you always know exactly where a command will land before you commit.
-
-**Pane references:** Commands run in PTY shells, never in a tmux pane.
-
-- **`[PANE MAP]`** — present inside tmux, mapping window-relative indices to pane IDs (`idx:0=%3* bash | idx:1=%7 vim`) with the active pane marked `*`. Used by the AI to translate user references like "pane 1" when discussing panes with the user.
-- **`/pane`** — lists the session's panes. Use `/pane %N` to pin the pane whose new activity triggers a fresh context snapshot; the preference is saved to `pane_prefs.json` and survives daemon restarts.
+**Where a command lands:** The approval panel names the shell and host before you commit. Commands run in this session's PTY shell by default, in a dedicated shell for `wait: false`, or on a configured host with `host`.
 
 **Remote script streaming** — A **Ghost Shell** that runs a daemon-host script (one in `~/.daemoneye/scripts/`) on its remote `ssh_target` host streams the script instead of copying it: the script is hex-encoded and piped into the remote interpreter's stdin (`python3`/`perl` decode → `bash /dev/stdin <args>`), so it runs on the remote with no remote disk write and no remote-side setup. Under `sudo` the script is written to its `~/.daemoneye/scripts/<name>` path on the remote instead, because a NOPASSWD sudoers rule must name a fixed path. See the `ssh_target` row of the runbook fields table.
 
@@ -261,22 +262,39 @@ With it:
 Foreground commands — the ones run in your session's PTY shell — stay on the
 host by design: they are visible, approved, and run in your shell.
 Commands on a configured `[hosts.<name>]` host run there, not in a sandbox.
-`[execution] backend = "tmux"` still loads, with a startup warning that the
-tmux backend was removed; commands run in PTY shells as usual.
 
 Design of record: [`docs/design/daemoneye-2.0.md`](docs/design/daemoneye-2.0.md) § 2.9.
 
 ---
 
-### 🔍 Full-View tmux Awareness
+### 🐚 PTY Shells & Remote Hosts
 
-The agent sees your whole tmux world, not just the pane you are typing in.
+Every command the agent runs, in chat, in a ghost, or in a scheduled job, goes to a PTY shell the daemon owns.
 
-- **Every session, not just yours.** The pane cache tracks windows and panes across *all* tmux sessions. Panes outside your own session appear labelled with their session name; their content is fetched on demand rather than polled, so watching a second session costs nothing until you ask.
-- **Live status per pane.** Each pane is classified every 2 s — `Running`, `Idle 4m`, `AwaitingInput`, `Bell`, `Dead(1)` — and that status shows up everywhere panes are listed. An idle shell is never mistaken for a prompt waiting on input.
-- **Any pane's contents, one call away.** `get_shell_context` returns the current context block on demand — a live snapshot with panes and recent output — so "which pane has the error?" is one call instead of a hunt when the ambient block has gone stale.
-- **Navigation is read-only by design.** The agent sees every pane but no longer steers your tmux: the pane-manipulation tools were removed in favor of a see-everything / act-on-nothing boundary, so what you are looking at stays yours.
-- **`/panes` is worth reading.** A window-grouped inspector: cwd, status, activity age and a preview line per pane, with the pinned pane marked.
+- **Shells outlive the daemon.** Each shell is hosted by a detached `daemoneye shell-host` process, so a daemon restart adopts its running shells instead of killing them.
+- **Real exit codes.** A marker protocol wraps each command, so the agent gets the command's actual exit status, never a guess.
+- **Everything is recorded.** Each shell is logged byte for byte as asciicast v2 under `~/.daemoneye/var/log/shells/`, with a per-command index. The agent reads it with `read_shell`, `find_in_shells` and the `history` tools. You replay it with `/logs` and `/log <id>`. All output is masked before the model sees it.
+- **Follow and join.** `/shells` lists the live shells, and `/tail <id>` follows one. `/agents` attaches to a running ghost: pause it (`Ctrl+P` stops the job itself, inside a sandbox too), resume it, interrupt it, or type into it. `/shell [host]` opens a shell of your own.
+- **Remote hosts.** Declare `[hosts.<name>]` once, and `open_shell`, `run_terminal_command`, `read_file` and `edit_file` accept `host: "<name>"`. The connection runs in a local PTY shell using your own keys and agent, through one SSH ControlMaster per host. Nothing is installed on the remote host, and a command there never starts a tmux server. `/hosts` lists the configured hosts.
+- **The agent sees its shells.** Each turn carries `[HOSTS]` and `[SHELLS]` blocks: the configured hosts, and this session's shells with their state. `get_shell_context` gives a fresh snapshot on demand.
+
+---
+
+### 🪟 Inside tmux (optional)
+
+tmux is never required. When you do run `daemoneye chat` inside tmux, the daemon *reads* your session for context and never writes to it. A test gate in `tests/tmux_read_only.rs` rejects any tmux write verb in the source.
+
+- **Pane awareness.** The context carries read-only summaries of your session's panes, each with a live status: `Running`, `Idle 4m`, `AwaitingInput`, `Bell`, `Dead(1)`. `[PANE MAP]` maps window-relative indices to pane IDs (`idx:0=%3* bash | idx:1=%7 vim`), so "what's in pane 1?" resolves. Panes in your other tmux sessions are listed too; their contents are fetched only when asked for.
+- **`/pane`.** A window-grouped inspector: cwd, status, activity age and a preview line per pane. `/pane %N` pins the pane whose new activity refreshes the context snapshot. The pin is saved to `pane_prefs.json` and survives a daemon restart.
+- **Bell recovery.** Bells raised in your windows while the daemon was down are noticed on the next poll and logged to `events.jsonl`.
+- **A chat key binding.** `daemoneye setup` prints one you can add to `~/.tmux.conf`:
+
+  ```sh
+  bind-key T split-window -v '~/.daemoneye/bin/daemoneye chat'
+  ```
+
+  It uses the full path, so it works even when `~/.cargo/bin` is not on the `PATH` tmux inherits.
+- **Outside tmux,** `[daemon] tmux_session` can name an existing session for the daemon to observe. The daemon never creates one.
 
 ---
 
@@ -284,8 +302,8 @@ The agent sees your whole tmux world, not just the pane you are typing in.
 
 The chat client is built on a `ratatui` inline viewport that treats your terminal the way a good CLI tool should.
 
-- **Real scrollback** — The conversation transcript is committed to your terminal's native scrollback. Scroll up in tmux copy-mode and the whole history is there, clean and selectable; only the input box and status bar occupy a small fixed region at the bottom.
-- **Survives window switches and resizes** — Switching tmux windows away from and back to the chat pane, or resizing it, leaves the transcript and chrome intact. The renderer keeps a history of every committed line; when tmux shifts the grid in ways the client can't observe (screen scrolls, height reflows), the re-anchor clears the stale region and repaints the transcript tail from that history instead of trusting row arithmetic — no orphaned borders, no eaten lines.
+- **Real scrollback** — The conversation transcript is committed to your terminal's native scrollback. Scroll up in your terminal (or tmux copy-mode) and the whole history is there, clean and selectable; only the input box and status bar occupy a small fixed region at the bottom.
+- **Survives resizes and window switches** — Resizing the terminal, or switching tmux windows away from the chat and back, leaves the transcript and chrome intact. The renderer keeps a history of every committed line. When the grid shifts in ways the client can't observe (screen scrolls, height reflows), it clears the stale region and repaints the transcript tail from that history instead of trusting row arithmetic. No orphaned borders, no eaten lines.
 - **Multi-line input editor** — Visible cursor, word-wrap, multi-line editing, and multi-line paste. A pasted block lands whole instead of submitting at its first newline.
 - **Two-press interrupt that actually stops the work** — While the agent is streaming, press ESC or Ctrl+C once to warn, twice to abort. The second press sends a cancel to the daemon over a fresh connection, so the daemon aborts the in-flight provider stream instead of billing it to completion; the partial response is kept in history with a `⊘ cancelled` marker.
 - **No infinite spinner** — The daemon signals liveness at least every 15 s for the whole turn, including during long tool runs. The client holds it to that: 90 s of silence before any output, or 120 s mid-response, ends the wait with an error that says which happened and what to check, rather than spinning forever against a wedged daemon.
@@ -300,10 +318,10 @@ The chat client is built on a `ratatui` inline viewport that treats your termina
 Inline panels stay short so the scrollback stays readable — a `run_terminal_command` that printed 4 000 lines shows 9 of them plus `… 3991 more lines · ctrl+o`. The rest is not lost. Press **`ctrl+o`** from the chat prompt, or mid-turn while the agent is still streaming, and the client opens an alternate-screen pager over the full conversation.
 
 - **Every byte is there** — the viewer renders the exact `Response::ToolResult` payload the daemon sent, not a re-read of the event log (which caps output at 200 chars) or the session JSONL (truncated at `limits.tool_result_chars`). Masking is applied on the way in, so nothing redacted in the inline panel appears unmasked in the viewer, and it never reads `var/log/panes/`.
-- **Modal and additive** — the inline `insert_before` streaming surface is untouched, so native tmux scrollback, copy-mode and drag selection keep working exactly as before. `esc` restores the inline chat byte-identically: input box, status bar and prior scrollback intact, including after a pane resize while the viewer was open.
+- **Modal and additive** — the inline `insert_before` streaming surface is untouched, so native terminal scrollback, copy-mode and drag selection keep working exactly as before. `esc` restores the inline chat byte-identically: input box, status bar and prior scrollback intact, including after a pane resize while the viewer was open.
 - **Block-structured** — user turns, assistant replies, tool panels, command output and system notices are separate blocks you can focus, collapse and expand individually, or all at once.
 - **Search** — `/` opens an incremental search across the whole transcript, including inside expanded output bodies; `n` / `N` walk the matches and the status line shows `k/N`.
-- **Copy** — `y` loads the focused block into a tmux buffer (`tmux load-buffer -w`, so it also reaches the system clipboard where the terminal supports OSC 52). Paste it anywhere with `ctrl+a ]`. The copied text is the block's real content, decoration-free and independent of whether it is collapsed.
+- **Copy** (inside tmux) — `y` loads the focused block into a tmux buffer (`tmux load-buffer -w`, so it also reaches the system clipboard where the terminal supports OSC 52). Paste it with your tmux paste key. The copied text is the block's real content, decoration-free and independent of whether it is collapsed.
 - **Mouse** — wheel scroll and click-to-toggle work inside the viewer. Mouse tracking is enabled *only* while the viewer is up, so it never steals drag-select from the terminal on the main screen.
 - **Rehydration** — `/session load <name>` refills the transcript from the saved session, so a fresh client on a resumed conversation shows the prior turns under `ctrl+o` too.
 - **Bounded** — the client keeps at most 500 blocks or 8 MiB, whichever binds first, evicting oldest-first. When anything has been evicted the status line says so (`N older blocks evicted`).
@@ -363,7 +381,6 @@ Long sessions don't get truncated at an arbitrary message count — DaemonEye ma
 - **Flexible Scheduling** — Run commands or Ghost Shell tasks once at a specific time, on a repeating interval, or on a full cron expression.
 - **Watchdog Monitors** — Active monitors use AI-powered analysis to evaluate system state on a schedule and trigger remediation when something looks wrong.
 - **Failure Isolation** — Each job runs in its own scheduler-owned PTY shell with a real exit code recorded in the shell's log; the shell is swept when the job is done.
-- **Bell Recovery** — Every 2-second poll checks `#{window_flags}` for uncleared bells (`!`) and unseen activity (`#`) on all windows. Newly-discovered bells are logged to `events.jsonl` so notifications missed during a daemon restart are recovered automatically.
 
 ---
 
@@ -390,7 +407,7 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye daemon` | Start the background daemon |
 | `daemoneye daemon --console` | Log to the console instead of a file (troubleshooting; required for `Type=simple` systemd) |
 | `daemoneye daemon --log-file FILE` | Write the daemon log to `FILE` instead of `~/.daemoneye/var/log/daemon.log` |
-| `daemoneye daemon --session NAME` | Override the managed tmux session name from config |
+| `daemoneye daemon --session NAME` | Name the existing tmux session to observe read-only, overriding `[daemon] tmux_session` |
 | `daemoneye stop` | Stop the daemon gracefully |
 | `daemoneye sandbox status` | Show the sandbox runtime (the `sbx` version, or why it is unusable) and the daemon's own sandboxes |
 | `daemoneye ping` | Check whether the daemon is running |
@@ -398,7 +415,7 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye logs` | Tail `daemon.log` |
 | `daemoneye chat` | Start an interactive multi-turn chat session |
 | `daemoneye ask <query>` | Send a single question to the AI |
-| `daemoneye setup` | Initialise `~/.daemoneye/`, install the binary, write the systemd service, print tmux config |
+| `daemoneye setup` | Initialise `~/.daemoneye/`, install the binary, write the systemd service, print an optional tmux key binding |
 | `daemoneye setup --overwrite-bin` | Re-copy the current binary to `~/.daemoneye/bin/daemoneye` |
 | `daemoneye setup --overwrite-memory` | Refresh the built-in knowledge memory files from the current binary |
 | `daemoneye setup --overwrite-all` | Refresh binary, memories, and the built-in SRE prompt (your `config.toml` is never touched) |
@@ -412,7 +429,7 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye schedule list` | List scheduled jobs and their status |
 | `daemoneye schedule cancel <id>` | Cancel a scheduled job by UUID |
 | `daemoneye schedule delete <id>` | Permanently delete a scheduled job by UUID |
-| `daemoneye schedule windows` | List leftover `de-*` tmux windows from failed scheduled jobs |
+| `daemoneye schedule windows` | List leftover `de-*` tmux windows from 1.x scheduled jobs (2.0 creates none) |
 | `daemoneye session import <id> --name <name>` | Import an orphaned ephemeral session log into the named session store (no daemon required) |
 | `daemoneye costs` | Show AI spend from the event log (no daemon required) |
 | `daemoneye costs --since DATE --until DATE --by agent` | Filter and group the cost report; `--agent NAME`, `--json` also available |
@@ -451,7 +468,7 @@ Both `reindex` and `audit-prompts` run without a daemon. `reindex` is safe to ru
 
 At a tool-approval prompt, typing a message instead of `Y`/`A`/`N` redirects the agent. Up/Down navigate the input; at the top or bottom edge they recall history.
 
-### Chat pane keys
+### Chat keys
 
 | Key | Effect |
 |---|---|
@@ -478,7 +495,7 @@ Active only while the alternate-screen viewer is open (`ctrl+o`).
 | `a` | Expand everything |
 | `/` | Open incremental search |
 | `n` / `N` | Next / previous match |
-| `y` | Copy the focused block to a tmux buffer (and the system clipboard where supported) |
+| `y` | Inside tmux: copy the focused block to a tmux buffer (and the system clipboard where supported) |
 | Wheel | Scroll |
 | Click | Focus and toggle the block under the cursor |
 | `Esc` / `q` / `ctrl+o` | Close the viewer and restore the inline chat |
@@ -579,7 +596,7 @@ Tools marked **⚠** require explicit user approval before they execute.
 
 ### `daemoneye setup`
 
-Run it once after building. It initialises the full `~/.daemoneye/` tree, copies the binary to a stable location, writes a systemd user service file, and prints the tmux keybinding.
+Run it once after building. It initialises the full `~/.daemoneye/` tree, copies the binary to a stable location, writes a systemd user service file, and prints an optional tmux key binding for summoning a chat (see [Inside tmux](#-inside-tmux-optional)).
 
 | Flag | Effect |
 |---|---|
@@ -645,14 +662,7 @@ On first run all seeded files (binary, memories, prompt) are written automatical
 
 `daemoneye setup` writes `~/.config/systemd/user/daemoneye.service` — a user-scoped service that runs `~/.daemoneye/bin/daemoneye daemon --console` automatically on login. The `--console` flag is required for `Type=simple` systemd services: without it the daemon forks, the parent exits, and systemd loses track of the process.
 
-When running as a systemd service the daemon starts outside tmux. Every command — chat, ghosts, scheduled jobs, webhook automation — runs in daemon-owned PTY shells, so the service is fully functional with no interactive client connection and no tmux at all. If a `[daemon] tmux_session` name is configured, the daemon adopts a tmux session by that name when one already exists (useful if you want its read-only pane context) and creates none itself.
-
-To use a different session name, add a `[daemon]` section to `~/.daemoneye/etc/config.toml`:
-
-```toml
-[daemon]
-tmux_session = "myserver"   # override the default "daemoneye" session name
-```
+The service needs no terminal and no tmux. Every command, whether from chat, a ghost, a scheduled job or webhook automation, runs in daemon-owned PTY shells. Alerts reach chat clients over IPC whenever one connects. To give the service read-only pane context from an existing tmux session, name it in `[daemon] tmux_session`. The daemon never creates that session.
 
 ```sh
 systemctl --user daemon-reload
@@ -664,24 +674,6 @@ systemctl --user disable daemoneye          # disable autostart
 ```
 
 View logs with `daemoneye logs` (tails `~/.daemoneye/var/log/daemon.log`) or through journald: `journalctl --user -u daemoneye -f`.
-
-### Shell hook (optional)
-
-Add the appropriate snippet to your shell config to enable accurate exit-code tracking for foreground commands in `daemoneye status`:
-
-```sh
-# bash (~/.bashrc)
-_de_exit_trap() { tmux set-environment "DE_EXIT_${TMUX_PANE#%}" "$?" 2>/dev/null; }
-PROMPT_COMMAND="_de_exit_trap${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
-```
-
-```sh
-# zsh (~/.zshrc)
-_de_precmd() { tmux set-environment "DE_EXIT_${TMUX_PANE#%}" "$?" 2>/dev/null; }
-precmd_functions+=(_de_precmd)
-```
-
-Without this hook foreground commands still appear in `daemoneye status` but are always recorded as succeeded regardless of their actual exit code.
 
 ---
 
@@ -936,7 +928,7 @@ read_file         = 200   # allow more read_file calls than the global batch cap
 search_repository = 25    # tighten search calls
 ```
 
-Use `/limits` in the chat pane to inspect the active values and live session counters. Use `/limits reset` to zero the per-session tool counter without ending the session.
+Use `/limits` in the chat to inspect the active values and live session counters. Use `/limits reset` to zero the per-session tool counter without ending the session.
 
 There is deliberately **no message-count cap** on session history. History length is governed entirely by token pressure — see `[compaction]` below.
 
@@ -988,7 +980,7 @@ Periodic sweeps for the two artifact directories that otherwise grow without bou
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `pane_log_retention_days` | integer | `7` | Delete captured pane logs (`var/log/panes/*.log`, written by background jobs) older than this many days. `0` = keep forever. |
+| `pane_log_retention_days` | integer | `7` | Delete captured pane logs (`var/log/panes/*.log`, legacy logs from 1.x background jobs; 2.0 writes none) older than this many days. `0` = keep forever. |
 | `mailbox_retention_days` | integer | `7` | Delete agent mailbox results (`agents/<name>/mailbox/*.json`) older than this many days. `0` = keep forever. |
 
 ### `[execution]` section
@@ -1058,7 +1050,7 @@ Controls named session persistence — saving and resuming conversation history 
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `auto_name_enabled` | bool | `true` | After `auto_name_turn_threshold` turns, prompt the user with an AI-suggested session name in the chat pane. |
+| `auto_name_enabled` | bool | `true` | After `auto_name_turn_threshold` turns, prompt the user with an AI-suggested session name in the chat. |
 | `auto_name_turn_threshold` | integer | `10` | Number of user turns before an auto-name suggestion is offered. |
 | `load_recent_turns` | integer | `10` | Number of most-recent turns loaded when resuming a saved session with `/session load`. `0` loads the complete history (may exceed the context window). |
 | `archive_retention_days` | integer | `0` | Delete session archive files (`<id>.archive.jsonl`) whose mtime is older than this many days. `0` = keep forever. Archives belonging to active sessions are never swept. |
@@ -1109,7 +1101,6 @@ Watchdog AI analysis (reads runbook, emits GHOST_TRIGGER: YES|NO)
         │  YES + runbook has  enabled: true
         ▼
 GhostManager::start_session()
-  • Ensures the host tmux session exists (command windows created lazily)
   • Loads ghost_config from runbook frontmatter
   • Applies named agent profile if runbook specifies agent: <name>
   • Injects prior briefing state as [Previous Session Summary] context
@@ -1395,7 +1386,7 @@ Before sending terminal context to an AI provider, DaemonEye applies a regex-bas
 - Credit card numbers (16-digit grouped format)
 - US Social Security Numbers
 
-Masked values are replaced with placeholder tokens (`<REDACTED>`, `<JWT>`, `<DB_URL>`, `<GITHUB_TOKEN>`, etc.). Review the context shown in the AI pane before submitting if you handle highly sensitive data.
+Masked values are replaced with placeholder tokens (`<REDACTED>`, `<JWT>`, `<DB_URL>`, `<GITHUB_TOKEN>`, etc.). Review the context shown in the chat before submitting if you handle highly sensitive data.
 
 Add organisation-specific patterns to `extra_patterns` in `[masking]`. Built-in patterns always run — user patterns extend the set, never replace it. Redaction counts by type are tracked across the daemon's lifetime and displayed under **Redactions** in `daemoneye status`, giving a continuous audit view of what categories have been filtered. All built-in types are always shown (including those with a zero count), and hits from user-configured `extra_patterns` are tallied separately as `"User Defined"`.
 
@@ -1403,9 +1394,9 @@ The same filter runs on webhook alert payloads before they enter the conversatio
 
 ### Sudo passwords
 
-When a command (foreground or background) requires `sudo`, the daemon first checks whether credentials are already cached (`sudo -n true`). If cached, the command runs without any interruption. If not cached, the chat interface prompts for your password with terminal echo disabled — you always type it in the chat pane, not in the terminal pane, eliminating the risk of keystrokes landing in the wrong window.
+When a command (foreground or background) requires `sudo`, the daemon first checks whether credentials are already cached (`sudo -n true`). If cached, the command runs without any interruption. If not cached, the chat interface prompts for your password with terminal echo disabled — you always type it in the chat, never into a shell, eliminating the risk of keystrokes landing in the wrong window.
 
-Up to 3 attempts are permitted. A wrong password is detected from the pane output ("Sorry, try again.") and you are re-prompted automatically. If all attempts fail or you cancel, the AI receives a structured error describing what happened and suggesting `daemoneye install-sudoers` where appropriate.
+Up to 3 attempts are permitted. A wrong password is detected from the shell output ("Sorry, try again.") and you are re-prompted automatically. If all attempts fail or you cancel, the AI receives a structured error describing what happened and suggesting `daemoneye install-sudoers` where appropriate.
 
 The password is never written to disk, stored in a log file, or transmitted to the AI. The in-memory credential is held in a `zeroize::Zeroizing<String>` that overwrites the allocation on drop.
 

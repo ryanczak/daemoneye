@@ -4,6 +4,50 @@ All notable changes to DaemonEye are documented here.
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-10-12
+
+DaemonEye no longer needs tmux. Every command the daemon runs goes through
+daemon-owned PTY shells, locally or on configured remote hosts. tmux is an
+optional, read-only observer. Design of record:
+`docs/design/daemoneye-2.0.md`. Milestones M20–M24 and M26–M27 each have a
+retrospective in `docs/dev/milestones/M<n>-*/README.md`.
+
+- **Shell engine (M20)** — PTY shells hosted by detached `shell-host`
+  processes that survive a daemon restart. Each shell has an asciicast v2
+  recording and a vt100 screen model. A marker protocol reports real exit
+  codes.
+- **Host model & SSH (M21)** — `[hosts.<name>]` remote hosts can be named
+  by `open_shell`, `run_terminal_command`, `read_file` and `edit_file`
+  (`host?`). Connections run through one SSH ControlMaster per host.
+  Host-key, password, passphrase and remote `sudo` prompts are asked in the
+  chat and never reach a shell log.
+- **Tool surface & context (M22)** — the six pane tools are replaced by shell
+  tools: `list_shells`, `read_shell`, `find_in_shells`, `open_shell`,
+  `close_shell`, `watch_shell`, `send_input`, plus a deferred `history`
+  group. Each tool declares a `Category`. Pane context blocks give way to
+  `[HOSTS]` / `[SHELLS]`. The prompt assets and seeded memories were
+  rewritten.
+- **Client decoupling & shell UX (M23)** — `daemoneye chat` runs in any
+  terminal. New commands: `/shells`, `/tail`, `/agents` (attached mode with
+  pause, resume and interrupt), `/logs`, `/log`, `/hosts` and `/shell`.
+- **Run manager (M24)** — a chat turn, a ghost, a scheduled job and a
+  delegated agent are all runs. Each has a turn log, a structured result, a
+  briefing and cooperative cancel (`daemoneye stop <run-id>`, `/stop`). A
+  finished ghost can be resumed with `daemoneye run resume`. `wait: false`
+  replaces `background: true`.
+- **Agent isolation on Docker Sandboxes (M26)** — ghost runs, and chat
+  `wait: false` commands, run in `sbx` microVMs. Sandboxes have no network by
+  default, their egress is audited, and they fail closed. The M18/M19
+  `docker run` sandbox is removed.
+- **tmux becomes an optional observer (M27)** — the daemon makes no tmux
+  write calls, and a test gate rejects any write verb in the source. There is
+  no tmux execution backend: `backend = "tmux"` loads with a warning.
+  Scheduled jobs run in PTY shells, and the legacy `Command` action is
+  refused with a reason. Alerts and ghost events reach chats over a presence
+  connection. A chat reconnects after a daemon restart, and its catch-up
+  brief arrives on reconnect. A mistyped tool argument returns an error the
+  model can correct. New: `daemoneye doctor`.
+
 ## [1.0.0] — 2026-09-03
 
 The last tmux-based release. Tagged on the merge of `m19-sandbox-completion`
