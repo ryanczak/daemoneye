@@ -105,4 +105,79 @@ disk-history tail), then the two pinned tests in
 `src/daemon/server/chat_presence.rs`, the mutation check, and the evidence
 entry.
 
+### Update — 2026-10-13 01:30 (end-to-end verification)
+
+All evidence captured mechanically from one pass each, pasted verbatim from
+the tee'd files. The mutation check was an env-gated early `None`
+(`DAEMONEYE_MUTATION_07E_SKIP_NONRESIDENT` in `attach_brief_for`), captured,
+then reverted — `git diff --stat` empty, and
+`grep -rn 'DAEMONEYE_MUTATION' src/` prints nothing. Commit `088dd566`
+carries the code; the working tree is clean.
+
+**The two pinned tests** (`cargo test --lib <name>` each):
+
+```
+test daemon::server::chat_presence::tests::catchup_brief_reaches_a_session_that_is_not_resident ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+
+test daemon::server::chat_presence::tests::attach_brief_creates_no_store_entry_for_a_non_resident_session ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+```
+
+**Mutation check — the non-resident branch skipped** (env-gated, run with
+`DAEMONEYE_MUTATION_07E_SKIP_NONRESIDENT=1`): the pinned test fails on its
+brief assert, exactly as required.
+
+```
+thread 'daemon::server::chat_presence::tests::catchup_brief_reaches_a_session_that_is_not_resident' (1098937) panicked at src/daemon/server/chat_presence.rs:658:9:
+a non-resident session gets the same brief a resident one does
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::server::chat_presence::tests::catchup_brief_reaches_a_session_that_is_not_resident
+test daemon::server::chat_presence::tests::catchup_brief_reaches_a_session_that_is_not_resident ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+```
+
+**Preservation** — the two resident tests 07e must not break:
+
+```
+test daemon::server::chat_presence::tests::attach_brief_includes_an_alert_injected_while_away ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+
+test webhook::process::tests::inject_reaches_a_presence_attached_session_that_is_not_resident ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2262 filtered out; finished in 0.00s
+```
+
+**Full suite** (`cargo test`, one run, tee'd to a file and summed
+mechanically — `awk '{p+=$4; f+=$6} END {print "passed="p" failed="f}'` over
+the result lines):
+
+```
+test result: ok. 2253 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 64.14s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+passed=2324 failed=0
+```
+
+**Gate commands:**
+
+```
+$ cargo fmt --all --check
+fmt-exit=0
+$ cargo clippy --all-targets --all-features -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+$ cargo build
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.62s
+```
+
+**PASTE MATCH: yes.** The live check is the S2 re-run in phase 07, which the
+architect does after a daemon restart with no ask before quitting.
+
 <!-- entries appended below this line -->
