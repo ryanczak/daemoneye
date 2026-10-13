@@ -197,10 +197,14 @@ impl ShellBackend for PtyBackend {
     }
 
     async fn status(&self) -> ShellResponse {
-        let (state, rows, cols, pid) = {
+        let (state, rows, cols, pid, raw_mode, alt_screen, foreground) = {
             let mut shell = self.shell.lock().unwrap_or_log();
             let alive = shell.is_alive().with_context(|| "checking shell liveness");
-            let (rows, cols) = self.screen.lock().unwrap_or_log().size();
+            let screen = self.screen.lock().unwrap_or_log();
+            let (rows, cols) = screen.size();
+            let alt_screen = screen.is_alt_screen();
+            let raw_mode = shell.raw_mode();
+            let foreground = shell.foreground_command();
             let pid = shell.pid().unwrap_or(0);
             let state = match alive {
                 Ok(true) => {
@@ -230,13 +234,24 @@ impl ShellBackend for PtyBackend {
                     ShellState::Exited
                 }
             };
-            (state, rows, cols, pid)
+            (
+                state,
+                rows,
+                cols,
+                pid,
+                raw_mode,
+                Some(alt_screen),
+                foreground,
+            )
         };
         ShellResponse::Status {
             state,
             rows,
             cols,
             pid,
+            raw_mode,
+            alt_screen,
+            foreground,
         }
     }
 
@@ -252,6 +267,36 @@ impl ShellBackend for PtyBackend {
 
     async fn close(&self) -> anyhow::Result<()> {
         self.shell.lock().unwrap_or_log().hangup()
+    }
+
+    /// Render under the screen mutex: the last `scrollback` rows that scrolled
+    /// off the top, then the marked screen. The scrollback read must come
+    /// before the marked render — `scrollback_rows` temporarily moves the
+    /// parser's scrollback offset, and the viewport is read after it is
+    /// restored, so the frame's screen section is exactly what `contents()`
+    /// would show.
+    async fn screen_text(&self, annotated: bool, scrollback: u16) -> anyhow::Result<ShellResponse> {
+        let (text, rows, cols, cursor, alt_screen) = {
+            let mut screen = self.screen.lock().unwrap_or_log();
+            let (rows, cols) = screen.size();
+            let cursor = screen.cursor();
+            let alt_screen = screen.is_alt_screen();
+            let head = screen.scrollback_rows(usize::from(scrollback));
+            let body = screen.marked(annotated);
+            let text = match (head.is_empty(), body.is_empty()) {
+                (true, _) => body,
+                (false, true) => head,
+                (false, false) => format!("{head}\n{body}"),
+            };
+            (text, rows, cols, cursor, alt_screen)
+        };
+        Ok(ShellResponse::ScreenText {
+            text,
+            rows,
+            cols,
+            cursor,
+            alt_screen,
+        })
     }
 }
 
@@ -386,6 +431,169 @@ mod tests {
             }
         }
         panic!("{label}: expected an \"o\" event containing {needle:?} in cast:\n{contents}");
+    }
+
+    #[test]
+    fn backend_status_reports_raw_mode_under_stty_raw() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        // Never assert on an idle shell: an interactive bash's readline
+        // clears ICANON while it waits at the prompt, so an idle shell
+        // reads Some(true) — correct, and the reason D3 only consults
+        // raw_mode when the state is Running. A plain `sleep` keeps the
+        // line discipline the shell set up: canonical.
+        rt.block_on(backend.input(b"sleep 5\r\n"))
+            .expect("write the sleep");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let raw = match rt.block_on(backend.status()) {
+                ShellResponse::Status { raw_mode, .. } => raw_mode,
+                other => panic!("expected a Status frame, got {other:?}"),
+            };
+            if raw == Some(false) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the shell to be canonical while a plain sleep runs within 10 s, last {raw:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        // `stty raw` switches the slave's line discipline off; the master's
+        // tcgetattr then reads ICANON clear. The command restores sane mode
+        // itself after the sleep: polled for below, since the tty's state
+        // after `stty sane` depends on what bash's readline does next, and
+        // that is not what this test pins.
+        rt.block_on(backend.input(b"stty raw -echo; sleep 2; stty sane\r\n"))
+            .expect("write the stty command");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let raw = match rt.block_on(backend.status()) {
+                ShellResponse::Status { raw_mode, .. } => raw_mode,
+                other => panic!("expected a Status frame, got {other:?}"),
+            };
+            if raw == Some(true) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the shell to be in raw mode within 10 s of `stty raw`, last {raw:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn backend_status_names_the_foreground_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        // A fresh idle bash holds its own terminal.
+        let idle = rt.block_on(backend.status());
+        match &idle {
+            ShellResponse::Status { foreground, .. } => assert_eq!(
+                *foreground, None,
+                "an idle shell's foreground group is the shell itself, got {idle:?}"
+            ),
+            other => panic!("expected a Status frame, got {other:?}"),
+        }
+
+        rt.block_on(backend.input(b"sleep 30\r\n"))
+            .expect("write the sleep command");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let fg = match rt.block_on(backend.status()) {
+                ShellResponse::Status { foreground, .. } => foreground,
+                other => panic!("expected a Status frame, got {other:?}"),
+            };
+            if fg.as_deref() == Some("sleep") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the foreground group's leader to be named `sleep` within 10 s, last {fg:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        rt.block_on(backend.input(b"\x03"))
+            .expect("end the sleep with ^C");
+    }
+
+    #[test]
+    fn backend_screen_text_marks_inverse_and_reports_alt_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(
+            backend.input(b"printf '\\033[?1049h\\033[7mSELECTED\\033[0m plain\\n'; sleep 30\r\n"),
+        )
+        .expect("write the marking command");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let resp = rt
+                .block_on(backend.screen_text(false, 0))
+                .expect("screen_text");
+            let ShellResponse::ScreenText {
+                text, alt_screen, ..
+            } = resp
+            else {
+                panic!("expected ScreenText, got {resp:?}");
+            };
+            if alt_screen && text.contains("[SEL: SELECTED]") {
+                assert!(
+                    text.contains("plain"),
+                    "the unmarked part must survive: {text:?}"
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the screen to show the inverse run and the alt screen within 10 s, last: {text:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        rt.block_on(backend.input(b"\x03"))
+            .expect("end the sleep with ^C");
+    }
+
+    #[test]
+    fn backend_screen_text_prepends_scrollback_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(backend.input(b"for i in 1 2 3 4 5 6 7 8; do echo line$i; done\r\n"))
+            .expect("write the loop");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let text = loop {
+            let resp = rt
+                .block_on(backend.screen_text(false, 100))
+                .expect("screen_text");
+            let ShellResponse::ScreenText { text, .. } = resp else {
+                panic!("expected ScreenText");
+            };
+            if text.contains("line1") && text.contains("line8") {
+                break text;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the frame to hold scrollback and screen within 10 s, last: {text:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(
+            text.contains(
+                "line1
+line2"
+            ),
+            "the scrollback head must be prepended oldest first: {text:?}"
+        );
+        assert!(
+            text.contains("line8"),
+            "the viewport must still be there: {text:?}"
+        );
     }
 
     #[test]

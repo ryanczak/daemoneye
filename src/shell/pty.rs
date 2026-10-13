@@ -448,6 +448,44 @@ impl PtyShell {
         self.master.process_group_leader().map(|pgid| pgid as i64)
     }
 
+    /// Basename of argv[0] of the foreground group leader, `None` when that
+    /// group is the shell's own or `/proc` cannot name it. `/proc/<pid>/cmdline`
+    /// is argv NUL-joined, so the basename of the first NUL-terminated field
+    /// is the program name a `ps` row would show.
+    pub fn foreground_command(&self) -> Option<String> {
+        let fg = self.current_foreground_pgid()?;
+        if Some(fg) == self.pid().map(i64::from) {
+            return None;
+        }
+        let argv = std::fs::read(format!("/proc/{fg}/cmdline")).ok()?;
+        let argv0 = argv.split(|b: &u8| *b == 0).next()?;
+        let name: String = argv0
+            .rsplit(|b: &u8| *b == b'/')
+            .next()?
+            .iter()
+            .map(|b| *b as char)
+            .collect();
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// The slave's line discipline, read from the master fd with
+    /// `libc::tcgetattr`: `Some(true)` when `ICANON` is off. `None` when the
+    /// fd or the read is unavailable.
+    ///
+    /// Read via `MasterPty::as_raw_fd()`, not `get_termios()`: the latter
+    /// returns portable-pty's own `nix` version's `Termios`, which is not this
+    /// crate's `nix = 0.31` type.
+    pub fn raw_mode(&self) -> Option<bool> {
+        let fd = self.master.as_raw_fd()?;
+        let mut t: libc::termios = unsafe { std::mem::zeroed() };
+        // SAFETY: `t` is a valid, initialised `libc::termios` for the kernel
+        // to fill; `tcgetattr` reports success itself.
+        if unsafe { libc::tcgetattr(fd, &mut t) } != 0 {
+            return None;
+        }
+        Some(t.c_lflag & libc::ICANON == 0)
+    }
+
     /// Hang up the shell itself: SIGHUP to its pid, not to the foreground
     /// group. An interactive bash exits on it and hangs up its own jobs. A
     /// paused shell is stopped, so the hangup would wait forever: it and its

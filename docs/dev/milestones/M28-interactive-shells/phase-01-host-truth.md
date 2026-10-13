@@ -1,7 +1,7 @@
 # Phase 01: host-truth — the shell host reports what owns its terminal
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -93,10 +93,16 @@ behaviour change** for any existing tool.
   a new one covering `Screen` and `ScreenText`),
   `proto_status_from_a_pre_phase_host_parses_with_none_fields`.
 - `backend.rs`, real PTY: `backend_status_reports_raw_mode_under_stty_raw`
-  (`stty raw -echo; sleep 5` ⇒ `Some(true)`; a fresh idle shell ⇒
-  `Some(false)`), `backend_status_names_the_foreground_command` (`sleep` ⇒
+  (while `sleep 5` runs ⇒ `Some(false)`; while `stty raw -echo; sleep 5`
+  runs ⇒ `Some(true)`. **Never assert on an idle shell:** an interactive
+  bash's readline clears `ICANON` while it waits at the prompt, so an idle
+  shell reads `Some(true)` — correct, and the reason D3 only consults
+  `raw_mode` when the state is `Running`),
+  `backend_status_names_the_foreground_command` (`sleep` ⇒
   `Some("sleep")`; idle ⇒ `None`), `backend_screen_text_marks_inverse_and_reports_alt_screen`
-  (`printf` an inverse run and `ESC[?1049h`).
+  (one command that enters the alt screen **and then** prints the inverse
+  run, then sleeps; type the escapes as `\\033` text for `printf` to
+  expand — raw ESC bytes written to the shell are eaten by readline).
 - `host.rs`: `host_screen_on_a_backend_without_a_screen_is_an_error`.
 - `client.rs`: `client_screen_round_trip`.
 - `foreground.rs`: `classify_matches_the_design_matrix` (every local row
@@ -163,3 +169,53 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-13
+
+The first run (GLM-5.3-Flash) stalled after 120 read-only calls probing
+termios. **The stall was the spec's fault, not yours.** The spec asked
+`backend_status_reports_raw_mode_under_stty_raw` to assert that a fresh
+idle shell is not raw. That is false for an interactive bash: readline
+clears `ICANON` while it waits at the prompt. The § Tests bullet is now
+corrected. Your `PtyShell::raw_mode()` is right as written — do not change
+it or probe termios again.
+
+**Already done and correct — do not redo:** Tasks 1–4. `marked()`,
+`scrollback_rows()`, the `Screen` / `ScreenText` frames, the three
+optional `Status` fields, `ShellBackend::screen_text` with its default,
+`PtyBackend` and `SbxBackend` implementations, `raw_mode()`,
+`foreground_command()`. The build is clean and 380 of 382 `shell::` tests
+pass.
+
+**Exactly this remains:**
+
+1. Fix `backend_status_reports_raw_mode_under_stty_raw` per the corrected
+   § Tests bullet: drop the idle assertion; assert `Some(false)` while a
+   plain `sleep` runs.
+2. Fix `backend_screen_text_marks_inverse_and_reports_alt_screen`: it
+   writes raw ESC bytes (readline eats them) and prints the inverse run
+   before entering the alt screen (which hides it). Send one command such
+   as `printf '\\033[?1049h\\033[7mSELECTED\\033[0m plain\\n'; sleep 30`
+   followed by a newline.
+3. Delete the three debug tests `probe_sb8`, `probe_sb9`, `probe_sb10` in
+   `src/shell/screen.rs`.
+4. Task 3's missing test: `proto_status_from_a_pre_phase_host_parses_with_none_fields`.
+5. Task 4's missing test: `host_screen_on_a_backend_without_a_screen_is_an_error`.
+6. Task 5 entirely: `client::screen(...)` and `client_screen_round_trip`.
+7. Task 6 entirely: `src/shell/foreground.rs` and its four tests.
+8. Task 7: the end-to-end capture and `PASTE MATCH`.
+
+Finish condition: every test in § Tests passes, and `cargo test` reports
+`failed=0` with `passed` above 2325.
+
+### Update — 2026-10-13 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** Tasks 1–4 are on disk and correct, and the stall came from one impossible assertion the spec dictated; with that assertion corrected in the doc, a resumed run keeps the finished work and has eight enumerated items left, which a fresh re-dispatch would redo.
+
+### Update — 2026-10-13 12:01 (progress)
+
+Started the phase (executor: Claude Opus 4.6). Status flipped to in-progress and
+the milestone README row updated. Reading the design (`interactive-shells.md` §
+1, D1–D3, § 5), `screen.rs`, `proto.rs`, `host.rs`, `backend.rs`, `client.rs`
+and `pty.rs` before editing. No code yet.

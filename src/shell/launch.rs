@@ -320,6 +320,9 @@ mod tests {
                         rows: 24,
                         cols: 80,
                         pid: 1,
+                        raw_mode: None,
+                        alt_screen: None,
+                        foreground: None,
                     })
                     .unwrap();
                     let _ = stream.write_all(resp.as_bytes()).await;
@@ -354,6 +357,9 @@ mod tests {
                         rows: 24,
                         cols: 80,
                         pid: 1,
+                        raw_mode: None,
+                        alt_screen: None,
+                        foreground: None,
                     })
                     .unwrap();
                     let _ = stream.write_all(resp.as_bytes()).await;

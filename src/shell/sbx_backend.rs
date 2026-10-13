@@ -89,10 +89,17 @@ impl<B: ShellBackend> ShellBackend for SbxBackend<B> {
             rows,
             cols,
             pid,
-        } = inner
+            raw_mode,
+            alt_screen,
+            foreground,
+            ..
+        } = &inner
         else {
             return inner;
         };
+        let (rows, cols, pid) = (*rows, *cols, *pid);
+        let (raw_mode, alt_screen, foreground) = (*raw_mode, *alt_screen, foreground.clone());
+        let inner_state = *inner_state;
         if inner_state == ShellState::Exited {
             return inner;
         }
@@ -118,6 +125,9 @@ impl<B: ShellBackend> ShellBackend for SbxBackend<B> {
             rows,
             cols,
             pid,
+            raw_mode,
+            alt_screen,
+            foreground,
         }
     }
 
@@ -140,6 +150,12 @@ impl<B: ShellBackend> ShellBackend for SbxBackend<B> {
 
     fn subscribe_with_screen(&self) -> (Vec<u8>, broadcast::Receiver<Vec<u8>>) {
         self.inner.subscribe_with_screen()
+    }
+
+    /// Delegates to the inner backend: the sbx host's screen is the inner
+    /// PTY's screen (the in-VM side renders into it).
+    async fn screen_text(&self, annotated: bool, scrollback: u16) -> anyhow::Result<ShellResponse> {
+        self.inner.screen_text(annotated, scrollback).await
     }
 
     async fn close(&self) -> anyhow::Result<()> {

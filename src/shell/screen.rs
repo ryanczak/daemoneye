@@ -98,10 +98,18 @@ impl ShellScreen {
     /// The visible screen with semantically-coloured runs wrapped in markers:
     /// red → `[ERROR: …]`, yellow → `[WARN: …]`, green → `[OK: …]`.
     pub fn annotated(&self) -> String {
+        self.marked(true)
+    }
+
+    /// The visible screen with selection markers: every run of cells in
+    /// inverse video is wrapped `[SEL: …]`, and — only when `annotated` —
+    /// the semantically-coloured runs `annotated()` wraps today are wrapped
+    /// on top (`red → [ERROR: …]`, yellow → `[WARN: …]`, green → `[OK: …]`).
+    pub fn marked(&self, annotated: bool) -> String {
         let (rows, cols) = self.size();
         let mut out: Vec<String> = Vec::with_capacity(usize::from(rows));
         for row in 0..rows {
-            out.push(self.annotated_row(row, cols));
+            out.push(self.marked_row(row, cols, annotated));
         }
         // A trailing run of entirely-empty rows yields empty strings; drop them
         // but keep interior empty lines (they separate legitimately empty rows).
@@ -111,9 +119,44 @@ impl ShellScreen {
         out.join("\n")
     }
 
-    fn annotated_row(&self, row: u16, cols: u16) -> String {
+    /// The last `n` rows that scrolled off the top of the screen, as plain
+    /// text — vt100's scrollback, oldest line first. `n` larger than what is
+    /// kept returns what is kept. The parser's scrollback offset is moved and
+    /// restored under the same borrow, so the viewport is untouched.
+    pub fn scrollback_rows(&mut self, n: usize) -> String {
+        if n == 0 {
+            return String::new();
+        }
+        let (_, cols) = self.size();
+        let screen = self.parser.screen_mut();
+        // At scrollback offset `o`, `rows()`'s first item is the oldest
+        // scrollback row still above the viewport (`o` rows up from the
+        // bottom); walking `o` from `usize::MAX` (clamped to the buffer) down
+        // to 1 therefore yields the kept scrollback rows oldest first. Each
+        // step re-borrows the screen; the offset is restored to 0 at the end,
+        // so the viewport this function leaves behind is the live one.
+        screen.set_scrollback(usize::MAX);
+        let kept = screen.scrollback();
+        let mut lines: Vec<String> = Vec::with_capacity(kept);
+        for offset in (1..=kept).rev() {
+            screen.set_scrollback(offset);
+            if let Some(line) = screen
+                .rows(0, cols)
+                .map(|l| l.trim_end().to_string())
+                .next()
+            {
+                lines.push(line);
+            }
+        }
+        screen.set_scrollback(0);
+        let start = lines.len().saturating_sub(n);
+        lines[start..].join("\n")
+    }
+
+    fn marked_row(&self, row: u16, cols: u16, annotated: bool) -> String {
         let mut text = String::new();
         let mut color: Option<CellColor> = None;
+        let mut inverse = false;
         let mut out = String::new();
         for col in 0..cols {
             let cell = match self.parser.screen().cell(row, col) {
@@ -128,25 +171,47 @@ impl ShellScreen {
                 continue;
             }
             let ccolor = cell_color(cell.fgcolor());
-            if ccolor != color {
-                flush_span(&mut out, &mut text, color.take());
+            let cinv = cell.inverse();
+            if ccolor != color || cinv != inverse {
+                flush_span(&mut out, &mut text, color.take(), inverse, annotated);
                 color = ccolor;
+                inverse = cinv;
             }
             text.push_str(cell.contents());
         }
-        flush_span(&mut out, &mut text, color.take());
+        flush_span(&mut out, &mut text, color.take(), inverse, annotated);
         out
     }
 }
 
-/// Flush an accumulated run of `color`-labelled cells to `out`, wrapping it
-/// in the marker only when labelled; runs that trim to nothing are dropped.
-fn flush_span(out: &mut String, span_buf: &mut String, color: Option<CellColor>) {
+/// Flush an accumulated run of cells to `out`: an inverse run is wrapped
+/// `[SEL: …]` regardless of colour, then — when `annotated` — the label for
+/// a semantically-coloured run is added on top (`red → [ERROR: …]`). Runs
+/// that trim to nothing are dropped.
+///
+/// Nested markers wrap outside-in: the inverse span is the outer marker, so
+/// a red *and* inverse run reads `[SEL: [ERROR: …]]`. `annotated()` only
+/// sees colour runs, so its output is exactly what it always was.
+fn flush_span(
+    out: &mut String,
+    span_buf: &mut String,
+    color: Option<CellColor>,
+    inverse: bool,
+    annotated: bool,
+) {
     let text = span_buf.trim().to_string();
     if !text.is_empty() {
-        match color {
-            Some(color) => out.push_str(&format!("[{}: {}]", marker_label(color), text)),
-            None => out.push_str(&text),
+        match (inverse, color) {
+            (true, Some(color)) if annotated => {
+                let label = marker_label(color);
+                out.push_str(&format!("[SEL: [{label}: {text}]]"));
+            }
+            (true, _) => out.push_str(&format!("[SEL: {text}]")),
+            (false, Some(color)) if annotated => {
+                let label = marker_label(color);
+                out.push_str(&format!("[{label}: {text}]"));
+            }
+            (false, _) => out.push_str(&text),
         }
     }
     span_buf.clear();
@@ -312,6 +377,56 @@ mod tests {
         // 3 rows: 8 lines scrolled through it, so only the last two survive
         // (a CRLF on the last line still leaves the final row empty).
         assert_eq!(contents, "line7\nline8");
+    }
+
+    #[test]
+    fn marked_wraps_an_inverse_run_as_sel() {
+        let mut s = screen(2, 40);
+        s.feed(b"\x1b[7mselected item\x1b[0m");
+        assert_eq!(s.marked(false), "[SEL: selected item]");
+        assert_eq!(s.marked(true), "[SEL: selected item]");
+    }
+
+    #[test]
+    fn marked_leaves_plain_text_unmarked() {
+        let mut s = screen(2, 40);
+        s.feed(b"plain text only\r\nsecond");
+        assert_eq!(s.marked(false), "plain text only\nsecond");
+        assert_eq!(s.marked(false), s.contents());
+    }
+
+    #[test]
+    fn marked_with_annotated_also_wraps_colour_runs() {
+        let mut s = screen(2, 40);
+        s.feed(b"\x1b[7mtop\x1b[0m \x1b[31mred tail\x1b[0m");
+        let out = s.marked(true);
+        assert_eq!(out, "[SEL: top][ERROR: red tail]", "annotated: {out:?}");
+        let plain = s.marked(false);
+        assert_eq!(plain, "[SEL: top]red tail", "plain: {plain:?}");
+        let annotated = s.annotated();
+        assert_eq!(annotated, "[SEL: top][ERROR: red tail]");
+    }
+
+    #[test]
+    fn scrollback_rows_return_what_scrolled_off() {
+        let mut s = ShellScreen::new(3, 20, 100);
+        for i in 1..=8 {
+            let line = format!("line{i}\r\n");
+            s.feed(line.as_bytes());
+        }
+        // 3 visible rows with 8 lines pushed through: the scrollback keeps
+        // the six rows that scrolled off (line1..line6); line7/line8/blank
+        // are the viewport.
+        let all = s.scrollback_rows(100);
+        assert_eq!(
+            all, "line1\nline2\nline3\nline4\nline5\nline6",
+            "all: {all:?}"
+        );
+        let last_two = s.scrollback_rows(2);
+        assert_eq!(last_two, "line5\nline6", "last two: {last_two:?}");
+        assert_eq!(s.scrollback_rows(0), "", "no scrollback rows requested");
+        assert_eq!(s.contents(), "line7\nline8", "viewport untouched");
+        assert_eq!(s.contents(), "line7\nline8", "still untouched");
     }
 
     #[test]

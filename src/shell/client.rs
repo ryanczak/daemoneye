@@ -164,6 +164,36 @@ pub async fn status(sock: &Path, timeout: Duration) -> anyhow::Result<ShellRespo
     read_one(sock, &mut reader, timeout).await
 }
 
+/// Read the shell's rendered screen from the host at `sock`: the last
+/// `scrollback` rows that scrolled off the top prepended to the visible
+/// screen, inverse-video runs marked `[SEL: …]`, and — when `annotated` —
+/// the colour runs marked too.
+pub async fn screen(
+    sock: &Path,
+    annotated: bool,
+    scrollback: u16,
+    timeout: Duration,
+) -> anyhow::Result<ShellResponse> {
+    let stream = UnixStream::connect(sock)
+        .await
+        .with_context(|| format!("connecting to shell socket at {}", sock.display()))?;
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+
+    let wire = encode(ShellRequest::Screen {
+        annotated,
+        scrollback,
+    })
+    .context("encoding Screen frame")?;
+    writer
+        .write_all(wire.as_bytes())
+        .await
+        .context("sending Screen frame")?;
+    writer.flush().await.context("flushing Screen frame")?;
+
+    read_one(sock, &mut reader, timeout).await
+}
+
 /// The single answer frame of a one-shot request that expects `Ok`.
 async fn read_ack(
     sock: &Path,
@@ -991,6 +1021,7 @@ mod tests {
             Signal(ShellSignal),
             Input(Vec<u8>),
             Status,
+            Screen { annotated: bool, scrollback: u16 },
         }
 
         struct SignalBackend {
@@ -1036,6 +1067,17 @@ mod tests {
             async fn status(&self) -> ShellResponse {
                 self.calls.lock().unwrap().push(Call::Status);
                 self.status.clone()
+            }
+            async fn screen_text(
+                &self,
+                annotated: bool,
+                scrollback: u16,
+            ) -> anyhow::Result<ShellResponse> {
+                self.calls.lock().unwrap().push(Call::Screen {
+                    annotated,
+                    scrollback,
+                });
+                Ok(self.status.clone())
             }
             fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
                 tokio::sync::broadcast::channel(1).0.subscribe()
@@ -1139,6 +1181,9 @@ mod tests {
                 rows: 31,
                 cols: 100,
                 pid: 4711,
+                raw_mode: None,
+                alt_screen: None,
+                foreground: None,
             };
             let server = start_server(expected.clone()).await;
             let answered = status(&server.path, Duration::from_secs(5))
@@ -1151,6 +1196,7 @@ mod tests {
                     rows,
                     cols,
                     pid,
+                    ..
                 } => {
                     assert_eq!(rows, 31, "rows round-trip");
                     assert_eq!(cols, 100, "cols round-trip");
@@ -1162,6 +1208,30 @@ mod tests {
                 server.backend.calls(),
                 vec![Call::Status],
                 "exactly one Status dispatch"
+            );
+        }
+
+        #[tokio::test]
+        async fn client_screen_round_trip() {
+            let expected = ShellResponse::ScreenText {
+                text: "line1\n[SEL: picked]\n$ ".into(),
+                rows: 24,
+                cols: 80,
+                cursor: (12, 34),
+                alt_screen: true,
+            };
+            let server = start_server(expected.clone()).await;
+            let answered = screen(&server.path, true, 40, Duration::from_secs(5))
+                .await
+                .expect("the one-shot Screen round-trip answers");
+            assert_eq!(answered, expected, "the frame must survive");
+            assert_eq!(
+                server.backend.calls(),
+                vec![Call::Screen {
+                    annotated: true,
+                    scrollback: 40
+                }],
+                "the request's two fields must reach the backend"
             );
         }
 

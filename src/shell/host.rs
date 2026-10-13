@@ -30,6 +30,18 @@ pub trait ShellBackend: Send + Sync + 'static {
         (Vec::new(), self.subscribe())
     }
 
+    /// Render the shell's screen: the last `scrollback` rows that scrolled
+    /// off the top prepended to the marked screen. A backend with no screen
+    /// model answers the default error, which the host relays as an `Error`
+    /// frame.
+    async fn screen_text(
+        &self,
+        _annotated: bool,
+        _scrollback: u16,
+    ) -> anyhow::Result<ShellResponse> {
+        anyhow::bail!("this shell host has no screen")
+    }
+
     /// Whether the shell has exited. The exit watch in `serve_until_exit`
     /// polls this every 250 ms, so it must be cheap: a backend that probes
     /// the shell with an external call overrides it with something that is
@@ -221,6 +233,15 @@ async fn handle_line<B: ShellBackend>(
             },
         },
         ShellRequest::Status => backend.status().await,
+        ShellRequest::Screen {
+            annotated,
+            scrollback,
+        } => backend
+            .screen_text(annotated, scrollback)
+            .await
+            .unwrap_or_else(|e| ShellResponse::Error {
+                message: e.to_string(),
+            }),
         ShellRequest::Close => match backend.close().await {
             Ok(()) => ShellResponse::Ok,
             Err(e) => ShellResponse::Error {
@@ -318,6 +339,9 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 pid: 0,
+                raw_mode: None,
+                alt_screen: None,
+                foreground: None,
             }
         }
         fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
@@ -401,7 +425,10 @@ mod tests {
                 state: ShellState::Running,
                 rows: 24,
                 cols: 80,
-                pid: 0
+                pid: 0,
+                raw_mode: None,
+                alt_screen: None,
+                foreground: None
             }
         );
 
@@ -536,7 +563,10 @@ mod tests {
                 state: ShellState::Running,
                 rows: 24,
                 cols: 80,
-                pid: 0
+                pid: 0,
+                raw_mode: None,
+                alt_screen: None,
+                foreground: None
             }
         );
     }
@@ -565,7 +595,10 @@ mod tests {
                 state: ShellState::Running,
                 rows: 24,
                 cols: 80,
-                pid: 0
+                pid: 0,
+                raw_mode: None,
+                alt_screen: None,
+                foreground: None
             }
         );
     }
@@ -656,5 +689,48 @@ mod tests {
         );
         drop(writer);
         tokio::task::yield_now().await;
+    }
+
+    #[tokio::test]
+    async fn host_screen_on_a_backend_without_a_screen_is_an_error() {
+        // FakeBackend does not override `screen_text`, so the trait's default
+        // refusal must come back as an `Error` frame, and the connection must
+        // survive for a later request.
+        let server = start_server().await;
+        let client = UnixStream::connect(&server.path).await.unwrap();
+        let (reader, mut writer) = client.into_split();
+        let mut reader = BufReader::new(reader);
+
+        write_request(
+            &mut writer,
+            &ShellRequest::Screen {
+                annotated: true,
+                scrollback: 10,
+            },
+        )
+        .await;
+        let resp = read_response(&mut reader).await;
+        match resp {
+            ShellResponse::Error { message } => assert_eq!(
+                message, "this shell host has no screen",
+                "the default refusal, relayed verbatim"
+            ),
+            other => panic!("expected Error frame, got {other:?}"),
+        }
+
+        write_request(&mut writer, &ShellRequest::Status).await;
+        assert_eq!(
+            read_response(&mut reader).await,
+            ShellResponse::Status {
+                state: ShellState::Running,
+                rows: 24,
+                cols: 80,
+                pid: 0,
+                raw_mode: None,
+                alt_screen: None,
+                foreground: None
+            },
+            "the connection must survive the refused Screen request"
+        );
     }
 }

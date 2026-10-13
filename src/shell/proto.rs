@@ -45,6 +45,13 @@ pub enum ShellRequest {
         signal: ShellSignal,
     },
     Status,
+    /// Render the current screen: the last `scrollback` rows that scrolled
+    /// off the top prepended to the visible screen, with inverse-video runs
+    /// marked `[SEL: …]` and — when `annotated` — the colour runs marked.
+    Screen {
+        annotated: bool,
+        scrollback: u16,
+    },
     /// Hang up the shell itself (SIGHUP to its pid), ending it and its jobs.
     Close,
 }
@@ -64,11 +71,30 @@ pub enum ShellResponse {
     Screen {
         bytes: Vec<u8>,
     },
+    /// A rendered `ShellRequest::Screen`: scrollback + the marked screen.
+    ScreenText {
+        text: String,
+        rows: u16,
+        cols: u16,
+        cursor: (u16, u16),
+        alt_screen: bool,
+    },
     Status {
         state: ShellState,
         rows: u16,
         cols: u16,
         pid: u32,
+        /// The slave's line discipline, read from the master fd: `Some(true)`
+        /// when `ICANON` is off. `None` on a host from before this milestone.
+        #[serde(default)]
+        raw_mode: Option<bool>,
+        /// The screen model's alt-screen bit. `None` on a pre-milestone host.
+        #[serde(default)]
+        alt_screen: Option<bool>,
+        /// Basename of argv[0] of the foreground group leader, `None` when
+        /// the group is the shell's own. `None` on a pre-milestone host.
+        #[serde(default)]
+        foreground: Option<String>,
     },
     Exited {
         code: i32,
@@ -149,8 +175,44 @@ mod tests {
                     rows: 40,
                     cols: 120,
                     pid: 1234,
+                    raw_mode: Some(true),
+                    alt_screen: Some(false),
+                    foreground: Some("vim".into()),
                 },
-                json!({"type": "Status", "state": "Running", "rows": 40, "cols": 120, "pid": 1234}),
+                json!({
+                    "type": "Status",
+                    "state": "Running",
+                    "rows": 40,
+                    "cols": 120,
+                    "pid": 1234,
+                    "raw_mode": true,
+                    "alt_screen": false,
+                    "foreground": "vim"
+                }),
+            ),
+            (
+                // A host from before this milestone sends no foreground
+                // fields; serde's `#[serde(default)]` must parse it as all
+                // `None` so the classifier reads `Unknown`, never a prompt.
+                ShellResponse::Status {
+                    state: ShellState::Idle,
+                    rows: 24,
+                    cols: 80,
+                    pid: 1,
+                    raw_mode: None,
+                    alt_screen: None,
+                    foreground: None,
+                },
+                json!({
+                    "type": "Status",
+                    "state": "Idle",
+                    "rows": 24,
+                    "cols": 80,
+                    "pid": 1,
+                    "raw_mode": null,
+                    "alt_screen": null,
+                    "foreground": null
+                }),
             ),
             (
                 ShellResponse::Exited { code: 0 },
@@ -227,6 +289,38 @@ mod tests {
         let wire = encode(&frame).unwrap();
         let decoded: ShellResponse = serde_json::from_str(wire.trim_end()).unwrap();
         assert_eq!(decoded, frame, "byte-exact Screen round trip");
+
+        let request = ShellRequest::Screen {
+            annotated: true,
+            scrollback: 40,
+        };
+        assert_eq!(
+            encode(&request).unwrap(),
+            "{\"type\":\"Screen\",\"annotated\":true,\"scrollback\":40}\n",
+            "the Screen request carries its two fields on the pinned wire form"
+        );
+        let text = ShellResponse::ScreenText {
+            text: "line1\n[SEL: picked]\n$ ".into(),
+            rows: 24,
+            cols: 80,
+            cursor: (12, 34),
+            alt_screen: true,
+        };
+        let wire = encode(&text).unwrap();
+        let decoded: ShellResponse = serde_json::from_str(wire.trim_end()).unwrap();
+        assert_eq!(decoded, text, "ScreenText round trip");
+        assert_eq!(
+            parse(&wire),
+            json!({
+                "type": "ScreenText",
+                "text": "line1\n[SEL: picked]\n$ ",
+                "rows": 24,
+                "cols": 80,
+                "cursor": [12, 34],
+                "alt_screen": true
+            }),
+            "the pinned wire form of a ScreenText reply"
+        );
     }
 
     #[test]
@@ -243,6 +337,33 @@ mod tests {
             let wire = encode(&frame).unwrap();
             let body = &wire[..wire.len() - 1];
             assert!(!body.contains('\n'), "no internal newline: {body:?}");
+        }
+    }
+
+    #[test]
+    fn proto_status_from_a_pre_phase_host_parses_with_none_fields() {
+        // A host from before this milestone answers exactly the old wire
+        // shape: no raw_mode, no alt_screen, no foreground key at all.
+        let old = r#"{"type":"Status","state":"Running","rows":24,"cols":80,"pid":4711}
+"#;
+        let decoded: ShellResponse = serde_json::from_str(old.trim_end()).unwrap();
+        match decoded {
+            ShellResponse::Status {
+                state,
+                rows,
+                cols,
+                pid,
+                raw_mode,
+                alt_screen,
+                foreground,
+            } => {
+                assert_eq!(state, ShellState::Running, "state parses");
+                assert_eq!((rows, cols, pid), (24, 80, 4711), "geometry parses");
+                assert_eq!(raw_mode, None, "missing raw_mode defaults to None");
+                assert_eq!(alt_screen, None, "missing alt_screen defaults to None");
+                assert_eq!(foreground, None, "missing foreground defaults to None");
+            }
+            other => panic!("unexpected variant: {other:?}"),
         }
     }
 }
