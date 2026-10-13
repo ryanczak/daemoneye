@@ -387,3 +387,100 @@ presence registered with a disk history, unregistered, then
 `record_chat_detach`, then the inject with no presence and no store entry —
 the mutation check on the row-5 line, the mechanically captured evidence
 entry, and the gates. Finish condition `passed=2325`.
+
+### Update — 2026-10-13 02:14 (bounce 1, progress)
+
+Rows 4–5 and the pinned bounce test are implemented. `non_resident_detach_ids()`
+sits next to `take_non_resident_detach` in `src/daemon/session.rs`;
+`inject_into_sessions` (`src/webhook/process.rs`) extends its union with those
+ids after the presence ids, sort + dedup as before — each id once, the
+in-memory push unchanged, no store entry created. The pinned test
+`catchup_brief_names_an_alert_posted_after_the_chat_left` in
+`src/daemon/server/chat_presence.rs` follows the production order exactly:
+presence registered over an existing disk history, then **unregistered**, then
+`record_chat_detach`, then `inject_into_sessions` with no presence and no
+store entry, then the record backdated 60 s (both `Instant` and UTC, like the
+`away-1` test's `last_detach` backdate). It asserts the alert landed in the
+session file, that the attach brief names `[Webhook Alert]`, and that the
+store still has no entry for the id. One wobble worth noting: between
+row 5's first application and the test run, the verifier rebuilt with the
+union line present but the import missing; the import was re-added and the
+line restored after the mutation-check revert — both final states are
+verified by the gate runs below.
+
+### Update — 2026-10-13 02:24 (end-to-end verification, bounce 1)
+
+All evidence captured mechanically from single passes, pasted verbatim from
+the tee'd files. The mutation check was a hand edit of the row-5 line in
+`src/webhook/process.rs` (the union reverts to store keys + presence ids
+only), run, captured, then restored from the copy taken before the edit —
+`git diff --stat` shows only this phase doc afterwards. Code commits:
+`14fe16b6` (rows 4–5 + the pinned test). Working tree clean but for this
+entry.
+
+**The pinned bounce test** (`cargo test --lib <name>`):
+
+```
+test daemon::server::chat_presence::tests::catchup_brief_names_an_alert_posted_after_the_chat_left ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+```
+
+**Mutation check — row 5's ids dropped from the inject union:** the pinned
+test fails at the file-contents assert, exactly as required.
+
+```
+thread 'daemon::server::chat_presence::tests::catchup_brief_names_an_alert_posted_after_the_chat_left' (1144006) panicked at src/daemon/server/chat_presence.rs:772:9:
+the alert posted after the chat left lands in its session file: {"role":"system","content":"[Background Task Completed] deploy finished (exit 0)"}
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::server::chat_presence::tests::catchup_brief_names_an_alert_posted_after_the_chat_left
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+error: test failed, to rerun pass `--lib`
+```
+
+**Preservation** — 07e's first-pass tests and 07d's two, all re-run after the
+restore:
+
+```
+test daemon::server::chat_presence::tests::catchup_brief_reaches_a_session_that_is_not_resident ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+test daemon::server::chat_presence::tests::attach_brief_creates_no_store_entry_for_a_non_resident_session ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+test daemon::server::chat_presence::tests::attach_brief_includes_an_alert_injected_while_away ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+test webhook::process::tests::inject_reaches_a_presence_attached_session_that_is_not_resident ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2263 filtered out; finished in 0.00s
+```
+
+**Full suite** (`cargo test`, one run, tee'd; sums over the result lines via
+`awk '{p+=$4; f+=$6} END {print "passed="p" failed="f}'`):
+
+```
+test result: ok. 2254 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 64.08s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+passed=2325 failed=0
+```
+
+**Gate commands:**
+
+```
+$ cargo fmt --all --check
+fmt-exit=0
+$ cargo clippy --all-targets --all-features -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.45s
+$ cargo build
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.88s
+```
+
+**PASTE MATCH: yes.** Finish condition met: `passed=2325 failed=0`. The live
+check remains the S2 re-run in phase 07, which the architect does after a
+daemon restart with no ask before quitting.
