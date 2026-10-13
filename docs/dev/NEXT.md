@@ -8,6 +8,6 @@ scoping M28.
 
 Candidates for the next milestone: the M27 deferred list (unify session
 residency, F9, the invalid-args nits), and M28+ from
-`docs/design/daemoneye-2.0.md` § 6 (telemetry & dashboard, MCP surface,
+`docs/design/daemoneye-post-2.0-todo.md` and `docs/design/daemoneye-2.0.md` § 6 (telemetry & dashboard, MCP surface,
 knowledge & fleet). Fold queue: M27 proposal A, M27 proposal B (held), and
 M23's two proposals.
