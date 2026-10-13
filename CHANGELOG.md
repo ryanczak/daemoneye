@@ -2,6 +2,10 @@
 
 All notable changes to DaemonEye are documented here.
 
+From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
+2.2.0, …); fixes between closes are patch releases. See `REXYMCP.md`
+§ Versioning.
+
 ## [Unreleased]
 
 ## [2.0.0] — 2026-10-12
