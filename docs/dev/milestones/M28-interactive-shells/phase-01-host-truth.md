@@ -219,3 +219,47 @@ Started the phase (executor: Claude Opus 4.6). Status flipped to in-progress and
 the milestone README row updated. Reading the design (`interactive-shells.md` §
 1, D1–D3, § 5), `screen.rs`, `proto.rs`, `host.rs`, `backend.rs`, `client.rs`
 and `pty.rs` before editing. No code yet.
+
+### Update — 2026-10-13 21:35 (progress)
+
+Resumed the phase (executor: Claude Opus 4.6, second resume). Completed the
+eight remaining items from the notes for executor: the raw-mode test's idle
+assertion dropped per the corrected § Tests bullet (canonical while a plain
+`sleep` runs, raw while `stty raw -echo; sleep 2; stty sane` runs, no
+post-`sane` assertion); the inverse/alt-screen test rewritten as the single
+`printf '\033[?1049h\033[7mSELECTED\033[0m plain\n'; sleep 30` command with
+`\\033` text for printf to expand; `probe_sb8/9/10` deleted; the two missing
+proto/host tests added; `client::screen(...)` exported from
+`src/shell/mod.rs` with `client_screen_round_trip` extended to pin the
+request's two fields reaching the backend; `src/shell/foreground.rs` written
+(both classifiers, `Display`, the digit guard on the prompt rule) and
+exported; end-to-end block captured below. During verification the clippy
+`match_like_matches_macro` lint and one residual post-`stty sane` assertion
+were fixed. All four gates pass; `cargo test` 2340 passed, 0 failed.
+
+### Update — 2026-10-13 21:40 (end-to-end verification)
+
+Block verbatim from § End-to-end verification, captured mechanically to
+`/tmp/e2e-01.txt`:
+
+```
+marked_wraps_an_inverse_run_as_sel: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+marked_leaves_plain_text_unmarked: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+marked_with_annotated_also_wraps_colour_runs: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+scrollback_rows_return_what_scrolled_off: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+proto_status_from_a_pre_phase_host_parses_with_none_fields: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+backend_status_reports_raw_mode_under_stty_raw: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 5.05s
+backend_status_names_the_foreground_command: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.05s
+backend_screen_text_marks_inverse_and_reports_alt_screen: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.06s
+host_screen_on_a_backend_without_a_screen_is_an_error: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+client_screen_round_trip: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+classify_matches_the_design_matrix: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+classify_never_calls_a_pre_phase_host_a_prompt: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+classify_transport_matches_the_design_matrix: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+classify_transport_prompt_rule: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2278 filtered out; finished in 0.00s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.66s
+fmt_exit=0
+passed=2340 failed=0
+```
+
+PASTE MATCH
