@@ -6,6 +6,9 @@ and the roadmap's M28–M30 shift down by one; the static `interactive` flag is
 **replaced** by derived live state; `annotated` defaults to **false**.
 **Amended:** 2026-10-13 — transport shells (D3, D4, § 5): a shell whose
 child is `ssh` or `sbx exec` is never classified from the local terminal.
+Same day: the five coverage caveats became decisions — selection markers
+(D1, D7), settle that cannot settle (D7), modifier keys and paste (D8),
+geometry (D10).
 **Drives:** M28 (release `2.1.0`), three phases (§ 6).
 **Sibling:** [`daemoneye-2.0.md`](daemoneye-2.0.md) § 6 — the roadmap row.
 
@@ -78,6 +81,15 @@ alt_screen: bool }`. The host renders under its existing
 `[shells] scrollback_lines`; Claude Code's transcript lives there). No
 daemon-side parser, so the screen a tool reports and the screen `/tail`
 draws can never disagree in substance.
+
+**Selection markers are always on.** Independently of `annotated`, a run of
+cells in **inverse video** is wrapped as `[SEL: …]`. Inverse is how
+ncurses menus, `dialog`, `whiptail`, `less`'s status line and most pickers
+mark the selected row, and plain `contents()` drops it; colour markers
+(`annotated`) are semantics the model opts into, inverse is structure it
+always needs. `ShellScreen::marked()` generalises `annotated_row` over
+`vt100::Cell::inverse()`; the frame's `annotated` flag only adds the
+colour runs on top.
 
 ### D2 — `Status` grows the three foreground facts
 
@@ -210,6 +222,16 @@ makes it work on TUI output where `watch_shell`'s byte match does not;
 Code finished its turn". `annotated` stays false by decision: a TUI's
 colours are not OK/WARN/ERROR semantics.
 
+**A settle that cannot settle is a result, not an error.** `top`, clocks
+and spinners redraw forever. Quiescence is measured on the **rendered
+text** (two consecutive `Screen` reads `settle_ms` apart that are equal),
+not on the byte stream, so a cursor blink or an SGR-only redraw settles and
+only a visible change does not. When `timeout_secs` elapses first the tool
+returns the current screen with the header `did not settle within N s —
+the screen is still changing; use wait_for for a pattern that marks the
+state you need`. The tool description names `top` as the example so the
+model reaches for `wait_for` on the first call, not the second.
+
 ### D8 — `send_input` sends `\r` and takes named keys
 
 - `enter: true` appends `\r`, not `\n`. A cooked line discipline turns it
@@ -223,6 +245,22 @@ colours are not OK/WARN/ERROR semantics.
   come from the `Status`/`ScreenText` reply. `text` is sent first, then
   `keys`, then Enter if `enter`. An unknown key name is an error naming the
   vocabulary; nothing is sent.
+- **Modifier grammar.** `C-`, `M-` and `S-` compose: `S-Enter`, `C-S-p`,
+  `M-Enter`. Combinations a legacy terminal has no byte for — `S-Enter`,
+  `C-Enter`, `S-Tab` already being `BTab`, `C-S-<x>` — encode as **CSI u**
+  (`ESC [ <codepoint> ; <modifier> u`, `S-Enter` = `ESC [ 13 ; 2 u`), the
+  kitty keyboard protocol's legacy-compatible form. Whether the program
+  honours CSI u is the program's business; the tool's result says which
+  keys went out as CSI u so the model can read the screen and tell. The
+  phase 03 live close checks `S-Enter` against Claude Code's own
+  `/terminal-setup` expectation.
+- **Paste.** `paste: bool`, default **true when `text` contains a newline
+  and the shell has bracketed paste on**, else false. When true the text is
+  wrapped in `ESC [ 200 ~` / `ESC [ 201 ~` so a multi-line prompt reaches
+  Claude Code as one paste instead of a submit per line; when the shell has
+  not asked for bracketed paste the brackets are never sent, the same rule
+  `attach_keys` applies. `paste: true` with the mode off is an error naming
+  the mode, not a silent downgrade.
 
 ### D9 — The guard, the panel and the ghost refusal
 
@@ -242,6 +280,18 @@ default is refuse; the refusal names the shell, the classification and
 `allow_tui_input` as the runbook field that lifts it. The existing
 `ToolPolicy` explicit-allow stays a prerequisite — `allow_tui_input` widens
 *where* a permitted ghost may type, never *whether* it may.
+
+### D10 — Geometry is configurable and a shell can be opened to size
+
+Shells spawn at 24×80 today, which cramps every modern TUI. `[shells]`
+gains `rows` (default **40**) and `cols` (default **120**); every spawn
+path (`shell_for_owner`, `open_shell`, the dedicated background shell, the
+sandbox and host shells) reads them. `open_shell` gains optional `rows` /
+`cols` so the model can open a wide shell for a wide app; the result names
+the size. The existing `Resize` frame is unchanged and attached mode still
+resizes to the user's terminal, so a shell the user attaches to follows the
+human, and one the model drives keeps its configured size. Tests that pin
+24×80 pass the size explicitly rather than inheriting the default.
 
 ## 5. The matrix the tests pin
 
@@ -269,9 +319,9 @@ transport record never takes the rows above them.
 
 | Phase | Delivers | Exit |
 |---|---|---|
-| **01 — Host truth** | D1, D2, D3: the `Screen` frame, the three `Status` fields (raw mode read from the master fd), `src/shell/foreground.rs` with both `classify` and `classify_transport` + the § 5 table test, `read_shell_screen` without `wait_for`/`settle_ms`, `last_foreground` and `in_flight` on the record (D4, flag still present). Tool count 42→43 in `CLAUDE.md`/`README.md`; `sre.toml` documents the tool. | A shell running `less` and one at a prompt: `read_shell_screen` shows the frame and the prompt; `Status` reports `raw_mode`/`alt_screen`/`foreground` for each; a pre-D2 `Status` JSON parses as `Unknown`; a shell on `zoidberg` at its remote prompt classifies `Prompt` while its local terminal reports raw mode. |
+| **01 — Host truth** | D1, D2, D3: the `Screen` frame, the three `Status` fields (raw mode read from the master fd), `src/shell/foreground.rs` with both `classify` and `classify_transport` + the § 5 table test, `read_shell_screen` without `wait_for`/`settle_ms` but with the `[SEL: …]` inverse markers, `last_foreground` and `in_flight` on the record (D4, flag still present). Tool count 42→43 in `CLAUDE.md`/`README.md`; `sre.toml` documents the tool. | A shell running `less` and one at a prompt: `read_shell_screen` shows the frame and the prompt, and `less`'s inverse status line comes back as `[SEL: …]`; `Status` reports `raw_mode`/`alt_screen`/`foreground` for each; a pre-D2 `Status` JSON parses as `Unknown`; a shell on `zoidberg` at its remote prompt classifies `Prompt` while its local terminal reports raw mode. |
 | **02 — Safety** | D4 (flag removed), D5, D8, D9: live probes in `shell_for_owner` and the explicit path, the busy refusal, `\r` + `keys` via `src/shell/keys.rs` shared with `cli/attach.rs`, the guard + panel + ghost refusal + `allow_tui_input`. | Live: Claude Code launched from attached mode in the owner's lowest shell; a bare `run_terminal_command` lands in a fresh shell; `shell: "s0"` is refused naming `claude`; `send_input(keys: ["BTab"])` cycles its mode and the panel showed the screen tail; a ghost with no `allow_tui_input` is refused; `run_terminal_command(host: "zoidberg")` twice in a row reuses the same host shell. |
-| **03 — Launch & wait** | D6, D7's `wait_for`/`settle_ms`/`scrollback`: `interactive: true`, the ssh auto-upgrade replacing the `[Interactive session started]` path, screen waits. | Live close (M14 convention): the model launches Claude Code with `interactive: true`, types a prompt with `send_input`, `read_shell_screen(settle_ms: 1500)` returns the finished answer, `scrollback` returns the part that scrolled off; `ssh zoidberg` goes through the auto-upgrade and the shell is reusable again after `exit`. |
+| **03 — Launch & wait** | D6, D7's `wait_for`/`settle_ms`/`scrollback` with the rendered-text quiescence rule and the did-not-settle result, D8's modifier grammar (CSI u) and `paste`, D10's `[shells] rows`/`cols` and `open_shell(rows, cols)`: `interactive: true`, the ssh auto-upgrade replacing the `[Interactive session started]` path, screen waits. | Live close (M14 convention): the model launches Claude Code with `interactive: true`, types a prompt with `send_input`, `read_shell_screen(settle_ms: 1500)` returns the finished answer, `scrollback` returns the part that scrolled off; a two-line prompt goes in as one bracketed paste; `S-Enter` goes out as CSI u and the screen shows what Claude Code made of it; `read_shell_screen(settle_ms: 500)` on `top` returns the did-not-settle result inside `timeout_secs`; a shell opened with `cols: 160` runs `htop` at that width; `ssh zoidberg` goes through the auto-upgrade and the shell is reusable again after `exit`. |
 
 Phase 01 is independently shippable and has no behaviour change for a model
 that does not call the new tool. Phase 02 is the hazard fix. Phase 03 is
@@ -295,23 +345,40 @@ the TUI-as-a-first-class-citizen step and the milestone's live close.
 
 ## 8. Open items (settled at phase scoping, not here)
 
-- **Default PTY geometry.** Shells spawn 24×80; Claude Code is usable but
-  cramped. A `[shells] rows`/`cols` default (lean: 40×120) is a one-line
-  config change that belongs in phase 03 if the live close wants it.
 - **Panel tail length.** D9 says 5 rows. Tune once it renders.
 - **`watch_shell` and `wait_for` overlap.** `watch_shell` stays the
   byte-stream primitive; if phase 03 shows `wait_for` covering every real
   use, retiring `watch_shell`'s `pattern` is a post-M28 follow-on.
-- **Attribute hints for menus.** `contents()` is plain text; dialog,
-  whiptail and fzf mark the selected row with reverse video, which the
-  read loses. A `[>]` prefix on the cursor row, or a reverse-video run
-  marker, would cover most pickers. Phase 03 decides after the live close.
-- **Animating apps never settle.** `top`, clocks and spinners defeat
-  `settle_ms`; `wait_for` is the primitive there and the tool description
-  must say so.
-- **Modifiers beyond Ctrl/Meta.** Shift-Enter and Ctrl-Shift chords need
-  CSI u (`ESC [ 13 ; 2 u`); Claude Code's newline-in-prompt is the obvious
-  case. The `keys` vocabulary can grow without changing the contract.
-- **Bracketed paste.** Multi-line `text` into an app with paste mode on
-  submits line by line; a `paste: true` on `send_input` that wraps it in
-  `ESC [ 200 ~` / `201 ~` is a small addition if phase 03 needs it.
+
+## 9. What stays out of reach
+
+Known after the decisions above, so nobody rediscovers them live:
+
+- **Mouse.** Claude Code and others enable tracking; no tool sends mouse
+  events and nothing here plans to. Keyboard covers every flow that matters.
+- **Colour-only selection.** `[SEL: …]` marks inverse video. `fzf` and
+  some pickers mark the current row with colour alone; `annotated: true`
+  then shows the run as `[OK/WARN/ERROR: …]` only when the colour happens
+  to be one of the three. The cursor position in the header is the
+  fallback.
+- **CSI u depends on the program.** `S-Enter` goes out correctly; a program
+  that does not speak CSI u sees an escape sequence it ignores or
+  misreads. The result says the key went out as CSI u, the screen says
+  whether it landed.
+- **Exotic remote prompts.** The transport rule reads a last row ending
+  in `$ # % >` as a prompt; a remote prompt ending in anything else reads
+  as busy and gets a fresh shell on that host. Correct, but one shell per
+  command until the prompt is changed.
+- **Transport-shell foregrounds are nameless.** Over ssh or sbx the
+  daemon cannot name the remote program; the classification is
+  `Program { cmd: "<remote>" }`. The screen read is how the model finds
+  out what it is.
+- **The ambient block is one observation stale** by design (D4); a shell
+  that became busy since the last probe still shows as the default until
+  the next decision probes it. Decisions never use the cache.
+- **Box-drawing TUIs are token-heavy.** A 40×120 frame of `htop` is the
+  full grid every read; `lines` and `pattern` are the cost controls, there
+  is no semantic compaction.
+- **Ghost shells drive TUIs only by opt-in** (`allow_tui_input`), and a
+  ghost never sees the approval panel's screen tail — it reads the screen
+  itself or not at all.
