@@ -460,3 +460,34 @@ At post time the session was neither resident nor presence-attached, so
 The PE run's original S2 history count (`live tick 2` → 2) came from the
 model's own `search_repository` text, not from an injected alert. S7 is
 done; no `$R` process is left.
+
+### Update — 2026-10-12 (S2 re-run after 07e bounce 1, architect, PE present)
+
+**S2 passed: F11 is verified fixed, live,** against `7a7be581`. The daemon
+restarted, the chat reconnected and quit with no ask, a `LiveTicks` alert
+was posted 38 s later, then `chat --resume`. The alert is in the session
+file, and `⚙ [Catch-up] 1 event while you were away (44s): • [Webhook
+Alert]` was shown on resume. S7 is done; no `$R` process is left.
+
+```
+== PE-S2R2 F11 RE-RUN ==
+head=7a7be581
+session=17c53bae2bef7fbb
+daemon-restart exit=0
+reconnected: 1
+post=200
+2026-10-13T02:31:47Z INFO  chat presence attached for session 17c53bae2bef7fbb
+2026-10-13T02:31:49Z INFO  chat presence detached for session 17c53bae2bef7fbb (last=true)
+2026-10-13T02:32:27Z INFO  Webhook alert: 'LiveTicks' [firing] severity=critical source=alertmanager
+2026-10-13T02:32:34Z INFO  chat presence attached for session 17c53bae2bef7fbb
+alert-in-history=1
+⚙ [Catch-up] 1 event while you were away (44s):
+  • [Webhook Alert]
+
+catchup-lines=1
+```
+
+PASTE MATCH: yes
+
+**Next.** S6, on the PE's go-ahead: the 2.0.0 bump, CHANGELOG, gates, and
+the annotated tag `v2.0.0`. Push only on the PE's go-ahead.
