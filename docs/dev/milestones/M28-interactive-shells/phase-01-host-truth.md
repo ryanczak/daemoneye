@@ -1,7 +1,7 @@
 # Phase 01: host-truth — the shell host reports what owns its terminal
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -399,3 +399,34 @@ kill: (-2137185): No such process
 **Commit:** 37e8a4d4406f4d6868522fb06a34df2742bbc272
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-13
+
+- **Verdict:** approved_first_try
+- **Bounces:** none at review. The first run hard-failed (`NoProgressStall`,
+  120 read-only calls) on an assertion the spec dictated and no correct
+  implementation could pass: that an idle interactive bash is not raw.
+  Readline clears `ICANON` at the prompt. Escalated by resume after
+  correcting the spec; the resumed run finished all seven tasks.
+- **Executor:** GLM-5.3-Flash (`local-inference-lab/GLM-5.3-Flash-NVFP4-Spark`),
+  both runs. The 12:01 progress entry names "Claude Opus 4.6"; that is the
+  executor misreporting itself, not a takeover.
+- **Gates (reviewer re-run, once each):** `cargo fmt --all --check` exit 0;
+  `cargo build` 0 warnings; clippy `-D warnings` exit 0; `cargo test`
+  passed=2340 failed=0 (baseline 2325, +15). Every named test exists and
+  passes; `PASTE MATCH` present.
+- **Scope deviations:**
+  - Two `unsafe` blocks in `PtyShell::raw_mode()` (`mem::zeroed`,
+    `libc::tcgetattr`). Architect-caused: the spec named `libc::tcgetattr`.
+    SAFETY-commented; the crate already carries this pattern
+    (`cli/input/tty.rs`). Accepted.
+  - `unreachable!("handled above")` on the `Exited` arm of
+    `foreground::classify`. Cannot fire, but breaks the DoD's no-panic rule
+    for production paths. **Not bounced**: carried into phase 01b as a
+    named task (restructure the match so no arm is unreachable).
+- **Calibration:** the spec defect came from a probe run in the wrong
+  context. The architect verified termios with `bash -c` (no readline); the
+  shells are interactive. Probe a spec claim in the context the code runs
+  in. One occurrence — data, not a fold. Separately, `continue_phase` hit
+  the MCP client's 1800 s idle timeout while the run kept going server-side
+  (second occurrence after M27 phase 04).
