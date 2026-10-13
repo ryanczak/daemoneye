@@ -1,7 +1,7 @@
 # Phase 01b: record-truth — what the shell record knows
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-01
 **Estimated diff:** ~150 lines (on top of the ~140 already on disk)
 **Tags:** language=rust, kind=feature, size=s
@@ -355,3 +355,36 @@ kill: (-2325551): No such process
 **Commit:** fd865b09f548a4b75ff181143fb3e3e5efbbefa7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-13
+
+- **Verdict:** approved_first_try
+- **Bounces:** none at review. Two earlier runs hard-failed
+  (`NoProgressStall`, 120 read-only calls): the first audited every
+  caller of the shell runners after Tasks 1–3, the resume made zero edits
+  after reading the nine files the tool checklist names. The phase was then
+  re-split (tool moved to 01c) and the third run finished in 140 turns.
+- **Executor:** GLM-5.3-Flash, all three runs.
+- **Gates (reviewer re-run, once each):** fmt exit 0; build 0 warnings;
+  clippy `-D warnings` exit 0; `cargo test` passed=2343 failed=0, exactly
+  the pinned count. `unreachable!` count 0; `PASTE MATCH` present.
+- **Spot check:** `classify_record` routes on `sandbox` or a named host and
+  returns `Unknown` for a missing or non-`Status` reply on the transport
+  side, as D3 requires. The two `in_flight` tests ran green six times in
+  isolation and once with their module; the session log's one failure each
+  was the executor's own red-then-green while writing them.
+- **Scope deviations:**
+  - The executor's explanation of an interim `failed=1` (a `kill:` line
+    "racing the awk") is wrong: the awk sums only `test result` lines. The
+    failures were its own in-progress tests. The pasted evidence is a clean
+    single run, so the claim changes nothing, but it is not true.
+  - Commit `fd865b09` also carries the architect's uncommitted re-scope
+    docs (README, NEXT, the new 01c doc). Architect-caused: they were left
+    in the tree at dispatch. Accepted; commit re-scope docs before
+    dispatching next time.
+- **Calibration:** three dispatches stalled across phases 01 and 01b, each
+  on a spec shape (an impossible assertion, an open-ended audit, a
+  nine-file checklist), and each cleared once the shape was fixed: the
+  re-split run made its first edit early and finished. Held for the M28
+  retrospective: say when a list is complete; keep a phase to a handful of
+  files.
