@@ -1,6 +1,6 @@
 # M27 — tmux becomes an optional observer; DaemonEye 2.0 close
 
-**Status:** done (closed 2026-10-12; every exit criterion verified live on pinky, `v2.0.0` tagged and pushed, § Retrospective). **Awaiting PE sign-off on the close and the fold proposals.** Scoped 2026-10-09; PE decisions below.
+**Status:** done (closed 2026-10-12; every exit criterion verified live on pinky, `v2.0.0` tagged and pushed, § Retrospective). **PE signed off on the close 2026-10-12; fold A landed in `WORKFLOW.md`, B held.** Scoped 2026-10-09; PE decisions below.
 
 **Depends on:** M20 (shell engine), M24 (run manager), M26 (sbx isolation:
 chat and ghost commands already run in PTY shells, not tmux).
@@ -211,8 +211,8 @@ deferred item 1.
 6. daemon.log says "foreground command approved", and the approval records
    carry `mode` values from 1.x.
 
-**Fold proposals (PE decision; nothing landed).**
-- **A — `WORKFLOW.md` § phase specs:** when a phase edits more than one
+**Fold proposals (PE decision 2026-10-12: A landed, B held).**
+- **A — landed** in `WORKFLOW.md` § Calibration, "A multi-site phase carries a per-site work list": when a phase edits more than one
   site, the spec carries a per-site work list (`file · symbol | change`),
   and the executor's first patch is due within 10 turns. Three occurrences
   (02, 04, 03b), plus five clean runs after it was applied.

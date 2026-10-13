@@ -2043,3 +2043,31 @@ command piped through `tail` exits with `tail`'s status, so a failing gate reads
 as passing.
 
 *(Folded 2026-07-27 after two hard-fails on the same disagreement.)*
+
+### A multi-site phase carries a per-site work list, and the first patch is due early
+
+When a phase edits more than one site, the Spec carries a **work list**: a
+table with one row per edit, `file · symbol | change`. That table is the
+whole job. Two rules go above it, verbatim:
+
+- **Open only the files a row names.** The compiler names any further
+  exhaustive `match` to extend; extend those and nothing else.
+- **Your first `patch` lands within 10 turns.** That patch is row 1.
+
+The table states *where* (the architect has traced the site) and *what
+behaviour* changes there. It does not state the code. Tests are named, and
+their bodies are the executor's. On a bounce, the remaining work is added as
+new numbered rows under a loud "green gates are expected and are NOT
+evidence the phase is done" header. The rows already approved are named, so
+they are not redone.
+
+Why: without the table, the executor spends its budget re-deriving where
+each change goes, re-reading files it has already read, until the governor
+fires a `NoProgressStall` with most of the work unwritten or unverified.
+Naming every remaining edit removes the re-derivation, and an early first
+patch turns the read phase into a write phase before the stall threshold.
+
+*(Folded 2026-10-12 at the M27 close, on PE sign-off. Three NoProgressStalls
+in M27 (phases 02, 04, 03b) preceded it. Phases written in this form after
+them (07a, 07b, 07d) landed first try, and 07e's one bounce was an
+architect spec error, not a stall.)*
