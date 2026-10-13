@@ -48,7 +48,7 @@ phases are split further where one is more than a session.
 | # | Phase | Status |
 |---|---|---|
 | 01 | host-truth ([phase-01-host-truth.md](phase-01-host-truth.md)) — the host's `Screen` frame with `[SEL: …]` markers, the three `Status` foreground facts, the pure `Foreground` classifier (local and transport); no daemon behaviour change | done (approved_first_try, 2026-10-13) |
-| 01b | screen-tool — `read_shell_screen` (no waits yet); `last_foreground` and `in_flight` on `ShellRecord`; carried from 01: remove the `unreachable!` in `foreground::classify` | todo |
+| 01b | screen-tool ([phase-01b-screen-tool.md](phase-01b-screen-tool.md)) — `read_shell_screen` (no waits yet); `last_foreground` and `in_flight` on `ShellRecord`; carried from 01: remove the `unreachable!` in `foreground::classify` | todo |
 | 02 | safety — live probes in shell reuse and the explicit path, the busy refusal, the static flag removed, `send_input` `\r` + `keys` + `paste` + guard + panel + ghost refusal (split at drafting) | todo |
 | 03 | launch-wait — `interactive: true`, the ssh auto-upgrade, screen waits, `[shells] rows`/`cols`; live close (split at drafting) | todo |
 
