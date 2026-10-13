@@ -1,7 +1,7 @@
 # Phase 07e: catchup-nonresident — the catch-up brief reaches a chat whose session is not resident
 
 **Milestone:** M27 — tmux becomes an optional observer; 2.0 close
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-07d (done)
 **Tags:** language=rust, kind=fix, size=s
 
@@ -181,3 +181,138 @@ $ cargo build
 architect does after a daemon restart with no ask before quitting.
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-13 01:32 (complete, server-authored)
+
+**Summary:** The task tracker has no seeded ids, so my `update_task` calls are no-ops; the work itself is complete on disk.
+
+**Summary + Notes for review**
+
+Implemented all three rows of phase 07e. Row 1 added `NON_RESIDENT_DETACHES` to `src/daemon/session.rs` — a process-wide `OnceLock<Mutex<HashMap<String, NonResidentDetach>>>` in the shape of the presence registry (`presence_map`), each record holding `detach_instant: Instant`, `detach_time_utc: chrono::DateTime<Utc>`, and `messages_at_detach: usize` taken from `read_session_file(id, None).len()`, plus `take_non_resident_detach(id)` to consume it. Row 2 kept `record_chat_detach`'s resident branch byte-identical and, when the store has no entry, wrote a record to the new registry instead (post-closure `contains_key` check, no `SessionEntry` ever inserted). Row 3 kept `attach_brief_for`'s resident branch byte-identical and made it consume the registry record on *every* run — resident brief wins when one exists, otherwise the non-resident branch reads the session file and briefs over the messages beyond the recorded count via the untouched `build_catchup_brief`, with `.min()` slicing guards for histories that changed since detach. End-to-end verification: both pinned tests report `1 passed` each; the mutation check (env-gated skip of the non-resident branch, reverted before the final runs) failed exactly at the brief assert — `panicked at src/daemon/server/chat_presence.rs:658:9: a non-resident session gets the same brief a resident one does`; the two preservation tests (`attach_brief_includes_an_alert_injected_while_away`, `inject_reaches_a_presence_attached_session_that_is_not_resident`) each report `1 passed`; full `cargo test` sums mechanically to `passed=2324 failed=0`, matching the criterion exactly; fmt, clippy `-D warnings`, and build exit 0 with zero new warnings. Committed as `088dd566` (code + tests) and `dedb5433` (evidence entry, `PASTE MATCH: yes`); working tree clean; phase status left at `in-progress` for the server's completion tail. Notes for review: (1) my two tests deliberately re-check `!store.contains_key(sid)` after `record_chat_detach` and after the attach — the 07d constraint "never insert a store entry for a non-resident id" made testable; (2) the registry is a leak path in one narrow case — a detach record for an id that never re-attaches is never consumed — bounded by `SessionStore` idle eviction which cannot apply here; I judged it acceptable for phase scope and note it as the known follow-up if the reviewer disagrees; (3) `attach_brief_for` consumed the record before the resident branch could return `Some`, so a resident session that also had a stale registry record (not reachable in production, since `record_chat_detach` writes exactly one branch per call) is handled by the consume-first ordering — the spec's "whichever branch it takes" wording is satisfied literally; (4) the mutation check ran as an env-gated code path rather than a hand edit, per the 07d convention the reviewer accepted last phase.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test readme_documents_every_chat_slash_command ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-cc7815668fa16fef)
+kill: (1115568): No such process
+kill: (-1116284): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-1fcd2fefcb61e77f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa4dd6aaa30d0935)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6320952fb0a05191)
+     Running tests/integration.rs (target/debug/deps/integration-a4b1c9f3f5ac1ccb)
+     Running tests/isolation.rs (target/debug/deps/isolation-07c971a3f2b72c58)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-a6c1d042be279283)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M27-tmux-observer/README.md` — +1 -1
+- `docs/dev/milestones/M27-tmux-observer/phase-07e-catchup-nonresident.md` — +86 -1
+- `src/daemon/server/chat_presence.rs` — +159 -4
+- `src/daemon/session.rs` — +56 -0
+
+**Commit:** dedb54339622006a7cb104abb8f9d63580a07fc5
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
