@@ -269,6 +269,18 @@ pub enum PendingCall {
         since_command: Option<u32>,
         filter: Option<String>,
     },
+    /// Read a shell's live rendered screen (M28 phase 01c): the viewport as
+    /// of the call, with a header naming what holds the terminal. Lossy by
+    /// design; `ReadShell` reads the record.
+    ReadShellScreen {
+        id: String,
+        thought_signature: Option<String>,
+        shell: String,
+        lines: Option<u64>,
+        scrollback: Option<u16>,
+        pattern: Option<String>,
+        annotated: bool,
+    },
     /// Search every in-scope shell's recorded output for a regex (M22
     /// phase-03c). Reads the **recordings**, like `read_shell` — not live
     /// screens; shells whose recording cannot be read are skipped and named.
@@ -891,6 +903,26 @@ impl PendingCall {
                     "filter": filter,
                 })),
             },
+            PendingCall::ReadShellScreen {
+                id,
+                thought_signature,
+                shell,
+                lines,
+                scrollback,
+                pattern,
+                annotated,
+            } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "read_shell_screen".to_string(),
+                arguments: args_to_string(serde_json::json!({
+                    "shell": shell,
+                    "lines": lines,
+                    "scrollback": scrollback,
+                    "pattern": pattern,
+                    "annotated": annotated,
+                })),
+            },
             PendingCall::FindInShells {
                 id,
                 thought_signature,
@@ -972,6 +1004,7 @@ impl PendingCall {
             PendingCall::DeleteAgent { id, .. } => id,
             PendingCall::AwaitAgentResult { id, .. } => id,
             PendingCall::ReadShell { id, .. } => id,
+            PendingCall::ReadShellScreen { id, .. } => id,
             PendingCall::FindInShells { id, .. } => id,
             PendingCall::RunLogTail { id, .. } => id,
             PendingCall::RunLogSearch { id, .. } => id,
@@ -1004,6 +1037,7 @@ impl PendingCall {
                 | PendingCall::ListAgents { .. }
                 | PendingCall::AwaitAgentResult { .. }
                 | PendingCall::ReadShell { .. }
+                | PendingCall::ReadShellScreen { .. }
                 | PendingCall::FindInShells { .. }
                 | PendingCall::OpenShell { .. }
                 | PendingCall::CloseShell { .. }
@@ -1126,6 +1160,25 @@ impl PendingCall {
                 }
                 s
             }
+            PendingCall::ReadShellScreen {
+                shell,
+                lines,
+                scrollback,
+                pattern,
+                ..
+            } => {
+                let mut s = shell.clone();
+                if let Some(n) = lines {
+                    s.push_str(&format!(" lines={n}"));
+                }
+                if let Some(n) = scrollback {
+                    s.push_str(&format!(" scrollback={n}"));
+                }
+                if let Some(p) = pattern {
+                    s.push_str(&format!(" pattern=\"{p}\""));
+                }
+                s
+            }
             PendingCall::FindInShells { pattern, scope, .. } => match scope {
                 Some(s) => format!("/{pattern}/ scope={s}"),
                 None => format!("/{pattern}/"),
@@ -1216,6 +1269,7 @@ impl PendingCall {
             PendingCall::DeleteAgent { .. } => "delete_agent",
             PendingCall::AwaitAgentResult { .. } => "await_agent_result",
             PendingCall::ReadShell { .. } => "read_shell",
+            PendingCall::ReadShellScreen { .. } => "read_shell_screen",
             PendingCall::FindInShells { .. } => "find_in_shells",
             PendingCall::RunLogTail { .. } => "run_log_tail",
             PendingCall::RunLogSearch { .. } => "run_log_search",

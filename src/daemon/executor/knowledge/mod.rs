@@ -18,7 +18,7 @@ pub(super) use memory::{
 };
 pub(super) use shell::{
     close_shell, find_in_shells, input_target_note, list_shell_logs, list_shells, open_shell,
-    read_shell, read_shell_log, send_input, watch_shell,
+    read_shell, read_shell_log, read_shell_screen, send_input, watch_shell,
 };
 // Wider than the group above on purpose: the prompt builders reach it from
 // `daemon`, and a `pub(super)` binding cannot be widened on re-export.

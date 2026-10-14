@@ -4,9 +4,8 @@
 2026-10-13 from `docs/design/interactive-shells.md`. See
 [`README.md`](milestones/M28-interactive-shells/README.md).
 
-**Active phase:** [phase-01c-screen-tool](milestones/M28-interactive-shells/phase-01c-screen-tool.md)
-— todo. Dispatch with `/rexymcp:dispatch phase-01c-screen-tool`. Phases 01
-(host-truth) and 01b (record-truth) are done.
+**Active phase:** none drafted. Phases 01, 01b and 01c are done; phase 02
+(safety) is next, drafted with `/rexymcp:architect next`.
 
 M27 closed 2026-10-12 (`v2.0.0`). The roadmap's former M28–M30 are now
 M29–M31 (`docs/design/daemoneye-2.0.md` § 6).

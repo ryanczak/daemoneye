@@ -92,6 +92,19 @@ pub(super) struct ReadShellArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct ReadShellScreenArgs {
+    shell: String,
+    #[serde(default)]
+    lines: Option<u64>,
+    #[serde(default)]
+    scrollback: Option<u16>,
+    #[serde(default)]
+    pattern: Option<String>,
+    #[serde(default)]
+    annotated: bool,
+}
+
+#[derive(Deserialize)]
 pub(super) struct FindInShellsArgs {
     pattern: String,
     #[serde(default)]
@@ -453,6 +466,23 @@ impl ToolArgs for ReadShellArgs {
             lines: self.lines,
             since_command: self.since_command,
             filter: self.filter,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for ReadShellScreenArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ReadShellScreen {
+            id: id.to_string(),
+            shell: self.shell,
+            lines: self.lines,
+            scrollback: self.scrollback,
+            pattern: self.pattern,
+            annotated: self.annotated,
             thought_signature: ts,
         }
     }

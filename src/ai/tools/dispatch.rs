@@ -57,6 +57,7 @@ pub fn dispatch_tool_event(
         "delete_script" => dispatch::<DeleteScriptArgs>(id, args, ts),
         "read_file" => dispatch::<ReadFileArgs>(id, args, ts),
         "read_shell" => dispatch::<ReadShellArgs>(id, args, ts),
+        "read_shell_screen" => dispatch::<ReadShellScreenArgs>(id, args, ts),
         "find_in_shells" => dispatch::<FindInShellsArgs>(id, args, ts),
         "open_shell" => dispatch::<OpenShellArgs>(id, args, ts),
         "close_shell" => dispatch::<CloseShellArgs>(id, args, ts),
@@ -215,11 +216,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn tool_table_counts_are_42_28_14() {
-        assert_eq!(TOOLS.len(), 42, "total tools");
+    fn tool_table_counts_are_43_29_14() {
+        assert_eq!(TOOLS.len(), 43, "total tools");
         assert_eq!(
             TOOLS.iter().filter(|t| t.deferred_group.is_none()).count(),
-            28,
+            29,
             "core tools"
         );
         assert_eq!(
@@ -389,9 +390,9 @@ mod tests {
             retired_absent,
             "get_terminal_context must be absent from TOOLS"
         );
-        assert_eq!(TOOLS.len(), 42, "the rename must not change the tool count");
+        assert_eq!(TOOLS.len(), 43, "the rename must not change the tool count");
         let core = TOOLS.iter().filter(|t| t.deferred_group.is_none()).count();
-        assert_eq!(core, 28, "the rename must not change the core count");
+        assert_eq!(core, 29, "the rename must not change the core count");
         let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
         let blob = serde_json::to_string(&rendered).expect("render must serialize");
         assert!(
@@ -532,6 +533,9 @@ mod tests {
                 "list_shells" => json!({"scope": "mine"}),
                 "read_shell" => {
                     json!({"shell": "s3", "lines": 10, "since_command": 0, "filter": "."})
+                }
+                "read_shell_screen" => {
+                    json!({"shell": "s3", "lines": 10, "scrollback": 5, "pattern": ".", "annotated": true})
                 }
                 "find_in_shells" => json!({"pattern": "error", "scope": "all"}),
                 "spawn_ghost_shell" => json!({"runbook": "rb", "message": "investigate"}),
@@ -953,8 +957,8 @@ mod tests {
     fn every_tool_has_a_category() {
         assert_eq!(
             TOOLS.len(),
-            42,
-            "tool count should match the 28 core + 14 deferred claim"
+            43,
+            "tool count should match the 29 core + 14 deferred claim"
         );
         for t in TOOLS {
             assert!(
@@ -971,7 +975,7 @@ mod tests {
         for t in TOOLS {
             *counts.entry(t.category).or_insert(0) += 1;
         }
-        assert_eq!(counts.get(&Category::Read), Some(&20), "Read count");
+        assert_eq!(counts.get(&Category::Read), Some(&21), "Read count");
         assert_eq!(counts.get(&Category::Write), Some(&13), "Write count");
         assert_eq!(counts.get(&Category::Search), Some(&3), "Search count");
         assert_eq!(counts.get(&Category::Run), Some(&5), "Run count");

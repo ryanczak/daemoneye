@@ -183,6 +183,16 @@ pub enum AiEvent {
         filter: Option<String>,
         thought_signature: Option<String>,
     },
+    /// Read a shell's live rendered screen (M28 phase 01c).
+    ReadShellScreen {
+        id: String,
+        shell: String,
+        lines: Option<u64>,
+        scrollback: Option<u16>,
+        pattern: Option<String>,
+        annotated: bool,
+        thought_signature: Option<String>,
+    },
     /// Regex-search every in-scope shell's recorded output (M22 phase-03c).
     FindInShells {
         id: String,

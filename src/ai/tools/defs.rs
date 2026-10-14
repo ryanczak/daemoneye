@@ -825,6 +825,60 @@ pub static TOOLS: &[ToolDef] = &[
         category: Category::Read,
     },
     ToolDef {
+        name: "read_shell_screen",
+        description: "Read a PTY shell's live screen — what a person looking at that \
+                      terminal would see right now, as of this call. The header names \
+                      what holds the terminal (`shell prompt`, `running <cmd>`, \
+                      `running <cmd> (TUI)`, `paused <cmd>`), the size, the cursor and \
+                      whether a full-screen app is up. Use it to see an interactive \
+                      program such as an editor, a pager or Claude Code, or to check \
+                      what a shell is doing before typing into it with send_input. \
+                      Inverse-video runs (a menu's selected row) appear as \
+                      `[SEL: …]`. This is the viewport, and it is lossy: output that \
+                      scrolled away or was redrawn is gone. For what a command \
+                      printed, the record is read_shell / read_shell_log.",
+        params: &[
+            ParamDef {
+                name: "shell",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Shell id to read (e.g. \"s3\"). Get ids from list_shells.",
+            },
+            ParamDef {
+                name: "lines",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Return only the last N visible rows. Omit for the whole \
+                              screen.",
+            },
+            ParamDef {
+                name: "scrollback",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Also return up to N rows that scrolled off the top, in a \
+                              section above the screen (not counted by `lines`). An \
+                              inline TUI's earlier output lives there.",
+            },
+            ParamDef {
+                name: "pattern",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional regex; only matching rows are returned. A \
+                              syntactically invalid regex is an error.",
+            },
+            ParamDef {
+                name: "annotated",
+                ty: ParamTy::Bool,
+                required: false,
+                description: "Also wrap red / yellow / green runs as [ERROR: …] / \
+                              [WARN: …] / [OK: …]. Default false: a TUI's colours are \
+                              rarely those meanings.",
+            },
+        ],
+        deferred_group: None,
+        category: Category::Read,
+    },
+    ToolDef {
         name: "find_in_shells",
         description: "Search the recorded output of the PTY shells the daemon is \
                       running for a regular expression, in one call — the way \

@@ -1289,6 +1289,24 @@ where
             filter.as_deref(),
         ))),
 
+        PendingCall::ReadShellScreen {
+            shell,
+            lines,
+            scrollback,
+            pattern,
+            annotated,
+            ..
+        } => Ok(ToolCallOutcome::Result(
+            knowledge::read_shell_screen(
+                shell,
+                *lines,
+                *scrollback,
+                pattern.as_deref(),
+                *annotated,
+            )
+            .await,
+        )),
+
         PendingCall::FindInShells { pattern, scope, .. } => {
             Ok(ToolCallOutcome::Result(knowledge::find_in_shells(
                 pattern,

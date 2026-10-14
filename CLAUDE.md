@@ -137,7 +137,7 @@ DaemonEye is a Rust daemon that runs an AI assistant beside your terminal. It fo
 
 ### Current AI tools
 
-**42 tools: 28 core + 14 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
+**43 tools: 29 core + 14 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
 `src/ai/tools/defs.rs` — `core` means `None` (rendered on every request); a group
 name means the tool is omitted until `load_tools` pulls the group in. **Note the
 asymmetry**: for scripts, runbooks and memory the *write* side is core while the
@@ -152,6 +152,7 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `get_shell_context` | core | Fresh terminal snapshot on demand; optional `scope` param: `"shells"` (open shells + default only, no capture), `"session"` (default, user's session), `"all"` (adds foreign-session pane metadata) |
 | `list_shells` | core | List the PTY shells the daemon is running: id (`s3`), owner, age, and `interactive` / `dedicated` / `exited` flags; optional `scope`: `"mine"` (default, this session's shells) or `"all"` (every live shell). The id is what the shell tools take as their target |
 | `read_shell` | core | Read a shell's recorded output — its per-command log, not the live screen. `shell` is the id from `list_shells`; optional `since_command` (command index to start from; an index past the recorded commands is an error), `filter` (regex, invalid = error), `lines` (tail clamp, default 200, max 2000). Output is masked |
+| `read_shell_screen` | core | Read a shell's **live screen** as of the call, masked — the viewport, lossy, not the record (`read_shell` is the record). Header names the `Foreground` (`shell prompt` / `running <cmd>` / `running <cmd> (TUI)` / `paused <cmd>`), size, cursor and alt screen, and the call stores it as the record's `last_foreground`. Inverse-video runs show as `[SEL: …]`. Optional `lines` (tail of the visible rows), `scrollback` (rows that scrolled off, in their own section, not counted by `lines`), `pattern` (regex, invalid = error), `annotated` (default false; adds `[OK/WARN/ERROR: …]`). Not approval-gated; no owner check, as `read_shell` |
 | `find_in_shells` | core | One regex search across every in-scope shell's recorded output — answers "which shell printed the error?" in a single call. Returns shell id, 1-indexed line number and the matching line with ±1 line of context; masked, capped at 50 matches across all shells, searches the last 2000 lines of each recording; unreadable shells are skipped and named. `scope: "mine"` (default) or `"all"` |
 | `open_shell` | core | Start a new PTY shell — on the daemon host by default, or on a configured host with `host` — and return its id. The result names the reuse caveat: commands reuse this session's lowest-numbered open shell, so the new shell may not be the one the next command lands in |
 | `close_shell` | core | End one of this session's PTY shells by id: hangs the shell up (SIGHUP, which also ends a command running in it) and reports whether the host actually went away, refusing another session's or a ghost job's shell |

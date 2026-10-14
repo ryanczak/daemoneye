@@ -708,6 +708,25 @@ where
                         filter,
                     });
                 }
+                AiEvent::ReadShellScreen {
+                    id,
+                    shell,
+                    lines,
+                    scrollback,
+                    pattern,
+                    annotated,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadShellScreen {
+                        id,
+                        thought_signature,
+                        shell,
+                        lines,
+                        scrollback,
+                        pattern,
+                        annotated,
+                    });
+                }
                 AiEvent::FindInShells {
                     id,
                     pattern,

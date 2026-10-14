@@ -127,7 +127,7 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   see which shells exist and what state they are in. If a shell seems to be \
   misbehaving, this is how you check it exists and whether it has exited.
 
-### `read_shell`
+### `read_shell / read_shell_screen`
 
 - `read_shell(shell, lines?, since_command?, filter?)` — read what a shell has \
   **recorded**, from its per-command log: not a live screen buffer, so the \
@@ -139,6 +139,16 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   match. `lines` clamps the result to its last N lines (default 200, capped at \
   2000). Output is masked before it is returned. Reading a shell changes \
   nothing in it.
+- `read_shell_screen(shell, lines?, scrollback?, pattern?, annotated?)` — \
+  the shell's **live screen** as of the call: what a person at that terminal \
+  sees now. The header names what holds the terminal (`shell prompt`, \
+  `running <cmd>`, `running <cmd> (TUI)`, `paused <cmd>`), the size, the \
+  cursor and whether a full-screen app is up. Use it for an interactive \
+  program — an editor, a pager, Claude Code — and to check a shell before \
+  typing into it with `send_input`. A menu's selected row shows as \
+  `[SEL: …]`. `scrollback` adds rows that scrolled off the top, where an \
+  inline TUI keeps its earlier output. The screen is lossy: for what a \
+  command printed, `read_shell` is the record.
 
 ### `find_in_shells`
 

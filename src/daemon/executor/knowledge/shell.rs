@@ -1680,6 +1680,224 @@ where
          output and does not wait for the program to react."
     )
 }
+
+// ---------------------------------------------------------------------------
+// read_shell_screen (M28 phase 01c) — the live viewport, as of the call
+// ---------------------------------------------------------------------------
+
+/// The socket round-trip budget for one screen read: the same 5 s the other
+/// one-shot shell probes use. The answer is a render, not the program
+/// reacting, so it is short.
+const SCREEN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// One rendered read of a shell's screen, as the host answered it.
+struct ScreenRead {
+    text: String,
+    rows: u16,
+    cols: u16,
+    cursor: (u16, u16),
+    alt_screen: bool,
+}
+
+/// Return a shell's rendered screen with a header naming what holds its
+/// terminal, masked. The public form uses the daemon's registry and the
+/// standard timeout; `read_shell_screen_in` takes both.
+pub async fn read_shell_screen(
+    shell: &str,
+    lines: Option<u64>,
+    scrollback: Option<u16>,
+    pattern: Option<&str>,
+    annotated: bool,
+) -> String {
+    read_shell_screen_in(
+        crate::shell::registry(),
+        shell,
+        lines,
+        scrollback,
+        pattern,
+        annotated,
+        SCREEN_TIMEOUT,
+    )
+    .await
+}
+
+/// `read_shell_screen` against an injected registry and timeout.
+///
+/// Reads the visible screen on its own, then — only when `scrollback` is
+/// asked for — reads again with the scrollback rows and keeps the part above
+/// the visible screen. The host joins the two with a plain newline, so the
+/// boundary is only recoverable this way, and keeping it is what lets
+/// `lines` count visible rows exactly and the result label both sections.
+pub(super) async fn read_shell_screen_in(
+    reg: &ShellRegistry,
+    shell: &str,
+    lines: Option<u64>,
+    scrollback: Option<u16>,
+    pattern: Option<&str>,
+    annotated: bool,
+    timeout: Duration,
+) -> String {
+    if !with_shells(reg, |store| store.contains_key(shell)) {
+        return unknown_shell_error(reg, shell);
+    }
+    let pattern_re = match pattern {
+        Some(p) => match regex::RegexBuilder::new(p).size_limit(1 << 20).build() {
+            Ok(re) => Some(re),
+            Err(e) => {
+                return format!(
+                    "Error: invalid pattern regex {p:?}: {e}. Fix the expression and \
+                     call again; the pattern is applied as a regex, not a literal."
+                );
+            }
+        },
+        None => None,
+    };
+    let sock = socket_path(shell);
+    let visible = match read_screen(&sock, shell, annotated, 0, timeout).await {
+        Ok(read) => read,
+        Err(msg) => return msg,
+    };
+    let head = match scrollback {
+        Some(n) if n > 0 => match read_screen(&sock, shell, annotated, n, timeout).await {
+            Ok(read) => scrollback_part(&read.text, &visible.text),
+            Err(msg) => return msg,
+        },
+        _ => String::new(),
+    };
+    let status = crate::shell::status(&sock, timeout).await.ok();
+    let last_line = visible
+        .text
+        .lines()
+        .rfind(|l| !l.trim().is_empty())
+        .map(str::to_string);
+    let observed_at = crate::shell::now_unix();
+    let foreground = with_shells(reg, |store| {
+        store.get_mut(shell).map(|record| {
+            let fg = crate::shell::classify_record(record, status.as_ref(), last_line.as_deref());
+            record.last_foreground = Some((fg.clone(), observed_at));
+            fg
+        })
+    });
+    let Some(foreground) = foreground else {
+        return unknown_shell_error(reg, shell);
+    };
+    let out = format_screen_read(
+        shell,
+        &foreground,
+        &visible,
+        &head,
+        lines,
+        pattern_re.as_ref(),
+    );
+    mask_sensitive(&out)
+}
+
+/// One `Screen` round-trip, or the error sentence the model reads. A host
+/// that does not answer is an error naming the shell — never a blank screen,
+/// which would read as "the shell shows nothing".
+async fn read_screen(
+    sock: &std::path::Path,
+    shell: &str,
+    annotated: bool,
+    scrollback: u16,
+    timeout: Duration,
+) -> Result<ScreenRead, String> {
+    match crate::shell::screen(sock, annotated, scrollback, timeout).await {
+        Ok(crate::shell::ShellResponse::ScreenText {
+            text,
+            rows,
+            cols,
+            cursor,
+            alt_screen,
+        }) => Ok(ScreenRead {
+            text,
+            rows,
+            cols,
+            cursor,
+            alt_screen,
+        }),
+        Ok(crate::shell::ShellResponse::Error { message }) => Err(format!(
+            "Error: shell {shell} could not render its screen: {message}. A shell \
+             host started before this daemon version has no screen to read; \
+             read_shell shows its recorded output instead."
+        )),
+        Ok(other) => Err(format!(
+            "Error: shell {shell} answered the screen read with an unexpected frame \
+             ({other:?}), so there is no screen to show."
+        )),
+        Err(e) => Err(format!(
+            "Error: shell {shell} did not answer the screen read: {}. Its host may \
+             be gone; call list_shells.",
+            format_err_chain(&e)
+        )),
+    }
+}
+
+/// Pure: the rows above the visible screen in a scrollback read. The host
+/// writes `<scrollback>\n<visible>`, so the scrollback is what precedes the
+/// visible text. If the screen changed between the two reads the suffix no
+/// longer matches, and the whole later read is returned as scrollback rather
+/// than guessing at a boundary.
+fn scrollback_part(with_scrollback: &str, visible: &str) -> String {
+    if visible.is_empty() {
+        return with_scrollback.to_string();
+    }
+    match with_scrollback.strip_suffix(visible) {
+        Some(head) => head.strip_suffix('\n').unwrap_or(head).to_string(),
+        None => with_scrollback.to_string(),
+    }
+}
+
+/// Pure: the result text. Header, then the scrollback section when there is
+/// one, then the visible rows tailed by `lines`; `pattern` filters both.
+fn format_screen_read(
+    shell: &str,
+    foreground: &crate::shell::Foreground,
+    visible: &ScreenRead,
+    head: &str,
+    lines: Option<u64>,
+    pattern: Option<&regex::Regex>,
+) -> String {
+    let keep = |row: &&str| pattern.is_none_or(|re| re.is_match(row));
+    let mut out = format!(
+        "Shell {shell} — {foreground} — {}x{}, cursor {},{}{}{}:\n",
+        visible.rows,
+        visible.cols,
+        visible.cursor.0,
+        visible.cursor.1,
+        if visible.alt_screen {
+            ", alt screen"
+        } else {
+            ""
+        },
+        match pattern {
+            Some(re) => format!(", rows matching /{}/", re.as_str()),
+            None => String::new(),
+        },
+    );
+    if !head.is_empty() {
+        let rows: Vec<&str> = head.lines().filter(keep).collect();
+        out.push_str(&format!("--- scrollback ({} rows) ---\n", rows.len()));
+        for row in rows {
+            out.push_str(row);
+            out.push('\n');
+        }
+        out.push_str("--- screen ---\n");
+    }
+    let rows: Vec<&str> = visible.text.lines().filter(keep).collect();
+    let start = match lines {
+        Some(n) => rows
+            .len()
+            .saturating_sub(usize::try_from(n).unwrap_or(usize::MAX)),
+        None => 0,
+    };
+    for row in &rows[start..] {
+        out.push_str(row);
+        out.push('\n');
+    }
+    out
+}
+
 // open_shell + close_shell (M22 phase-04a)
 // ---------------------------------------------------------------------------
 
@@ -5101,5 +5319,267 @@ mod tests {
                 "the pattern is rejected before any file is read: {out}"
             );
         });
+    }
+
+    // -----------------------------------------------------------------------
+    // read_shell_screen (M28 phase 01c)
+    // -----------------------------------------------------------------------
+
+    /// Open a real in-process shell host and return its id. The same path
+    /// `close_shell_ends_the_callers_shell` takes.
+    async fn open_screen_shell(reg: &ShellRegistry) -> String {
+        let opened = open_shell_with(
+            reg,
+            &Owner::Chat("screen-reader".into()),
+            crate::host::HostId::Local,
+            5,
+            Duration::from_millis(3000),
+            spawn_in_process_host,
+        )
+        .await;
+        assert!(
+            opened.contains("Opened shell"),
+            "the precondition is a real, ready shell: {opened}"
+        );
+        opened
+            .split_whitespace()
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                    .to_string()
+            })
+            .find(|w| w.starts_with('s') && w[1..].chars().all(|c| c.is_ascii_digit()))
+            .expect("the success sentence names the id")
+    }
+
+    async fn type_into(id: &str, bytes: &[u8]) {
+        crate::shell::send_input(&socket_path(id), bytes, Duration::from_secs(5))
+            .await
+            .expect("the shell accepts input");
+    }
+
+    /// Read the screen until `done` holds or 10 s pass; returns the last read.
+    async fn screen_until(
+        reg: &ShellRegistry,
+        id: &str,
+        lines: Option<u64>,
+        pattern: Option<&str>,
+        done: impl Fn(&str) -> bool,
+    ) -> String {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let out =
+                read_shell_screen_in(reg, id, lines, None, pattern, false, Duration::from_secs(5))
+                    .await;
+            if done(&out) || Instant::now() >= deadline {
+                return out;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// The rows after the header line.
+    fn body_rows(out: &str) -> Vec<&str> {
+        out.lines().skip(1).collect()
+    }
+
+    #[tokio::test]
+    async fn read_shell_screen_returns_the_screen_with_a_foreground_header() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let id = open_screen_shell(&reg).await;
+        type_into(&id, b"echo SCREEN-MARKER-01C\n").await;
+        let out = screen_until(&reg, &id, None, None, |o| {
+            o.lines().skip(1).any(|l| l.trim() == "SCREEN-MARKER-01C") && o.contains("shell prompt")
+        })
+        .await;
+        let header = out.lines().next().unwrap_or_default();
+        assert!(
+            header.starts_with(&format!("Shell {id} — shell prompt — 24x80, cursor ")),
+            "the header names the shell, its foreground and its size: {out}"
+        );
+        assert!(
+            body_rows(&out)
+                .iter()
+                .any(|l| l.trim() == "SCREEN-MARKER-01C"),
+            "the body is the rendered screen: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_shell_screen_names_a_running_program() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let id = open_screen_shell(&reg).await;
+        type_into(&id, b"sleep 30\n").await;
+        let out = screen_until(&reg, &id, None, None, |o| o.contains("running sleep")).await;
+        type_into(&id, b"\x03").await;
+        assert!(
+            out.lines()
+                .next()
+                .is_some_and(|h| h.contains("— running sleep —")),
+            "a running job is named in the header: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_shell_screen_lines_tails_the_visible_rows() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let id = open_screen_shell(&reg).await;
+        type_into(&id, b"printf 'row-a\\nrow-b\\nrow-c\\n'\n").await;
+        // Wait for the output (a row that is exactly `row-c`, not the echoed
+        // command) and the prompt after it.
+        let full = screen_until(&reg, &id, None, None, |o| {
+            o.lines().any(|l| l.trim() == "row-c") && o.contains("shell prompt")
+        })
+        .await;
+        let rows = body_rows(&full);
+        let after_c = rows
+            .iter()
+            .rposition(|l| l.trim() == "row-c")
+            .expect("row-c is on screen");
+        let tail_len = rows.len() - after_c;
+        let out = read_shell_screen_in(
+            &reg,
+            &id,
+            Some(tail_len as u64),
+            None,
+            None,
+            false,
+            Duration::from_secs(5),
+        )
+        .await;
+        let tailed = body_rows(&out);
+        assert_eq!(
+            tailed.len(),
+            tail_len,
+            "lines clamps to the last N rows: {out}"
+        );
+        assert_eq!(tailed[0].trim(), "row-c", "the tail starts at row-c: {out}");
+        assert!(
+            !tailed.iter().any(|l| l.trim() == "row-a"),
+            "rows above the tail are dropped: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_shell_screen_pattern_filters_rows() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let id = open_screen_shell(&reg).await;
+        type_into(&id, b"printf 'row-a\\nrow-b\\nrow-c\\n'\n").await;
+        let out = screen_until(&reg, &id, None, Some("^row-b$"), |o| {
+            body_rows(o).contains(&"row-b")
+        })
+        .await;
+        assert_eq!(
+            body_rows(&out),
+            vec!["row-b"],
+            "only the row matching the pattern is returned, not the echoed command: {out}"
+        );
+        assert!(
+            out.lines().next().is_some_and(|h| h.contains("/^row-b$/")),
+            "{out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_shell_screen_invalid_pattern_is_an_error() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert_watch_record(&reg, 5, 1_788_470_005);
+        let out = read_shell_screen_in(
+            &reg,
+            "s5",
+            None,
+            None,
+            Some("("),
+            false,
+            Duration::from_millis(200),
+        )
+        .await;
+        assert!(
+            out.starts_with("Error: invalid pattern regex \"(\""),
+            "an invalid regex is an error before any socket I/O: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_shell_screen_unknown_shell_is_an_error_naming_live_shells() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert_watch_record(&reg, 5, 1_788_470_005);
+        let out = read_shell_screen_in(
+            &reg,
+            "s9",
+            None,
+            None,
+            None,
+            false,
+            Duration::from_millis(200),
+        )
+        .await;
+        assert_eq!(
+            out,
+            unknown_shell_error(&reg, "s9"),
+            "the same sentence read_shell gives"
+        );
+        assert!(out.contains("s5"), "the live ids are named: {out}");
+    }
+
+    #[tokio::test]
+    async fn read_shell_screen_records_last_foreground() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let id = open_screen_shell(&reg).await;
+        let before = with_shells(&reg, |store| {
+            store.get(&id).and_then(|r| r.last_foreground.clone())
+        });
+        assert_eq!(before, None, "nothing is observed before the first read");
+        let out = screen_until(&reg, &id, None, None, |o| o.contains("shell prompt")).await;
+        let after = with_shells(&reg, |store| {
+            store.get(&id).and_then(|r| r.last_foreground.clone())
+        });
+        let (fg, at) = after.expect("the read stores what it observed");
+        assert_eq!(fg, crate::shell::Foreground::Prompt, "{out}");
+        assert!(at > 0, "the observation carries its time");
+    }
+
+    #[tokio::test]
+    async fn read_shell_screen_masks_a_secret_on_screen() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let id = open_screen_shell(&reg).await;
+        type_into(&id, b"echo AKIAIOSFODNN7EXAMPLE\n").await;
+        let out = screen_until(&reg, &id, None, None, |o| {
+            o.matches("<AWS_KEY>").count() >= 2 && o.contains("shell prompt")
+        })
+        .await;
+        assert!(
+            out.contains("<AWS_KEY>"),
+            "the key on screen is masked: {out}"
+        );
+        assert!(
+            !out.contains("AKIAIOSFODNN7EXAMPLE"),
+            "the raw key never reaches the model: {out}"
+        );
+    }
+
+    #[test]
+    fn scrollback_part_strips_the_visible_suffix() {
+        assert_eq!(
+            scrollback_part("old-1\nold-2\nnow-1\nnow-2", "now-1\nnow-2"),
+            "old-1\nold-2"
+        );
+        assert_eq!(
+            scrollback_part("old-1\nchanged", "now-1"),
+            "old-1\nchanged",
+            "a screen that changed between reads keeps the whole later read"
+        );
+        assert_eq!(
+            scrollback_part("old-1", ""),
+            "old-1",
+            "an empty screen strips nothing"
+        );
     }
 }

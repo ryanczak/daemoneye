@@ -1,7 +1,7 @@
 # Phase 01c: screen-tool — `read_shell_screen`
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** done
 **Depends on:** phase-01b
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -145,3 +145,70 @@ diff /tmp/pasted-01c.txt /tmp/e2e-01c.txt && echo "PASTE MATCH" || echo "PASTE M
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-13 23:51 (progress)
+
+Started the phase (executor: GLM-5.3-Flash-NVFP4-Spark). Status flipped to
+in-progress and the milestone README row updated. Working the spec in task
+order: `read_shell_screen` in `knowledge/shell.rs` beside `read_shell`, then
+pending/events/args/defs/dispatch/stream/executor arms, the `sre.toml`
+section, the two doc tables, the eight PTY tests, and the end-to-end
+capture.
+
+### Update — 2026-10-13 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** the run made zero code edits in 143 turns after reading every file the checklist names, the same failure as phase 01b's resume, and it recurred after the one-file-per-task refinement aimed at it; the briefing also shows the spec missed count-pinned tests in `src/ai/tools/dispatch.rs` that must change, so "doc_truth passes unmodified" read as a contradiction.
+
+### Update — 2026-10-14 (end-to-end verification)
+
+Architect takeover. The § End-to-end verification block, run verbatim on the
+final tree, with the `finished in` timings normalised to `<t>` so the
+capture is reproducible:
+
+```
+read_shell_screen_returns_the_screen_with_a_foreground_header: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2290 filtered out; finished in <t>s
+read_shell_screen_names_a_running_program: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2290 filtered out; finished in <t>s
+read_shell_screen_lines_tails_the_visible_rows: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2290 filtered out; finished in <t>s
+read_shell_screen_pattern_filters_rows: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2290 filtered out; finished in <t>s
+read_shell_screen_invalid_pattern_is_an_error: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2290 filtered out; finished in <t>s
+read_shell_screen_unknown_shell_is_an_error_naming_live_shells: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2290 filtered out; finished in <t>s
+read_shell_screen_records_last_foreground: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2290 filtered out; finished in <t>s
+read_shell_screen_masks_a_secret_on_screen: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2290 filtered out; finished in <t>s
+claude_md_count=1
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+fmt_exit=0
+passed=2352 failed=0
+```
+
+PASTE MATCH
+
+### Review verdict — 2026-10-14
+
+- **Verdict:** escalated
+- **Bounces:** none. One dispatch, `hard_fail` (`NoProgressStall`, 143 turns,
+  zero code edits after reading every file the checklist names). The same
+  failure as phase 01b's resume, recurring after the one-file-per-task
+  refinement aimed at it, so the decision table's takeover row applied.
+- **Executor:** Claude (direct), architect takeover.
+- **Gates:** fmt exit 0; build 0 warnings; clippy `-D warnings` exit 0;
+  `cargo test` passed=2352 failed=0 (2343 + the eight named tests + one
+  unit test for the scrollback split). `doc_truth` passes with the test
+  file unmodified.
+- **Mutation check:** removing `mask_sensitive` from the result turns
+  `read_shell_screen_masks_a_secret_on_screen` red; restored, green.
+- **Scope deviations:**
+  - The spec was wrong in three places, each found during the takeover.
+    It pointed at `watch_shell`'s fixture as "real PTY"; those tests use
+    fake cast files, and the real-host fixture is `open_shell_with` +
+    `spawn_in_process_host`. It said `doc_truth` passes unmodified without
+    naming three count-pinned tests in `src/ai/tools/dispatch.rs` that must
+    move with any new tool (total, core, Read category). And a new `###`
+    heading in `sre.toml` would have broken `doc_truth`'s pinned count of
+    11; the tool is documented under the shared heading
+    `` `read_shell / read_shell_screen` ``, which the test validates.
+  - Scrollback is read with a second `Screen` call and the visible suffix
+    stripped, because the host joins the two with a plain newline. The
+    result labels the two sections. A unit test pins the split.
+- **Calibration:** see the milestone README note on the M28 stalls.
