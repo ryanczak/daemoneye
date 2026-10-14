@@ -8,6 +8,7 @@ mod backend;
 mod client;
 mod foreground;
 mod host;
+pub mod keys;
 mod launch;
 mod log;
 mod proto;
@@ -26,6 +27,7 @@ pub use client::{
 };
 pub use foreground::{Foreground, classify, classify_record, classify_transport};
 pub use host::{ShellBackend, bind, serve, serve_until_exit};
+pub use keys::{EncodedKeys, ShellModes, encode_keys, paste_bytes};
 pub use launch::{
     await_ready, cast_path, lock_path, resolve_cast, run_host, socket_path, spawn_detached,
 };

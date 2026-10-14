@@ -8,6 +8,7 @@
 
 use crate::cli::tail::{TailModel, render_tail};
 use crate::ipc::Response;
+use crate::shell::keys::ShellModes;
 
 /// How long a first `Ctrl-d` waits for a second before it detaches.
 pub const CTRL_D_WINDOW: std::time::Duration = std::time::Duration::from_millis(400);
@@ -55,24 +56,6 @@ pub enum Chord {
     TogglePause,
     /// `Ctrl-c`: interrupt the foreground job.
     Interrupt,
-}
-
-/// The shell's terminal modes that change what a key should send.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ShellModes {
-    /// The shell asked for bracketed paste (`ESC [ ? 2004 h`).
-    pub bracketed_paste: bool,
-    /// The shell asked for application cursor keys (`ESC [ ? 1 h`).
-    pub application_cursor: bool,
-}
-
-impl ShellModes {
-    pub fn of(screen: &vt100::Screen) -> Self {
-        Self {
-            bracketed_paste: screen.bracketed_paste(),
-            application_cursor: screen.application_cursor(),
-        }
-    }
 }
 
 /// What one chunk of keyboard bytes comes to: the bytes to send, whether to

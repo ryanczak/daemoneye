@@ -1219,6 +1219,8 @@ mod tests {
                 cols: 80,
                 cursor: (12, 34),
                 alt_screen: true,
+                bracketed_paste: false,
+                application_cursor: false,
             };
             let server = start_server(expected.clone()).await;
             let answered = screen(&server.path, true, 40, Duration::from_secs(5))

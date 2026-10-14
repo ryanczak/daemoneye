@@ -1026,7 +1026,9 @@ pub static TOOLS: &[ToolDef] = &[
                 name: "enter",
                 ty: ParamTy::Bool,
                 required: false,
-                description: "Append a newline. Default true.",
+                description: "Press Enter after the text: sends a carriage return \
+                              (the byte the Enter key sends), which a shell's line \
+                              discipline turns into a newline. Default true.",
             },
         ],
         deferred_group: None,

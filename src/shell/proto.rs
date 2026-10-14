@@ -78,6 +78,14 @@ pub enum ShellResponse {
         cols: u16,
         cursor: (u16, u16),
         alt_screen: bool,
+        /// The screen's bracketed-paste mode. `false` on a host from before
+        /// this phase, the safe default: the paste rule then never brackets.
+        #[serde(default)]
+        bracketed_paste: bool,
+        /// The screen's application-cursor mode. `false` on a host from
+        /// before this phase.
+        #[serde(default)]
+        application_cursor: bool,
     },
     Status {
         state: ShellState,
@@ -305,6 +313,8 @@ mod tests {
             cols: 80,
             cursor: (12, 34),
             alt_screen: true,
+            bracketed_paste: true,
+            application_cursor: false,
         };
         let wire = encode(&text).unwrap();
         let decoded: ShellResponse = serde_json::from_str(wire.trim_end()).unwrap();
@@ -317,7 +327,9 @@ mod tests {
                 "rows": 24,
                 "cols": 80,
                 "cursor": [12, 34],
-                "alt_screen": true
+                "alt_screen": true,
+                "bracketed_paste": true,
+                "application_cursor": false
             }),
             "the pinned wire form of a ScreenText reply"
         );
@@ -362,6 +374,29 @@ mod tests {
                 assert_eq!(raw_mode, None, "missing raw_mode defaults to None");
                 assert_eq!(alt_screen, None, "missing alt_screen defaults to None");
                 assert_eq!(foreground, None, "missing foreground defaults to None");
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn screen_text_without_key_modes_defaults_them_off() {
+        // A host from before this phase sends no mode keys; a reader must
+        // see both modes as off — the safe default, which never brackets.
+        let old = r#"{"type":"ScreenText","text":"$ ","rows":24,"cols":80,"cursor":[0,2],"alt_screen":false}
+"#;
+        let decoded: ShellResponse = serde_json::from_str(old.trim_end()).unwrap();
+        match decoded {
+            ShellResponse::ScreenText {
+                bracketed_paste,
+                application_cursor,
+                ..
+            } => {
+                assert!(!bracketed_paste, "missing bracketed_paste defaults to off");
+                assert!(
+                    !application_cursor,
+                    "missing application_cursor defaults to off"
+                );
             }
             other => panic!("unexpected variant: {other:?}"),
         }

@@ -276,11 +276,12 @@ impl ShellBackend for PtyBackend {
     /// restored, so the frame's screen section is exactly what `contents()`
     /// would show.
     async fn screen_text(&self, annotated: bool, scrollback: u16) -> anyhow::Result<ShellResponse> {
-        let (text, rows, cols, cursor, alt_screen) = {
+        let (text, rows, cols, cursor, alt_screen, modes) = {
             let mut screen = self.screen.lock().unwrap_or_log();
             let (rows, cols) = screen.size();
             let cursor = screen.cursor();
             let alt_screen = screen.is_alt_screen();
+            let modes = screen.modes();
             let head = screen.scrollback_rows(usize::from(scrollback));
             let body = screen.marked(annotated);
             let text = match (head.is_empty(), body.is_empty()) {
@@ -288,7 +289,7 @@ impl ShellBackend for PtyBackend {
                 (false, true) => head,
                 (false, false) => format!("{head}\n{body}"),
             };
-            (text, rows, cols, cursor, alt_screen)
+            (text, rows, cols, cursor, alt_screen, modes)
         };
         Ok(ShellResponse::ScreenText {
             text,
@@ -296,6 +297,8 @@ impl ShellBackend for PtyBackend {
             cols,
             cursor,
             alt_screen,
+            bracketed_paste: modes.bracketed_paste,
+            application_cursor: modes.application_cursor,
         })
     }
 }
@@ -552,6 +555,43 @@ mod tests {
             assert!(
                 std::time::Instant::now() < deadline,
                 "the screen to show the inverse run and the alt screen within 10 s, last: {text:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        rt.block_on(backend.input(b"\x03"))
+            .expect("end the sleep with ^C");
+    }
+
+    #[test]
+    fn backend_screen_text_reports_the_key_modes() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = spawn_backend(&dir);
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        rt.block_on(backend.input(b"printf '\\033[?2004h'; sleep 30\r\n"))
+            .expect("write the mode command");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let resp = rt
+                .block_on(backend.screen_text(false, 0))
+                .expect("screen_text");
+            let ShellResponse::ScreenText {
+                bracketed_paste,
+                application_cursor,
+                ..
+            } = resp
+            else {
+                panic!("expected ScreenText, got {resp:?}");
+            };
+            if bracketed_paste {
+                assert!(
+                    !application_cursor,
+                    "only `?2004h` was sent; application cursor must stay off"
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the ScreenText reply to report bracketed paste within 10 s"
             );
             std::thread::sleep(Duration::from_millis(50));
         }

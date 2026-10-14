@@ -1430,7 +1430,7 @@ where
                 "send_input into shell {}: {:?}{} — {}",
                 shell,
                 text,
-                if *enter { " (newline appended)" } else { "" },
+                if *enter { " (Enter sent)" } else { "" },
                 target_note
             );
             match prompt_and_await_approval(

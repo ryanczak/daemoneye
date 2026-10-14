@@ -6,6 +6,8 @@
 //! is the *transcript* (the byte-exact record of everything that happened).
 //! Only the former lives here.
 
+use crate::shell::keys::ShellModes;
+
 /// Semantic colour tag produced from grid cells by [`ShellScreen::annotated`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CellColor {
@@ -93,6 +95,12 @@ impl ShellScreen {
     /// the `ESC[?1049h` / `ESC[?1049l` pair that `less` and `vim` emit.
     pub fn is_alt_screen(&self) -> bool {
         self.parser.screen().alternate_screen()
+    }
+
+    /// The key modes the screen model holds: bracketed paste and application
+    /// cursor, as the program set them (`ESC [ ? 2004 h` / `ESC [ ? 1 h`).
+    pub fn modes(&self) -> ShellModes {
+        ShellModes::of(self.parser.screen())
     }
 
     /// The visible screen with semantically-coloured runs wrapped in markers:
@@ -437,6 +445,32 @@ mod tests {
         assert!(s.is_alt_screen());
         s.feed(b"\x1b[?1049l");
         assert!(!s.is_alt_screen());
+    }
+
+    #[test]
+    fn screen_reports_bracketed_paste_and_application_cursor() {
+        let mut s = screen(3, 20);
+        let fresh = s.modes();
+        assert!(
+            !fresh.bracketed_paste && !fresh.application_cursor,
+            "both off on a fresh screen: {fresh:?}"
+        );
+        s.feed(b"\x1b[?2004h\x1b[?1h");
+        let on = s.modes();
+        assert!(
+            on.bracketed_paste,
+            "bracketed paste on after `?2004h`: {on:?}"
+        );
+        assert!(
+            on.application_cursor,
+            "application cursor on after `?1h`: {on:?}"
+        );
+        s.feed(b"\x1b[?2004l\x1b[?1l");
+        let off = s.modes();
+        assert!(
+            !off.bracketed_paste && !off.application_cursor,
+            "both off after the matching `l`: {off:?}"
+        );
     }
 
     #[test]

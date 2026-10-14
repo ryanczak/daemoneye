@@ -1,7 +1,7 @@
 # Phase 02d: keys — the key encoder, the screen's key modes, Enter as `\r`
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02c
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -218,3 +218,31 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-14 13:03 (started)
+
+Executor: Claude (M28 phase-02d run). Status flipped to `in-progress`; implementing the Spec in order — `ShellModes` move, the encoder, the paste rule, the screen key modes, Enter as `\r`, then the end-to-end capture.
+
+### Update — 2026-10-14 13:30 (end-to-end verification)
+
+```text
+keys_encode_the_plain_vocabulary: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+keys_cursor_keys_follow_application_cursor_mode: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+keys_control_and_meta_use_legacy_bytes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+keys_modified_cursor_and_function_keys_use_xterm_parameters: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+keys_without_a_legacy_byte_go_out_as_csi_u: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+keys_unknown_name_is_an_error_naming_the_vocabulary: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+paste_brackets_only_when_the_shell_asked: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+paste_strips_an_embedded_end_bracket: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_reports_bracketed_paste_and_application_cursor: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_text_without_key_modes_defaults_them_off: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+backend_screen_text_reports_the_key_modes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+send_input_enter_sends_a_carriage_return: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+shellmodes_defs=src/shell/keys.rs
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2367 failed=0
+```
+
+PASTE MATCH

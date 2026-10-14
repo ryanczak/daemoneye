@@ -1667,9 +1667,11 @@ where
     }
     let mut bytes = text.as_bytes().to_vec();
     if enter {
-        // `\n`, not `\r` or `\r\n`: the same terminator `wrap_command` sends,
-        // which is how every command in this codebase reaches a shell.
-        bytes.push(b'\n');
+        // `\r`, not `\n`: the byte a real Enter key sends. A cooked shell
+        // turns it into `\n` (`ICRNL`); a raw-mode app sees the same byte it
+        // would from a human. `wrap_command`'s terminator is unchanged — it
+        // never targets a raw-mode app.
+        bytes.push(b'\r');
     }
     if let Err(e) = send(bytes).await {
         return format!(
@@ -1688,11 +1690,7 @@ where
             "s"
         },
         shell,
-        if enter {
-            ", newline appended"
-        } else {
-            ", no newline"
-        },
+        if enter { ", Enter sent" } else { ", no Enter" },
         ". Read the effect with read_shell or watch_shell — this tool returns no \
          output and does not wait for the program to react."
     )
@@ -1826,6 +1824,8 @@ async fn read_screen(
             cols,
             cursor,
             alt_screen,
+            bracketed_paste: _,
+            application_cursor: _,
         }) => Ok(ScreenRead {
             text,
             rows,
@@ -4944,7 +4944,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_input_appends_a_newline_by_default() {
+    async fn send_input_enter_sends_a_carriage_return() {
         let (_home, _dir) = lifecycle_home();
         let reg = ShellRegistry::default();
         insert(&reg, 3, Owner::Chat("caller".into()), NOW);
@@ -4969,15 +4969,11 @@ mod tests {
             out.starts_with("Sent") && out.contains("s3"),
             "the report names the shell and what was sent: {out}"
         );
-        assert!(
-            out.contains("newline appended"),
-            "the newline is reported: {out}"
-        );
+        assert!(out.contains("Enter sent"), "the Enter is reported: {out}");
         assert_eq!(
             captured.lock().unwrap().as_slice(),
-            [b"hello\n".to_vec()],
-            "exit: true appends exactly one \\n — a length cannot tell it from \\r, \
-             so the bytes are asserted whole"
+            [b"hello\r".to_vec()],
+            "enter: true appends exactly one \\r — the byte a real Enter sends"
         );
     }
 
@@ -5059,13 +5055,13 @@ mod tests {
         )
         .await;
         assert!(
-            out.contains("no newline"),
-            "the absence of the newline is reported: {out}"
+            out.contains("no Enter"),
+            "the absence of the Enter is reported: {out}"
         );
         assert_eq!(
             captured.lock().unwrap().as_slice(),
             [b"hello".to_vec()],
-            "exit: false sends the text alone, no terminator"
+            "enter: false sends the text alone, no terminator"
         );
     }
 
