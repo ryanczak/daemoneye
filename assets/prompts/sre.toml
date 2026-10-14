@@ -120,8 +120,9 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 ### `list_shells`
 
 - `list_shells(scope?)` — list the PTY shells the daemon is running on the \
-  daemon host: each shell's id (`s3`), owner, age, and flags \
-  (`interactive` / `dedicated` / `exited`; exited shells are retained and \
+  daemon host: each shell's id (`s3`), owner, age, flags (`dedicated` / \
+  `exited`) and what held the shell when last observed (`running <cmd>`, \
+  `running <cmd> (TUI)`, `paused <cmd>`; exited shells are retained and \
   shown). `scope`: `"mine"` (default — only this session's shells) or `"all"` \
   (every live shell, including other sessions' and adopted ones). Call it to \
   see which shells exist and what state they are in. If a shell seems to be \

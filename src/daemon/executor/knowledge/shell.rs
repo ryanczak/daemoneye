@@ -6,9 +6,9 @@
 use crate::ai::filter::mask_sensitive;
 use crate::config::shell_logs_dir;
 use crate::shell::{
-    MetaIndex, Owner, ShellId, ShellRecord, ShellRegistry, await_ready, cast_path, host_is_alive,
-    meta_path_for, parse_cast_name, read_command_output, socket_path, spawn_for_on_host,
-    with_shells,
+    Foreground, MetaIndex, Owner, ShellId, ShellRecord, ShellRegistry, await_ready, cast_path,
+    host_is_alive, meta_path_for, parse_cast_name, read_command_output, socket_path,
+    spawn_for_on_host, with_shells,
 };
 use std::time::{Duration, Instant};
 
@@ -20,7 +20,9 @@ pub(super) struct ShellRow {
     pub owner_key: String,
     pub host: crate::host::HostId,
     pub started_unix: u64,
-    pub interactive: bool,
+    /// The observed classification, not the timestamp: what holds the shell
+    /// is what the listing shows, when it was seen is not.
+    pub foreground: Option<Foreground>,
     pub dedicated: bool,
     pub exited_unix: Option<u64>,
 }
@@ -115,7 +117,7 @@ fn collect_row(record: &ShellRecord) -> ShellRow {
         owner_key: record.owner.key(),
         host: record.host.clone(),
         started_unix: record.started_unix,
-        interactive: record.interactive,
+        foreground: record.last_foreground.as_ref().map(|(fg, _)| fg.clone()),
         dedicated: record.dedicated,
         exited_unix: record.exited_unix,
     }
@@ -151,8 +153,13 @@ fn format_shell_rows(rows: &[ShellRow], scope: Option<&str>, now_unix: u64) -> S
             String::new()
         };
         let mut flags = String::new();
-        if row.interactive {
-            flags.push_str(" [interactive]");
+        if let Some(fg) = row
+            .foreground
+            .as_ref()
+            .filter(|_| row.exited_unix.is_none())
+            .filter(|fg| matches!(fg, Foreground::Program { .. } | Foreground::Paused { .. }))
+        {
+            flags.push_str(&format!(" [{fg}]"));
         }
         if row.dedicated {
             flags.push_str(" [dedicated]");
@@ -200,9 +207,12 @@ fn format_age(age_secs: u64) -> String {
 ///
 /// Pure mirror of `shell_for_owner`'s step-(1) reuse predicate
 /// (`src/shell/session.rs`): lowest **numeric** index among the owner's
-/// shells that run on `HostId::Local` and are neither `interactive` nor
-/// `dedicated` — a bare `run_terminal_command` lands on the daemon host, so
-/// a remote shell is never its default.
+/// shells that run on `HostId::Local` and are neither busy nor `dedicated` —
+/// a bare `run_terminal_command` lands on the daemon host, so a remote shell
+/// is never its default. Busy is the *observed* foreground
+/// (`Program`/`Paused`), the cache's classification, never a probe: this
+/// runs on every prompt assembly and must do no I/O, so it is one
+/// observation stale where `shell_for_owner` is not.
 ///
 /// **Deliberate divergence:** `shell_for_owner` settles liveness with a
 /// per-shell flock probe — the registry's own liveness check — while this
@@ -212,8 +222,10 @@ fn format_age(age_secs: u64) -> String {
 fn default_shell_for(rows: &[ShellRow], owner_key: &str) -> Option<String> {
     rows.iter()
         .filter(|row| {
-            !row.interactive
-                && !row.dedicated
+            !matches!(
+                row.foreground,
+                Some(Foreground::Program { .. }) | Some(Foreground::Paused { .. })
+            ) && !row.dedicated
                 && row.exited_unix.is_none()
                 && row.owner_key == owner_key
                 && row.host == crate::host::HostId::Local
@@ -246,8 +258,13 @@ fn format_shell_context(rows: &[ShellRow], owner_key: &str, now_unix: u64) -> St
                 String::new()
             };
             let mut flags = String::new();
-            if row.interactive {
-                flags.push_str(" [interactive]");
+            if let Some(fg) = row
+                .foreground
+                .as_ref()
+                .filter(|_| row.exited_unix.is_none())
+                .filter(|fg| matches!(fg, Foreground::Program { .. } | Foreground::Paused { .. }))
+            {
+                flags.push_str(&format!(" [{fg}]"));
             }
             if row.dedicated {
                 flags.push_str(" [dedicated]");
@@ -2450,7 +2467,7 @@ mod tests {
         id: &str,
         owner_key: &str,
         started_unix: u64,
-        interactive: bool,
+        foreground: Option<Foreground>,
         dedicated: bool,
         exited_unix: Option<u64>,
     ) -> ShellRow {
@@ -2459,7 +2476,7 @@ mod tests {
             owner_key: owner_key.to_string(),
             host: crate::host::HostId::Local,
             started_unix,
-            interactive,
+            foreground,
             dedicated,
             exited_unix,
         }
@@ -2471,7 +2488,7 @@ mod tests {
             owner_key: owner_key.to_string(),
             host,
             started_unix,
-            interactive: false,
+            foreground: None,
             dedicated: false,
             exited_unix: None,
         }
@@ -2493,7 +2510,7 @@ mod tests {
         let mut gone = row_on("s4", "chat:a", web.clone(), NOW);
         gone.exited_unix = Some(NOW);
         let rows = vec![
-            row("s0", "chat:a", NOW, false, false, None),
+            row("s0", "chat:a", NOW, None, false, None),
             row_on("s2", "chat:a", web.clone(), NOW),
             row_on("s3", "ghost:job", web, NOW),
             gone,
@@ -2506,7 +2523,7 @@ mod tests {
 
     #[test]
     fn hosts_context_is_empty_without_configured_hosts() {
-        let rows = vec![row("s0", "chat:a", NOW, false, false, None)];
+        let rows = vec![row("s0", "chat:a", NOW, None, false, None)];
         assert_eq!(
             format_hosts_context(&std::collections::HashMap::new(), &rows),
             ""
@@ -2598,8 +2615,8 @@ mod tests {
     #[test]
     fn default_shell_for_picks_the_lowest_index_not_the_lowest_string() {
         let rows = vec![
-            row("s10", "chat:a", NOW - 100, false, false, None),
-            row("s2", "chat:a", NOW - 100, false, false, None),
+            row("s10", "chat:a", NOW - 100, None, false, None),
+            row("s2", "chat:a", NOW - 100, None, false, None),
         ];
         let got = default_shell_for(&rows, "chat:a");
         assert_eq!(
@@ -2610,23 +2627,10 @@ mod tests {
     }
 
     #[test]
-    fn default_shell_for_skips_an_interactive_shell() {
-        let rows = vec![
-            row("s0", "chat:a", NOW - 100, true, false, None),
-            row("s1", "chat:a", NOW - 100, false, false, None),
-        ];
-        assert_eq!(
-            default_shell_for(&rows, "chat:a"),
-            Some("s1".to_string()),
-            "an interactive shell must not be named as the default, s1 is"
-        );
-    }
-
-    #[test]
     fn default_shell_for_skips_a_dedicated_shell() {
         let rows = vec![
-            row("s0", "chat:a", NOW - 100, false, true, None),
-            row("s1", "chat:a", NOW - 100, false, false, None),
+            row("s0", "chat:a", NOW - 100, None, true, None),
+            row("s1", "chat:a", NOW - 100, None, false, None),
         ];
         assert_eq!(
             default_shell_for(&rows, "chat:a"),
@@ -2638,8 +2642,8 @@ mod tests {
     #[test]
     fn default_shell_for_skips_an_exited_shell() {
         let rows = vec![
-            row("s0", "chat:a", NOW - 100, false, false, Some(NOW)),
-            row("s1", "chat:a", NOW - 100, false, false, None),
+            row("s0", "chat:a", NOW - 100, None, false, Some(NOW)),
+            row("s1", "chat:a", NOW - 100, None, false, None),
         ];
         assert_eq!(
             default_shell_for(&rows, "chat:a"),
@@ -2651,8 +2655,8 @@ mod tests {
     #[test]
     fn default_shell_for_ignores_another_owners_shell() {
         let rows = vec![
-            row("s0", "chat:other", NOW - 100, false, false, None),
-            row("s1", "chat:a", NOW - 100, false, false, None),
+            row("s0", "chat:other", NOW - 100, None, false, None),
+            row("s1", "chat:a", NOW - 100, None, false, None),
         ];
         assert_eq!(
             default_shell_for(&rows, "chat:a"),
@@ -2663,11 +2667,21 @@ mod tests {
 
     #[test]
     fn default_shell_for_returns_none_when_every_shell_is_ineligible() {
-        let rows = vec![row("s0", "chat:a", NOW - 100, true, false, None)];
+        let rows = vec![row(
+            "s0",
+            "chat:a",
+            NOW - 100,
+            Some(Foreground::Program {
+                cmd: "claude".to_string(),
+                tui: true,
+            }),
+            false,
+            None,
+        )];
         assert_eq!(
             default_shell_for(&rows, "chat:a"),
             None,
-            "an interactive-only shell set has no default"
+            "a shell last seen busy has no default"
         );
     }
 
@@ -2700,7 +2714,7 @@ mod tests {
                 crate::host::HostId::Named("pinky".to_string()),
                 NOW - 100,
             ),
-            row("s2", "chat:a", NOW - 100, false, false, None),
+            row("s2", "chat:a", NOW - 100, None, false, None),
         ];
         assert_eq!(
             default_shell_for(&rows, "chat:a"),
@@ -2723,13 +2737,23 @@ mod tests {
     #[test]
     fn format_shell_context_lists_every_shell_with_its_flags() {
         let rows = vec![
-            row("s2", "chat:a", NOW - 12, true, false, None),
-            row("s0", "chat:a", NOW - 240, false, false, None),
-            row("s4", "chat:b", NOW - 240, false, true, Some(NOW - 5)),
+            row(
+                "s2",
+                "chat:a",
+                NOW - 12,
+                Some(Foreground::Program {
+                    cmd: "claude".to_string(),
+                    tui: true,
+                }),
+                false,
+                None,
+            ),
+            row("s0", "chat:a", NOW - 240, None, false, None),
+            row("s4", "chat:b", NOW - 240, None, true, Some(NOW - 5)),
         ];
         let out = format_shell_context(&rows, "chat:a", NOW);
         assert!(
-            out.starts_with("[SHELLS] 3 — s0 age:4m, s2 age:12s [interactive], s4 age:"),
+            out.starts_with("[SHELLS] 3 — s0 age:4m, s2 age:12s [running claude (TUI)], s4 age:"),
             "numeric order (s0, s2, s4) with flags on the right rows: {out}"
         );
         assert!(
@@ -2743,9 +2767,19 @@ mod tests {
     #[test]
     fn format_shell_context_keeps_each_flag_on_its_own_row() {
         let rows = vec![
-            row("s0", "chat:a", NOW - 240, false, false, None),
-            row("s2", "chat:a", NOW - 12, true, false, None),
-            row("s4", "chat:b", NOW - 240, false, true, Some(NOW - 5)),
+            row("s0", "chat:a", NOW - 240, None, false, None),
+            row(
+                "s2",
+                "chat:a",
+                NOW - 12,
+                Some(Foreground::Program {
+                    cmd: "claude".to_string(),
+                    tui: true,
+                }),
+                false,
+                None,
+            ),
+            row("s4", "chat:b", NOW - 240, None, true, Some(NOW - 5)),
         ];
         let out = format_shell_context(&rows, "chat:a", NOW);
         let count_line = out
@@ -2768,9 +2802,19 @@ mod tests {
             segments[0]
         );
         assert!(
-            segments[1].contains("[interactive]"),
-            "s2's segment must carry [interactive]: segment {:?} in {out}",
+            segments[1].contains("[running claude (TUI)]"),
+            "s2's segment must carry the observed foreground: segment {:?} in {out}",
             segments[1]
+        );
+        assert!(
+            segments[2].contains("[exited]"),
+            "s4's segment must carry [exited]: segment {:?} in {out}",
+            segments[2]
+        );
+        assert!(
+            !segments[2].contains("[paused"),
+            "an exited shell's segment must not restate its foreground: {:?}",
+            segments[2]
         );
         assert!(
             segments[2].contains("[dedicated]"),
@@ -2785,11 +2829,21 @@ mod tests {
 
     #[test]
     fn format_shell_context_omits_the_default_line_when_none_is_eligible() {
-        let rows = vec![row("s0", "chat:a", NOW - 100, true, false, None)];
+        let rows = vec![row(
+            "s0",
+            "chat:a",
+            NOW - 100,
+            Some(Foreground::Program {
+                cmd: "claude".to_string(),
+                tui: true,
+            }),
+            false,
+            None,
+        )];
         let out = format_shell_context(&rows, "chat:a", NOW);
         assert!(
             out.contains("[SHELLS] 1"),
-            "the single interactive row is still counted: {out}"
+            "the single busy row is still counted: {out}"
         );
         assert!(
             !out.contains("[DEFAULT SHELL]"),
@@ -3022,16 +3076,16 @@ mod tests {
     #[test]
     fn formatter_marks_flags_and_exits_without_the_registry() {
         let rows = vec![
-            row("s3", "chat:a", NOW - 100, false, false, None),
-            row("s4", "ghost:a", 0, true, true, Some(NOW - 10)),
+            row("s3", "chat:a", NOW - 100, None, false, None),
+            row("s4", "ghost:a", 0, None, true, Some(NOW - 10)),
         ];
         let out = format_shell_rows(&rows, Some("all"), NOW);
-        assert!(out.contains("[interactive]"), "flag carried: {out}");
         assert!(out.contains("[dedicated]"), "flag carried: {out}");
         assert!(
             out.contains("[exited]"),
             "an exited shell is kept visible: {out}"
         );
+        assert!(!out.contains("[interactive]"), "no stale flag: {out}");
         assert!(out.contains("owner:ghost:a"), "owner key shown: {out}");
         assert!(out.contains("2 shells"), "count header: {out}");
         assert!(out.contains("age:1m"), "age from started_unix: {out}");
@@ -3045,8 +3099,215 @@ mod tests {
     }
 
     #[test]
+    fn format_shell_rows_shows_the_observed_foreground() {
+        let rows = vec![
+            row(
+                "s0",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Program {
+                    cmd: "claude".to_string(),
+                    tui: true,
+                }),
+                false,
+                None,
+            ),
+            row(
+                "s1",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Paused {
+                    cmd: "vim".to_string(),
+                }),
+                false,
+                None,
+            ),
+            row(
+                "s2",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Prompt),
+                false,
+                None,
+            ),
+            row(
+                "s3",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Unknown),
+                false,
+                None,
+            ),
+            row("s4", "chat:a", NOW - 10, None, false, None),
+        ];
+        let out = format_shell_rows(&rows, None, NOW);
+        assert!(
+            out.contains("s0  owner:chat:a  age:10s [running claude (TUI)]"),
+            "a TUI program is shown with its TUI marker: {out}"
+        );
+        assert!(
+            out.contains("s1  owner:chat:a  age:10s [paused vim]"),
+            "a paused shell shows its stopped job: {out}"
+        );
+        assert!(
+            out.contains("s2  owner:chat:a  age:10s\n"),
+            "a shell at its prompt renders no bracketed foreground: {out}"
+        );
+        assert!(
+            out.contains("s3  owner:chat:a  age:10s\n"),
+            "an unknown classification renders nothing: {out}"
+        );
+        assert!(
+            out.contains("s4  owner:chat:a  age:10s\n"),
+            "an unobserved shell renders nothing: {out}"
+        );
+    }
+
+    #[test]
+    fn format_shell_context_shows_the_observed_foreground() {
+        let rows = vec![
+            row(
+                "s0",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Program {
+                    cmd: "claude".to_string(),
+                    tui: true,
+                }),
+                false,
+                None,
+            ),
+            row(
+                "s1",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Paused {
+                    cmd: "vim".to_string(),
+                }),
+                false,
+                None,
+            ),
+            row(
+                "s2",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Prompt),
+                false,
+                None,
+            ),
+            row(
+                "s3",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Unknown),
+                false,
+                None,
+            ),
+            row("s4", "chat:a", NOW - 10, None, false, None),
+        ];
+        let out = format_shell_context(&rows, "chat:a", NOW);
+        let listing = out
+            .lines()
+            .find(|line| line.starts_with("[SHELLS] "))
+            .expect("the count line is present");
+        assert!(
+            listing.contains("s0 age:10s [running claude (TUI)]"),
+            "the TUI program is shown in the block: {listing}"
+        );
+        assert!(
+            listing.contains("s1 age:10s [paused vim]"),
+            "the paused shell is shown in the block: {listing}"
+        );
+        for id in ["s2", "s3", "s4"] {
+            let segment = listing
+                .split(", ")
+                .find(|s| s.starts_with(&format!("{id} ")))
+                .unwrap_or_else(|| panic!("{id} listed: {listing}"));
+            assert!(
+                !segment.contains('['),
+                "{id} is not busy, so no bracketed foreground: {segment:?} in {listing}"
+            );
+        }
+        assert!(
+            out.contains("[DEFAULT SHELL] s2 —"),
+            "the default skips the busy shells and names the first prompt shell: {out}"
+        );
+    }
+
+    #[test]
+    fn default_shell_skips_a_shell_last_seen_busy() {
+        let busy_first = vec![
+            row(
+                "s0",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Program {
+                    cmd: "claude".to_string(),
+                    tui: true,
+                }),
+                false,
+                None,
+            ),
+            row(
+                "s1",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Prompt),
+                false,
+                None,
+            ),
+        ];
+        assert_eq!(
+            default_shell_for(&busy_first, "chat:a"),
+            Some("s1".to_string()),
+            "a shell last seen running a program is skipped, s1 is the default"
+        );
+        let paused_first = vec![
+            row(
+                "s0",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Paused {
+                    cmd: "vim".to_string(),
+                }),
+                false,
+                None,
+            ),
+            row(
+                "s1",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Prompt),
+                false,
+                None,
+            ),
+        ];
+        assert_eq!(
+            default_shell_for(&paused_first, "chat:a"),
+            Some("s1".to_string()),
+            "a shell last seen paused is skipped too"
+        );
+        let unobserved_first = vec![
+            row("s0", "chat:a", NOW - 10, None, false, None),
+            row(
+                "s1",
+                "chat:a",
+                NOW - 10,
+                Some(Foreground::Prompt),
+                false,
+                None,
+            ),
+        ];
+        assert_eq!(
+            default_shell_for(&unobserved_first, "chat:a"),
+            Some("s0".to_string()),
+            "an unobserved shell is not busy, so the lowest stays the default"
+        );
+    }
+
+    #[test]
     fn formatter_reports_a_single_shell_without_plural_splitting() {
-        let rows = vec![row("s1", "chat:a", NOW - 30, false, false, None)];
+        let rows = vec![row("s1", "chat:a", NOW - 30, None, false, None)];
         let out = format_shell_rows(&rows, None, NOW);
         assert!(out.contains("1 shell (scope \"mine\")"), "get: {out}");
         assert!(out.contains("age:30s"), "age: {out}");
@@ -3057,7 +3318,7 @@ mod tests {
     /// output, so a user with no hosts configured sees nothing new.
     #[test]
     fn local_shells_render_without_a_host() {
-        let rows = vec![row("s1", "chat:a", NOW - 30, false, false, None)];
+        let rows = vec![row("s1", "chat:a", NOW - 30, None, false, None)];
         let exact = format_shell_rows(&rows, None, NOW);
         assert_eq!(
             exact, "1 shell (scope \"mine\"):\n  s1  owner:chat:a  age:30s\n",
@@ -3082,7 +3343,7 @@ mod tests {
             owner_key: "chat:a".to_string(),
             host: host.clone(),
             started_unix: NOW - 30,
-            interactive: false,
+            foreground: None,
             dedicated: false,
             exited_unix: None,
         }];
