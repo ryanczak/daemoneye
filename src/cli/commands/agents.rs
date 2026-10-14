@@ -159,7 +159,6 @@ mod tests {
             host: "local".to_string(),
             owner: owner.to_string(),
             started_unix: NOW - 60,
-            interactive: false,
             dedicated: false,
             exited_unix: exited.then_some(NOW - 10),
             last_command: None,

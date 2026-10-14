@@ -21,9 +21,9 @@ use crate::ipc::{Request, Response};
 use crate::shell::PromptReply;
 use crate::shell::{
     CommandOutcome, Foreground, MetaIndex, Owner, PROBE_TIMEOUT, ShellId, ShellRegistry,
-    await_ready, host_entry_or_bare, mark_interactive, marker_shell_name, master_running,
-    meta_path_for, now_unix, probe_foreground, run_command, run_command_with_prompts,
-    shell_for_owner, socket_path, spawn_for_on_host, which_ssh, with_shells,
+    await_ready, host_entry_or_bare, marker_shell_name, master_running, meta_path_for, now_unix,
+    probe_foreground, run_command, run_command_with_prompts, shell_for_owner, socket_path,
+    spawn_for_on_host, which_ssh, with_shells,
 };
 use crate::shell::{CommandRecord, marked_inner_range};
 use std::sync::atomic::AtomicUsize;
@@ -375,23 +375,14 @@ where
     if crate::daemon::utils::is_interactive_command(cmd) {
         // The command must never be written to the shell: an interactive
         // session owns the terminal and consumes every byte, so writing would
-        // poison the shell for every later command (08b F2). Return before
-        // running; the session is established inside this shell.
-        mark_interactive(reg, &id);
-        let destination = crate::daemon::utils::interactive_destination(cmd)
-            .unwrap_or_else(|| "the remote host".to_string());
-        let text = format!(
-            "[Interactive session started]\n\
-             `{cmd}` opened an interactive session on shell {id} — now \
-             connected to {destination}.\n\
-             The command did not exit; that shell is running an interactive \
-             session on the remote host.\n\
-             Do NOT call `{cmd}` again — the session is already established.\n\
-             Later commands run in a fresh shell and do not reach this \
-             session; a way to type into the open session arrives with a \
-             later milestone."
+        // poison the shell for every later command (08b F2). Refuse before
+        // running, naming the tools that hold an interactive session.
+        anyhow::bail!(
+            "Error: `{cmd}` starts an interactive session, which \
+             run_terminal_command cannot hold: nothing was run. To start it, \
+             open a shell with open_shell, type the command into it with \
+             send_input, and see the session with read_shell_screen."
         );
-        return Ok((id, ShellRunResult { text, exit_code: 0 }));
     }
     let (started_unix, record_host, marker) = with_shells(reg, |store| {
         store
@@ -1700,9 +1691,9 @@ mod tests {
         );
     }
 
-    /// 08b's primary case: an interactive command returns immediately with the
-    /// session-established text and a clean exit status, and is never written
-    /// to the shell. Set against a real in-process host; nothing is sent over
+    /// 08b's primary case, in the refusal shape: an interactive command
+    /// resolves immediately with an **error**, and nothing is ever written to
+    /// the shell. Set against a real in-process host; nothing is sent over
     /// the PTY, so no network is involved — the classifier keys on the
     /// command string, and `nowhere.invalid` has no reachable host anyway.
     #[tokio::test]
@@ -1710,7 +1701,7 @@ mod tests {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let start = std::time::Instant::now();
-        let (id, result) = run_in_shell_for_test(
+        let err = run_in_shell_for_test(
             &reg,
             Owner::Chat("interactive".into()),
             "ssh nowhere.invalid",
@@ -1720,42 +1711,36 @@ mod tests {
             spawn_in_process_host,
         )
         .await
-        .expect("an interactive command resolves immediately, without timing out");
+        .expect_err("an interactive command is refused, not started");
         let elapsed = start.elapsed();
         assert!(
             elapsed < std::time::Duration::from_secs(5),
             "the interactive path must return at once — {elapsed:?} means the \
              command was written to the shell and waited for a prompt"
         );
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("nothing was run"),
+            "the refusal must say the command never ran: {msg}"
+        );
+        assert!(
+            msg.contains("open_shell") && msg.contains("send_input"),
+            "the refusal must name the tools that hold an interactive session: {msg}"
+        );
+        let held: Vec<String> = with_shells(&reg, |store| {
+            store.values().map(|r| r.id.as_str().to_string()).collect()
+        });
         assert_eq!(
-            result.exit_code, 0,
-            "nothing failed: the session opened, so no fabricated failure"
-        );
-        assert!(
-            id.as_str().starts_with('s'),
-            "the shell the command was (not) written to is named: {id:?}"
-        );
-        assert!(
-            result.text.contains("nowhere.invalid"),
-            "the destination reaches the model: {:?}",
-            result.text
-        );
-        assert!(
-            result.text.contains(id.as_str()),
-            "the shell id must be in the text so the model can name the session: {:?}",
-            result.text
-        );
-        assert!(
-            result.text.contains("Do NOT call") && result.text.contains("already established"),
-            "the message must warn against re-running the command: {:?}",
-            result.text
+            held.len(),
+            1,
+            "the refusal still resolved the owner's shell"
         );
 
-        // The decisive half: the shell the command was *not* written to must
-        // still answer. If the command had been written, its bytes would sit
-        // under an interactive process and every later write would time out.
+        // The decisive half: the shell nothing was written to must still
+        // answer. If the command had been written, its bytes would sit under
+        // an interactive process and every later write would time out.
         let outcome = crate::shell::run_command(
-            &crate::shell::socket_path(id.as_str()),
+            &crate::shell::socket_path(held[0].as_str()),
             "echo PROBE_ALIVE",
             "bash",
             std::time::Duration::from_secs(10),
@@ -1769,16 +1754,19 @@ mod tests {
         );
     }
 
-    /// The F2 regression guard: after the interactive command, the owner's
-    /// next command must report a *different* shell id and actually run. An
-    /// implementation that only marks the shell without also stopping reuse
-    /// would hand back the poisoned shell here.
+    /// The F2 regression guard, in the refusal shape: `ssh nowhere.invalid`
+    /// is refused — an error naming the tools that hold an interactive
+    /// session — and nothing is written to the shell, so the shell the
+    /// refused call resolved stays reusable: the owner's next command runs
+    /// in the **same** shell id. An implementation that wrote the command
+    /// would leave that shell poisoned; one that refused without resolving
+    /// a shell would leave the owner without one to reuse.
     #[tokio::test]
-    async fn shell_exec_interactive_marks_the_shell_and_the_next_command_gets_a_new_one() {
+    async fn run_terminal_command_refuses_an_interactive_command_and_writes_nothing() {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Chat("marked".into());
-        let (id1, first) = run_in_shell_for_test(
+        let err = run_in_shell_for_test(
             &reg,
             owner.clone(),
             "ssh nowhere.invalid",
@@ -1788,8 +1776,27 @@ mod tests {
             spawn_in_process_host,
         )
         .await
-        .expect("the interactive command resolves immediately");
-        assert_eq!(first.exit_code, 0, "the session opened, nothing failed");
+        .expect_err("an interactive command is refused, not started");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("open_shell") && msg.contains("send_input"),
+            "the refusal must name the tools that hold an interactive session: {msg}"
+        );
+        assert!(
+            msg.contains("nothing was run"),
+            "the refusal must say the command never ran: {msg}"
+        );
+
+        let resolved: Vec<String> = with_shells(&reg, |store| {
+            let mut ids: Vec<String> = store.values().map(|r| r.id.as_str().to_string()).collect();
+            ids.sort();
+            ids
+        });
+        assert_eq!(
+            resolved.len(),
+            1,
+            "the refused call still resolved the owner's shell: {resolved:?}"
+        );
 
         let (id2, second) = run_in_shell_for_test(
             &reg,
@@ -1801,30 +1808,21 @@ mod tests {
             spawn_in_process_host,
         )
         .await
-        .expect("the next command must not inherit the captured shell");
-        assert_ne!(
+        .expect("the next command must run in the shell the refusal left behind");
+        assert_eq!(
             id2.as_str(),
-            "the owner must get a fresh shell after the interactive capture"
+            resolved[0].as_str(),
+            "nothing was written, so the refused call's shell is reused"
         );
-        assert_eq!(second.exit_code, 0, "echo actually ran on the fresh shell");
+        assert_eq!(second.exit_code, 0, "echo actually ran on the reused shell");
         assert!(
             second.text.contains("ALIVE"),
-            "the fresh shell produced the command's output, not a timeout: {:?}",
+            "the reused shell produced the command's output, not a timeout: {:?}",
             second.text
         );
-
-        // The captured shell's record stays: the host is alive and later work
-        // addresses the session by id.
-        let guard = reg.try_lock().expect("registry lock");
-        assert!(
-            guard.contains_key(id1.as_str()),
-            "the captured shell's record must remain in the registry"
-        );
-        assert!(
-            guard[id1.as_str()].interactive,
-            "the record stays marked interactive"
-        );
     }
+
+    /// An ordinary command runs, then the owner's next one runs in the same
     /// shell, both commands run on it, and the reuse filter is untouched.
     #[tokio::test]
     async fn shell_exec_non_interactive_still_runs_on_the_same_shell() {
@@ -1869,14 +1867,6 @@ mod tests {
             two.text.contains("two"),
             "the output surfaced: {:?}",
             two.text
-        );
-
-        // The shell was never marked: the flag must still be unset so a later
-        // reuse does not silently skip a perfectly good shell.
-        let guard = reg.try_lock().expect("registry lock");
-        assert!(
-            !guard[id1.as_str()].interactive,
-            "a non-interactive command must not mark the shell"
         );
     }
 

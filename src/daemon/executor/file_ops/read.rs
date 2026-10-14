@@ -833,9 +833,11 @@ mod tests {
         );
     }
 
-    /// The negative of the reuse rule: an `interactive` shell for this owner
-    /// and host is **not** taken. A shell an interactive command owns eats
-    /// every byte, so the read must get a different (fresh) one.
+    /// The negative of the reuse rule: a shell whose foreground the read
+    /// transport cannot prove idle is **not** taken. The busy maker here is a
+    /// real `sleep 30` typed into the held shell — the same state an
+    /// interactive command leaves behind — so the read must get a different
+    /// (fresh) one rather than type its `sed` into the sleeping program.
     #[tokio::test]
     async fn the_read_transport_never_opens_an_interactive_shell() {
         let (_home, _dir) = remote_read_test_home();
@@ -858,11 +860,26 @@ mod tests {
         let held: Vec<String> = crate::shell::with_shells(&reg, |store| {
             store.values().map(|r| r.id.as_str().to_string()).collect()
         });
-        crate::shell::with_shells(&reg, |store| {
-            for record in store.values_mut() {
-                record.interactive = true;
+        for id in &held {
+            let id = crate::shell::ShellId::parse(id).expect("a held id parses");
+            let socket = crate::shell::socket_path(id.as_str());
+            crate::shell::send_input(&socket, b"sleep 30\n", std::time::Duration::from_secs(5))
+                .await
+                .expect("the held shell accepts the busy maker");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let fg =
+                    crate::shell::probe_foreground(&reg, &id, crate::shell::PROBE_TIMEOUT).await;
+                if !matches!(fg, crate::shell::Foreground::Prompt) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the held shell never read busy: {fg:?}"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
-        });
+        }
 
         let second = super::super::run_in_host_shell(
             &reg,
@@ -876,7 +893,7 @@ mod tests {
         .expect("the read gets a shell of its own");
         assert!(
             second.contains("SECOND_READ"),
-            "the interactive shell's owner keeps it: {second:?}"
+            "the busy shell's owner keeps it: {second:?}"
         );
 
         let held_after: std::collections::BTreeSet<String> =
@@ -888,8 +905,15 @@ mod tests {
             });
         assert!(
             held_after.len() > held.len(),
-            "a fresh shell was opened for the read, not the interactive one: {held_after:?}"
+            "a fresh shell was opened for the read, not the busy one: {held_after:?}"
         );
+
+        for id in &held {
+            let socket = crate::shell::socket_path(id.as_str());
+            crate::shell::send_input(&socket, b"\x03", std::time::Duration::from_secs(5))
+                .await
+                .expect("the held shell accepts the cancel");
+        }
     }
 
     /// The remote read's result names the host it came from, so a model

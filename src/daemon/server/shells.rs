@@ -28,7 +28,6 @@ where
                 host: record.host.as_str().to_string(),
                 owner: record.owner.key(),
                 started_unix: record.started_unix,
-                interactive: record.interactive,
                 dedicated: record.dedicated,
                 exited_unix: record.exited_unix,
                 last_command: None,
@@ -1464,7 +1463,6 @@ mod tests {
         let id_b = crate::shell::spawn_for(&reg, owner.clone(), 5, true, |_id| async { Ok(()) })
             .await
             .unwrap();
-        crate::shell::mark_interactive(&reg, &id_a);
         with_shells(&reg, |store| {
             store.get_mut(id_b.as_str()).unwrap().exited_unix = Some(42);
         });
@@ -1480,14 +1478,9 @@ mod tests {
             (&shells[1], &shells[0])
         };
         assert_eq!(first.id, id_a.as_str());
-        assert!(
-            first.interactive,
-            "the record's interactive flag rides the wire, not a hardcoded false"
-        );
         assert!(!first.dedicated);
         assert_eq!(first.exited_unix, None);
         assert_eq!(second.id, id_b.as_str());
-        assert!(!second.interactive);
         assert!(second.dedicated, "the spawn's dedicated flag rides");
         assert_eq!(
             second.exited_unix,

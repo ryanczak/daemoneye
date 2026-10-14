@@ -107,11 +107,6 @@ pub struct ShellRecord {
     /// handed to a caller that asks for that sandbox.
     pub sandbox: Option<String>,
     pub started_unix: u64,
-    /// Set when an interactive command (ssh, mosh, …) took this shell's
-    /// terminal. Such a shell still passes the liveness probe — its `bash` is
-    /// alive — but every byte written to it is consumed by the interactive
-    /// process, so it must never be handed to another command (08b F2).
-    pub interactive: bool,
     /// Set when this shell was created to serve exactly one command for its
     /// whole life — a background run. Unlike `interactive` this is decided at
     /// creation, not discovered later: the shell is never offered to another
@@ -180,16 +175,6 @@ pub fn with_shells<T>(
 ) -> T {
     let mut store = reg.0.lock().unwrap_or_log();
     f(&mut store)
-}
-
-/// Mark `id`'s shell captured by an interactive session. Idempotent; a no-op
-/// when the id is not in the registry.
-pub fn mark_interactive(reg: &ShellRegistry, id: &ShellId) {
-    with_shells(reg, |store| {
-        if let Some(record) = store.get_mut(id.as_str()) {
-            record.interactive = true;
-        }
-    });
 }
 
 /// Record that `cmd` is now outstanding on `id`'s shell: called immediately
@@ -385,7 +370,6 @@ where
                 host,
                 sandbox,
                 started_unix,
-                interactive: false,
                 dedicated,
                 exited_unix: None,
                 last_foreground: None,
@@ -535,12 +519,11 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
                     host: crate::host::HostId::Local,
                     sandbox,
                     started_unix,
-                    interactive: false,
-                    // An adopted shell's original purpose is unknown; `false`
-                    // keeps it reusable, which is today's behaviour. A shell
-                    // whose sidecar was invalid is `true` instead, so a
+                    // An adopted shell's `dedicated` carries its sidecar's
+                    // verdict: a bad sidecar fails closed (see above), so a
                     // probably-in-a-VM child is never reused for another
-                    // command.
+                    // command; a good one keeps the shell reusable, which is
+                    // today's behaviour.
                     dedicated,
                     exited_unix: None,
                     last_foreground: None,
@@ -690,7 +673,6 @@ mod tests {
             host: crate::host::HostId::Local,
             sandbox: None,
             started_unix: 0,
-            interactive: false,
             dedicated: false,
             exited_unix: None,
             last_foreground: None,
@@ -1465,48 +1447,6 @@ mod tests {
             allocate_index(&occupied),
             0,
             "the released slot must be reallocatable"
-        );
-    }
-
-    /// 08b Task 1's boundary cases: the setter is idempotent, and an id that
-    /// is not in the registry is a no-op rather than an insert.
-    #[test]
-    fn registry_mark_interactive_is_idempotent_and_ignores_unknown_ids() {
-        let reg = ShellRegistry::default();
-        let record = record(0, Owner::Chat("a".into()));
-        let id = record.id.clone();
-        with_shells(&reg, |store| {
-            store.insert(id.as_str().to_string(), record);
-        });
-
-        mark_interactive(&reg, &id);
-        mark_interactive(&reg, &id);
-
-        let guard = reg.try_lock().unwrap();
-        assert!(
-            guard[id.as_str()].interactive,
-            "marking twice must leave the flag set"
-        );
-        assert_eq!(
-            guard.len(),
-            1,
-            "marking must never insert; the second call must not have added a record"
-        );
-    }
-
-    #[test]
-    fn registry_mark_interactive_leaves_an_unknown_id_absent() {
-        let reg = ShellRegistry::default();
-        let stranger = ShellId::from_index(9);
-        mark_interactive(&reg, &stranger);
-        let guard = reg.try_lock().unwrap();
-        assert!(
-            guard.is_empty(),
-            "marking an id that is not in the registry must be a no-op"
-        );
-        assert!(
-            !guard.contains_key(stranger.as_str()),
-            "a no-op must not materialise the stranger"
         );
     }
 

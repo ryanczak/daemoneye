@@ -94,7 +94,6 @@ pub struct ShellInfo {
     /// The owner's key (`Owner::key()`), e.g. `chat:<session>` or `ghost:<job>`.
     pub owner: String,
     pub started_unix: u64,
-    pub interactive: bool,
     pub dedicated: bool,
     /// `Some` once the shell's host has been seen dead.
     pub exited_unix: Option<u64>,

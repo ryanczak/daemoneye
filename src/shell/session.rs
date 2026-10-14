@@ -114,12 +114,7 @@ where
         let mut matches: Vec<ShellId> = store
             .values()
             .filter(|record| {
-                // A shell whose terminal an interactive command took passes
-                // the liveness probe but eats every byte written to it
-                // (08b F2); the owner gets a fresh one instead. The record
-                // stays and the host stays alive: later work addresses the
-                // session by id. A dedicated shell is excluded for the same
-                // reason in the other direction: it belongs to exactly one
+                // A dedicated shell is excluded: it belongs to exactly one
                 // command, so it is never offered to anything else. Reuse is
                 // host-keyed: a shell runs its commands on the host its
                 // record names, so it is handed only to a caller asking for
@@ -127,8 +122,7 @@ where
                 // the command. A sandbox shell runs its commands in a VM, so
                 // it is handed only to a caller that asks for that sandbox,
                 // never to `shell_for_owner`.
-                !record.interactive
-                    && !record.dedicated
+                !record.dedicated
                     && record.host == host
                     && record.sandbox.is_none()
                     && record.owner.key() == owner_key
@@ -205,16 +199,15 @@ where
     // The same candidate scan `shell_for_owner` runs, keyed on the sandbox
     // instead of the host: a sandbox shell's own host is always `Local`, so
     // the host is not what distinguishes two of the owner's shells here — the
-    // sandbox is. Interactive and dedicated shells are excluded for the same
-    // reasons `shell_for_owner` excludes them, and a match whose host is dead
+    // sandbox is. Dedicated shells are excluded for the same reason
+    // `shell_for_owner` excludes them, and a match whose host is dead
     // is removed so it is not handed to the next caller as a live shell.
     let owner_key = owner.key();
     let candidates: Vec<ShellId> = with_shells(reg, |store| {
         let mut matches: Vec<ShellId> = store
             .values()
             .filter(|record| {
-                !record.interactive
-                    && !record.dedicated
+                !record.dedicated
                     && record.owner.key() == owner_key
                     && record.sandbox.as_deref() == Some(sandbox)
             })
@@ -573,7 +566,6 @@ mod tests {
     use crate::shell::client;
     use crate::shell::host;
     use crate::shell::registry::ShellRecord;
-    use crate::shell::registry::mark_interactive;
     use crate::shell::registry::spawn_for_in_sandbox;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -756,7 +748,6 @@ mod tests {
                     host: crate::host::HostId::Named("pinky".to_string()),
                     sandbox: None,
                     started_unix: 0,
-                    interactive: false,
                     dedicated: false,
                     exited_unix: None,
                     last_foreground: None,
@@ -810,7 +801,6 @@ mod tests {
                     host: crate::host::HostId::Local,
                     sandbox: None,
                     started_unix: 0,
-                    interactive: false,
                     dedicated: false,
                     exited_unix: None,
                     last_foreground: None,
@@ -864,7 +854,6 @@ mod tests {
                     host: crate::host::HostId::Local,
                     sandbox: None,
                     started_unix: 0,
-                    interactive: false,
                     dedicated: false,
                     exited_unix: None,
                     last_foreground: None,
@@ -879,7 +868,6 @@ mod tests {
                     host: crate::host::HostId::Local,
                     sandbox: None,
                     started_unix: 0,
-                    interactive: false,
                     dedicated: false,
                     exited_unix: None,
                     last_foreground: None,
@@ -934,81 +922,6 @@ mod tests {
         );
     }
 
-    /// 08b: an interactive command captures the owner's shell, so that record
-    /// must not be offered for reuse — but the record itself stays and the
-    /// host stays alive (M23 attaches to it later by id).
-    #[tokio::test]
-    async fn session_reuse_skips_a_shell_marked_interactive() {
-        let (_home, _dir) = test_home();
-        let reg = ShellRegistry::default();
-        let owner = Owner::Chat("captured".into());
-
-        let (marked_id, _) = shell_for_owner(
-            &reg,
-            owner.clone(),
-            crate::host::HostId::Local,
-            5,
-            Duration::from_secs(15),
-            spawn_in_process_host,
-        )
-        .await
-        .expect("the owner's first shell comes up");
-
-        mark_interactive(&reg, &marked_id);
-
-        // The marked shell is still in the registry, untouched.
-        {
-            let guard = reg.try_lock().unwrap();
-            let record = guard
-                .get(marked_id.as_str())
-                .expect("the marked record must remain in the registry");
-            assert!(
-                record.interactive,
-                "mark_interactive must have set the flag"
-            );
-        }
-
-        let (second_id, _) = shell_for_owner(
-            &reg,
-            owner.clone(),
-            crate::host::HostId::Local,
-            5,
-            Duration::from_secs(15),
-            spawn_in_process_host,
-        )
-        .await
-        .expect("the next command must get a fresh shell, not the captured one");
-
-        assert_ne!(
-            marked_id.as_str(),
-            second_id.as_str(),
-            "a shell marked interactive must never be reused"
-        );
-
-        let outcome = client::run_command(
-            &launch::socket_path(second_id.as_str()),
-            "echo NEW_SHELL_READY",
-            "bash",
-            Duration::from_secs(10),
-        )
-        .await
-        .expect("the fresh shell answers");
-        let text = String::from_utf8_lossy(&outcome.output);
-        assert!(
-            text.contains("NEW_SHELL_READY"),
-            "the replacement shell must be usable: {text:?}"
-        );
-
-        // And the marked record survived the whole exchange.
-        {
-            let guard = reg.try_lock().unwrap();
-            assert!(
-                guard.contains_key(marked_id.as_str()),
-                "the captured shell's record must not be removed or killed"
-            );
-        }
-    }
-
     #[tokio::test]
     async fn session_dedicated_shell_is_never_reused_by_shell_for_owner() {
         let (_home, _dir) = test_home();
@@ -1026,7 +939,6 @@ mod tests {
                     host: crate::host::HostId::Local,
                     sandbox: None,
                     started_unix: 0,
-                    interactive: false,
                     dedicated: true,
                     exited_unix: None,
                     last_foreground: None,
@@ -1216,7 +1128,6 @@ mod tests {
             host: crate::host::HostId::Local,
             sandbox: Some("de-ghost-r1".to_string()),
             started_unix: 0,
-            interactive: false,
             dedicated: false,
             exited_unix: None,
             last_foreground: None,
@@ -1228,7 +1139,6 @@ mod tests {
             host: crate::host::HostId::Local,
             sandbox: None,
             started_unix: 0,
-            interactive: false,
             dedicated: false,
             exited_unix: None,
             last_foreground: None,

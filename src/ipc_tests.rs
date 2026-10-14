@@ -982,7 +982,6 @@ fn shell_ipc_messages_round_trip() {
         host: "web01".to_string(),
         owner: "chat:deadbeef".to_string(),
         started_unix: 1_788_470_000,
-        interactive: true,
         dedicated: false,
         exited_unix: Some(1_788_470_050),
         last_command: Some("echo hi".to_string()),

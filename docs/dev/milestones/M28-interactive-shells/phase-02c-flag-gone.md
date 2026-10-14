@@ -1,7 +1,7 @@
 # Phase 02c: flag-gone — remove the static `interactive` flag
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02b
 **Estimated diff:** ~250 lines, mostly deletions
 **Tags:** language=rust, kind=refactor, size=m
@@ -155,6 +155,14 @@ None.
 
 <!-- entries appended below this line -->
 
+### Update — 2026-10-14 11:35 (started, fourth run)
+
+Resumed by Claude (fourth run). The resume notes are authoritative: Tasks 1–5
+(production code and the three flag-test deletions) are on disk and correct,
+and the remaining work is exactly the two `shell_exec.rs` test rewrites, the
+`read.rs` busy-shell rewrite, and the compiler-named literal sites. Starting
+with Task 6.
+
 ### Notes for executor — 2026-10-14 (resume)
 
 The first run did all the production work correctly and deleted the three
@@ -216,3 +224,23 @@ last line reads `passed=2356 failed=0`, and `flag_refs=0`.
 
 **Chosen lever:** resume
 **Rationale:** production code and the three deletions are on disk and correct; what remains is a fixed list of test edits the compiler enumerates, so a resumed run with that list keeps the work instead of redoing it.
+
+### Update — 2026-10-14 11:50 (end-to-end verification)
+
+The spec's § End-to-end verification block was run verbatim, each line once,
+after all Task 6/7 edits were on disk and `cargo fmt --all` had run. This
+entry holds only the output block; the capture is `/tmp/e2e-02c.txt`
+byte-for-byte.
+
+```sh
+run_terminal_command_refuses_an_interactive_command_and_writes_nothing: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2294 filtered out; finished in <t>s
+the_read_transport_never_opens_an_interactive_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2294 filtered out; finished in <t>s
+shell_exec_non_interactive_still_runs_on_the_same_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2294 filtered out; finished in <t>s
+shell_for_owner_skips_a_busy_lowest_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2294 filtered out; finished in <t>s
+flag_refs=0
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2356 failed=0
+```
+PASTE MATCH

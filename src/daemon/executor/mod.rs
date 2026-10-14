@@ -2152,7 +2152,6 @@ mod tests {
                     host: crate::host::HostId::Local,
                     sandbox: None,
                     started_unix: 1_788_470_000,
-                    interactive: false,
                     dedicated: false,
                     exited_unix: None,
                     last_foreground: None,

@@ -240,9 +240,6 @@ pub(super) fn render_shell_list(
                 Some(_) => "exited".to_string(),
                 None => "live".to_string(),
             };
-            if s.interactive {
-                state.push_str(", interactive");
-            }
             if s.dedicated {
                 state.push_str(", dedicated");
             }
@@ -969,7 +966,6 @@ mod tests {
             host: host.to_string(),
             owner: owner.to_string(),
             started_unix,
-            interactive: false,
             dedicated: false,
             exited_unix: None,
             last_command: None,
@@ -1030,7 +1026,6 @@ mod tests {
         live.last_command = Some("cargo build".to_string());
         let mut gone = shell("s2", "pinky", "ghost:job7", NOW - 7200);
         gone.exited_unix = Some(NOW - 120);
-        gone.interactive = true;
         let rows = render_shell_list(&[live, gone], "mine", NOW);
         assert_eq!(rows.len(), 2, "one row per shell: {rows:?}");
         for want in [
@@ -1048,7 +1043,6 @@ mod tests {
             "host:pinky",
             "owner:ghost:job7",
             "exited 2m ago",
-            "interactive",
             "age:2h0m",
             "last:—",
         ] {
