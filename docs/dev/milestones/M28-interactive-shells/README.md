@@ -50,7 +50,7 @@ phases are split further where one is more than a session.
 | 01 | host-truth ([phase-01-host-truth.md](phase-01-host-truth.md)) — the host's `Screen` frame with `[SEL: …]` markers, the three `Status` foreground facts, the pure `Foreground` classifier (local and transport); no daemon behaviour change | done (approved_first_try, 2026-10-13) |
 | 01b | record-truth ([phase-01b-screen-tool.md](phase-01b-screen-tool.md)) — `last_foreground` and `in_flight` on `ShellRecord`, `classify_record`; the `unreachable!` carried from 01. *Re-scoped 2026-10-13 after two stalls: the tool moved to 01c* | done (approved_first_try, 2026-10-13) |
 | 01c | screen-tool ([phase-01c-screen-tool.md](phase-01c-screen-tool.md)) — `read_shell_screen` (no waits yet), prompt asset, tool tables | done (escalated: architect takeover, 2026-10-14) |
-| 02a | busy-shells ([phase-02a-busy-shells.md](phase-02a-busy-shells.md)) — a live foreground probe; reuse skips a busy shell; a named busy shell is refused before any write; the prompt digit rule narrowed to `%` | review      |
+| 02a | busy-shells ([phase-02a-busy-shells.md](phase-02a-busy-shells.md)) — a live foreground probe; reuse skips a busy shell; a named busy shell is refused before any write; the prompt digit rule narrowed to `%` | done (approved_first_try, 2026-10-14) |
 | 02b | flag-gone — remove the static `interactive` flag; `list_shells` and `[SHELLS]` show the observed foreground | todo |
 | 02c | keys — `send_input` sends `\r` for Enter, named `keys` with CSI u, bracketed `paste` | todo |
 | 02d | input-guard — the `send_input` foreground guard, panel line and screen tail, ghost refusal and `allow_tui_input` | todo |

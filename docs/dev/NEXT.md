@@ -4,9 +4,8 @@
 2026-10-13 from `docs/design/interactive-shells.md`. See
 [`README.md`](milestones/M28-interactive-shells/README.md).
 
-**Active phase:** [phase-02a-busy-shells](milestones/M28-interactive-shells/phase-02a-busy-shells.md)
-— todo. Dispatch with `/rexymcp:dispatch phase-02a-busy-shells`. Phases 01,
-01b and 01c are done.
+**Active phase:** none drafted. Phases 01, 01b, 01c and 02a are done;
+phase 02b (flag-gone) is next, drafted with `/rexymcp:architect next`.
 
 M27 closed 2026-10-12 (`v2.0.0`). The roadmap's former M28–M30 are now
 M29–M31 (`docs/design/daemoneye-2.0.md` § 6).

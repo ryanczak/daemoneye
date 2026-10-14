@@ -1,7 +1,7 @@
 # Phase 02a: busy-shells — never write a command into a busy shell
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-01c
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -411,3 +411,30 @@ kill: (-3340952): No such process
 **Commit:** 1f7baddb7ed1f54d8f5c592cd7dd54ab34acb4e3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none at review. Three executor runs: the first stalled
+  (`NoProgressStall`) after Tasks 1–3 on a rule the spec omitted — a fresh
+  transport shell's blank screen reads as busy — and ended in a numbered
+  `/tmp/dbgN.sh` loop the identical-repetition detector cannot see; the
+  first resume implemented Task 4 then stalled verifying by module test
+  suites; the second resume did the last three edits in 106 turns.
+- **Executor:** GLM-5.3-Flash, all three runs.
+- **Gates (reviewer re-run, once each):** fmt exit 0; build 0 warnings;
+  clippy `-D warnings` exit 0; `cargo test` passed=2357 failed=0, the
+  pinned count. `PASTE MATCH` present.
+- **Spot check:** `probe_foreground` holds no lock across an await; the
+  blank-screen re-read is bounded at 10 × 100 ms; reuse walks candidates in
+  index order and skips, never removes, a busy shell; the digit exclusion
+  is `%`-only. All eight preservation tests are byte-identical to
+  `70f568fc`. Mutation: disabling the refusal (`if false && …`) turns
+  `run_terminal_command_refuses_a_busy_named_shell` red; restored, green.
+- **Scope deviations:** none in the final tree. The first run edited a
+  preservation test with debug code; the resume restored it.
+- **Calibration:** two governor gaps for rexyMCP — near-identical commands
+  with a changing filename evade the repetition detector, and verification
+  by many separate test runs reads as a no-progress stall. Third
+  `continue_phase` client idle-timeout (fold candidate). Held for the M28
+  retrospective.
