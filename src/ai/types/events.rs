@@ -224,13 +224,16 @@ pub enum AiEvent {
         pattern: Option<String>,
         thought_signature: Option<String>,
     },
-    /// Write text into a live PTY shell's input (M22 phase-05). Approval-
-    /// gated; the result is the host's ack, not the program's reaction —
-    /// reading that is `read_shell` / `watch_shell`.
+    /// Write text, named keys, or both into a live PTY shell's input (M22
+    /// phase-05; M28 phase-02e adds `keys` and `paste`). Approval-gated; the
+    /// result is the host's ack, not the program's reaction — reading that
+    /// is `read_shell` / `watch_shell` / `read_shell_screen`.
     SendInput {
         id: String,
         shell: String,
         text: String,
+        keys: Vec<String>,
+        paste: Option<bool>,
         enter: bool,
         thought_signature: Option<String>,
     },

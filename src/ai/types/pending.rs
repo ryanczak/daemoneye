@@ -319,13 +319,17 @@ pub enum PendingCall {
         timeout_secs: u64,
         pattern: Option<String>,
     },
-    /// Write text into a live PTY shell's input (M22 phase-05). Approval-
-    /// gated on every call; `enter` appends the newline (default true).
+    /// Write text, named keys, or both into a live PTY shell's input (M22
+    /// phase-05; M28 phase-02e adds `keys` and `paste`). Approval-gated on
+    /// every call; `enter` appends the carriage return (true only by default
+    /// for a text-only send).
     SendInput {
         id: String,
         thought_signature: Option<String>,
         shell: String,
         text: String,
+        keys: Vec<String>,
+        paste: Option<bool>,
         enter: bool,
     },
     /// List the shell recordings on disk (M22 phase-06b) — the deferred
@@ -535,13 +539,18 @@ impl PendingCall {
                 thought_signature,
                 shell,
                 text,
+                keys,
+                paste,
                 enter,
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "send_input".to_string(),
                 arguments: args_to_string(
-                    serde_json::json!({"shell": shell, "text": text, "enter": enter}),
+                    // Every field goes back in: a resumed or replayed history
+                    // that dropped `keys` or `paste` would re-run a different
+                    // call from the one the user approved.
+                    serde_json::json!({"shell": shell, "text": text, "keys": keys, "paste": paste, "enter": enter}),
                 ),
             },
             PendingCall::ListShellLogs {

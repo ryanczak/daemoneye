@@ -1599,6 +1599,61 @@ pub fn input_target_note(state: Option<crate::shell::ShellState>) -> String {
     }
 }
 
+/// The bytes `send_input` sends for one call, and the facts the result
+/// sentence and the approval panel name about them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposedInput {
+    /// Everything that reaches the shell: the text (bracketed when the paste
+    /// rule brackets it), then the encoded keys, then the Enter `\r`.
+    pub bytes: Vec<u8>,
+    /// Whether the text went out wrapped in the shell's paste brackets.
+    pub bracketed: bool,
+    /// The key names, verbatim from the call.
+    pub keys: Vec<String>,
+    /// The key names that went out as CSI u — the form a program may ignore,
+    /// so the result tells the model to check the screen.
+    pub csi_u: Vec<String>,
+    /// Whether a trailing Enter `\r` is part of `bytes`.
+    pub enter: bool,
+}
+
+/// Compose `send_input`'s bytes: `paste_bytes(text)`, then
+/// `encode_keys(keys)`, then the Enter `\r`.
+///
+/// Errors pass the encoder's and the paste rule's messages through
+/// unchanged; the one own error is a call with nothing in it — empty text,
+/// no keys, no Enter — which would be a round trip that sent zero bytes.
+/// Nothing has been sent when this returns `Err`; the executor's arm turns
+/// it into the tool result before any approval prompt.
+pub fn compose_input(
+    text: &str,
+    paste: Option<bool>,
+    keys: &[String],
+    enter: bool,
+    modes: crate::shell::ShellModes,
+) -> anyhow::Result<ComposedInput> {
+    if text.is_empty() && keys.is_empty() && !enter {
+        return Err(anyhow::anyhow!(
+            "nothing to send: the text is empty, no keys are named and enter is \
+             false — name what the shell should receive"
+        ));
+    }
+    let (text_bytes, bracketed) = crate::shell::paste_bytes(text, paste, modes)?;
+    let encoded = crate::shell::encode_keys(keys, modes)?;
+    let mut bytes = text_bytes;
+    bytes.extend_from_slice(&encoded.bytes);
+    if enter {
+        bytes.push(b'\r');
+    }
+    Ok(ComposedInput {
+        bytes,
+        bracketed,
+        keys: keys.to_vec(),
+        csi_u: encoded.csi_u,
+        enter,
+    })
+}
+
 /// Write `text` (plus a newline when `enter`) into one of `caller`'s live PTY
 /// shells and return the sentence the model reads.
 ///
@@ -1607,12 +1662,11 @@ pub fn input_target_note(state: Option<crate::shell::ShellState>) -> String {
 /// mirroring the `open_shell` / `open_shell_with` split. Injecting `send` is
 /// what makes the newline and the absolute-wrong-target assertions exact
 /// checks on the bytes rather than inferences from a message.
-pub async fn send_input(shell: &str, text: &str, enter: bool, caller: &Owner) -> String {
+pub async fn send_input(shell: &str, input: &ComposedInput, caller: &Owner) -> String {
     send_input_with(
         crate::shell::registry(),
         shell,
-        text,
-        enter,
+        input,
         caller,
         INPUT_TIMEOUT,
         |bytes| async move {
@@ -1626,8 +1680,7 @@ pub async fn send_input(shell: &str, text: &str, enter: bool, caller: &Owner) ->
 pub(super) async fn send_input_with<S, Fut>(
     reg: &ShellRegistry,
     shell: &str,
-    text: &str,
-    enter: bool,
+    input: &ComposedInput,
     caller: &Owner,
     input_timeout: Duration,
     send: S,
@@ -1665,15 +1718,7 @@ where
              owns it does that; list_shells shows which shells are whose."
         );
     }
-    let mut bytes = text.as_bytes().to_vec();
-    if enter {
-        // `\r`, not `\n`: the byte a real Enter key sends. A cooked shell
-        // turns it into `\n` (`ICRNL`); a raw-mode app sees the same byte it
-        // would from a human. `wrap_command`'s terminator is unchanged — it
-        // never targets a raw-mode app.
-        bytes.push(b'\r');
-    }
-    if let Err(e) = send(bytes).await {
+    if let Err(e) = send(input.bytes.clone()).await {
         return format!(
             "Error: shell {shell} did not accept the input, so nothing was typed: \
              {}. The write is not half-delivered (the host acks the whole frame \
@@ -1681,19 +1726,35 @@ where
             format_err_chain(&e)
         );
     }
-    format!(
-        "Sent {} byte{} to shell {}{}{}.",
-        text.len() + usize::from(enter),
-        if text.len() + usize::from(enter) == 1 {
-            ""
-        } else {
-            "s"
-        },
+    let n = input.bytes.len();
+    let mut tail = if input.enter {
+        ", Enter sent".to_string()
+    } else {
+        ", no Enter".to_string()
+    };
+    if !input.keys.is_empty() {
+        tail.push_str(&format!(", keys: {}", input.keys.join(", ")));
+    }
+    if input.bracketed {
+        tail.push_str(", as a bracketed paste");
+    }
+    let mut out = format!(
+        "Sent {} byte{} to shell {}{tail}. Read the effect with read_shell, \
+         read_shell_screen or watch_shell — this tool returns no output and \
+         does not wait for the program to react.",
+        n,
+        if n == 1 { "" } else { "s" },
         shell,
-        if enter { ", Enter sent" } else { ", no Enter" },
-        ". Read the effect with read_shell or watch_shell — this tool returns no \
-         output and does not wait for the program to react."
-    )
+    );
+    if !input.csi_u.is_empty() {
+        out.push_str(&format!(
+            " {} went out as CSI u (ESC [<codepoint>;<modifier> u), which some \
+             programs ignore — read the screen with read_shell_screen to see \
+             what the program made of them.",
+            input.csi_u.join(", ")
+        ));
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1935,14 +1996,13 @@ const TEST_COLS: u16 = 80;
 /// Renders an anyhow chain as `top-level (source) (source)` — the shape
 /// `open_shell`'s readiness and cap errors use — and is plain for a chainless
 /// error.
-fn format_err_chain(e: &anyhow::Error) -> String {
+pub(crate) fn format_err_chain(e: &anyhow::Error) -> String {
     let mut msg = e.to_string();
     for cause in e.chain().skip(1) {
         msg.push_str(&format!(" ({cause})"));
     }
     msg
 }
-
 /// Open a new PTY shell for `caller` and return the sentence the model reads.
 ///
 /// The public form uses the daemon's registry, the configured
@@ -4943,17 +5003,194 @@ mod tests {
         );
     }
 
+    /// The composed input the older `send_input_with` tests send: the text,
+    /// no keys, the Enter flag, the default modes — the shape phase-02e's
+    /// new tests build explicitly.
+    fn composed(text: &str, enter: bool) -> ComposedInput {
+        compose_input(text, None, &[], enter, crate::shell::ShellModes::default())
+            .expect("plain text, no keys, a valid composition")
+    }
+
+    #[test]
+    fn compose_input_orders_text_keys_then_enter() {
+        let keys = vec!["Up".to_string()];
+        let input = compose_input("ls", None, &keys, true, crate::shell::ShellModes::default())
+            .expect("a valid composition");
+        assert_eq!(
+            input.bytes,
+            b"ls\x1b[A\r".to_vec(),
+            "the text, then the encoded keys, then the Enter \\r: {:?}",
+            input.bytes
+        );
+        assert_eq!(input.keys, keys, "the key names are carried verbatim");
+        assert!(!input.bracketed, "plain text is never bracketed");
+        assert!(input.enter, "the Enter flag is carried");
+
+        let ctrl_c = vec!["C-c".to_string()];
+        let input = compose_input(
+            "",
+            None,
+            &ctrl_c,
+            false,
+            crate::shell::ShellModes::default(),
+        )
+        .expect("a keys-only send");
+        assert_eq!(
+            input.bytes,
+            b"\x03".to_vec(),
+            "an empty text with one control key sends just that key: {:?}",
+            input.bytes
+        );
+        assert!(input.csi_u.is_empty(), "C-c has a legacy byte");
+    }
+
+    #[test]
+    fn compose_input_brackets_a_multiline_paste_when_the_shell_asked() {
+        let on = crate::shell::ShellModes {
+            bracketed_paste: true,
+            ..crate::shell::ShellModes::default()
+        };
+        let input = compose_input("a\nb", None, &[], false, on).expect("the mode is on");
+        assert_eq!(
+            input.bytes,
+            b"\x1b[200~a\nb\x1b[201~".to_vec(),
+            "a newline with the mode on is wrapped in the paste brackets: {:?}",
+            input.bytes
+        );
+        assert!(input.bracketed, "the wrap is reported to the panel/result");
+
+        let off = crate::shell::ShellModes::default();
+        let input = compose_input("a\nb", None, &[], false, off).expect("the mode is off");
+        assert_eq!(
+            input.bytes,
+            b"a\nb".to_vec(),
+            "with the mode off the raw bytes go out, never brackets: {:?}",
+            input.bytes
+        );
+        assert!(!input.bracketed, "and it is reported as unbracketed");
+    }
+
+    #[test]
+    fn compose_input_refuses_bad_input_before_anything_is_sent() {
+        let bad_key = vec!["Bogus".to_string()];
+        let err = compose_input(
+            "x",
+            None,
+            &bad_key,
+            false,
+            crate::shell::ShellModes::default(),
+        )
+        .expect_err("an unknown key is refused");
+        assert!(
+            err.to_string().contains("Bogus"),
+            "the bad name is echoed: {err}"
+        );
+
+        let err = compose_input(
+            "a\nb",
+            Some(true),
+            &[],
+            false,
+            crate::shell::ShellModes::default(),
+        )
+        .expect_err("paste: true with the mode off is refused");
+        assert!(
+            err.to_string().contains("bracketed paste"),
+            "the error names the mode that is off: {err}"
+        );
+
+        let err = compose_input("", None, &[], false, crate::shell::ShellModes::default())
+            .expect_err("an empty call is refused");
+        assert!(
+            err.to_string().contains("nothing to send"),
+            "the empty call names its own error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_input_result_names_csi_u_keys_and_the_paste() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert(&reg, 3, Owner::Chat("caller".into()), NOW);
+        let captured: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+        let keys = vec!["S-Enter".to_string()];
+        let input = compose_input("", None, &keys, false, crate::shell::ShellModes::default())
+            .expect("S-Enter is in the vocabulary");
+        let out = send_input_with(
+            &reg,
+            "s3",
+            &input,
+            &Owner::Chat("caller".into()),
+            Duration::from_secs(5),
+            |bytes| {
+                let cap = &captured;
+                async move {
+                    cap.lock().unwrap().push(bytes);
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        assert!(
+            out.contains("S-Enter") && out.contains("CSI u"),
+            "the result names the CSI u key and the encoding: {out}"
+        );
+        assert_eq!(
+            captured.lock().unwrap().as_slice(),
+            [input.bytes.as_slice()],
+            "the bytes the injected send saw equal input.bytes"
+        );
+
+        captured.lock().unwrap().clear();
+        let on = crate::shell::ShellModes {
+            bracketed_paste: true,
+            ..crate::shell::ShellModes::default()
+        };
+        let input = compose_input("a\nb", None, &[], false, on).expect("the mode is on");
+        let out = send_input_with(
+            &reg,
+            "s3",
+            &input,
+            &Owner::Chat("caller".into()),
+            Duration::from_secs(5),
+            |bytes| {
+                let cap = &captured;
+                async move {
+                    cap.lock().unwrap().push(bytes);
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        assert!(
+            out.contains("bracketed paste"),
+            "the result says the text went out as a paste: {out}"
+        );
+        assert_eq!(
+            captured.lock().unwrap().as_slice(),
+            [input.bytes.as_slice()],
+            "the bracketed bytes are what the injected send saw"
+        );
+    }
+
     #[tokio::test]
     async fn send_input_enter_sends_a_carriage_return() {
         let (_home, _dir) = lifecycle_home();
         let reg = ShellRegistry::default();
         insert(&reg, 3, Owner::Chat("caller".into()), NOW);
         let captured: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+        let input = compose_input(
+            "hello",
+            None,
+            &[],
+            true,
+            crate::shell::ShellModes::default(),
+        )
+        .expect("plain text, no keys");
         let out = send_input_with(
             &reg,
             "s3",
-            "hello",
-            true,
+            &input,
             &Owner::Chat("caller".into()),
             Duration::from_secs(5),
             |bytes| {
@@ -5004,8 +5241,7 @@ mod tests {
         let out = send_input_with(
             &reg,
             "s7",
-            "ls",
-            true,
+            &composed("ls", true),
             &Owner::Chat("a".into()),
             Duration::from_secs(5),
             send,
@@ -5021,8 +5257,7 @@ mod tests {
         let out = send_input_with(
             &reg,
             "s7",
-            "ls",
-            true,
+            &composed("ls", true),
             &Owner::Ghost("g".into()),
             Duration::from_secs(5),
             send,
@@ -5038,11 +5273,18 @@ mod tests {
         let reg = ShellRegistry::default();
         insert(&reg, 3, Owner::Chat("caller".into()), NOW);
         let captured: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+        let input = compose_input(
+            "hello",
+            None,
+            &[],
+            false,
+            crate::shell::ShellModes::default(),
+        )
+        .expect("plain text, no keys");
         let out = send_input_with(
             &reg,
             "s3",
-            "hello",
-            false,
+            &input,
             &Owner::Chat("caller".into()),
             Duration::from_secs(5),
             |bytes| {
@@ -5076,8 +5318,7 @@ mod tests {
         let out = send_input_with(
             &reg,
             "s4",
-            "whoami",
-            true,
+            &composed("whoami", true),
             &Owner::Chat("a".into()),
             Duration::from_secs(5),
             |_bytes| {
@@ -5110,8 +5351,7 @@ mod tests {
         let out = send_input_with(
             &reg,
             "s99",
-            "echo hi",
-            false,
+            &composed("echo hi", false),
             &Owner::Chat("caller".into()),
             Duration::from_secs(5),
             |_bytes| {
@@ -5142,8 +5382,7 @@ mod tests {
         let out = send_input_with(
             &reg,
             "s3",
-            "SENTINEL-NOT-IN-OUTPUT",
-            false,
+            &composed("SENTINEL-NOT-IN-OUTPUT", false),
             &Owner::Chat("caller".into()),
             Duration::from_secs(5),
             |bytes| async move {

@@ -997,18 +997,19 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "send_input",
-        description: "Write text into a live PTY shell's input as if typed — the way to \
-                      answer a program's stdin prompt or drive an interactive \
-                      process the daemon is already running (e.g. typing a \
-                      command at a shell you opened, or responding to a \
-                      `(y/n)` question). It does **not** run the text through a \
-                      command wrapper: there is no exit code, it does not wait \
-                      for the program to react, and it returns **no output** — \
-                      read the effect afterwards with read_shell or watch_shell. \
-                      A shell sitting at its prompt will run the text as a \
-                      command, without that command's approval, capture or exit \
-                      code. Requires user approval; a ghost shell may not use \
-                      it unless its agent ToolPolicy explicitly allows it.",
+        description: "Write text, named keys, or both into a live PTY shell's input as \
+                      if typed — the way to answer a program's stdin prompt or \
+                      drive an interactive process the daemon is already running \
+                      (e.g. typing a command at a shell you opened, or responding \
+                      to a `(y/n)` question, or pressing Escape to cancel a \
+                      menu). It does **not** run the text through a command \
+                      wrapper: there is no exit code, it does not wait for the \
+                      program to react, and it returns **no output** — read the \
+                      effect afterwards with read_shell, read_shell_screen or \
+                      watch_shell. A shell sitting at its prompt will run the \
+                      text as a command, without that command's approval, capture \
+                      or exit code. Requires user approval; a ghost shell may not \
+                      use it unless its agent ToolPolicy explicitly allows it.",
         params: &[
             ParamDef {
                 name: "shell",
@@ -1019,16 +1020,44 @@ pub static TOOLS: &[ToolDef] = &[
             ParamDef {
                 name: "text",
                 ty: ParamTy::Str,
-                required: true,
-                description: "The characters to write, exactly as if typed.",
+                required: false,
+                description: "The characters to write, exactly as if typed. Default \
+                              empty, when the call only presses keys.",
+            },
+            ParamDef {
+                name: "keys",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Named keys to press after the text, in order — tmux's key \
+                              vocabulary: Enter, Escape, Tab, BTab, Up, Down, Right, Left, \
+                              Home, End, PageUp, PageDown, Delete, BSpace, Space, F1 through \
+                              F12, or one printable character, with the C-, M- and S- \
+                              prefixes in any order (e.g. \"C-c\", \"M-b\", \"S-Enter\"). \
+                              A combination with no legacy byte goes out as CSI u; the \
+                              result names those keys. Unknown names are an error and \
+                              nothing is sent.",
+            },
+            ParamDef {
+                name: "paste",
+                ty: ParamTy::Bool,
+                required: false,
+                description: "Send the text as one bracketed paste (wrapped in the shell's \
+                              bracket markers) instead of typed characters — how a \
+                              multi-line prompt reaches a program that submits per line. \
+                              Default: brackets when the text contains a newline and the \
+                              shell has bracketed paste mode on. `paste: true` while that \
+                              mode is off is an error, not a silent downgrade.",
             },
             ParamDef {
                 name: "enter",
                 ty: ParamTy::Bool,
                 required: false,
-                description: "Press Enter after the text: sends a carriage return \
-                              (the byte the Enter key sends), which a shell's line \
-                              discipline turns into a newline. Default true.",
+                description: "Press Enter after the text and keys: sends a carriage \
+                              return (the byte the Enter key sends), which a shell's line \
+                              discipline turns into a newline. Defaults to true when \
+                              `keys` is empty and to false when keys are pressed — \
+                              `send_input(shell, keys: [\"Escape\"])` does not also press \
+                              Enter.",
             },
         ],
         deferred_group: None,

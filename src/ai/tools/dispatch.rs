@@ -1018,6 +1018,54 @@ mod tests {
         );
     }
 
+    /// `enter` defaults to true only for a text-only send: a keys-only call
+    /// must not also press Enter, and an explicit `enter` wins in both
+    /// directions. The default is resolved in `SendInputArgs::to_event`, so
+    /// this tests the whole dispatch path.
+    #[test]
+    fn send_input_enter_defaults_on_only_without_keys() {
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "send_input",
+            &json!({"shell": "s3", "text": "y"}),
+            None,
+        )
+        .expect("text dispatches");
+        let AiEvent::SendInput { enter, .. } = ev else {
+            panic!("expected AiEvent::SendInput")
+        };
+        assert!(enter, "text alone presses Enter by default");
+
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "send_input",
+            &json!({"shell": "s3", "keys": ["Escape"]}),
+            None,
+        )
+        .expect("keys dispatch");
+        let AiEvent::SendInput {
+            enter, text, keys, ..
+        } = ev
+        else {
+            panic!("expected AiEvent::SendInput")
+        };
+        assert!(!enter, "a keys-only send does not press Enter by default");
+        assert_eq!(keys, vec!["Escape".to_string()], "the keys land");
+        assert_eq!(text, "", "the text defaults to empty");
+
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "send_input",
+            &json!({"shell": "s3", "keys": ["Up"], "enter": true}),
+            None,
+        )
+        .expect("keys with an explicit enter dispatch");
+        let AiEvent::SendInput { enter, .. } = ev else {
+            panic!("expected AiEvent::SendInput")
+        };
+        assert!(enter, "an explicit enter wins over the keys default");
+    }
+
     /// `run_terminal_command`'s args land in the named fields of the struct
     /// variant, each value in the field it was given. A positional tuple
     /// transposed two adjacent `Option<String>`s silently; the named fields

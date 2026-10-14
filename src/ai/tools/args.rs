@@ -145,9 +145,16 @@ pub(super) struct WatchShellArgs {
 #[derive(Deserialize)]
 pub(super) struct SendInputArgs {
     shell: String,
+    #[serde(default)]
     text: String,
-    #[serde(default = "default_enter")]
-    enter: bool,
+    #[serde(default)]
+    keys: Vec<String>,
+    paste: Option<bool>,
+    // `Option` rather than a bool default: `enter` defaults to true only
+    // when `keys` is empty, and the default fn cannot see the other fields —
+    // `to_event` resolves it.
+    #[serde(default)]
+    enter: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -309,10 +316,6 @@ pub(super) fn default_unnamed() -> String {
 
 pub(super) fn default_300() -> u64 {
     300
-}
-
-pub(super) fn default_enter() -> bool {
-    true
 }
 
 pub(super) fn default_edit() -> String {
@@ -574,11 +577,18 @@ impl ToolArgs for SendInputArgs {
         serde_json::from_value(value).ok()
     }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        // `enter` defaults to true only for a text-only send: `keys:
+        // ["Escape"]` must not also press Enter. Resolved here, at the tool
+        // boundary, so the event and everything downstream carries the
+        // final answer.
+        let enter = self.enter.unwrap_or(self.keys.is_empty());
         AiEvent::SendInput {
             id: id.to_string(),
             shell: self.shell,
             text: self.text,
-            enter: self.enter,
+            keys: self.keys,
+            paste: self.paste,
+            enter,
             thought_signature: ts,
         }
     }

@@ -1391,6 +1391,8 @@ where
             id,
             shell,
             text,
+            keys,
+            paste,
             enter,
             ..
         } => {
@@ -1421,18 +1423,55 @@ where
                 _ => knowledge::input_target_note(None),
             };
 
-            // 3. Approval. `ghost_policy` is `None` on purpose: step 1 already
+            // 3. The shell's key modes, then the bytes. Read before the
+            //    approval prompt so a bad key name or an unbracketable paste
+            //    is the tool result, not a panel followed by a failure; an
+            //    unreadable or unannotated reply falls back to the defaults,
+            //    which encode plain bytes for every key.
+            let modes = match crate::shell::screen(
+                &crate::shell::socket_path(shell),
+                false,
+                0,
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            {
+                Ok(crate::shell::ShellResponse::ScreenText {
+                    bracketed_paste,
+                    application_cursor,
+                    ..
+                }) => crate::shell::ShellModes {
+                    bracketed_paste,
+                    application_cursor,
+                },
+                _ => crate::shell::ShellModes::default(),
+            };
+            let input = match knowledge::compose_input(text, *paste, keys, *enter, modes) {
+                Ok(input) => input,
+                Err(e) => {
+                    return Ok(ToolCallOutcome::Result(format!(
+                        "Error: {} — nothing was sent.",
+                        knowledge::format_err_chain(&e)
+                    )));
+                }
+            };
+
+            // 4. Approval. `ghost_policy` is `None` on purpose: step 1 already
             //    made the ghost decision, and passing the live policy here
             //    would re-enter the helper's auto-approve branch.
             //    `target_pane_hint` is `None` because this is a PTY shell, not
             //    a tmux pane.
-            let approval_cmd = format!(
-                "send_input into shell {}: {:?}{} — {}",
-                shell,
-                text,
-                if *enter { " (Enter sent)" } else { "" },
-                target_note
-            );
+            let mut approval_cmd = format!("send_input into shell {}: {:?}", shell, text);
+            if !input.keys.is_empty() {
+                approval_cmd.push_str(&format!(" keys [{}]", input.keys.join(", ")));
+            }
+            if input.bracketed {
+                approval_cmd.push_str(" as a bracketed paste");
+            }
+            if input.enter {
+                approval_cmd.push_str(" (Enter sent)");
+            }
+            approval_cmd.push_str(&format!(" — {target_note}"));
             match prompt_and_await_approval(
                 ApprovalRequest {
                     id: id.as_str(),
@@ -1454,12 +1493,11 @@ where
                 Err(outcome) => return Ok(outcome),
             }
 
-            // 4. Execute.
+            // 5. Execute.
             Ok(ToolCallOutcome::Result(
                 knowledge::send_input(
                     shell,
-                    text,
-                    *enter,
+                    &input,
                     &Owner::Chat(session_id.unwrap_or_default().to_string()),
                 )
                 .await,

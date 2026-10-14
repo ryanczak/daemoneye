@@ -781,6 +781,8 @@ where
                     id,
                     shell,
                     text,
+                    keys,
+                    paste,
                     enter,
                     thought_signature,
                 } => {
@@ -789,6 +791,8 @@ where
                         thought_signature,
                         shell,
                         text,
+                        keys,
+                        paste,
                         enter,
                     });
                 }

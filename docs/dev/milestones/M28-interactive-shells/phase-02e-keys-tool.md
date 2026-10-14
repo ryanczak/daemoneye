@@ -1,7 +1,7 @@
 # Phase 02e: keys-tool — `send_input` takes `keys` and `paste`
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02d
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -159,3 +159,24 @@ diff /tmp/pasted-02e.txt /tmp/e2e-02e.txt && echo "PASTE MATCH" || echo "PASTE M
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-14 16:04 (started)
+
+Executor: Claude (M28 phase-02e run). Status flipped to `in-progress`; implementing the Spec in order — the `keys`/`paste` parameters through `SendInputArgs` → `AiEvent` → `PendingCall` → `stream.rs` → `defs.rs`, `compose_input` in `knowledge/shell.rs`, the executor's modes-then-compose-then-approve arm, then the docs and the end-to-end capture.
+
+### Update — 2026-10-14 16:15 (end-to-end verification)
+
+```text
+compose_input_orders_text_keys_then_enter: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+compose_input_brackets_a_multiline_paste_when_the_shell_asked: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+compose_input_refuses_bad_input_before_anything_is_sent: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+send_input_result_names_csi_u_keys_and_the_paste: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+send_input_enter_defaults_on_only_without_keys: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+send_input_enter_sends_a_carriage_return: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2372 failed=0
+```
+
+PASTE MATCH

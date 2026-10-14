@@ -212,9 +212,17 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 
 ### `send_input`
 
-- `send_input(shell, text, enter? = true)` — **requires user approval**. Type \
-  raw characters into a live shell's input: answer a program's stdin prompt, \
-  or drive an interactive process the daemon is already running. The approval \
+- `send_input(shell, text?, keys?, paste?, enter?)` — **requires user \
+  approval**. Type raw characters into a live shell's input: answer a \
+  program's stdin prompt, \
+  or drive an interactive process the daemon is already running. `keys` \
+  presses named keys after the text, in tmux's vocabulary — `keys: \
+  ["Escape"]` closes a menu, `keys: ["BTab"]` cycles a completion, \
+  `keys: ["C-c"]` interrupts; `text` is optional, so a call can be keys \
+  alone. `paste` sends a multi-line `text` as **one bracketed paste** \
+  instead of a submit per line, when the program asked for bracketed paste. \
+  `enter` presses Enter afterwards, defaulting to true for a text send and \
+  false when keys are pressed. The approval \
   panel says what the shell is doing — busy running a program (the input goes \
   to it), stopped (`Paused`, the input sits unread until it resumes), or \
   **idle at its prompt**, which means the text will be run as a shell command \
