@@ -1,7 +1,7 @@
 # Phase 02b: foreground-listed — listings show what holds each shell
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-02a
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -356,3 +356,32 @@ kill: (-3441032): No such process
 **Commit:** ba67ee4ac294114832041bcdec4e24211c2b25f5
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none. One dispatch, complete in 193 turns.
+- **Executor:** GLM-5.3-Flash.
+- **Gates (reviewer re-run, once each):** fmt exit 0; build 0 warnings;
+  clippy `-D warnings` exit 0; `cargo test` passed=2359 failed=0.
+  `doc_truth` 16/16 with the test file unmodified.
+- **Spot check:** `default_shell_for` skips `Program` / `Paused` from the
+  cached foreground and does no I/O; rendering shows a bracketed foreground
+  for `Program` / `Paused` only. The six named tests pass; the pasted
+  output fence matches the reviewer's run.
+- **Scope deviations:**
+  - **Count 2359, not the pinned 2360 — architect-caused.** The spec's
+    "complete list" of tests pinning the old flag missed a fourth,
+    `default_shell_for_skips_an_interactive_shell`, which cannot compile once
+    `ShellRow` loses `interactive`. The executor folded it into
+    `default_shell_skips_a_shell_last_seen_busy` and disclosed it. The
+    replacement asserts the deleted test's case (busy lowest skipped, `s1`
+    named) and adds the paused and unobserved cases. Accepted.
+  - The evidence entry holds two fences (the command block, then the
+    output), so the spec's self-check, which takes the first fence, would
+    compare the wrong one; the executor ran it against the output fence and
+    said so. Spec-shape issue, not an executor error.
+- **Calibration:** the architect's inventory grepped for `[interactive]`
+  and `interactive: true` and missed a test that passes the flag
+  positionally through a helper. A "complete list" claim needs a compile
+  check, not a grep. One occurrence; held for the retrospective.
