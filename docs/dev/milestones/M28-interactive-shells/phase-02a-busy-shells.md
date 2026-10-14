@@ -41,7 +41,12 @@ or the prompt assets.
    `crate::shell::screen` for the last non-blank row; then
    `classify_record` and store the result as the record's
    `last_foreground`. Any socket error ⇒ the status/row is `None`, which
-   classifies `Unknown`. **Never hold the registry lock across an
+   classifies `Unknown`. **A transport shell's screen is blank until its
+   prompt draws**, and a blank screen has no last row, which the transport
+   rule reads as busy. So for a transport record, while the screen has no
+   non-blank row, re-read it up to 10 times, 100 ms apart, before
+   classifying. A screen still blank after that classifies as the rule
+   says (busy). **Never hold the registry lock across an
    `.await`**: copy what you need out, probe, then lock again to classify
    and store.
 3. **Reuse skips a busy shell** — in `shell_for_owner` and
@@ -151,3 +156,40 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-14 (resume)
+
+The first run stalled after 305 actions. It was right to chase the failing
+named-host reuse test: **the spec was missing a rule**, now added to Task
+2. A freshly spawned transport shell has a blank screen until its prompt
+draws, and the transport rule reads blank as busy. That is why
+`shell_for_owner_reuses_a_shell_on_the_requested_host` and
+`shell_for_owner_in_sandbox_creates_then_reuses` fail. Do not investigate
+further; implement the blank-screen re-read in Task 2.
+
+**Already done and correct — do not redo:** Task 1 (the `%`-only digit
+rule and the extended prompt test), Task 2's `probe_foreground` apart from
+the re-read, Task 3's reuse change, and four of the five new tests.
+
+**Exactly this remains, in order:**
+
+1. Remove every `eprintln!("DBG …")` from `src/shell/session.rs`, and
+   restore `shell_for_owner_reuses_a_shell_on_the_requested_host` to its
+   original body: delete the `probe_foreground` / `screen` debug block and
+   the commented-out `assert_eq!` you added. `git diff src/shell/session.rs`
+   shows them. Preservation tests are not edited.
+2. Task 2's blank-screen re-read for transport records.
+3. The clippy error: `assert_eq!` with a literal bool (use `assert!`).
+4. Task 4 in `src/daemon/executor/shell_exec.rs` and its test
+   `run_terminal_command_refuses_a_busy_named_shell`.
+5. Task 5, the end-to-end capture and `PASTE MATCH`.
+
+Finish: `cargo test` reports exactly **2357** passed, 0 failed.
+
+Do not write throwaway scripts to `/tmp` to run `true` or to print files;
+call the tool you need directly.
+
+### Update — 2026-10-14 (escalation)
+
+**Chosen lever:** resume, after correcting the spec
+**Rationale:** Tasks 1–3 are on disk and correct apart from one rule the spec omitted (a fresh transport shell's blank screen reads as busy); with that rule added, a resumed run keeps the work and has five enumerated items left.
