@@ -157,6 +157,37 @@ None.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-10-14 (second resume)
+
+The resumed run implemented Task 4 correctly, then stalled while verifying
+by running test suites module by module. The governor counts each test run
+as no progress, so 120 of them end the run. **Do not run module test
+suites. Run only the commands named below.**
+
+**Done and correct — do not redo or re-verify:** Tasks 1–4, all the
+`session.rs` work, the refusal in `shell_exec.rs`, the restored
+preservation test. Clippy is clean and five of the six phase tests pass.
+
+**Exactly three edits remain:**
+
+1. Run `cargo fmt --all` (one import list in `src/shell/mod.rs` is
+   unformatted).
+2. Write `run_terminal_command_refuses_a_busy_named_shell` in
+   `src/daemon/executor/shell_exec.rs`'s test module, per § Tests. Use the
+   module's `spawn_in_process_host`; make the shell busy with
+   `crate::shell::send_input(&socket, b"sleep 30\n", …)` and wait until
+   `probe_foreground` reports `Program { cmd: "sleep", .. }`. Run it once
+   with `cargo test --lib run_terminal_command_refuses_a_busy_named_shell`.
+3. Run the § End-to-end verification block **once**, paste it, add the
+   `PASTE MATCH` line.
+
+Finish: the block's last line reads `passed=2357 failed=0`.
+
+### Update — 2026-10-14 (escalation, second)
+
+**Chosen lever:** resume
+**Rationale:** Tasks 1–4 are implemented and green, and the second stall was verification run as dozens of separate test invocations rather than a spec gap; three bounded edits remain.
+
 ### Notes for executor — 2026-10-14 (resume)
 
 The first run stalled after 305 actions. It was right to chase the failing
