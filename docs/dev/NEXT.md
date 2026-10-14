@@ -6,7 +6,7 @@
 
 **Active phase:** [phase-02e-keys-tool](milestones/M28-interactive-shells/phase-02e-keys-tool.md)
 — todo. Dispatch with `/rexymcp:dispatch phase-02e-keys-tool`. Phases 01,
-01b, 01c, 02a, 02b, 02c and 02d are done.
+01b, 01c, 02a, 02b, 02c, 02d and 02e are done.
 
 M27 closed 2026-10-12 (`v2.0.0`). The roadmap's former M28–M30 are now
 M29–M31 (`docs/design/daemoneye-2.0.md` § 6).

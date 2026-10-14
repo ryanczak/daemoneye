@@ -1,7 +1,7 @@
 # Phase 02e: keys-tool — `send_input` takes `keys` and `paste`
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-02d
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -338,3 +338,19 @@ kill: (-3979641): No such process
 **Commit:** 11ec09338be7c14af28e877021ffa14ae1513c3a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch, 263 turns)
+- **Scope deviations:** none (`format_err_chain` re-exported `pub(crate)` from
+  `knowledge` for the executor arm's refusal text — necessary, not scope).
+- **Calibration:** none. Independent re-run: 2372 passed / 0 failed, fmt and
+  clippy clean; every added `unwrap`/`expect` is in a test module. Verified
+  in the diff: modes read and `compose_input` run **before** the approval
+  prompt, with an `Error: … — nothing was sent.` result and no panel on a
+  bad key or an unbracketable paste; `enter` resolved once in
+  `SendInputArgs::to_event`; `to_tool_call` carries `keys` and `paste`.
+  Nit: the `sre.toml` bullet says `paste` applies "when the program asked
+  for bracketed paste" without saying it is the default for multi-line text.

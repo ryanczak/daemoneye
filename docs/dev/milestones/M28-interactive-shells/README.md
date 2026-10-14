@@ -54,7 +54,7 @@ phases are split further where one is more than a session.
 | 02b | foreground-listed ([phase-02b-foreground-listed.md](phase-02b-foreground-listed.md)) — `list_shells` and `[SHELLS]` show the observed foreground instead of `[interactive]`; `[DEFAULT SHELL]` skips a shell last seen busy | done (approved_first_try, 2026-10-14) |
 | 02c | flag-gone ([phase-02c-flag-gone.md](phase-02c-flag-gone.md)) — remove `ShellRecord.interactive`, `mark_interactive`, the reuse predicates and the IPC / `/shells` uses; the interactive-command path becomes an honest refusal | done (approved_first_try, 2026-10-14) |
 | 02d | keys ([phase-02d-keys.md](phase-02d-keys.md)) — the pure key encoder (tmux names, xterm modifiers, CSI u) and paste rule in `src/shell/keys.rs`; `ScreenText` reports bracketed paste and application cursor; `send_input`'s Enter is `\r` | done (approved_first_try, 2026-10-14) |
-| 02e | keys-tool ([phase-02e-keys-tool.md](phase-02e-keys-tool.md)) — `send_input` gains `keys` and `paste`, the panel and result name them, prompt and doc tables. *Split from 02d at drafting* | review      |
+| 02e | keys-tool ([phase-02e-keys-tool.md](phase-02e-keys-tool.md)) — `send_input` gains `keys` and `paste`, the panel and result name them, prompt and doc tables. *Split from 02d at drafting* | done (approved_first_try, 2026-10-14) |
 | 02f | input-guard — the `send_input` foreground guard, panel line and screen tail, ghost refusal and `allow_tui_input` | todo |
 | 03 | launch-wait — `interactive: true`, the ssh auto-upgrade, screen waits, `[shells] rows`/`cols`; live close (split at drafting) | todo |
 
