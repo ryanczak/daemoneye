@@ -1,7 +1,7 @@
 # Phase 02d: keys — the key encoder, the screen's key modes, Enter as `\r`
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-02c
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -388,3 +388,18 @@ kill: (-3770163): No such process
 **Commit:** 390581349facbf7c71717b09caea50c7f8b2b652
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch, 194 turns)
+- **Scope deviations:** none
+- **Calibration:** none. Independent re-run: 2367 passed / 0 failed, fmt and
+  clippy clean, `ShellModes` defined only in `keys.rs`. Every rule example in
+  § Key table traced through `encode_one` by hand (incl. `C-Space` 0x00,
+  `S-Space` / `M-S-Enter` as CSI u, `M-C-x`, `M-Up` in xterm form). Nits, not
+  bounced: the `keys.rs` module doc says `attach_keys` "encodes from here"
+  (it only shares `ShellModes`); `backend_screen_text_reports_the_key_modes`
+  can see readline's own `?2004h` before the test's `printf`, so it pins the
+  backend wiring (a hard-coded `false` fails it), not that particular write.
