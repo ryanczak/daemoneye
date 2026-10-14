@@ -51,14 +51,15 @@ phases are split further where one is more than a session.
 | 01b | record-truth ([phase-01b-screen-tool.md](phase-01b-screen-tool.md)) — `last_foreground` and `in_flight` on `ShellRecord`, `classify_record`; the `unreachable!` carried from 01. *Re-scoped 2026-10-13 after two stalls: the tool moved to 01c* | done (approved_first_try, 2026-10-13) |
 | 01c | screen-tool ([phase-01c-screen-tool.md](phase-01c-screen-tool.md)) — `read_shell_screen` (no waits yet), prompt asset, tool tables | done (escalated: architect takeover, 2026-10-14) |
 | 02a | busy-shells ([phase-02a-busy-shells.md](phase-02a-busy-shells.md)) — a live foreground probe; reuse skips a busy shell; a named busy shell is refused before any write; the prompt digit rule narrowed to `%` | done (approved_first_try, 2026-10-14) |
-| 02b | flag-gone — remove the static `interactive` flag; `list_shells` and `[SHELLS]` show the observed foreground | todo |
-| 02c | keys — `send_input` sends `\r` for Enter, named `keys` with CSI u, bracketed `paste` | todo |
-| 02d | input-guard — the `send_input` foreground guard, panel line and screen tail, ghost refusal and `allow_tui_input` | todo |
+| 02b | foreground-listed ([phase-02b-foreground-listed.md](phase-02b-foreground-listed.md)) — `list_shells` and `[SHELLS]` show the observed foreground instead of `[interactive]`; `[DEFAULT SHELL]` skips a shell last seen busy | todo |
+| 02c | flag-gone — remove `ShellRecord.interactive`, `mark_interactive`, the reuse predicates and the IPC / `/shells` uses | todo |
+| 02d | keys — `send_input` sends `\r` for Enter, named `keys` with CSI u, bracketed `paste` | todo |
+| 02e | input-guard — the `send_input` foreground guard, panel line and screen tail, ghost refusal and `allow_tui_input` | todo |
 | 03 | launch-wait — `interactive: true`, the ssh auto-upgrade, screen waits, `[shells] rows`/`cols`; live close (split at drafting) | todo |
 
 ## Notes
 
-- **Phase 02 split (2026-10-14).** Four phases of two or three files each,
+- **Phase 02 split (2026-10-14).** Five phases (02b split again at drafting: the flag has four deciding files and five rendering ones, so the model-facing surfaces go first and the field removal second) of two or three files each,
   per the stall note below. Drafting 02a found that phase 01's digit rule
   rejects bash's default `bash-5.2$ ` prompt, which minimal hosts and sbx
   sandboxes show; 02a narrows it to `%`.
