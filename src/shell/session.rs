@@ -9,11 +9,85 @@ use anyhow::Context;
 
 use crate::config::Config;
 use crate::host::ssh_argv;
+use crate::shell::foreground::Foreground;
 use crate::shell::launch;
 use crate::shell::registry::{
     Owner, ShellId, ShellRecord, ShellRegistry, host_is_alive, sandbox_sidecar_path, spawn_for,
     spawn_for_on_host, with_shells, write_sandbox_sidecar,
 };
+
+/// How long `probe_foreground` waits for one `Status`/`Screen` round-trip.
+/// Reuse probes run while a chat turn waits on the shell it asked for, so
+/// this is short: a live local host answers in microseconds, and a probe
+/// that outlives 2 s has classified a dead or wedged host, which reads
+/// `Unknown` — the busy answer a fresh shell is the remedy for. The
+/// refusal probe in `run_terminal_command` reuses it, so every probe in the
+/// daemon waits the same amount.
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Probe a shell's live foreground state and record it.
+///
+/// One `Status` round-trip over the shell's socket, and — only for a
+/// **transport** record, a named host or a sandbox — one `Screen` read whose
+/// last non-blank row is what the transport rule classifies from. Then
+/// [`classify_record`] decides, and the result lands on the record's
+/// `last_foreground` with the current unix second.
+///
+/// Any socket error ⇒ the status (and row) is `None`, which classifies
+/// `Unknown`: the shell could not be asked, so nothing is asserted about it.
+///
+/// The registry lock is never held across an `.await`: the record's routing
+/// facts are copied out first, the socket I/O runs with the lock released,
+/// then the lock is taken again to classify and store.
+pub async fn probe_foreground(reg: &ShellRegistry, id: &ShellId, timeout: Duration) -> Foreground {
+    let (transport, in_registry) = with_shells(reg, |store| {
+        store
+            .get(id.as_str())
+            .map(|record| {
+                (
+                    record.sandbox.is_some()
+                        || matches!(record.host, crate::host::HostId::Named(_)),
+                    true,
+                )
+            })
+            .unwrap_or((false, false))
+    });
+    if !in_registry {
+        return Foreground::Unknown;
+    }
+    let sock = launch::socket_path(id.as_str());
+    let status = crate::shell::status(&sock, timeout).await.ok();
+    let last_row: Option<String> = if transport {
+        // A freshly spawned transport shell has a blank screen until its
+        // prompt draws; the transport rule reads blank as busy, so re-read
+        // briefly before classifying — the prompt is on its way.
+        let mut row: Option<String> = None;
+        for _ in 0..10 {
+            match crate::shell::screen(&sock, false, 0, timeout).await {
+                Ok(crate::shell::ShellResponse::ScreenText { text, .. }) => {
+                    if let Some(last) = text.lines().rfind(|l| !l.trim().is_empty()) {
+                        row = Some(last.to_string());
+                        break;
+                    }
+                }
+                _ => break,
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        row
+    } else {
+        None
+    };
+    let foreground = with_shells(reg, |store| {
+        let observed_at = crate::shell::registry::now_unix();
+        store.get_mut(id.as_str()).map(|record| {
+            let fg = crate::shell::classify_record(record, status.as_ref(), last_row.as_deref());
+            record.last_foreground = Some((fg.clone(), observed_at));
+            fg
+        })
+    });
+    foreground.unwrap_or(Foreground::Unknown)
+}
 
 /// A ready shell socket for `owner` on `host`: reuse the owner's live shell
 /// on that host, or create one. Returns the shell id and the path to its
@@ -30,12 +104,13 @@ where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    // (1) Lowest-indexed existing record whose host is still alive, so the
-    // answer is deterministic when an owner holds several shells; a match
-    // whose host is dead is removed here so it is not handed to the next
-    // caller as a live shell, then we fall through to create.
+    // (1) The owner's live shells on `host`, lowest index first — the reuse
+    // order. A match whose host is dead is removed here so it is not handed
+    // to the next caller as a live shell; the rest are candidates the probe
+    // below walks in order. A busy candidate is **skipped, never removed**:
+    // the program holding it is mid-run and the shell stays addressable.
     let owner_key = owner.key();
-    let reuse: Option<ShellId> = with_shells(reg, |store| {
+    let candidates: Vec<ShellId> = with_shells(reg, |store| {
         let mut matches: Vec<ShellId> = store
             .values()
             .filter(|record| {
@@ -61,20 +136,29 @@ where
             .map(|record| record.id.clone())
             .collect();
         matches.sort_by_key(|id| id.index());
-        let lowest = matches.into_iter().next()?;
-        if host_is_alive(&launch::lock_path(lowest.as_str())) {
-            Some(lowest)
-        } else {
-            store.remove(lowest.as_str());
-            None
-        }
+        matches.retain(|id| {
+            if host_is_alive(&launch::lock_path(id.as_str())) {
+                true
+            } else {
+                store.remove(id.as_str());
+                false
+            }
+        });
+        matches
     });
 
-    // (2) Reuse a live shell without spawning and without waiting on
-    // readiness: the lock's flock is the liveness contract (06b), and a
-    // second check here would add nothing the caller's next command does not
-    // already prove.
-    if let Some(id) = reuse {
+    // (2) The first candidate whose live foreground is a prompt — a busy
+    // shell is skipped, never removed, so the program holding it is
+    // untouched. D4: the decision probes live, never the cached
+    // `last_foreground`.
+    let mut idle: Option<ShellId> = None;
+    for id in &candidates {
+        if probe_foreground(reg, id, PROBE_TIMEOUT).await == crate::shell::Foreground::Prompt {
+            idle = Some(id.clone());
+            break;
+        }
+    }
+    if let Some(id) = idle {
         let socket = launch::socket_path(id.as_str());
         return Ok((id, socket));
     }
@@ -118,14 +202,14 @@ where
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    // The same reuse scan `shell_for_owner` runs, keyed on the sandbox
+    // The same candidate scan `shell_for_owner` runs, keyed on the sandbox
     // instead of the host: a sandbox shell's own host is always `Local`, so
     // the host is not what distinguishes two of the owner's shells here — the
     // sandbox is. Interactive and dedicated shells are excluded for the same
     // reasons `shell_for_owner` excludes them, and a match whose host is dead
     // is removed so it is not handed to the next caller as a live shell.
     let owner_key = owner.key();
-    let reuse: Option<ShellId> = with_shells(reg, |store| {
+    let candidates: Vec<ShellId> = with_shells(reg, |store| {
         let mut matches: Vec<ShellId> = store
             .values()
             .filter(|record| {
@@ -137,17 +221,27 @@ where
             .map(|record| record.id.clone())
             .collect();
         matches.sort_by_key(|id| id.index());
-        let lowest = matches.into_iter().next()?;
-        if host_is_alive(&launch::lock_path(lowest.as_str())) {
-            Some(lowest)
-        } else {
-            store.remove(lowest.as_str());
-            None
-        }
+        matches.retain(|id| {
+            if host_is_alive(&launch::lock_path(id.as_str())) {
+                true
+            } else {
+                store.remove(id.as_str());
+                false
+            }
+        });
+        matches
     });
 
-    // The same reuse shortcut: a live shell needs no readiness wait.
-    if let Some(id) = reuse {
+    // The same probe rule: the first candidate at a prompt is reused, a busy
+    // one is skipped and never removed.
+    let mut idle: Option<ShellId> = None;
+    for id in &candidates {
+        if probe_foreground(reg, id, PROBE_TIMEOUT).await == crate::shell::Foreground::Prompt {
+            idle = Some(id.clone());
+            break;
+        }
+    }
+    if let Some(id) = idle {
         let socket = launch::socket_path(id.as_str());
         return Ok((id, socket));
     }
@@ -1384,6 +1478,204 @@ mod tests {
             local_rows, 1,
             "the fresh local shell is the one the local caller got"
         );
+    }
+
+    /// Wait until `probe_foreground` reports a running program on `id`'s
+    /// shell: the busy state the reuse skip and the refusal probe against.
+    /// The busy maker is a plain `sleep 30` typed at the prompt.
+    async fn busy_until_running(reg: &ShellRegistry, id: &ShellId) -> Foreground {
+        let socket = launch::socket_path(id.as_str());
+        client::send_input(&socket, b"sleep 30\n", Duration::from_secs(5))
+            .await
+            .expect("the shell accepts input");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let fg = probe_foreground(reg, id, PROBE_TIMEOUT).await;
+            if matches!(fg, Foreground::Program { .. }) {
+                return fg;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the shell never read busy: {fg:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// End the `sleep 30` a test started, with the byte that cancels it.
+    async fn cancel_busy(id: &ShellId) {
+        let socket = launch::socket_path(id.as_str());
+        client::send_input(&socket, b"\x03", Duration::from_secs(5))
+            .await
+            .expect("the shell accepts the cancel");
+    }
+
+    /// Task 3, read half: an idle shell probes as `Prompt` — the shell owns
+    /// its own terminal, which is the reuse answer.
+    #[tokio::test]
+    async fn probe_foreground_reads_a_prompt_on_an_idle_shell() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("probe-idle".into());
+        let (id, _) = shell_for_owner(
+            &reg,
+            owner,
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the shell comes up");
+        let fg = probe_foreground(&reg, &id, PROBE_TIMEOUT).await;
+        assert_eq!(fg, Foreground::Prompt, "an idle shell is at a prompt");
+        let stored = with_shells(&reg, |store| {
+            store
+                .get(id.as_str())
+                .and_then(|r| r.last_foreground.clone())
+        });
+        assert_eq!(
+            stored.map(|(fg, _)| fg),
+            Some(Foreground::Prompt),
+            "the probe stores what it observed"
+        );
+    }
+
+    /// Task 3, busy half: a shell running `sleep 30` probes as
+    /// `Program { cmd: "sleep" }` — non-tui, cooked mode.
+    #[tokio::test]
+    async fn probe_foreground_names_a_running_program() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("probe-busy".into());
+        let (id, _) = shell_for_owner(
+            &reg,
+            owner,
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the shell comes up");
+        let fg = busy_until_running(&reg, &id).await;
+        assert_eq!(
+            fg,
+            Foreground::Program {
+                cmd: "sleep".into(),
+                tui: false,
+            },
+            "the running job is named"
+        );
+        cancel_busy(&id).await;
+    }
+
+    /// Task 3's headline case: the owner's only shell is busy with `sleep`,
+    /// so the caller gets a **fresh** shell and the busy one stays in the
+    /// registry, untouched and still running its job.
+    #[tokio::test]
+    async fn shell_for_owner_skips_a_busy_lowest_shell() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("busy-lowest".into());
+        let (busy, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the owner's only shell comes up");
+        busy_until_running(&reg, &busy).await;
+
+        let spawn_calls = Arc::new(AtomicUsize::new(0));
+        let host_spawn = {
+            let counter = Arc::clone(&spawn_calls);
+            move |id: ShellId| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                spawn_in_process_host(id)
+            }
+        };
+        let (fresh, _) = shell_for_owner(
+            &reg,
+            owner,
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            host_spawn,
+        )
+        .await
+        .expect("a busy lowest shell is skipped for a fresh one");
+
+        assert_ne!(
+            fresh.as_str(),
+            busy.as_str(),
+            "the busy shell must not be handed to the caller"
+        );
+        assert_eq!(
+            spawn_calls.load(Ordering::SeqCst),
+            1,
+            "a fresh shell was created, not a reuse of the busy one"
+        );
+        let still = with_shells(&reg, |store| store.contains_key(busy.as_str()));
+        assert!(still, "the busy shell is skipped, never removed");
+        cancel_busy(&busy).await;
+    }
+
+    /// Task 3's walk case: the owner's lowest shell is busy, the next one is
+    /// idle, so the caller gets the **idle** one — the reuse rule walks the
+    /// owner's shells in index order.
+    #[tokio::test]
+    async fn shell_for_owner_reuses_the_next_idle_shell() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("next-idle".into());
+        let (lowest, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the lowest shell comes up");
+        busy_until_running(&reg, &lowest).await;
+        let (next, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the busy lowest shell is skipped and this one is created");
+        assert_ne!(
+            lowest.as_str(),
+            next.as_str(),
+            "fixture: two distinct shells, lowest index first"
+        );
+
+        let (got, _) = shell_for_owner(
+            &reg,
+            owner,
+            crate::host::HostId::Local,
+            5,
+            Duration::from_secs(15),
+            |_id| async { Ok(()) },
+        )
+        .await
+        .expect("the reuse rule answers without spawning");
+
+        assert_eq!(
+            got.as_str(),
+            next.as_str(),
+            "the busy lowest shell is skipped and the next idle one is reused"
+        );
+        cancel_busy(&lowest).await;
     }
 
     /// Task 4's negative case: an ordinary `shell_for_owner` caller is never

@@ -20,10 +20,10 @@ use crate::host::connect_argv;
 use crate::ipc::{Request, Response};
 use crate::shell::PromptReply;
 use crate::shell::{
-    CommandOutcome, MetaIndex, Owner, ShellId, ShellRegistry, await_ready, host_entry_or_bare,
-    mark_interactive, marker_shell_name, master_running, meta_path_for, now_unix, run_command,
-    run_command_with_prompts, shell_for_owner, socket_path, spawn_for_on_host, which_ssh,
-    with_shells,
+    CommandOutcome, Foreground, MetaIndex, Owner, PROBE_TIMEOUT, ShellId, ShellRegistry,
+    await_ready, host_entry_or_bare, mark_interactive, marker_shell_name, master_running,
+    meta_path_for, now_unix, probe_foreground, run_command, run_command_with_prompts,
+    shell_for_owner, socket_path, spawn_for_on_host, which_ssh, with_shells,
 };
 use crate::shell::{CommandRecord, marked_inner_range};
 use std::sync::atomic::AtomicUsize;
@@ -339,6 +339,39 @@ where
             (id.clone(), socket_path(id.as_str()))
         }
     };
+    // A shell the caller named is probed live before anything is written to
+    // it (D5): a command written into a busy shell would be typed into
+    // whatever program holds it. A shell that was just interrupted can read
+    // `Running` for a moment, so a non-prompt answer is re-probed twice,
+    // 150 ms apart, before the refusal stands. Nothing has been written yet,
+    // so the refusal leaves the shell exactly as it was.
+    if let ShellTarget::Existing(ref id) = target {
+        const RECHECKS: usize = 2;
+        const RECHECK_GAP: Duration = Duration::from_millis(150);
+        let mut fg = probe_foreground(reg, id, PROBE_TIMEOUT).await;
+        for _ in 0..RECHECKS {
+            if matches!(fg, Foreground::Prompt) {
+                break;
+            }
+            tokio::time::sleep(RECHECK_GAP).await;
+            fg = probe_foreground(reg, id, PROBE_TIMEOUT).await;
+        }
+        if !matches!(fg, Foreground::Prompt) {
+            // D5's wording. For `Unknown` the middle clause names the
+            // unreadable state instead of a program, because nothing asserts
+            // what holds the terminal.
+            let reason = match fg {
+                Foreground::Unknown => "the shell's state could not be read".to_string(),
+                _ => "a command written there would be typed into it".to_string(),
+            };
+            anyhow::bail!(
+                "Error: shell {} is {fg}; {reason}. Use send_input to type into \
+                 that program, read_shell_screen to see it, or shell: \"new\" for \
+                 a fresh shell.",
+                id.as_str()
+            );
+        }
+    }
     if crate::daemon::utils::is_interactive_command(cmd) {
         // The command must never be written to the shell: an interactive
         // session owns the terminal and consumes every byte, so writing would
@@ -932,7 +965,7 @@ fn read_cast_slice(cast: &Path, before: u64, after: u64) -> std::io::Result<Vec<
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::shell::{bind, lock_path, serve, socket_path};
+    use crate::shell::{ShellResponse, bind, lock_path, screen, send_input, serve, socket_path};
     use crate::test_home_guard;
     use anyhow::Context;
     use std::sync::Arc;
@@ -2240,6 +2273,130 @@ mod tests {
         );
         let still_there = with_shells(&reg, |store| store.contains_key(id.as_str()));
         assert!(still_there, "a refused command must not close the shell");
+    }
+
+    /// Task 4's refusal, live: `shell: "<id>"` naming a shell that is busy
+    /// running `sleep 30` is refused **before any byte is written** — the
+    /// error names the shell and the running program, the `sleep` keeps
+    /// running, and the refused command's text never appears on the shell's
+    /// screen. A shell that was just interrupted can read `Running` for a
+    /// moment, so the run path re-probes; here the busy state is settled
+    /// before the call is made, so the refusal is the first answer.
+    #[tokio::test]
+    async fn run_terminal_command_refuses_a_busy_named_shell() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("busy-named".into());
+        let (id, _) = shell_for_owner(
+            &reg,
+            owner,
+            crate::host::HostId::Local,
+            5,
+            SHELL_READY_TIMEOUT,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the shell comes up");
+
+        let busy_socket = socket_path(id.as_str());
+        send_input(&busy_socket, b"sleep 30\n", Duration::from_secs(5))
+            .await
+            .expect("the shell accepts the input");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let fg = probe_foreground(&reg, &id, PROBE_TIMEOUT).await;
+            if matches!(
+                fg,
+                Foreground::Program { ref cmd, .. } if cmd == "sleep"
+            ) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the shell never read busy: {fg:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        let err = run_in_shell_for_test(
+            &reg,
+            Owner::Chat("busy-named".into()),
+            "echo BUSY_REFUSAL_MUST_NOT_RUN",
+            5,
+            Some(id.as_str()),
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect_err("a busy named shell must be refused");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(id.as_str()),
+            "the refusal must name the shell id: {msg}"
+        );
+        assert!(
+            msg.contains("running sleep"),
+            "the refusal must name the running program: {msg}"
+        );
+        assert!(
+            msg.contains("a command written there would be typed into it")
+                && msg.contains("send_input")
+                && msg.contains("shell: \"new\""),
+            "the refusal must carry D5's remedy wording: {msg}"
+        );
+
+        // Nothing was written, so the refused command's text must never have
+        // reached the shell: the status still reads `Running` and the screen
+        // shows no trace of the command.
+        let busy_socket = socket_path(id.as_str());
+        let busy_status = crate::shell::status(&busy_socket, Duration::from_secs(5))
+            .await
+            .expect("the busy shell still answers status");
+        let ShellResponse::Status { state, .. } = busy_status else {
+            panic!("status must answer with a Status frame");
+        };
+        assert_eq!(
+            state,
+            crate::shell::ShellState::Running,
+            "the sleep is still running after the refusal"
+        );
+        let screen_after = screen(&busy_socket, false, 0, Duration::from_secs(5))
+            .await
+            .expect("the busy shell still answers screen");
+        let ShellResponse::ScreenText { text, .. } = screen_after else {
+            panic!("screen must answer with a ScreenText frame");
+        };
+        assert!(
+            !text.contains("BUSY_REFUSAL_MUST_NOT_RUN"),
+            "the refused command must never have been typed into the shell: {text:?}"
+        );
+
+        // The refusal left the shell as it was: end the sleep and run the
+        // command the ordinary way to prove the shell stayed usable.
+        send_input(&busy_socket, b"\x03", Duration::from_secs(5))
+            .await
+            .expect("the shell accepts the cancel");
+        let (ran_in, result) = run_in_shell_for_test(
+            &reg,
+            Owner::Chat("busy-named".into()),
+            "echo AFTER_CANCEL_OK",
+            5,
+            Some(id.as_str()),
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the interrupted shell is usable again");
+        assert_eq!(
+            ran_in.as_str(),
+            id.as_str(),
+            "the refusal must not have disturbed the shell"
+        );
+        assert!(
+            result.text.contains("AFTER_CANCEL_OK"),
+            "the command ran after the sleep was cancelled: {:?}",
+            result.text
+        );
     }
 
     /// Task 1's redundant-but-legal row: naming a `shell` whose host *is* the

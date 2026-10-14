@@ -151,9 +151,10 @@ pub fn classify_transport(
 }
 
 /// Whether a rendered row reads as a shell prompt: trimmed, it ends in `$`,
-/// `#`, `%` or `>` whose preceding character is not an ASCII digit. A digit
-/// before the character is a progress counter or a version, not a prompt
-/// (`Progress 50%`), and an empty line is nothing at all.
+/// `#`, `%` or `>` — with the digit exclusion applying to `%` **only**.
+/// A digit before `%` is a progress counter (`Progress 50%`); before `$`, `#`
+/// or `>` it is a shell version, which bash and sh print in their default
+/// prompts on a host with no rc file (`bash-5.2$ `, `sh-5.2# `).
 fn is_prompt_line(line: &str) -> bool {
     let trimmed = line.trim_end();
     let mut chars = trimmed.chars();
@@ -163,7 +164,7 @@ fn is_prompt_line(line: &str) -> bool {
     if !matches!(last, '$' | '#' | '%' | '>') {
         return false;
     }
-    !matches!(chars.next_back(), Some(c) if c.is_ascii_digit())
+    !(last == '%' && matches!(chars.next_back(), Some(c) if c.is_ascii_digit()))
 }
 
 #[cfg(test)]
@@ -319,10 +320,19 @@ mod tests {
             "root@box:/# ",
             "zoidberg% ",
             "PS C:\\> ",
+            "bash-5.2$ ",
+            "sh-5.2# ",
         ] {
             assert!(is_prompt_line(line), "must match: {line:?}");
         }
-        for line in ["Progress 50%", "Password:", "Continue? (y/n)", "", "   "] {
+        for line in [
+            "Progress 50%",
+            "100%",
+            "Password:",
+            "Continue? (y/n)",
+            "",
+            "   ",
+        ] {
             assert!(!is_prompt_line(line), "must NOT match: {line:?}");
         }
     }

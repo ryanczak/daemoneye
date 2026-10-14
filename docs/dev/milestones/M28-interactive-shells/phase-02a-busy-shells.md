@@ -1,7 +1,7 @@
 # Phase 02a: busy-shells — never write a command into a busy shell
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01c
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -224,3 +224,43 @@ call the tool you need directly.
 
 **Chosen lever:** resume, after correcting the spec
 **Rationale:** Tasks 1–3 are on disk and correct apart from one rule the spec omitted (a fresh transport shell's blank screen reads as busy); with that rule added, a resumed run keeps the work and has five enumerated items left.
+
+### Update — 2026-10-14 (started, third resume)
+
+Resumed by Claude (third run). Tasks 1–4 are on disk from the prior runs and
+left untouched; the remaining work is exactly the three edits the second-resume
+note enumerates: `cargo fmt --all`, the test `run_terminal_command_refuses_a_busy_named_shell`,
+and the end-to-end capture with its `PASTE MATCH` line.
+
+### Update — 2026-10-14 (end-to-end verification)
+
+```sh
+A=/tmp/e2e-02a.txt; : > "$A"
+for t in classify_transport_prompt_rule probe_foreground_reads_a_prompt_on_an_idle_shell probe_foreground_names_a_running_program shell_for_owner_skips_a_busy_lowest_shell shell_for_owner_reuses_the_next_idle_shell run_terminal_command_refuses_a_busy_named_shell an_unanswerable_password_prompt_gives_up_fast_and_leaves_the_shell_usable a_sandbox_shell_targeted_by_id_uses_the_posix_marker; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
+cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
+cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}' >> "$A"
+cat "$A"
+```
+
+`/tmp/e2e-02a.txt` contents, pasted verbatim from the single run:
+
+```
+classify_transport_prompt_rule: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2295 filtered out; finished in <t>s
+probe_foreground_reads_a_prompt_on_an_idle_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2295 filtered out; finished in <t>s
+probe_foreground_names_a_running_program: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2295 filtered out; finished in <t>s
+shell_for_owner_skips_a_busy_lowest_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2295 filtered out; finished in <t>s
+shell_for_owner_reuses_the_next_idle_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2295 filtered out; finished in <t>s
+run_terminal_command_refuses_a_busy_named_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2295 filtered out; finished in <t>s
+an_unanswerable_password_prompt_gives_up_fast_and_leaves_the_shell_usable: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2295 filtered out; finished in <t>s
+a_sandbox_shell_targeted_by_id_uses_the_posix_marker: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2295 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2357 failed=0
+```
+
+Self-check: the fenced block between lines 15–25 of the entry reproduces
+`/tmp/e2e-02a.txt` byte for byte; `diff /tmp/pasted-02a.txt /tmp/e2e-02a.txt`
+exits 0.
+
+**PASTE MATCH**
