@@ -1,7 +1,7 @@
 # Phase 02c: flag-gone — remove the static `interactive` flag
 
 **Milestone:** M28 — Interactive shells
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-02b
 **Estimated diff:** ~250 lines, mostly deletions
 **Tags:** language=rust, kind=refactor, size=m
@@ -244,3 +244,143 @@ fmt_exit=0
 passed=2356 failed=0
 ```
 PASTE MATCH
+
+### Update — 2026-10-14 19:31 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 02c is complete on top of the prior run's Tasks 1–5: the `interactive` field, `mark_interactive`, the IPC field, and the reuse predicates were already gone, so this run finished Task 6 (the three test rewrites), Task 7 (every compiler-named literal site), and Task 8 (the evidence capture). `run_terminal_command_refuses_an_interactive_command_and_writes_nothing` now asserts the `Err` names `open_shell`/`send_input`/`nothing was run` and that a following `echo` reuses the **same** shell id; the read-transport negative test makes its held shell busy with a real `sleep 30` + `probe_foreground` poll and cancels with `\x03` at the end. One deviation: `shell_exec_interactive_returns_without_running_the_command` (08b's primary-case test, not in the spec's list) also had to be rewritten because the path it pinned — the `[Interactive session started]` success text — no longer exists; it now pins the same refusal and keeps its decisive half (the unwritten shell still answers `echo PROBE_ALIVE`). Without that rewrite the suite sat at `failed=1`.
+
+**Notes for review:** End-to-end block ran once, verbatim, and pasted into a new `(end-to-end verification)` Update Log entry — `diff` against `/tmp/e2e-02c.txt` says **PASTE MATCH**; the block reads `flag_refs=0`, `fmt_exit=0`, `passed=2356 failed=0` (exactly 2359 − 3 deleted), doc_truth 16/0, clippy clean. Two full-suite flakes surfaced mid-run (`script_invocation_accepts_an_absolute_path_under_scripts_dir`, an sbx test unrelated to this phase) and passed on isolated re-runs and in both final full runs; the last capture pasted is from a clean run. `is_interactive_command`/`interactive_destination` stay untouched for the bg path and phase 03. Status remains `in-progress`; no `(complete)` entry written; commit `efd6575f` contains everything and the tree is clean.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.67s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ seeded_assets_name_no_retired_tools ... ok
+test readme_tools_counts_are_accurate ... ok
+test readme_approval_markers_match_the_gated_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test readme_documents_every_chat_slash_command ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1317d86dbab8a67a)
+kill: (3629596): No such process
+kill: (-3630345): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58e4c018b6115a52)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa77b3165037b91b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-b44e63b56dae5611)
+     Running tests/integration.rs (target/debug/deps/integration-cc4ec88fa7c13534)
+     Running tests/isolation.rs (target/debug/deps/isolation-91fd5762b61d94c8)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-62d50a1c46611977)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M28-interactive-shells/README.md` — +1 -1
+- `docs/dev/milestones/M28-interactive-shells/phase-02c-flag-gone.md` — +29 -1
+- `src/cli/commands/agents.rs` — +0 -1
+- `src/cli/commands/slash.rs` — +0 -3
+- `src/daemon/executor/file_ops/read.rs` — +33 -9
+- `src/daemon/executor/shell_exec.rs` — +59 -60
+- `src/daemon/server/shells.rs` — +0 -6
+- `src/ipc_tests.rs` — +0 -1
+- `src/shell/foreground.rs` — +0 -3
+- `src/shell/session.rs` — +0 -7
+
+**Commit:** efd6575ff338804636224f6de6cf24933fe14e0c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
