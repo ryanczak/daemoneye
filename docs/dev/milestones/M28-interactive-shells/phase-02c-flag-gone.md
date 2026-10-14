@@ -1,7 +1,7 @@
 # Phase 02c: flag-gone — remove the static `interactive` flag
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-02b
 **Estimated diff:** ~250 lines, mostly deletions
 **Tags:** language=rust, kind=refactor, size=m
@@ -384,3 +384,17 @@ kill: (-3630345): No such process
 **Commit:** efd6575ff338804636224f6de6cf24933fe14e0c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (one resume after a NoProgressStall; no bug filed)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** one, justified — `shell_exec_interactive_returns_without_running_the_command`
+  was also rewritten to the refusal shape (it pinned the deleted success
+  text). The spec's test list missed it: architect-caused, as in 02b.
+- **Calibration:** a deletion phase's test list must come from a full
+  `cargo test` against the deleted production code, not from a compile check
+  alone — a test that compiles but pins removed *behaviour* only shows as a
+  runtime failure. Independent re-run: 2356 passed / 0 failed, `flag_refs=0`,
+  fmt/clippy/doc_truth clean.
