@@ -154,3 +154,65 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-14 (resume)
+
+The first run did all the production work correctly and deleted the three
+flag tests, then stalled reading test line ranges and git history. **Do
+not read git history or old revisions.** Every remaining edit is below.
+
+**Done — do not touch:** Tasks 1–4 in production code (`registry.rs`,
+`ipc.rs`, `server/shells.rs` non-test part, `slash.rs` `render_shell_list`,
+`session.rs` reuse predicates, `shell/mod.rs`, the `shell_exec.rs`
+refusal) and Task 5's three deletions.
+
+**Remaining, exactly:**
+
+1. Rename `shell_exec_interactive_marks_the_shell_and_the_next_command_gets_a_new_one`
+   to `run_terminal_command_refuses_an_interactive_command_and_writes_nothing`
+   and make it assert: `ssh nowhere.invalid` returns `Err` whose text names
+   `send_input` and `open_shell`; a following `echo` on the same owner runs
+   in the **same** shell id and its output contains the echoed text.
+2. `shell_exec_non_interactive_still_runs_on_the_same_shell`: delete only
+   the assertion that reads `.interactive`.
+3. `the_read_transport_never_opens_an_interactive_shell`
+   (`src/daemon/executor/file_ops/read.rs`): replace the loop that sets
+   `record.interactive = true` with: `crate::shell::send_input` of
+   `b"sleep 30\n"` to the held shell's socket, then poll
+   `crate::shell::probe_foreground` until it is not `Foreground::Prompt`.
+   Keep the rest of the test. Send `b"\x03"` to that socket at the end.
+4. Every other site the compiler names: delete the `interactive: …` field
+   or the assertion line that reads `.interactive`, nothing else. As of
+   this note `cargo build --tests` names these lines:
+   - `src/cli/commands/agents.rs:162`
+   - `src/cli/commands/slash.rs:1030`
+   - `src/cli/commands/slash.rs:969`
+   - `src/daemon/executor/file_ops/read.rs:863`
+   - `src/daemon/executor/knowledge/shell.rs:2558`
+   - `src/daemon/executor/mod.rs:2155`
+   - `src/daemon/executor/shell_exec.rs:1815`
+   - `src/daemon/executor/shell_exec.rs:1869`
+   - `src/daemon/prompt.rs:351`
+   - `src/daemon/prompt.rs:477`
+   - `src/daemon/server/shells.rs:1466`
+   - `src/daemon/server/shells.rs:1483`
+   - `src/daemon/server/shells.rs:1489`
+   - `src/ipc_tests.rs:985`
+   - `src/shell/foreground.rs:352`
+   - `src/shell/foreground.rs:368`
+   - `src/shell/foreground.rs:380`
+   - `src/shell/session.rs:1136`
+   - `src/shell/session.rs:1148`
+   - `src/shell/session.rs:751`
+   - `src/shell/session.rs:805`
+   - `src/shell/session.rs:859`
+   - `src/shell/session.rs:874`
+   - `src/shell/session.rs:946`
+
+Then run the § End-to-end verification block once. Finish: the block's
+last line reads `passed=2356 failed=0`, and `flag_refs=0`.
+
+### Update — 2026-10-14 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** production code and the three deletions are on disk and correct; what remains is a fixed list of test edits the compiler enumerates, so a resumed run with that list keeps the work instead of redoing it.
