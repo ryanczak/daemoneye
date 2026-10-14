@@ -52,13 +52,19 @@ phases are split further where one is more than a session.
 | 01c | screen-tool ([phase-01c-screen-tool.md](phase-01c-screen-tool.md)) — `read_shell_screen` (no waits yet), prompt asset, tool tables | done (escalated: architect takeover, 2026-10-14) |
 | 02a | busy-shells ([phase-02a-busy-shells.md](phase-02a-busy-shells.md)) — a live foreground probe; reuse skips a busy shell; a named busy shell is refused before any write; the prompt digit rule narrowed to `%` | done (approved_first_try, 2026-10-14) |
 | 02b | foreground-listed ([phase-02b-foreground-listed.md](phase-02b-foreground-listed.md)) — `list_shells` and `[SHELLS]` show the observed foreground instead of `[interactive]`; `[DEFAULT SHELL]` skips a shell last seen busy | done (approved_first_try, 2026-10-14) |
-| 02c | flag-gone — remove `ShellRecord.interactive`, `mark_interactive`, the reuse predicates and the IPC / `/shells` uses | todo |
+| 02c | flag-gone ([phase-02c-flag-gone.md](phase-02c-flag-gone.md)) — remove `ShellRecord.interactive`, `mark_interactive`, the reuse predicates and the IPC / `/shells` uses; the interactive-command path becomes an honest refusal | todo |
 | 02d | keys — `send_input` sends `\r` for Enter, named `keys` with CSI u, bracketed `paste` | todo |
 | 02e | input-guard — the `send_input` foreground guard, panel line and screen tail, ghost refusal and `allow_tui_input` | todo |
 | 03 | launch-wait — `interactive: true`, the ssh auto-upgrade, screen waits, `[shells] rows`/`cols`; live close (split at drafting) | todo |
 
 ## Notes
 
+- **The interactive-command path was a stub (found drafting 02c).** For
+  `ssh host` and friends, `run_terminal_command` wrote nothing to the
+  shell but told the model the session was established; only the flag made
+  the next command use a fresh shell. 02c turns it into an honest refusal
+  pointing at `open_shell` + `send_input`; phase 03's `interactive: true`
+  replaces the refusal.
 - **Phase 02 split (2026-10-14).** Five phases (02b split again at drafting: the flag has four deciding files and five rendering ones, so the model-facing surfaces go first and the field removal second) of two or three files each,
   per the stall note below. Drafting 02a found that phase 01's digit rule
   rejects bash's default `bash-5.2$ ` prompt, which minimal hosts and sbx
