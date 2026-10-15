@@ -1,7 +1,7 @@
 # Phase 02g: allow-tui-input — the runbook opt-in for ghost input to a program
 
 **Milestone:** M28 — Interactive shells
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-02f
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -156,3 +156,163 @@ fmt_exit=0
 passed=2378 failed=0
 ```
 
+### Update — 2026-10-15 03:28 (complete, server-authored)
+
+**Summary:** </think>Working tree clean, commit made. Everything done. Let me do the completion checklist:
+
+- [x] Phase doc Status: in-progress (not flipped to review)
+- [x] Milestone README phase-table row in-progress
+- [x] No hand-written (complete) entry — only started + end-to-end entries
+- [x] cargo fmt --all run before git add
+- [x] All verification commands ran clean (fmt_exit=0, clippy Finished, full suite passed=2378 failed=0)
+- [x] Final message will be Summary + Notes for review
+- [x] git status clean
+- [x] git log shows all files touched
+
+Also the acceptance criteria: PASTE MATCH confirmed. Test count 2378 = 2376 + 2 new tests. Good.
+
+Let me verify the phase doc status is still in-progress and no (complete) entry exists. Also double-check clippy passed in the E2E output — "Finished `dev` profile ... in <t>s" was the tail -1 of clippy, meaning it succeeded.
+
+One more check: the grep for spec-pinned literal `allow_tui_input` — done above, landed in all the right files. The frontmatter field parses via parse_bool_field.
+
+Now write the final summary.</think>
+Phase 02g complete. Working tree clean, commit `ee7f3671`.
+
+**Summary:** Phase 02g implemented and committed (`ee7f3671`); working tree clean, status left `in-progress` with no `(complete)` entry. `GhostConfig` and `GhostPolicy` gained `allow_tui_input: bool` (serde default false), copied by `from_config`; the runbook parser reads it with `parse_bool_field(frontmatter, "allow_tui_input")` next to `auto_approve_commands`. `ghost_may_type_into(fg, allow_tui_input)` returns true for `Prompt`, `allow_tui_input` for both `Program` shapes, and false for `Paused`/`Exited`/`Unknown`; the `SendInput` arm passes the ghost policy's flag (`false` when no policy), with the `ToolPolicy` gate and its order untouched. `ghost_input_refusal` keeps its signature: the `Program` refusal names `allow_tui_input: true` as the lifter, the `Paused`/`Exited`/`Unknown` refusals do not. Docs: `allow_tui_input` row added to the README frontmatter table next to `auto_approve_commands`, and one sentence each appended to `send_input` in `assets/prompts/sre.toml` and the `CLAUDE.md` tool row; `tests/doc_truth.rs` passes unmodified.
+
+**Notes for review:** E2E ran verbatim line-by-line, `PASTE MATCH` confirmed via the self-check diff, and the paste lives in its own `end-to-end verification` Update Log entry. Full suite `passed=2378 failed=0` — exactly the 2376 baseline plus the 2 new tests (`runbook_parses_allow_tui_input`, `ghost_policy_carries_allow_tui_input`); the rename adds nothing. `doc_truth` 16/0, clippy `-D warnings` clean, `fmt_exit=0`. All four named tests returned `test result: ok. 1 passed` individually, including the pre-existing `ghost_may_send_input_requires_an_explicit_allow` control. The literal grep confirms `allow_tui_input` landed in all 6 compile-pinned literals (parser field, `from_config`, 4 in `policy_tests.rs`) with every other `GhostConfig`/`GhostPolicy` initializer using `..Default::default()` or an existing helper. Mid-run the verifier caught three missing-field errors while I added the field across the struct chain (runbook parser initializer, `GhostPolicy`, and 4 `policy_tests.rs` helpers) — each was the expected propagation of the new field through the exact literal list the spec predicted, fixed immediately; no silent workarounds were needed and no other tests changed.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.92s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+. ok
+test e2e_prompt_asset_tool_hygiene ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1317d86dbab8a67a)
+kill: (18724): No such process
+kill: (-19477): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58e4c018b6115a52)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa77b3165037b91b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-b44e63b56dae5611)
+     Running tests/integration.rs (target/debug/deps/integration-cc4ec88fa7c13534)
+     Running tests/isolation.rs (target/debug/deps/isolation-91fd5762b61d94c8)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-62d50a1c46611977)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +1 -0
+- `assets/prompts/sre.toml` — +3 -1
+- `docs/dev/milestones/M28-interactive-shells/README.md` — +1 -1
+- `docs/dev/milestones/M28-interactive-shells/phase-02g-allow-tui-input.md` — +20 -1
+- `src/daemon/executor/mod.rs` — +69 -18
+- `src/daemon/policy.rs` — +8 -0
+- `src/daemon/policy_tests.rs` — +17 -0
+- `src/ipc.rs` — +8 -0
+- `src/runbook.rs` — +18 -0
+
+**Commit:** ee7f36719bb3dd66a9cbee82cd8c95e192e46207
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).

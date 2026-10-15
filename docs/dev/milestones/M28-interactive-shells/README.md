@@ -56,7 +56,7 @@ phases are split further where one is more than a session.
 | 02d | keys ([phase-02d-keys.md](phase-02d-keys.md)) — the pure key encoder (tmux names, xterm modifiers, CSI u) and paste rule in `src/shell/keys.rs`; `ScreenText` reports bracketed paste and application cursor; `send_input`'s Enter is `\r` | done (approved_first_try, 2026-10-14) |
 | 02e | keys-tool ([phase-02e-keys-tool.md](phase-02e-keys-tool.md)) — `send_input` gains `keys` and `paste`, the panel and result name them, prompt and doc tables. *Split from 02d at drafting* | done (approved_first_try, 2026-10-14) |
 | 02f | input-guard ([phase-02f-input-guard.md](phase-02f-input-guard.md)) — `send_input` probes the live foreground before the panel; the panel names it and shows a TUI's masked screen tail; a ghost may type only at a prompt | done (approved_first_try, 2026-10-14) |
-| 02g | allow-tui-input ([phase-02g-allow-tui-input.md](phase-02g-allow-tui-input.md)) — the runbook `allow_tui_input` field through `GhostConfig` / `GhostPolicy`, lifting 02f's ghost refusal; docs. *Split from 02f at drafting* | in-progress |
+| 02g | allow-tui-input ([phase-02g-allow-tui-input.md](phase-02g-allow-tui-input.md)) — the runbook `allow_tui_input` field through `GhostConfig` / `GhostPolicy`, lifting 02f's ghost refusal; docs. *Split from 02f at drafting* | review      |
 | 03 | launch-wait — `interactive: true`, the ssh auto-upgrade, screen waits, `[shells] rows`/`cols`; live close (split at drafting) | todo |
 
 ## Notes
