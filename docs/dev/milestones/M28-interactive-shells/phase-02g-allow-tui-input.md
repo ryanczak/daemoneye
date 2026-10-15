@@ -1,7 +1,7 @@
 # Phase 02g: allow-tui-input — the runbook opt-in for ghost input to a program
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-02f
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=feature, size=s

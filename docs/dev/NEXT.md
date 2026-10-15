@@ -6,7 +6,7 @@
 
 **Active phase:** [phase-02g-allow-tui-input](milestones/M28-interactive-shells/phase-02g-allow-tui-input.md)
 — todo. Dispatch with `/rexymcp:dispatch phase-02g-allow-tui-input`. Phases 01,
-01b, 01c, 02a, 02b, 02c, 02d, 02e and 02f are done.
+01b, 01c, 02a, 02b, 02c, 02d, 02e, 02f and 02g are done.
 
 M27 closed 2026-10-12 (`v2.0.0`). The roadmap's former M28–M30 are now
 M29–M31 (`docs/design/daemoneye-2.0.md` § 6).
