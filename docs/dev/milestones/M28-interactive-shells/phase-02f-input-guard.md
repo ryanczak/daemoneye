@@ -1,7 +1,7 @@
 # Phase 02f: input-guard — `send_input` sees what holds the shell
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-02e
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -437,3 +437,19 @@ kill: (-4147607): No such process
 **Commit:** d3abdf2da2f7fa27c98db06a373382fd8bbd59df
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch, 166 turns)
+- **Scope deviations:** one, accepted as a nit — `screen_tail` drops **every**
+  blank row, not only trailing ones, so a TUI's internal blank lines are
+  collapsed out of the 5-row tail. The spec's test (blanks only trailing)
+  cannot tell; for a panel preview five content rows is the more useful
+  read, so it stands.
+- **Calibration:** none. Independent re-run: 2376 passed / 0 failed, fmt and
+  clippy clean, `ShellState`/`input_target_note` grep ⇒ 0. Verified in the
+  arm: ToolPolicy gate → live `probe_foreground` (unparseable id ⇒
+  `Unknown`) → ghost gate (refusal, no panel, nothing sent) → screen read →
+  compose → panel → send; the old `status` probe is gone.
