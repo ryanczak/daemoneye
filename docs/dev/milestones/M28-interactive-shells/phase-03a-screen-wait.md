@@ -383,3 +383,48 @@ kill: (-184205): No such process
 **Commit:** b123b0a584cfcca77816595a7a5ecc6c5cee11c4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-15 12:35 (progress, bug-03a-1 fix)
+
+Bounce fix for bug-03a-1 (executor re-dispatch). In `wait_screen` the
+pattern loop's match arm returned `WaitOutcome::Matched` unconditionally;
+with `settle` `Some` it now breaks out of the pattern loop and hands over
+to the settle phase under the same deadline, so the combined case yields
+`Settled` (or `NotSettled`), never `Matched`. `wait_for` alone still
+returns `Matched` (`wait_screen_returns_when_the_pattern_appears`
+unmodified and passing). Added
+`wait_screen_with_both_waits_for_the_pattern_then_settles` per
+`bugs/bug-03a-1.md` (reader yields `loading`, `done 1`, `done 2`, then
+`done 3`; asserts `Settled` and that the reader was called past the first
+`done` read).
+
+Mutation check: reverting the fix (early return on match) makes the new
+test fail —
+`panicked at src/daemon/executor/knowledge/shell.rs:6212:9: with both
+waits the pattern match hands over to the settle phase, which needs two
+equal reads after 'done 1': Matched { elapsed: 11.320816ms }` —
+`test result: FAILED. 0 passed; 1 failed`. Re-applied the fix; the test
+passes and `wait_screen*` ⇒ `5 passed; 0 failed`.
+
+### Update — 2026-10-15 12:40 (end-to-end verification)
+
+§ End-to-end verification re-run verbatim with the new test name added to
+the `for` list, each line once, against the real artifacts. Captured
+mechanically to `/tmp/e2e-03a.txt`; pasted below unmodified.
+
+```
+wait_screen_returns_when_the_pattern_appears: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+wait_screen_with_both_waits_for_the_pattern_then_settles: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+wait_screen_settles_when_two_reads_agree: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+wait_screen_that_never_settles_is_a_result_not_an_error: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+wait_screen_never_matching_times_out: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+wait_bounds_clamp_the_timeout_and_the_settle: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+read_shell_screen_invalid_wait_for_is_an_error: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+read_shell_screen_returns_the_screen_with_a_foreground_header: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2385 failed=0
+```
+
+PASTE MATCH

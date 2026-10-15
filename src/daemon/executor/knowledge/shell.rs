@@ -1897,9 +1897,12 @@ where
             }
             match read().await {
                 Ok(text) if matched(&text) => {
-                    return WaitOutcome::Matched {
-                        elapsed: started.elapsed(),
-                    };
+                    if settle.is_none() {
+                        return WaitOutcome::Matched {
+                            elapsed: started.elapsed(),
+                        };
+                    }
+                    break;
                 }
                 Ok(_) => {}
                 Err(msg) => return WaitOutcome::Failed(msg),
@@ -6182,6 +6185,42 @@ mod tests {
         assert!(
             matches!(out, WaitOutcome::Matched { .. }),
             "the third read matches, so the wait ends Matched: {out:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_screen_with_both_waits_for_the_pattern_then_settles() {
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let counter = std::rc::Rc::clone(&calls);
+        let read = move || {
+            let c = counter.get();
+            counter.set(c + 1);
+            let v = match c {
+                0 => "loading",
+                1 => "done 1",
+                2 => "done 2",
+                _ => "done 3",
+            };
+            std::future::ready(Ok::<String, String>(v.to_string()))
+        };
+        let re = regex::Regex::new("done").unwrap();
+        let out = wait_screen(
+            read,
+            Some(&re),
+            Some(Duration::from_millis(10)),
+            Duration::from_millis(200),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(
+            matches!(out, WaitOutcome::Settled { .. }),
+            "with both waits the pattern match hands over to the settle phase, \
+             which needs two equal reads after `done 1`: {out:?}"
+        );
+        assert!(
+            calls.get() > 2,
+            "the reader was called past the first `done` read (called {} times)",
+            calls.get()
         );
     }
 
