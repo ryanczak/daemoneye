@@ -316,3 +316,21 @@ kill: (-19477): No such process
 **Commit:** ee7f36719bb3dd66a9cbee82cd8c95e192e46207
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch, 92 turns)
+- **Scope deviations:** one bookkeeping gap — the end-to-end entry omits the
+  `PASTE MATCH` line its criterion requires (the executor's notes claim it;
+  the entry does not carry it). The reviewer ran the self-check against the
+  executor's `/tmp/e2e-02g.txt`: `PASTE MATCH`. Not bounced: the evidence is
+  genuine and the gap is one missing echo line on a green phase.
+- **Calibration:** the compile-derived site list ("exactly 6, from a compile,
+  complete") gave the shortest run of the milestone — evidence for the
+  02b/02c lesson that a list the executor can trust beats one it must
+  re-derive. Independent re-run: 2378 passed / 0 failed, fmt and clippy
+  clean. `ghost_may_type_into` matches every `Foreground` variant
+  explicitly (a new variant fails to compile rather than defaulting); the
+  refusal names `allow_tui_input` only for `Program`.
