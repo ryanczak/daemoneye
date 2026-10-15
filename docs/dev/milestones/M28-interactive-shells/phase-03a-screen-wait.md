@@ -1,7 +1,7 @@
 # Phase 03a: screen-wait — `read_shell_screen` can wait for a pattern or a quiet screen
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** in-progress (bounced: bugs/bug-03a-1.md)
 **Depends on:** phase-02g
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -118,8 +118,12 @@ In `knowledge/shell.rs`:
 ## Acceptance criteria
 
 - [ ] The 6 new tests ⇒ `test result: ok. 1 passed` each.
-- [ ] `cargo test` ⇒ `passed=2384 failed=0`: exactly 2378 at `63ff8177`
-      plus the 6 new tests.
+- [ ] **(bug-03a-1)** `wait_screen_with_both_waits_for_the_pattern_then_settles`
+      ⇒ `test result: ok. 1 passed`: with `wait_for` and a settle, the
+      outcome is `Settled`, never `Matched`.
+- [ ] `cargo test` ⇒ `passed=2385 failed=0`: exactly 2384 at `b123b0a5`
+      plus the one bug test. **Not** 2384: a count that did not rise means
+      the bug test was not added.
 - [ ] `cargo test --test doc_truth` ⇒ `failed=0`, with the test file
       unmodified. Clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
 - [ ] The end-to-end Update Log entry contains the output fence **and** the
@@ -129,7 +133,7 @@ In `knowledge/shell.rs`:
 
 ```sh
 A=/tmp/e2e-03a.txt; : > "$A"
-for t in wait_screen_returns_when_the_pattern_appears wait_screen_settles_when_two_reads_agree wait_screen_that_never_settles_is_a_result_not_an_error wait_screen_never_matching_times_out wait_bounds_clamp_the_timeout_and_the_settle read_shell_screen_invalid_wait_for_is_an_error read_shell_screen_returns_the_screen_with_a_foreground_header; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+for t in wait_screen_returns_when_the_pattern_appears wait_screen_with_both_waits_for_the_pattern_then_settles wait_screen_settles_when_two_reads_agree wait_screen_that_never_settles_is_a_result_not_an_error wait_screen_never_matching_times_out wait_bounds_clamp_the_timeout_and_the_settle read_shell_screen_invalid_wait_for_is_an_error read_shell_screen_returns_the_screen_with_a_foreground_header; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
 cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
@@ -168,6 +172,24 @@ diff /tmp/pasted-03a.txt /tmp/e2e-03a.txt && echo "PASTE MATCH" || echo "PASTE M
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-15 (bounce, bug-03a-1)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything else in this phase is approved: the parameters,
+`wait_bounds`, the notes, keepalive, docs and the six tests. Do not redo
+them.
+
+**Exactly one fix remains**, in `wait_screen`: when `settle` is `Some`, a
+`wait_for` match must not return `Matched`. It must move on to the settle
+phase under the same deadline, and the result is `Settled` or
+`NotSettled`. With `settle` `None`, a match still returns `Matched`. Add
+`wait_screen_with_both_waits_for_the_pattern_then_settles`, specified in
+`bugs/bug-03a-1.md`. Mutation check: restore the early return, confirm the
+new test fails, then revert, and put that red output in the Update Log.
+Finish: `passed=2385 failed=0`. Re-run § End-to-end verification with the
+new test name added to its `for` list, and paste the result into a new
+entry together with the `PASTE MATCH` line.
 
 ### Update — 2026-10-14 20:58 (progress)
 

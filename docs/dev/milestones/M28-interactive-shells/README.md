@@ -57,7 +57,7 @@ phases are split further where one is more than a session.
 | 02e | keys-tool ([phase-02e-keys-tool.md](phase-02e-keys-tool.md)) — `send_input` gains `keys` and `paste`, the panel and result name them, prompt and doc tables. *Split from 02d at drafting* | done (approved_first_try, 2026-10-14) |
 | 02f | input-guard ([phase-02f-input-guard.md](phase-02f-input-guard.md)) — `send_input` probes the live foreground before the panel; the panel names it and shows a TUI's masked screen tail; a ghost may type only at a prompt | done (approved_first_try, 2026-10-14) |
 | 02g | allow-tui-input ([phase-02g-allow-tui-input.md](phase-02g-allow-tui-input.md)) — the runbook `allow_tui_input` field through `GhostConfig` / `GhostPolicy`, lifting 02f's ghost refusal; docs. *Split from 02f at drafting* | done (approved_first_try, 2026-10-14) |
-| 03a | screen-wait ([phase-03a-screen-wait.md](phase-03a-screen-wait.md)) — `read_shell_screen` gains `wait_for`, `settle_ms`, `timeout_secs`; quiescence on rendered text; a wait that runs out is a result | review      |
+| 03a | screen-wait ([phase-03a-screen-wait.md](phase-03a-screen-wait.md)) — `read_shell_screen` gains `wait_for`, `settle_ms`, `timeout_secs`; quiescence on rendered text; a wait that runs out is a result | in-progress (bounced: bug-03a-1) |
 | 03b | geometry — `[shells] rows`/`cols` (40×120) on every spawn path; `open_shell(rows, cols)` | todo |
 | 03c | launch — `run_terminal_command(interactive: true)` (write, settle, return the screen); the ssh auto-upgrade replacing 02c's refusal | todo |
 | — | live close (M14 convention) at milestone close: the design § 6 phase-02 and phase-03 live checks | todo |
