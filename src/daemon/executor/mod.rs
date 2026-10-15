@@ -164,6 +164,30 @@ pub(crate) fn ghost_may_send_input(
     !is_ghost || policy.is_some_and(|p| p.explicitly_allows("send_input")) // ghost needs an explicit allow
 }
 
+/// Whether a ghost may type into a shell held by `fg`.
+///
+/// A ghost that answered "yes" is allowed only at a prompt: everywhere else
+/// the bytes would land inside a program or nowhere at all, and phase 02g's
+/// runbook opt-in (`allow_tui_input`) is what lifts that. The `Foreground`
+/// argument is what the live probe classified, so the gate follows the
+/// terminal's actual state at the moment of the call, not a cached one.
+pub(crate) fn ghost_may_type_into(fg: &crate::shell::Foreground) -> bool {
+    matches!(fg, crate::shell::Foreground::Prompt)
+}
+
+/// The tool result when the ghost gate refuses: it names the shell, what
+/// holds it, and that nothing was sent. Deliberately informative — the ghost
+/// reads the `Foreground` wording and can answer with `list_shells` or a
+/// fresh shell rather than retrying blind.
+pub(crate) fn ghost_input_refusal(shell: &str, fg: &crate::shell::Foreground) -> String {
+    format!(
+        "Error: shell {shell} is {fg}, not a shell at its prompt. A ghost may \
+         type only into a shell at its prompt; typing here would reach whatever \
+         holds the shell now, and nothing was sent. Use list_shells to find a \
+         shell at its prompt, or open one with open_shell."
+    )
+}
+
 /// True when this session may run a **foreground** command.
 ///
 /// Foreground execution is deliberately outside the container — the user is
@@ -1396,9 +1420,10 @@ where
             enter,
             ..
         } => {
-            // 1. Ghost gate — before any approval prompt, so a ghost is never
-            //    shown a panel it cannot use. Default-deny: the agent
-            //    `ToolPolicy` must *explicitly* allow `send_input`.
+            // 1. Policy gate — before anything else, so a ghost the policy
+            //    denies gets this refusal, not the foreground one below.
+            //    Default-deny: the agent `ToolPolicy` must *explicitly* allow
+            //    `send_input`.
             if !ghost_may_send_input(is_ghost, tool_policy.as_ref()) {
                 return Ok(ToolCallOutcome::Result(
                     "send_input is denied for ghost shells unless the agent's tool \
@@ -1407,28 +1432,36 @@ where
                 ));
             }
 
-            // 2. What the shell is doing, for the approval panel. `Idle`
-            //    genuinely means "at its prompt" — a program waiting on stdin
-            //    reports `Running` — so the note names the it-will-be-run-as-
-            //    a-command hazard instead of refusing it.
-            let target_note = match crate::shell::status(
-                &crate::shell::socket_path(shell),
-                std::time::Duration::from_secs(5),
-            )
-            .await
-            {
-                Ok(crate::shell::ShellResponse::Status { state, .. }) => {
-                    knowledge::input_target_note(Some(state))
+            // 2. What actually holds the shell, probed live before any panel
+            //    or send (D9). An id that cannot parse is not a shell at all,
+            //    so it classifies `Unknown` — the same answer the probe gives
+            //    an id the registry does not hold.
+            let fg = match crate::shell::ShellId::parse(shell) {
+                Ok(sid) => {
+                    crate::shell::probe_foreground(
+                        crate::shell::registry(),
+                        &sid,
+                        crate::shell::PROBE_TIMEOUT,
+                    )
+                    .await
                 }
-                _ => knowledge::input_target_note(None),
+                Err(_) => crate::shell::Foreground::Unknown,
             };
 
-            // 3. The shell's key modes, then the bytes. Read before the
-            //    approval prompt so a bad key name or an unbracketable paste
-            //    is the tool result, not a panel followed by a failure; an
-            //    unreadable or unannotated reply falls back to the defaults,
-            //    which encode plain bytes for every key.
-            let modes = match crate::shell::screen(
+            // 3. The ghost gate: a ghost may type only into a shell at its
+            //    prompt. Nothing is sent and no panel is shown. (`allow_tui_input`,
+            //    phase 02g, is the runbook opt-in that widens this.)
+            if is_ghost && !ghost_may_type_into(&fg) {
+                return Ok(ToolCallOutcome::Result(ghost_input_refusal(shell, &fg)));
+            }
+
+            // 4. The shell's key modes and its screen, in one read. Read
+            //    before the approval prompt so a bad key name or an
+            //    unbracketable paste is the tool result, not a panel followed
+            //    by a failure; an unreadable or unannotated reply falls back
+            //    to the defaults, which encode plain bytes for every key.
+            //    The screen text feeds the panel's TUI tail.
+            let (modes, screen_text) = match crate::shell::screen(
                 &crate::shell::socket_path(shell),
                 false,
                 0,
@@ -1437,14 +1470,18 @@ where
             .await
             {
                 Ok(crate::shell::ShellResponse::ScreenText {
+                    text: screen,
                     bracketed_paste,
                     application_cursor,
                     ..
-                }) => crate::shell::ShellModes {
-                    bracketed_paste,
-                    application_cursor,
-                },
-                _ => crate::shell::ShellModes::default(),
+                }) => (
+                    crate::shell::ShellModes {
+                        bracketed_paste,
+                        application_cursor,
+                    },
+                    Some(screen),
+                ),
+                _ => (crate::shell::ShellModes::default(), None),
             };
             let input = match knowledge::compose_input(text, *paste, keys, *enter, modes) {
                 Ok(input) => input,
@@ -1456,26 +1493,16 @@ where
                 }
             };
 
-            // 4. Approval. `ghost_policy` is `None` on purpose: step 1 already
-            //    made the ghost decision, and passing the live policy here
-            //    would re-enter the helper's auto-approve branch.
+            // 5. Approval. `ghost_policy` is `None` on purpose: the gates
+            //    above already made the ghost decisions, and passing the live
+            //    policy here would re-enter the helper's auto-approve branch.
             //    `target_pane_hint` is `None` because this is a PTY shell, not
             //    a tmux pane.
-            let mut approval_cmd = format!("send_input into shell {}: {:?}", shell, text);
-            if !input.keys.is_empty() {
-                approval_cmd.push_str(&format!(" keys [{}]", input.keys.join(", ")));
-            }
-            if input.bracketed {
-                approval_cmd.push_str(" as a bracketed paste");
-            }
-            if input.enter {
-                approval_cmd.push_str(" (Enter sent)");
-            }
-            approval_cmd.push_str(&format!(" — {target_note}"));
+            let panel = knowledge::input_panel(shell, text, &input, &fg, screen_text.as_deref());
             match prompt_and_await_approval(
                 ApprovalRequest {
                     id: id.as_str(),
-                    cmd: &approval_cmd,
+                    cmd: &panel,
                     background: false,
                     target_pane_hint: None,
                     host: None,
@@ -1493,7 +1520,7 @@ where
                 Err(outcome) => return Ok(outcome),
             }
 
-            // 5. Execute.
+            // 6. Execute.
             Ok(ToolCallOutcome::Result(
                 knowledge::send_input(
                     shell,
@@ -1897,7 +1924,7 @@ where
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod send_input_gate_tests {
-    use super::ghost_may_send_input;
+    use super::{ghost_input_refusal, ghost_may_send_input, ghost_may_type_into};
     use crate::agents::policy::ToolPolicy;
 
     #[test]
@@ -1923,6 +1950,57 @@ mod send_input_gate_tests {
             deny: None,
         };
         assert!(ghost_may_send_input(true, Some(&allow_list)));
+    }
+
+    #[test]
+    fn ghost_may_type_only_at_a_prompt() {
+        assert!(
+            ghost_may_type_into(&crate::shell::Foreground::Prompt),
+            "a prompt is the only thing a ghost may type into"
+        );
+        for fg in [
+            crate::shell::Foreground::Program {
+                cmd: "claude".to_string(),
+                tui: true,
+            },
+            crate::shell::Foreground::Program {
+                cmd: "grep".to_string(),
+                tui: false,
+            },
+            crate::shell::Foreground::Paused {
+                cmd: "sleep".to_string(),
+            },
+            crate::shell::Foreground::Exited,
+            crate::shell::Foreground::Unknown,
+        ] {
+            assert!(
+                !ghost_may_type_into(&fg),
+                "{fg} is never a ghost's typing target before 02g's opt-in"
+            );
+        }
+    }
+
+    #[test]
+    fn ghost_input_refusal_names_the_shell_and_what_holds_it() {
+        let refusal = ghost_input_refusal(
+            "s4",
+            &crate::shell::Foreground::Program {
+                cmd: "vim".to_string(),
+                tui: true,
+            },
+        );
+        assert!(
+            refusal.starts_with("Error:"),
+            "the refusal is the tool's error form: {refusal}"
+        );
+        assert!(
+            refusal.contains("s4") && refusal.contains("running vim (TUI)"),
+            "the refusal names the shell and what holds it: {refusal}"
+        );
+        assert!(
+            refusal.contains("nothing was sent"),
+            "the refusal says nothing was sent: {refusal}"
+        );
     }
 }
 

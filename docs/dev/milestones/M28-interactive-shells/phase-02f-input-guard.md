@@ -1,7 +1,7 @@
 # Phase 02f: input-guard — `send_input` sees what holds the shell
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02e
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -155,3 +155,24 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-14 19:17 (started)
+
+Executor: Claude (M28 phase-02f run). Status flipped to `in-progress`; implementing the Spec in order — the `SendInput` arm's probe → ghost gate order and the `crate::shell::status` call's removal, `ghost_may_type_into` and `ghost_input_refusal` next to `ghost_may_send_input`, then `input_target_note(&Foreground)` / `screen_tail` / `input_panel` in `knowledge/shell.rs`, then the test rename and the end-to-end capture.
+
+### Update — 2026-10-14 19:17 (end-to-end verification)
+
+```text
+input_target_note_names_each_foreground: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_tail_keeps_the_last_rows_masked: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+input_panel_shows_the_foreground_and_a_tui_screen_tail: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ghost_may_type_only_at_a_prompt: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ghost_input_refusal_names_the_shell_and_what_holds_it: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ghost_may_send_input_requires_an_explicit_allow: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2376 failed=0
+```
+
+PASTE MATCH

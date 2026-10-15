@@ -1562,41 +1562,85 @@ fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
 const INPUT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The words the approval panel shows about what the shell is doing — the
-/// `input_target_note` sentence for the `send_input` panel's `cmd` line.
+/// `input_target_note` sentence for the `send_input` panel's `foreground:`
+/// line.
 ///
-/// The `Idle` wording is the honest hazard, not a refusal: a program waiting
-/// on stdin reports `Running` through this wire, so `Idle` really does mean
-/// the shell is at its prompt and whatever arrives will be run as a command —
-/// without `run_terminal_command`'s approval text, capture or exit code. The
-/// approving user is told that; refusing would block a legitimate use
-/// (`send_input` to a prompt-less shell is exactly how you drive the shell
-/// itself).
-pub fn input_target_note(state: Option<crate::shell::ShellState>) -> String {
-    match state {
-        Some(crate::shell::ShellState::Running) => {
-            "shell is running a program, so the input goes to that program (e.g. \
-             answering its stdin prompt); it is NOT executed as a shell command"
-                .to_string()
-        }
-        Some(crate::shell::ShellState::Idle) => {
+/// The probe's [`Foreground`] classification, not the coarser `ShellState`:
+/// `Running` collapsed `claude` in raw mode and `grep` reading a pipe into
+/// one sentence, and said nothing about the screen the keys land on. The
+/// wording per case is the guard table's (D9) chat column — the guard
+/// informs and the human decides.
+pub fn input_target_note(fg: &crate::shell::Foreground) -> String {
+    match fg {
+        crate::shell::Foreground::Prompt => {
             "shell is at its prompt, so the input WILL be run as a shell command, \
              without run_terminal_command's approval, capture or exit code"
                 .to_string()
         }
-        Some(crate::shell::ShellState::Paused) => {
-            "shell's job is stopped; the input will sit unread until the job \
-             resumes"
-                .to_string()
+        crate::shell::Foreground::Program { cmd, tui: false } => {
+            format!("the input goes to {cmd}'s stdin and is NOT executed as a shell command")
         }
-        Some(crate::shell::ShellState::Exited) => {
-            "shell reports exited, so it may be gone and nothing will read the \
-             input"
-                .to_string()
+        crate::shell::Foreground::Program { cmd, tui: true } => {
+            format!("the input goes to the raw-mode TUI {cmd} as keystrokes")
         }
-        None => "shell state could not be probed, so it may be gone and nothing will \
-             read the input"
-            .to_string(),
+        crate::shell::Foreground::Paused { cmd } => {
+            format!("{cmd}'s job is stopped, so the input will sit unread until it resumes")
+        }
+        crate::shell::Foreground::Exited | crate::shell::Foreground::Unknown => {
+            "the shell may be gone, so nothing may read the input".to_string()
+        }
     }
+}
+
+/// The last `rows` rows of a screen read, trailing blank rows dropped and
+/// every line passed through `mask_sensitive` — the panel shows the user
+/// what the keys will land on without leaking what the screen happens to
+/// hold. Pure: the caller supplies the screen text.
+pub fn screen_tail(text: &str, rows: usize) -> String {
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect::<Vec<_>>();
+    let start = kept.len().saturating_sub(rows);
+    kept[start..]
+        .iter()
+        .map(|l| mask_sensitive(l))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The full `send_input` approval panel: what goes out, then the
+/// `foreground:` line naming what holds the shell, then — only for a TUI —
+/// the masked last rows of its screen. `screen` is the `ScreenText.text` the
+/// executor arm already read; `None` (an unreadable screen) shows nothing
+/// rather than a guess.
+pub fn input_panel(
+    shell: &str,
+    text: &str,
+    input: &ComposedInput,
+    fg: &crate::shell::Foreground,
+    screen: Option<&str>,
+) -> String {
+    let mut out = format!("send_input into shell {shell}: {text:?}");
+    if !input.keys.is_empty() {
+        out.push_str(&format!(" keys [{}]", input.keys.join(", ")));
+    }
+    if input.bracketed {
+        out.push_str(" as a bracketed paste");
+    }
+    if input.enter {
+        out.push_str(" (Enter sent)");
+    }
+    out.push_str(&format!(" — foreground: {fg} — {}", input_target_note(fg)));
+    if let crate::shell::Foreground::Program { tui: true, .. } = fg
+        && let Some(screen) = screen
+    {
+        out.push_str(&format!(
+            "\nscreen (last 5 rows):\n{}",
+            screen_tail(screen, 5)
+        ));
+    }
+    out
 }
 
 /// The bytes `send_input` sends for one call, and the facts the result
@@ -4970,36 +5014,111 @@ mod tests {
     }
 
     #[test]
-    fn input_target_note_names_the_prompt_hazard_when_idle() {
-        let idle = input_target_note(Some(crate::shell::ShellState::Idle));
+    fn input_target_note_names_each_foreground() {
+        let prompt = input_target_note(&crate::shell::Foreground::Prompt);
         assert!(
-            idle.contains("prompt") && idle.contains("shell command"),
-            " Idle must say the text will be run as a shell command: {idle}"
+            prompt.contains("prompt") && prompt.contains("shell command"),
+            "Prompt must say the text will be run as a shell command: {prompt}"
         );
-        let running = input_target_note(Some(crate::shell::ShellState::Running));
+        let stdin_prog = input_target_note(&crate::shell::Foreground::Program {
+            cmd: "grep".to_string(),
+            tui: false,
+        });
         assert!(
-            running.contains("program") && running.contains("NOT"),
-            "Running must say the input goes to the running program: {running}"
+            stdin_prog.contains("grep")
+                && stdin_prog.contains("stdin")
+                && stdin_prog.contains("NOT"),
+            "a non-TUI program must name the cmd and stdin: {stdin_prog}"
+        );
+        let tui = input_target_note(&crate::shell::Foreground::Program {
+            cmd: "claude".to_string(),
+            tui: true,
+        });
+        assert!(
+            tui.contains("claude") && tui.contains("TUI"),
+            "a TUI must name the cmd and the TUI: {tui}"
         );
         assert_ne!(
-            idle, running,
+            prompt, stdin_prog,
             "a note that says the same thing in every state tells the approving \
              user nothing"
         );
+        let paused = input_target_note(&crate::shell::Foreground::Paused {
+            cmd: "sleep".to_string(),
+        });
         assert!(
-            input_target_note(Some(crate::shell::ShellState::Paused)).contains("stopped"),
-            "Paused names the stopped job: {}",
-            input_target_note(Some(crate::shell::ShellState::Paused))
+            paused.contains("sleep") && paused.contains("stopped"),
+            "Paused names the stopped job: {paused}"
+        );
+        for fg in [
+            crate::shell::Foreground::Exited,
+            crate::shell::Foreground::Unknown,
+        ] {
+            let note = input_target_note(&fg);
+            assert!(
+                note.contains("gone"),
+                "{fg} says the shell may be gone: {note}"
+            );
+        }
+    }
+
+    #[test]
+    fn screen_tail_keeps_the_last_rows_masked() {
+        let screen = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n\n\n\n";
+        let out = screen_tail(screen, 5);
+        assert_eq!(
+            out, "four\nfive\nsix\nseven\neight",
+            "8 rows + 3 blank ⇒ exactly rows 4–8, blanks dropped: {out:?}"
+        );
+        let secret = "AKIAIOSFODNN7EXAMPLE is on screen";
+        let masked = screen_tail(&format!("row\n{secret}\nlast"), 5);
+        assert!(
+            !masked.contains("AKIAIOSFODNN7EXAMPLE") && masked.contains("<AWS_KEY>"),
+            "the tail is masked before it reaches the panel: {masked:?}"
+        );
+    }
+
+    #[test]
+    fn input_panel_shows_the_foreground_and_a_tui_screen_tail() {
+        let input = composed("y", true);
+        let screen = "top row\npick a mode\n> claude\n  1. opt\nAKIAIOSFODNN7EXAMPLE";
+        let panel = input_panel(
+            "s4",
+            "y",
+            &input,
+            &crate::shell::Foreground::Program {
+                cmd: "claude".to_string(),
+                tui: true,
+            },
+            Some(screen),
         );
         assert!(
-            input_target_note(Some(crate::shell::ShellState::Exited)).contains("gone"),
-            "Exited says the shell may be gone: {}",
-            input_target_note(Some(crate::shell::ShellState::Exited))
+            panel.contains("foreground: running claude (TUI)"),
+            "the panel names what holds the shell: {panel}"
         );
         assert!(
-            input_target_note(None).contains("could not be probed"),
-            "a failed probe says so: {}",
-            input_target_note(None)
+            panel.contains("screen (last 5 rows):") && panel.contains("> claude"),
+            "a TUI panel shows the screen tail: {panel}"
+        );
+        assert!(
+            panel.contains("<AWS_KEY>") && !panel.contains("AKIAIOSFODNN7EXAMPLE"),
+            "the tail rows are masked: {panel}"
+        );
+
+        let prompt_panel = input_panel(
+            "s4",
+            "y",
+            &input,
+            &crate::shell::Foreground::Prompt,
+            Some(screen),
+        );
+        assert!(
+            prompt_panel.contains("foreground: shell prompt"),
+            "the prompt panel names the prompt: {prompt_panel}"
+        );
+        assert!(
+            !prompt_panel.contains("screen ("),
+            "a prompt panel never shows a screen tail: {prompt_panel}"
         );
     }
 

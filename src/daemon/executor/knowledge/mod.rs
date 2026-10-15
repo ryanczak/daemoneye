@@ -18,7 +18,7 @@ pub(super) use memory::{
 };
 pub(crate) use shell::format_err_chain;
 pub(super) use shell::{
-    close_shell, compose_input, find_in_shells, input_target_note, list_shell_logs, list_shells,
+    close_shell, compose_input, find_in_shells, input_panel, list_shell_logs, list_shells,
     open_shell, read_shell, read_shell_log, read_shell_screen, send_input, watch_shell,
 };
 // Wider than the group above on purpose: the prompt builders reach it from
