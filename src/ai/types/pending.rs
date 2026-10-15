@@ -271,7 +271,9 @@ pub enum PendingCall {
     },
     /// Read a shell's live rendered screen (M28 phase 01c): the viewport as
     /// of the call, with a header naming what holds the terminal. Lossy by
-    /// design; `ReadShell` reads the record.
+    /// design; `ReadShell` reads the record. 03a adds the wait parameters —
+    /// block until the screen shows `wait_for` or goes quiet for
+    /// `settle_ms`, bounded by `timeout_secs`.
     ReadShellScreen {
         id: String,
         thought_signature: Option<String>,
@@ -280,6 +282,9 @@ pub enum PendingCall {
         scrollback: Option<u16>,
         pattern: Option<String>,
         annotated: bool,
+        wait_for: Option<String>,
+        settle_ms: Option<u64>,
+        timeout_secs: Option<u64>,
     },
     /// Search every in-scope shell's recorded output for a regex (M22
     /// phase-03c). Reads the **recordings**, like `read_shell` — not live
@@ -920,6 +925,9 @@ impl PendingCall {
                 scrollback,
                 pattern,
                 annotated,
+                wait_for,
+                settle_ms,
+                timeout_secs,
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
@@ -930,6 +938,9 @@ impl PendingCall {
                     "scrollback": scrollback,
                     "pattern": pattern,
                     "annotated": annotated,
+                    "wait_for": wait_for,
+                    "settle_ms": settle_ms,
+                    "timeout_secs": timeout_secs,
                 })),
             },
             PendingCall::FindInShells {
@@ -1174,6 +1185,8 @@ impl PendingCall {
                 lines,
                 scrollback,
                 pattern,
+                wait_for,
+                settle_ms,
                 ..
             } => {
                 let mut s = shell.clone();
@@ -1185,6 +1198,12 @@ impl PendingCall {
                 }
                 if let Some(p) = pattern {
                     s.push_str(&format!(" pattern=\"{p}\""));
+                }
+                if let Some(p) = wait_for {
+                    s.push_str(&format!(" wait_for=\"{p}\""));
+                }
+                if let Some(n) = settle_ms {
+                    s.push_str(&format!(" settle_ms={n}"));
                 }
                 s
             }
@@ -1581,6 +1600,25 @@ mod tests {
         assert!(call.summary().is_empty());
     }
 
+    #[test]
+    fn summary_read_shell_screen_names_the_wait() {
+        let mk = |wait_for: Option<&str>, settle_ms: Option<u64>| PendingCall::ReadShellScreen {
+            id: "x".to_string(),
+            thought_signature: None,
+            shell: "s3".to_string(),
+            lines: None,
+            scrollback: None,
+            pattern: None,
+            annotated: false,
+            wait_for: wait_for.map(|s| s.to_string()),
+            settle_ms,
+            timeout_secs: None,
+        };
+        assert_eq!(mk(None, None).summary(), "s3");
+        assert_eq!(mk(Some("done"), None).summary(), "s3 wait_for=\"done\"");
+        assert_eq!(mk(None, Some(1500)).summary(), "s3 settle_ms=1500");
+    }
+
     fn mk_read_shell(filter: Option<String>, lines: Option<u64>) -> PendingCall {
         PendingCall::ReadShell {
             id: "x".to_string(),
@@ -1634,6 +1672,24 @@ mod tests {
 
         let args = parsed_args(&mk_read_shell(None, Some(200)));
         assert_eq!(args["lines"], 200);
+
+        let screen = PendingCall::ReadShellScreen {
+            id: "x".to_string(),
+            thought_signature: None,
+            shell: "s3".to_string(),
+            lines: Some(10),
+            scrollback: None,
+            pattern: None,
+            annotated: false,
+            wait_for: Some("done".to_string()),
+            settle_ms: None,
+            timeout_secs: Some(120),
+        };
+        let args = parsed_args(&screen);
+        assert_eq!(args["lines"], 10);
+        assert_eq!(args["wait_for"], "done");
+        assert_eq!(args["timeout_secs"], 120);
+        assert!(!args.as_object().unwrap().contains_key("settle_ms"));
     }
 
     #[test]
@@ -1864,6 +1920,18 @@ mod tests {
                 timeout_secs: 30,
             },
             mk_read_shell(None, None),
+            PendingCall::ReadShellScreen {
+                id: x(),
+                thought_signature: None,
+                shell: "s3".to_string(),
+                lines: None,
+                scrollback: None,
+                pattern: None,
+                annotated: false,
+                wait_for: None,
+                settle_ms: None,
+                timeout_secs: None,
+            },
             PendingCall::FindInShells {
                 id: x(),
                 thought_signature: None,

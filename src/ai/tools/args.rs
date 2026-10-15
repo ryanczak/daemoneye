@@ -102,6 +102,12 @@ pub(super) struct ReadShellScreenArgs {
     pattern: Option<String>,
     #[serde(default)]
     annotated: bool,
+    #[serde(default)]
+    wait_for: Option<String>,
+    #[serde(default)]
+    settle_ms: Option<u64>,
+    #[serde(default)]
+    timeout_secs: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -486,6 +492,9 @@ impl ToolArgs for ReadShellScreenArgs {
             scrollback: self.scrollback,
             pattern: self.pattern,
             annotated: self.annotated,
+            wait_for: self.wait_for,
+            settle_ms: self.settle_ms,
+            timeout_secs: self.timeout_secs,
             thought_signature: ts,
         }
     }

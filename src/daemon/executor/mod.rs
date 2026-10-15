@@ -1338,16 +1338,25 @@ where
             scrollback,
             pattern,
             annotated,
+            wait_for,
+            settle_ms,
+            timeout_secs,
             ..
         } => Ok(ToolCallOutcome::Result(
-            knowledge::read_shell_screen(
-                shell,
-                *lines,
-                *scrollback,
-                pattern.as_deref(),
-                *annotated,
+            crate::daemon::utils::with_keepalive(
+                tx,
+                knowledge::read_shell_screen(
+                    shell,
+                    *lines,
+                    *scrollback,
+                    pattern.as_deref(),
+                    *annotated,
+                    wait_for.as_deref(),
+                    *settle_ms,
+                    *timeout_secs,
+                ),
             )
-            .await,
+            .await?,
         )),
 
         PendingCall::FindInShells { pattern, scope, .. } => {

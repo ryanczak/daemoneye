@@ -1,7 +1,7 @@
 # Phase 03a: screen-wait — `read_shell_screen` can wait for a pattern or a quiet screen
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02g
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -168,3 +168,48 @@ diff /tmp/pasted-03a.txt /tmp/e2e-03a.txt && echo "PASTE MATCH" || echo "PASTE M
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-14 20:58 (progress)
+
+Started phase 03a (executor dispatch). Read the design D7 wording, the existing
+`read_shell_screen` chain (args → `AiEvent` → `PendingCall` → `to_tool_call` →
+executor arm → `knowledge::read_shell_screen`) and the `watch_shell` keepalive
+wrap it must copy. Baseline full-suite count confirmed: `passed=2378 failed=0`
+at 63ff8177, matching the criterion's pin. Now implementing the three
+parameters, `wait_bounds`, `wait_screen`, the note lines, keepalive and docs.
+
+### Update — 2026-10-14 22:20 (progress)
+
+All seven spec tasks are implemented and green: the three parameters ride
+args → `AiEvent` → `PendingCall` → `to_tool_call` → the executor arm (which
+now wraps the call in `with_keepalive` like `WatchShell` does) →
+`read_shell_screen`; `wait_bounds` clamps 1..=300 s / 50..=5000 ms with a 30 s
+default; `wait_screen` is the injected-reader async core with the four-way
+`WaitOutcome`; the note lines match the design's four wordings; the invalid
+`wait_for` regex errors before any read with the `pattern` wording; the
+`sre.toml` / `CLAUDE.md` / `README.md` rows name all three parameters.
+`cargo test` ⇒ `passed=2384 failed=0` (2378 + 6 new). Clippy `-D warnings`
+and `cargo fmt --all --check` are clean; `tests/doc_truth.rs` passes
+unmodified. Capturing the end-to-end evidence next.
+
+### Update — 2026-10-14 22:25 (end-to-end verification)
+
+§ End-to-end verification run verbatim, each line once, against the real
+artifacts (the `--lib` test binary and the real prompt/doc assets). Captured
+mechanically to `/tmp/e2e-03a.txt`; pasted below unmodified.
+
+```
+wait_screen_returns_when_the_pattern_appears: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+wait_screen_settles_when_two_reads_agree: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+wait_screen_that_never_settles_is_a_result_not_an_error: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+wait_screen_never_matching_times_out: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+wait_bounds_clamp_the_timeout_and_the_settle: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+read_shell_screen_invalid_wait_for_is_an_error: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+read_shell_screen_returns_the_screen_with_a_foreground_header: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2384 failed=0
+```
+
+PASTE MATCH

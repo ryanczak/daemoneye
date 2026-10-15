@@ -715,6 +715,9 @@ where
                     scrollback,
                     pattern,
                     annotated,
+                    wait_for,
+                    settle_ms,
+                    timeout_secs,
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::ReadShellScreen {
@@ -725,6 +728,9 @@ where
                         scrollback,
                         pattern,
                         annotated,
+                        wait_for,
+                        settle_ms,
+                        timeout_secs,
                     });
                 }
                 AiEvent::FindInShells {

@@ -183,7 +183,9 @@ pub enum AiEvent {
         filter: Option<String>,
         thought_signature: Option<String>,
     },
-    /// Read a shell's live rendered screen (M28 phase 01c).
+    /// Read a shell's live rendered screen (M28 phase 01c); 03a adds the
+    /// wait parameters — block until the screen shows `wait_for` or goes
+    /// quiet for `settle_ms`, bounded by `timeout_secs`.
     ReadShellScreen {
         id: String,
         shell: String,
@@ -191,6 +193,9 @@ pub enum AiEvent {
         scrollback: Option<u16>,
         pattern: Option<String>,
         annotated: bool,
+        wait_for: Option<String>,
+        settle_ms: Option<u64>,
+        timeout_secs: Option<u64>,
         thought_signature: Option<String>,
     },
     /// Regex-search every in-scope shell's recorded output (M22 phase-03c).

@@ -837,7 +837,10 @@ pub static TOOLS: &[ToolDef] = &[
                       Inverse-video runs (a menu's selected row) appear as \
                       `[SEL: …]`. This is the viewport, and it is lossy: output that \
                       scrolled away or was redrawn is gone. For what a command \
-                      printed, the record is read_shell / read_shell_log.",
+                      printed, the record is read_shell / read_shell_log. \
+                      wait_for / settle_ms make it wait before reading: block until \
+                      the screen shows a pattern or goes quiet (e.g. Claude Code \
+                      finished its turn), then return the screen as it now stands.",
         params: &[
             ParamDef {
                 name: "shell",
@@ -874,6 +877,37 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "Also wrap red / yellow / green runs as [ERROR: …] / \
                               [WARN: …] / [OK: …]. Default false: a TUI's colours are \
                               rarely those meanings.",
+            },
+            ParamDef {
+                name: "wait_for",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional regex; block until the rendered screen shows it, \
+                              then return the screen. Matching happens on the screen's \
+                              **text** as rendered, not the byte stream, so it works on \
+                              TUI output where watch_shell's match does not. A \
+                              syntactically invalid regex is an error. Bounded by \
+                              `timeout_secs`; running out is a result, not an error.",
+            },
+            ParamDef {
+                name: "settle_ms",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Block until the screen goes quiet: two reads this many \
+                              milliseconds apart show the same text. The primitive for \
+                              \"the app finished drawing\" — after typing into Claude \
+                              Code, settle_ms: 1500 returns the finished answer. A \
+                              screen that never settles (top, a clock, a spinner) is a \
+                              result, not an error: use wait_for there. Bounds: 50–5000, \
+                              bounded by timeout_secs.",
+            },
+            ParamDef {
+                name: "timeout_secs",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Maximum seconds to wait for wait_for / settle_ms. Default \
+                              30, clamped to 1–300. With neither wait parameter set this \
+                              is ignored and the call returns immediately.",
             },
         ],
         deferred_group: None,

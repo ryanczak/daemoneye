@@ -140,7 +140,8 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   match. `lines` clamps the result to its last N lines (default 200, capped at \
   2000). Output is masked before it is returned. Reading a shell changes \
   nothing in it.
-- `read_shell_screen(shell, lines?, scrollback?, pattern?, annotated?)` — \
+- `read_shell_screen(shell, lines?, scrollback?, pattern?, annotated?, \
+wait_for?, settle_ms?, timeout_secs?)` — \
   the shell's **live screen** as of the call: what a person at that terminal \
   sees now. The header names what holds the terminal (`shell prompt`, \
   `running <cmd>`, `running <cmd> (TUI)`, `paused <cmd>`), the size, the \
@@ -149,7 +150,14 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   typing into it with `send_input`. A menu's selected row shows as \
   `[SEL: …]`. `scrollback` adds rows that scrolled off the top, where an \
   inline TUI keeps its earlier output. The screen is lossy: for what a \
-  command printed, `read_shell` is the record.
+  command printed, `read_shell` is the record. \
+  `wait_for` is a regex the screen must show before the call returns — the \
+  rendered text, not the byte stream, so it works on TUI output. \
+  `settle_ms: 1500` blocks until the screen stops changing — after typing a \
+  prompt into Claude Code, this returns the finished answer. `timeout_secs` \
+  (default 30, cap 300) bounds either wait; a wait that runs out is a \
+  result, not an error, and shows the screen as it is. On `top` — which \
+  never stops redrawing — use `wait_for` for the state you need.
 
 ### `find_in_shells`
 

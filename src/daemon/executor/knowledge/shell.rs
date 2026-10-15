@@ -1810,6 +1810,30 @@ where
 /// reacting, so it is short.
 const SCREEN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The default and clamped bounds for a screen wait (`timeout_secs` /
+/// `settle_ms`). The default 30 s covers a Claude Code turn; 300 s is the
+/// ceiling so a stuck wait still returns this turn. A settle below 50 ms
+/// would race the host's own render; above 5 s it is a timeout by another
+/// name.
+pub(crate) fn wait_bounds(
+    timeout_secs: Option<u64>,
+    settle_ms: Option<u64>,
+) -> (Duration, Option<Duration>) {
+    const DEFAULT_TIMEOUT: u64 = 30;
+    const MAX_TIMEOUT: u64 = 300;
+    const MIN_SETTLE_MS: u64 = 50;
+    const MAX_SETTLE_MS: u64 = 5000;
+    let timeout = Duration::from_secs(
+        timeout_secs
+            .unwrap_or(DEFAULT_TIMEOUT)
+            .clamp(1, MAX_TIMEOUT),
+    );
+    let settle = settle_ms
+        .filter(|n| *n > 0)
+        .map(|n| Duration::from_millis(n.clamp(MIN_SETTLE_MS, MAX_SETTLE_MS)));
+    (timeout, settle)
+}
+
 /// One rendered read of a shell's screen, as the host answered it.
 struct ScreenRead {
     text: String,
@@ -1819,15 +1843,140 @@ struct ScreenRead {
     alt_screen: bool,
 }
 
+/// The poll interval between two screen reads inside `wait_screen`. Short
+/// enough to notice a prompt appearing promptly, long enough not to spin the
+/// host's renderer.
+const WAIT_POLL: Duration = Duration::from_millis(100);
+
+/// How a screen wait ended. A wait that runs out is a **result**, not an
+/// error — `top` never stops redrawing and that is a legitimate answer — so
+/// every branch but `Failed` renders the screen.
+#[derive(Debug)]
+enum WaitOutcome {
+    /// `wait_for` matched the rendered text; `elapsed` is how long the wait
+    /// took.
+    Matched { elapsed: Duration },
+    /// Two reads `settle` apart returned the same text; `elapsed` is how long
+    /// the wait took.
+    Settled { elapsed: Duration },
+    /// `wait_for` never matched within the timeout; the deadline is named.
+    NotMatched { timeout: Duration },
+    /// The screen never went quiet within the timeout; the deadline is named.
+    NotSettled { timeout: Duration },
+    /// The read itself failed; the error sentence is passed through and the
+    /// caller shows no screen at all.
+    Failed(String),
+}
+
+/// Pure async core of the screen wait: poll `read` (which returns the
+/// rendered, unannotated visible text) until the pattern appears, the screen
+/// settles, or `timeout` runs out. With `wait_for` set the pattern is waited
+/// for first and the settle second; one `timeout` bounds the whole wait.
+/// `poll` and `settle` are injected so tests stay hermetic and fast.
+///
+/// Quiescence is measured on the **text** — two consecutive reads `settle`
+/// apart that are equal — never on the annotated form or the byte stream, so
+/// a cursor blink or an SGR-only redraw counts as settled.
+async fn wait_screen<R, F>(
+    mut read: R,
+    wait_for: Option<&regex::Regex>,
+    settle: Option<Duration>,
+    timeout: Duration,
+    poll: Duration,
+) -> WaitOutcome
+where
+    R: FnMut() -> F,
+    F: Future<Output = Result<String, String>>,
+{
+    let started = Instant::now();
+    let matched = |t: &str| wait_for.is_none_or(|re| re.is_match(t));
+    if wait_for.is_some() {
+        loop {
+            if Instant::now() >= started + timeout {
+                return WaitOutcome::NotMatched { timeout };
+            }
+            match read().await {
+                Ok(text) if matched(&text) => {
+                    return WaitOutcome::Matched {
+                        elapsed: started.elapsed(),
+                    };
+                }
+                Ok(_) => {}
+                Err(msg) => return WaitOutcome::Failed(msg),
+            }
+            tokio::time::sleep(poll).await;
+        }
+    }
+    let Some(settle) = settle else {
+        return WaitOutcome::Failed(String::new());
+    };
+    loop {
+        let first = match read().await {
+            Ok(text) => text,
+            Err(msg) => return WaitOutcome::Failed(msg),
+        };
+        if Instant::now() >= started + timeout {
+            return WaitOutcome::NotSettled { timeout };
+        }
+        tokio::time::sleep(settle).await;
+        if Instant::now() >= started + timeout {
+            return WaitOutcome::NotSettled { timeout };
+        }
+        let second = match read().await {
+            Ok(text) => text,
+            Err(msg) => return WaitOutcome::Failed(msg),
+        };
+        if second == first && matched(&second) {
+            return WaitOutcome::Settled {
+                elapsed: started.elapsed(),
+            };
+        }
+        if Instant::now() >= started + timeout {
+            return WaitOutcome::NotSettled { timeout };
+        }
+        tokio::time::sleep(poll).await;
+    }
+}
+
+/// Pure: the one note line that opens a waited read's output, so the model
+/// knows the screen it is about to see arrived after a wait and how.
+fn wait_note(outcome: &WaitOutcome, pattern: Option<&regex::Regex>) -> Option<String> {
+    let s = |d: Duration| format!("{:.1}", d.as_secs_f64());
+    let pat = pattern.map_or(String::new(), |re| re.as_str().to_string());
+    match outcome {
+        WaitOutcome::Matched { elapsed } => Some(format!(
+            "[waited {} s: the screen shows /{pat}/]",
+            s(*elapsed)
+        )),
+        WaitOutcome::Settled { elapsed } => {
+            Some(format!("[waited {} s: the screen settled]", s(*elapsed)))
+        }
+        WaitOutcome::NotMatched { timeout } => Some(format!(
+            "[did not see /{pat}/ within {} s — showing the screen as it is now]",
+            s(*timeout)
+        )),
+        WaitOutcome::NotSettled { timeout } => Some(format!(
+            "[did not settle within {} s — the screen is still changing; \
+             use wait_for for a pattern that marks the state you need]",
+            s(*timeout)
+        )),
+        WaitOutcome::Failed(_) => None,
+    }
+}
+
 /// Return a shell's rendered screen with a header naming what holds its
 /// terminal, masked. The public form uses the daemon's registry and the
 /// standard timeout; `read_shell_screen_in` takes both.
+#[allow(clippy::too_many_arguments)]
 pub async fn read_shell_screen(
     shell: &str,
     lines: Option<u64>,
     scrollback: Option<u16>,
     pattern: Option<&str>,
     annotated: bool,
+    wait_for: Option<&str>,
+    settle_ms: Option<u64>,
+    timeout_secs: Option<u64>,
 ) -> String {
     read_shell_screen_in(
         crate::shell::registry(),
@@ -1836,6 +1985,9 @@ pub async fn read_shell_screen(
         scrollback,
         pattern,
         annotated,
+        wait_for,
+        settle_ms,
+        timeout_secs,
         SCREEN_TIMEOUT,
     )
     .await
@@ -1848,6 +2000,12 @@ pub async fn read_shell_screen(
 /// the visible screen. The host joins the two with a plain newline, so the
 /// boundary is only recoverable this way, and keeping it is what lets
 /// `lines` count visible rows exactly and the result label both sections.
+///
+/// `wait_for` / `settle_ms` / `timeout_secs` add a wait before the read: the
+/// note line naming how the wait ended opens the output. A wait that runs
+/// out is a result, not an error — the screen as it now stands is still the
+/// answer to "what does this show?".
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn read_shell_screen_in(
     reg: &ShellRegistry,
     shell: &str,
@@ -1855,6 +2013,9 @@ pub(super) async fn read_shell_screen_in(
     scrollback: Option<u16>,
     pattern: Option<&str>,
     annotated: bool,
+    wait_for: Option<&str>,
+    settle_ms: Option<u64>,
+    timeout_secs: Option<u64>,
     timeout: Duration,
 ) -> String {
     if !with_shells(reg, |store| store.contains_key(shell)) {
@@ -1872,6 +2033,38 @@ pub(super) async fn read_shell_screen_in(
         },
         None => None,
     };
+    let wait_re = match wait_for {
+        Some(p) => match regex::RegexBuilder::new(p).size_limit(1 << 20).build() {
+            Ok(re) => Some(re),
+            Err(e) => {
+                return format!(
+                    "Error: invalid wait_for regex {p:?}: {e}. Fix the expression and \
+                     call again; wait_for is applied as a regex to the rendered screen, \
+                     not a literal."
+                );
+            }
+        },
+        None => None,
+    };
+    let (wait_timeout, settle) = wait_bounds(timeout_secs, settle_ms);
+    let wait_outcome = if wait_re.is_none() && settle.is_none() {
+        None
+    } else {
+        let sock = socket_path(shell);
+        let read = || async {
+            match read_screen(&sock, shell, false, 0, SCREEN_TIMEOUT).await {
+                Ok(r) => Ok(r.text),
+                Err(msg) => Err(msg),
+            }
+        };
+        Some(wait_screen(read, wait_re.as_ref(), settle, wait_timeout, WAIT_POLL).await)
+    };
+    let note = wait_outcome
+        .as_ref()
+        .and_then(|o| wait_note(o, wait_re.as_ref()));
+    if let Some(WaitOutcome::Failed(msg)) = wait_outcome.as_ref() {
+        return msg.clone();
+    }
     let sock = socket_path(shell);
     let visible = match read_screen(&sock, shell, annotated, 0, timeout).await {
         Ok(read) => read,
@@ -1909,6 +2102,10 @@ pub(super) async fn read_shell_screen_in(
         lines,
         pattern_re.as_ref(),
     );
+    let out = match note {
+        Some(line) => format!("{line}\n{out}"),
+        None => out,
+    };
     mask_sensitive(&out)
 }
 
@@ -5939,6 +6136,180 @@ mod tests {
     // read_shell_screen (M28 phase 01c)
     // -----------------------------------------------------------------------
 
+    // -- screen waits (M28 phase 03a) --------------------------------------
+
+    #[test]
+    fn wait_bounds_clamp_the_timeout_and_the_settle() {
+        let (t, s) = wait_bounds(None, None);
+        assert_eq!(t, Duration::from_secs(30), "the default timeout is 30 s");
+        assert_eq!(s, None, "no settle_ms means no settle wait");
+
+        let (t, _) = wait_bounds(Some(0), None);
+        assert_eq!(t, Duration::from_secs(1), "0 s clamps up to 1 s");
+        let (t, _) = wait_bounds(Some(9999), None);
+        assert_eq!(t, Duration::from_secs(300), "9999 s clamps down to 300 s");
+
+        let (t, s) = wait_bounds(Some(10), Some(1));
+        assert_eq!(t, Duration::from_secs(10));
+        assert_eq!(s, Some(Duration::from_millis(50)), "1 ms clamps to 50 ms");
+        let (_, s) = wait_bounds(None, Some(99999));
+        assert_eq!(
+            s,
+            Some(Duration::from_millis(5000)),
+            "99999 ms clamps to 5 s"
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_screen_returns_when_the_pattern_appears() {
+        let seq: std::cell::RefCell<Vec<&'static str>> = std::cell::RefCell::new(vec![
+            "loading", "loading", "done $", "done $", "done $", "done $",
+        ]);
+        let read = || {
+            let mut q = seq.borrow_mut();
+            let v = q.remove(0);
+            std::future::ready(Ok::<String, String>(v.to_string()))
+        };
+        let re = regex::Regex::new("done").unwrap();
+        let out = wait_screen(
+            read,
+            Some(&re),
+            None,
+            Duration::from_millis(200),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(
+            matches!(out, WaitOutcome::Matched { .. }),
+            "the third read matches, so the wait ends Matched: {out:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_screen_settles_when_two_reads_agree() {
+        let seq: std::cell::RefCell<Vec<&'static str>> = std::cell::RefCell::new(vec![
+            "a", "b", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c", "c",
+            "c", "c", "c",
+        ]);
+        let read = || {
+            let mut q = seq.borrow_mut();
+            let v = q.remove(0);
+            std::future::ready(Ok::<String, String>(v.to_string()))
+        };
+        let out = wait_screen(
+            read,
+            None,
+            Some(Duration::from_millis(10)),
+            Duration::from_millis(200),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(
+            matches!(out, WaitOutcome::Settled { .. }),
+            "reads three and four both say c, so the screen settled: {out:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_screen_that_never_settles_is_a_result_not_an_error() {
+        let n = std::cell::Cell::new(0u64);
+        let read = || {
+            let v = n.get();
+            n.set(v + 1);
+            std::future::ready(Ok::<String, String>(format!("frame {v}")))
+        };
+        let out = wait_screen(
+            read,
+            None,
+            Some(Duration::from_millis(10)),
+            Duration::from_millis(200),
+            Duration::from_millis(10),
+        )
+        .await;
+        let WaitOutcome::NotSettled { timeout } = &out else {
+            panic!("a counter screen never settles, so the wait is NotSettled: {out:?}")
+        };
+        assert_eq!(
+            *timeout,
+            Duration::from_millis(200),
+            "the deadline is named"
+        );
+        let note = wait_note(&out, None).unwrap_or_default();
+        assert!(
+            note.contains("did not settle") && note.contains("wait_for"),
+            "the note points the model at wait_for: {note}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_screen_never_matching_times_out() {
+        let read = || std::future::ready(Ok::<String, String>("loading".to_string()));
+        let re = regex::Regex::new("done").unwrap();
+        let out = wait_screen(
+            read,
+            Some(&re),
+            None,
+            Duration::from_millis(200),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(
+            matches!(out, WaitOutcome::NotMatched { .. }),
+            "a screen that never shows the pattern is NotMatched: {out:?}"
+        );
+        let note = wait_note(&out, Some(&re)).unwrap_or_default();
+        assert!(
+            note.contains("done"),
+            "the note names the pattern it waited for: {note}"
+        );
+
+        let read = || std::future::ready(Err::<String, String>("gone".to_string()));
+        let out = wait_screen(
+            read,
+            Some(&re),
+            None,
+            Duration::from_millis(200),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(
+            matches!(&out, WaitOutcome::Failed(msg) if msg == "gone"),
+            "the read's error is passed through: {out:?}"
+        );
+        assert!(
+            wait_note(&out, Some(&re)).is_none(),
+            "a Failed outcome shows no screen"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_shell_screen_invalid_wait_for_is_an_error() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        insert_watch_record(&reg, 5, 1_788_470_005);
+        let out = read_shell_screen_in(
+            &reg,
+            "s5",
+            None,
+            None,
+            None,
+            false,
+            Some("("),
+            None,
+            None,
+            Duration::from_millis(200),
+        )
+        .await;
+        assert!(
+            out.starts_with("Error: invalid wait_for regex \"(\""),
+            "an invalid wait_for regex is an error before any socket I/O: {out}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // read_shell_screen (M28 phase 01c) — live-shell fixtures
+    // -----------------------------------------------------------------------
+
     /// Open a real in-process shell host and return its id. The same path
     /// `close_shell_ends_the_callers_shell` takes.
     async fn open_screen_shell(reg: &ShellRegistry) -> String {
@@ -5981,9 +6352,19 @@ mod tests {
     ) -> String {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let out =
-                read_shell_screen_in(reg, id, lines, None, pattern, false, Duration::from_secs(5))
-                    .await;
+            let out = read_shell_screen_in(
+                reg,
+                id,
+                lines,
+                None,
+                pattern,
+                false,
+                None,
+                None,
+                None,
+                Duration::from_secs(5),
+            )
+            .await;
             if done(&out) || Instant::now() >= deadline {
                 return out;
             }
@@ -6042,7 +6423,6 @@ mod tests {
         let id = open_screen_shell(&reg).await;
         type_into(&id, b"printf 'row-a\\nrow-b\\nrow-c\\n'\n").await;
         // Wait for the output (a row that is exactly `row-c`, not the echoed
-        // command) and the prompt after it.
         let full = screen_until(&reg, &id, None, None, |o| {
             o.lines().any(|l| l.trim() == "row-c") && o.contains("shell prompt")
         })
@@ -6060,22 +6440,20 @@ mod tests {
             None,
             None,
             false,
+            None,
+            None,
+            None,
             Duration::from_secs(5),
         )
         .await;
         let tailed = body_rows(&out);
-        assert_eq!(
-            tailed.len(),
-            tail_len,
-            "lines clamps to the last N rows: {out}"
-        );
+        assert_eq!(tailed.len(), tail_len,);
         assert_eq!(tailed[0].trim(), "row-c", "the tail starts at row-c: {out}");
         assert!(
             !tailed.iter().any(|l| l.trim() == "row-a"),
             "rows above the tail are dropped: {out}"
         );
     }
-
     #[tokio::test]
     async fn read_shell_screen_pattern_filters_rows() {
         let (_home, _dir) = lifecycle_home();
@@ -6109,6 +6487,9 @@ mod tests {
             None,
             Some("("),
             false,
+            None,
+            None,
+            None,
             Duration::from_millis(200),
         )
         .await;
@@ -6130,6 +6511,9 @@ mod tests {
             None,
             None,
             false,
+            None,
+            None,
+            None,
             Duration::from_millis(200),
         )
         .await;
@@ -6138,6 +6522,7 @@ mod tests {
             unknown_shell_error(&reg, "s9"),
             "the same sentence read_shell gives"
         );
+        assert!(out.contains("s5"), "the live ids are named: {out}");
         assert!(out.contains("s5"), "the live ids are named: {out}");
     }
 
@@ -6157,26 +6542,6 @@ mod tests {
         let (fg, at) = after.expect("the read stores what it observed");
         assert_eq!(fg, crate::shell::Foreground::Prompt, "{out}");
         assert!(at > 0, "the observation carries its time");
-    }
-
-    #[tokio::test]
-    async fn read_shell_screen_masks_a_secret_on_screen() {
-        let (_home, _dir) = lifecycle_home();
-        let reg = ShellRegistry::default();
-        let id = open_screen_shell(&reg).await;
-        type_into(&id, b"echo AKIAIOSFODNN7EXAMPLE\n").await;
-        let out = screen_until(&reg, &id, None, None, |o| {
-            o.matches("<AWS_KEY>").count() >= 2 && o.contains("shell prompt")
-        })
-        .await;
-        assert!(
-            out.contains("<AWS_KEY>"),
-            "the key on screen is masked: {out}"
-        );
-        assert!(
-            !out.contains("AKIAIOSFODNN7EXAMPLE"),
-            "the raw key never reaches the model: {out}"
-        );
     }
 
     #[test]
