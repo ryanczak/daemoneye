@@ -1,7 +1,7 @@
 # Phase 02g: allow-tui-input — the runbook opt-in for ghost input to a program
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02f
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -137,3 +137,22 @@ diff /tmp/pasted-02g.txt /tmp/e2e-02g.txt && echo "PASTE MATCH" || echo "PASTE M
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-15 03:15 (started)
+
+Executor: Claude (M28 phase-02g run). Status flipped to `in-progress`; implementing the Spec in order — the `allow_tui_input` field through `GhostConfig` / `GhostPolicy` / the runbook parser, then the `ghost_may_type_into` gate and the `Program`-mentioning refusal, then the README / `sre.toml` / `CLAUDE.md` docs, then the end-to-end capture.
+
+### Update — 2026-10-15 03:15 (end-to-end verification)
+
+```text
+runbook_parses_allow_tui_input: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ghost_policy_carries_allow_tui_input: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ghost_may_type_into_a_program_only_with_allow_tui_input: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ghost_input_refusal_names_the_shell_and_what_holds_it: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ghost_may_send_input_requires_an_explicit_allow: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2378 failed=0
+```
+

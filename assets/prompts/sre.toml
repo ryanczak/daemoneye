@@ -232,7 +232,9 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   `watch_shell`. Every byte lands in the shell's cast log as an audit event \
   no read tool will show you back, so never type a secret through it — if a \
   program asks for a password, tell the user instead. A ghost shell may not \
-  use it unless its agent `ToolPolicy` explicitly allows it.
+  use it unless its agent `ToolPolicy` explicitly allows it, and a ghost \
+  types only into a shell at its prompt unless its runbook sets \
+  `allow_tui_input: true`.
 
 ### `list_shell_logs` / `read_shell_log`
 

@@ -93,6 +93,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
         let ssh_target = parse_string_field(frontmatter, "ssh_target");
         let model = parse_string_field(frontmatter, "model");
         let auto_approve_commands = parse_bool_field(frontmatter, "auto_approve_commands");
+        let allow_tui_input = parse_bool_field(frontmatter, "allow_tui_input");
         let agent = parse_string_field(frontmatter, "agent");
         let hosts = parse_list_field(frontmatter, "hosts");
 
@@ -104,6 +105,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
             ssh_target,
             model,
             auto_approve_commands,
+            allow_tui_input,
             agent,
             tool_policy: None,
             spawn_depth: 0,
@@ -567,6 +569,22 @@ Last updated: 2026-03-01
         let raw = "---\nenabled: true\n---\n# Runbook: test\n\n## Alert Criteria\n- x\n";
         let (_, _, gc, _) = parse_frontmatter(raw);
         assert_eq!(gc.max_ghost_turns, 0);
+    }
+
+    #[test]
+    fn runbook_parses_allow_tui_input() {
+        let raw = "---\nenabled: true\nallow_tui_input: true\n---\n# Runbook: test\n\n## Alert Criteria\n- x\n";
+        let (_, _, gc, _) = parse_frontmatter(raw);
+        assert!(
+            gc.allow_tui_input,
+            "allow_tui_input: true in the frontmatter must reach the ghost config"
+        );
+        let without = "---\nenabled: true\n---\n# Runbook: test\n\n## Alert Criteria\n- x\n";
+        let (_, _, gc, _) = parse_frontmatter(without);
+        assert!(
+            !gc.allow_tui_input,
+            "a runbook without the line opts out, so a ghost may type only at a prompt"
+        );
     }
 
     #[test]

@@ -171,6 +171,14 @@ pub struct GhostConfig {
     /// daemon-wide via `[approvals] ghost_commands = true` in `config.toml`.
     #[serde(default)]
     pub auto_approve_commands: bool,
+    /// Whether a ghost may type into a shell whose foreground is a running
+    /// program (line mode or TUI), rather than only at its prompt. Set
+    /// per-runbook via `allow_tui_input: true` in frontmatter. It widens
+    /// **where** a permitted ghost may type, never **whether** it may: the
+    /// agent `ToolPolicy` must still explicitly allow `send_input` first.
+    /// A paused, exited or unknown shell stays refused either way.
+    #[serde(default)]
+    pub allow_tui_input: bool,
     /// Name of the agent this ghost shell was spawned from.
     /// Set when a runbook specifies `agent: <name>` or the AI passes an agent
     /// to `spawn_ghost_shell`. Used for logging and audit purposes.

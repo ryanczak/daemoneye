@@ -7,6 +7,7 @@ fn policy(scripts: &[&str]) -> GhostPolicy {
         run_with_sudo: false,
         ssh_target: None,
         auto_approve_commands: false,
+        allow_tui_input: false,
         remote_host: None,
         remote_sudo_scripts: Vec::new(),
     }
@@ -19,6 +20,7 @@ fn sudo_policy(scripts: &[&str]) -> GhostPolicy {
         run_with_sudo: true,
         ssh_target: None,
         auto_approve_commands: false,
+        allow_tui_input: false,
         remote_host: None,
         remote_sudo_scripts: Vec::new(),
     }
@@ -31,6 +33,7 @@ fn remote_policy(scripts: &[&str], target: &str) -> GhostPolicy {
         run_with_sudo: false,
         ssh_target: Some(target.to_string()),
         auto_approve_commands: false,
+        allow_tui_input: false,
         remote_host: None,
         remote_sudo_scripts: Vec::new(),
     }
@@ -43,6 +46,7 @@ fn remote_sudo_policy(scripts: &[&str], target: &str) -> GhostPolicy {
         run_with_sudo: true,
         ssh_target: Some(target.to_string()),
         auto_approve_commands: false,
+        allow_tui_input: false,
         remote_host: None,
         remote_sudo_scripts: Vec::new(),
     }
@@ -398,6 +402,23 @@ fn from_config_copies_auto_approve_commands() {
     };
     let policy = GhostPolicy::from_config(&gc);
     assert!(policy.auto_approve_commands);
+}
+
+#[test]
+fn ghost_policy_carries_allow_tui_input() {
+    let gc = crate::ipc::GhostConfig {
+        allow_tui_input: true,
+        ..Default::default()
+    };
+    let policy = GhostPolicy::from_config(&gc);
+    assert!(
+        policy.allow_tui_input,
+        "the runbook opt-in must reach the ghost policy the executor reads"
+    );
+    assert!(
+        !GhostPolicy::from_config(&crate::ipc::GhostConfig::default()).allow_tui_input,
+        "a ghost without the line may type only at a prompt"
+    );
 }
 
 // ── remote_script_name ────────────────────────────────────────────────────

@@ -25,6 +25,13 @@ pub struct GhostPolicy {
     /// Carried here for completeness; the system prompt reads from `GhostConfig`
     /// directly. Kept as a mirror so `GhostPolicy` is a complete snapshot.
     pub auto_approve_commands: bool,
+    /// Whether a ghost may type into a shell whose foreground is a running
+    /// program (line mode or TUI), rather than only at its prompt. Set
+    /// per-runbook via `allow_tui_input: true` in frontmatter. It widens
+    /// **where** a permitted ghost may type, never **whether** it may: the
+    /// agent `ToolPolicy` must still explicitly allow `send_input` first.
+    /// A paused, exited or unknown shell stays refused either way.
+    pub allow_tui_input: bool,
     /// Hosts this ghost may open shells on, by `[hosts.<name>]` key.
     /// **Empty is unrestricted**: a runbook with no `hosts:` line constrains
     /// nothing, so every runbook written before this field existed keeps its
@@ -46,6 +53,7 @@ impl GhostPolicy {
             run_with_sudo: config.run_with_sudo,
             ssh_target: config.ssh_target.clone(),
             auto_approve_commands: config.auto_approve_commands,
+            allow_tui_input: config.allow_tui_input,
             hosts: config.hosts.clone(),
             remote_host: config
                 .ssh_target_host

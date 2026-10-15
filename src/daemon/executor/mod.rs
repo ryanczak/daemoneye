@@ -166,25 +166,44 @@ pub(crate) fn ghost_may_send_input(
 
 /// Whether a ghost may type into a shell held by `fg`.
 ///
-/// A ghost that answered "yes" is allowed only at a prompt: everywhere else
-/// the bytes would land inside a program or nowhere at all, and phase 02g's
-/// runbook opt-in (`allow_tui_input`) is what lifts that. The `Foreground`
-/// argument is what the live probe classified, so the gate follows the
-/// terminal's actual state at the moment of the call, not a cached one.
-pub(crate) fn ghost_may_type_into(fg: &crate::shell::Foreground) -> bool {
-    matches!(fg, crate::shell::Foreground::Prompt)
+/// A ghost that answered "yes" is allowed at a prompt always, and into a
+/// running program only when its runbook opted in with `allow_tui_input`:
+/// there the bytes land inside whatever holds the shell, which is exactly
+/// what the runbook author asked for. The `Foreground` argument is what the
+/// live probe classified, so the gate follows the terminal's actual state
+/// at the moment of the call, not a cached one.
+pub(crate) fn ghost_may_type_into(fg: &crate::shell::Foreground, allow_tui_input: bool) -> bool {
+    match fg {
+        crate::shell::Foreground::Prompt => true,
+        crate::shell::Foreground::Program { .. } => allow_tui_input,
+        // A paused job is not reading input, an exited shell is gone and an
+        // unknown state may be either; the opt-in does not reach these, so
+        // the answer stays no.
+        crate::shell::Foreground::Paused { .. }
+        | crate::shell::Foreground::Exited
+        | crate::shell::Foreground::Unknown => false,
+    }
 }
 
 /// The tool result when the ghost gate refuses: it names the shell, what
 /// holds it, and that nothing was sent. Deliberately informative — the ghost
 /// reads the `Foreground` wording and can answer with `list_shells` or a
-/// fresh shell rather than retrying blind.
+/// fresh shell rather than retrying blind. For a `Program` foreground the
+/// refusal names the runbook field that lifts it; for `Paused`, `Exited`
+/// and `Unknown` it does not, because no field does.
 pub(crate) fn ghost_input_refusal(shell: &str, fg: &crate::shell::Foreground) -> String {
+    let lift = match fg {
+        crate::shell::Foreground::Program { .. } => {
+            " A runbook that sets `allow_tui_input: true` may type into a \
+             running program."
+        }
+        _ => "",
+    };
     format!(
         "Error: shell {shell} is {fg}, not a shell at its prompt. A ghost may \
          type only into a shell at its prompt; typing here would reach whatever \
          holds the shell now, and nothing was sent. Use list_shells to find a \
-         shell at its prompt, or open one with open_shell."
+         shell at its prompt, or open one with open_shell.{lift}"
     )
 }
 
@@ -1449,9 +1468,11 @@ where
             };
 
             // 3. The ghost gate: a ghost may type only into a shell at its
-            //    prompt. Nothing is sent and no panel is shown. (`allow_tui_input`,
-            //    phase 02g, is the runbook opt-in that widens this.)
-            if is_ghost && !ghost_may_type_into(&fg) {
+            //    prompt, plus into a running program when its runbook opted
+            //    in with `allow_tui_input`. Nothing is sent and no panel is
+            //    shown.
+            let allow_tui_input = ghost_policy.as_ref().is_some_and(|p| p.allow_tui_input);
+            if is_ghost && !ghost_may_type_into(&fg, allow_tui_input) {
                 return Ok(ToolCallOutcome::Result(ghost_input_refusal(shell, &fg)));
             }
 
@@ -1953,12 +1974,16 @@ mod send_input_gate_tests {
     }
 
     #[test]
-    fn ghost_may_type_only_at_a_prompt() {
+    fn ghost_may_type_into_a_program_only_with_allow_tui_input() {
         assert!(
-            ghost_may_type_into(&crate::shell::Foreground::Prompt),
-            "a prompt is the only thing a ghost may type into"
+            ghost_may_type_into(&crate::shell::Foreground::Prompt, false),
+            "a prompt is always a ghost's typing target"
         );
-        for fg in [
+        assert!(
+            ghost_may_type_into(&crate::shell::Foreground::Prompt, true),
+            "a prompt is always a ghost's typing target"
+        );
+        let programs = [
             crate::shell::Foreground::Program {
                 cmd: "claude".to_string(),
                 tui: true,
@@ -1967,6 +1992,18 @@ mod send_input_gate_tests {
                 cmd: "grep".to_string(),
                 tui: false,
             },
+        ];
+        for fg in &programs {
+            assert!(
+                !ghost_may_type_into(fg, false),
+                "{fg} is refused without the runbook opt-in"
+            );
+            assert!(
+                ghost_may_type_into(fg, true),
+                "{fg} is allowed when the runbook sets allow_tui_input"
+            );
+        }
+        for fg in [
             crate::shell::Foreground::Paused {
                 cmd: "sleep".to_string(),
             },
@@ -1974,8 +2011,8 @@ mod send_input_gate_tests {
             crate::shell::Foreground::Unknown,
         ] {
             assert!(
-                !ghost_may_type_into(&fg),
-                "{fg} is never a ghost's typing target before 02g's opt-in"
+                !ghost_may_type_into(&fg, false) && !ghost_may_type_into(&fg, true),
+                "{fg} is never a ghost's typing target, opt-in or not"
             );
         }
     }
@@ -2000,6 +2037,20 @@ mod send_input_gate_tests {
         assert!(
             refusal.contains("nothing was sent"),
             "the refusal says nothing was sent: {refusal}"
+        );
+        assert!(
+            refusal.contains("allow_tui_input"),
+            "the Program refusal names the runbook field that lifts it: {refusal}"
+        );
+        let paused = ghost_input_refusal(
+            "s5",
+            &crate::shell::Foreground::Paused {
+                cmd: "vim".to_string(),
+            },
+        );
+        assert!(
+            !paused.contains("allow_tui_input"),
+            "the field does not lift a paused shell, so the refusal names it not: {paused}"
         );
     }
 }
