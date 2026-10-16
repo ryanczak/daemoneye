@@ -958,15 +958,33 @@ pub static TOOLS: &[ToolDef] = &[
                       lowest-numbered open shell unless you say otherwise — pass \
                       `shell: \"<id>\"` to run_terminal_command to target a specific \
                       shell, or `shell: \"new\"` to make one command use a fresh shell.",
-        params: &[ParamDef {
-            name: "host",
-            ty: ParamTy::Str,
-            required: false,
-            description: "Optional configured host name to open the shell on (a \
-                          [hosts.<name>] key, e.g. \"pinky\"). Omitted: the daemon \
-                          host. The shell is ordinary once open — run commands in it \
-                          by passing its id as run_terminal_command's `shell`.",
-        }],
+        params: &[
+            ParamDef {
+                name: "host",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional configured host name to open the shell on (a \
+                              [hosts.<name>] key, e.g. \"pinky\"). Omitted: the daemon \
+                              host. The shell is ordinary once open — run commands in it \
+                              by passing its id as run_terminal_command's `shell`.",
+            },
+            ParamDef {
+                name: "rows",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Optional terminal height the shell opens with. Default: \
+                              the configured [shells] rows (40 unless set). Clamped \
+                              to 10..=200.",
+            },
+            ParamDef {
+                name: "cols",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Optional terminal width the shell opens with, e.g. 200 \
+                              for a wide TUI. Default: the configured [shells] cols \
+                              (120 unless set). Clamped to 40..=500.",
+            },
+        ],
         deferred_group: None,
         category: Category::Run,
     },

@@ -176,13 +176,19 @@ wait_for?, settle_ms?, timeout_secs?)` — \
 
 ### `open_shell`
 
-- `open_shell(host?)` — start a new PTY shell; the result names its id. \
+- `open_shell(host?, rows?, cols?)` — start a new PTY shell; the result names \
+  its id and the size its terminal was opened at. \
   Without `host` the shell opens on the daemon host. With \
   `host: "<name>"` it opens on a **configured host** — the `name` must be a \
   `[hosts.<name>]` key from the config (the same names `list_hosts` /
   `read_host_file` use); an unknown one is refused, and the refusal names the \
   hosts that are configured. Commands run in it **there**, and the result \
   reports the real remote exit code. \
+  `rows` / `cols` size the shell's terminal for the program you are about to \
+  run — `open_shell(cols: 200)` for a wide one. Both are optional: the \
+  default is the configured `[shells] rows`/`cols` (40×120 unless set), and a \
+  request is clamped to rows 10–200, cols 40–500, so the result names what \
+  you actually got. \
   An opened shell is ordinary: `list_shells` lists it (with its host), \
   `read_shell` and `find_in_shells` read its recorded output, and \
   `close_shell` ends it. \

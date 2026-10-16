@@ -114,15 +114,19 @@ pub(super) async fn handle_shell_open<W>(tx: &mut W, host: Option<&str>) -> Resu
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    let response =
-        match crate::daemon::executor::knowledge::open_shell_id(&crate::shell::Owner::User, host)
-            .await
-        {
-            Ok((id, _)) => Response::ShellOpened {
-                id: id.as_str().to_string(),
-            },
-            Err(msg) => Response::Error(msg.trim_start_matches("Error: ").to_string()),
-        };
+    let response = match crate::daemon::executor::knowledge::open_shell_id(
+        &crate::shell::Owner::User,
+        host,
+        None,
+        None,
+    )
+    .await
+    {
+        Ok((id, _, _)) => Response::ShellOpened {
+            id: id.as_str().to_string(),
+        },
+        Err(msg) => Response::Error(msg.trim_start_matches("Error: ").to_string()),
+    };
     send_response_split(tx, response).await?;
     Ok(())
 }

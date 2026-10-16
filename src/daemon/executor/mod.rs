@@ -1373,11 +1373,9 @@ where
             )))
         }
 
-        PendingCall::OpenShell { host, .. } => {
-            // The same boundary the foreground arm enforces: a ghost may open
-            // a shell on a host its runbook names only. Gating here too is
-            // what closes the second door — `open_shell` is reachable on its
-            // own, not only through `run_terminal_command`.
+        PendingCall::OpenShell {
+            host, rows, cols, ..
+        } => {
             if let Some(policy) = ghost_policy.as_ref() {
                 let asked = match host.as_deref() {
                     None => crate::host::HostId::Local,
@@ -1419,6 +1417,8 @@ where
                 knowledge::open_shell(
                     &Owner::Chat(session_id.unwrap_or_default().to_string()),
                     host.as_deref(),
+                    *rows,
+                    *cols,
                 )
                 .await,
             ))

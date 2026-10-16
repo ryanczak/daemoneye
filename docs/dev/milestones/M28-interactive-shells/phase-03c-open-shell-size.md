@@ -1,7 +1,7 @@
 # Phase 03c: open-shell-size — `open_shell(rows, cols)`
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03b
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -142,3 +142,28 @@ diff /tmp/pasted-03c.txt /tmp/e2e-03c.txt && echo "PASTE MATCH" || echo "PASTE M
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-16 13:29 (started)
+
+**Executor:** phase-03c run (headless).
+
+Flipped the status to `in-progress` and begun the spec: params through the
+dispatch chain, `resolve_size`, the sized spawn path, the size sentence,
+docs.
+
+### Update — 2026-10-16 13:52 (end-to-end verification)
+
+Run of § End-to-end verification, verbatim, captured to `/tmp/e2e-03c.txt`:
+
+```
+resolve_size_fills_and_clamps: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+open_shell_names_the_requested_size: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+open_shell_args_carry_rows_and_cols: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+open_shell_local_result_names_the_size: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2390 failed=0
+```
+
+PASTE MATCH

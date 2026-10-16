@@ -749,11 +749,15 @@ where
                 AiEvent::OpenShell {
                     id,
                     host,
+                    rows,
+                    cols,
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::OpenShell {
                         id,
                         host,
+                        rows,
+                        cols,
                         thought_signature,
                     });
                 }

@@ -2250,35 +2250,67 @@ pub(crate) fn format_err_chain(e: &anyhow::Error) -> String {
     }
     msg
 }
-/// Open a new PTY shell for `caller` and return the sentence the model reads.
-///
-/// The public form uses the daemon's registry, the configured
-/// `[shells] max_per_owner` and the standard readiness timeout; the `_in`
-/// form takes all three plus the spawn step, mirroring how `list_shells` /
-/// `list_shells_in` already split.
-///
-/// `host` is resolved **before** any spawn: an unknown or malformed name is
-/// refused with `host_entry`'s / `HostId::parse`'s own message — never routed
+
+/// The size a shell is opened at when `open_shell` was given `rows`/`cols`.
+/// A missing value comes from `default`, and the resolved pair is clamped by
+/// the same bounds `ShellsConfig::size` applies — routed through that method
+/// rather than a second copy of the numbers, so the two can never drift.
+pub fn resolve_size(rows: Option<u64>, cols: Option<u64>, default: (u16, u16)) -> (u16, u16) {
+    // An out-of-`u16` request saturates rather than falling back to the
+    // default: the model asked for a size, and the clamp must see *its*
+    // number (99999 → the 500 ceiling), not the default it did not ask for.
+    let narrow =
+        |v: Option<u64>| -> Option<u16> { v.map(|v| u16::try_from(v).unwrap_or(u16::MAX)) };
+    let cfg = crate::config::ShellsConfig {
+        rows: narrow(rows).unwrap_or(default.0),
+        cols: narrow(cols).unwrap_or(default.1),
+        ..crate::config::ShellsConfig::default()
+    };
+    cfg.size()
+}
+
+#[cfg(test)]
+mod resolve_size_tests {
+    use super::resolve_size;
+
+    /// A missing `rows`/`cols` falls back to `default` whole; a present one
+    /// replaces only its own half; an absurd pair clamps to the `[shells]`
+    /// bounds the config method applies.
+    #[test]
+    fn resolve_size_fills_and_clamps() {
+        assert_eq!(resolve_size(None, None, (40, 120)), (40, 120));
+        assert_eq!(resolve_size(Some(50), None, (40, 120)), (50, 120));
+        assert_eq!(resolve_size(None, Some(160), (40, 120)), (40, 160));
+        assert_eq!(resolve_size(Some(0), Some(99999), (40, 120)), (10, 500));
+    }
+}
 /// through `open_shell_error`, which would wrap a host problem in per-owner
 /// shell-limit advice the model cannot act on.
-pub async fn open_shell(caller: &Owner, host: Option<&str>) -> String {
-    match open_shell_id(caller, host).await {
-        Ok((id, host)) => opened_shell_sentence(&id, &host),
+pub async fn open_shell(
+    caller: &Owner,
+    host: Option<&str>,
+    rows: Option<u64>,
+    cols: Option<u64>,
+) -> String {
+    match open_shell_id(caller, host, rows, cols).await {
+        Ok((id, host, size)) => opened_shell_sentence(&id, &host, size),
         Err(msg) => msg,
     }
 }
 
 /// `open_shell` for a caller that needs the shell's id rather than the
-/// model's sentence: the user's `/shell` (M23). `Ok` carries the id and the
-/// host it landed on; `Err` carries the same sentence `open_shell` returns.
+/// model's sentence: the user's `/shell` (M23). `Ok` carries the id, the host
+/// it landed on and the size it was opened at; `Err` carries the same
+/// sentence `open_shell` returns.
 pub async fn open_shell_id(
     caller: &Owner,
     host: Option<&str>,
-) -> Result<(ShellId, crate::host::HostId), String> {
-    let max_per_owner = crate::config::Config::load()
-        .unwrap_or_default()
-        .shells
-        .max_per_owner;
+    rows: Option<u64>,
+    cols: Option<u64>,
+) -> Result<(ShellId, crate::host::HostId, (u16, u16)), String> {
+    let config = crate::config::Config::load().unwrap_or_default();
+    let max_per_owner = config.shells.max_per_owner;
+    let size = resolve_size(rows, cols, crate::shell::spawn_size());
     let host = match host.map(crate::host::HostId::parse) {
         None => crate::host::HostId::Local,
         Some(Ok(parsed)) => parsed,
@@ -2294,7 +2326,7 @@ pub async fn open_shell_id(
                 crate::host::HostId::Local,
                 max_per_owner,
                 SHELL_READY_TIMEOUT,
-                spawn_in_process_host,
+                move |id| spawn_in_process_host_sized(id, size),
             )
             .await
         }
@@ -2307,18 +2339,22 @@ pub async fn open_shell_id(
             if let Err(e) = crate::shell::host_entry(name) {
                 return Err(format!("Error: {e}"));
             }
+            let name = name.clone();
             open_shell_with_id(
                 &open_shell_test_registry(),
                 caller,
                 crate::host::HostId::Named(name.clone()),
                 max_per_owner,
                 SHELL_READY_TIMEOUT,
-                |id| spawn_on_named_host(id, name),
+                move |id| {
+                    let name = name.clone();
+                    async move { spawn_on_named_host(id, &name, size).await }
+                },
             )
             .await
         }
     }?;
-    Ok((id, host))
+    Ok((id, host, size))
 }
 
 /// `open_shell` with every effect injected: the registry, the host the
@@ -2349,7 +2385,11 @@ where
     )
     .await
     {
-        Ok(id) => opened_shell_sentence(&id, &host),
+        Ok(id) => opened_shell_sentence(
+            &id,
+            &host,
+            resolve_size(None, None, crate::shell::spawn_size()),
+        ),
         Err(msg) => msg,
     }
 }
@@ -2407,11 +2447,14 @@ where
 }
 
 /// The sentence the model reads after `open_shell` opened shell `id` on
-/// `host`.
-fn opened_shell_sentence(id: &ShellId, host: &crate::host::HostId) -> String {
+/// `host`. `size` is the `(rows, cols)` the shell was actually opened at —
+/// the resolved request, after the clamp — so the model knows what it got
+/// when the request was out of range or absent.
+fn opened_shell_sentence(id: &ShellId, host: &crate::host::HostId, size: (u16, u16)) -> String {
     // The local sentence is byte-identical to the pre-host one (`HostId` has
     // no printable form); a named host is appended so the model can see where
-    // the shell landed and address follow-up work there.
+    // the shell landed and address follow-up work there. The size clause
+    // names the real geometry after the host clause, before the `Note:`.
     let opened_on = match host {
         crate::host::HostId::Local => String::new(),
         crate::host::HostId::Named(name) => format!(" It is on host {name}."),
@@ -2419,13 +2462,15 @@ fn opened_shell_sentence(id: &ShellId, host: &crate::host::HostId) -> String {
     format!(
         "Opened shell {}. It is now registered and readable — list_shells lists \
          it, read_shell and find_in_shells read its recorded output, close_shell \
-         ends it.{opened_on} Note: a command still runs in this session's \
-         lowest-numbered open shell by default, so this shell sees work only \
-         when it is that one — pass shell: {:?} to run_terminal_command to \
-         target it directly, or shell: \"new\" for one command's exclusive \
-         shell.",
+         ends it.{opened_on} Its terminal is {r} rows × {c} columns. Note: a \
+         command still runs in this session's lowest-numbered open shell by \
+         default, so this shell sees work only when it is that one — pass \
+         shell: {:?} to run_terminal_command to target it directly, or \
+         shell: \"new\" for one command's exclusive shell.",
         id.as_str(),
-        id.as_str()
+        id.as_str(),
+        r = size.0,
+        c = size.1,
     )
 }
 
@@ -2487,6 +2532,15 @@ async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
     tests::spawn_in_process_host(id).await
 }
 
+/// The test build's local host: the fixed-size in-process host, ignoring the
+/// resolved `size` the request named. The production form below spawns a
+/// detached host at `size`; under `cargo test` the detached host would
+/// re-execute the test binary (07b F4), so the in-process fixture is used.
+#[cfg(test)]
+async fn spawn_in_process_host_sized(id: ShellId, _size: (u16, u16)) -> anyhow::Result<()> {
+    spawn_in_process_host(id).await
+}
+
 /// The ignored ssh variant of the in-process host: the real `ssh` argv for
 /// `pinky`, spawned by `PtyBackend` right here (not detached), so the process
 /// bound to the shell's socket is an `ssh` talking to the real remote host
@@ -2525,15 +2579,17 @@ fn open_shell_test_registry() -> crate::shell::ShellRegistry {
     crate::shell::registry().clone()
 }
 
-#[cfg(not(test))]
-async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
-    let (rows, cols) = crate::shell::spawn_size();
-    crate::shell::spawn_detached_host(id, &[], rows, cols).await
+async fn spawn_on_named_host(id: ShellId, name: &str, size: (u16, u16)) -> anyhow::Result<()> {
+    crate::shell::spawn_ssh_host(id, name, size.0, size.1).await
 }
 
-async fn spawn_on_named_host(id: ShellId, name: &str) -> anyhow::Result<()> {
-    let (rows, cols) = crate::shell::spawn_size();
-    crate::shell::spawn_ssh_host(id, name, rows, cols).await
+/// The local host at the resolved size. The production form is a detached
+/// `daemoneye shell-host` whose PTY is `size`; under `cargo test` that would
+/// re-execute the test binary (07b F4), so the fixed-size in-process host is
+/// used and the request's size is ignored.
+#[cfg(not(test))]
+async fn spawn_in_process_host_sized(id: ShellId, size: (u16, u16)) -> anyhow::Result<()> {
+    crate::shell::spawn_detached_host(id, &[], size.0, size.1).await
 }
 
 /// The cap-breach sentence for `open_shell`. `max_per_owner == 0` means
@@ -4281,7 +4337,7 @@ mod tests {
         .expect("write config");
         let reg = ShellRegistry::default();
         let _swap = open_shell_test_seam::swap_in(&reg);
-        let out = open_shell(&Owner::Chat("hosted".into()), Some("nope")).await;
+        let out = open_shell(&Owner::Chat("hosted".into()), Some("nope"), None, None).await;
         assert!(
             out.contains("nope"),
             "the refusal must name the host the model asked for: {out}"
@@ -4347,7 +4403,7 @@ mod tests {
         let (_home, _dir) = lifecycle_home();
         let reg = ShellRegistry::default();
         let _swap = open_shell_test_seam::swap_in(&reg);
-        let out = open_shell(&Owner::Chat("local".into()), None).await;
+        let out = open_shell(&Owner::Chat("local".into()), None, None, None).await;
         assert!(
             out.contains("Opened shell"),
             "the precondition is a ready local shell: {out}"
@@ -4365,14 +4421,16 @@ mod tests {
         );
     }
 
-    /// The no-host result sentence is the contract every existing caller and
-    /// test was written against — it must not shift by a byte.
+    /// The no-host result sentence names the size the shell opened at. With
+    /// no `rows`/`cols` in the request and no `[shells]` table in
+    /// `lifecycle_home`'s config, that is the 03b default 40×120; the byte
+    /// contract now includes it.
     #[tokio::test]
-    async fn open_shell_local_result_is_unchanged() {
+    async fn open_shell_local_result_names_the_size() {
         let (_home, _dir) = lifecycle_home();
         let reg = ShellRegistry::default();
         let _swap = open_shell_test_seam::swap_in(&reg);
-        let out = open_shell(&Owner::Chat("sentinel".into()), None).await;
+        let out = open_shell(&Owner::Chat("sentinel".into()), None, None, None).await;
         let id = out
             .split_whitespace()
             .map(|w| {
@@ -4386,15 +4444,35 @@ mod tests {
             format!(
                 "Opened shell {id}. It is now registered and readable — list_shells \
                  lists it, read_shell and find_in_shells read its recorded output, \
-                 close_shell ends it. Note: a command still runs in this session's \
-                 lowest-numbered open shell by default, so this shell sees work only \
-                 when it is that one — pass shell: \"{id}\" to run_terminal_command to \
-                 target it directly, or shell: \"new\" for one command's exclusive shell."
+                 close_shell ends it. Its terminal is 40 rows × 120 columns. Note: \
+                 a command still runs in this session's lowest-numbered open shell \
+                 by default, so this shell sees work only when it is that one — \
+                 pass shell: \"{id}\" to run_terminal_command to target it \
+                 directly, or shell: \"new\" for one command's exclusive shell."
             ),
-            "the no-host sentence must be byte-identical to the pre-host contract"
+            "the no-host sentence names the size it opened at (40×120 here: no \
+             request, no [shells] table)"
         );
     }
 
+    /// A sized request resolves through `open_shell` the same way: the
+    /// sentence names the size the shell was opened at, `rows` first, with
+    /// the ` × ` between.
+    #[tokio::test]
+    async fn open_shell_names_the_requested_size() {
+        let (_home, _dir) = lifecycle_home();
+        let reg = ShellRegistry::default();
+        let _swap = open_shell_test_seam::swap_in(&reg);
+        let out = open_shell(&Owner::Chat("sized".into()), None, Some(50), Some(160)).await;
+        assert!(
+            out.contains("Opened shell"),
+            "the precondition is a ready shell: {out}"
+        );
+        assert!(
+            out.contains("Its terminal is 50 rows × 160 columns."),
+            "the sentence names the requested size: {out}"
+        );
+    }
     /// A name outside `[A-Za-z0-9._-]` (or over 64 chars) is refused before
     /// any spawn, with `HostId::parse`'s own message — not with shell-limit
     /// advice.
@@ -4403,7 +4481,7 @@ mod tests {
         let (_home, _dir) = lifecycle_home();
         let reg = ShellRegistry::default();
         let _swap = open_shell_test_seam::swap_in(&reg);
-        let out = open_shell(&Owner::Chat("weird".into()), Some("bad name!")).await;
+        let out = open_shell(&Owner::Chat("weird".into()), Some("bad name!"), None, None).await;
         assert!(
             out.starts_with("Error:"),
             "a malformed name is refused: {out}"
@@ -4469,7 +4547,7 @@ mod tests {
             open_shell_test_seam::swapped().is_none(),
             "precondition: no swap is in scope (this test must not depend on another)"
         );
-        let out = open_shell(&Owner::Chat("no-swap".into()), None).await;
+        let out = open_shell(&Owner::Chat("no-swap".into()), None, None, None).await;
         assert!(
             out.contains("Opened shell"),
             "the precondition is a ready local shell: {out}"

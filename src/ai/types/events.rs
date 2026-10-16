@@ -207,10 +207,14 @@ pub enum AiEvent {
     },
     /// Open a new PTY shell for this session (M22 phase-04a), optionally on a
     /// configured `[hosts.<name>]` host (M21 phase-04b). `host` names the
-    /// shell's destination; `None` is the daemon host.
+    /// shell's destination; `None` is the daemon host. M28 phase-03c adds
+    /// `rows`/`cols`: the size the shell is opened at, `None` for the
+    /// configured `[shells]` size.
     OpenShell {
         id: String,
         host: Option<String>,
+        rows: Option<u64>,
+        cols: Option<u64>,
         thought_signature: Option<String>,
     },
     /// Close one of this session's PTY shells (M22 phase-04a).

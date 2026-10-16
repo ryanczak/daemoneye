@@ -133,6 +133,10 @@ pub(super) struct ListShellsArgs {
 pub(super) struct OpenShellArgs {
     #[serde(default)]
     host: Option<String>,
+    #[serde(default)]
+    rows: Option<u64>,
+    #[serde(default)]
+    cols: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -548,6 +552,8 @@ impl ToolArgs for OpenShellArgs {
         AiEvent::OpenShell {
             id: id.to_string(),
             host: self.host,
+            rows: self.rows,
+            cols: self.cols,
             thought_signature: ts,
         }
     }

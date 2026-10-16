@@ -298,11 +298,14 @@ pub enum PendingCall {
     /// Open a new PTY shell for this session (M22 phase-04a). An empty `host`
     /// opens the shell on the daemon host; a named one must be a configured
     /// `[hosts.<name>]` key (M21 phase-04b), which `open_shell` resolves
-    /// before spawning.
+    /// before spawning. M28 phase-03c adds `rows`/`cols`: the size the shell
+    /// is opened at, `None` for the configured `[shells]` size.
     OpenShell {
         id: String,
         thought_signature: Option<String>,
         host: Option<String>,
+        rows: Option<u64>,
+        cols: Option<u64>,
     },
     /// Close one of this session's PTY shells (M22 phase-04a). Sends Term and
     /// reports what it observed; there is no kill frame on this wire.
@@ -961,11 +964,17 @@ impl PendingCall {
                 id,
                 thought_signature,
                 host,
+                rows,
+                cols,
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "open_shell".to_string(),
-                arguments: args_to_string(serde_json::json!({ "host": host })),
+                arguments: args_to_string(serde_json::json!({
+                    "host": host,
+                    "rows": rows,
+                    "cols": cols,
+                })),
             },
             PendingCall::CloseShell {
                 id,
@@ -1152,6 +1161,12 @@ impl PendingCall {
             PendingCall::ListShells { scope, .. } => scope.clone().unwrap_or_default(),
             // A close shows which shell; an open shows which host, when one
             // was named — the ordinary case is local, i.e. nothing to show.
+            PendingCall::OpenShell {
+                host,
+                rows: Some(r),
+                cols: Some(c),
+                ..
+            } => format!("{host:?} rows={r} cols={c}"),
             PendingCall::OpenShell { host, .. } => host.clone().unwrap_or_default(),
             PendingCall::CloseShell { shell, .. } => shell.clone(),
             PendingCall::SendInput { shell, .. } => shell.clone(),
@@ -1411,6 +1426,8 @@ mod tests {
                 id: "x".to_string(),
                 thought_signature: None,
                 host: None,
+                rows: None,
+                cols: None,
             },
             PendingCall::CloseShell {
                 id: "x".to_string(),

@@ -1211,6 +1211,33 @@ mod tests {
         }
     }
 
+    /// `open_shell`'s `rows`/`cols` land in the named event fields as given —
+    /// `Some` when present, `None` when absent. Argument parsing never fails
+    /// on an absurd value; clamping happens later, in the executor.
+    #[test]
+    fn open_shell_args_carry_rows_and_cols() {
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "open_shell",
+            &json!({"rows": 50, "cols": 160}),
+            None,
+        )
+        .expect("the sized form dispatches");
+        let AiEvent::OpenShell { rows, cols, .. } = ev else {
+            panic!("expected AiEvent::OpenShell, got {ev:?}")
+        };
+        assert_eq!(rows, Some(50), "the rows request lands in the event");
+        assert_eq!(cols, Some(160), "the cols request lands in the event");
+
+        let ev = dispatch_tool_event("tc_1", "open_shell", &json!({}), None)
+            .expect("the bare form dispatches");
+        let AiEvent::OpenShell { rows, cols, .. } = ev else {
+            panic!("expected AiEvent::OpenShell, got {ev:?}")
+        };
+        assert_eq!(rows, None, "an absent rows is None, never a default");
+        assert_eq!(cols, None, "an absent cols is None, never a default");
+    }
+
     #[test]
     fn invalid_args_event_names_the_mistyped_param() {
         let ev = invalid_args_event(
