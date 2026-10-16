@@ -1,7 +1,7 @@
 # Phase 03b: geometry — shells spawn at `[shells] rows` × `cols`, default 40×120
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-03a
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -326,3 +326,15 @@ kill: (-1835677): No such process
 **Commit:** 572818175968a6b749189bfb68e53f30a74c4fec
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-16
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch, 120 turns)
+- **Scope deviations:** none
+- **Calibration:** none. Independent re-run: 2387 passed / 0 failed, fmt and
+  clippy clean, fixed-size spawn grep 13 ⇒ 0. One helper (`spawn_size`)
+  at every site plus the `server/shells.rs` fallback; clamps live in
+  `ShellsConfig::size`; the hand-written `Default` carries 40×120; README
+  table + example, config template and struct doc comment all updated.
