@@ -1006,6 +1006,8 @@ values are checked at daemon startup; see the lifecycle table in
 | `exited_retention_secs` | integer | `300` | How long an exited shell's registry record stays listed before it is reaped. `0` = reap a dead shell on the pass after its host is first seen dead. The `.cast` log has a separate, day-based retention below. |
 | `log_retention_days` | integer | `7` | Days to keep `var/log/shells/*.cast` (and their `.meta.json` sidecars). `0` = keep forever. A shell still in the registry is never swept, however old its log. |
 | `scrollback_lines` | integer | `5000` | Rows of scrollback the screen model retains per shell. |
+| `rows` | integer | `40` | Rows of the PTY every shell spawns with. Clamped to `10..=200`, so `0` cannot open an unusable terminal. |
+| `cols` | integer | `120` | Columns of the PTY every shell spawns with. Clamped to `40..=500`. |
 
 ```toml
 [shells]
@@ -1013,6 +1015,8 @@ max_per_owner        = 5
 exited_retention_secs = 300
 log_retention_days   = 7
 scrollback_lines     = 5000
+rows                 = 40
+cols                 = 120
 ```
 
 ### `[hosts.<name>]` sections

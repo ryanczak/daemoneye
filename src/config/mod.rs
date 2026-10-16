@@ -998,6 +998,30 @@ mod tests {
     }
 
     #[test]
+    fn shells_config_defaults_to_40_by_120() {
+        let empty: Config = toml::from_str("[shells]\n").unwrap();
+        assert_eq!(empty.shells.rows, 40, "rows must default to 40");
+        assert_eq!(empty.shells.cols, 120, "cols must default to 120");
+        assert_eq!(empty.shells.size(), (40, 120));
+
+        let sized: Config = toml::from_str("[shells]\nrows = 50\ncols = 200\n").unwrap();
+        assert_eq!((sized.shells.rows, sized.shells.cols), (50, 200));
+
+        let shells = ShellsConfig::default();
+        assert_eq!(shells.size(), (40, 120), "default().size() is (40, 120)");
+    }
+
+    #[test]
+    fn shells_size_clamps_nonsense() {
+        let zero: Config = toml::from_str("[shells]\nrows = 0\ncols = 0\n").unwrap();
+        assert_eq!(zero.shells.size(), (10, 40), "0 clamps to the floor");
+        let huge: Config = toml::from_str("[shells]\nrows = 9999\ncols = 9999\n").unwrap();
+        assert_eq!(huge.shells.size(), (200, 500), "9999 clamps to the ceiling");
+        let sane: Config = toml::from_str("[shells]\nrows = 50\ncols = 200\n").unwrap();
+        assert_eq!(sane.shells.size(), (50, 200), "a sane size passes through");
+    }
+
+    #[test]
     fn shells_config_defaults() {
         let shells = ShellsConfig::default();
         assert_eq!(shells.max_per_owner, 5);

@@ -19,7 +19,8 @@ pub(super) type WriteSpawn = Box<
 pub(super) fn production_spawn(name: &str) -> WriteSpawn {
     let name = name.to_string();
     Box::new(move |id| {
-        Box::pin(async move { crate::shell::spawn_ssh_host(id, &name, 24, 80).await })
+        let (rows, cols) = crate::shell::spawn_size();
+        Box::pin(async move { crate::shell::spawn_ssh_host(id, &name, rows, cols).await })
     })
 }
 

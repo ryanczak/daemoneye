@@ -454,7 +454,8 @@ where
 /// test — the seam is what makes the host path testable at all.
 async fn run_script_on_host(reg: &ShellRegistry, owner: Owner, cmd: &str) -> (String, i32) {
     run_script_on_host_with(reg, owner, cmd, |shell_id| {
-        crate::shell::spawn_detached_host(shell_id, &[], 24, 80)
+        let (rows, cols) = crate::shell::spawn_size();
+        crate::shell::spawn_detached_host(shell_id, &[], rows, cols)
     })
     .await
 }
@@ -498,8 +499,9 @@ async fn run_script_in_sandbox(
         &cmd_to_run,
         "scheduled",
         |shell_id| {
+            let (rows, cols) = crate::shell::spawn_size();
             let s = sandbox.clone();
-            async move { crate::shell::spawn_sbx_host(shell_id, &s, 24, 80).await }
+            async move { crate::shell::spawn_sbx_host(shell_id, &s, rows, cols).await }
         },
     )
     .await

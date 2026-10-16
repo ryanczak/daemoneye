@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 
-use crate::config::Config;
+use crate::config::{Config, ShellsConfig};
 use crate::host::ssh_argv;
 use crate::shell::foreground::Foreground;
 use crate::shell::launch;
@@ -272,6 +272,16 @@ where
 /// `$status`). One function so the two can never disagree.
 pub fn login_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string())
+}
+
+/// The `(rows, cols)` every production spawn passes: `[shells] rows`/`cols`
+/// (D10), or `ShellsConfig::default().size()` when the config cannot be
+/// loaded. One helper so every spawn site reads the same geometry and the
+/// sites can never drift apart.
+pub fn spawn_size() -> (u16, u16) {
+    Config::load()
+        .map(|cfg| cfg.shells.size())
+        .unwrap_or_else(|_| ShellsConfig::default().size())
 }
 
 /// The shell name whose exit-variable syntax the marker protocol must use.

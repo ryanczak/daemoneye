@@ -623,7 +623,10 @@ where
                                     tx,
                                     rx,
                                     crate::host::HostId::Local,
-                                    |id| crate::shell::spawn_detached_host(id, &[], 24, 80),
+                                    |id| {
+                                        let (rows, cols) = crate::shell::spawn_size();
+                                        crate::shell::spawn_detached_host(id, &[], rows, cols)
+                                    },
                                 )
                                 .await
                                 {
@@ -739,7 +742,10 @@ where
                                     tx,
                                     rx,
                                     host.clone(),
-                                    |id| crate::shell::spawn_ssh_host(id, name, 24, 80),
+                                    |id| {
+                                        let (rows, cols) = crate::shell::spawn_size();
+                                        crate::shell::spawn_ssh_host(id, name, rows, cols)
+                                    },
                                 )
                                 .await
                                 {

@@ -55,7 +55,7 @@ pub use session::{
     PROBE_TIMEOUT, clear_sandbox_sidecar, host_entry, host_entry_or_bare, login_shell,
     marker_shell_name, master_running, probe_foreground, shell_for_owner,
     shell_for_owner_in_sandbox, shell_marker_name, spawn_dedicated_for, spawn_detached_host,
-    spawn_ghost_ssh_host, spawn_sbx_host, spawn_ssh_host, which_sbx, which_ssh,
+    spawn_ghost_ssh_host, spawn_sbx_host, spawn_size, spawn_ssh_host, which_sbx, which_ssh,
 };
 
 use std::sync::OnceLock;

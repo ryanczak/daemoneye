@@ -722,8 +722,9 @@ impl ExecutionConfig {
 }
 
 /// Shell-engine settings (`[shells]`).
-/// These values control the PTY-backed shell engine shipped by M20; nothing
-/// in the daemon reads them yet.
+/// These values control the PTY-backed shell engine shipped by M20; `rows` and
+/// `cols` are the geometry every production spawn reads (`ShellsConfig::size`,
+/// via `spawn_size`), and the screen model reads `scrollback_lines`.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ShellsConfig {
     /// Max concurrent shells one owner (a chat session, a ghost) may hold.
@@ -741,6 +742,12 @@ pub struct ShellsConfig {
     /// Default: 5000.
     #[serde(default = "default_shells_scrollback_lines")]
     pub scrollback_lines: u32,
+    /// Rows of the PTY every production spawn opens. Default: 40.
+    #[serde(default = "default_shells_rows")]
+    pub rows: u16,
+    /// Columns of the PTY every production spawn opens. Default: 120.
+    #[serde(default = "default_shells_cols")]
+    pub cols: u16,
 }
 
 /// Default per-owner concurrent shell cap (5).
@@ -763,6 +770,16 @@ fn default_shells_scrollback_lines() -> u32 {
     5000
 }
 
+/// Default shell PTY height (40 rows).
+fn default_shells_rows() -> u16 {
+    40
+}
+
+/// Default shell PTY width (120 columns).
+fn default_shells_cols() -> u16 {
+    120
+}
+
 impl Default for ShellsConfig {
     fn default() -> Self {
         Self {
@@ -770,7 +787,18 @@ impl Default for ShellsConfig {
             exited_retention_secs: default_shells_exited_retention_secs(),
             log_retention_days: default_shells_log_retention_days(),
             scrollback_lines: default_shells_scrollback_lines(),
+            rows: default_shells_rows(),
+            cols: default_shells_cols(),
         }
+    }
+}
+
+impl ShellsConfig {
+    /// The `(rows, cols)` a shell spawns with: `rows` clamped to `10..=200`
+    /// and `cols` to `40..=500`, so `rows = 0` cannot open an unusable
+    /// terminal and a nonsense value cannot exceed any screen.
+    pub fn size(&self) -> (u16, u16) {
+        (self.rows.clamp(10, 200), self.cols.clamp(40, 500))
     }
 }
 

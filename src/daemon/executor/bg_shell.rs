@@ -132,8 +132,9 @@ pub(super) async fn start_background_sandboxed(
         max_per_owner,
         &sandbox,
         |shell_id| {
+            let (rows, cols) = crate::shell::spawn_size();
             let s = sandbox.clone();
-            async move { crate::shell::spawn_sbx_host(shell_id, &s, 24, 80).await }
+            async move { crate::shell::spawn_sbx_host(shell_id, &s, rows, cols).await }
         },
     )
     .await
@@ -227,7 +228,8 @@ async fn finish_start(
 }
 
 /// The production form: [`start_background_with`] with the real spawn. The
-/// PTY geometry matches `shell_exec`'s host spawn (24×80).
+/// PTY geometry is `[shells] rows`/`cols` via [`crate::shell::spawn_size`],
+/// the same geometry `shell_exec`'s host spawn reads.
 pub(super) async fn start_background(
     reg: &ShellRegistry,
     owner: Owner,
@@ -235,7 +237,8 @@ pub(super) async fn start_background(
     max_per_owner: u32,
 ) -> anyhow::Result<(BackgroundStart, CommandHandle)> {
     start_background_with(reg, owner, cmd, max_per_owner, |id| {
-        crate::shell::spawn_detached_host(id, &[], 24, 80)
+        let (rows, cols) = crate::shell::spawn_size();
+        crate::shell::spawn_detached_host(id, &[], rows, cols)
     })
     .await
 }

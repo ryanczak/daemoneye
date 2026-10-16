@@ -279,8 +279,7 @@ prompt = "sre"
 # ── Shells ───────────────────────────────────────────────────────────────────
 
 # [shells]
-# Settings for the PTY-backed shell engine. Nothing here takes effect yet;
-# later M20 phases consume these values.
+# Settings for the PTY-backed shell engine.
 #
 # max_per_owner        = 5      # max concurrent shells one owner (a chat
 #                               # session, a ghost) may hold; 0 = unlimited
@@ -290,6 +289,10 @@ prompt = "sre"
 #                               # 0 = keep forever
 # scrollback_lines     = 5000   # rows of scrollback the screen model retains
 #                               # per shell
+# rows                 = 40     # rows of the PTY every shell spawns with
+#                               # (clamped 10..=200)
+# cols                 = 120    # columns of the PTY every shell spawns with
+#                               # (clamped 40..=500)
 
 # ── Daemon ───────────────────────────────────────────────────────────────────
 

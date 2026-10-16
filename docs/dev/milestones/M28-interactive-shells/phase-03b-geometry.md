@@ -1,7 +1,7 @@
 # Phase 03b: geometry — shells spawn at `[shells] rows` × `cols`, default 40×120
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03a
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -131,6 +131,35 @@ diff /tmp/pasted-03b.txt /tmp/e2e-03b.txt && echo "PASTE MATCH" || echo "PASTE M
 
 ## Update Log
 
-(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+### Update — 2026-10-16 20:57 (progress)
+
+Executor Claude (Opus 4.6, rexyMCP run) started phase-03b. Status flipped to
+in-progress (README phase table to match). Tasks 1–4 implemented: `rows`/`cols`
+on `ShellsConfig` with `size()` clamping (10..=200 rows, 40..=500 cols);
+`spawn_size()` in `src/shell/session.rs`, re-exported from `src/shell/mod.rs`;
+all 13 production spawn sites plus `server/shells.rs`'s unreadable-host
+fallback now read it (`TEST_ROWS`/`TEST_COLS` stay test-only, `#[cfg(test)]`-gated
+after they went dead in the non-test build); `[shells]` docs in the template
+and README, stale "nothing takes effect yet" line deleted;
+`shells_config_defaults_to_40_by_120` and `shells_size_clamps_nonsense` added.
+Gates green: fmt, clippy -D warnings, full suite passed=2387 failed=0.
+End-to-end capture and the started commit follow.
+
+### Update — 2026-10-16 20:57 (end-to-end verification)
+
+`§ End-to-end verification` run verbatim, output redirected to `/tmp/e2e-03b.txt`
+and pasted below unedited; the `PASTE MATCH` line follows the fence.
+
+```
+shells_config_defaults_to_40_by_120: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+shells_size_clamps_nonsense: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+fixed_size_spawns=0
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2387 failed=0
+```
+
+PASTE MATCH
 
 <!-- entries appended below this line -->

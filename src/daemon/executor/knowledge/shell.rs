@@ -2232,9 +2232,12 @@ pub(super) const SHELL_READY_TIMEOUT: std::time::Duration = std::time::Duration:
 const SIGNAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The PTY geometry this module's test host spawns with — the same 24×80
-/// `shell_exec` uses, so both fixtures produce interchangeable hosts.
+/// `shell_exec` uses, so both fixtures produce interchangeable hosts. Test-only:
+/// production spawns read `[shells] rows`/`cols` through `spawn_size()`.
+#[cfg(test)]
 const TEST_ROWS: u16 = 24;
 /// The PTY geometry this module's test host spawns with.
+#[cfg(test)]
 const TEST_COLS: u16 = 80;
 
 /// Renders an anyhow chain as `top-level (source) (source)` — the shape
@@ -2524,11 +2527,13 @@ fn open_shell_test_registry() -> crate::shell::ShellRegistry {
 
 #[cfg(not(test))]
 async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
-    crate::shell::spawn_detached_host(id, &[], TEST_ROWS, TEST_COLS).await
+    let (rows, cols) = crate::shell::spawn_size();
+    crate::shell::spawn_detached_host(id, &[], rows, cols).await
 }
 
 async fn spawn_on_named_host(id: ShellId, name: &str) -> anyhow::Result<()> {
-    crate::shell::spawn_ssh_host(id, name, TEST_ROWS, TEST_COLS).await
+    let (rows, cols) = crate::shell::spawn_size();
+    crate::shell::spawn_ssh_host(id, name, rows, cols).await
 }
 
 /// The cap-breach sentence for `open_shell`. `max_per_owner == 0` means

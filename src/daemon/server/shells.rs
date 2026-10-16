@@ -540,7 +540,7 @@ where
     // it to draw them. A host that cannot answer reads as the spawn default.
     let (rows, cols) = match crate::shell::status(&sock, RELAY_TIMEOUT).await {
         Ok(crate::shell::ShellResponse::Status { rows, cols, .. }) => (rows, cols),
-        _ => (24, 80),
+        _ => crate::shell::spawn_size(),
     };
     let stream = match tokio::net::UnixStream::connect(&sock).await {
         Ok(s) => s,

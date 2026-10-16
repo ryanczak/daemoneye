@@ -330,7 +330,10 @@ where
             host.clone(),
             cmd,
             id,
-            |shell_id| crate::shell::spawn_ghost_ssh_host(shell_id, name, 24, 80),
+            |shell_id| {
+                let (rows, cols) = crate::shell::spawn_size();
+                crate::shell::spawn_ghost_ssh_host(shell_id, name, rows, cols)
+            },
         )
         .await;
         crate::daemon::stats::finish_command(cmd_id, exit_code);
@@ -406,9 +409,10 @@ where
                             &cmd_to_run,
                             id,
                             move |shell_id| {
+                                let (rows, cols) = crate::shell::spawn_size();
                                 let s = spawn_sandbox.clone();
                                 async move {
-                                    crate::shell::spawn_sbx_host(shell_id, &s, 24, 80).await
+                                    crate::shell::spawn_sbx_host(shell_id, &s, rows, cols).await
                                 }
                             },
                         )
@@ -451,7 +455,10 @@ where
             crate::host::HostId::Local,
             cmd,
             id,
-            |shell_id| crate::shell::spawn_detached_host(shell_id, &[], 24, 80),
+            |shell_id| {
+                let (rows, cols) = crate::shell::spawn_size();
+                crate::shell::spawn_detached_host(shell_id, &[], rows, cols)
+            },
         )
         .await;
         crate::daemon::stats::finish_command(cmd_id, exit_code);

@@ -176,7 +176,10 @@ pub async fn run_read_file(
                 host_id.clone(),
                 &cmd,
                 REMOTE_READ_TIMEOUT_SECS,
-                |id| crate::shell::spawn_ssh_host(id, name, 24, 80),
+                |id| {
+                    let (rows, cols) = crate::shell::spawn_size();
+                    crate::shell::spawn_ssh_host(id, name, rows, cols)
+                },
             )
             .await
             {
