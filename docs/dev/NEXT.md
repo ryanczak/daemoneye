@@ -4,8 +4,8 @@
 2026-10-13 from `docs/design/interactive-shells.md`. See
 [`README.md`](milestones/M28-interactive-shells/README.md).
 
-**Active phase:** [phase-03a-screen-wait](milestones/M28-interactive-shells/phase-03a-screen-wait.md)
-— todo. Dispatch with `/rexymcp:dispatch phase-03a-screen-wait`. Phases 01,
+**Active phase:** [phase-03b-geometry](milestones/M28-interactive-shells/phase-03b-geometry.md)
+— todo. Dispatch with `/rexymcp:dispatch phase-03b-geometry`. Phases 01,
 01b, 01c, 02a, 02b, 02c, 02d, 02e, 02f, 02g and 03a are done.
 
 M27 closed 2026-10-12 (`v2.0.0`). The roadmap's former M28–M30 are now
