@@ -1,7 +1,7 @@
 # Phase 03a: screen-wait — `read_shell_screen` can wait for a pattern or a quiet screen
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-02g
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -574,3 +574,21 @@ kill: (-491276): No such process
 **Commit:** c2a34c393451b01ced76661757c0c61c3c642dc5
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-16
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-03a-1: `wait_for` with `settle_ms` returned on the first
+  match and never settled)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (587 turns, then
+  a 50-turn bounce fix)
+- **Scope deviations:** none. Accepted as is: `settle_ms: 0` means no
+  settle wait rather than clamping to 50 ms; the never-reached `Failed("")`
+  arm in `wait_screen` (the caller does not call it with neither wait set).
+- **Calibration:** the bug was architect-caused at the root. The spec
+  defined combined behaviour ("first the pattern, then the settle") but
+  named no test for the combination, so nothing pinned it. Lesson: every
+  behaviour a spec states as a combination needs its own named test.
+  Independent re-run: 2385 passed / 0 failed, fmt and clippy clean; the fix's
+  mutation check (restore the early return ⇒ `Matched`, `1 failed`) is in
+  the Update Log.

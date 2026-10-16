@@ -1,7 +1,7 @@
 # Bug 1 on phase-03a: `wait_for` with `settle_ms` never settles
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (c2a34c39)
 **Filed:** 2026-10-15
 
 ## What's wrong
