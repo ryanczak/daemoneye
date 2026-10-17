@@ -1,7 +1,7 @@
 # Phase 03d: launch — an interactive command starts in its shell and returns the screen
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03c
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -52,7 +52,10 @@ interactive command) or any tool definition.
 
    The text names no exit code. `exit_code: 0` exists only for the stats
    and the shell-command log, which have no field for "did not exit".
-2. **The branch.** In `run_in_shell_core`, the
+2. **The branch.** In `run_in_shell_core` — the branch is the one
+   `if crate::daemon::utils::is_interactive_command(cmd) {` in that
+   function, and the resolved shell is bound above it by
+   `let (id, socket) = match target {`, so pass `&id` and `&socket` — the
    `is_interactive_command(cmd)` branch calls `launch_interactive` with the
    resolved `id` and socket, instead of `bail!`ing. It stays where it is,
    after target resolution and the named-shell busy probe, so a named busy
@@ -79,8 +82,17 @@ interactive command) or any tool definition.
     and its output contains `ALIVE`. Send `\x03` to the first shell at the
     end. Use `sleep 30` and not ssh, because ssh to an unresolvable host
     exits at once and leaves the shell idle.
-- Use the existing in-process host fixtures (`run_in_shell_for_test` with
-  `spawn_in_process_host`, `test_home`) as the current tests do.
+- **How a test gets a shell to launch into** (this is what the first run
+  could not find). In the `shell_exec.rs` test module:
+  1. `let (_home, _dir) = test_home(); let reg = ShellRegistry::default();`
+  2. `let (id, _) = run_in_shell_for_test(&reg, owner.clone(), "true", 5, None, None, spawn_in_process_host).await?;`
+     — this creates the owner's shell and returns its id;
+  3. `launch_interactive(&reg, &id, &socket_path(id.as_str()), "sleep 30").await`;
+  4. for the next-command test, `run_in_shell_for_test(&reg, owner, "echo ALIVE", 5, None, None, spawn_in_process_host)`
+     returns `(id2, result)` with `id2 != id`;
+  5. clean up with `crate::shell::send_input(&socket_path(id.as_str()), b"\x03", Duration::from_secs(5))`.
+  `run_in_shell_for_test` is the helper at the top of the test module;
+  you do not need to read the helpers below it.
 
 ## Tests
 
@@ -150,3 +162,23 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-17 (refined re-dispatch)
+
+The first run wrote no code: it hard-failed at turn 147 on a
+`NoProgressStall` after reading `shell_exec.rs` in full and then **one or two
+lines at a time** through lines 2040–2154 (the test helpers), looking for how
+a test obtains a shell to call `launch_interactive` on. That recipe is now in
+§ Gotchas, and the production edit's two anchors (the `is_interactive_command`
+branch and the `let (id, socket) = match target {` binding) are named in
+Spec Task 2. **Do not read files a line at a time**: find an anchor with one
+`grep -n`, then read one 60–120-line window around it. Write
+`launch_interactive` first, then the branch, then the three tests. Record the
+executor as the model that actually runs (the first run's log entry named a
+different model and has been removed).
+
+
+### Update — 2026-10-17 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** first failure, wrote no code, and the stall traces to a spec gap (no recipe for a test to obtain the shell `launch_interactive` needs, and no anchor for the edit in a 3,700-line file), which a re-dispatch with those named fixes; there is no partial work for a resume to keep.
