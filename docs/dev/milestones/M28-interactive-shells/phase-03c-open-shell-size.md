@@ -1,7 +1,7 @@
 # Phase 03c: open-shell-size — `open_shell(rows, cols)`
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-03b
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -318,3 +318,20 @@ kill: (-1981142): No such process
 **Commit:** e918fbbb9a9a88d57104633c21588e2c447dc0b5
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-17
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch, 523 turns)
+- **Scope deviations:** none
+- **Calibration:** turn cost, held for the retrospective. Every phase that
+  threads a new tool parameter through the six layers (args → event →
+  pending → stream → defs → executor arm) ran long: 02e 263, 03a 587,
+  03c 523, against 92 for 02g and 120 for 03b, which touched no tool
+  surface. Correctness was not the problem: all three passed, and 03a's
+  bounce was the spec's fault. Independent re-run: 2390 passed / 0
+  failed, fmt and clippy clean. `resolve_size` routes through
+  `ShellsConfig::size` (one clamp source, `u16` saturating before the
+  clamp); the production sized spawns pass the size through and the
+  test host ignores it, as specified.

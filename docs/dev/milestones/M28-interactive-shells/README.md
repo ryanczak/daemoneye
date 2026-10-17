@@ -59,7 +59,7 @@ phases are split further where one is more than a session.
 | 02g | allow-tui-input ([phase-02g-allow-tui-input.md](phase-02g-allow-tui-input.md)) — the runbook `allow_tui_input` field through `GhostConfig` / `GhostPolicy`, lifting 02f's ghost refusal; docs. *Split from 02f at drafting* | done (approved_first_try, 2026-10-14) |
 | 03a | screen-wait ([phase-03a-screen-wait.md](phase-03a-screen-wait.md)) — `read_shell_screen` gains `wait_for`, `settle_ms`, `timeout_secs`; quiescence on rendered text; a wait that runs out is a result | done (approved_after_1, 2026-10-16) |
 | 03b | geometry ([phase-03b-geometry.md](phase-03b-geometry.md)) — `[shells] rows`/`cols` (40×120) through one `spawn_size()` at all 13 spawn sites | done (approved_first_try, 2026-10-16) |
-| 03c | open-shell-size ([phase-03c-open-shell-size.md](phase-03c-open-shell-size.md)) — `open_shell(rows, cols)`; the result names the size. *Split from 03b at drafting* | review      |
+| 03c | open-shell-size ([phase-03c-open-shell-size.md](phase-03c-open-shell-size.md)) — `open_shell(rows, cols)`; the result names the size. *Split from 03b at drafting* | done (approved_first_try, 2026-10-17) |
 | 03d | launch — `run_terminal_command(interactive: true)` (write, settle, return the screen); the ssh auto-upgrade replacing 02c's refusal | todo |
 | — | live close (M14 convention) at milestone close: the design § 6 phase-02 and phase-03 live checks | todo |
 
