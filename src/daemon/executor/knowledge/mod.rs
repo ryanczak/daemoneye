@@ -21,6 +21,11 @@ pub(super) use shell::{
     close_shell, compose_input, find_in_shells, input_panel, list_shell_logs, list_shells,
     open_shell, read_shell, read_shell_log, read_shell_screen, send_input, watch_shell,
 };
+// `read_shell_screen_in` is the injected-registry form the interactive
+// launch (`shell_exec.rs`) reads the screen through — wider than the group
+// above for the same reason `format_err_chain` is.
+pub(crate) use shell::SCREEN_TIMEOUT;
+pub(crate) use shell::read_shell_screen_in;
 // Wider than the group above on purpose: the prompt builders reach it from
 // `daemon`, and a `pub(super)` binding cannot be widened on re-export.
 pub use shell::{

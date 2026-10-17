@@ -182,3 +182,31 @@ different model and has been removed).
 
 **Chosen lever:** refined re-dispatch
 **Rationale:** first failure, wrote no code, and the stall traces to a spec gap (no recipe for a test to obtain the shell `launch_interactive` needs, and no anchor for the edit in a 3,700-line file), which a re-dispatch with those named fixes; there is no partial work for a resume to keep.
+
+### Update — 2026-10-17 18:37 (progress)
+
+**Executor:** phase-03d run 2 (headless).
+
+`launch_interactive` and the branch are in; the two 02c tests are renamed and
+rewritten to the launch shape and `launch_interactive_returns_the_settled_screen`
+passes. `read_shell_screen_in` is `pub(crate)` and re-exported from
+`knowledge`, with `SCREEN_TIMEOUT` widened for the same caller. Capturing the
+end-to-end evidence next.
+
+### Update — 2026-10-17 18:52 (end-to-end verification)
+
+Run of § End-to-end verification, verbatim, captured to `/tmp/e2e-03d.txt`:
+
+```
+launch_interactive_returns_the_settled_screen: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+run_terminal_command_launches_an_interactive_command: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+an_interactive_launch_keeps_its_shell_and_the_next_command_gets_another: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+shell_exec_non_interactive_still_runs_on_the_same_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+refusal_text=0
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2391 failed=0
+```
+
+PASTE MATCH

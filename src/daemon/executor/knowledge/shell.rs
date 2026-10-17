@@ -1807,8 +1807,9 @@ where
 
 /// The socket round-trip budget for one screen read: the same 5 s the other
 /// one-shot shell probes use. The answer is a render, not the program
-/// reacting, so it is short.
-const SCREEN_TIMEOUT: Duration = Duration::from_secs(5);
+/// reacting, so it is short. `pub(crate)`: the interactive launch
+/// (`shell_exec.rs`) reads the settled screen through it too.
+pub(crate) const SCREEN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The default and clamped bounds for a screen wait (`timeout_secs` /
 /// `settle_ms`). The default 30 s covers a Claude Code turn; 300 s is the
@@ -1998,6 +1999,10 @@ pub async fn read_shell_screen(
 
 /// `read_shell_screen` against an injected registry and timeout.
 ///
+/// `pub(crate)` rather than `pub(super)`: `shell_exec.rs`'s interactive
+/// launch reads the screen through it, and `knowledge/mod.rs` re-exports it
+/// — a `pub(super)` item cannot be given wider visibility on re-export.
+///
 /// Reads the visible screen on its own, then — only when `scrollback` is
 /// asked for — reads again with the scrollback rows and keeps the part above
 /// the visible screen. The host joins the two with a plain newline, so the
@@ -2009,7 +2014,7 @@ pub async fn read_shell_screen(
 /// out is a result, not an error — the screen as it now stands is still the
 /// answer to "what does this show?".
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn read_shell_screen_in(
+pub(crate) async fn read_shell_screen_in(
     reg: &ShellRegistry,
     shell: &str,
     lines: Option<u64>,

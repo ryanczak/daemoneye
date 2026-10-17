@@ -373,16 +373,13 @@ where
         }
     }
     if crate::daemon::utils::is_interactive_command(cmd) {
-        // The command must never be written to the shell: an interactive
-        // session owns the terminal and consumes every byte, so writing would
-        // poison the shell for every later command (08b F2). Refuse before
-        // running, naming the tools that hold an interactive session.
-        anyhow::bail!(
-            "Error: `{cmd}` starts an interactive session, which \
-             run_terminal_command cannot hold: nothing was run. To start it, \
-             open a shell with open_shell, type the command into it with \
-             send_input, and see the session with read_shell_screen."
-        );
+        // The command is launched, not run to completion: the bare command
+        // plus `\r` starts the session and the settled screen is what comes
+        // back (D6). No markers, no exit wait, no signal to the foreground
+        // group — the shell stays busy holding the session, so the reuse
+        // rule hands later commands to another shell.
+        let result = launch_interactive(reg, &id, &socket, cmd).await?;
+        return Ok((id, result));
     }
     let (started_unix, record_host, marker) = with_shells(reg, |store| {
         store
@@ -452,6 +449,47 @@ where
             Err(e.context(ctx))
         }
     }
+}
+
+/// Start an interactive command in `id`'s shell and return the settled screen
+/// without waiting for the session to end (D6): the bare command plus `\r`,
+/// no marker wrapping, then `read_shell_screen_in`'s settle-and-read, which
+/// records the shell's `last_foreground`. The shell stays busy while the
+/// session runs — the reuse rule and the named-shell probe see it through
+/// `last_foreground`, so later commands land elsewhere.
+async fn launch_interactive(
+    reg: &ShellRegistry,
+    id: &ShellId,
+    sock: &Path,
+    cmd: &str,
+) -> anyhow::Result<ShellRunResult> {
+    let bytes: &[u8] = &[cmd.as_bytes(), b"\r"].concat();
+    crate::shell::send_input(sock, bytes, Duration::from_secs(5)).await?;
+    let screen = super::knowledge::read_shell_screen_in(
+        reg,
+        id.as_str(),
+        None,
+        None,
+        None,
+        false,
+        None,
+        Some(500),
+        Some(5),
+        super::knowledge::SCREEN_TIMEOUT,
+    )
+    .await;
+    Ok(ShellRunResult {
+        text: format!(
+            "[Interactive session started] `{cmd}` holds shell {}; nothing waits \
+             for it. Type into it with send_input(shell: \"{}\") and read it \
+             with read_shell_screen(shell: \"{}\"). Later commands run in \
+             another shell while it is busy.\n{screen}",
+            id.as_str(),
+            id.as_str(),
+            id.as_str(),
+        ),
+        exit_code: 0,
+    })
 }
 
 /// The non-sudo epilogue: index, format, annotate. Shared by the plain and the
@@ -1691,17 +1729,18 @@ mod tests {
         );
     }
 
-    /// 08b's primary case, in the refusal shape: an interactive command
-    /// resolves immediately with an **error**, and nothing is ever written to
-    /// the shell. Set against a real in-process host; nothing is sent over
-    /// the PTY, so no network is involved — the classifier keys on the
-    /// command string, and `nowhere.invalid` has no reachable host anyway.
+    /// 08b's primary case, in the launch shape: an interactive command is
+    /// launched in the resolved shell — the bare command plus `\r`, no
+    /// markers — and returns `Ok` with the settled screen without waiting
+    /// for the session to end (D6). The ssh really runs and fails to resolve
+    /// the host; the screen shows that honestly, so nothing is asserted
+    /// about what ssh printed.
     #[tokio::test]
-    async fn shell_exec_interactive_returns_without_running_the_command() {
+    async fn run_terminal_command_launches_an_interactive_command() {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let start = std::time::Instant::now();
-        let err = run_in_shell_for_test(
+        let (id, result) = run_in_shell_for_test(
             &reg,
             Owner::Chat("interactive".into()),
             "ssh nowhere.invalid",
@@ -1711,93 +1750,150 @@ mod tests {
             spawn_in_process_host,
         )
         .await
-        .expect_err("an interactive command is refused, not started");
+        .expect("an interactive command launches instead of being refused");
         let elapsed = start.elapsed();
         assert!(
-            elapsed < std::time::Duration::from_secs(5),
-            "the interactive path must return at once — {elapsed:?} means the \
-             command was written to the shell and waited for a prompt"
-        );
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("nothing was run"),
-            "the refusal must say the command never ran: {msg}"
+            elapsed < std::time::Duration::from_secs(10),
+            "the launch must return without waiting for the session — \
+             {elapsed:?} means it waited for ssh to exit"
         );
         assert!(
-            msg.contains("open_shell") && msg.contains("send_input"),
-            "the refusal must name the tools that hold an interactive session: {msg}"
+            result.text.starts_with("[Interactive session started]"),
+            "the launch result opens with the launch sentence: {:?}",
+            result.text
         );
-        let held: Vec<String> = with_shells(&reg, |store| {
-            store.values().map(|r| r.id.as_str().to_string()).collect()
-        });
+        assert!(
+            result.text.contains(id.as_str()),
+            "the launch result names the shell the session holds: {id} — {:?}",
+            result.text
+        );
         assert_eq!(
-            held.len(),
-            1,
-            "the refusal still resolved the owner's shell"
+            result.exit_code, 0,
+            "the launch's exit code is the stats placeholder, not ssh's"
+        );
+        assert!(
+            !result.text.contains("exit"),
+            "the launch result names no exit code — nothing exited: {:?}",
+            result.text
         );
 
-        // The decisive half: the shell nothing was written to must still
-        // answer. If the command had been written, its bytes would sit under
-        // an interactive process and every later write would time out.
-        let outcome = crate::shell::run_command(
-            &crate::shell::socket_path(held[0].as_str()),
-            "echo PROBE_ALIVE",
-            "bash",
-            std::time::Duration::from_secs(10),
+        // The ssh really ran: the screen part is the host's render, not the
+        // launch sentence. What it shows is ssh's own failure to resolve the
+        // host — not asserted here, since it is the host's wording, not the
+        // daemon's. The record's last observed foreground is whatever the
+        // settle read saw, and `ssh nowhere.invalid` fails to resolve at
+        // once, so the shell may already be idle again — `sleep 30`
+        // (`launch_interactive_returns_the_settled_screen`) pins the busy
+        // read.
+
+        // The launch really wrote to the shell: end whatever held it with
+        // the interrupt byte, then prove the shell is at its prompt and
+        // still usable.
+        // holder: end it with the byte that interrupts ssh, then prove the
+        // shell is back to its prompt and still usable.
+        crate::shell::send_input(
+            &crate::shell::socket_path(id.as_str()),
+            b"\x03",
+            Duration::from_secs(5),
         )
         .await
-        .expect("the unpoisoned shell answers");
-        let text = String::from_utf8_lossy(&outcome.output);
+        .expect("the shell accepts the interrupt");
+    }
+    /// The launch path itself: `launch_interactive` writes the bare command
+    /// plus `\r` into the shell, waits for the screen to settle, and returns
+    /// the header plus the masked screen (D6). `sleep 30` really runs, so the
+    /// record's last observed foreground is the running program and the
+    /// interrupt at the end is what ends it.
+    #[tokio::test]
+    async fn launch_interactive_returns_the_settled_screen() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("launch-screen".into());
+        let (id, _) =
+            run_in_shell_for_test(&reg, owner, "true", 5, None, None, spawn_in_process_host)
+                .await
+                .expect("the owner's shell comes up");
+        let before = with_shells(&reg, |store| {
+            store
+                .get(id.as_str())
+                .and_then(|r| r.last_foreground.clone())
+        });
+        assert_eq!(before, None, "nothing is observed before the launch");
+
+        let result = launch_interactive(&reg, &id, &socket_path(id.as_str()), "sleep 30")
+            .await
+            .expect("the launch writes the command and reads the settled screen");
         assert!(
-            text.contains("PROBE_ALIVE"),
-            "the shell must be unpoisoned — nothing was written to it: {text:?}"
+            result.text.starts_with("[Interactive session started]"),
+            "the result opens with the launch sentence: {:?}",
+            result.text
         );
+        assert!(
+            result.text.contains(id.as_str()),
+            "the result names the shell the session holds: {id} — {:?}",
+            result.text
+        );
+        assert!(
+            result.text.lines().skip(1).any(|l| l.contains("sleep 30")),
+            "the screen part shows the command that was launched: {:?}",
+            result.text
+        );
+        assert_eq!(
+            result.exit_code, 0,
+            "the launch's exit code is the stats placeholder, not sleep's"
+        );
+        let fg = with_shells(&reg, |store| {
+            store
+                .get(id.as_str())
+                .and_then(|r| r.last_foreground.clone())
+                .map(|(fg, _)| fg)
+        });
+        assert_eq!(
+            fg,
+            Some(Foreground::Program {
+                cmd: "sleep".into(),
+                tui: false,
+            }),
+            "the settle read records the running program: {fg:?}"
+        );
+
+        crate::shell::send_input(&socket_path(id.as_str()), b"\x03", Duration::from_secs(5))
+            .await
+            .expect("the shell accepts the interrupt");
     }
 
-    /// The F2 regression guard, in the refusal shape: `ssh nowhere.invalid`
-    /// is refused — an error naming the tools that hold an interactive
-    /// session — and nothing is written to the shell, so the shell the
-    /// refused call resolved stays reusable: the owner's next command runs
-    /// in the **same** shell id. An implementation that wrote the command
-    /// would leave that shell poisoned; one that refused without resolving
-    /// a shell would leave the owner without one to reuse.
+    /// The F2 regression guard, in the launch shape: an interactive launch
+    /// keeps its shell — the session holds it, so the reuse rule skips it
+    /// and the owner's next command lands in a **different** shell id.
+    /// Set against real in-process hosts.
     #[tokio::test]
-    async fn run_terminal_command_refuses_an_interactive_command_and_writes_nothing() {
+    async fn an_interactive_launch_keeps_its_shell_and_the_next_command_gets_another() {
         let (_home, _dir) = test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Chat("marked".into());
-        let err = run_in_shell_for_test(
+        let (id, _) = run_in_shell_for_test(
             &reg,
             owner.clone(),
-            "ssh nowhere.invalid",
+            "true",
             5,
             None,
             None,
             spawn_in_process_host,
         )
         .await
-        .expect_err("an interactive command is refused, not started");
-        let msg = format!("{err:#}");
+        .expect("the owner's shell comes up");
+
+        let launched = launch_interactive(&reg, &id, &socket_path(id.as_str()), "sleep 30")
+            .await
+            .expect("the launch starts the session");
         assert!(
-            msg.contains("open_shell") && msg.contains("send_input"),
-            "the refusal must name the tools that hold an interactive session: {msg}"
-        );
-        assert!(
-            msg.contains("nothing was run"),
-            "the refusal must say the command never ran: {msg}"
+            launched.text.contains(id.as_str()),
+            "the launch names the shell it holds: {:?}",
+            launched.text
         );
 
-        let resolved: Vec<String> = with_shells(&reg, |store| {
-            let mut ids: Vec<String> = store.values().map(|r| r.id.as_str().to_string()).collect();
-            ids.sort();
-            ids
-        });
-        assert_eq!(
-            resolved.len(),
-            1,
-            "the refused call still resolved the owner's shell: {resolved:?}"
-        );
-
+        // The reuse rule sees the held shell busy, so the next command runs
+        // in another shell.
         let (id2, second) = run_in_shell_for_test(
             &reg,
             owner.clone(),
@@ -1808,17 +1904,78 @@ mod tests {
             spawn_in_process_host,
         )
         .await
-        .expect("the next command must run in the shell the refusal left behind");
-        assert_eq!(
+        .expect("the next command must run in a fresh shell");
+        assert_ne!(
             id2.as_str(),
-            resolved[0].as_str(),
-            "nothing was written, so the refused call's shell is reused"
+            id.as_str(),
+            "a shell holding a session is never handed to another command"
         );
-        assert_eq!(second.exit_code, 0, "echo actually ran on the reused shell");
+        assert_eq!(second.exit_code, 0, "echo actually ran in the new shell");
         assert!(
             second.text.contains("ALIVE"),
-            "the reused shell produced the command's output, not a timeout: {:?}",
+            "the fresh shell produced the command's output: {:?}",
             second.text
+        );
+
+        // Name the held shell directly: the probe must refuse before any
+        // byte is written — the session, not an absence, holds the terminal.
+        let err = run_in_shell_for_test(
+            &reg,
+            owner.clone(),
+            "echo HELD_REFUSAL_MUST_NOT_RUN",
+            5,
+            Some(id.as_str()),
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect_err("the held shell is refused");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(id.as_str()) && msg.contains("running sleep"),
+            "the refusal names the shell and the session holding it: {msg}"
+        );
+
+        // End the session and prove the shell is still usable.
+        crate::shell::send_input(
+            &crate::shell::socket_path(id.as_str()),
+            b"\x03",
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("the shell accepts the interrupt");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let fg = probe_foreground(&reg, &id, PROBE_TIMEOUT).await;
+            if matches!(fg, Foreground::Prompt) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the shell never came back to its prompt after the interrupt: {fg:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let (id3, third) = run_in_shell_for_test(
+            &reg,
+            owner,
+            "echo ENDED_OK",
+            5,
+            Some(id.as_str()),
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the interrupted shell is usable again");
+        assert_eq!(
+            id3.as_str(),
+            id.as_str(),
+            "ending the session returns the shell to the reuse rule"
+        );
+        assert!(
+            third.text.contains("ENDED_OK"),
+            "the interrupted shell produced the command's output: {:?}",
+            third.text
         );
     }
 
