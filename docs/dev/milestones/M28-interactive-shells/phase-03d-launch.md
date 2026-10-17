@@ -1,7 +1,7 @@
 # Phase 03d: launch — an interactive command starts in its shell and returns the screen
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-03c
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -349,3 +349,21 @@ kill: (-2910585): No such process
 **Commit:** a4f57c1d0923ecedbb2f92d676010558a24ab59b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-17
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (one escalation: the first run hard-failed on a
+  `NoProgressStall` with no code written; refined re-dispatch, 247 turns)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none
+- **Calibration:** the stall was architect-caused. The spec told a test to
+  "call `launch_interactive` on the owner's shell" without saying how a
+  test obtains that shell, and gave no anchor for the edit in a
+  3,700-line file. The executor crawled the test helpers one line per
+  read. Adding a five-step recipe and two anchors turned it into a clean
+  run. Lesson: when a spec asks a test to call a new function directly,
+  give the fixture recipe that produces its arguments. Independent re-run:
+  2391 passed / 0 failed, fmt and clippy clean, refusal text 1 ⇒ 0. The
+  new test pins `last_foreground` `None` before and `Program { sleep }`
+  after the launch.
