@@ -1,7 +1,7 @@
 # Phase 04b: launch-settle — a launch waits for the program to draw; honest refusal wording
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-04a
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -384,3 +384,26 @@ kill: (-229275): No such process
 **Commit:** eb7deaff7b0cc3484ea1dbb72b447c681d6933dd
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch, 351 turns)
+- **Scope deviations:** none in the code. In process, the executor ran the
+  full suite about 16 times chasing a failure in `sbx.rs` (M26, untouched by
+  this phase), against the spec's "do not re-run the suite to chase a
+  mismatch". It documented the cause, a `HOME`-reading test, and the
+  investigation in a second commit (`eb7deaff`). The same test flaked in
+  02c, so it is a recurring flake that predates M28, and it goes on the
+  deferred list.
+- **Calibration:** the mutation check is genuine and shows the original
+  defect. With the change wait disabled, the returned screen holds only the
+  echoed command line plus the new "has not drawn anything yet" note: F1
+  exactly. Independent re-run: 2403 passed / 0 failed (the spec's count
+  exactly); fmt and clippy clean; the reviewer's self-check matches
+  `/tmp/e2e-04b.txt`; the standards grep over `36d96fd4..HEAD` in `src` is
+  empty; no production `unwrap`/`expect`. F3: `RefusedBeforeWrite` is in
+  the busy refusal's chain, and `shell_run_error_text` checks it before the
+  generic branch. F4: `defs.rs` and `sre.toml` give `top -d 0.2` or a
+  clock, and note that plain `top` redraws every 3 s.
