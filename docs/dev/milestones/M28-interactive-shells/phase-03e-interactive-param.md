@@ -1,7 +1,7 @@
 # Phase 03e: interactive-param — `run_terminal_command(interactive: true)`
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03d
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -103,8 +103,10 @@ routing already does. The result says the `wait` was ignored.
 ## Acceptance criteria
 
 - [ ] The 3 new tests ⇒ `test result: ok. 1 passed` each.
-- [ ] `cargo test` ⇒ `passed=2394 failed=0`: exactly 2391 at `178f6db9`
-      plus the 3 new tests.
+- [ ] `cargo test` ⇒ `passed=2395 failed=0`: 2391 at `178f6db9` plus the 3
+      new tests **plus** `to_tool_call_carries_interactive_into_the_arguments`,
+      which the first run added to pin the `to_tool_call` gotcha and which
+      is accepted. (Re-pinned 2026-10-18 from 2394.)
 - [ ] `cargo test --test doc_truth` ⇒ `failed=0`, with the test file
       unmodified. Clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
 - [ ] The end-to-end Update Log entry contains the output fence **and** the
@@ -114,7 +116,7 @@ routing already does. The result says the `wait` was ignored.
 
 ```sh
 A=/tmp/e2e-03e.txt; : > "$A"
-for t in run_terminal_command_args_carry_interactive an_interactive_call_is_never_backgrounded run_interactive_in_shell_launches_any_command wait_false_runs_in_the_background launch_interactive_returns_the_settled_screen; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+for t in run_terminal_command_args_carry_interactive to_tool_call_carries_interactive_into_the_arguments an_interactive_call_is_never_backgrounded run_interactive_in_shell_launches_any_command wait_false_runs_in_the_background launch_interactive_returns_the_settled_screen; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
 cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
@@ -156,3 +158,32 @@ diff /tmp/pasted-03e.txt /tmp/e2e-03e.txt && echo "PASTE MATCH" || echo "PASTE M
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-18 (resume)
+
+**All the code is done and green. Do not change any source file.** The
+architect re-ran the gates on the tree as you left it: fmt, build and clippy
+are clean, and `cargo test` is `passed=2395 failed=0`. The first run stalled
+because the spec pinned 2394 and the suite (correctly) reads 2395: your extra
+test `to_tool_call_carries_interactive_into_the_arguments` is accepted and the
+criterion is re-pinned to **2395**. 2395 is not a flake. **Do not re-run the
+suite to chase it.**
+
+**Exactly one task remains:** run § End-to-end verification once, verbatim
+(its `for` list now includes the extra test), paste the capture into a new
+`### Update — <date> (end-to-end verification)` entry with the `PASTE MATCH`
+line after the fence, then commit.
+
+### Update — 2026-10-17 13:36 (progress)
+
+**Executor:** phase-03e run 1 (headless).
+
+Status flipped to in-progress; starting with the parameter plumbing
+(`AiEvent::ToolCall` → `PendingCall::Foreground` → `to_tool_call` → defs.rs),
+then `routes_to_background`, the launch path, the executor arm, docs, and the
+end-to-end capture.
+
+### Update — 2026-10-18 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** every code task is done and green (2395/0, fmt and clippy clean on the left-behind tree); the stall was the spec's exact count (2394) refusing a reasonable extra test, so the criterion is re-pinned and only the evidence capture is left, which a resume does without redoing 15 files.
