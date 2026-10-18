@@ -1,7 +1,7 @@
 # Phase 03e: interactive-param — `run_terminal_command(interactive: true)`
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-03d
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -349,3 +349,29 @@ kill: (-3863509): No such process
 **Commit:** d71d13c274ed04f5051c58fdd2b9efda905db30f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (one escalation: the first run's code was complete and
+  green, but it stalled re-running the suite against the spec's exact
+  2394. Resumed after the re-pin to 2395, 33 turns.)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** one, unreported by the executor and accepted.
+  Task 4's per-result prefix `(wait: false ignored: …)` was not
+  implemented. The executor arm has no `wait` to test: `PendingCall::Foreground`
+  carries none. The model is still told: `sre.toml`, the system prompt sent
+  with every request, says "`wait=false` alongside `interactive=true` is
+  ignored". Adding the prefix would mean another 9-literal plumbing pass for
+  information the prompt already gives. Carried to the live-close list.
+  Also accepted: the extra test
+  `to_tool_call_carries_interactive_into_the_arguments`.
+- **Calibration:** the third exact-count trap this milestone (02b, 02c's
+  inverse, 03e). An exact pin should leave room for a test the spec's own
+  gotchas invite, or the spec should name that test. A spec'd behaviour
+  with no named test was silently dropped (the prefix), the same class as
+  03a's bug: every spec'd behaviour needs a named test. Independent
+  re-run: 2395 passed / 0 failed, fmt and clippy clean.
+  `routes_to_background` is `!interactive && wait == Some(false)`. Both
+  executor call sites (local and named host) branch to
+  `run_interactive_in_shell`.
