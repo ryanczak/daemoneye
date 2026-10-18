@@ -1,7 +1,7 @@
 # Phase 03e: interactive-param — `run_terminal_command(interactive: true)`
 
 **Milestone:** M28 — Interactive shells
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-03d
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -206,3 +206,146 @@ passed=2395 failed=0
 ```
 
 PASTE MATCH
+
+### Update — 2026-10-18 14:13 (complete, server-authored)
+
+**Summary:** </think>Working tree is clean, commit includes everything. Final summary now.
+
+Let me verify the acceptance criteria:
+- The 3 new tests ⇒ test result: ok. 1 passed each ✓ (capture shows all three)
+- cargo test ⇒ passed=2395 failed=0 ✓
+- cargo test --test doc_truth ⇒ 16 passed; 0 failed ✓, fmt_exit=0, clippy clean ✓
+- The end-to-end Update Log entry contains the output fence and the PASTE MATCH line ✓
+
+Status left at in-progress ✓, no (complete) entry ✓, task tracking all done ✓.
+
+Write the Summary + Notes for review.</think>
+The end-to-end verification is captured and committed. Final summary:
+
+**Summary:** Resumed phase-03e with all code already green; the one remaining task was the evidence capture. I ran § End-to-end verification once, verbatim: all six named tests pass (`ok. 1 passed` each, including the accepted extra `to_tool_call_carries_interactive_into_the_arguments`), `doc_truth` passes 16/0 on the unmodified test file, clippy `-D warnings` is clean, `cargo fmt --all --check` exits 0, and the full suite reads `passed=2395 failed=0`. The capture `/tmp/e2e-03e.txt` is pasted into a new `### Update — 2026-10-18 14:10 (end-to-end verification)` entry in the phase doc with the self-check's `PASTE MATCH` line after the fence (the self-check's re-diff confirmed byte-for-byte agreement). Everything — the 14-file feature diff from run 1 plus this entry — is committed as `d71d13c2 feat: add run_terminal_command(interactive: true) launch parameter`; `git status --short` is empty.
+
+**Notes for review:** No source file was touched this run, per the resume guidance. One friction point worth knowing: the phase doc arrived as an unusually short on-disk file whose read state kept drifting against my tool cache, so I appended the entry by anchored patch rather than the doc-edit helpers, then validated the result with the spec's own self-check (it re-extracts the fenced block from the committed doc and diffs it against `/tmp/e2e-03e.txt` — output was exactly `PASTE MATCH`). The status line remains `in-progress` and no `(complete)` entry was written; the task tracker (1–6) is all `done`. The suite count stands at the re-pinned 2395, not the spec's original 2394, as the escalation entry records.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ e2e_seeded_asset_tool_hygiene ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1317d86dbab8a67a)
+kill: (3862777): No such process
+kill: (-3863509): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58e4c018b6115a52)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa77b3165037b91b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-b44e63b56dae5611)
+     Running tests/integration.rs (target/debug/deps/integration-cc4ec88fa7c13534)
+     Running tests/isolation.rs (target/debug/deps/isolation-91fd5762b61d94c8)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-62d50a1c46611977)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M28-interactive-shells/phase-03e-interactive-param.md` — +11 -2
+
+**Commit:** d71d13c274ed04f5051c58fdd2b9efda905db30f
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
