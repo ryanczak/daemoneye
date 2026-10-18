@@ -1,7 +1,7 @@
 # Phase 03e: interactive-param — `run_terminal_command(interactive: true)`
 
 **Milestone:** M28 — Interactive shells
-**Status:** done
+**Status:** in-progress (bounced: bugs/bug-03e-1.md)
 **Depends on:** phase-03d
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -107,6 +107,9 @@ routing already does. The result says the `wait` was ignored.
       new tests **plus** `to_tool_call_carries_interactive_into_the_arguments`,
       which the first run added to pin the `to_tool_call` gotcha and which
       is accepted. (Re-pinned 2026-10-18 from 2394.)
+- [ ] **(bug-03e-1)** `grep -B1 'pub(crate) async fn run_interactive_in_shell' src/daemon/executor/shell_exec.rs | grep -c allow`
+      ⇒ `0`: the dead `#[allow(clippy::too_many_arguments)]` is gone, and
+      the count stays **2395, not 2396**.
 - [ ] `cargo test --test doc_truth` ⇒ `failed=0`, with the test file
       unmodified. Clippy (`-D warnings`) and `cargo fmt --all --check` exit 0.
 - [ ] The end-to-end Update Log entry contains the output fence **and** the
@@ -158,6 +161,23 @@ diff /tmp/pasted-03e.txt /tmp/e2e-03e.txt && echo "PASTE MATCH" || echo "PASTE M
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-18 (bounce, bug-03e-1)
+
+**Green gates and a clean tree are expected here and are NOT evidence that
+the phase is done.** Everything in this phase is approved: the parameter,
+the routing, the launch path, both executor call sites, the docs and the
+four tests. Do not touch them.
+
+**Exactly one edit remains:** delete the one line
+`#[allow(clippy::too_many_arguments)]` directly above
+`pub(crate) async fn run_interactive_in_shell` in
+`src/daemon/executor/shell_exec.rs`. It has 7 parameters, so clippy does
+not fire, and the reviewer confirmed clippy is clean without it. Do not
+remove any other `allow` in the file: `run_in_shell_with_prompts` needs its
+own. Finish condition: clippy exits 0, the grep in § Acceptance criteria
+reads 0, and `cargo test` is still `passed=2395 failed=0`. Then re-run
+§ End-to-end verification and paste it, with `PASTE MATCH`, into a new entry.
 
 ### Notes for executor — 2026-10-18 (resume)
 
@@ -350,9 +370,12 @@ kill: (-3863509): No such process
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
 
-### Review verdict — 2026-10-18
+### Review verdict — 2026-10-18 (withdrawn — see bug-03e-1)
 
-- **Verdict:** approved_first_try
+- **Verdict:** ~~approved_first_try~~ withdrawn the same day: the
+  reviewer committed this before reading the standards grep, which shows a
+  dead `#[allow]` (bug-03e-1). Kept for the record.
+- **Original verdict:** approved_first_try
 - **Bounces:** none (one escalation: the first run's code was complete and
   green, but it stalled re-running the suite against the spec's exact
   2394. Resumed after the re-pin to 2395, 33 turns.)
