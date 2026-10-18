@@ -229,8 +229,10 @@ not on the byte stream, so a cursor blink or an SGR-only redraw settles and
 only a visible change does not. When `timeout_secs` elapses first the tool
 returns the current screen with the header `did not settle within N s —
 the screen is still changing; use wait_for for a pattern that marks the
-state you need`. The tool description names `top` as the example so the
-model reaches for `wait_for` on the first call, not the second.
+state you need`. The tool description names a fast-redrawing screen (`top -d 0.2`, `watch
+-n 0.1`) as the example, so the model reaches for `wait_for` on the first
+call. *Corrected at the M28 live close:* plain `top` refreshes every 3 s, so
+a 500 ms settle passes between its redraws.
 
 ### D8 — `send_input` sends `\r` and takes named keys
 
