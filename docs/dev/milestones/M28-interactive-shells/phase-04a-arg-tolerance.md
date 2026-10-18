@@ -1,7 +1,7 @@
 # Phase 04a: arg-tolerance — the argument shapes GLM actually sends parse
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 rehearsal 1 (findings F2, F5)
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -335,3 +335,26 @@ kill: (-4068832): No such process
 **Commit:** b478d129365a990054fa5ce502be27f9d68f26da
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch, 225 turns)
+- **Scope deviations:** two, both reported by the executor and accepted.
+  1. Two extra helper-level tests in a new `args_tests` module, so the count
+     is 2400, not the pinned 2398. The softened pin worked as intended:
+     reported, not chased.
+  2. `a_garbage_value_is_still_invalid_and_named` calls
+     `invalid_args_event` directly. `dispatch_tool_event` alone returns
+     `None` on a parse failure; the fallback to `InvalidToolArgs` lives in
+     the backends. The spec said "through `dispatch_tool_event`", which was
+     an architect error, correctly worked around and documented in the
+     test.
+- **Calibration:** the reviewer ran every grep before writing the verdict
+  (03e's lesson). Independent re-run: 2400 passed / 0 failed; fmt and
+  clippy clean; the reviewer's own self-check gives `PASTE MATCH`; the
+  standards grep over `09427868..HEAD` in `src` is empty; no production
+  `unwrap`/`expect`. Nit, not bounced: a `keys` of `"[]"` falls through as
+  a one-name list, so `encode_keys` rejects it as an unknown key. That is
+  harmless and honest.
