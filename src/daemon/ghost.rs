@@ -696,6 +696,46 @@ fn push_user_note(session_id: &str, sessions: &SessionStore, text: String, turn:
     }
 }
 
+/// The `PendingCall` a ghost's turn loop collects from an `AiEvent::ToolCall`
+/// (F9): ghosts are background-only, so the call becomes `Background` — but a
+/// call asking for the interactive launch path is refused as invalid args,
+/// with the reason, instead of being silently backgrounded.
+fn ghost_pending_for_tool_call(
+    id: String,
+    cmd: String,
+    interactive: bool,
+    thought_signature: Option<String>,
+    host: Option<String>,
+) -> PendingCall {
+    if interactive {
+        PendingCall::InvalidArgs {
+            id,
+            name: "run_terminal_command",
+            arguments: serde_json::json!({
+                "command": cmd,
+                "background": false,
+                "interactive": true,
+                "host": host
+            })
+            .to_string(),
+            error: "interactive: true is not available to a ghost: ghosts run \
+                    every command in the background and wait for it to exit, so \
+                    a program that never exits (a TUI) cannot be launched. Run a \
+                    command that exits."
+                .to_string(),
+            thought_signature,
+        }
+    } else {
+        PendingCall::Background {
+            id,
+            cmd,
+            thought_signature,
+            _credential: None,
+            host,
+        }
+    }
+}
+
 fn cancel_stage(run_id: &crate::daemon::run::RunId) -> String {
     crate::daemon::run::take_cancel_door(run_id)
         .map(crate::daemon::run::CancelDoor::stage)
@@ -1033,19 +1073,19 @@ async fn do_ghost_turn(
                         id,
                         cmd: command,
                         wait: _wait,
-                        interactive: _interactive,
+                        interactive,
                         thought_signature,
                         shell: _shell,
                         host,
                         timeout_secs: _timeout_secs,
                     } => {
-                        pending_calls.push(PendingCall::Background {
+                        pending_calls.push(ghost_pending_for_tool_call(
                             id,
-                            cmd: command,
+                            command,
+                            interactive,
                             thought_signature,
-                            _credential: None,
                             host,
-                        });
+                        ));
                     }
                     AiEvent::ListRunbooks {
                         id,
@@ -1592,6 +1632,68 @@ async fn do_ghost_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F9: a ghost is background-only, so a tool call asking for the
+    /// interactive launch path is refused as invalid args with the reason —
+    /// never silently backgrounded. The call is otherwise unchanged.
+    #[test]
+    fn a_ghost_interactive_call_is_refused_with_the_reason() {
+        let call = ghost_pending_for_tool_call(
+            "tc_1".to_string(),
+            "claude".to_string(),
+            true,
+            Some("sig".to_string()),
+            Some("pinky".to_string()),
+        );
+        let PendingCall::InvalidArgs {
+            id,
+            name,
+            arguments,
+            error,
+            thought_signature,
+        } = call
+        else {
+            panic!("expected PendingCall::InvalidArgs for the interactive call")
+        };
+        assert_eq!(id, "tc_1");
+        assert_eq!(name, "run_terminal_command");
+        assert_eq!(thought_signature, Some("sig".to_string()));
+        assert!(
+            error.contains("not available to a ghost"),
+            "the refusal says why interactive is refused: {error}"
+        );
+        assert!(
+            error.contains("Run a command that exits"),
+            "the refusal says what to do instead: {error}"
+        );
+        let args: serde_json::Value =
+            serde_json::from_str(&arguments).expect("the raw arguments parse as JSON");
+        assert_eq!(
+            args.get("command").and_then(|c| c.as_str()),
+            Some("claude"),
+            "the raw arguments are kept for history: {arguments}"
+        );
+        assert_eq!(
+            args.get("interactive").and_then(|i| i.as_bool()),
+            Some(true),
+            "the arguments show the call as the model made it: {arguments}"
+        );
+
+        let call = ghost_pending_for_tool_call(
+            "tc_2".to_string(),
+            "echo hi".to_string(),
+            false,
+            None,
+            None,
+        );
+        let PendingCall::Background { cmd, .. } = call else {
+            panic!("expected PendingCall::Background for a call without interactive")
+        };
+        assert_eq!(
+            cmd, "echo hi",
+            "a call without interactive stays a background run"
+        );
+    }
 
     #[test]
     fn ghost_start_records_how_its_ssh_target_resolved() {

@@ -1386,6 +1386,32 @@ mod tests {
         }
     }
 
+    /// Rehearsal 2 (finding F6): GLM sends an empty `keys` as the **string**
+    /// `"[]"` alongside a text send. That string is an empty array, not the
+    /// one key name `"[]"` — which made `send_input(text: "exit")` fail with
+    /// `unknown key "[]"`.
+    #[test]
+    fn send_input_keys_empty_array_string_is_no_keys() {
+        for (keys, want, why) in [
+            ("[]", Vec::<&str>::new(), "an empty array-string is no keys"),
+            (
+                "[\"Escape\"]",
+                vec!["Escape"],
+                "a one-name array-string is that array",
+            ),
+            ("Down", vec!["Down"], "a bare string is still one key name"),
+        ] {
+            let args = json!({"shell": "s3", "text": "exit", "keys": keys});
+            let ev = dispatch_tool_event("tc_1", "send_input", &args, None)
+                .unwrap_or_else(|| panic!("dispatch failed for {args}: {why}"));
+            let AiEvent::SendInput { text, keys, .. } = ev else {
+                panic!("expected AiEvent::SendInput for {args}")
+            };
+            assert_eq!(keys, want, "{why}");
+            assert_eq!(text, "exit", "the text send survives the keys parsing");
+        }
+    }
+
     /// Rehearsal 1 (finding F5): GLM sends `background` as the string
     /// `"false"` on nearly every `run_terminal_command`, and string
     /// booleans for the others.

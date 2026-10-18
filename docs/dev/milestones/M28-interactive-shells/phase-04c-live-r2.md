@@ -143,3 +143,53 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-18 15:43 (progress)
+
+Executor run for phase-04c (F6, F7, F9). Status flipped to `in-progress`; the
+README row follows. All three fixes are in:
+
+- **F6** (`src/ai/tools/args.rs`): `lenient_keys` now takes a string that
+  parses as a JSON array as exactly that array, empty included; only a string
+  that is not a JSON array stays a one-key name. `"[]"` ⇒ no keys,
+  `"[\"Escape\"]"` ⇒ `["Escape"]`, `"Down"` ⇒ `["Down"]` unchanged.
+- **F7** (`src/daemon/executor/shell_exec.rs`, `mod.rs`): a shell-resolution
+  failure on either path (`shell_for_owner` reuse **and** the
+  `shell: "new"` spawn) is wrapped in `RefusedBeforeWrite` by a new `pre_write`
+  helper, so the per-owner cap refusal reaches the model as pre-write; the
+  `RefusedBeforeWrite` branch of `shell_run_error_text` drops the
+  `Error running command in shell <id>:` prefix and reads
+  `Error: <chain>. Nothing was written, so it is safe to act on the message
+  above.` No other branch changed. The existing
+  `a_busy_refusal_says_nothing_was_written` needed one assertion loosened:
+  `Nothing was written to that shell` → `Nothing was written`, which the
+  wording change required.
+- **F9** (`src/daemon/ghost.rs`): the ghost loop's `AiEvent::ToolCall` arm
+  now routes through a new `ghost_pending_for_tool_call`; `interactive: true`
+  becomes `PendingCall::InvalidArgs` (`name: "run_terminal_command"`, the call's
+  arguments as JSON, the pinned reason), everything else stays
+  `PendingCall::Background`.
+
+End-to-end capture next (Task 4).
+
+### Update — 2026-10-18 15:43 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim, once, into
+`/tmp/e2e-04c.txt`. All three new tests pass (`1 passed` each), the two
+pre-existing tests still pass, `doc_truth` is green, clippy `-D warnings` is
+clean, `cargo fmt --all --check` exits 0, and the full suite counts
+`passed=2406 failed=0` — the pinned 2403 + 3 new.
+
+```text
+send_input_keys_empty_array_string_is_no_keys: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_cap_refusal_says_nothing_was_written_and_names_no_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_ghost_interactive_call_is_refused_with_the_reason: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_busy_refusal_says_nothing_was_written: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+send_input_keys_accept_an_array_a_json_string_or_one_name: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2406 failed=0
+```
+
+PASTE MATCH

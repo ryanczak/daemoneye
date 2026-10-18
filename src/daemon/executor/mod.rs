@@ -312,8 +312,8 @@ fn shell_run_error_text(shell_id: &str, e: &anyhow::Error) -> String {
         )
     } else if e.chain().any(|c| c.is::<shell_exec::RefusedBeforeWrite>()) {
         format!(
-            "Error running command in shell {shell_id}: {chain}. Nothing was \
-             written to that shell, so it is safe to act on the message above."
+            "Error: {chain}. Nothing was written, so it is safe to act on the \
+             message above."
         )
     } else if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
         format!(
@@ -2752,7 +2752,7 @@ mod tests {
         );
         let text = shell_run_error_text("s1", &refused);
         assert!(
-            text.contains("Nothing was written to that shell"),
+            text.contains("Nothing was written"),
             "the refusal says nothing was written: {text}"
         );
         assert!(
@@ -2766,6 +2766,32 @@ mod tests {
         assert!(
             !text.contains("may still be running"),
             "nothing was written, so nothing may still be running: {text}"
+        );
+    }
+
+    /// F7: the per-owner shell-cap refusal is raised by `registry.rs` before
+    /// anything is written, so it takes the same pre-write text as the busy
+    /// refusal — and, having never touched a shell, must not name one.
+    #[test]
+    fn a_cap_refusal_says_nothing_was_written_and_names_no_shell() {
+        let refused = anyhow::Error::new(shell_exec::RefusedBeforeWrite)
+            .context("owner 'chat:x' already holds 5 shells (cap 5)");
+        let text = shell_run_error_text("s1", &refused);
+        assert!(
+            text.contains("Nothing was written"),
+            "the cap refusal says nothing was written: {text}"
+        );
+        assert!(
+            text.contains("cap 5"),
+            "the cap refusal names the cap and the count held: {text}"
+        );
+        assert!(
+            !text.contains("double-apply"),
+            "nothing was written, so there is no double-apply risk to warn about: {text}"
+        );
+        assert!(
+            !text.contains("s1"),
+            "the refusal names no shell it never used: {text}"
         );
     }
 }

@@ -256,6 +256,14 @@ fn live_shell_ids(reg: &ShellRegistry) -> Vec<String> {
     })
 }
 
+/// Wrap a shell-resolution failure in `RefusedBeforeWrite`: the per-owner
+/// cap refusal (F7) is raised by `registry.rs` before anything is written,
+/// exactly as the busy refusal is, so it must not reach the model wrapped in
+/// the generic "may still be running / double-apply" run-error caveat.
+fn pre_write(e: anyhow::Error) -> anyhow::Error {
+    anyhow::Error::new(RefusedBeforeWrite).context(e)
+}
+
 /// The single body of the run path. `prompts: None` is the historical
 /// behaviour; a transport turns the sudo branch on.
 #[allow(clippy::too_many_arguments)]
@@ -293,10 +301,16 @@ where
     // falling back would run the command somewhere the model did not ask for.
     let (id, socket) = match target {
         ShellTarget::Reuse => {
-            shell_for_owner(reg, owner, host, max_per_owner, SHELL_READY_TIMEOUT, spawn).await?
+            let (id, socket) =
+                shell_for_owner(reg, owner, host, max_per_owner, SHELL_READY_TIMEOUT, spawn)
+                    .await
+                    .map_err(pre_write)?;
+            (id, socket)
         }
         ShellTarget::New => {
-            let id = spawn_for_on_host(reg, owner, max_per_owner, host, false, spawn).await?;
+            let id = spawn_for_on_host(reg, owner, max_per_owner, host, false, spawn)
+                .await
+                .map_err(pre_write)?;
             let socket = socket_path(id.as_str());
             await_ready(&socket, Instant::now() + SHELL_READY_TIMEOUT).await?;
             (id, socket)

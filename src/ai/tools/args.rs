@@ -60,6 +60,15 @@ where
     if v.as_str().is_some_and(|s| s.trim().is_empty()) {
         return Ok(Vec::new());
     }
+    // A string that parses as a JSON array is that array, empty included
+    // (F6): GLM sends `"[]"` for no keys, and a bare-string fallback here
+    // would hand back the one-name list `["[]"]`.
+    if let Some(s) = v.as_str()
+        && let Ok(arr) = serde_json::from_str::<serde_json::Value>(s)
+        && arr.is_array()
+    {
+        return Ok(extract_string_vec(&arr).unwrap_or_default());
+    }
     Ok(extract_string_vec(&v)
         .filter(|keys| !keys.is_empty())
         .or_else(|| v.as_str().map(|s| vec![s.to_string()]))
