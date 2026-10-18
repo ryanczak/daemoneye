@@ -310,6 +310,11 @@ fn shell_run_error_text(shell_id: &str, e: &anyhow::Error) -> String {
              was cancelled with Ctrl-C, so the command did not run with elevated \
              privileges. Fix what the error names before retrying."
         )
+    } else if e.chain().any(|c| c.is::<shell_exec::RefusedBeforeWrite>()) {
+        format!(
+            "Error running command in shell {shell_id}: {chain}. Nothing was \
+             written to that shell, so it is safe to act on the message above."
+        )
     } else if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
         format!(
             "Error running command in shell {shell_id}: {chain}. That shell has \
@@ -2731,6 +2736,36 @@ mod tests {
         assert!(
             text.contains("chat session. The password prompt"),
             "the reason's sentence survives once and the guidance follows it: {text}"
+        );
+    }
+
+    /// A busy-shell refusal happened before anything was written, so it must
+    /// not arrive wrapped in the generic run-error caveat ("may still be
+    /// running … retrying could double-apply") that contradicts the refusal
+    /// (F3).
+    #[test]
+    fn a_busy_refusal_says_nothing_was_written() {
+        let refused = anyhow::Error::new(shell_exec::RefusedBeforeWrite).context(
+            "Error: shell s1 is running claude (TUI); a command written there \
+             would be typed into it. Use send_input to type into that program, \
+             read_shell_screen to see it, or shell: \"new\" for a fresh shell.",
+        );
+        let text = shell_run_error_text("s1", &refused);
+        assert!(
+            text.contains("Nothing was written to that shell"),
+            "the refusal says nothing was written: {text}"
+        );
+        assert!(
+            text.contains("running claude"),
+            "the refusal still names the program holding the terminal: {text}"
+        );
+        assert!(
+            !text.contains("double-apply"),
+            "nothing was written, so there is no double-apply risk to warn about: {text}"
+        );
+        assert!(
+            !text.contains("may still be running"),
+            "nothing was written, so nothing may still be running: {text}"
         );
     }
 }

@@ -908,9 +908,12 @@ pub static TOOLS: &[ToolDef] = &[
                               milliseconds apart show the same text. The primitive for \
                               \"the app finished drawing\" — after typing into Claude \
                               Code, settle_ms: 1500 returns the finished answer. A \
-                              screen that never settles (top, a clock, a spinner) is a \
+                              screen that never settles (top -d 0.2, a clock, a \
+                              spinner) is a \
                               result, not an error: use wait_for there. Bounds: 50–5000, \
-                              bounded by timeout_secs.",
+                              bounded by timeout_secs. Plain top redraws every 3 s, so a \
+                              settle under that can pass between its redraws and report \
+                              a settled top that is still redrawing.",
             },
             ParamDef {
                 name: "timeout_secs",

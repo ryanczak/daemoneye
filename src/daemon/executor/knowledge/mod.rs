@@ -26,6 +26,9 @@ pub(super) use shell::{
 // above for the same reason `format_err_chain` is.
 pub(crate) use shell::SCREEN_TIMEOUT;
 pub(crate) use shell::read_shell_screen_in;
+// The launch's change-wait prefix (`wait_screen_change`) and its baseline
+// read (`screen_text`) are the same caller's, for the same reason.
+pub(crate) use shell::{screen_text, wait_screen_change};
 // Wider than the group above on purpose: the prompt builders reach it from
 // `daemon`, and a `pub(super)` binding cannot be widened on re-export.
 pub use shell::{

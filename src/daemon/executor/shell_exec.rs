@@ -43,6 +43,19 @@ const CAST_SETTLE_TIMEOUT: Duration = Duration::from_secs(2);
 /// How often the settle loop re-reads the cast file length between polls.
 const CAST_SETTLE_POLL: Duration = Duration::from_millis(10);
 
+/// How long `launch_interactive` waits after writing the command before it
+/// reads the pre-draw baseline. The echo of the command must be on the screen
+/// by then, or the baseline would miss the very bytes the change wait is
+/// meant to get past.
+const BASELINE_GAP: Duration = Duration::from_millis(100);
+/// How long the launch's change wait will wait for the program to draw
+/// something before giving up (F1): the launch still returns the settled
+/// screen, but the result says the program has drawn nothing yet.
+const CHANGE_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
+/// The poll interval between two screen reads inside the launch's change
+/// wait.
+const CHANGE_WAIT_POLL: Duration = Duration::from_millis(100);
+
 /// Default wall-clock cap on one command run in a PTY shell, when the caller
 /// gives no `timeout_secs`.
 pub(super) const LOCAL_CMD_TIMEOUT: Duration = Duration::from_secs(45);
@@ -398,12 +411,18 @@ where
                 Foreground::Unknown => "the shell's state could not be read".to_string(),
                 _ => "a command written there would be typed into it".to_string(),
             };
-            anyhow::bail!(
+            // The refusal happened before anything was written, so it must
+            // not arrive wrapped in the generic run-error text's "may still
+            // be running / double-apply" caveat — that contradicts the
+            // refusal. `RefusedBeforeWrite` in the chain is what
+            // `shell_run_error_text` keys on (F3).
+            let msg = format!(
                 "Error: shell {} is {fg}; {reason}. Use send_input to type into \
                  that program, read_shell_screen to see it, or shell: \"new\" for \
                  a fresh shell.",
                 id.as_str()
             );
+            return Err(anyhow::Error::new(RefusedBeforeWrite).context(msg));
         }
     }
     if interactive || crate::daemon::utils::is_interactive_command(cmd) {
@@ -486,11 +505,14 @@ where
 }
 
 /// Start an interactive command in `id`'s shell and return the settled screen
-/// without waiting for the session to end (D6): the bare command plus `\r`,
-/// no marker wrapping, then `read_shell_screen_in`'s settle-and-read, which
-/// records the shell's `last_foreground`. The shell stays busy while the
-/// session runs — the reuse rule and the named-shell probe see it through
-/// `last_foreground`, so later commands land elsewhere.
+/// without waiting for the session to end (D6, and F1 from rehearsal 1): the
+/// bare command plus `\r`, no marker wrapping, then a change wait — the
+/// launch must not call a screen settled while it still shows only what was
+/// there before the program started — followed by
+/// `read_shell_screen_in`'s settle-and-read, which records the shell's
+/// `last_foreground`. The shell stays busy while the session runs — the
+/// reuse rule and the named-shell probe see it through `last_foreground`, so
+/// later commands land elsewhere.
 async fn launch_interactive(
     reg: &ShellRegistry,
     id: &ShellId,
@@ -499,6 +521,33 @@ async fn launch_interactive(
 ) -> anyhow::Result<ShellRunResult> {
     let bytes: &[u8] = &[cmd.as_bytes(), b"\r"].concat();
     crate::shell::send_input(sock, bytes, Duration::from_secs(5)).await?;
+    // The echo of the command is on the screen within ~100 ms, so a read now
+    // is the pre-draw baseline: anything the program draws later differs from
+    // it. If the read fails (a host that went away) skip the change wait and
+    // let the settled read surface the failure.
+    tokio::time::sleep(BASELINE_GAP).await;
+    let baseline = super::knowledge::screen_text(id.as_str(), super::knowledge::SCREEN_TIMEOUT)
+        .await
+        .ok();
+    let drew = match baseline.as_deref() {
+        Some(baseline) => {
+            let shell = id.as_str().to_string();
+            let read = || {
+                let shell = shell.clone();
+                async move {
+                    super::knowledge::screen_text(&shell, super::knowledge::SCREEN_TIMEOUT).await
+                }
+            };
+            super::knowledge::wait_screen_change(
+                read,
+                baseline,
+                CHANGE_WAIT_TIMEOUT,
+                CHANGE_WAIT_POLL,
+            )
+            .await
+        }
+        None => false,
+    };
     let screen = super::knowledge::read_shell_screen_in(
         reg,
         id.as_str(),
@@ -512,6 +561,17 @@ async fn launch_interactive(
         super::knowledge::SCREEN_TIMEOUT,
     )
     .await;
+    // One line, after the header, when three seconds passed and the program
+    // has drawn nothing: the settled screen would otherwise read as if the
+    // launch had seen the program's own display.
+    let screen = if drew {
+        screen
+    } else {
+        format!(
+            "{screen}\n[the program has not drawn anything yet; read it again with \
+             read_shell_screen]"
+        )
+    };
     Ok(ShellRunResult {
         text: format!(
             "[Interactive session started] `{cmd}` holds shell {}; nothing waits \
@@ -549,6 +609,23 @@ async fn finish_run(
         },
     ))
 }
+
+/// This command was refused **before anything was written** to the shell: the
+/// busy-shell probe saw a program holding the terminal, so writing would have
+/// typed into it. Distinct from a timeout on purpose — the command did not
+/// fail, it never started, and the shell is exactly as it was — so
+/// `shell_run_error_text` must not wrap it in the "may still be running /
+/// double-apply" caveat that contradicts the refusal (F3).
+#[derive(Debug)]
+pub struct RefusedBeforeWrite;
+
+impl std::fmt::Display for RefusedBeforeWrite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the command was refused before anything was written")
+    }
+}
+
+impl std::error::Error for RefusedBeforeWrite {}
 
 /// Prompt round-trip bookkeeping for one sudo run: how many credentials have
 /// been sent. sudo re-prompts with the same sentinel on a wrong password, so
@@ -1833,6 +1910,42 @@ mod tests {
         .await
         .expect("the shell accepts the interrupt");
     }
+    /// The launch path itself: `launch_interactive` writes the bare command
+    /// plus `\r` into the shell, waits for the program to draw something (the
+    /// change wait, F1), then reads the settled screen, and returns the header
+    /// plus the masked screen (D6). `sleep 1; printf 'DRAWN'` draws nothing
+    /// for a second, so a launch that settled on the echoed command line would
+    /// miss it; the interrupt at the end is what ends the sleep.
+    #[tokio::test]
+    async fn launch_waits_for_a_slow_program_to_draw() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("slow-draw".into());
+        let (id, _) =
+            run_in_shell_for_test(&reg, owner, "true", 5, None, None, spawn_in_process_host)
+                .await
+                .expect("the owner's shell comes up");
+
+        let result = launch_interactive(
+            &reg,
+            &id,
+            &socket_path(id.as_str()),
+            "sleep 1; printf 'DR%sN\\n' AW",
+        )
+        .await
+        .expect("the launch writes the command and reads the settled screen");
+        assert!(
+            result.text.contains("DRAWN"),
+            "the printf only runs after the sleep, so the settled screen must \
+             show the drawn word — a launch that settled on the echoed command \
+             line returns before it: {:?}",
+            result.text
+        );
+        crate::shell::send_input(&socket_path(id.as_str()), b"\x03", Duration::from_secs(5))
+            .await
+            .expect("the shell accepts the interrupt");
+    }
+
     /// The launch path itself: `launch_interactive` writes the bare command
     /// plus `\r` into the shell, waits for the screen to settle, and returns
     /// the header plus the masked screen (D6). `sleep 30` really runs, so the

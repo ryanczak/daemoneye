@@ -1,7 +1,7 @@
 # Phase 04b: launch-settle — a launch waits for the program to draw; honest refusal wording
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04a
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -155,3 +155,45 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-18 13:55 (progress)
+
+Mutation check recorded. With `launch_interactive`'s change wait disabled
+(`let drew = false;` at `shell_exec.rs:551`, applied by `patch`, restored
+afterwards), `launch_waits_for_a_slow_program_to_draw` went **red**:
+
+```
+thread 'daemon::executor::shell_exec::tests::launch_waits_for_a_slow_program_to_draw' panicked at src/daemon/executor/shell_exec.rs:1919:9:
+the printf only runs after the sleep, so the settled screen must show the drawn word — a launch that settled on the echoed command line returns before it: "[Interactive session started] `sleep 1; printf 'DR%sN\\n' AW` holds shell s0; ... matt@pinky:~$ sleep 1; printf 'DR%sN\\n' AW\n\n[the program has not drawn anything yet; read it again with read_shell_screen]"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2341 filtered out
+```
+
+Restored and re-run green. Capturing the end-to-end evidence next.
+
+
+**Executor:** phase-04b run (headless).
+
+Status flipped to in-progress. Reading the touched surfaces before editing:
+`wait_screen`/`read_screen` in `knowledge/shell.rs`, `launch_interactive` and
+the busy-shell refusal in `shell_exec.rs`, `shell_run_error_text` in
+`executor/mod.rs`, the `settle_ms` description in `defs.rs`, `sre.toml` and
+`doc_truth.rs`'s expectations.
+
+
+### Update — 2026-10-18 13:57 (end-to-end verification)
+
+Run of § End-to-end verification, verbatim, captured to `/tmp/e2e-04b.txt`:
+
+```
+wait_screen_change_returns_on_the_first_difference: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+launch_waits_for_a_slow_program_to_draw: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_busy_refusal_says_nothing_was_written: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_run_error_never_doubles_its_full_stop: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+launch_interactive_returns_the_settled_screen: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2403 failed=0
+```
+
+PASTE MATCH

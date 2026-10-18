@@ -170,8 +170,11 @@ wait_for?, settle_ms?, timeout_secs?)` — \
   `settle_ms: 1500` blocks until the screen stops changing — after typing a \
   prompt into Claude Code, this returns the finished answer. `timeout_secs` \
   (default 30, cap 300) bounds either wait; a wait that runs out is a \
-  result, not an error, and shows the screen as it is. On `top` — which \
-  never stops redrawing — use `wait_for` for the state you need.
+  result, not an error, and shows the screen as it is. On a screen that \
+  never settles — `top -d 0.2`, a clock, a spinner, anything redrawing \
+  faster than the settle window — use `wait_for` for the state you need. \
+  Plain `top` redraws every 3 s, so a settle shorter than that can pass \
+  between its redraws and report a settled `top` that is still redrawing.
 
 ### `find_in_shells`
 

@@ -1850,8 +1850,9 @@ struct ScreenRead {
 const WAIT_POLL: Duration = Duration::from_millis(100);
 
 /// How a screen wait ended. A wait that runs out is a **result**, not an
-/// error — `top` never stops redrawing and that is a legitimate answer — so
-/// every branch but `Failed` renders the screen.
+/// error — a fast-redrawing screen (`top -d 0.2`) never stops redrawing and
+/// that is a legitimate answer — so every branch but `Failed` renders the
+/// screen.
 #[derive(Debug)]
 enum WaitOutcome {
     /// `wait_for` matched the rendered text; `elapsed` is how long the wait
@@ -1937,6 +1938,40 @@ where
         }
         if Instant::now() >= started + timeout {
             return WaitOutcome::NotSettled { timeout };
+        }
+        tokio::time::sleep(poll).await;
+    }
+}
+
+/// Pure async core of the change wait: poll `read` (the rendered, unannotated
+/// visible text) until a read's text differs from `baseline`, or `timeout`
+/// runs out. True means the program drew something; false means the deadline
+/// passed with the screen exactly as the launch left it. A read that **fails**
+/// counts as no change — `wait_screen` reports a failed read to its caller,
+/// but this wait runs as the prefix of a launch whose settled read still has
+/// to happen, so a flaky poll read must not abort the launch; the settled
+/// read surfaces the failure itself if the shell is really gone.
+/// `pub(crate)`: `launch_interactive` (`shell_exec.rs`) is the caller, via
+/// the `knowledge` re-export, the same route `read_shell_screen_in` takes.
+pub(crate) async fn wait_screen_change<R, F>(
+    mut read: R,
+    baseline: &str,
+    timeout: Duration,
+    poll: Duration,
+) -> bool
+where
+    R: FnMut() -> F,
+    F: Future<Output = Result<String, String>>,
+{
+    let started = Instant::now();
+    loop {
+        if Instant::now() >= started + timeout {
+            return false;
+        }
+        match read().await {
+            Ok(text) if text != baseline => return true,
+            Ok(_) => {}
+            Err(_) => {}
         }
         tokio::time::sleep(poll).await;
     }
@@ -2158,6 +2193,16 @@ async fn read_screen(
             format_err_chain(&e)
         )),
     }
+}
+
+/// The rendered, **unannotated** visible text of `shell`'s screen — what a
+/// person at that terminal sees now, without the header or the wait note.
+/// `pub(crate)`: the interactive launch (`shell_exec.rs`) reads it as the
+/// baseline its change wait compares against.
+pub(crate) async fn screen_text(shell: &str, timeout: Duration) -> Result<String, String> {
+    read_screen(&socket_path(shell), shell, false, 0, timeout)
+        .await
+        .map(|r| r.text)
 }
 
 /// Pure: the rows above the visible screen in a scrollback read. The host
@@ -6248,6 +6293,40 @@ mod tests {
             s,
             Some(Duration::from_millis(5000)),
             "99999 ms clamps to 5 s"
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_screen_change_returns_on_the_first_difference() {
+        let seq: std::cell::RefCell<Vec<&'static str>> = std::cell::RefCell::new(vec![
+            "$ claude", "$ claude", "UI", "UI", "UI", "UI", "UI", "UI", "UI", "UI", "UI", "UI",
+        ]);
+        let read = || {
+            let mut q = seq.borrow_mut();
+            let v = if q.is_empty() { "UI" } else { q.remove(0) };
+            std::future::ready(Ok::<String, String>(v.to_string()))
+        };
+        assert!(
+            wait_screen_change(
+                read,
+                "$ claude",
+                Duration::from_millis(200),
+                Duration::from_millis(10),
+            )
+            .await,
+            "the third read shows the drawn UI, so the wait returns true"
+        );
+
+        let read = || std::future::ready(Ok::<String, String>("$ claude".to_string()));
+        assert!(
+            !wait_screen_change(
+                read,
+                "$ claude",
+                Duration::from_millis(200),
+                Duration::from_millis(10),
+            )
+            .await,
+            "a reader that never changes is the launch's not-drawn-yet case: false"
         );
     }
 
