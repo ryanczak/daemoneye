@@ -143,3 +143,58 @@ launch.
 **Next.** Fix phases before rehearsal 2: **04a** argument tolerance (F2,
 F5); **04b** launch settle and wording (F1, F3, F4). Then rehearsal 2 runs
 all of B1–B10.
+
+### Update — 2026-10-18 (rehearsal 2, architect, after 04a + 04b)
+
+The release was rebuilt with 04a and 04b and the runtime state reset. B2
+now launches `claude` from `/home/matt/src/daemoneye`, a folder already
+trusted, so no new trust entry is written into the PE's `~/.claude.json`.
+The raw notes are in `/tmp/e2e-m28-04.txt` (section R2).
+
+| Block | Result |
+|---|---|
+| B1 see | **pass** |
+| B2 launch | **pass, F1 fixed**: `[waited 4.7 s: the screen settled]` and Claude Code's full UI on the launch result |
+| B3 never poison | **pass, F3 fixed**: "…refused before anything was written. Nothing was written to that shell, so it is safe to act on the message above." |
+| B4 type and wait | **pass**: the panel showed `foreground: running claude (TUI)` and a 5-row tail; `settle_ms: 1500` gave `[waited 3.1 s: the screen settled]` with the answer |
+| B5 keys | **pass, F2 fixed**: `BTab` (3 bytes) flipped `⏵⏵ auto mode on` → `⏸ manual mode on`; a two-line `text` went as one bracketed paste (34 bytes) into the composer, unsubmitted; `S-Enter` sent 7 bytes and the result said it went out as CSI u; Claude Code added a composer line |
+| B6 never settles | **pass**: `top -d 0.2` → `[did not settle within 5.0 s …]` |
+| B7 geometry | **pass**: 160 columns, `stty size` → `40 160` |
+| B8 ssh upgrade | **pass** after F6's workaround: `ssh zoidberg` auto-launched (`running ssh (TUI)`); `hostname` → `zoidberg`; `exit` → the shell is back at `shell prompt` |
+| B9 host reuse | **pass**: two `host: "zoidberg"` calls with no `shell` both reused `s4` (still 5 shells, at the cap) |
+| B10 ghost guard | **cannot be run live → F8** |
+
+No invalid-arguments line in `daemon.log` all run: F5's fix holds.
+
+**New findings.**
+- **F6 (major).** GLM sends an empty `keys` as the **string** `"[]"`
+  alongside a `text` send. 04a's `lenient_keys` treats an empty
+  array-string as a one-name list, `["[]"]`, so `send_input(text: "exit")`
+  failed twice with `unknown key "[]"`. The 04a reviewer had accepted this
+  as a "harmless nit", wrongly. Fix constraint: a string that parses as a
+  JSON array, empty included, gives exactly that array.
+- **F7 (minor).** The per-owner cap refusal is also pre-write, but it
+  still carries "may still be running … do not assume it failed". It also
+  names `shell s1`, a shell it never touched (the error path's owner-shell
+  lookup). Same family as F3.
+- **F8 (design).** Ghosts are background-only: `ghost.rs` maps every ghost
+  `run_terminal_command` to `PendingCall::Background` and drops
+  `wait`/`interactive`/`shell`. A never-exiting program fills the turn
+  until the 300 s command limit, then its dedicated shell is gone. A ghost
+  therefore never holds a live shell running a TUI it could type into, and
+  D9's ghost rows (02f/02g) are defence in depth with unit-test coverage
+  only. (GLM's ghost call was `{"background":true,"command":"top"}`
+  despite the runbook saying `interactive: true`.)
+- **F9 (minor).** A ghost's `interactive: true` is dropped silently rather
+  than refused with a reason.
+- **Observations, predate M28:** O3, the masker turns the echoed word
+  `hostname` into `<SSH_HOST>`; O4, a successful run's result does not name
+  its shell id.
+- **Harness:** start the PE run's daemon from a clean terminal. Started
+  from inside Claude Code, it inherited `CLAUDE_CODE_CHILD_SESSION`, which
+  turned transcript saving off in the PTY's Claude Code.
+
+**Next.** F6 must be fixed before the PE run; with GLM, `send_input` is
+not dependable without it. Proposed **04c**: F6, plus the minors F7 and
+F9. F8 is recorded for the retrospective as a design note. Then the PE run
+(B1–B9, B11); B10 is noted as not live-reachable.
