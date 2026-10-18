@@ -4,8 +4,8 @@
 2026-10-13 from `docs/design/interactive-shells.md`. See
 [`README.md`](milestones/M28-interactive-shells/README.md).
 
-**Active phase:** [phase-04-live-close](milestones/M28-interactive-shells/phase-04-live-close.md)
-— todo. **Architect-run** with the PE present (not dispatched): rehearsals, then the PE run, then the 2.1.0 close. Phases 01,
+**Active phase:** [phase-04a-arg-tolerance](milestones/M28-interactive-shells/phase-04a-arg-tolerance.md) (a live-close fix; the live close itself, [phase-04](milestones/M28-interactive-shells/phase-04-live-close.md), resumes with rehearsal 2 after 04a and 04b)
+— todo. Dispatch with `/rexymcp:dispatch phase-04a-arg-tolerance`. Phases 01,
 01b, 01c, 02a, 02b, 02c, 02d, 02e, 02f, 02g, 03a, 03b, 03c, 03d and 03e are done.
 
 M27 closed 2026-10-12 (`v2.0.0`). The roadmap's former M28–M30 are now

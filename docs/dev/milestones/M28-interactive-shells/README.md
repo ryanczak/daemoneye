@@ -62,7 +62,9 @@ phases are split further where one is more than a session.
 | 03c | open-shell-size ([phase-03c-open-shell-size.md](phase-03c-open-shell-size.md)) — `open_shell(rows, cols)`; the result names the size. *Split from 03b at drafting* | done (approved_first_try, 2026-10-17) |
 | 03d | launch ([phase-03d-launch.md](phase-03d-launch.md)) — an interactive command (ssh, mosh, …) is launched: bare command + `\r`, settle, return the screen; replaces 02c's refusal | done (approved_first_try, 2026-10-17) |
 | 03e | interactive-param ([phase-03e-interactive-param.md](phase-03e-interactive-param.md)) — `run_terminal_command(interactive: true)` for any command, its panel line, the `wait: false` refusal. *Split from 03d at drafting: tool plumbing apart from behaviour* | done (approved_after_2, 2026-10-18) |
-| 04 | live-close ([phase-04-live-close.md](phase-04-live-close.md)) — architect rehearsals then a PE run of B1–B11 on pinky (Claude Code in a daemon PTY, zoidberg, ghost guard); then the 2.1.0 release | todo |
+| 04 | live-close ([phase-04-live-close.md](phase-04-live-close.md)) — architect rehearsals then a PE run of B1–B11 on pinky (Claude Code in a daemon PTY, zoidberg, ghost guard); then the 2.1.0 release | in-progress (rehearsal 1 done: F1–F5) |
+| 04a | arg-tolerance ([phase-04a-arg-tolerance.md](phase-04a-arg-tolerance.md)) — live F2 + F5: `keys` as an array, a JSON string or one name; string booleans; the invalid-args error names undeclared fields | todo |
+| 04b | launch-settle — live F1 + F3 + F4: a launch does not settle on the pre-launch screen; the busy-refusal wording; `top` is not the never-settles example | todo |
 
 ## Notes
 
