@@ -1,7 +1,7 @@
 # Phase 03e: interactive-param — `run_terminal_command(interactive: true)`
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** in-progress (bounced: bugs/bug-03e-1.md — re-dispatch 1 did not make the edit)
 **Depends on:** phase-03d
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -74,6 +74,14 @@ routing already does. The result says the `wait` was ignored.
    `### Update — <date> (end-to-end verification)`. The entry holds the
    output fence **and**, after it, the `PASTE MATCH` line the self-check
    printed.
+
+7. **Remove the dead allow (bug-03e-1)** — delete the one line
+   `#[allow(clippy::too_many_arguments)]` directly above
+   `pub(crate) async fn run_interactive_in_shell` in
+   `src/daemon/executor/shell_exec.rs`. This is a **source edit** and it is
+   the only open task; tasks 1–6 are done and approved. Keep the `allow` on
+   `run_in_shell_with_prompts`. Then re-capture the evidence (Task 6) into
+   a new entry.
 
 **Gotchas.**
 - Do not change the approval request's `cmd`: it also feeds the approval
@@ -179,7 +187,11 @@ own. Finish condition: clippy exits 0, the grep in § Acceptance criteria
 reads 0, and `cargo test` is still `passed=2395 failed=0`. Then re-run
 § End-to-end verification and paste it, with `PASTE MATCH`, into a new entry.
 
-### Notes for executor — 2026-10-18 (resume)
+### ~~Notes for executor — 2026-10-18 (resume)~~ SUPERSEDED
+
+> **Superseded by the bounce note above.** This note was for the resume
+> run, which had to capture evidence only. Its "do not change any source
+> file" no longer applies: bug-03e-1 needs exactly one source edit.
 
 **All the code is done and green. Do not change any source file.** The
 architect re-ran the gates on the tree as you left it: fmt, build and clippy
