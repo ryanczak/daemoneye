@@ -487,6 +487,7 @@ where
             shell,
             host,
             timeout_secs,
+            interactive,
             ..
         } => {
             // Ghost gate — a ghost has no unsandboxed door out (M19 phase-03).
@@ -609,27 +610,47 @@ where
                         };
                         // The two arms spawn different programs, so their closure
                         // types differ and each calls `run_in_shell_with_prompts`
-                        // itself (the same split `open_shell` makes).
+                        // itself (the same split `open_shell` makes). An
+                        // `interactive: true` call takes `run_interactive_in_shell`
+                        // instead, after the same approval: the launch path waits
+                        // only for the screen to settle, and `wait: false` on it
+                        // is ignored (03e).
                         let outcome = match &host {
                             crate::host::HostId::Local => {
-                                match shell_exec::run_in_shell_with_prompts(
-                                    crate::shell::registry(),
-                                    owner.clone(),
-                                    cmd,
-                                    max_per_owner,
-                                    shell.as_deref(),
-                                    *timeout_secs,
-                                    id.as_str(),
-                                    tx,
-                                    rx,
-                                    crate::host::HostId::Local,
-                                    |id| {
-                                        let (rows, cols) = crate::shell::spawn_size();
-                                        crate::shell::spawn_detached_host(id, &[], rows, cols)
-                                    },
-                                )
-                                .await
-                                {
+                                let run = if *interactive {
+                                    shell_exec::run_interactive_in_shell(
+                                        crate::shell::registry(),
+                                        owner.clone(),
+                                        cmd,
+                                        max_per_owner,
+                                        shell.as_deref(),
+                                        crate::host::HostId::Local,
+                                        |id| {
+                                            let (rows, cols) = crate::shell::spawn_size();
+                                            crate::shell::spawn_detached_host(id, &[], rows, cols)
+                                        },
+                                    )
+                                    .await
+                                } else {
+                                    shell_exec::run_in_shell_with_prompts(
+                                        crate::shell::registry(),
+                                        owner.clone(),
+                                        cmd,
+                                        max_per_owner,
+                                        shell.as_deref(),
+                                        *timeout_secs,
+                                        id.as_str(),
+                                        tx,
+                                        rx,
+                                        crate::host::HostId::Local,
+                                        |id| {
+                                            let (rows, cols) = crate::shell::spawn_size();
+                                            crate::shell::spawn_detached_host(id, &[], rows, cols)
+                                        },
+                                    )
+                                    .await
+                                };
+                                match run {
                                     Ok((shell_id, result)) => {
                                         crate::daemon::stats::finish_command(
                                             cmd_id,
@@ -731,24 +752,40 @@ where
                                     );
                                     return Ok(ToolCallOutcome::Result(msg));
                                 }
-                                match shell_exec::run_in_shell_with_prompts(
-                                    crate::shell::registry(),
-                                    owner.clone(),
-                                    cmd,
-                                    max_per_owner,
-                                    shell.as_deref(),
-                                    *timeout_secs,
-                                    id.as_str(),
-                                    tx,
-                                    rx,
-                                    host.clone(),
-                                    |id| {
-                                        let (rows, cols) = crate::shell::spawn_size();
-                                        crate::shell::spawn_ssh_host(id, name, rows, cols)
-                                    },
-                                )
-                                .await
-                                {
+                                let run = if *interactive {
+                                    shell_exec::run_interactive_in_shell(
+                                        crate::shell::registry(),
+                                        owner.clone(),
+                                        cmd,
+                                        max_per_owner,
+                                        shell.as_deref(),
+                                        host.clone(),
+                                        |id| {
+                                            let (rows, cols) = crate::shell::spawn_size();
+                                            crate::shell::spawn_ssh_host(id, name, rows, cols)
+                                        },
+                                    )
+                                    .await
+                                } else {
+                                    shell_exec::run_in_shell_with_prompts(
+                                        crate::shell::registry(),
+                                        owner.clone(),
+                                        cmd,
+                                        max_per_owner,
+                                        shell.as_deref(),
+                                        *timeout_secs,
+                                        id.as_str(),
+                                        tx,
+                                        rx,
+                                        host.clone(),
+                                        |id| {
+                                            let (rows, cols) = crate::shell::spawn_size();
+                                            crate::shell::spawn_ssh_host(id, name, rows, cols)
+                                        },
+                                    )
+                                    .await
+                                };
+                                match run {
                                     Ok((shell_id, result)) => {
                                         crate::daemon::stats::finish_command(
                                             cmd_id,

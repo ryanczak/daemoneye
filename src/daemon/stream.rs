@@ -37,8 +37,8 @@ fn cancel_stage(run_id: &crate::daemon::run::RunId) -> String {
 }
 
 /// Only an explicit `wait: false` skips the wait; an omitted `wait` waits.
-fn routes_to_background(wait: Option<bool>) -> bool {
-    wait == Some(false)
+fn routes_to_background(wait: Option<bool>, interactive: bool) -> bool {
+    !interactive && wait == Some(false)
 }
 
 /// Run the AI conversation loop: stream tokens, collect tool calls, execute,
@@ -320,12 +320,13 @@ where
                     id,
                     cmd,
                     wait,
+                    interactive,
                     thought_signature,
                     shell,
                     host,
                     timeout_secs,
                 } => {
-                    if routes_to_background(wait) {
+                    if routes_to_background(wait, interactive) {
                         // `wait: false` stays on the daemon host; a named host
                         // on a background command is row 08b's surface, so the
                         // value is dropped here (sre.toml promises this).
@@ -344,6 +345,7 @@ where
                             shell,
                             host,
                             timeout_secs,
+                            interactive,
                             thought_signature: thought_signature.clone(),
                         });
                     }
@@ -1680,7 +1682,7 @@ mod tests {
     #[test]
     fn omitting_wait_runs_in_the_foreground() {
         assert!(
-            !routes_to_background(None),
+            !routes_to_background(None, false),
             "an omitted `wait` waits — the PTY foreground path is the default"
         );
     }
@@ -1688,7 +1690,7 @@ mod tests {
     #[test]
     fn wait_false_runs_in_the_background() {
         assert!(
-            routes_to_background(Some(false)),
+            routes_to_background(Some(false), false),
             "`wait: false` is the old `background: true`"
         );
     }
@@ -1696,8 +1698,21 @@ mod tests {
     #[test]
     fn wait_true_runs_in_the_foreground() {
         assert!(
-            !routes_to_background(Some(true)),
+            !routes_to_background(Some(true), false),
             "an explicit `wait: true` waits — a `wait.is_some()` routing would invert this"
+        );
+    }
+
+    #[test]
+    fn an_interactive_call_is_never_backgrounded() {
+        assert!(
+            !routes_to_background(Some(false), true),
+            "interactive: true takes the waited foreground launch path even with \
+             wait: false"
+        );
+        assert!(
+            routes_to_background(Some(false), false),
+            "without interactive, wait: false still backgrounds"
         );
     }
 

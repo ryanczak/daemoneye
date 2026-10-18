@@ -9,6 +9,10 @@ pub enum PendingCall {
         shell: Option<String>,
         host: Option<String>,
         timeout_secs: Option<u64>,
+        /// `run_terminal_command(interactive: true)` (03e): take the launch
+        /// path — type the command, return the settled screen — instead of
+        /// waiting on the command. Only `Foreground` carries it.
+        interactive: bool,
     },
     Background {
         id: String,
@@ -384,6 +388,7 @@ impl PendingCall {
                 shell,
                 host,
                 timeout_secs,
+                interactive,
             } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
@@ -391,6 +396,7 @@ impl PendingCall {
                 arguments: args_to_string(serde_json::json!({
                     "command": cmd,
                     "background": false,
+                    "interactive": interactive,
                     "shell": shell,
                     "host": host,
                     "timeout_secs": timeout_secs
@@ -1346,6 +1352,7 @@ mod tests {
             shell: None,
             host: None,
             timeout_secs: None,
+            interactive: false,
         }
     }
 
@@ -1597,6 +1604,7 @@ mod tests {
             shell: shell.map(|s| s.to_string()),
             host: host.map(|h| h.to_string()),
             timeout_secs: None,
+            interactive: false,
         };
         assert_eq!(mk(None, None).summary(), "\"uptime\"");
         assert_eq!(mk(Some("s3"), None).summary(), "\"uptime\" in s3");
@@ -1709,6 +1717,23 @@ mod tests {
         assert!(!args.as_object().unwrap().contains_key("settle_ms"));
     }
 
+    /// `to_tool_call` round-trips `interactive` into the arguments JSON, so
+    /// the echoed history shows the call the model actually made (03e).
+    #[test]
+    fn to_tool_call_carries_interactive_into_the_arguments() {
+        let interactive = PendingCall::Foreground {
+            id: "x".to_string(),
+            thought_signature: None,
+            cmd: "vim".to_string(),
+            shell: None,
+            host: None,
+            timeout_secs: None,
+            interactive: true,
+        };
+        assert_eq!(parsed_args(&interactive)["interactive"], true);
+        assert_eq!(parsed_args(&mk_foreground("ls"))["interactive"], false);
+    }
+
     #[test]
     fn to_tool_call_background_omits_credential_when_absent() {
         let mk = || PendingCall::Background {
@@ -1736,6 +1761,7 @@ mod tests {
                 shell: None,
                 host: None,
                 timeout_secs: None,
+                interactive: false,
             },
             PendingCall::Background {
                 id: x(),

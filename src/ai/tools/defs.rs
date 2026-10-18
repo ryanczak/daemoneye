@@ -103,6 +103,17 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "Optional maximum seconds to wait for the command (PTY backend \
                               only). Default 45, capped at 3600. 0 means the default.",
             },
+            ParamDef {
+                name: "interactive",
+                ty: ParamTy::Bool,
+                required: false,
+                description: "For a program that does not exit (a TUI such as vim, top or \
+                              claude, or a REPL): the command is typed into the shell, the \
+                              call waits only for the screen to settle (up to 5 s) and \
+                              returns the screen; nothing waits for the program to finish. \
+                              Drive it with send_input and read it with read_shell_screen. \
+                              ssh and mosh are launched this way automatically.",
+            },
         ],
         deferred_group: None,
         category: Category::Run,

@@ -1088,6 +1088,7 @@ mod tests {
             id,
             cmd,
             wait,
+            interactive,
             thought_signature,
             shell,
             host,
@@ -1111,6 +1112,51 @@ mod tests {
             Some(33),
             "the timeout lands in `timeout_secs`"
         );
+        assert!(
+            !interactive,
+            "interactive is absent from the args, so it is false"
+        );
+    }
+
+    /// `interactive` is on the tool surface and lands in the event: present
+    /// as `true`, absent as `false` (03e).
+    #[test]
+    fn run_terminal_command_args_carry_interactive() {
+        let def = TOOLS
+            .iter()
+            .find(|t| t.name == "run_terminal_command")
+            .unwrap_or_else(|| panic!("run_terminal_command is in TOOLS"));
+        let param = def
+            .params
+            .iter()
+            .find(|p| p.name == "interactive")
+            .unwrap_or_else(|| panic!("run_terminal_command carries an interactive param"));
+        assert!(matches!(param.ty, ParamTy::Bool), "the param is a bool");
+        assert!(!param.required, "the param is optional");
+
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "run_terminal_command",
+            &json!({"command": "vim", "interactive": true}),
+            None,
+        )
+        .expect("the args dispatch");
+        let AiEvent::ToolCall { interactive, .. } = ev else {
+            panic!("expected AiEvent::ToolCall, got {ev:?}")
+        };
+        assert!(interactive, "interactive: true lands in the event");
+
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "run_terminal_command",
+            &json!({"command": "vim"}),
+            None,
+        )
+        .expect("the args dispatch");
+        let AiEvent::ToolCall { interactive, .. } = ev else {
+            panic!("expected AiEvent::ToolCall, got {ev:?}")
+        };
+        assert!(!interactive, "interactive defaults to false when absent");
     }
 
     /// GLM's legacy `background` habit: the schema never names it, so the

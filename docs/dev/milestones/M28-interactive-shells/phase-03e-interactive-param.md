@@ -187,3 +187,22 @@ end-to-end capture.
 
 **Chosen lever:** resume
 **Rationale:** every code task is done and green (2395/0, fmt and clippy clean on the left-behind tree); the stall was the spec's exact count (2394) refusing a reasonable extra test, so the criterion is re-pinned and only the evidence capture is left, which a resume does without redoing 15 files.
+
+### Update — 2026-10-18 14:10 (end-to-end verification)
+
+**Executor:** phase-03e run 2 (resume).
+
+```sh
+run_terminal_command_args_carry_interactive: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+to_tool_call_carries_interactive_into_the_arguments: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+an_interactive_call_is_never_backgrounded: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+run_interactive_in_shell_launches_any_command: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+wait_false_runs_in_the_background: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+launch_interactive_returns_the_settled_screen: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2395 failed=0
+```
+
+PASTE MATCH

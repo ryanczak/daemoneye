@@ -330,6 +330,7 @@ impl AiClient for GeminiClient {
                                                         id: next_tool_id(),
                                                         cmd,
                                                         wait: Some(!bg),
+                                                        interactive: false,
                                                         thought_signature: None,
                                                         shell: None,
                                                         host: None,

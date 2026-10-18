@@ -93,6 +93,20 @@ Non-obvious annotations that require a behavioural response:
 - Runs on the daemon host even if the user is SSH'd elsewhere. Supports sudo \
   (chat prompt).
 
+**`interactive=true`** — launch, do not wait:
+- For a program that does not exit: a TUI such as `vim`, `top` or `claude`, \
+  or a REPL. The command is typed into the shell, the call waits only for the \
+  screen to settle (up to 5 s) and returns the screen; nothing waits for the \
+  program to finish.
+- Drive the session with `send_input` and read it with `read_shell_screen`: \
+  `run_terminal_command("claude", interactive: true)`, then \
+  `send_input(shell: "s3", text: "…", enter: true)`, then \
+  `read_shell_screen(shell: "s3", settle_ms: 1500)`.
+- The shell stays busy holding the session, so later commands run in another \
+  shell while it is up. `wait=false` alongside `interactive=true` is ignored: \
+  a launch never waits on the command anyway. `ssh` and `mosh` are launched \
+  this way automatically, without the parameter.
+
 **Where commands actually run.** Every `run_terminal_command` runs on the PTY \
 substrate — a PTY shell the daemon owns, recorded as an asciicast log. Nothing \
 is ever executed in a tmux pane; tmux is read-only context when present.

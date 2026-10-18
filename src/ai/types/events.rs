@@ -7,6 +7,7 @@ pub enum AiEvent {
         id: String,
         cmd: String,
         wait: Option<bool>,
+        interactive: bool,
         thought_signature: Option<String>,
         shell: Option<String>,
         host: Option<String>,

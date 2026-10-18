@@ -1033,6 +1033,7 @@ async fn do_ghost_turn(
                         id,
                         cmd: command,
                         wait: _wait,
+                        interactive: _interactive,
                         thought_signature,
                         shell: _shell,
                         host,

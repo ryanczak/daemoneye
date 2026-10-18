@@ -153,7 +153,41 @@ where
         max_per_owner,
         shell,
         timeout_secs,
+        false,
         prompts,
+        host,
+        spawn,
+    )
+    .await
+}
+
+/// The launch path (03e) `run_terminal_command(interactive: true)` takes:
+/// no prompts and no timeout — the bare command is typed into the shell, the
+/// call waits only for the screen to settle (D6), and `run_in_shell_core`
+/// marks the run interactive so a non-launching command also takes this door.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_interactive_in_shell<S, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    cmd: &str,
+    max_per_owner: u32,
+    shell: Option<&str>,
+    host: crate::host::HostId,
+    spawn: S,
+) -> anyhow::Result<(ShellId, ShellRunResult)>
+where
+    S: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    run_in_shell_core(
+        reg,
+        owner,
+        cmd,
+        max_per_owner,
+        shell,
+        None,
+        true,
+        None::<SudoPromptArgs<'_, tokio::io::Sink, tokio::io::Empty>>,
         host,
         spawn,
     )
@@ -220,6 +254,7 @@ async fn run_in_shell_core<'p, W, R, F, Fut>(
     max_per_owner: u32,
     shell: Option<&str>,
     timeout_secs: Option<u64>,
+    interactive: bool,
     prompts: Option<SudoPromptArgs<'p, W, R>>,
     host: crate::host::HostId,
     spawn: F,
@@ -372,7 +407,7 @@ where
             );
         }
     }
-    if crate::daemon::utils::is_interactive_command(cmd) {
+    if interactive || crate::daemon::utils::is_interactive_command(cmd) {
         // The command is launched, not run to completion: the bare command
         // plus `\r` starts the session and the settled screen is what comes
         // back (D6). No markers, no exit wait, no signal to the foreground
@@ -1855,6 +1890,56 @@ mod tests {
                 tui: false,
             }),
             "the settle read records the running program: {fg:?}"
+        );
+
+        crate::shell::send_input(&socket_path(id.as_str()), b"\x03", Duration::from_secs(5))
+            .await
+            .expect("the shell accepts the interrupt");
+    }
+
+    /// Task 3 recipe: `run_interactive_in_shell` launches a command
+    /// `is_interactive_command` does **not** recognise — `sleep 30` through
+    /// the waited path would hang on the marker protocol until the timeout,
+    /// and here it returns `Ok` within 10 s with the launch text. `\x03` at
+    /// the end ends the session so the shell does not outlive the test.
+    #[tokio::test]
+    async fn run_interactive_in_shell_launches_any_command() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("interactive-param".into());
+        let (id, result) = tokio::time::timeout(
+            Duration::from_secs(10),
+            run_interactive_in_shell(
+                &reg,
+                owner.clone(),
+                "sleep 30",
+                5,
+                None,
+                crate::host::HostId::Local,
+                spawn_in_process_host,
+            ),
+        )
+        .await
+        .expect("an interactive launch returns within 10 s")
+        .expect("an interactive launch of a non-recognised command succeeds");
+        assert!(
+            result.text.starts_with("[Interactive session started]"),
+            "the launch text opens with the interactive banner: {:?}",
+            &result.text[..result.text.len().min(120)]
+        );
+        let fg = with_shells(&reg, |store| {
+            store
+                .get(id.as_str())
+                .and_then(|r| r.last_foreground.clone())
+                .map(|(fg, _)| fg)
+        });
+        assert_eq!(
+            fg,
+            Some(Foreground::Program {
+                cmd: "sleep".into(),
+                tui: false,
+            }),
+            "the record's last_foreground is the running program: {fg:?}"
         );
 
         crate::shell::send_input(&socket_path(id.as_str()), b"\x03", Duration::from_secs(5))
