@@ -1,7 +1,7 @@
 # Phase 03e: interactive-param — `run_terminal_command(interactive: true)`
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-03d
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -732,3 +732,34 @@ kill: (-3954382): No such process
 **Commit:** 02ced43c8795cd8c8ebc7ce5f7a58f52363af657
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-18 (final)
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2.
+  - bug-03e-1: a dead `#[allow(clippy::too_many_arguments)]` on the
+    7-parameter `run_interactive_in_shell`. The reviewer's first approval
+    (`0acd54c8`) was committed before reading the standards grep and was
+    withdrawn.
+  - The first re-dispatch made no edit and reported complete. It obeyed
+    the earlier resume note's bold "do not change any source file", and
+    the fix had no numbered Spec task. Architect-caused (`spec_bug`).
+  - Fixed in `02ced43c`, a one-line deletion, in 59 turns.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** carried from the withdrawn verdict, accepted. Task
+  4's per-result `(wait: false ignored: …)` prefix is not implemented: the
+  arm carries no `wait`, and `sre.toml` tells the model instead; it is on
+  the live-close list. The extra test
+  `to_tool_call_carries_interactive_into_the_arguments` is accepted.
+- **Calibration:** for the retrospective.
+  1. The reviewer reads the standards grep **before** committing an
+     approval: a `&&` chain that commits regardless turned a finding into a
+     withdrawal.
+  2. When a phase moves from resume to bounce, supersede the resume notes;
+     a stale bold prohibition beat the newer note.
+  3. A bounce fix needs a numbered Spec task, or the task seeder reports
+     everything done.
+
+  Independent re-run: 2395 passed / 0 failed, fmt and clippy clean; the
+  phase-wide standards grep (`3612285c..HEAD`) is empty; the bug-03e-1
+  criterion is 1 ⇒ 0.

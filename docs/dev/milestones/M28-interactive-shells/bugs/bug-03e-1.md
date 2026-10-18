@@ -1,7 +1,7 @@
 # Bug 1 on phase-03e: a dead `#[allow(clippy::too_many_arguments)]`
 
 **Severity:** minor
-**Status:** open
+**Status:** fixed (02ced43c)
 **Filed:** 2026-10-18
 
 ## What's wrong
