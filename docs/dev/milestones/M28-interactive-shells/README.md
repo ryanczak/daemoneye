@@ -65,7 +65,7 @@ phases are split further where one is more than a session.
 | 04 | live-close ([phase-04-live-close.md](phase-04-live-close.md)) — architect rehearsals then a PE run of B1–B11 on pinky (Claude Code in a daemon PTY, zoidberg, ghost guard); then the 2.1.0 release | in-progress (rehearsals 1–2 done: F1–F9) |
 | 04a | arg-tolerance ([phase-04a-arg-tolerance.md](phase-04a-arg-tolerance.md)) — live F2 + F5: `keys` as an array, a JSON string or one name; string booleans; the invalid-args error names undeclared fields | done (approved_first_try, 2026-10-18) |
 | 04b | launch-settle ([phase-04b-launch-settle.md](phase-04b-launch-settle.md)) — live F1 + F3 + F4: a launch does not settle on the pre-launch screen; the busy-refusal wording; `top` is not the never-settles example | done (approved_first_try, 2026-10-18) |
-| 04c | live-r2 ([phase-04c-live-r2.md](phase-04c-live-r2.md)) — rehearsal 2's F6 (`keys:"[]"` is no keys), F7 (the cap refusal is pre-write and names no shell), F9 (a ghost refuses `interactive`) | in-progress |
+| 04c | live-r2 ([phase-04c-live-r2.md](phase-04c-live-r2.md)) — rehearsal 2's F6 (`keys:"[]"` is no keys), F7 (the cap refusal is pre-write and names no shell), F9 (a ghost refuses `interactive`) | review      |
 
 ## Notes
 
