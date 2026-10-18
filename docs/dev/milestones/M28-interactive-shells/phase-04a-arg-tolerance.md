@@ -1,7 +1,7 @@
 # Phase 04a: arg-tolerance — the argument shapes GLM actually sends parse
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04 rehearsal 1 (findings F2, F5)
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -138,3 +138,62 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+### Update — 2026-10-18 09:19 (progress, executor)
+
+Started phase 04a. Read the rehearsal's F2/F5 findings and the current
+`args.rs` / `dispatch.rs` / `defs.rs`.
+
+Tasks 1–4 are implemented:
+
+- `lenient_bool` (serde `deserialize_with` helper) — real boolean, string
+  boolean (`"true"`/`"false"`, case-insensitive, whitespace-trimmed) and
+  null all parse; any other string errors. Applied to `wait`,
+  `background`, `interactive` on `run_terminal_command`, and `paste`,
+  `enter` on `send_input`; `#[serde(default)]` kept everywhere.
+- `lenient_keys` — real array, JSON-encoded string of an array (reusing
+  `extract_string_vec`), or any other non-empty string as one key name;
+  empty/absent gives an empty list; no separator splitting. Applied to
+  `SendInputArgs::keys`.
+- `invalid_args_event` now adds one problem per undeclared key:
+  `unexpected parameter '<name>' (<json type>): not in this tool's schema;
+  remove it`, after the existing declared-parameter checks (which are
+  unchanged).
+- The `keys` description gained the sentence naming the JSON-array and
+  single-name forms.
+
+One deviation to note: the `invalid_args_event` mistyped-param check
+still reports `wait:"true"` as "is string, expected boolean" — the spec's
+"Keep every existing message as it is" pins that, so a string boolean on a
+declared field that reaches `invalid_args_event` (a value the lenient
+deserializer rejected is impossible for declared fields now, so this only
+shows in the direct-call test) still says boolean there. The undeclared
+line is new and separate.
+
+Five new tests: three in `dispatch.rs` tests per the spec's Test list
+(`send_input_keys_accept_an_array_a_json_string_or_one_name`,
+`string_booleans_parse_where_glm_sends_them`,
+`a_garbage_value_is_still_invalid_and_named`) and two in a new
+`args_tests` module in `args.rs` covering the helpers directly
+(`lenient_bool_rejects_prose_but_takes_string_and_real_booleans`,
+`lenient_keys_never_splits_on_separators`). The spec's count of +3 was
+written for the three dispatch tests; I report the full count after the
+full suite run in the end-to-end entry.
+
+E2E capture (task 5) runs next, then fmt/commit.
+### Update — 2026-10-18 09:25 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim (each line once), into `/tmp/e2e-04a.txt`:
+
+```
+send_input_keys_accept_an_array_a_json_string_or_one_name: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+string_booleans_parse_where_glm_sends_them: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_garbage_value_is_still_invalid_and_named: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+invalid_args_event_names_the_mistyped_param: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+send_input_enter_defaults_on_only_without_keys: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2400 failed=0
+```
+
+`PASTE MATCH` — the self-check re-extracted the fence above and diffed it against `/tmp/e2e-04a.txt`: identical.

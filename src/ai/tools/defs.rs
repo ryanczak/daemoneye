@@ -1096,9 +1096,10 @@ pub static TOOLS: &[ToolDef] = &[
                               Home, End, PageUp, PageDown, Delete, BSpace, Space, F1 through \
                               F12, or one printable character, with the C-, M- and S- \
                               prefixes in any order (e.g. \"C-c\", \"M-b\", \"S-Enter\"). \
-                              A combination with no legacy byte goes out as CSI u; the \
-                              result names those keys. Unknown names are an error and \
-                              nothing is sent.",
+                              Pass a JSON array such as [\"Down\", \"Enter\"]; a single key \
+                              name such as \"Escape\" also works. A combination with no \
+                              legacy byte goes out as CSI u; the result names those keys. \
+                              Unknown names are an error and nothing is sent.",
             },
             ParamDef {
                 name: "paste",

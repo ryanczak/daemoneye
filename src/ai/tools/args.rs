@@ -10,15 +10,75 @@ pub(super) trait ToolArgs: Sized {
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent;
 }
 
+/// Lenient boolean deserialization: providers (GLM in rehearsal 1) send
+/// `"true"`/`"false"` as JSON strings despite the schema's `boolean` type.
+/// A real boolean, a string boolean (case-insensitive, whitespace-trimmed)
+/// and null all parse; any other string is an error so the invalid-args
+/// error can name the field.
+pub(super) fn lenient_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<Value>::deserialize(deserializer)?;
+    match v {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(b)),
+        Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" => Ok(Some(true)),
+            "false" => Ok(Some(false)),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid boolean: {other:?}"
+            ))),
+        },
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "expected a boolean, got {}",
+            json_type_of(&other)
+        ))),
+    }
+}
+
+fn json_type_of(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// Lenient `keys`: a real array, a JSON-encoded string of an array, or a
+/// single key name as a bare string — the three shapes providers send for a
+/// `string`-typed array parameter. Never split on separators: `C-,` and
+/// `M- ` are valid key names.
+pub(super) fn lenient_keys<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<Value>::deserialize(deserializer)?.unwrap_or(Value::Null);
+    if v.as_str().is_some_and(|s| s.trim().is_empty()) {
+        return Ok(Vec::new());
+    }
+    Ok(extract_string_vec(&v)
+        .filter(|keys| !keys.is_empty())
+        .or_else(|| v.as_str().map(|s| vec![s.to_string()]))
+        .unwrap_or_default())
+}
+
 // ── Typed arg structs ──────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub(super) struct RunTerminalCommandArgs {
     command: String,
+    #[serde(default, deserialize_with = "lenient_bool")]
     wait: Option<bool>,
-    // GLM sends `background` from its priors; the schema never mentions it,
-    // so serde must keep it or it silently degrades to a waited call.
+    // GLM sends `background` from its priors — as a string, most of the time
+    // — so the schema never mentions it; serde must keep it or it silently
+    // degrades to a waited call.
+    #[serde(default, deserialize_with = "lenient_bool")]
     background: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_bool")]
     interactive: Option<bool>,
     shell: Option<String>,
     host: Option<String>,
@@ -158,13 +218,14 @@ pub(super) struct SendInputArgs {
     shell: String,
     #[serde(default)]
     text: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_keys")]
     keys: Vec<String>,
+    #[serde(default, deserialize_with = "lenient_bool")]
     paste: Option<bool>,
     // `Option` rather than a bool default: `enter` defaults to true only
     // when `keys` is empty, and the default fn cannot see the other fields —
     // `to_event` resolves it.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_bool")]
     enter: Option<bool>,
 }
 
@@ -943,5 +1004,63 @@ impl ToolArgs for AwaitAgentResultArgs {
             timeout_secs: self.timeout_secs,
             thought_signature: ts,
         }
+    }
+}
+
+#[cfg(test)]
+mod args_tests {
+    use super::*;
+
+    #[test]
+    fn lenient_bool_rejects_prose_but_takes_string_and_real_booleans() {
+        let prose =
+            serde_json::json!({"command": "x", "background": "then hostname with host zoidberg"});
+        let r = serde_json::from_value::<RunTerminalCommandArgs>(prose);
+        assert!(r.is_err(), "lenient_bool must reject prose");
+
+        let strings = serde_json::json!({"command": "x", "wait": "TRUE ", "background": "False"});
+        let parsed = serde_json::from_value::<RunTerminalCommandArgs>(strings)
+            .expect("trimmed, case-insensitive string booleans parse");
+        assert_eq!(parsed.wait, Some(true), "'TRUE ' is true");
+        assert_eq!(parsed.background, Some(false), "'False' is false");
+
+        let real = serde_json::json!({"command": "x", "wait": true});
+        let parsed = serde_json::from_value::<RunTerminalCommandArgs>(real)
+            .expect("a real boolean still parses");
+        assert_eq!(parsed.wait, Some(true));
+
+        let absent = serde_json::json!({"command": "x"});
+        let parsed = serde_json::from_value::<RunTerminalCommandArgs>(absent)
+            .expect("an absent boolean is None");
+        assert_eq!(parsed.background, None);
+    }
+
+    #[test]
+    fn lenient_keys_never_splits_on_separators() {
+        let args = serde_json::json!({"shell": "s1", "keys": "C-,"});
+        let parsed = serde_json::from_value::<SendInputArgs>(args)
+            .expect("a single key name parses verbatim");
+        assert_eq!(
+            parsed.keys,
+            vec!["C-,"],
+            "no comma split — C-, is a key name"
+        );
+
+        let args = serde_json::json!({"shell": "s1", "keys": ["M- "]});
+        let parsed = serde_json::from_value::<SendInputArgs>(args).expect("an array parses");
+        assert_eq!(parsed.keys, vec!["M- "], "the space in M- is kept");
+
+        let args = serde_json::json!({"shell": "s1", "keys": "  "});
+        let parsed = serde_json::from_value::<SendInputArgs>(args)
+            .expect("a whitespace-only string is an empty list");
+        assert!(
+            parsed.keys.is_empty(),
+            "whitespace-only is empty, not one key"
+        );
+
+        let args = serde_json::json!({"shell": "s1"});
+        let parsed =
+            serde_json::from_value::<SendInputArgs>(args).expect("an absent keys is an empty list");
+        assert!(parsed.keys.is_empty(), "absent keys defaults to empty");
     }
 }

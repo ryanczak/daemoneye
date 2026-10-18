@@ -146,6 +146,26 @@ pub fn invalid_args_event(
         }
     }
 
+    // Undeclared keys — `background` habit, chat prose leaking in — get
+    // their own problem line, so the model sees *what* to remove rather
+    // than a generic schema complaint it cannot act on.
+    let declared: std::collections::BTreeSet<&str> = def.params.iter().map(|p| p.name).collect();
+    let mut undeclared: Vec<&String> = Vec::new();
+    if let Some(obj) = args.as_object() {
+        for key in obj.keys() {
+            if !declared.contains(key.as_str()) {
+                undeclared.push(key);
+            }
+        }
+    }
+    undeclared.sort();
+    for name in undeclared {
+        let ty = json_type_name(&args[name]);
+        problems.push(format!(
+            "unexpected parameter '{name}' ({ty}): not in this tool's schema; remove it"
+        ));
+    }
+
     let error = if problems.is_empty() {
         format!(
             "the arguments do not match the schema; expected: {}",
@@ -1328,6 +1348,107 @@ mod tests {
         assert!(
             invalid_args_event("tc_3", "no_such_tool", &json!({}), None).is_none(),
             "an unknown tool keeps the unknown-tool path"
+        );
+    }
+
+    /// The three shapes GLM actually sent for `keys` in rehearsal 1's
+    /// daemon.log (finding F2), plus the real array — all must land.
+    #[test]
+    fn send_input_keys_accept_an_array_a_json_string_or_one_name() {
+        for (args, want, why) in [
+            (
+                json!({"shell": "s1", "enter": false, "keys": "Down"}),
+                vec!["Down"],
+                "the bare string is one key name",
+            ),
+            (
+                json!({"shell": "s1", "keys": "[\"Down\",\"Enter\"]"}),
+                vec!["Down", "Enter"],
+                "the JSON-encoded string parses",
+            ),
+            (
+                json!({"shell": "s1", "keys": ["Down", "Enter"]}),
+                vec!["Down", "Enter"],
+                "a real array still parses",
+            ),
+            (
+                json!({"shell": "s1", "keys": ""}),
+                Vec::<&str>::new(),
+                "an empty string is an empty list",
+            ),
+        ] {
+            let ev = dispatch_tool_event("tc_1", "send_input", &args, None)
+                .unwrap_or_else(|| panic!("dispatch failed for {args}: {why}"));
+            let AiEvent::SendInput { keys, .. } = ev else {
+                panic!("expected AiEvent::SendInput for {args}")
+            };
+            assert_eq!(keys, want, "{why}");
+        }
+    }
+
+    /// Rehearsal 1 (finding F5): GLM sends `background` as the string
+    /// `"false"` on nearly every `run_terminal_command`, and string
+    /// booleans for the others.
+    #[test]
+    fn string_booleans_parse_where_glm_sends_them() {
+        let ev = dispatch_tool_event(
+            "tc_1",
+            "run_terminal_command",
+            &json!({"command": "echo hi", "background": "false"}),
+            None,
+        )
+        .expect("background:'false' dispatches");
+        let AiEvent::ToolCall { cmd, wait, .. } = ev else {
+            panic!("expected AiEvent::ToolCall, got {ev:?}")
+        };
+        assert_eq!(cmd, "echo hi");
+        assert_eq!(wait, Some(true), "background:'false' means a waited call");
+
+        let ev = dispatch_tool_event(
+            "tc_2",
+            "run_terminal_command",
+            &json!({"command": "x", "interactive": "true"}),
+            None,
+        )
+        .expect("interactive:'true' dispatches");
+        let AiEvent::ToolCall { interactive, .. } = ev else {
+            panic!("expected AiEvent::ToolCall, got {ev:?}")
+        };
+        assert!(interactive, "the string boolean parses");
+
+        let ev = dispatch_tool_event(
+            "tc_3",
+            "send_input",
+            &json!({"shell": "s1", "text": "y", "enter": "false", "paste": "TRUE"}),
+            None,
+        )
+        .expect("string booleans dispatch");
+        let AiEvent::SendInput { enter, paste, .. } = ev else {
+            panic!("expected AiEvent::SendInput, got {ev:?}")
+        };
+        assert!(!enter, "enter:'false' parses");
+        assert_eq!(paste, Some(true), "paste:'TRUE' parses case-insensitively");
+    }
+
+    /// A value that is not a string boolean at all — rehearsal 1 saw chat
+    /// prose leak into `background` twice — stays invalid, and the error now
+    /// names the field. The backend flow is tried-then-fallback: dispatch
+    /// returns `None`, then `invalid_args_event` builds the result.
+    #[test]
+    fn a_garbage_value_is_still_invalid_and_named() {
+        let args = json!({"command": "x", "background": "then hostname with host zoidberg"});
+        assert!(
+            dispatch_tool_event("tc_1", "run_terminal_command", &args, None).is_none(),
+            "a garbage background cannot dispatch"
+        );
+        let ev = invalid_args_event("tc_1", "run_terminal_command", &args, None)
+            .expect("a known tool always yields an event");
+        let AiEvent::InvalidToolArgs { error, .. } = ev else {
+            panic!("expected AiEvent::InvalidToolArgs, got {ev:?}");
+        };
+        assert!(
+            error.contains("background"),
+            "the error names the offending field: {error}"
         );
     }
 }
