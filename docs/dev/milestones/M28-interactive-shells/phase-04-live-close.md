@@ -77,3 +77,69 @@ tag `v2.1.0`). **Push only on the PE's explicit go-ahead.**
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-18 (rehearsal 1, architect)
+
+Harness as in Pre-flight. `~/.claude`, `~/.claude.json` and `~/.ssh` are
+symlinked into `$R`: shell-hosts inherit `HOME=$R`, and without the links
+`claude` lands on its login screen and ssh has no keys. The raw notes are
+in `/tmp/e2e-m28-04.txt`. Stopped after B9: F2 and F5 make every GLM-driven
+block unreliable.
+
+| Block | Result |
+|---|---|
+| B1 see | **pass**: `less` launched with `interactive: true`; header `running less (TUI)`, alt screen, 40×120 (03b's default); status line `[SEL: /tmp/de28-live/lessfile.txt]` |
+| B2 launch | **partial**: `[Interactive session started] \`claude\` holds shell s1`, and `list_shells` shows `[running claude (TUI)]`, **but F1** |
+| B3 never poison | **pass**: `echo hi` ran in a fresh shell; `shell: "s1"` refused with "shell s1 is running claude (TUI) …" (**F3**: wording) |
+| B4 type and wait | not run (blocked: F2 kept the trust dialog open) |
+| B5 keys | **fail → F2** |
+| B6 never settles | `top` settled (**F4**); `top -d 0.2`: **pass**, `[did not settle within 5.0 s — … use wait_for …]` with the screen |
+| B7 geometry | **pass**: `open_shell(cols: 160)` → "40 rows × 160 columns"; `stty size` → `40 160` |
+| B8 ssh upgrade | not run |
+| B9 host reuse | **half**: the first call opened `s4 host:zoidberg`; the second was lost to F5 |
+| B10 ghost | not run |
+
+**Findings.**
+- **F1 (major), launch settles before the program draws.** 03d's launch
+  settle (500 ms, two equal reads) passed on the bare echo of `claude`,
+  before Node started. The returned screen held only
+  `matt@pinky:~$ claude`, which defeats the point of returning the screen.
+  A re-read with `settle_ms: 1500` showed Claude Code's trust dialog.
+  `sleep` in the unit tests draws nothing, so they cannot see this. Fix
+  constraint: the launch must not call a screen settled while it still
+  shows only what was there before the program started.
+- **F2 (blocker), `send_input` `keys` cannot be sent.** `defs.rs` declares
+  `keys` as `ParamTy::Str` (there is no array type). GLM follows the schema
+  and sends `"Down"` or the JSON-encoded string `"[\"Down\",\"Enter\"]"`,
+  which do not deserialize into `Vec<String>`. All 8+ calls were rejected.
+  (GLM's claim that it also sent a real array is false; `daemon.log` shows
+  only strings.) 02e's dispatch test fed a real array, so it passed.
+  Precedent: `load_tools` `groups` accepts a real array or a JSON-encoded
+  string of one.
+- **F3 (minor), wrong wrapper on the busy refusal.** The refusal is
+  wrapped in the generic run-error text ("don't assume failure / don't
+  retry: double-apply risk"), which contradicts a refusal made before
+  anything was written.
+- **F4 (minor, docs), `top` does settle.** `top` redraws every 3 s, so a
+  500 ms settle passes between redraws. The `settle_ms` description, the
+  `sre.toml` example and design D7 all name `top` as a screen that never
+  settles. Use a fast redraw (`top -d 0.2`, `watch -n 0.1`) as the example.
+- **F5 (major; predates M28 but disruptive), GLM's `background` is
+  rejected, and the error never says so.** Every rejected
+  `run_terminal_command` (16 in the run) carried `"background":"false"`, a
+  string, including calls GLM insisted were clean. Twice, chat prose leaked
+  into its value. GLM's tool-call output injects it whatever the model
+  intends. The invalid-arguments error lists only the declared parameters
+  and never names `background`, so the model cannot self-correct, and each
+  storm burns 6–9 retries. When told, its calls succeeded until the
+  injection came back. Fix constraint: a string boolean for
+  `background`/`wait`/`interactive` must parse, and an invalid-arguments
+  error must name every offending field, declared or not.
+
+**Carried decision 1, evidence.** B1 and B2's approval panels showed only
+`$ less …` and `$ claude`, with no sign that the call was an interactive
+launch.
+
+**Next.** Fix phases before rehearsal 2: **04a** argument tolerance (F2,
+F5); **04b** launch settle and wording (F1, F3, F4). Then rehearsal 2 runs
+all of B1–B10.
