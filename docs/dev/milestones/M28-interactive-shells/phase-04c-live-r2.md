@@ -1,7 +1,7 @@
 # Phase 04c: live-r2 — rehearsal 2's findings F6, F7, F9
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04b
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=s
