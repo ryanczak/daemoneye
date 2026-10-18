@@ -165,7 +165,6 @@ where
 /// no prompts and no timeout — the bare command is typed into the shell, the
 /// call waits only for the screen to settle (D6), and `run_in_shell_core`
 /// marks the run interactive so a non-launching command also takes this door.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_interactive_in_shell<S, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
