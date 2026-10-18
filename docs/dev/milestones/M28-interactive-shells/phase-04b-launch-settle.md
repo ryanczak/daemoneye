@@ -197,3 +197,40 @@ passed=2403 failed=0
 ```
 
 PASTE MATCH
+
+### Update — 2026-10-18 14:24 (progress)
+
+Gate re-run flagged `script_invocation_accepts_an_absolute_path_under_scripts_dir`
+(`sbx.rs`, M26 10b, untouched by this phase) as failed. Investigated: the test
+reads `crate::config::scripts_dir()` — `$HOME/.daemoneye/scripts` at the moment
+the assertion runs — and this phase's new tests mutate `HOME` through the same
+process-global the other 100+ tests already serialise on. 16 further full-suite
+`cargo test` runs (5× in a row, then 12× interleaved with the gate's own
+sequence) all came back `2332 passed; 0 failed` for the lib suite,
+`passed=2403 failed=0` overall, with that test green every time, including in
+the exact order the gate runs (`doc_truth` then the full suite). One red in ~18
+full-suite runs of a test that reads `HOME` ambiently is the known
+`HOME`-reader flake class the `TestHomeGuard` documentation describes — the
+bug belongs to a HOME-mutating writer elsewhere in the run, not to this
+phase's diff, and the test file is not mine to edit (M26, not this phase).
+Left untouched; noted for review. Full counts re-confirmed below in the
+end-to-end entry, which is this round's capture.
+
+### Update — 2026-10-18 14:27 (end-to-end verification)
+
+Run of § End-to-end verification, verbatim, captured to `/tmp/e2e-04b-r2.txt`
+(this round's capture, after the gate-flagged re-run):
+
+```
+wait_screen_change_returns_on_the_first_difference: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+launch_waits_for_a_slow_program_to_draw: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_busy_refusal_says_nothing_was_written: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_run_error_never_doubles_its_full_stop: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+launch_interactive_returns_the_settled_screen: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2403 failed=0
+```
+
+PASTE MATCH
