@@ -1,7 +1,7 @@
 # Phase 04d: launch-panel — the approval panel says a launch keeps the shell
 
 **Milestone:** M28 — Interactive shells
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04c
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -166,3 +166,148 @@ passed=2410 failed=0
 ```
 
 PASTE MATCH
+
+### Update — 2026-10-19 01:20 (complete, server-authored)
+
+**Summary:** </think>All tasks done. Status line still in-progress (I did not flip to review). The e2e paste-match verified. Working tree clean. One commit.
+
+Let me double check the phase doc status is still in-progress and I didn't write a (complete) entry. Yes — I wrote progress + e2e verification entries only.
+
+Summary time.</think>
+All five spec tasks are implemented and committed; working tree is clean and the phase doc remains `in-progress` with no hand-written completion entry.
+
+**Summary + Notes for review**
+
+Built phase-04d: `Response::ToolCallPrompt` and `ApprovalRequest` gained an `interactive: bool` (serde-defaulted on the wire, so an older daemon's frame still parses as `false`); a new pure `is_launch(interactive, cmd)` in `executor/mod.rs` feeds it from both `run_terminal_command` approval arms (local and named host) and also catches auto-upgraded `ssh host` via `is_interactive_command`; `tool_call_panel_body` renders `→ interactive: the command keeps the shell; nothing waits for it` right after the `$ cmd` line when the flag is set, before any classification line, with `prompt_tool_call_ratatui` forwarding it and the client arm destructuring the new field. F10 is fixed by stripping one leading `Error: ` from the chain in the `RefusedBeforeWrite` branch of `shell_run_error_text`, so the busy refusal prints one prefix and the unprefixed cap refusal still gets exactly one. The four spec'd tests plus a regression-adjacent assertion set pass individually; end-to-end verification ran verbatim, was captured to `/tmp/e2e-04d.txt`, pasted into a dedicated `(end-to-end verification)` Update Log entry, and the self-check returned **PASTE MATCH**. Full gates: `cargo test` `passed=2410 failed=0` (spec predicted 2410 — exact match), `doc_truth` 16 passed/0 failed, clippy `-D warnings` clean, `cargo fmt --all --check` exit 0, no new `#[allow]` (the existing `too_many_arguments` comment was updated to 9 params, not silenced). Command string is untouched everywhere; classification and the ghost `is_safe` path were not modified. Notes: the `send_input` arm and `foreground.rs` pass `false` as specified; the mid-run edits routed through the verifier's machine-applicable suggestions are exactly the field additions it names. One commit, `feat: label launches on the approval panel and single-prefix refusals (04d)`; `git status --short` is empty.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.0.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.86s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+st readme_tools_tables_match_the_code ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test config_pricing_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1317d86dbab8a67a)
+kill: (449769): No such process
+kill: (-450504): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58e4c018b6115a52)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-fa77b3165037b91b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-b44e63b56dae5611)
+     Running tests/integration.rs (target/debug/deps/integration-cc4ec88fa7c13534)
+     Running tests/isolation.rs (target/debug/deps/isolation-91fd5762b61d94c8)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-62d50a1c46611977)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M28-interactive-shells/README.md` — +1 -1
+- `docs/dev/milestones/M28-interactive-shells/phase-04d-launch-panel.md` — +30 -1
+- `src/cli/commands/slash.rs` — +1 -0
+- `src/cli/commands/stream.rs` — +60 -4
+- `src/daemon/executor/foreground.rs` — +1 -0
+- `src/daemon/executor/mod.rs` — +78 -0
+- `src/ipc.rs` — +6 -0
+- `src/ipc_tests.rs` — +23 -0
+
+**Commit:** 72cff2a250f37a3d721c2194a69b823249bc0249
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
