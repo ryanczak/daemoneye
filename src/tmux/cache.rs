@@ -625,14 +625,10 @@ impl SessionCache {
             .map(|p| p.window_name.as_str())
             .filter(|w| !w.is_empty());
 
-        // M29 F9: a source pane that did not get the active block still belongs
-        // in the pane listing with its summary; it is dropped only when it was
-        // rendered as `[ACTIVE PANE]` above (listing it twice would be noise).
-        let active_block_pane = active_label_pane;
         let mut others: Vec<_> = panes
             .iter()
             .filter(|(_, state)| state.session_name == home)
-            .filter(|(id, _)| active_block_pane != Some(id.as_str()))
+            .filter(|(id, _)| active_label_pane != Some(id.as_str()))
             .filter(|(id, _)| chat_pane != Some(id.as_str()))
             .filter(|(_, state)| window_in_scope(scope, &state.window_name, chat_window))
             .collect();
@@ -728,7 +724,7 @@ impl SessionCache {
             let foreign: Vec<_> = panes
                 .iter()
                 .filter(|(_, state)| state.session_name != home)
-                .filter(|(id, _)| active_block_pane != Some(id.as_str()))
+                .filter(|(id, _)| active_label_pane != Some(id.as_str()))
                 .filter(|(id, _)| chat_pane != Some(id.as_str()))
                 .collect();
             if !foreign.is_empty() {

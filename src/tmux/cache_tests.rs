@@ -892,3 +892,286 @@ fn labeled_context_session_scope_omits_foreign_header_when_none() {
         "All scope with no foreign panes should not emit foreign header, got: {ctx_all}"
     );
 }
+
+// ── active-pane labelling (M29 F9) ────────────────────────────────────────
+
+#[test]
+fn no_active_label_when_the_focus_is_the_chat_pane() {
+    let c = cache();
+    {
+        let mut panes = c.panes.write().unwrap();
+        panes.insert(
+            "%1".to_string(),
+            PaneState {
+                buffer: "user shell".to_string(),
+                summary: "Idle shell at: $".to_string(),
+                current_cmd: "bash".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: String::new(),
+                session_name: "test-session".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::shell::status::PaneStatus::Idle(0),
+            },
+        );
+        panes.insert(
+            "%2".to_string(),
+            PaneState {
+                buffer: "chat output".to_string(),
+                summary: "Active: chat output".to_string(),
+                current_cmd: "daemoneye".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: String::new(),
+                session_name: "test-session".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::shell::status::PaneStatus::Idle(0),
+            },
+        );
+    }
+    c.set_active_pane("%2");
+    let ctx = c.get_labeled_context(Some("%1"), Some("%2"));
+    assert!(
+        !ctx.contains("[ACTIVE PANE"),
+        "the chat pane's focus must label nothing active, got: {ctx}"
+    );
+    assert!(
+        ctx.contains("[SESSION PANE %1"),
+        "the source pane must still be listed as an ordinary pane line, got: {ctx}"
+    );
+    assert!(
+        ctx.contains("Idle shell at: $"),
+        "the listed source pane keeps its summary, got: {ctx}"
+    );
+    assert!(
+        !ctx.contains("%2"),
+        "the chat pane must never be mentioned, got: {ctx}"
+    );
+}
+
+#[test]
+fn the_chat_pane_is_never_the_active_pane() {
+    let c = cache();
+    {
+        let mut panes = c.panes.write().unwrap();
+        panes.insert(
+            "%1".to_string(),
+            PaneState {
+                buffer: "user shell".to_string(),
+                summary: "Idle shell at: $".to_string(),
+                current_cmd: "bash".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: String::new(),
+                session_name: "test-session".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::shell::status::PaneStatus::Idle(0),
+            },
+        );
+        panes.insert(
+            "%2".to_string(),
+            PaneState {
+                buffer: "chat output".to_string(),
+                summary: "Active: chat output".to_string(),
+                current_cmd: "daemoneye".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: String::new(),
+                session_name: "test-session".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::shell::status::PaneStatus::Idle(0),
+            },
+        );
+    }
+    c.set_active_pane("%2");
+    let ctx = c.get_labeled_context_scoped(Some("%2"), Some("%2"), ContextScope::Session);
+    assert!(
+        !ctx.contains("[ACTIVE PANE"),
+        "the chat pane must never wear the active label, got: {ctx}"
+    );
+}
+
+#[test]
+fn the_users_real_focus_gets_the_one_active_label() {
+    let c = cache();
+    {
+        let mut panes = c.panes.write().unwrap();
+        panes.insert(
+            "%1".to_string(),
+            PaneState {
+                buffer: "user shell".to_string(),
+                summary: "Idle shell at: $".to_string(),
+                current_cmd: "bash".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: String::new(),
+                session_name: "test-session".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::shell::status::PaneStatus::Idle(0),
+            },
+        );
+        panes.insert(
+            "%2".to_string(),
+            PaneState {
+                buffer: "chat output".to_string(),
+                summary: "Active: chat output".to_string(),
+                current_cmd: "daemoneye".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: String::new(),
+                session_name: "test-session".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::shell::status::PaneStatus::Idle(0),
+            },
+        );
+    }
+    c.set_active_pane("%1");
+    let ctx = c.get_labeled_context(Some("%1"), Some("%2"));
+    assert_eq!(
+        ctx.matches("[ACTIVE PANE").count(),
+        1,
+        "exactly one active label, got: {ctx}"
+    );
+    assert!(
+        ctx.contains("[ACTIVE PANE %1"),
+        "the user's real focus wears the label, got: {ctx}"
+    );
+    assert_eq!(
+        ctx.matches("%1").count(),
+        1,
+        "the focused pane must not also be listed as a pane line, got: {ctx}"
+    );
+    assert!(
+        !ctx.contains("%2"),
+        "the chat pane must never be mentioned, got: {ctx}"
+    );
+}
+
+#[test]
+fn an_unknown_focus_labels_nothing_active() {
+    let c = cache();
+    {
+        let mut panes = c.panes.write().unwrap();
+        panes.insert(
+            "%1".to_string(),
+            PaneState {
+                buffer: "user shell".to_string(),
+                summary: "Idle shell at: $".to_string(),
+                current_cmd: "bash".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: String::new(),
+                session_name: "test-session".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::shell::status::PaneStatus::Idle(0),
+            },
+        );
+        panes.insert(
+            "%2".to_string(),
+            PaneState {
+                buffer: "chat output".to_string(),
+                summary: "Active: chat output".to_string(),
+                current_cmd: "daemoneye".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: String::new(),
+                session_name: "test-session".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::shell::status::PaneStatus::Idle(0),
+            },
+        );
+    }
+    let ctx = c.get_labeled_context(Some("%1"), Some("%2"));
+    assert!(
+        !ctx.contains("[ACTIVE PANE"),
+        "an unknown focus labels nothing active, got: {ctx}"
+    );
+    assert!(
+        ctx.contains("[SESSION PANE %1"),
+        "the source pane is still listed, got: {ctx}"
+    );
+    assert!(
+        ctx.contains("Idle shell at: $"),
+        "the listed source pane keeps its summary, got: {ctx}"
+    );
+}
