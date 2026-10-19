@@ -151,3 +151,22 @@ in `src/tmux/cache_tests.rs`; confirm callers in `prompt.rs` and `get_shell_cont
 are untouched (task 3); then capture the § End-to-end verification output verbatim
 into `/tmp/e2e-m29-04.txt` and paste it, with the `PASTE MATCH` line, as the
 `### Update — <date> (end-to-end verification)` entry (task 4).
+
+### Update — 2026-10-19 09:21 (end-to-end verification)
+
+Output of the § End-to-end verification script, run once after
+`cargo fmt --all`:
+
+```
+no_active_label_when_the_focus_is_the_chat_pane: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_chat_pane_is_never_the_active_pane: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_users_real_focus_gets_the_one_active_label: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+an_unknown_focus_labels_nothing_active: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+cache_tests: test result: ok. <n> passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2422 failed=0
+```
+
+PASTE MATCH
