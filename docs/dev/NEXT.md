@@ -4,9 +4,9 @@
 2026-10-13 from `docs/design/interactive-shells.md`. See
 [`README.md`](milestones/M28-interactive-shells/README.md).
 
-**Active phase:** [phase-04c-live-r2](milestones/M28-interactive-shells/phase-04c-live-r2.md) (a live-close fix; the live close itself, [phase-04](milestones/M28-interactive-shells/phase-04-live-close.md), resumes with the PE run after 04c; rehearsals 1 and 2 are done)
-— todo. Dispatch with `/rexymcp:dispatch phase-04c-live-r2`. Phases 01,
-01b, 01c, 02a, 02b, 02c, 02d, 02e, 02f, 02g, 03a, 03b, 03c, 03d, 03e, 04a, 04b and 04c are done.
+**Active phase:** [phase-04d-launch-panel](milestones/M28-interactive-shells/phase-04d-launch-panel.md) (the last fix before the close: the PE run of [phase-04](milestones/M28-interactive-shells/phase-04-live-close.md) passed)
+— todo. Dispatch with `/rexymcp:dispatch phase-04d-launch-panel`. Phases 01,
+01b, 01c, 02a, 02b, 02c, 02d, 02e, 02f, 02g, 03a, 03b, 03c, 03d, 03e, 04a, 04b and 04c are done; the phase-04 PE run passed.
 
 M27 closed 2026-10-12 (`v2.0.0`). The roadmap's former M28–M30 are now
 M29–M31 (`docs/design/daemoneye-2.0.md` § 6).
