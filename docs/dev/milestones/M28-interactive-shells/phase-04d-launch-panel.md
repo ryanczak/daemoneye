@@ -1,7 +1,7 @@
 # Phase 04d: launch-panel — the approval panel says a launch keeps the shell
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-04c
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -311,3 +311,28 @@ kill: (-450504): No such process
 **Commit:** 72cff2a250f37a3d721c2194a69b823249bc0249
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch, 164 turns)
+- **Scope deviations:** none. The spec said both `run_terminal_command`
+  approval sites (local and named host) pass `is_launch(...)`. There is one:
+  the foreground approval comes before the host split, so the single
+  `is_launch` call at that site covers both arms. The premise was an
+  architect error, and the outcome is correct. The other `ApprovalRequest`
+  literals (the chat `wait: false` background arm, `send_input`,
+  `foreground.rs`) pass `false`.
+- **Calibration:** none. Every check was run before this verdict.
+  - Independent re-run: 2410 passed / 0 failed (the pinned count exactly);
+    fmt and clippy clean; the reviewer's self-check matches
+    `/tmp/e2e-04d.txt`; no production `unwrap`/`expect`.
+  - The standards grep shows one `#[allow(clippy::too_many_arguments)]`
+    line. It is the **existing** allow on `prompt_tool_call_ratatui`, with
+    its comment changed from "8 params" to "9 params" (a `-`/`+` pair in the
+    diff). The function has 9 parameters, so the allow is not dead.
+  - Classification is untouched: no diff line touches
+    `prompt_classification`, `classify` or `is_safe`.
+  - F10: one leading `Error: ` is stripped before the wrapper adds its own,
+    and the cap refusal (no prefix) is unchanged.
