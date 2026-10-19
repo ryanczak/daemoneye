@@ -63,13 +63,20 @@ where
     presence_register(&session_id, conn.clone());
     // The attach makes the session resident (M29 phase 05): load its disk
     // history and meta into the store now, so injection, the catch-up brief and
-    // `handle_ask` all serve one entry. `from_disk` reads files, so it must run
-    // outside the store lock — the build-then-insert form, not a nested
-    // `with_sessions` (which the depth guard rejects).
+    // `handle_ask` all serve one entry. `from_disk` reads files, so it runs
+    // before the lock: probe with `contains_key` (no I/O), build outside
+    // `with_sessions`, then insert — keeping an entry another task created in
+    // between.
+    let absent = !with_sessions(&sessions, |store| store.contains_key(&session_id));
+    let built = if absent {
+        Some(SessionEntry::from_disk(&session_id))
+    } else {
+        None
+    };
     with_sessions(&sessions, |store| {
-        store
-            .entry(session_id.clone())
-            .or_insert_with(|| SessionEntry::from_disk(&session_id));
+        if let Some(built) = built {
+            store.entry(session_id.clone()).or_insert(built);
+        }
     });
     log::info!("chat presence attached for session {session_id}");
 

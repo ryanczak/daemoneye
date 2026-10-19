@@ -232,6 +232,7 @@ catchup_brief_reaches_a_session_that_is_not_resident: test result: ok. 1 passed;
 catchup_brief_names_an_alert_posted_after_the_chat_left: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
 inject_reaches_a_presence_attached_session_that_is_not_resident: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
 registry_refs=0
+in_lock_builds=0
 doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
     Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
 fmt_exit=0

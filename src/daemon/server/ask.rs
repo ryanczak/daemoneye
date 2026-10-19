@@ -85,11 +85,23 @@ where
     // `SessionEntry::from_disk` is the one constructor for a resident entry (M29
     // phase 05): the presence attach goes through it too, so an entry created
     // here always carries the disk history and the persisted meta already.
+    // `from_disk` reads files, so it runs before the lock: probe with
+    // `contains_key` (no I/O), build outside `with_sessions`, then insert —
+    // keeping an entry the attach or another task created in between.
     let (session_cost_usd, has_untracked_cost): (f64, bool) = if let Some(ref id) = session_id {
+        let absent = !with_sessions(sessions, |store| store.contains_key(id.as_str()));
+        let built = if absent {
+            Some(SessionEntry::from_disk(id))
+        } else {
+            None
+        };
         with_sessions(sessions, |store| {
+            if let Some(built) = built {
+                store.entry(id.clone()).or_insert(built);
+            }
             let entry = store
-                .entry(id.clone())
-                .or_insert_with(|| SessionEntry::from_disk(id));
+                .get_mut(id.as_str())
+                .expect("the probe or the insert above guarantees the entry exists");
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();
 
