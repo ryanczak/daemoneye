@@ -1,6 +1,6 @@
 [package]
 name = "daemoneye"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2024"
 description = "An AI-powered terminal assistant that embeds into tmux — streams responses, runs commands, watches panes, and operates autonomously via ghost shells"
 license = "MIT"

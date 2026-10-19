@@ -4,7 +4,7 @@
 inside a DaemonEye PTY shell, and the model can see it, type into it
 safely, wait on it, and never poison it with a command meant for a prompt.
 
-**Status:** done (scoped 2026-10-13, closed 2026-10-18; release pending PE sign-off)
+**Status:** done (scoped 2026-10-13, closed 2026-10-18; released 2.1.0)
 
 **Release:** 2.1.0
 

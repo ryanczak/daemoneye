@@ -8,6 +8,41 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-10-18 — M28 Interactive shells
+
+An interactive TUI, with Claude Code as the reference case, now runs inside a
+DaemonEye PTY shell. The model can see it, type into it safely, wait on it,
+and never poison it with a command meant for a shell prompt. Design of record:
+`docs/design/interactive-shells.md`. The retrospective is in
+`docs/dev/milestones/M28-interactive-shells/README.md`.
+
+- **See** — new core tool `read_shell_screen`. It returns a shell's rendered
+  live screen, masked, with inverse-video runs marked `[SEL: …]`. Optional
+  `scrollback`, `lines`, `pattern` and `annotated`. A header names the
+  shell's `Foreground`: shell prompt, running, running a TUI, or paused.
+- **Never poison** — a bare `run_terminal_command` skips a shell that is
+  busy with a TUI and runs in a fresh shell. A command aimed at a busy
+  shell with `shell: "<id>"` is refused before any byte is written, and
+  the refusal says it is safe to act on.
+- **Type safely** — `send_input` sends `\r` for Enter. It also takes named
+  `keys` (CSI u for modifier combinations) and bracketed `paste`. Its
+  approval panel shows the foreground and a masked screen tail. A ghost
+  without `allow_tui_input` is refused.
+- **Launch and wait** — `run_terminal_command(interactive: true)` starts a
+  TUI without waiting for it or signalling it. Recognised interactive
+  commands such as `ssh` start the same way. The approval panel marks a
+  launch with `→ interactive`. `read_shell_screen` takes `wait_for` and
+  `settle_ms` to wait on the rendered screen, and a screen that never
+  settles comes back as a result, not an error.
+- **Busy-ness is observed** — the static `interactive` flag on shells is
+  gone. A shell counts as busy when it was last seen running something
+  (`last_foreground`) or has a command in flight.
+- **Argument tolerance** — tool arguments that arrive as strings parse:
+  `"false"`, a `keys` string, and `"[]"`. An unknown parameter is named in
+  the error.
+- **Single-prefix refusals** — refusals start with exactly one `Error: `.
+  A capacity refusal names no shell it did not use.
+
 ## [2.0.0] — 2026-10-12
 
 DaemonEye no longer needs tmux. Every command the daemon runs goes through
