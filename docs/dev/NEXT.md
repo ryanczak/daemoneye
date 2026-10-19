@@ -4,8 +4,8 @@
 2026-10-18 from `docs/design/daemoneye-post-2.0-todo.md` and the M28
 deferred list. See [`README.md`](milestones/M29-post-2.0-fixes/README.md).
 
-**Active phase:** [phase-03-log-fields](milestones/M29-post-2.0-fixes/phase-03-log-fields.md)
-— todo. Dispatch with `/rexymcp:dispatch phase-03-log-fields`. Phases 01 and 02 are done.
+**Active phase:** none drafted. Phases 01–03 are done. Next:
+`/rexymcp:architect next` drafts phase 04 (active-pane).
 
 M28 closed 2026-10-18 (`v2.1.0`, pushed). The roadmap's Telemetry & dashboard,
 MCP surface and Knowledge milestones move to M30–M32

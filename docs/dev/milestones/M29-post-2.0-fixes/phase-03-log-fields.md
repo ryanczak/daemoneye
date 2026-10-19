@@ -1,7 +1,7 @@
 # Phase 03: log-fields — `wait` and `shell` on command events; 2.0 wording in daemon.log
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** review
+**Status:** done
 **Depends on:** phase-02
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=fix, size=s
@@ -304,3 +304,23 @@ kill: (-1101050): No such process
 **Commit:** a419aa3134bffa747982382e2420f502876fe9c0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-19
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch,
+  79 turns)
+- **Scope deviations:** none.
+- **Calibration:**
+  - **The consumer check worked.** The spec named the two `wait: false`
+    `log_shell_command` callers, which the todo list did not mention, and
+    the executor passed `false` at exactly those two calls and `true` at
+    the six waited ones. It is the first clean first dispatch of M29.
+  - **Nit, mine:** the spec's "replace the paragraph" dropped the README
+    sentence saying `exit` is the real exit code. Restore it at the close.
+    This is not a bounce, since the executor did what the spec said.
+  - Independent re-run: fmt, build and clippy exit 0; 2418 passed, 0
+    failed; self-check MATCH on the first fence (the output-first paste
+    instruction worked); standards grep clean; no production
+    `unwrap`/`expect`; `foreground.rs` untouched.
