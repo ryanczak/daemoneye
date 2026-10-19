@@ -397,10 +397,14 @@ impl SessionCache {
 
     /// Build a labeled terminal context block for the AI.
     ///
-    /// The source pane (the user's working pane, identified by `DAEMONEYE_SOURCE_PANE`) is
-    /// captured at full depth and tagged `[ACTIVE PANE]` so the AI immediately knows
-    /// which pane is the user's current focus.  All other cached panes are included as
-    /// brief summaries tagged `[BACKGROUND PANE]` with CWD and terminal title.
+    /// The pane wearing `[ACTIVE PANE]` is the user's real tmux focus (the
+    /// cache's `active_pane`) captured at full depth, and never the chat pane
+    /// itself; the `source_pane` argument gets that block only when it *is* the
+    /// focus (M29 F9 — 1.x callers pass a 1.x "target pane" that may be a
+    /// sibling of the chat pane, and `get_shell_context` passes the chat pane).
+    /// All other cached panes — including a source pane that did not get the
+    /// active block — are included as brief summaries tagged `[VISIBLE PANE]`,
+    /// `[BACKGROUND PANE]` or `[SESSION PANE]` with CWD and terminal title.
     /// A `[SESSION ENVIRONMENT]` block is prepended when any high-signal env vars are set.
     ///
     /// `chat_pane` is the pane running `daemoneye chat` — it is excluded from the
@@ -528,7 +532,34 @@ impl SessionCache {
         }
 
         // Active pane — full capture, explicitly labelled.
-        if let Some(pane_id) = source_pane {
+        //
+        // Only the user's real tmux focus (`active_pane`) may wear the
+        // `[ACTIVE PANE]` label, and never the chat pane itself (M29 F9):
+        // 1.x callers pass a "target pane" that is a *sibling* of the chat
+        // pane, so the label would land on the next pane over, and
+        // `get_shell_context` passes the chat pane, which would label the
+        // chat's own output as what the user is looking at.
+        let active_pane = self.active_pane.read().unwrap_or_log().clone();
+        let active_label_pane = match (source_pane, active_pane.as_deref()) {
+            (Some(src), Some(focus)) if Some(src) != chat_pane && src == focus => Some(src),
+            _ => None,
+        };
+
+        // Non-active panes — classified by their relationship to the chat window.
+        //
+        // - VISIBLE PANE:    same window as the chat pane (user can see it in the split)
+        // - BACKGROUND PANE: daemon-launched window (de-bg-* / de-sj-* / de-gs-bg-* / de-gs-sj-* / de-gs-ir-*)
+        // - SESSION PANE:    any other user window (SSH sessions, editors, etc.)
+        let _now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Read session_name before the panes guard (M12 lock ordering).
+        let _home = self.session_name.read().unwrap_or_log().clone();
+        let _panes = self.panes.read().unwrap_or_log();
+
+        if let Some(pane_id) = active_label_pane {
             // Pull CWD, command, title, scroll position, mode flags, and pane index from cache in one lock.
             let (cwd, cmd, title, scroll_pos, in_copy_mode, _pane_idx, _window_name_for_active) = {
                 let panes = self.panes.read().unwrap_or_log();
@@ -611,10 +642,14 @@ impl SessionCache {
             .map(|p| p.window_name.as_str())
             .filter(|w| !w.is_empty());
 
+        // M29 F9: a source pane that did not get the active block still belongs
+        // in the pane listing with its summary; it is dropped only when it was
+        // rendered as `[ACTIVE PANE]` above (listing it twice would be noise).
+        let active_block_pane = active_label_pane;
         let mut others: Vec<_> = panes
             .iter()
             .filter(|(_, state)| state.session_name == home)
-            .filter(|(id, _)| source_pane != Some(id.as_str()))
+            .filter(|(id, _)| active_block_pane != Some(id.as_str()))
             .filter(|(id, _)| chat_pane != Some(id.as_str()))
             .filter(|(_, state)| window_in_scope(scope, &state.window_name, chat_window))
             .collect();
@@ -710,7 +745,7 @@ impl SessionCache {
             let foreign: Vec<_> = panes
                 .iter()
                 .filter(|(_, state)| state.session_name != home)
-                .filter(|(id, _)| source_pane != Some(id.as_str()))
+                .filter(|(id, _)| active_block_pane != Some(id.as_str()))
                 .filter(|(id, _)| chat_pane != Some(id.as_str()))
                 .collect();
             if !foreign.is_empty() {

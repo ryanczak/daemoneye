@@ -1,7 +1,7 @@
 # Phase 04: active-pane — `[ACTIVE PANE]` only for the user's real focus, never the chat pane
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=fix, size=s
@@ -138,3 +138,16 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-19 08:35 (start)
+
+**Executor:** Claude (Anthropic) — fresh start, no resume context.
+
+**Status:** `todo` → `in-progress`; README phase-table row updated to match.
+
+**Plan:** Implement the `get_labeled_context_scoped` gating rule (task 1) and the
+still-listed rule (task 2) in `src/tmux/cache.rs` with the four specified tests
+in `src/tmux/cache_tests.rs`; confirm callers in `prompt.rs` and `get_shell_context`
+are untouched (task 3); then capture the § End-to-end verification output verbatim
+into `/tmp/e2e-m29-04.txt` and paste it, with the `PASTE MATCH` line, as the
+`### Update — <date> (end-to-end verification)` entry (task 4).
