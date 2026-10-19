@@ -141,7 +141,7 @@ milestone were spec or review errors, not executor errors.
 
 
 **Fold proposals** (PE sign-off needed before any lands in `WORKFLOW.md`).
-- **Proposal A: report the full-suite count, don't pin it.** Three
+- **Proposal A: report the full-suite count, don't pin it.** **Folded 2026-10-18 with PE sign-off**, as `WORKFLOW.md` § "A full-suite pass count is a report, not a gate". Three
   occurrences (02b, 03e, 04b), so this is a fix. The text: "A full-suite
   pass count is a report, not a gate. Pin the new test names; state the
   expected count, and say an extra test is fine: name it and report; do

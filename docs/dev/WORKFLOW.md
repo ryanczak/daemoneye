@@ -1551,6 +1551,22 @@ for 06d's call-site count. This is the second milestone in which an existing
 rule was re-proposed rather than applied (M24 close was the first); per
 `NEXT.md`, grep this file before proposing a fold.
 
+### A full-suite pass count is a report, not a gate
+
+Pin the **names** of the new tests. State the expected suite total for
+orientation, then add the escape clause in the same sentence: *an extra test is
+fine: name it and report; do not re-run the suite to chase a number.* An exact
+total presented as a gate gives the executor a target it can miss for reasons
+outside its own work: a helper test it rightly added, a flaky test, a count
+that was off when the spec was written. The executor then re-runs a green
+suite until its budget runs out. The `grep -c` folds above do not cover this,
+because the suite total is not a grep.
+
+*(Folded 2026-10-18 after three occurrences, all M28. In phase 02b the executor
+chased an exact total. Phase 03e stalled re-running a green suite and was
+hard-failed. Phase 04b ran the suite 16 times. Phase 04c and later carried the
+escape clause, and none of them chased the count.)*
+
 ### A check the executor cannot satisfy is a bounce you wrote yourself
 
 The fold above says *run every count*. This one is about a different failure:

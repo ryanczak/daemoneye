@@ -11,5 +11,5 @@ lists M29–M31 (`docs/design/daemoneye-2.0.md` § 6).
 Still queued: the M28 deferred list (F8 ghost foreground, O3, O4, the
 `sbx.rs` flake), the M27 deferred list (unify session residency, F9, the
 invalid-args nits) and `docs/design/daemoneye-post-2.0-todo.md`. Fold
-queue: M28 proposal A (awaiting sign-off), M28 proposal B (held), M27
+queue: M28 proposal B (held), M27
 proposal B (held) and M23's two proposals.
