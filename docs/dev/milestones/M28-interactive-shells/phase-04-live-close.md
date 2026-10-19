@@ -1,7 +1,7 @@
 # Phase 04: live-close — Claude Code runs inside a DaemonEye shell, and 2.1.0 ships
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** done
 **Depends on:** 01–03e (all `done`)
 **Estimated diff:** this doc's Update Log, the milestone README, then the
 release (`Cargo.toml` / `Cargo.lock`, `CHANGELOG.md`)
@@ -232,3 +232,16 @@ saving is off" warning. The raw notes are in `/tmp/e2e-m28-04.txt`
 
 **Next.** 04d, then the close: the retrospective, the calibration folds
 for PE sign-off, and the 2.1.0 release.
+
+### Update — 2026-10-18 (04d live check)
+
+On a fresh throwaway daemon with a clean environment, each approval panel
+was **denied**, so nothing ran:
+
+- `run_terminal_command("claude", interactive: true)`: `$ claude`, then
+  `→ interactive: the command keeps the shell; nothing waits for it`.
+- `run_terminal_command("ssh zoidberg")` (auto-launched): the same line.
+- `run_terminal_command("echo plain")`: no `interactive` line.
+
+D6 is closed. The live close is complete: B1–B9 and B11 pass, B10 is not
+live-reachable (F8), and F1–F7 and F9–F10 are fixed.
