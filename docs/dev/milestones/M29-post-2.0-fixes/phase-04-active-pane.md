@@ -1,7 +1,7 @@
 # Phase 04: active-pane — `[ACTIVE PANE]` only for the user's real focus, never the chat pane
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** review
+**Status:** done
 **Depends on:** phase-03
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=fix, size=s
@@ -340,3 +340,32 @@ kill: (-1202592): No such process
 **Commit:** 21954927750fe45b501eb6c73fafbb9ccfb8a1c7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-19
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch,
+  268 turns, 4 commits)
+- **Scope deviations:** none. The callers (`prompt.rs`, `executor/mod.rs`)
+  are untouched.
+- **Calibration:**
+  - **Turn cost.** The executor's notes disclose why it took 268 turns:
+    its first commit had no tests (its first end-to-end run showed
+    `0 passed`), and it mangled and then repaired the doc comment above
+    `pane_map_summary`. The pasted evidence comes only from the finished
+    code. The diff is about 330 lines against an estimated 150, mostly
+    `PaneState` literals. A shared test helper for building a pane would
+    have halved it. This is the first occurrence, so it is data only.
+  - **Nit, pre-existing, for the close.** The "Build a labeled terminal
+    context block" doc comment still sits above `pane_map_summary`, not
+    above `get_labeled_context_scoped`. It was misplaced before this phase,
+    and the executor kept it where it was.
+  - **rexyMCP backlog.** The server-authored completion summary begins
+    with leaked model reasoning (`</think>Everything is committed…`).
+  - Independent re-run: fmt, build and clippy exit 0; 2422 passed, 0
+    failed; self-check MATCH on the first fence; standards grep clean; no
+    production `unwrap`/`expect`. The gate requires both "not the chat
+    pane" and "equals `active_pane`", and both listings drop only the
+    labelled pane. `active_pane` is read and released before the `panes`
+    lock.
