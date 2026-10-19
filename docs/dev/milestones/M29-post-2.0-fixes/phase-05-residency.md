@@ -387,3 +387,49 @@ kill: (-1310570): No such process
 **Commit:** 538a508be13d05c1a43d212cc6cc3f89529bd645
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-19 20:49 (end-to-end verification, bounce re-run)
+
+The phase's § End-to-end verification, run verbatim and once, `cargo fmt
+--all` first, after moving `from_disk` out of the store lock at both
+creation sites. The output was redirected to `/tmp/e2e-m29-05.txt` and
+pasted below unedited.
+
+````
+restart_reconnect_alert_ask_sees_the_alert: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+restart_reconnect_quit_alert_resume_briefs_the_alert: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+fresh_resume_of_a_never_loaded_session_carries_history_and_meta: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+attach_makes_the_session_resident_with_its_disk_history: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+catchup_brief_reaches_a_session_that_is_not_resident: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+catchup_brief_names_an_alert_posted_after_the_chat_left: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+inject_reaches_a_presence_attached_session_that_is_not_resident: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+registry_refs=0
+in_lock_builds=0
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2425 failed=0
+````
+
+PASTE MATCH
+
+- **The bounce fix.** Both production creation sites now follow the
+  bug-05-1 pattern: a `contains_key` probe (no I/O) under `with_sessions`,
+  `SessionEntry::from_disk` built with no lock held, then `or_insert` in a
+  second `with_sessions` — keeping an entry another task created in
+  between. `handle_ask` fetches the now-guaranteed entry with `get_mut`.
+  The attach-site comment now describes exactly this probe / build /
+  insert form.
+- `in_lock_builds=0` — zero `or_insert_with(|| SessionEntry::from_disk`
+  occurrences in production code (`ask.rs` whole file, `chat_presence.rs`
+  above its test module). The bounce's finish condition is met.
+- **Mutation check, as the bounce entry required:** putting the `ask.rs`
+  site back to `or_insert_with(|| SessionEntry::from_disk(id))` read
+  `in_lock_builds=1`; reverting restored `in_lock_builds=0`. The metric
+  measures the defect.
+- All seven named tests print `test result: ok. 1 passed`; `registry_refs`
+  stays 0; `doc_truth` 16/0; clippy `-D warnings` clean; `fmt_exit=0`;
+  full suite `passed=2425 failed=0` — the fix added no test, so the count
+  is 2425, not 2426, as the bug's definition of done requires.
+- Self-check `diff` of the pasted fence against `/tmp/e2e-m29-05.txt`
+  printed `PASTE MATCH`.
