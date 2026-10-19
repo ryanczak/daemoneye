@@ -4,7 +4,7 @@
 inside a DaemonEye PTY shell, and the model can see it, type into it
 safely, wait on it, and never poison it with a command meant for a prompt.
 
-**Status:** in-progress (scoped 2026-10-13)
+**Status:** done (scoped 2026-10-13, closed 2026-10-18; release pending PE sign-off)
 
 **Release:** 2.1.0
 
@@ -62,11 +62,128 @@ phases are split further where one is more than a session.
 | 03c | open-shell-size ([phase-03c-open-shell-size.md](phase-03c-open-shell-size.md)) — `open_shell(rows, cols)`; the result names the size. *Split from 03b at drafting* | done (approved_first_try, 2026-10-17) |
 | 03d | launch ([phase-03d-launch.md](phase-03d-launch.md)) — an interactive command (ssh, mosh, …) is launched: bare command + `\r`, settle, return the screen; replaces 02c's refusal | done (approved_first_try, 2026-10-17) |
 | 03e | interactive-param ([phase-03e-interactive-param.md](phase-03e-interactive-param.md)) — `run_terminal_command(interactive: true)` for any command, its panel line, the `wait: false` refusal. *Split from 03d at drafting: tool plumbing apart from behaviour* | done (approved_after_2, 2026-10-18) |
-| 04 | live-close ([phase-04-live-close.md](phase-04-live-close.md)) — architect rehearsals then a PE run of B1–B11 on pinky (Claude Code in a daemon PTY, zoidberg, ghost guard); then the 2.1.0 release | in-progress (PE run passed; 04d then close) |
+| 04 | live-close ([phase-04-live-close.md](phase-04-live-close.md)) — architect rehearsals then a PE run of B1–B11 on pinky (Claude Code in a daemon PTY, zoidberg, ghost guard); then the 2.1.0 release | done (architect-run; PE run passed 2026-10-18) |
 | 04a | arg-tolerance ([phase-04a-arg-tolerance.md](phase-04a-arg-tolerance.md)) — live F2 + F5: `keys` as an array, a JSON string or one name; string booleans; the invalid-args error names undeclared fields | done (approved_first_try, 2026-10-18) |
 | 04b | launch-settle ([phase-04b-launch-settle.md](phase-04b-launch-settle.md)) — live F1 + F3 + F4: a launch does not settle on the pre-launch screen; the busy-refusal wording; `top` is not the never-settles example | done (approved_first_try, 2026-10-18) |
 | 04c | live-r2 ([phase-04c-live-r2.md](phase-04c-live-r2.md)) — rehearsal 2's F6 (`keys:"[]"` is no keys), F7 (the cap refusal is pre-write and names no shell), F9 (a ghost refuses `interactive`) | done (approved_first_try, 2026-10-18) |
 | 04d | launch-panel ([phase-04d-launch-panel.md](phase-04d-launch-panel.md)) — PE decision: the approval panel says a launch keeps the shell (D6), as its own frame field; F10 `Error: Error:` | done (approved_first_try, 2026-10-18) |
+
+## Retrospective (2026-10-18)
+
+**Outcome.** Every exit criterion is met and checked live on pinky.
+- Claude Code runs inside a DaemonEye PTY shell. The model launches it with
+  `interactive: true` and sees its rendered screen, including `[SEL: …]`
+  inverse runs.
+- The model types into it with `send_input` (`text`, named `keys` with CSI
+  u, bracketed `paste`) and waits on it with `read_shell_screen`
+  (`wait_for`, `settle_ms`).
+- A busy shell is never written to.
+- The static `interactive` flag is gone.
+
+The PE run passed B1–B9 and B11. B10, the ghost guard, cannot be reached
+live (F8 below). The suite went from 2325 to 2410.
+
+**Numbers** (from the telemetry store). 19 executor phases, 32 runs, 6,370
+executor turns, about 26 hours of executor wall clock. Plus the
+architect-run live close: two rehearsals, the PE run and the 04d check.
+- **16 `approved_first_try`:** 01, 01b, 02a–02g, 03b, 03c, 03d, 04a–04d.
+  Several needed a resume or a refined re-dispatch after a hard fail, which
+  is not counted as a bounce.
+- **`approved_after_1`:** 03a. **`approved_after_2`:** 03e.
+- **`escalated`:** 01c (architect takeover).
+- **9 hard-failed runs:** six stalls in 01–02c, 03d's stall, 03e's
+  suite-retry loop, and 01c.
+- **Bug docs:** bug-03a-1 and bug-03e-1.
+
+**What the live close found that nothing else did.** Ten findings (F1–F10).
+All but F8 are fixed in 04a–04d.
+- **F1:** a launch "settled" before the program drew.
+- **F2, F5, F6:** argument shapes GLM really sends did not parse: `keys` as
+  a string, `background:"false"`, and `keys:"[]"`.
+- **F3, F7, F10:** pre-write refusals wore the "may still be running /
+  double-apply" text, named a shell they had not used, or printed `Error:`
+  twice.
+- **F4:** plain `top` was the docs' example of a screen that never
+  settles; it redraws every 3 s.
+- **F9:** a ghost silently dropped `interactive`.
+
+Every one of these passed its unit tests. The lesson is the same as M26's
+and M27's: an entry point is verified only when it is driven live.
+
+**Architect errors, recorded.** The most consequential defects this
+milestone were spec or review errors, not executor errors.
+- **Specs.**
+  - 01's assertion was impossible (an idle interactive bash reads as raw
+    mode).
+  - The exact count pins trapped executors three times: 02b, 03e (stalled
+    re-running a green suite), and 04b (16 suite reruns).
+  - Combined behaviour shipped with no named test: 03a's `wait_for` +
+    `settle_ms` broke, and 03e's `wait: false` note was dropped silently.
+  - 03d named no fixture recipe for a direct call, and stalled.
+  - 03e's spec said "two approval sites" where there is one.
+  - A stale resume note contradicted a bounce note, so 03e's first
+    re-dispatch made no edit.
+- **Reviews.**
+  - 02g's approval was committed without its verdict block, because a
+    `&&` chain stopped before the heredoc.
+  - 03e's first approval was committed before the standards grep was read;
+    it showed a dead `#[allow]`, and the approval was withdrawn.
+  - 04a's "harmless nit" (`keys:"[]"`) was F6.
+- From 04a on, every review ran all its greps before writing a verdict.
+
+**Process calibration** (fold proposals below need PE sign-off).
+- **Tool-plumbing cost.** A phase that threads a new tool parameter through
+  args → event → pending → stream → defs → executor ran 263–587 turns
+  (02e, 03a, 03c). Phases that touched no tool surface ran 92–164. Splitting
+  plumbing from behaviour (03d/03e, 04a–04d) kept the later phases short.
+- **Compile-derived site lists work.** 02g ("exactly 6, from a compile")
+  took 92 turns. A grep-derived "complete list" (02b, 02c) missed sites.
+
+
+**Fold proposals** (PE sign-off needed before any lands in `WORKFLOW.md`).
+- **Proposal A: report the full-suite count, don't pin it.** Three
+  occurrences (02b, 03e, 04b), so this is a fix. The text: "A full-suite
+  pass count is a report, not a gate. Pin the new test names; state the
+  expected count, and say an extra test is fine: name it and report; do
+  not re-run the suite to chase a number." The existing count folds cover
+  `grep -c` pins, not the suite total, which is how this trap survived them.
+- **Proposal B: combined behaviour gets its own named test.** Two
+  occurrences (03a, 03e), so this is a trend and is held. When a spec says
+  "A and B together do C", one named test must pin C, or the combination
+  ships unverified.
+
+**rexyMCP issues seen this milestone** (for the rexyMCP backlog, not this
+repo):
+1. **`continue_phase` and the client timeout.** It blocks past the MCP
+   client's 1800 s idle timeout (five times); the run continues server-side.
+2. **Governor blind spots.** Detected only by the 120-call read-only
+   limit, or not at all:
+   - near-identical commands with changing filenames (`/tmp/dbgN.sh`);
+   - verification spread across many module test runs;
+   - forward single-line reads through a file (03d crawled `shell_exec.rs`
+     a line at a time).
+3. **Executor claims that were false.**
+   - 03d's started entry named the executor "Claude Opus 4.6".
+   - 02g claimed `PASTE MATCH` without writing the line.
+   - GLM said it had sent a real array for `keys` when `daemon.log` showed
+     strings.
+4. **`get_run_status` result size.** Its results exceed the context budget.
+
+**Deferred to a later milestone.**
+1. **F8, ghosts are background-only.** `ghost.rs` maps every ghost
+   `run_terminal_command` to `PendingCall::Background`. A ghost therefore
+   never holds a live TUI, and D9's ghost rows are defence in depth with
+   unit-test coverage only. Driving a TUI from a ghost needs a ghost
+   foreground path.
+2. **O3:** the masker turns the word `hostname` into `<SSH_HOST>` (seen
+   once).
+3. **O4:** a successful `run_terminal_command` result does not name its
+   shell id.
+4. **The `sbx.rs` flake.** A `HOME`-reading test in `sbx.rs` flaked in 02c
+   and 04b.
+5. **03e's per-result `wait: false` note.** Left as is by PE decision.
+6. **Still queued from M27:** unify session residency, F9, and the
+   invalid-args nits.
 
 ## Notes
 
