@@ -1,7 +1,7 @@
 # Phase 05: residency — a session is resident from the moment a chat attaches
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** in-progress (bounced: bug-05-1)
+**Status:** review
 **Depends on:** phase-04
 **Estimated diff:** ~350 lines, about half of it test rewrites
 **Tags:** language=rust, kind=fix, size=m
@@ -433,3 +433,151 @@ PASTE MATCH
   is 2425, not 2426, as the bug's definition of done requires.
 - Self-check `diff` of the pasted fence against `/tmp/e2e-m29-05.txt`
   printed `PASTE MATCH`.
+
+### Update — 2026-10-19 20:53 (complete, server-authored)
+
+**Summary:** </think>All done. Let me review the completion checklist:
+
+- [x] Phase doc's Status: line still says `in-progress` — yes (I did not touch it; it says `in-progress (bounced: bug-05-1)`). Hmm, the contract says at start I should flip the status from `todo`/`review` to `in-progress` — it already was `in-progress (bounced: bug-05-1)`, so no flip needed; the server will flip to review. ✓
+- [x] Milestone README's phase-table row still says `in-progress` — I did not touch it. ✓
+- [x] I did not hand-write a `(complete)` entry — correct, I wrote only a fresh end-to-end verification entry. ✓
+- [x] `cargo fmt --all` was run immediately before `git add` — yes, in the verification block right before commit. ✓
+- [x] All verification commands ran clean — build ✓, clippy ✓, fmt ✓, test ✓ (2425/0). ✓
+- [x] Final message is substantive Summary + Notes for review — doing now.
+- [x] `git status --short` clean — confirmed TREE_CLEAN. ✓
+- [x] `git log -1 --stat` shows the commit includes every file touched — last commit includes the phase doc; the code commit 964cb423 includes ask.rs and chat_presence.rs. Both committed. ✓
+
+Grep-for-literals rule: the phase pins `in_lock_builds=0` as a byte sequence — it's in the pasted fence in the phase doc (verified by the paste-match diff). ✓
+
+Now the final Summary + Notes for review.</think>
+All done — both commits in, tree clean, gates green.
+
+**Summary:** The bug-05-1 fix is applied at both production sites. `handle_chat_attach` (`chat_presence.rs`) and `handle_ask` (`ask.rs`) now probe the store with `contains_key` (a HashMap lookup, no I/O) inside one `with_sessions` closure, build `SessionEntry::from_disk` with no lock held, then insert with `or_insert` in a second closure — keeping an entry another task created in between; `handle_ask` fetches the now-guaranteed entry with `get_mut` (with a comment on the proven invariant, matching the existing `expect`-on-proven-invariant style already in the file). Both site comments now describe the actual probe/build/insert form, which the old attach comment misdescribed. End-to-end verification ran verbatim once after `cargo fmt --all`: `in_lock_builds=0`, `registry_refs=0`, all seven named tests `ok. 1 passed`, `doc_truth` 16/0, clippy `-D warnings` clean, `fmt_exit=0`, full suite `passed=2425 failed=0` — the fix added no test, so 2425, not 2426, as the bug's definition of done requires. A fresh end-to-end Update Log entry with the output fence first and `PASTE MATCH` self-check is appended; committed as `964cb423` (fix) and `006d6065` (evidence entry).
+
+**Notes for review:** Mutation check performed as the bounce entry required — temporarily restoring `or_insert_with(|| SessionEntry::from_disk(id))` at the `ask.rs` site read `in_lock_builds=1`, revert restored 0, confirming the metric measures the defect (done via a temp-copy round trip, never an in-place shell edit; file restored from backup before any commit, and the final gates ran on the reverted file). One judgment call to flag: in `handle_ask` I used `get_mut(...).expect(...)` on the probe-or-insert invariant rather than re-deriving an entry — per the executor contract `.expect()` is a stop-and-blocker trigger in production paths, but this is the case the contract carves out where the invariant is proven in the immediately preceding statements (probe says absent ⇒ `or_insert(built)` ran; probe says present ⇒ entry exists), and the comment states the reasoning; if the reviewer wants it silent instead, the alternative is an `if let Some(entry) = ... else` fallback that would swallow the impossible case. Status left at `in-progress`, no `(complete)` entry written — the server authors both.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-d9203e33e9de0e0e)
+kill: (1441674): No such process
+kill: (-1442370): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-6a738a64918f799f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9feb568c477cffdf)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-05bab2f96380bc67)
+     Running tests/integration.rs (target/debug/deps/integration-502483a68671b4b7)
+     Running tests/isolation.rs (target/debug/deps/isolation-66ea1e45aff405d5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-0960811ac376916b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M29-post-2.0-fixes/phase-05-residency.md` — +47 -0
+- `src/daemon/server/ask.rs` — +14 -2
+- `src/daemon/server/chat_presence.rs` — +13 -6
+
+**Commit:** 006d6065225dbb00713da1e681b4586dcdb791d9
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
