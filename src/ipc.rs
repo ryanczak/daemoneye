@@ -630,6 +630,12 @@ pub enum Response {
         /// still deserialises a newer daemon's frame.
         #[serde(default)]
         classification: Classification,
+        /// The command is a launch (`interactive: true` or an
+        /// auto-upgraded recognised interactive command): it keeps the shell
+        /// and nothing waits for it. Defaulted so an older daemon's frame
+        /// still deserialises with `false`.
+        #[serde(default)]
+        interactive: bool,
     },
     /// The approved background command requires a credential (sudo password, etc.).
     /// The client MUST prompt the user with echo disabled and return a `CredentialResponse`.

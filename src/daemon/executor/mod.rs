@@ -49,6 +49,11 @@ struct ApprovalRequest<'a> {
     /// The user-owned shell (`/shell`) the call is aimed at, if any. Such a
     /// prompt is classified `UserShell`, which no session grant covers.
     user_shell: Option<&'a str>,
+    /// The command is a launch (`interactive: true` or an auto-upgraded
+    /// recognised interactive command): it keeps the shell and nothing waits
+    /// for it. Display-only — the panel names the fact; classification and
+    /// the ghost `is_safe` check read the command string alone.
+    interactive: bool,
 }
 
 /// The classification an approval prompt carries: `UserShell` when the call
@@ -311,6 +316,11 @@ fn shell_run_error_text(shell_id: &str, e: &anyhow::Error) -> String {
              privileges. Fix what the error names before retrying."
         )
     } else if e.chain().any(|c| c.is::<shell_exec::RefusedBeforeWrite>()) {
+        // The pre-write refusals raised by the run path carry their own
+        // `Error: ` prefix (F10); the cap refusal raised by `registry.rs`
+        // does not. Strip exactly one leading one so the sentence reads
+        // `Error: …` once, whichever refusal produced it.
+        let chain = chain.strip_prefix("Error: ").unwrap_or(&chain).to_string();
         format!(
             "Error: {chain}. Nothing was written, so it is safe to act on the \
              message above."
@@ -572,6 +582,7 @@ where
                         user_shell: shell
                             .as_deref()
                             .filter(|s| crate::shell::is_user_shell(crate::shell::registry(), s)),
+                        interactive: is_launch(*interactive, cmd),
                     },
                     session_id,
                     ghost_policy.as_ref(),
@@ -875,6 +886,7 @@ where
                         target_pane_hint: None,
                         host: None,
                         user_shell: None,
+                        interactive: false,
                     },
                     session_id,
                     ghost_policy.as_ref(),
@@ -1586,6 +1598,7 @@ where
                     host: None,
                     user_shell: crate::shell::is_user_shell(crate::shell::registry(), shell)
                         .then_some(shell.as_str()),
+                    interactive: false,
                 },
                 session_id,
                 None,
@@ -1780,6 +1793,16 @@ fn tool_outcome_detail(outcome: &ToolCallOutcome) -> (bool, Option<String>) {
 // Approval gate — shared by foreground, background, and write-operations.
 // ---------------------------------------------------------------------------
 
+/// Whether this approval is for a launch — a command that keeps the shell it
+/// runs in, so nothing waits for it to exit. True when the call asked for
+/// `interactive: true` **or** the command itself is a recognised interactive
+/// program, so an auto-upgraded `ssh host` is labelled the same way a
+/// `claude` the model asked for is. Display-only: classification and the
+/// ghost `is_safe` check read the command string alone.
+fn is_launch(interactive: bool, cmd: &str) -> bool {
+    interactive || crate::daemon::utils::is_interactive_command(cmd)
+}
+
 /// Send a `ToolCallPrompt` to the client, wait up to [`APPROVAL_TIMEOUT`] for
 /// the user's [`Request::ToolCallResponse`], and log the outcome.
 ///
@@ -1808,6 +1831,7 @@ where
         target_pane_hint,
         host,
         user_shell,
+        interactive,
     } = req;
     let mode = if background {
         "background"
@@ -1891,6 +1915,7 @@ where
                 &known_hosts,
                 user_shell,
             ),
+            interactive,
         },
     )
     .await?;
@@ -2793,5 +2818,58 @@ mod tests {
             !text.contains("s1"),
             "the refusal names no shell it never used: {text}"
         );
+    }
+
+    /// F10: the busy refusal's own message already starts with `Error: `, so
+    /// the pre-write branch must not print a second one. A pre-write refusal
+    /// whose chain has no prefix (the cap refusal) still gets exactly one.
+    #[test]
+    fn a_refusal_starts_with_exactly_one_error_prefix() {
+        let busy = anyhow::Error::new(shell_exec::RefusedBeforeWrite).context(
+            "Error: shell s1 is running claude (TUI); a command written there \
+             would be typed into it. Use send_input to type into that program, \
+             read_shell_screen to see it, or shell: \"new\" for a fresh shell.",
+        );
+        let text = shell_run_error_text("s1", &busy);
+        assert!(
+            text.starts_with("Error: shell s1"),
+            "the busy refusal opens with the shell it refuses: {text}"
+        );
+        assert!(
+            !text.contains("Error: Error:"),
+            "the refusal must not double its Error prefix: {text}"
+        );
+
+        let cap = anyhow::Error::new(shell_exec::RefusedBeforeWrite)
+            .context("owner 'chat:x' already holds 5 shells (cap 5)");
+        let text = shell_run_error_text("s1", &cap);
+        assert!(
+            text.starts_with("Error: owner"),
+            "an unprefixed pre-write refusal still gets exactly one: {text}"
+        );
+        assert!(
+            !text.contains("Error: Error:"),
+            "the cap refusal must not double its Error prefix either: {text}"
+        );
+    }
+
+    /// D6's panel: the launch fact is `interactive: true` **or** a command
+    /// `is_interactive_command` recognises — so an auto-upgraded `ssh host`
+    /// is labelled a launch the same way a `claude` the model asked for is.
+    #[test]
+    fn a_launch_is_the_flag_or_a_recognised_interactive_command() {
+        assert!(
+            is_launch(true, "vim"),
+            "the explicit flag alone makes it a launch"
+        );
+        assert!(
+            is_launch(false, "ssh host"),
+            "a recognised interactive command is a launch without the flag"
+        );
+        assert!(
+            !is_launch(false, "ls"),
+            "an ordinary command is not a launch"
+        );
+        assert!(!is_launch(false, ""), "an empty command is not a launch");
     }
 }

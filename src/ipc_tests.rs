@@ -258,6 +258,7 @@ fn response_tool_call_prompt_roundtrip() {
         background: false,
         target_pane: Some("%5".to_string()),
         classification: Classification::default(),
+        interactive: false,
     };
     match roundtrip_resp(&resp) {
         Response::ToolCallPrompt {
@@ -266,10 +267,12 @@ fn response_tool_call_prompt_roundtrip() {
             background,
             target_pane,
             classification,
+            interactive,
         } => {
             assert_eq!(id, "tc_3");
             assert_eq!(command, "ls -la");
             assert!(!background);
+            assert!(!interactive);
             assert_eq!(target_pane, Some("%5".to_string()));
             assert_eq!(
                 classification,
@@ -302,6 +305,7 @@ fn tool_call_prompt_round_trips_its_classification() {
         classification: Classification::NewHost {
             host: "nope".to_string(),
         },
+        interactive: false,
     };
     match roundtrip_resp(&resp) {
         Response::ToolCallPrompt {
@@ -310,9 +314,11 @@ fn tool_call_prompt_round_trips_its_classification() {
             background,
             target_pane,
             classification,
+            interactive,
         } => {
             assert_eq!(id, "tc_3");
             assert_eq!(command, "uptime");
+            assert!(!interactive);
             assert!(!background);
             assert!(target_pane.is_none());
             assert_eq!(
@@ -345,6 +351,29 @@ fn tool_call_prompt_without_a_classification_defaults_to_command() {
                 "an unclassified frame is by definition an ordinary local command"
             );
             assert!(target_pane.is_none());
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn tool_call_prompt_without_interactive_parses_as_false() {
+    // An older daemon's frame: no `interactive` key. The `#[serde(default)]`
+    // on the field is what keeps it deserialising, as `false`.
+    let json = r#"{"ToolCallPrompt":{"id":"tc_3","command":"ls -la","background":false}}"#;
+    let parsed: Response = serde_json::from_str(json).expect("backward-compat deserialize");
+    match parsed {
+        Response::ToolCallPrompt { interactive, .. } => {
+            assert!(!interactive, "an unlabelled frame is not a launch");
+        }
+        _ => panic!("wrong variant"),
+    }
+
+    let json = r#"{"ToolCallPrompt":{"id":"tc_3","command":"claude","background":false,"interactive":true}}"#;
+    let parsed: Response = serde_json::from_str(json).expect("deserialize labelled frame");
+    match parsed {
+        Response::ToolCallPrompt { interactive, .. } => {
+            assert!(interactive, "the launch flag survives the wire");
         }
         _ => panic!("wrong variant"),
     }

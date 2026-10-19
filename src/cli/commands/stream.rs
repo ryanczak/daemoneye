@@ -430,6 +430,7 @@ pub(super) async fn ask_with_session_ratatui(
                 background,
                 target_pane,
                 classification,
+                interactive,
             } => {
                 let sb = crate::cli::render::StatusBarState {
                     session_id: "",
@@ -451,6 +452,7 @@ pub(super) async fn ask_with_session_ratatui(
                     background,
                     target_pane.as_deref(),
                     &classification,
+                    interactive,
                 )
                 .await?;
                 send_request(
@@ -1115,7 +1117,7 @@ async fn prompt_with_session_approve(
 
 // ── Ratatui prompt functions (called from ask_with_session_ratatui) ──────────
 
-#[allow(clippy::too_many_arguments)] // 8 params: the flow needs renderer, stdin, status, approval, command, background, pane, and class
+#[allow(clippy::too_many_arguments)] // 9 params: the flow needs renderer, stdin, status, approval, command, background, pane, class, and the launch flag
 pub(super) async fn prompt_tool_call_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
@@ -1125,11 +1127,18 @@ pub(super) async fn prompt_tool_call_ratatui(
     background: bool,
     target_pane: Option<&str>,
     classification: &crate::ipc::Classification,
+    interactive: bool,
 ) -> anyhow::Result<(bool, Option<String>)> {
     use crate::daemon::utils::command_has_sudo;
 
     let where_label = tool_call_panel_label(background);
-    let body = tool_call_panel_body(command, background, target_pane, classification);
+    let body = tool_call_panel_body(
+        command,
+        background,
+        target_pane,
+        classification,
+        interactive,
+    );
     let _ = renderer.commit_panel(where_label, &body, false);
 
     let is_sudo = command_has_sudo(command);
@@ -1217,8 +1226,12 @@ pub(super) fn tool_call_panel_body(
     _background: bool,
     target_pane: Option<&str>,
     classification: &crate::ipc::Classification,
+    interactive: bool,
 ) -> Vec<String> {
     let mut body = vec![format!("$ {}", command)];
+    if interactive {
+        body.push("→ interactive: the command keeps the shell; nothing waits for it".to_string());
+    }
     if let Some(tp) = target_pane {
         body.push(format!("→ target: {}", tp));
     }
@@ -1953,7 +1966,7 @@ mod tool_call_panel_tests {
     fn the_user_shell_panel_names_the_shell_and_is_always_asked() {
         let class = crate::ipc::Classification::UserShell { shell: "s7".into() };
         assert_eq!(
-            tool_call_panel_body("uptime", false, None, &class),
+            tool_call_panel_body("uptime", false, None, &class, false),
             vec![
                 "$ uptime".to_string(),
                 "→ your shell s7 (opened with /shell)".to_string()
@@ -1972,6 +1985,7 @@ mod tool_call_panel_tests {
             false,
             Some("%5"),
             &crate::ipc::Classification::Command,
+            false,
         );
         assert_eq!(
             body,
@@ -1987,6 +2001,48 @@ mod tool_call_panel_tests {
             tool_call_panel_label(true),
             "daemon · runs silently",
             "the background label is the pre-phase wording"
+        );
+    }
+
+    /// D6: the approval panel must say that a launch keeps the shell — the
+    /// user sees the session open and must know nothing waits for it. The
+    /// line sits right after the command, before any classification line.
+    #[test]
+    fn the_launch_panel_says_the_command_keeps_the_shell() {
+        let class = crate::ipc::Classification::Command;
+        let body = tool_call_panel_body("claude", false, None, &class, true);
+        assert_eq!(
+            body,
+            vec![
+                "$ claude".to_string(),
+                "→ interactive: the command keeps the shell; nothing waits for it".to_string(),
+            ],
+            "a launch's body is the command then the keeps-the-shell line"
+        );
+
+        let body = tool_call_panel_body(
+            "ssh zoidberg",
+            false,
+            None,
+            &crate::ipc::Classification::RemoteShell {
+                host: "zoidberg".into(),
+            },
+            true,
+        );
+        assert_eq!(
+            body,
+            vec![
+                "$ ssh zoidberg".to_string(),
+                "→ interactive: the command keeps the shell; nothing waits for it".to_string(),
+                "→ host: zoidberg (configured)".to_string(),
+            ],
+            "the launch line comes before the classification line"
+        );
+
+        let body = tool_call_panel_body("uptime", false, None, &class, false);
+        assert!(
+            !body.iter().any(|l| l.contains("interactive")),
+            "a non-launch's body has no interactive line: {body:?}"
         );
     }
 
@@ -2006,7 +2062,7 @@ mod tool_call_panel_tests {
             "a sudo Command under the shipped default is still asked, as before this phase"
         );
 
-        let body = tool_call_panel_body(command, false, Some("%5"), &class);
+        let body = tool_call_panel_body(command, false, Some("%5"), &class, false);
         assert_eq!(
             body,
             vec!["$ uptime".to_string(), "→ target: %5".to_string()],

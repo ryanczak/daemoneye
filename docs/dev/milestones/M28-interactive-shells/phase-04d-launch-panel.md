@@ -1,7 +1,7 @@
 # Phase 04d: launch-panel — the approval panel says a launch keeps the shell
 
 **Milestone:** M28 — Interactive shells
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04c
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -137,3 +137,32 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-19 01:05 (progress)
+
+Started phase-04d (executor). Status flipped to `in-progress` here and in the
+milestone README's phase table. Plan: add `interactive` to
+`Response::ToolCallPrompt` and `ApprovalRequest`, wire `is_launch` through both
+`run_terminal_command` approval sites, render the panel line in
+`tool_call_panel_body`, fix the F10 double `Error: ` prefix, add the four
+spec'd tests, then capture the end-to-end transcript verbatim.
+
+### Update — 2026-10-19 01:20 (end-to-end verification)
+
+Ran § End-to-end verification once, top to bottom, with each command's output
+appended to `/tmp/e2e-04d.txt`. The pasted block below is that file verbatim.
+
+```
+tool_call_prompt_without_interactive_parses_as_false: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_launch_is_the_flag_or_a_recognised_interactive_command: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_launch_panel_says_the_command_keeps_the_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_refusal_starts_with_exactly_one_error_prefix: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_local_command_panel_is_unchanged: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_busy_refusal_says_nothing_was_written: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2410 failed=0
+```
+
+PASTE MATCH

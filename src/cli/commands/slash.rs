@@ -1211,6 +1211,7 @@ mod tests {
             background: false,
             target_pane: None,
             classification: crate::ipc::Classification::default(),
+            interactive: false,
         };
         let line = error_line(&resp);
         assert!(line.contains("ToolCallPrompt"), "should name variant");

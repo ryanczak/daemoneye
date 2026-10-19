@@ -228,6 +228,7 @@ where
             target_pane_hint: None,
             host: None,
             user_shell: None,
+            interactive: false,
         },
         session_id,
         ghost_policy,
