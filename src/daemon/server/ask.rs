@@ -11,7 +11,6 @@ use crate::scheduler::ScheduleStore;
 use crate::tmux::cache::SessionCache;
 use anyhow::Result;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::io::{AsyncBufRead, AsyncWrite};
 // ── Ask handler ──────────────────────────────────────────────────────────────
 
@@ -83,76 +82,14 @@ where
 
     // Upsert the session entry: create it with the client-resolved target pane if
     // new, or refresh chat_pane and adopt client_target_pane if not yet set.
-    // Read persisted continuity state *before* taking the lock. It is a file read
-    // and must not run inside a critical section. Only needed when the session is
-    // not already resident — the probe below is a HashMap lookup, not blocking work.
-    let restored_meta = if let Some(ref id) = session_id {
-        if with_sessions(sessions, |store| store.contains_key(id)) {
-            None
-        } else {
-            crate::daemon::session::read_session_meta(id)
-        }
-    } else {
-        None
-    };
-
+    // `SessionEntry::from_disk` is the one constructor for a resident entry (M29
+    // phase 05): the presence attach goes through it too, so an entry created
+    // here always carries the disk history and the persisted meta already.
     let (session_cost_usd, has_untracked_cost): (f64, bool) = if let Some(ref id) = session_id {
         with_sessions(sessions, |store| {
-            let entry = store.entry(id.clone()).or_insert_with(|| {
-                // Try to restore continuity state from persisted meta.
-                let meta = restored_meta;
-                let (
-                    started_at,
-                    turn_count,
-                    last_prompt_tokens,
-                    tool_calls_this_session,
-                    token_scale,
-                    saved_name,
-                ) = match meta {
-                    Some(m) => (
-                        m.started_at,
-                        m.turn_count,
-                        m.last_prompt_tokens,
-                        m.tool_calls_this_session,
-                        m.token_scale,
-                        m.saved_name,
-                    ),
-                    None => (chrono::Utc::now(), 0, 0, 0, 1.5, None),
-                };
-                SessionEntry {
-                    messages: Vec::new(),
-                    last_accessed: Instant::now(),
-                    chat_pane: chat_pane.clone(),
-                    default_target_pane: client_target_pane.clone(),
-                    bg_windows: Vec::new(),
-                    last_prompt_tokens,
-                    tmux_session: session_name.clone(),
-                    last_detach: None,
-                    detach_time_utc: None,
-                    messages_at_detach: 0,
-                    is_ghost: false,
-                    ghost_config: None,
-                    ghost_runbook_name: None,
-                    ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
-                    started_at,
-                    turn_count,
-                    tool_calls_this_session,
-                    active_model: None,
-                    last_snapshot_activity: 0,
-                    saved_name,
-                    dirty: false,
-                    artifacts_created: Vec::new(),
-                    auto_name_suggested: false,
-                    ghost_task_message: None,
-                    loaded_tools: std::collections::HashSet::new(),
-                    cost_usd: 0.0,
-                    cost_by_agent: std::collections::HashMap::new(),
-                    has_untracked_cost: false,
-                    token_scale,
-                    compaction_in_flight: false,
-                    pending_compaction_notice: None,
-                }
-            });
+            let entry = store
+                .entry(id.clone())
+                .or_insert_with(|| SessionEntry::from_disk(id));
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();
 

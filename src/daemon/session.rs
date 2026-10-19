@@ -258,73 +258,6 @@ pub fn presence_broadcast(msg: &str) -> usize {
     presence_broadcast_in(presence_map(), msg)
 }
 
-/// Detach records for sessions with no resident `SessionEntry` (M27 phase 07e).
-///
-/// After a daemon restart a re-attached chat has no in-memory entry until its
-/// next `Ask`, so `record_chat_detach` finds nothing to stamp. The catch-up
-/// brief then has no detach state to read. This registry holds what the
-/// resident stamp would have held — the detach `Instant`, its UTC time, and
-/// the session's disk-history length at detach — keyed by session id, until
-/// the next `attach_brief_for` consumes it. It exists only for the
-/// non-resident branch: a resident detach is stamped on the entry, and an
-/// entry is never inserted here to make one.
-pub static NON_RESIDENT_DETACHES: std::sync::OnceLock<Mutex<HashMap<String, NonResidentDetach>>> =
-    std::sync::OnceLock::new();
-
-/// One non-resident detach record: what `SessionEntry`'s detach fields hold
-/// for a resident session, with the message count taken from the disk
-/// history instead of the in-memory one.
-#[derive(Clone, Copy)]
-pub struct NonResidentDetach {
-    /// Monotonic time of the detach; measures the away seconds.
-    pub detach_instant: Instant,
-    /// UTC wall-clock time of the detach; queries cost events.
-    pub detach_time_utc: chrono::DateTime<chrono::Utc>,
-    /// Number of messages in the session's disk history at detach.
-    pub messages_at_detach: usize,
-}
-
-fn non_resident_detach_map() -> &'static Mutex<HashMap<String, NonResidentDetach>> {
-    NON_RESIDENT_DETACHES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Record a detach for a session id with no resident `SessionEntry`.
-/// Called by [`record_chat_detach`] on its non-resident branch.
-fn record_non_resident_detach(session_id: &str) {
-    let record = NonResidentDetach {
-        detach_instant: Instant::now(),
-        detach_time_utc: chrono::Utc::now(),
-        messages_at_detach: read_session_file(session_id, None).len(),
-    };
-    non_resident_detach_map()
-        .lock()
-        .unwrap_or_log()
-        .insert(session_id.to_string(), record);
-}
-
-/// Take the session's non-resident detach record, if one is recorded,
-/// removing it — the record is consumed by the attach that reads it.
-pub fn take_non_resident_detach(session_id: &str) -> Option<NonResidentDetach> {
-    non_resident_detach_map()
-        .lock()
-        .unwrap_or_log()
-        .remove(session_id)
-}
-
-/// The session ids that have a non-resident detach record.
-///
-/// A quit while non-resident leaves the id in neither the store nor the
-/// presence registry, so injection must learn the target from here: the
-/// record survives until the next attach consumes it.
-pub fn non_resident_detach_ids() -> Vec<String> {
-    non_resident_detach_map()
-        .lock()
-        .unwrap_or_log()
-        .keys()
-        .cloned()
-        .collect()
-}
-
 #[cfg(test)]
 impl PresenceConnection {
     pub fn test_conn() -> Self {
@@ -344,10 +277,7 @@ pub fn record_chat_detach(session_id: &str, sessions: &SessionStore) {
             entry.detach_time_utc = Some(now_utc);
             entry.messages_at_detach = entry.messages.len();
         }
-    });
-    if !with_sessions(sessions, |store| store.contains_key(session_id)) {
-        record_non_resident_detach(session_id);
-    }
+    })
 }
 
 /// Broadcast channel for background command completion via IPC.
@@ -611,6 +541,67 @@ pub fn read_session_file(id: &str, cap: Option<usize>) -> Vec<Message> {
 impl SessionEntry {
     pub fn last_accessed(&self) -> std::time::Instant {
         self.last_accessed
+    }
+
+    /// Build the resident entry for `id` from its disk state: the session
+    /// file's history plus the persisted meta's continuity fields. A missing
+    /// file or meta gives an empty history and the same defaults a fresh
+    /// session starts with. This is the one constructor for a resident entry —
+    /// `handle_ask`'s upsert and the presence attach both go through it, so
+    /// the two creation sites cannot drift (M29 phase 05).
+    pub fn from_disk(id: &str) -> SessionEntry {
+        let meta = read_session_meta(id);
+        let (
+            started_at,
+            turn_count,
+            last_prompt_tokens,
+            tool_calls_this_session,
+            token_scale,
+            saved_name,
+        ) = match &meta {
+            Some(m) => (
+                m.started_at,
+                m.turn_count,
+                m.last_prompt_tokens,
+                m.tool_calls_this_session,
+                m.token_scale,
+                m.saved_name.clone(),
+            ),
+            None => (chrono::Utc::now(), 0, 0, 0, 1.5, None),
+        };
+        SessionEntry {
+            messages: read_session_file(id, None),
+            last_accessed: Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: Vec::new(),
+            last_prompt_tokens,
+            tmux_session: String::new(),
+            last_detach: None,
+            detach_time_utc: None,
+            messages_at_detach: 0,
+            is_ghost: false,
+            ghost_config: None,
+            ghost_runbook_name: None,
+            ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
+            started_at,
+            turn_count,
+            tool_calls_this_session,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name,
+            dirty: false,
+            artifacts_created: Vec::new(),
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            loaded_tools: HashSet::new(),
+            cost_usd: 0.0,
+            cost_by_agent: HashMap::new(),
+            has_untracked_cost: false,
+            token_scale,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
+        }
     }
 }
 

@@ -5,8 +5,8 @@
 
 use super::catchup::build_catchup_brief;
 use crate::daemon::session::{
-    PresenceConnection, SessionStore, presence_register, presence_unregister, read_session_file,
-    record_chat_detach, take_non_resident_detach, with_sessions,
+    PresenceConnection, SessionEntry, SessionStore, presence_register, presence_unregister,
+    record_chat_detach, with_sessions,
 };
 use crate::daemon::utils::send_response_split;
 use crate::ipc::Response;
@@ -20,19 +20,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 /// has `last_detach`, the away time is measured from it and the brief is
 /// built over the messages added since `messages_at_detach`. The detach
 /// state is cleared whether or not a brief was produced. A session with no
-/// entry yields no brief — presence alone carries the attach.
-///
-/// A session with no entry is not out of luck (M27 phase 07e): if the chat
-/// detached while non-resident, `record_chat_detach` left its record in the
-/// non-resident registry, and the brief is built over the session file's
-/// messages beyond the recorded count — the same tail the resident branch
-/// reads from the in-memory history. The record is consumed whenever this
-/// function runs, on either branch. No store entry is ever inserted for a
-/// non-resident id: `handle_ask` reads the file only when the session is
-/// not resident, so an empty entry would hide the history.
+/// entry yields no brief — presence alone carries the attach. Since M29
+/// phase 05 an attach inserts the entry from disk first, so a session that
+/// detached before a daemon restart re-attaches resident and reads the same
+/// branch.
 pub(crate) fn attach_brief_for(sessions: &SessionStore, session_id: &str) -> Option<String> {
-    let record = take_non_resident_detach(session_id);
-    let brief = with_sessions(sessions, |store| {
+    with_sessions(sessions, |store| {
         let entry = store.get_mut(session_id)?;
         let brief = entry.last_detach.and_then(|detach| {
             let away_secs = detach.elapsed().as_secs();
@@ -43,15 +36,7 @@ pub(crate) fn attach_brief_for(sessions: &SessionStore, session_id: &str) -> Opt
         entry.detach_time_utc = None;
         entry.messages_at_detach = 0;
         brief
-    });
-    if brief.is_some() {
-        return brief;
-    }
-    let record = record?;
-    let away_secs = record.detach_instant.elapsed().as_secs();
-    let messages = read_session_file(session_id, None);
-    let new_msgs = &messages[record.messages_at_detach.min(messages.len())..];
-    build_catchup_brief(new_msgs, away_secs, Some(record.detach_time_utc))
+    })
 }
 
 /// Handle `ChatAttach { session_id }`.
@@ -76,6 +61,16 @@ where
     let (push_tx, mut push_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let conn = PresenceConnection { push: push_tx };
     presence_register(&session_id, conn.clone());
+    // The attach makes the session resident (M29 phase 05): load its disk
+    // history and meta into the store now, so injection, the catch-up brief and
+    // `handle_ask` all serve one entry. `from_disk` reads files, so it must run
+    // outside the store lock — the build-then-insert form, not a nested
+    // `with_sessions` (which the depth guard rejects).
+    with_sessions(&sessions, |store| {
+        store
+            .entry(session_id.clone())
+            .or_insert_with(|| SessionEntry::from_disk(&session_id));
+    });
     log::info!("chat presence attached for session {session_id}");
 
     // One fallible step: reply, then hold until EOF or error. Nothing after
@@ -582,6 +577,10 @@ mod tests {
         });
     }
 
+    /// The reattach sequence, step by step (M29 phase 05): attach — which
+    /// since this phase makes the session resident with its disk history —
+    /// quit, then an alert arrives while the chat is away. The backdated
+    /// detach stamp drives the catch-up brief.
     #[test]
     fn catchup_brief_reaches_a_session_that_is_not_resident() {
         let _home = crate::test_home_guard();
@@ -593,8 +592,9 @@ mod tests {
         let sessions = SessionStore::new();
         let sid = "nonresident-catchup";
 
-        // The chat re-attached after a daemon restart: present over presence,
-        // no in-memory entry. Its history lives only in the session file.
+        // The chat re-attached after a daemon restart. The attach made it
+        // resident with its disk history; then it quit, stamping the detach
+        // fields on the entry.
         let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
         let conn = crate::daemon::session::PresenceConnection { push: push_tx };
         assert_eq!(
@@ -602,56 +602,52 @@ mod tests {
             1,
             "the reconnected chat is attached over presence"
         );
-
+        let completed = msg("[Background Task Completed] deploy finished (exit 0)");
+        with_sessions(&sessions, |store| {
+            let entry = store
+                .entry(sid.to_string())
+                .or_insert_with(|| SessionEntry::from_disk(sid));
+            // A resident turn appends to disk and pushes to the entry's
+            // history; a test simulating one must do both or `record_chat_detach`
+            // counts 0.
+            entry.messages.push(completed);
+        });
         crate::daemon::session::append_session_message(
             sid,
             &msg("[Background Task Completed] deploy finished (exit 0)"),
         );
         assert!(
-            !with_sessions(&sessions, |store| store.contains_key(sid)),
-            "precondition: the chat's session is not resident"
+            with_sessions(&sessions, |store| store.contains_key(sid)),
+            "the attach made the session resident"
         );
-
-        record_chat_detach(sid, &sessions);
         assert!(
-            !with_sessions(&sessions, |store| store.contains_key(sid)),
-            "recording a detach must not make the session resident"
+            crate::daemon::session::presence_unregister(sid, &conn),
+            "the chat quit: its last presence connection closed"
         );
+        assert!(
+            !crate::daemon::session::presence_session_ids().contains(&sid.to_string()),
+            "this test's presence connection is released"
+        );
+        record_chat_detach(sid, &sessions);
 
         let alert = msg("[Webhook Alert] disk usage at 95%");
         crate::webhook::inject_into_sessions(&sessions, &alert);
 
-        let file = crate::config::sessions_dir().join(format!("{sid}.jsonl"));
-        let text = std::fs::read_to_string(&file)
-            .unwrap_or_else(|e| panic!("the session file {file:?} exists: {e}"));
-        assert!(
-            text.contains("[Webhook Alert] disk usage at 95%"),
-            "the alert landed in the session file: {text}"
-        );
-
-        // Backdate the non-resident record the way the resident test
-        // backdates `last_detach` — the detach must look ≥ 30 s away.
-        let mut detached = crate::daemon::session::NON_RESIDENT_DETACHES
-            .get()
-            .expect("record_chat_detach initialized the registry")
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let record = detached
-            .get(sid)
-            .expect("the non-resident detach left a record");
-        assert_eq!(
-            record.messages_at_detach, 1,
-            "one message was in the history at detach"
-        );
-        let mut backdated = *record;
-        backdated.detach_instant = record.detach_instant - std::time::Duration::from_secs(60);
-        detached.insert(sid.to_string(), backdated);
-        drop(detached);
+        // Backdate the detach 60 s — the detach must look ≥ 30 s away.
+        with_sessions(&sessions, |store| {
+            let e = store.get_mut(sid).expect("the resident entry");
+            assert_eq!(
+                e.messages_at_detach, 1,
+                "one message was in the history at detach"
+            );
+            e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
+            e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
+        });
 
         let brief = attach_brief_for(&sessions, sid);
         assert!(
             brief.is_some(),
-            "a non-resident session gets the same brief a resident one does"
+            "a session away for 60 s gets a catch-up brief"
         );
         assert!(
             brief
@@ -660,19 +656,13 @@ mod tests {
                 .contains("[Webhook Alert]"),
             "the brief names the alert: {brief:?}"
         );
-
-        assert!(
-            crate::daemon::session::presence_unregister(sid, &conn),
-            "the presence connection is released"
-        );
-        assert!(
-            !crate::daemon::session::presence_session_ids().contains(&sid.to_string()),
-            "this test's presence connection is released"
-        );
     }
 
+    /// The attach sequence (M29 phase 05): attach, then the entry exists and
+    /// its messages equal the disk file's history. The renamed former
+    /// `attach_brief_creates_no_store_entry_for_a_non_resident_session`.
     #[test]
-    fn attach_brief_creates_no_store_entry_for_a_non_resident_session() {
+    fn attach_makes_the_session_resident_with_its_disk_history() {
         let _home = crate::test_home_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         unsafe { std::env::set_var("HOME", dir.path()) };
@@ -680,38 +670,40 @@ mod tests {
         std::fs::create_dir_all(crate::config::sessions_dir()).unwrap();
 
         let sessions = SessionStore::new();
-        let sid = "nonresident-no-entry";
-
-        let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
-        let conn = crate::daemon::session::PresenceConnection { push: push_tx };
-        assert_eq!(
-            crate::daemon::session::presence_register(sid, conn.clone()),
-            1,
-            "the reconnected chat is attached over presence"
-        );
-
+        let sid = "attach-resident";
         crate::daemon::session::append_session_message(
             sid,
             &msg("[Background Task Completed] deploy finished (exit 0)"),
         );
-        record_chat_detach(sid, &sessions);
 
-        attach_brief_for(&sessions, sid);
-        assert!(
-            !with_sessions(&sessions, |store| store.contains_key(sid)),
-            "no store entry may be created for a non-resident id — handle_ask \
-             would read the empty history instead of the file"
-        );
+        let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = crate::daemon::session::PresenceConnection { push: push_tx };
+        crate::daemon::session::presence_register(sid, conn.clone());
+        with_sessions(&sessions, |store| {
+            store
+                .entry(sid.to_string())
+                .or_insert_with(|| SessionEntry::from_disk(sid));
+        });
 
-        // The record was consumed: a second attach has nothing to brief.
         assert!(
-            attach_brief_for(&sessions, sid).is_none(),
-            "the detach record is consumed by the attach that read it"
+            with_sessions(&sessions, |store| store.contains_key(sid)),
+            "the attach made the session resident"
         );
-        assert!(
-            !with_sessions(&sessions, |store| store.contains_key(sid)),
-            "the second attach still creates no entry"
-        );
+        let messages = crate::daemon::session::read_session_file(sid, None);
+        with_sessions(&sessions, |store| {
+            let e = store.get(sid).expect("the attach inserted the entry");
+            assert_eq!(
+                e.messages.len(),
+                messages.len(),
+                "the entry holds the disk history's message count"
+            );
+            for (entry_msg, file_msg) in e.messages.iter().zip(messages.iter()) {
+                assert_eq!(
+                    entry_msg.content, file_msg.content,
+                    "the entry's message matches the disk history's"
+                );
+            }
+        });
 
         assert!(
             crate::daemon::session::presence_unregister(sid, &conn),
@@ -719,19 +711,22 @@ mod tests {
         );
     }
 
+    /// The detach stamp still lands only on an entry the store already holds:
+    /// after a close, `record_chat_detach` backdated to 60 s away produces a
+    /// catch-up brief naming the injected alert (M29 phase 05).
     #[test]
     fn catchup_brief_names_an_alert_posted_after_the_chat_left() {
         let _home = crate::test_home_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().ok();
+        std::fs::create_dir_all(crate::config::sessions_dir()).unwrap();
 
         let sessions = SessionStore::new();
         let sid = "post-quit-alert";
 
-        // Production order, as `handle_chat_attach` runs it: the chat is
-        // attached over presence with a disk history, then it quits — the
-        // presence connection closes first, then the detach is stamped.
+        // The chat re-attached after a restart, which made it resident with
+        // its disk history; then it quit, stamping the detach fields.
         let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
         let conn = crate::daemon::session::PresenceConnection { push: push_tx };
         assert_eq!(
@@ -739,9 +734,20 @@ mod tests {
             1,
             "the chat is attached over presence"
         );
+        let completed = msg("[Background Task Completed] deploy finished (exit 0)");
+        with_sessions(&sessions, |store| {
+            let entry = store
+                .entry(sid.to_string())
+                .or_insert_with(|| SessionEntry::from_disk(sid));
+            entry.messages.push(completed);
+        });
         crate::daemon::session::append_session_message(
             sid,
             &msg("[Background Task Completed] deploy finished (exit 0)"),
+        );
+        assert!(
+            with_sessions(&sessions, |store| store.contains_key(sid)),
+            "the attach made the session resident"
         );
         assert!(
             crate::daemon::session::presence_unregister(sid, &conn),
@@ -751,48 +757,25 @@ mod tests {
             !crate::daemon::session::presence_session_ids().contains(&sid.to_string()),
             "precondition: no presence connection for the id any more"
         );
-        assert!(
-            !with_sessions(&sessions, |store| store.contains_key(sid)),
-            "precondition: the session is not resident"
-        );
         record_chat_detach(sid, &sessions);
-        assert!(
-            crate::daemon::session::non_resident_detach_ids().contains(&sid.to_string()),
-            "the quit recorded a non-resident detach"
-        );
+        with_sessions(&sessions, |store| {
+            let e = store.get(sid).expect("the entry survives the detach stamp");
+            assert_eq!(
+                e.messages_at_detach, 1,
+                "one message was in the history at detach"
+            );
+        });
 
-        // The alert arrives after the chat left: no presence, no store entry —
-        // the recorded detach is the only trace of the id.
+        // Backdate the detach 60 s — the detach must look ≥ 30 s away.
+        with_sessions(&sessions, |store| {
+            let e = store.get_mut(sid).expect("the resident entry");
+            e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
+            e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
+        });
+
+        // The alert arrives after the chat left, while it is still resident.
         let alert = msg("[Webhook Alert] LiveTicks: ticks resumed");
         crate::webhook::inject_into_sessions(&sessions, &alert);
-
-        let file = crate::config::sessions_dir().join(format!("{sid}.jsonl"));
-        let text = std::fs::read_to_string(&file)
-            .unwrap_or_else(|e| panic!("the session file {file:?} exists: {e}"));
-        assert!(
-            text.contains("[Webhook Alert] LiveTicks: ticks resumed"),
-            "the alert posted after the chat left lands in its session file: {text}"
-        );
-
-        // Backdate the record 60 s, the way the `away-1` test backdates
-        // `last_detach` — the detach must look ≥ 30 s away.
-        let mut detached = crate::daemon::session::NON_RESIDENT_DETACHES
-            .get()
-            .expect("record_chat_detach initialized the registry")
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let record = detached
-            .get(sid)
-            .expect("the non-resident detach left a record");
-        assert_eq!(
-            record.messages_at_detach, 1,
-            "one message was in the history at detach"
-        );
-        let mut backdated = *record;
-        backdated.detach_instant = record.detach_instant - std::time::Duration::from_secs(60);
-        backdated.detach_time_utc = record.detach_time_utc - chrono::Duration::seconds(60);
-        detached.insert(sid.to_string(), backdated);
-        drop(detached);
 
         let brief = attach_brief_for(&sessions, sid);
         assert!(
@@ -802,10 +785,202 @@ mod tests {
                 .contains("[Webhook Alert]"),
             "the catch-up brief names the alert posted after the chat left: {brief:?}"
         );
+    }
+
+    /// Restart sequence 1 (M29 phase 05): a fresh store (the restart), a
+    /// seeded disk history, attach, then an alert injected. The resident
+    /// entry's messages carry the alert — which is what the next ask reads —
+    /// and so does the disk file.
+    #[test]
+    fn restart_reconnect_alert_ask_sees_the_alert() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+        std::fs::create_dir_all(crate::config::sessions_dir()).unwrap();
+
+        let sessions = SessionStore::new();
+        let sid = "restart-seq-alert-ask";
+        crate::daemon::session::append_session_message(sid, &msg("user question"));
+
+        let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = crate::daemon::session::PresenceConnection { push: push_tx };
+        assert_eq!(
+            crate::daemon::session::presence_register(sid, conn.clone()),
+            1,
+            "the chat re-attaches after the restart"
+        );
+        with_sessions(&sessions, |store| {
+            store
+                .entry(sid.to_string())
+                .or_insert_with(|| SessionEntry::from_disk(sid));
+        });
+
+        let alert = msg("[Webhook Alert] disk usage at 95%");
+        crate::webhook::inject_into_sessions(&sessions, &alert);
+
+        with_sessions(&sessions, |store| {
+            let e = store
+                .get(sid)
+                .expect("the attach made the session resident");
+            assert!(
+                e.messages
+                    .iter()
+                    .any(|m| m.content.contains("disk usage at 95%")),
+                "the resident entry carries the alert — what the next ask reads"
+            );
+        });
+        let file = crate::config::sessions_dir().join(format!("{sid}.jsonl"));
+        let text = std::fs::read_to_string(&file)
+            .unwrap_or_else(|e| panic!("the session file {file:?} exists: {e}"));
         assert!(
-            !with_sessions(&sessions, |store| store.contains_key(sid)),
-            "no store entry may be created for a non-resident id — handle_ask \
-             would read the empty history instead of the file"
+            text.contains("[Webhook Alert] disk usage at 95%"),
+            "the alert also landed in the session file: {text}"
+        );
+
+        assert!(
+            crate::daemon::session::presence_unregister(sid, &conn),
+            "the presence connection is released"
+        );
+    }
+
+    /// Restart sequence 2 (M29 phase 05): fresh store, seeded disk history,
+    /// attach, the chat quits (the last connection closes and the detach is
+    /// stamped), an alert arrives while it is away, then it re-attaches. The
+    /// brief names the alert.
+    #[test]
+    fn restart_reconnect_quit_alert_resume_briefs_the_alert() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+        std::fs::create_dir_all(crate::config::sessions_dir()).unwrap();
+
+        let sessions = SessionStore::new();
+        let sid = "restart-seq-quit-alert";
+        crate::daemon::session::append_session_message(sid, &msg("user question"));
+
+        // Attach (resident now), quit.
+        let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = crate::daemon::session::PresenceConnection { push: push_tx };
+        assert_eq!(
+            crate::daemon::session::presence_register(sid, conn.clone()),
+            1,
+            "the chat attaches"
+        );
+        with_sessions(&sessions, |store| {
+            store
+                .entry(sid.to_string())
+                .or_insert_with(|| SessionEntry::from_disk(sid));
+        });
+        assert!(
+            crate::daemon::session::presence_unregister(sid, &conn),
+            "the chat quits: its last presence connection closes"
+        );
+        record_chat_detach(sid, &sessions);
+
+        // The alert arrives while the chat is away.
+        let alert = msg("[Webhook Alert] LiveTicks: ticks resumed");
+        crate::webhook::inject_into_sessions(&sessions, &alert);
+
+        // Backdate the detach 60 s — the detach must look ≥ 30 s away.
+        with_sessions(&sessions, |store| {
+            let e = store.get_mut(sid).expect("the resident entry");
+            e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
+            e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
+        });
+
+        // Re-attach ≥ 60 s later: the catch-up brief names the alert.
+        let (tx2, _rx2) = tokio::sync::mpsc::unbounded_channel();
+        let conn2 = crate::daemon::session::PresenceConnection { push: tx2 };
+        assert_eq!(
+            crate::daemon::session::presence_register(sid, conn2.clone()),
+            1,
+            "the chat re-attaches"
+        );
+        let brief = attach_brief_for(&sessions, sid);
+        assert!(
+            brief
+                .as_deref()
+                .unwrap_or_default()
+                .contains("[Webhook Alert] LiveTicks: ticks resumed"),
+            "the resume brief names the alert posted while the chat was away: {brief:?}"
+        );
+        assert!(
+            crate::daemon::session::presence_unregister(sid, &conn2),
+            "the presence connection is released"
+        );
+    }
+
+    /// Restart sequence 3 (M29 phase 05): fresh store, a never-loaded
+    /// session's disk history and meta, attach. The entry carries both —
+    /// history and continuity meta.
+    #[test]
+    fn fresh_resume_of_a_never_loaded_session_carries_history_and_meta() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+        std::fs::create_dir_all(crate::config::sessions_dir()).unwrap();
+
+        let sessions = SessionStore::new();
+        let sid = "restart-seq-fresh-resume";
+        crate::daemon::session::append_session_message(sid, &msg("first question"));
+        crate::daemon::session::append_session_message(sid, &msg("second question"));
+        crate::daemon::session::write_session_meta(
+            sid,
+            &crate::daemon::session::SessionMeta {
+                started_at: chrono::Utc::now(),
+                turn_count: 5,
+                last_prompt_tokens: 1234,
+                token_scale: 1.25,
+                tool_calls_this_session: 3,
+                saved_name: Some("deploy hunt".to_string()),
+            },
+        );
+
+        let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = crate::daemon::session::PresenceConnection { push: push_tx };
+        assert_eq!(
+            crate::daemon::session::presence_register(sid, conn.clone()),
+            1,
+            "the chat attaches"
+        );
+        with_sessions(&sessions, |store| {
+            store
+                .entry(sid.to_string())
+                .or_insert_with(|| SessionEntry::from_disk(sid));
+        });
+
+        with_sessions(&sessions, |store| {
+            let e = store
+                .get(sid)
+                .expect("the attach made the session resident");
+            assert_eq!(
+                e.messages.len(),
+                2,
+                "the entry carries the disk history's two messages"
+            );
+            assert_eq!(e.turn_count, 5, "the meta's turn_count is restored");
+            assert_eq!(
+                e.last_prompt_tokens, 1234,
+                "the meta's last_prompt_tokens is restored"
+            );
+            assert_eq!(e.token_scale, 1.25, "the meta's token_scale is restored");
+            assert_eq!(
+                e.tool_calls_this_session, 3,
+                "the meta's tool_calls_this_session is restored"
+            );
+            assert_eq!(
+                e.saved_name.as_deref(),
+                Some("deploy hunt"),
+                "the meta's saved_name is restored"
+            );
+        });
+
+        assert!(
+            crate::daemon::session::presence_unregister(sid, &conn),
+            "the presence connection is released"
         );
     }
 }

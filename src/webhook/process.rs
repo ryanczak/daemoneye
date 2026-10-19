@@ -3,8 +3,7 @@ use std::sync::Arc;
 use crate::ai::{AiEvent, Message};
 use crate::daemon::ghost::GhostManager;
 use crate::daemon::session::{
-    SessionStore, append_session_message, non_resident_detach_ids, presence_broadcast,
-    presence_session_ids, with_sessions,
+    SessionStore, append_session_message, presence_broadcast, presence_session_ids, with_sessions,
 };
 use crate::daemon::utils::{UnpoisonExt, fire_notification, log_event};
 
@@ -188,25 +187,16 @@ pub async fn process_alert(
 /// of whether the session was idle or active).
 pub(crate) fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
     // The union of the store's resident ids and every session with a live
-    // presence connection. A chat that re-attached after a daemon restart is
-    // present over presence but has no in-memory entry until it asks again —
-    // its history still lands in the session file, where `handle_ask` reads
-    // it. Without this union an alert fired in that window shows on screen
-    // and vanishes from the record.
+    // presence connection. Since M29 phase 05 an attach inserts the entry
+    // from disk, so every attached chat is resident: the union still guards
+    // a session whose entry was evicted while its connection is live.
     let mut ids: Vec<String> = with_sessions(sessions, |store| store.keys().cloned().collect());
     ids.extend(presence_session_ids());
-    // A chat that quit while non-resident left a detach record: it is in
-    // neither the store nor the presence registry, but the record survives
-    // until its next attach, so the alert must land in its file too.
-    ids.extend(non_resident_detach_ids());
     ids.sort();
     ids.dedup();
 
-    // `handle_ask` takes the in-memory history whenever the session is
-    // resident and only re-reads the file when it is not, so the resident
-    // entries must see the injected message too or the next turn silently
-    // misses the alert. A presence-only id must NOT get a store entry: the
-    // empty resident history would win over the file on the next ask.
+    // Every target gets the file append; resident entries get the in-memory
+    // push too so the next turn sees the alert without a disk re-read.
     for sid in &ids {
         append_session_message(sid, msg);
     }

@@ -1,7 +1,7 @@
 # Phase 05: residency — a session is resident from the moment a chat attaches
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04
 **Estimated diff:** ~350 lines, about half of it test rewrites
 **Tags:** language=rust, kind=fix, size=m
@@ -167,3 +167,47 @@ diff /tmp/pasted-m29-05.txt /tmp/e2e-m29-05.txt && echo "PASTE MATCH" || echo "P
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-19 09:53 (progress)
+
+Started. Status flipped to `in-progress`. Plan: add `SessionEntry::from_disk`,
+make `handle_ask`'s closure call it, make `handle_chat_attach` insert the entry
+after `presence_register`, strip the non-resident branch from
+`attach_brief_for`, delete the `NON_RESIDENT_DETACHES` registry and its
+`record_chat_detach` / `inject_into_sessions` hooks, then rewrite the four
+tests the phase names and add the three sequence tests.
+
+### Update — 2026-10-19 11:23 (end-to-end verification)
+
+The phase's § End-to-end verification, run verbatim and once, `cargo fmt
+--all` first. The output was redirected to `/tmp/e2e-m29-05.txt` and pasted
+below unedited.
+
+````
+restart_reconnect_alert_ask_sees_the_alert: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+restart_reconnect_quit_alert_resume_briefs_the_alert: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+fresh_resume_of_a_never_loaded_session_carries_history_and_meta: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+attach_makes_the_session_resident_with_its_disk_history: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+catchup_brief_reaches_a_session_that_is_not_resident: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+catchup_brief_names_an_alert_posted_after_the_chat_left: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+inject_reaches_a_presence_attached_session_that_is_not_resident: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+registry_refs=0
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2425 failed=0
+````
+
+PASTE MATCH
+
+- The four sequence tests and the renamed test each print `test result: ok.
+  1 passed` — the three new sequences (`restart_reconnect_alert_ask_sees_the_alert`,
+  `restart_reconnect_quit_alert_resume_briefs_the_alert`,
+  `fresh_resume_of_a_never_loaded_session_carries_history_and_meta`) and
+  `attach_makes_the_session_resident_with_its_disk_history`, with the two
+  rewritten catch-up tests and the untouched
+  `inject_reaches_a_presence_attached_session_that_is_not_resident`.
+- `registry_refs=0` — `grep -rc 'NON_RESIDENT_DETACHES\|non_resident_detach' src
+  | grep -v ':0'` printed nothing.
+- `doc_truth: 16 passed; 0 failed`, clippy `-D warnings` finished clean,
+  `fmt_exit=0`, full suite `passed=2425 failed=0`.
