@@ -1,7 +1,7 @@
 # Phase 03: log-fields — `wait` and `shell` on command events; 2.0 wording in daemon.log
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=fix, size=s
@@ -138,3 +138,34 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-19 08:05 (started, executor=rexy executor)
+
+**Status:** in-progress.
+
+Beginning phase-03. Plan: extend `log_shell_command` with a `wait: bool`
+parameter writing `"wait"`/`"shell"`, derive `wait`/`shell` in `log_command`
+from `mode`/`pane`, add the pure `approval_log_line` and use it for both
+daemon.log lines in `prompt_and_await_approval`, update README § Command audit
+log, add the three spec tests, then run the § End-to-end verification script
+once and paste its output.
+
+### Update — 2026-10-19 08:15 (end-to-end verification)
+
+Output of the § End-to-end verification script, run once after
+`cargo fmt --all`:
+
+```
+log_shell_command_records_wait_and_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+log_command_derives_wait_from_mode: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_approval_log_line_speaks_2_0: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+log_shell_command_writes_the_exit_code: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+old_log_lines=0
+readme_wait=2
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2418 failed=0
+```
+
+PASTE MATCH

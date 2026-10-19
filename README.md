@@ -1421,12 +1421,12 @@ Agent configs cannot be written by AI tools without user approval (the same gate
 Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in a dated segment under `~/.daemoneye/var/log/events/` (`events-YYYYMMDD.jsonl`, UTC). AI cost records are written to the same segment after each completed turn:
 
 ```
-{"cmd":"ps aux --sort=-%mem","event":"command","exit":0,"mode":"shell","out":"USER PID ...","pane":"s0","session":"abc123","status":"approved","ts":"2026-05-16T10:22:58Z","pid":41237}
-{"cmd":"sudo rm -rf /tmp/old","event":"command","mode":"foreground","out":"","pane":"","session":"abc123","status":"denied","ts":"2026-05-16T10:22:59Z","pid":41237}
+{"cmd":"ps aux --sort=-%mem","event":"command","exit":0,"mode":"shell","out":"USER PID ...","pane":"s0","session":"abc123","shell":"s0","status":"approved","ts":"2026-05-16T10:22:58Z","wait":true,"pid":41237}
+{"cmd":"sudo rm -rf /tmp/old","event":"command","mode":"foreground","out":"","pane":"","session":"abc123","shell":null,"status":"denied","ts":"2026-05-16T10:22:59Z","wait":true,"pid":41237}
 {"event":"ai_cost","ts":"2026-05-16T10:23:01Z","agent_name":"chat","provider":"anthropic","cost":{"total_cost_usd":0.0847},...}
 ```
 
-A command that ran has `mode` `shell`, `pane` = the PTY shell id, and `exit` = its real exit code. An approval decision that ran nothing has `mode` `foreground` (waited) or `background` (`wait: false`) and an empty `pane`. `status` is `approved` / `denied` / `timeout` / `refused`, or a path-specific failure. `out` is the first 200 characters of output.
+`wait` is `true` for a waited command and `false` for a `wait: false` one. `shell` is the PTY shell id for a run and `null` for an approval decision, which ran nothing. `mode` and `pane` are kept for existing readers; new readers should use `wait` and `shell`. `status` is `approved` / `denied` / `timeout` / `refused`, or a path-specific failure. `out` is the first 200 characters of output.
 
 Segments older than `[events] retention_days` (default 90) are swept automatically by the daemon. A pre-rotation `var/log/events.jsonl` is still read by every consumer (`daemoneye costs`, `daemoneye status`, `search_repository`, epoch tallies) and is never rotated or deleted — date-ranged reads span the legacy file and the segments transparently.
 

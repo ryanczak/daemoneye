@@ -72,10 +72,13 @@ pub fn log_event(event: &str, mut fields: serde_json::Value) {
 }
 
 /// A `command` event for a shell-substrate run. Same shape as `log_command`
-/// plus the real exit code, which the tmux path cannot supply.
+/// plus the real exit code, which the tmux path cannot supply, and the 2.0
+/// `wait`/`shell` keys: `wait` is false for a `wait: false` run, `shell` is
+/// the PTY shell id.
 pub fn log_shell_command(
     session_id: Option<&str>,
     shell_id: &str,
+    wait: bool,
     command: &str,
     status: &str,
     exit_code: i32,
@@ -95,6 +98,8 @@ pub fn log_shell_command(
         serde_json::json!({
             "session": session_id.unwrap_or("-"),
             "mode":    "shell",
+            "wait":    wait,
+            "shell":   shell_id,
             "pane":    shell_id,
             "cmd":     cmd,
             "status":  status,
@@ -338,11 +343,18 @@ pub fn log_command(
         .take(200)
         .map(|c| if c == '\n' { ' ' } else { c })
         .collect();
+    let wait = match mode {
+        "foreground" => Some(true),
+        "background" => Some(false),
+        _ => None,
+    };
     log_event(
         "command",
         serde_json::json!({
             "session": session_id.unwrap_or("-"),
             "mode":    mode,
+            "wait":    wait,
+            "shell":   serde_json::Value::Null,
             "pane":    pane,
             "cmd":     cmd,
             "status":  status,
@@ -926,6 +938,7 @@ mod tests {
             log_shell_command(
                 Some("sess-1"),
                 "s0",
+                true,
                 "printf 'HELLO\n'; exit 3",
                 "approved",
                 3,
@@ -935,6 +948,8 @@ mod tests {
             assert_eq!(record["event"], "command", "event kind");
             assert_eq!(record["mode"], "shell", "mode marks the shell substrate");
             assert_eq!(record["pane"], "s0", "pane carries the shell id");
+            assert_eq!(record["wait"], true, "the call was a waited run");
+            assert_eq!(record["shell"], "s0", "shell carries the shell id");
             assert_eq!(record["exit"], 3, "the real exit code");
             assert_eq!(
                 record["out"], "body line one body line two",
@@ -945,10 +960,49 @@ mod tests {
     }
 
     #[test]
+    fn log_shell_command_records_wait_and_shell() {
+        with_test_home(|| {
+            log_shell_command(Some("sess-1"), "s3", false, "cmd", "approved", 0, "out");
+            let record = last_written_event();
+            assert_eq!(record["event"], "command", "event kind");
+            assert_eq!(record["wait"], false, "wait: false run");
+            assert_eq!(record["shell"], "s3", "shell carries the shell id");
+            assert_eq!(record["mode"], "shell", "mode marks the shell substrate");
+            assert_eq!(record["pane"], "s3", "pane kept for existing readers");
+        });
+    }
+
+    #[test]
+    fn log_command_derives_wait_from_mode() {
+        with_test_home(|| {
+            log_command(Some("sess-1"), "foreground", "", "cmd", "denied", "out");
+            let record = last_written_event();
+            assert_eq!(record["wait"], true, "foreground is a waited decision");
+            assert_eq!(record["shell"], serde_json::Value::Null);
+            assert_eq!(record["mode"], "foreground");
+            assert_eq!(record["pane"], "");
+
+            log_command(Some("sess-1"), "background", "h1", "cmd", "approved", "out");
+            let record = last_written_event();
+            assert_eq!(record["wait"], false, "background is wait: false");
+            assert_eq!(record["shell"], serde_json::Value::Null);
+            assert_eq!(record["mode"], "background");
+            assert_eq!(record["pane"], "h1");
+
+            log_command(Some("sess-1"), "other", "", "cmd", "denied", "out");
+            let record = last_written_event();
+            assert_eq!(record["wait"], serde_json::Value::Null, "unknown mode");
+            assert_eq!(record["shell"], serde_json::Value::Null);
+            assert_eq!(record["mode"], "other");
+            assert_eq!(record["pane"], "");
+        });
+    }
+
+    #[test]
     fn log_shell_command_truncates_the_excerpt_at_200_chars() {
         with_test_home(|| {
             let long = "x".repeat(300);
-            log_shell_command(Some("sess-1"), "s1", "cmd", "approved", 0, &long);
+            log_shell_command(Some("sess-1"), "s1", true, "cmd", "approved", 0, &long);
             let record = last_written_event();
             assert_eq!(record["out"].as_str().unwrap().chars().count(), 200);
         });

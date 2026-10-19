@@ -701,6 +701,7 @@ where
                                         crate::daemon::utils::log_shell_command(
                                             session_id,
                                             shell_id.as_str(),
+                                            true,
                                             cmd,
                                             "approved",
                                             result.exit_code,
@@ -727,6 +728,7 @@ where
                                         crate::daemon::utils::log_shell_command(
                                             session_id,
                                             &shell_id,
+                                            true,
                                             cmd,
                                             "shell-error",
                                             -1,
@@ -755,6 +757,7 @@ where
                                     crate::daemon::utils::log_shell_command(
                                         session_id,
                                         "s?",
+                                        true,
                                         cmd,
                                         "host-error",
                                         -1,
@@ -779,6 +782,7 @@ where
                                     crate::daemon::utils::log_shell_command(
                                         session_id,
                                         "s?",
+                                        true,
                                         cmd,
                                         "host-error",
                                         -1,
@@ -841,6 +845,7 @@ where
                                         crate::daemon::utils::log_shell_command(
                                             session_id,
                                             shell_id.as_str(),
+                                            true,
                                             cmd,
                                             "approved",
                                             result.exit_code,
@@ -867,6 +872,7 @@ where
                                         crate::daemon::utils::log_shell_command(
                                             session_id,
                                             &shell_id,
+                                            true,
                                             cmd,
                                             "shell-error",
                                             -1,
@@ -971,6 +977,7 @@ where
                                 crate::daemon::utils::log_shell_command(
                                     session_id,
                                     start.shell_id.as_str(),
+                                    false,
                                     cmd,
                                     "approved",
                                     0,
@@ -1025,6 +1032,7 @@ where
                                 crate::daemon::utils::log_shell_command(
                                     session_id,
                                     &shell_id,
+                                    false,
                                     cmd,
                                     "shell-error",
                                     -1,
@@ -1826,6 +1834,16 @@ fn is_launch(interactive: bool, cmd: &str) -> bool {
     interactive || crate::daemon::utils::is_interactive_command(cmd)
 }
 
+/// daemon.log line for an approval decision, in 2.0 terms: a command is
+/// waited or run with `wait: false`, never "foreground" or "background".
+fn approval_log_line(background: bool, decision: &str, cmd: &str) -> String {
+    if background {
+        format!("command {decision} (wait: false): {cmd}")
+    } else {
+        format!("command {decision} (waited): {cmd}")
+    }
+}
+
 /// Send a `ToolCallPrompt` to the client, wait up to [`APPROVAL_TIMEOUT`] for
 /// the user's [`Request::ToolCallResponse`], and log the outcome.
 ///
@@ -1979,7 +1997,7 @@ where
 
     match parsed {
         Parsed::Approved => {
-            log::info!("{} command approved: {}", mode, cmd);
+            log::info!("{}", approval_log_line(background, "approved", cmd));
             if background {
                 crate::daemon::stats::inc_commands_bg_approved();
             } else {
@@ -2007,7 +2025,7 @@ where
             } else {
                 crate::daemon::stats::inc_commands_fg_denied();
             }
-            log::info!("{} command {}: {}", mode, decision, cmd);
+            log::info!("{}", approval_log_line(background, decision, cmd));
             crate::daemon::utils::log_event(
                 "command_approval",
                 serde_json::json!({
@@ -2043,6 +2061,30 @@ where
                 }),
             );
             Ok(Err(ToolCallOutcome::UserMessage(text)))
+        }
+    }
+}
+
+#[cfg(test)]
+mod approval_log_line_tests {
+    use super::approval_log_line;
+
+    #[test]
+    fn the_approval_log_line_speaks_2_0() {
+        assert_eq!(
+            approval_log_line(false, "approved", "ls"),
+            "command approved (waited): ls"
+        );
+        assert_eq!(
+            approval_log_line(true, "denied", "rm x"),
+            "command denied (wait: false): rm x"
+        );
+        for line in [
+            approval_log_line(false, "approved", "ls"),
+            approval_log_line(true, "denied", "rm x"),
+        ] {
+            assert!(!line.contains("foreground"), "no 1.x mode word: {line}");
+            assert!(!line.contains("background"), "no 1.x mode word: {line}");
         }
     }
 }
