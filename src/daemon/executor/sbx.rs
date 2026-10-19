@@ -797,6 +797,7 @@ mod tests {
 
     #[test]
     fn script_invocation_accepts_an_absolute_path_under_scripts_dir() {
+        let _home = crate::test_home_guard();
         let exists = |n: &str| n == "restart.sh";
         let cmd = format!(
             "{}/restart.sh --now",

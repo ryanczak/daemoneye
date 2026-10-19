@@ -103,8 +103,15 @@ fn builtin_defs() -> &'static [(&'static str, &'static str)] {
             "<SSH_PUBKEY>",
         ),
         // SSH config file directives that reveal server topology.
-        // Matches: HostName <value> and IdentityFile <value> (case-insensitive).
-        (r"(?i)\b(?:HostName|IdentityFile)\s+\S+", "<SSH_HOST>"),
+        // Matches: HostName <value> and IdentityFile <value> (case-insensitive),
+        // only as a directive at the start of a line, with a value whose first
+        // character is neither `-` nor whitespace (so "hostname -f" and prose
+        // such as "the hostname is pinky" stay untouched). The `regex` crate has
+        // no lookahead, hence the negated class instead of `(?!-)\S+`.
+        (
+            r"(?mi)^[ \t]*(?:HostName|IdentityFile)[ \t]+[^-\s]\S*",
+            "<SSH_HOST>",
+        ),
     ]
 }
 
@@ -450,6 +457,37 @@ mod tests {
     fn ssh_config_hostname_case_insensitive() {
         assert!(mask("hostname 192.168.1.1").contains("<SSH_HOST>"));
         assert!(mask("HOSTNAME server.internal").contains("<SSH_HOST>"));
+    }
+
+    #[test]
+    fn the_hostname_command_and_prose_are_not_masked() {
+        for text in [
+            "hostname\npinky",
+            "$ hostname\npinky",
+            "hostname -f",
+            "the hostname is pinky",
+        ] {
+            let out = mask(text);
+            assert_eq!(out, text, "output must be unchanged for {text:?}");
+        }
+    }
+
+    #[test]
+    fn ssh_config_lines_are_still_masked() {
+        for (text, secret) in [
+            ("HostName 10.0.0.5", "10.0.0.5"),
+            ("Host web\n  HostName 10.0.0.5", "10.0.0.5"),
+            ("\tIdentityFile ~/.ssh/id_ed25519", "id_ed25519"),
+            ("hostname 192.168.1.1", "192.168.1.1"),
+            ("HOSTNAME server.internal", "server.internal"),
+        ] {
+            let out = mask(text);
+            assert!(out.contains("<SSH_HOST>"), "masked line expected: {out:?}");
+            assert!(
+                !out.contains(secret),
+                "{secret:?} must be masked out of {out:?}"
+            );
+        }
     }
 
     #[test]

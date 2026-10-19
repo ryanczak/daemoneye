@@ -189,3 +189,33 @@ paste `/tmp/e2e-m29-02.txt` into an end-to-end Update Log entry.
 text also feeds remote file reads and the ghost paths. The stall was the
 executor tracing that blast radius. There was no source work to keep, so
 a resume would only have carried the wrong instruction forward.
+
+### Update — 2026-10-19 (end-to-end verification)
+
+```sh
+A=/tmp/e2e-m29-02.txt; : > "$A"
+for t in the_hostname_command_and_prose_are_not_masked ssh_config_lines_are_still_masked a_waited_result_names_its_shell ssh_config_hostname_case_insensitive script_invocation_accepts_an_absolute_path_under_scripts_dir; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+echo "guarded=$(grep -A4 'fn script_invocation_accepts_an_absolute_path_under_scripts_dir' src/daemon/executor/sbx.rs | grep -c 'test_home_guard')" >> "$A"
+echo "shell_exec_diff=$(git diff b274fcbe -- src/daemon/executor/shell_exec.rs | wc -l)" >> "$A"
+cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
+cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
+cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}' >> "$A"
+cat "$A"
+```
+
+```
+the_hostname_command_and_prose_are_not_masked: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ssh_config_lines_are_still_masked: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_waited_result_names_its_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ssh_config_hostname_case_insensitive: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+script_invocation_accepts_an_absolute_path_under_scripts_dir: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+guarded=1
+shell_exec_diff=0
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2415 failed=0
+```
+
+PASTE MATCH

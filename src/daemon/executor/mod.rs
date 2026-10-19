@@ -349,6 +349,19 @@ fn error_chain(e: &anyhow::Error) -> String {
     chain.trim_end().trim_end_matches('.').to_string()
 }
 
+/// Append the shell the command ran in to a waited `run_terminal_command`
+/// result, so the model does not have to guess which shell answered. Used
+/// only where the tool result is built: the same text feeds remote
+/// `read_file`/`edit_file` through `finish_run`, and there it is the file's
+/// contents, which a shell line would corrupt.
+fn with_shell_line(text: &str, shell_id: &str, launched: bool) -> String {
+    if launched {
+        text.to_string()
+    } else {
+        format!("{text}\n[ran in shell {shell_id}]")
+    }
+}
+
 pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
     tx: &mut W,
@@ -668,6 +681,11 @@ where
                                 };
                                 match run {
                                     Ok((shell_id, result)) => {
+                                        let text = with_shell_line(
+                                            &result.text,
+                                            shell_id.as_str(),
+                                            *interactive,
+                                        );
                                         crate::daemon::stats::finish_command(
                                             cmd_id,
                                             result.exit_code,
@@ -676,7 +694,7 @@ where
                                             tx,
                                             Response::ToolResult {
                                                 tool_call_id: id.to_string(),
-                                                output: result.text.clone(),
+                                                output: text.clone(),
                                             },
                                         )
                                         .await?;
@@ -686,9 +704,9 @@ where
                                             cmd,
                                             "approved",
                                             result.exit_code,
-                                            &result.text,
+                                            &text,
                                         );
-                                        result.text
+                                        text
                                     }
                                     Err(e) => {
                                         let shell_id =
@@ -803,6 +821,11 @@ where
                                 };
                                 match run {
                                     Ok((shell_id, result)) => {
+                                        let text = with_shell_line(
+                                            &result.text,
+                                            shell_id.as_str(),
+                                            *interactive,
+                                        );
                                         crate::daemon::stats::finish_command(
                                             cmd_id,
                                             result.exit_code,
@@ -811,7 +834,7 @@ where
                                             tx,
                                             Response::ToolResult {
                                                 tool_call_id: id.to_string(),
-                                                output: result.text.clone(),
+                                                output: text.clone(),
                                             },
                                         )
                                         .await?;
@@ -821,9 +844,9 @@ where
                                             cmd,
                                             "approved",
                                             result.exit_code,
-                                            &result.text,
+                                            &text,
                                         );
-                                        result.text
+                                        text
                                     }
                                     Err(e) => {
                                         let shell_id =
@@ -2871,5 +2894,24 @@ mod tests {
             "an ordinary command is not a launch"
         );
         assert!(!is_launch(false, ""), "an empty command is not a launch");
+    }
+
+    #[test]
+    fn a_waited_result_names_its_shell() {
+        assert_eq!(
+            with_shell_line("hi\n[command exited with status 3]", "s2", false),
+            "hi\n[command exited with status 3]\n[ran in shell s2]",
+            "the shell line follows the exit-status note"
+        );
+        assert_eq!(
+            with_shell_line("hi", "s1", false),
+            "hi\n[ran in shell s1]",
+            "a bare output gets the shell line as its final line"
+        );
+        assert_eq!(
+            with_shell_line("[Interactive session started] …", "s1", true),
+            "[Interactive session started] …",
+            "a launch already names its shell and is returned unchanged"
+        );
     }
 }
