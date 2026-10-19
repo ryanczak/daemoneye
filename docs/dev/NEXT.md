@@ -1,15 +1,16 @@
 # NEXT
 
-**Active milestone:** none. M28 "Interactive shells" closed on 2026-10-18;
-the retrospective is in
-[`README.md`](milestones/M28-interactive-shells/README.md). The `2.1.0`
-release is tagged `v2.1.0` locally and has not been pushed.
+**Active milestone: M29 — Post-2.0 fixes** (release `2.2.0`), scoped
+2026-10-18 from `docs/design/daemoneye-post-2.0-todo.md` and the M28
+deferred list. See [`README.md`](milestones/M29-post-2.0-fixes/README.md).
 
-**Active phase:** none. The next milestone needs PE sign-off. The roadmap
-lists M29–M31 (`docs/design/daemoneye-2.0.md` § 6).
+**Active phase:** [phase-01-invalid-args](milestones/M29-post-2.0-fixes/phase-01-invalid-args.md)
+— todo. Dispatch with `/rexymcp:dispatch phase-01-invalid-args`.
 
-Still queued: the M28 deferred list (F8 ghost foreground, O3, O4, the
-`sbx.rs` flake), the M27 deferred list (unify session residency, F9, the
-invalid-args nits) and `docs/design/daemoneye-post-2.0-todo.md`. Fold
-queue: M28 proposal B (held), M27
-proposal B (held) and M23's two proposals.
+M28 closed 2026-10-18 (`v2.1.0`, pushed). The roadmap's Telemetry & dashboard,
+MCP surface and Knowledge milestones move to M30–M32
+(`docs/design/daemoneye-2.0.md` § 6). Governor & guards (former M25) and
+F8 (ghost foreground) remain unscheduled.
+
+Fold queue: M28 proposal B (held), M27 proposal B (held) and M23's two
+proposals.
