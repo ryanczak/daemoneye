@@ -410,13 +410,10 @@ impl SessionCache {
     /// `chat_pane` is the pane running `daemoneye chat` — it is excluded from the
     /// background pane listing so the AI cannot accidentally target it with foreground
     /// commands.
-    /// Returns a compact `[PANE MAP]` line mapping window-relative pane indices to
-    /// absolute pane IDs.
     ///
-    /// Emitted on every AI turn so the AI always has current idx→ID mappings
-    /// regardless of when the conversation started.  Excludes daemon-owned
-    /// background windows (`de-bg-*`, `de-sj-*`, `de-gs-*`) and the chat pane
-    /// itself.  Returns an empty string when no targetable panes are known.
+    /// Returns a compact `[PANE MAP]` line mapping window-relative pane indices to
+    /// absolute pane IDs.  Excludes daemon-owned background windows and the chat
+    /// pane itself; returns an empty string when no targetable panes are known.
     pub fn pane_map_summary(&self, chat_pane: Option<&str>) -> String {
         // Read session_name before the panes guard (M12 lock ordering).
         let home = self.session_name.read().unwrap_or_log().clone();
@@ -544,20 +541,6 @@ impl SessionCache {
             (Some(src), Some(focus)) if Some(src) != chat_pane && src == focus => Some(src),
             _ => None,
         };
-
-        // Non-active panes — classified by their relationship to the chat window.
-        //
-        // - VISIBLE PANE:    same window as the chat pane (user can see it in the split)
-        // - BACKGROUND PANE: daemon-launched window (de-bg-* / de-sj-* / de-gs-bg-* / de-gs-sj-* / de-gs-ir-*)
-        // - SESSION PANE:    any other user window (SSH sessions, editors, etc.)
-        let _now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        // Read session_name before the panes guard (M12 lock ordering).
-        let _home = self.session_name.read().unwrap_or_log().clone();
-        let _panes = self.panes.read().unwrap_or_log();
 
         if let Some(pane_id) = active_label_pane {
             // Pull CWD, command, title, scroll position, mode flags, and pane index from cache in one lock.
