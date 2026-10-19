@@ -73,7 +73,7 @@ it is drafted.
 | # | Phase | Status |
 |---|---|---|
 | 01 | invalid-args ([phase-01-invalid-args.md](phase-01-invalid-args.md)) — required/optional in the type-mismatch message; `InvalidArgs` never budget-exempt (todo 3, 4) | done (approved_first_try, 2026-10-19) |
-| 02 | small-fixes — O3 masker `hostname`, O4 result names its shell, `sbx.rs` flake | not drafted |
+| 02 | small-fixes ([phase-02-small-fixes.md](phase-02-small-fixes.md)) — O3 masker `hostname`, O4 result names its shell, `sbx.rs` flake | todo |
 | 03 | log-fields — `wait`/`shell` on `command` events alongside `mode`/`pane`; 2.0 daemon.log wording (todo 6) | not drafted |
 | 04 | active-pane — at most one `[ACTIVE PANE]`, none on the chat's own pane (todo 2, F9) | not drafted |
 | 05 | residency — resident on presence attach; `NON_RESIDENT_DETACHES` gone; the three sequences as tests (todo 1, 5) | not drafted |
