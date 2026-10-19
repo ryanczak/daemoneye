@@ -1,7 +1,7 @@
 # Phase 02: small-fixes — masker `hostname`, results name their shell, the `sbx.rs` flake
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** review
+**Status:** done
 **Depends on:** phase-01
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=fix, size=s
@@ -353,3 +353,34 @@ kill: (-1066794): No such process
 **Commit:** d61f4b42ca74334acc0e5f571eec93483a2e9ca5
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-19
+
+- **Verdict:** approved_after_1 (the bounce was the spec bug, recorded at
+  escalation)
+- **Bounces:** 1 (`spec_bug`: the first spec put the shell line in
+  `finish_run`, whose text also feeds remote file reads and the ghost
+  paths)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (run 1:
+  145 turns, hard fail with no source edit; refined run 2: 67 turns,
+  complete)
+- **Scope deviations:** none.
+  - The spec's lookahead hint is not supported by the `regex` crate. The
+    executor flagged this and used `[^-\s]\S*`, which behaves the same and
+    is covered by the new tests.
+- **Calibration:**
+  - **Self-check template defect.** The self-check `awk` takes the first
+    fence after the heading. This executor pasted the command block before
+    the output, so the documented self-check extracts the script, not the
+    output. It flagged this honestly and verified against the output
+    fence. Future phase docs should either name the order (output fence
+    first) or extract the fence that follows a bare ```` ``` ````. This is
+    the first occurrence.
+  - **Second spec bug in a row in this milestone** (phase 01: an
+    ambiguous negative assertion; phase 02: the wrong code site). The
+    common cause: a spec fact I did not check against its consumers
+    before dispatch. This makes it a trend, to raise at the close.
+  - Independent re-run: fmt, build and clippy exit 0; 2415 passed, 0
+    failed; output-fence self-check MATCH; `shell_exec_diff=0`;
+    `with_shell_line` at exactly the two `run_terminal_command` arms;
+    standards grep clean; no production `unwrap`/`expect`.
