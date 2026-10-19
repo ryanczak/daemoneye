@@ -1,7 +1,7 @@
 # Phase 01: invalid-args — honest wording, no budget exemption
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~80 lines
 **Tags:** language=rust, kind=fix, size=s
@@ -54,8 +54,13 @@ Two defects in how a tool call with bad arguments is handled.
   (`dispatch.rs` tests): a `run_terminal_command` call whose `command` is
   an object yields an error containing `'command (string, required)'`. A
   call with a valid `command` and an object for `timeout_secs` yields
-  `'timeout_secs (integer, optional)'`. Neither error contains the other
-  word for that parameter.
+  `'timeout_secs (integer, optional)'`. The negative checks are
+  **scoped to the parameter**: the first error does not contain
+  `'command (string, optional)'`, and the second does not contain
+  `'timeout_secs (integer, required)'`. Do **not** assert that the whole
+  error lacks the bare word `optional` or `required`. The error ends with
+  the full expected-parameter list, which correctly names other parameters
+  with both words.
 - `an_invalid_args_call_is_never_budget_exempt` (`stream.rs` tests):
   `is_budget_exempt` is false for a `PendingCall::InvalidArgs` named
   `edit_file`, true for a well-formed approval-gated call such as
@@ -112,4 +117,66 @@ None.
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
+### Update — 2026-10-19 02:13 (progress)
+
+Started by Claude (executor run). Read the spec and both target files:
+`invalid_args_event`'s type-mismatch line hardcodes `optional`
+(`src/ai/tools/dispatch.rs`), and `src/daemon/stream.rs` tests
+`APPROVAL_GATED.contains(&tool_name)` directly in the cap check and the
+per-session counter bump, so a `PendingCall::InvalidArgs` naming a gated tool
+escapes both. Plan: fix the wording, add the pure `is_budget_exempt`
+predicate in `stream.rs`, route both call sites through it, add the two named
+tests, then capture the E2E transcript.
+
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-19
+
+The first run stalled after 169 calls, the last 40 of them re-reads of
+`dispatch.rs`. **The code changes are correct and stay as they are:** the
+wording fix in `invalid_args_event`, `is_budget_exempt`, and both
+`stream.rs` call sites routed through it.
+
+`a_type_mismatch_says_whether_the_parameter_is_required` fails because of
+a spec ambiguity, not a code bug. It asserts `!error.contains("optional")`,
+but the error's trailing `expected:` list contains `optional` for other
+parameters. Two edits remain:
+
+1. In that test, make the two negative assertions parameter-scoped, as the
+   Tests section now says: `!error.contains("'command (string, optional)'")`
+   and `!error.contains("'timeout_secs (integer, required)'")`.
+2. Add `an_invalid_args_call_is_never_budget_exempt` in `stream.rs`'s
+   `mod tests`. A well-formed `PendingCall::EditFile` needs every field
+   spelled out (`id`, `thought_signature`, `path`, `operation`, the five
+   `Option`s set to `None`); `PendingCall::ReadFile` likewise. The variant
+   definitions are in `src/ai/types/pending.rs`.
+
+Then run § End-to-end verification once.
+
+
+### Update — 2026-10-19 (escalation)
+
+**Chosen lever:** resume.
+**Rationale:** the stall came from a test assertion my spec wording
+invited, and the code is done and correct. A resume with the corrected
+Tests text and the one remaining test keeps the finished work, where a
+re-dispatch would redo it.
+
+### Update — 2026-10-19 (end-to-end verification)
+
+Ran § End-to-end verification verbatim, once, redirecting to
+`/tmp/e2e-m29-01.txt`. First pass reported `fmt_exit=1` (two formatting
+drifts the write tool introduced); ran `cargo fmt --all`, then re-checked:
+`cargo fmt --all --check` exits 0. Transcript:
+
+```
+a_type_mismatch_says_whether_the_parameter_is_required: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+an_invalid_args_call_is_never_budget_exempt: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+gated_name_checks=0
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=1
+passed=2412 failed=0
+```
+
+PASTE MATCH

@@ -137,9 +137,14 @@ pub fn invalid_args_event(
                 };
                 if actual != expected {
                     problems.push(format!(
-                        "parameter '{} ({}, optional)' is {actual}, expected {expected}",
+                        "parameter '{} ({}, {})' is {actual}, expected {expected}",
                         param.name,
-                        param.ty.as_str()
+                        param.ty.as_str(),
+                        if param.required {
+                            "required"
+                        } else {
+                            "optional"
+                        }
                     ));
                 }
             }
@@ -1475,6 +1480,51 @@ mod tests {
         assert!(
             error.contains("background"),
             "the error names the offending field: {error}"
+        );
+    }
+
+    /// The type-mismatch line says whether the parameter is required or
+    /// optional, in the same position the missing-parameter line and
+    /// `expected_params` carry it. Values are objects and arrays, which
+    /// nothing in the schema coerces leniently.
+    #[test]
+    fn a_type_mismatch_says_whether_the_parameter_is_required() {
+        let ev = invalid_args_event(
+            "tc_1",
+            "run_terminal_command",
+            &json!({"command": {"malicious": true}}),
+            None,
+        )
+        .expect("a known tool always yields an event");
+        let AiEvent::InvalidToolArgs { error, .. } = ev else {
+            panic!("expected InvalidToolArgs, got {ev:?}");
+        };
+        assert!(
+            error.contains("'command (string, required)'"),
+            "a required parameter is labelled required: {error}"
+        );
+        assert!(
+            !error.contains("'command (string, optional)'"),
+            "a required parameter is not labelled optional: {error}"
+        );
+
+        let ev = invalid_args_event(
+            "tc_2",
+            "run_terminal_command",
+            &json!({"command": "ls", "timeout_secs": ["soon"]}),
+            None,
+        )
+        .expect("a known tool always yields an event");
+        let AiEvent::InvalidToolArgs { error, .. } = ev else {
+            panic!("expected InvalidToolArgs, got {ev:?}");
+        };
+        assert!(
+            error.contains("'timeout_secs (integer, optional)'"),
+            "an optional parameter is labelled optional: {error}"
+        );
+        assert!(
+            !error.contains("'timeout_secs (integer, required)'"),
+            "an optional parameter is not labelled required: {error}"
         );
     }
 }

@@ -41,6 +41,16 @@ fn routes_to_background(wait: Option<bool>, interactive: bool) -> bool {
     !interactive && wait == Some(false)
 }
 
+/// Whether this call skips the per-turn, per-session and per-tool caps: a
+/// non-`InvalidArgs` call to an approval-gated tool. A call whose arguments
+/// failed schema validation prompts for nothing and runs nothing, so the
+/// model-visible mistake must still count against the caps — otherwise a
+/// model stuck sending bad arguments to `edit_file` is uncapped (M29
+/// phase-01).
+fn is_budget_exempt(call: &PendingCall) -> bool {
+    !matches!(call, PendingCall::InvalidArgs { .. }) && APPROVAL_GATED.contains(&call.tool_name())
+}
+
 /// Run the AI conversation loop: stream tokens, collect tool calls, execute,
 /// and repeat until the AI produces a final answer with no pending tool calls.
 ///
@@ -1284,7 +1294,7 @@ where
                         let tool_name = call.tool_name();
                         let mut tool_budget_hint: Option<String> = None;
 
-                        if !APPROVAL_GATED.contains(&tool_name) {
+                        if !is_budget_exempt(call) {
                             total_turn_call_count += 1;
 
                             // Per-session cumulative cap across all non-approval-gated tools.
@@ -1405,8 +1415,8 @@ where
                                     tool_name: tool_name.to_string(),
                                     content,
                                 });
-                                // Bump per-session counter for non-approval-gated tools.
-                                if !APPROVAL_GATED.contains(&tool_name)
+                                // Bump per-session counter for non-budget-exempt calls.
+                                if !is_budget_exempt(call)
                                     && let Some(id) = &session_id
                                 {
                                     with_sessions(&sessions, |store| {
@@ -1593,6 +1603,46 @@ fn panic_message(e: tokio::task::JoinError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_invalid_args_call_is_never_budget_exempt() {
+        let invalid = PendingCall::InvalidArgs {
+            id: "tc_1".into(),
+            name: "edit_file",
+            arguments: "{}".into(),
+            error: "bad args".into(),
+            thought_signature: None,
+        };
+        assert!(
+            !is_budget_exempt(&invalid),
+            "an InvalidArgs call naming a gated tool is never exempt"
+        );
+
+        let edit = PendingCall::EditFile {
+            id: "tc_2".into(),
+            thought_signature: None,
+            path: "/tmp/f".into(),
+            operation: "replace".into(),
+            old_string: None,
+            new_string: None,
+            content: None,
+            dest_path: None,
+            host: None,
+            sudo: None,
+        };
+        assert!(is_budget_exempt(&edit), "a gated tool call is exempt");
+
+        let read = PendingCall::ReadFile {
+            id: "tc_3".into(),
+            thought_signature: None,
+            path: "/tmp/f".into(),
+            offset: None,
+            limit: None,
+            pattern: None,
+            host: None,
+        };
+        assert!(!is_budget_exempt(&read), "a non-gated call is not exempt");
+    }
 
     #[tokio::test(start_paused = true)]
     async fn cancel_stage_distinguishes_the_two_doors() {
