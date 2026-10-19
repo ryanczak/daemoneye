@@ -1,7 +1,7 @@
 # Phase 04c: live-r2 — rehearsal 2's findings F6, F7, F9
 
 **Milestone:** M28 — Interactive shells
-**Status:** review
+**Status:** done
 **Depends on:** phase-04b
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -333,3 +333,23 @@ kill: (-310328): No such process
 **Commit:** 6b13107f12d8428d8b0f29dbf444e0b44ab65ee2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-18
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (one dispatch, 102 turns)
+- **Scope deviations:** none
+- **Calibration:** none. Every check was run before this verdict.
+  Independent re-run: 2406 passed / 0 failed (the pinned count exactly);
+  fmt and clippy clean; the reviewer's self-check matches
+  `/tmp/e2e-04c.txt`; the standards grep over `2024a632..HEAD` in `src` is
+  empty; no production `unwrap`/`expect`.
+  - **F6:** `lenient_keys` returns a parsed JSON array as-is, empty
+    included. The test uses rehearsal 2's exact shape
+    `{"shell":"s3","text":"exit","keys":"[]"}` and keeps the text.
+  - **F7:** `pre_write` wraps both resolution sites (reuse and
+    `shell: "new"`). The `RefusedBeforeWrite` branch drops the shell-id
+    prefix, and the test asserts the text contains no `s1`.
+  - **F9:** `ghost_pending_for_tool_call` turns `interactive: true` into
+    `InvalidArgs` with the reason; a call without it is still backgrounded.
