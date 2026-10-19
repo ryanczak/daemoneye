@@ -1,7 +1,7 @@
 # Phase 01: invalid-args — honest wording, no budget exemption
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~80 lines
 **Tags:** language=rust, kind=fix, size=s
@@ -315,3 +315,24 @@ kill: (-528082): No such process
 **Commit:** 72852edd6b58766f993ad4c73748ae797da4e54f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-19
+
+- **Verdict:** approved_first_try (no bounce; one hard fail, then a resume)
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (dispatch: 169
+  calls, hard-failed on `NoProgressStall`; resume: 27 turns, complete)
+- **Scope deviations:** none.
+- **Calibration:** the stall was a **spec bug**.
+  - The Tests text said a negative check held "for that parameter". The
+    executor asserted that the whole error lacked the bare word, which
+    the trailing `expected:` list makes impossible, then re-read
+    `dispatch.rs` 40 times looking for a code bug.
+  - Lesson: when a negative assertion targets a substring, spell out the
+    exact substring that must be absent. This is the first occurrence, so
+    it is data only.
+  - Independent re-run: fmt, build and clippy exit 0; 2412 passed, 0
+    failed; reviewer self-check MATCH; `gated_name_checks=0`; standards
+    grep clean; no production `unwrap`/`expect`.
+  - The pasted `fmt_exit=1` is the honest single-run capture taken before
+    the executor ran `cargo fmt`. The committed tree is clean.

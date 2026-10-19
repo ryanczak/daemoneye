@@ -5,7 +5,7 @@
 deferred list. See [`README.md`](milestones/M29-post-2.0-fixes/README.md).
 
 **Active phase:** [phase-01-invalid-args](milestones/M29-post-2.0-fixes/phase-01-invalid-args.md)
-— todo. Dispatch with `/rexymcp:dispatch phase-01-invalid-args`.
+— done. Next: `/rexymcp:architect next` drafts phase 02 (small-fixes).
 
 M28 closed 2026-10-18 (`v2.1.0`, pushed). The roadmap's Telemetry & dashboard,
 MCP surface and Knowledge milestones move to M30–M32
