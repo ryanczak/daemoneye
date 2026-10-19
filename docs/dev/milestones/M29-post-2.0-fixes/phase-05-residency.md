@@ -1,7 +1,7 @@
 # Phase 05: residency — a session is resident from the moment a chat attaches
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-05-1)
 **Depends on:** phase-04
 **Estimated diff:** ~350 lines, about half of it test rewrites
 **Tags:** language=rust, kind=fix, size=m
@@ -79,9 +79,10 @@ entry that exists.
    the `PASTE MATCH` line. Do not paste the command block.
 
 **Gotchas.**
-- `with_sessions` asserts if called re-entrantly. Build the entry
-  (`from_disk` reads disk) **outside** or inside a single
-  `with_sessions` closure, never by nesting two.
+- `with_sessions` asserts if called re-entrantly, **and** its closure is
+  the critical section of a std `Mutex`. `from_disk` reads files, so it
+  must run **before** `with_sessions`, never inside it. Do not put it in
+  an `or_insert_with` inside the closure (bug-05-1).
 - `handle_ask` reads a resident entry's `messages` instead of disk. With
   task 1 that is correct, because the entry now carries the disk history.
   Do not add a second disk read there.
@@ -123,6 +124,8 @@ Plus the renamed `attach_makes_the_session_resident_with_its_disk_history`.
       fine: name it and report; do not re-run the suite to chase a number.
 - [ ] `cargo test --test doc_truth` ⇒ `failed=0`. Clippy (`-D warnings`)
       and `cargo fmt --all --check` exit 0. No new `#[allow]`.
+- [ ] No file I/O under the store lock (bug-05-1): end-to-end line
+      `in_lock_builds=0`.
 - [ ] The end-to-end Update Log entry holds the output fence **first**,
       then the `PASTE MATCH` line.
 
@@ -132,6 +135,7 @@ Plus the renamed `attach_makes_the_session_resident_with_its_disk_history`.
 A=/tmp/e2e-m29-05.txt; : > "$A"
 for t in restart_reconnect_alert_ask_sees_the_alert restart_reconnect_quit_alert_resume_briefs_the_alert fresh_resume_of_a_never_loaded_session_carries_history_and_meta attach_makes_the_session_resident_with_its_disk_history catchup_brief_reaches_a_session_that_is_not_resident catchup_brief_names_an_alert_posted_after_the_chat_left inject_reaches_a_presence_attached_session_that_is_not_resident; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 echo "registry_refs=$(grep -rc 'NON_RESIDENT_DETACHES\|non_resident_detach' src | grep -v ':0' | wc -l)" >> "$A"
+T=$(grep -n '^mod tests\|^#\[cfg(test)\]' src/daemon/server/chat_presence.rs | head -1 | cut -d: -f1); echo "in_lock_builds=$(( $(grep -c 'or_insert_with(|| SessionEntry::from_disk' src/daemon/server/ask.rs) + $(head -n $((T-1)) src/daemon/server/chat_presence.rs | grep -c 'or_insert_with(|| SessionEntry::from_disk') ))" >> "$A"
 cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
 cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
@@ -167,6 +171,42 @@ diff /tmp/pasted-m29-05.txt /tmp/e2e-m29-05.txt && echo "PASTE MATCH" || echo "P
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-19 (bounce: bug-05-1)
+
+**Green gates and a clean tree are expected here, and they are NOT
+evidence that the phase is done.** Everything from the first run is
+approved and stays as it is: `from_disk`, the residency on attach, the
+deleted registry, the seven tests and the four rewritten tests.
+
+**There is exactly one fix left, applied at two sites.** Read
+`bugs/bug-05-1.md`. `SessionEntry::from_disk` reads files, and it now
+runs inside the `SessionStore` lock, in `handle_chat_attach`
+(`chat_presence.rs`) and in `handle_ask` (`ask.rs`). Move the read out of
+the lock:
+
+```rust
+// 1. probe (a HashMap lookup, cheap) — no I/O under the lock
+let absent = !with_sessions(&sessions, |store| store.contains_key(&id));
+// 2. read the disk with no lock held
+let built = if absent { Some(SessionEntry::from_disk(&id)) } else { None };
+// 3. insert, keeping an entry another task created in between
+with_sessions(&sessions, |store| {
+    if let Some(e) = built { store.entry(id.clone()).or_insert(e); }
+    // ...the rest of what this closure already does, unchanged
+});
+```
+
+In `handle_ask` the closure then continues with
+`let entry = store.get_mut(id)…` (the entry now exists) and does exactly
+what it does today. Fix the attach-site comment so it describes the code.
+
+**Finish condition:** the end-to-end line reads `in_lock_builds=0`, and
+`cargo test` reports `passed=2425`, **not** 2426, because the fix adds no
+test. Before reporting, mutation-check your work: put one site back to
+`or_insert_with(|| SessionEntry::from_disk(…))`, confirm that
+`in_lock_builds` reads 1, then revert. Say in the entry that you did this.
+Re-run § End-to-end verification once and paste a fresh output fence.
 
 ### Update — 2026-10-19 09:53 (progress)
 
