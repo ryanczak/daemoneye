@@ -198,3 +198,37 @@ No invalid-arguments line in `daemon.log` all run: F5's fix holds.
 not dependable without it. Proposed **04c**: F6, plus the minors F7 and
 F9. F8 is recorded for the retrospective as a design note. Then the PE run
 (B1–B9, B11); B10 is noted as not live-reachable.
+
+### Update — 2026-10-18 (PE run, after 04c)
+
+The PE watched read-only (`tmux -S /tmp/de28-emu.sock attach -r`). The
+daemon and chat started with every `CLAUDE*` variable unset (rehearsal 2's
+harness lesson), and Claude Code in the PTY showed **no** "transcript
+saving is off" warning. The raw notes are in `/tmp/e2e-m28-04.txt`
+(section PE).
+
+| Block | Result |
+|---|---|
+| B1 see | **pass**: `[SEL: /tmp/de28-live/lessfile.txt]`, `running less (TUI)`, 40×120 |
+| B2 launch | **pass**: the launch result carried the `Claude Code v2.1.299` banner |
+| B3 never poison | **pass**: the refusal ends "Nothing was written, so it is safe to act on the message above." (**F10**, nit: it reads `Error: Error: shell s1 …`) |
+| B4 type and wait | **pass**: the panel showed `foreground: running claude (TUI)`; `settle_ms: 1500` settled in 3.1 s with Claude's answer |
+| B5 keys | **pass**: `BTab` auto → manual; `S-Enter` went out as CSI u; the two lines landed unsubmitted (GLM passed `paste:false` explicitly here; the bracketed default passed in rehearsal 2) |
+| B6 never settles | **pass**: `top -d 0.2` → `[did not settle within 5.0 s …]` |
+| B7 geometry | **pass**: `stty size` → `40 160` |
+| B8 ssh upgrade | **pass, F6 fixed**: `exit` sent with no keys error; `s3` back to `shell prompt` |
+| B9 host reuse | **pass**: one zoidberg shell across two calls |
+| B10 ghost guard | not live-reachable (F8) |
+| B11 attached mode | **pass** (PE): `/attach s1`, typed into Claude Code, detached with Ctrl-d; the keys arrived and the screen was intact |
+
+`daemon.log` has **0** invalid-arguments lines for the whole PE run.
+
+**PE decisions.**
+1. **D6's approval panel line: fix before 2.1.0.** Phase **04d** marks
+   interactive launches in the panel without changing the `cmd` that feeds
+   approval classification, and folds in F10 (`Error: Error:`).
+2. **03e's per-result `wait: false` note: leave as is.** `sre.toml` states
+   the rule.
+
+**Next.** 04d, then the close: the retrospective, the calibration folds
+for PE sign-off, and the 2.1.0 release.
