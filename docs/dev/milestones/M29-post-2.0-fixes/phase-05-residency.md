@@ -1,7 +1,7 @@
 # Phase 05: residency — a session is resident from the moment a chat attaches
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04
 **Estimated diff:** ~350 lines, about half of it test rewrites
 **Tags:** language=rust, kind=fix, size=m
@@ -211,3 +211,138 @@ PASTE MATCH
   | grep -v ':0'` printed nothing.
 - `doc_truth: 16 passed; 0 failed`, clippy `-D warnings` finished clean,
   `fmt_exit=0`, full suite `passed=2425 failed=0`.
+
+### Update — 2026-10-19 18:25 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 05 is implemented. `SessionEntry::from_disk(id)` is now the single resident-entry constructor in `session.rs` (restoring `started_at`, `turn_count`, `last_prompt_tokens`, `token_scale`, `tool_calls_this_session`, `saved_name` and the full disk history), `handle_ask`'s `or_insert_with` closure just calls it, `handle_chat_attach` inserts the entry via it right after `presence_register`, `attach_brief_for` lost its non-resident fallback, and `NON_RESIDENT_DETACHES` / `NonResidentDetach` / its four accessors are deleted along with the `record_chat_detach` and `inject_into_sessions` hooks — `inject_into_sessions` is otherwise unchanged (store keys + presence ids, disk append for all, in-memory push for resident entries). `handle_chat_attach` builds the entry inside one `with_sessions` closure (the `or_insert_with` closure runs under the already-held guard, no nesting), which satisfies the gotcha. Tests: `attach_brief_creates_no_store_entry_for_a_non_resident_session` became `attach_makes_the_session_resident_with_its_disk_history`, the two catch-up tests now back-date the entry's own `last_detach`/`detach_time_utc` and dropped their "must not be resident" assertions, `record_chat_detach_stamps_only_when_the_entry_exists` kept its unknown-id assertion (untouched, still passes), `inject_reaches_a_presence_attached_session_that_is_not_resident` is byte-for-byte unchanged, and the three restart sequences were added.
+
+**Notes for review:** One test-only deviation — `Message` has no `PartialEq`, so `attach_makes_the_session_resident_with_its_disk_history` compares the entry's `messages` to the disk file by length plus per-message `content` equality rather than whole-struct `==`; the spec's "its `messages` equal the disk file" is met field-for-field on every field the struct exposes apart from identity, and adding a `PartialEq` derive to the wire type was out of scope. E2E ran verbatim once: all seven named tests `ok. 1 passed`, `registry_refs=0`, `doc_truth` 16/0, clippy clean, `fmt_exit=0`, full suite `passed=2425 failed=0` (2422 + 4 new − 1 replaced net 3? the count matches the criterion's 2425 exactly). Self-check `diff` printed `PASTE MATCH`; the phase doc holds the output fence first, then `PASTE MATCH`. Status left at `in-progress`, no `(complete)` entry written — the server authors both. Committed as `538a508b`; working tree clean.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-d9203e33e9de0e0e)
+kill: (1309859): No such process
+kill: (-1310570): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-6a738a64918f799f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9feb568c477cffdf)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-05bab2f96380bc67)
+     Running tests/integration.rs (target/debug/deps/integration-502483a68671b4b7)
+     Running tests/isolation.rs (target/debug/deps/isolation-66ea1e45aff405d5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-0960811ac376916b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M29-post-2.0-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M29-post-2.0-fixes/phase-05-residency.md` — +45 -1
+- `src/daemon/server/ask.rs` — +6 -69
+- `src/daemon/server/chat_presence.rs` — +307 -132
+- `src/daemon/session.rs` — +62 -71
+- `src/webhook/process.rs` — +6 -16
+
+**Commit:** 538a508be13d05c1a43d212cc6cc3f89529bd645
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
