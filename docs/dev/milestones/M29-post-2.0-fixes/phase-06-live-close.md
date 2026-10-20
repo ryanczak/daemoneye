@@ -75,3 +75,60 @@ read from the session's history file, `$R/.daemoneye/var/log/sessions/<id>.jsonl
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-20 (rehearsal 1, architect)
+
+Harness as in Pre-flight, at `d867b46c` (release binary current). The raw
+notes are in `/tmp/e2e-m29-06.txt`. Every process with `HOME=$R` was killed
+at the end; the PE's own daemon was untouched.
+
+| Block | Result |
+|---|---|
+| L1 masker | **pass**: `pinky\n[ran in shell s0]`; the printf gave `Host web\n<SSH_HOST>\n[ran in shell s0]` |
+| L2 shell line | **pass**: every waited result ends `[ran in shell s0]`; exit 3 gives `[command exited with status 3]` then `[ran in shell s0]` |
+| L3 log fields | **pass**: waited runs `"shell":"s0"…"wait":true`; the `wait: false` run `"shell":"s1"…"wait":false`; the denial `"shell":null`, with `mode`/`pane` present; daemon.log has `command approved (waited):`, `command approved (wait: false):`, `command denied (waited):`, and no `foreground command approved` |
+| L4 active pane | **first read pass, second read fail → F1** |
+| L5 S1 | **pass**: the answer named `disk-full-L5`; the history holds `[Webhook Alert]\n[FIRING] disk-full-L5 …` |
+| L6 S2 | **half → F2**: the catch-up brief showed on reconnect, before the banner and before any typing (residency works), but it reads only `• [Webhook Alert]` |
+| L7 S3 | **pass**: the first resume after a restart quoted "What is 17 times 23? Answer in one line." |
+| L8 invalid args | not run (unit-covered); 0 invalid-argument lines in daemon.log |
+
+**Findings.**
+- **F1 (major), `get_shell_context` never labels the focus.** With the
+  focus moved to the shell pane (`pane_active=1`; the pane map shows
+  `idx:1=%1*`), the result had no `[ACTIVE PANE` at all. The cause is
+  phase 04's spec, not the executor. `get_shell_context` calls
+  `get_labeled_context_scoped(chat_pane, chat_pane, …)`, and the rule gives
+  the block only to a `source_pane` that is not the chat pane and is the
+  focus. "Callers are unchanged" therefore made the second half
+  unreachable. The turn prompt has the same weakness: its source is the
+  target pane the chat resolved at startup, so a focus on any other pane is
+  never labelled. Fix constraint: the active block goes to the cache's
+  `active_pane` when it is in the session and is not the chat pane,
+  independent of `source_pane`; still at most one.
+- **F2 (minor; pre-dates M29), the catch-up does not name the alert.**
+  `build_catchup_brief` keeps each event's first line, and webhook messages
+  are built as `[Webhook Alert]\n[FIRING] <name> — …`, so the brief shows
+  the bare tag. Fix constraint: when the first line is only the event tag,
+  the summary carries the next non-empty line too.
+- **S1 (spec), the approvals words are inverted.** `/approvals off` means
+  gated (panels shown) and `on` means auto-approve. Pre-flight's "first
+  input is `/approvals off`" (carried from M28, which wanted panels) and
+  L3's "`/approvals on`, answer `n`" read them the other way round: L3
+  needs `/approvals off` to get a panel to deny. The rehearsal ran L1–L2
+  under `on` and the denial under `off`.
+- **Observations.** O5: the `wait: false` record carries `exit: 0`, the
+  launch's code, not the command's; the denial's `mode` is still the
+  legacy `foreground`. O6: the status bar reads `turn 1` after a resume,
+  and `session:` is blank while an approval panel is up. None blocks the
+  close.
+- **Harness.** H1: chat blocks before its banner until the emulator
+  session has an attached client (`chat.rs` polls
+  `#{session_attached}`). Attach a headless read-only client first:
+  `script -q -c "tmux -S $EMU attach -r -t m29" /dev/null` under
+  `setsid`. The PE's own `attach -r` serves the same purpose.
+
+**Next.** Fix phase **06a** for F1 and F2, with the `pane_map_summary`
+doc-comment nit folded in. Then rehearsal 2 re-runs L4 and L6 (and L1–L7
+as a regression pass), and the PE run follows with S1's wording fixed in
+this doc.
