@@ -77,6 +77,6 @@ it is drafted.
 | 03 | log-fields ([phase-03-log-fields.md](phase-03-log-fields.md)) — `wait`/`shell` on `command` events alongside `mode`/`pane`; 2.0 daemon.log wording (todo 6) | done (approved_first_try, 2026-10-19) |
 | 04 | active-pane ([phase-04-active-pane.md](phase-04-active-pane.md)) — at most one `[ACTIVE PANE]`, none on the chat's own pane (todo 2, F9) | done (approved_first_try, 2026-10-19) |
 | 05 | residency ([phase-05-residency.md](phase-05-residency.md)) — resident on presence attach; `NON_RESIDENT_DETACHES` gone; the three sequences as tests (todo 1, 5) | done (approved_after_2, 2026-10-19) |
-| 06 | live-close — architect-run, M14 convention | not drafted |
+| 06 | live-close ([phase-06-live-close.md](phase-06-live-close.md)) — architect-run, M14 convention | todo |
 
 ## Notes
