@@ -101,7 +101,7 @@ close. Each may split at drafting.
 
 | # | Phase | Status |
 |---|---|---|
-| 01 | run-metrics ([phase-01-run-metrics.md](phase-01-run-metrics.md)) — a `RunMetrics` tally (tool calls and successes, parse failures, tokens, wall clock, model / served model) kept on the run and fed by the chat turn, ghost, scheduled and delegated loops; `CostRecord.run_id` | in-progress |
+| 01 | run-metrics ([phase-01-run-metrics.md](phase-01-run-metrics.md)) — a `RunMetrics` tally (tool calls and successes, parse failures, tokens, wall clock, model / served model) kept on the run and fed by the chat turn, ghost, scheduled and delegated loops; `CostRecord.run_id` | review      |
 | 02 | run-record — the `run` event: the record type, `failure_class` computed from the terminal state, `is_model_attributable`, emitted at every run end; the ghost `Budget` fed with real spend | todo |
 | 03 | scorecard — pure aggregation over `run` events with `n_runs` and `min_runs`; `daemoneye scorecard` | todo |
 | 04 | profile — `daemoneye profile <model>`: strengths and ranked failure classes | todo |
