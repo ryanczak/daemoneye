@@ -136,3 +136,28 @@ at the end; the PE's own daemon was untouched.
 doc-comment nit folded in. Then rehearsal 2 re-runs L4 and L6 (and L1–L7
 as a regression pass), and the PE run follows with S1's wording fixed in
 this doc.
+
+### Update — 2026-10-20 (rehearsal 2, architect, after 06a)
+
+The release was rebuilt at `dc30f475` (06a approved), and the runtime state
+was reset to the config alone. The harness followed the corrected
+Pre-flight: `/approvals on` first, and a headless read-only client attached
+before chat. The raw notes are in `/tmp/e2e-m29-06.txt` (section R2). Every
+process with `HOME=$R` was killed at the end.
+
+| Block | Result |
+|---|---|
+| L1 masker | **pass**: `pinky\n[ran in shell s0]`; `Host web\n<SSH_HOST>\n[ran in shell s0]` |
+| L2 shell line | **pass**: `\n[command exited with status 3]\n[ran in shell s0]` |
+| L3 log fields | **pass**: the same records as rehearsal 1; the denial ran under `/approvals off` |
+| L4 active pane | **pass, F1 fixed**: chat focused → no `[ACTIVE PANE`, `%1` listed; focus on `%1` → exactly one `[ACTIVE PANE %1 \| cwd: /tmp \| title: pinky]` with the pane's screen, and `%1` not listed again |
+| L5 S1 | **pass**: the answer named `disk-full-L5`; the history holds the alert |
+| L6 S2 | **pass, F2 fixed**: 4 s after reconnect, before any typing: `• [Webhook Alert] [FIRING] cpu-hot-L6 — rehearsal alert L6: cpu at 99%` |
+| L7 S3 | **pass**: the first resume after a restart quoted "What is 17 times 23? Answer in one line." |
+| L8 invalid args | not run (unit-covered); 0 invalid-argument lines in daemon.log |
+
+No new findings. O5 and O6 recur, as recorded in rehearsal 1, and still do
+not block the close.
+
+**Next.** The PE run: L1–L7 once, watched with
+`tmux -S /tmp/de29-emu.sock attach -r`, then the Close steps.
