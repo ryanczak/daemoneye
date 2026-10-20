@@ -54,7 +54,7 @@ already a dependency (`src/cli/render_ratatui.rs`, `viewer.rs`).
 **Exit criteria:**
 
 - **Run record.** Every finished run of every kind appends one `run`
-  event carrying `run_id`, `kind`, `agent`, `model`, `served_model`,
+  event carrying `run_id`, `kind`, `agent`, `provider`, `model`,
   `status`, `failure_class`, `is_model_attributable`, `turns`,
   `tool_calls`, `tool_success_rate`, `parse_failure_rate`, `tokens`,
   `cost_usd`, `wall_clock_s` and `tags` (kind, agent, runbook, host).
@@ -101,7 +101,7 @@ close. Each may split at drafting.
 
 | # | Phase | Status |
 |---|---|---|
-| 01 | run-metrics — a `RunMetrics` tally (tool calls and successes, parse failures, tokens, wall clock, model / served model) kept on the run and fed by the chat turn, ghost, scheduled and delegated loops; `CostRecord.run_id` | todo |
+| 01 | run-metrics ([phase-01-run-metrics.md](phase-01-run-metrics.md)) — a `RunMetrics` tally (tool calls and successes, parse failures, tokens, wall clock, model / served model) kept on the run and fed by the chat turn, ghost, scheduled and delegated loops; `CostRecord.run_id` | todo |
 | 02 | run-record — the `run` event: the record type, `failure_class` computed from the terminal state, `is_model_attributable`, emitted at every run end; the ghost `Budget` fed with real spend | todo |
 | 03 | scorecard — pure aggregation over `run` events with `n_runs` and `min_runs`; `daemoneye scorecard` | todo |
 | 04 | profile — `daemoneye profile <model>`: strengths and ranked failure classes | todo |
@@ -111,6 +111,16 @@ close. Each may split at drafting.
 
 ## Notes
 
+- **Five model calls are invisible to cost today (found drafting 01).**
+  Briefing generation, the session digest, auto-naming and the webhook
+  and scheduled watchdogs call `make_client(..).chat(..)` and emit no
+  `ai_cost`. `daemoneye costs` has never seen them, and a daily cap that
+  read only `ai_cost` would not either. The daily-cap phase must cost and
+  gate them, or the cap's "nothing is sent to a provider" is false.
+- **No served model.** No backend reports the model that actually served
+  a call, so the record carries the configured `provider` and `model`.
+  Truncation reaches the loop only as a `Notice` string, so there is no
+  length-finish rate either.
 - **Not in scope.** A separate telemetry store; a human-assigned failure
   class; per-run USD caps in config; the governor's detectors; exposing
   the scorecard over MCP (M31); a Tasks panel (runbook `## Steps` were

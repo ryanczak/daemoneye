@@ -5,8 +5,10 @@
 [`README.md`](milestones/M30-telemetry-dashboard/README.md) for the PE
 decisions and the planned phases.
 
-**Active phase:** none yet — phase 01 (run-metrics) is drafted next with
-`/rexymcp:architect next`.
+**Active phase:** [phase-01-run-metrics](milestones/M30-telemetry-dashboard/phase-01-run-metrics.md)
+— todo: a `RunMetrics` tally on `RunLogGuard`, fed by the chat and ghost
+loops; `run_id` on every `ai_cost`. Dispatch with
+`/rexymcp:dispatch phase-01`.
 
 M29 closed 2026-10-20 (`v2.2.0`, pushed). M31 (MCP surface) and M32
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
