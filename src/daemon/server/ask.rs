@@ -99,9 +99,12 @@ where
             if let Some(built) = built {
                 store.entry(id.clone()).or_insert(built);
             }
-            let entry = store
-                .get_mut(id.as_str())
-                .expect("the probe or the insert above guarantees the entry exists");
+            // The probe found the entry present, so nothing was built — and
+            // `cleanup_pass` may have evicted it before we re-locked. That is
+            // a rare race, not a bug: no cost is known for this turn.
+            let Some(entry) = store.get_mut(id.as_str()) else {
+                return (0.0, false);
+            };
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();
 

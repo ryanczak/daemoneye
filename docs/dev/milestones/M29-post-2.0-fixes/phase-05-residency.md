@@ -618,3 +618,49 @@ kill: (-1442370): No such process
 **Commit:** 006d6065225dbb00713da1e681b4586dcdb791d9
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-20 00:21 (end-to-end verification, bounce-2 re-run)
+
+The phase's § End-to-end verification, run verbatim and once, `cargo fmt
+--all` first, after replacing `handle_ask`'s production `expect` with the
+eviction-race branch. The output was redirected to `/tmp/e2e-m29-05.txt`
+and pasted below unedited.
+
+````
+restart_reconnect_alert_ask_sees_the_alert: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+restart_reconnect_quit_alert_resume_briefs_the_alert: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+fresh_resume_of_a_never_loaded_session_carries_history_and_meta: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+attach_makes_the_session_resident_with_its_disk_history: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+catchup_brief_reaches_a_session_that_is_not_resident: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+catchup_brief_names_an_alert_posted_after_the_chat_left: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+inject_reaches_a_presence_attached_session_that_is_not_resident: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+registry_refs=0
+ask_prod_expects=0
+in_lock_builds=0
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2425 failed=0
+````
+
+PASTE MATCH
+
+- **The bounce-2 fix.** `handle_ask`'s production `expect("the probe or the
+  insert above guarantees the entry exists")` is gone. When the probe finds
+  the entry present nothing is built, and `cleanup_pass` can evict it in the
+  gap between the two `with_sessions` calls; `get_mut` returning `None` is
+  now a branch that returns `(0.0, false)` — no cost known for this turn —
+  instead of a panic. The build/insert path, the probe, and the absence of
+  file I/O under the lock (bug-05-1) are unchanged.
+- `ask_prod_expects=0` — zero `.expect(`/`.unwrap(` in `ask.rs` outside the
+  test module. The bug's definition of done line is met.
+- `in_lock_builds=0` and `registry_refs=0` still hold.
+- **Mutation check, as the bounce-2 entry required:** temporarily restoring
+  the `expect` read `ask_prod_expects=1`; reverting restored 0. The metric
+  measures the defect.
+- All seven named tests print `test result: ok. 1 passed`; `doc_truth` 16/0;
+  clippy `-D warnings` clean; `fmt_exit=0`; full suite `passed=2425
+  failed=0` — the fix added no test, so the count is 2425, not 2426, as the
+  bug's definition of done requires.
+- Self-check `diff` of the pasted fence against `/tmp/e2e-m29-05.txt`
+  printed `PASTE MATCH`.
