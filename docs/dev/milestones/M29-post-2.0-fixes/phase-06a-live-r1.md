@@ -163,3 +163,49 @@ Status flipped `todo → in-progress`; milestone README row updated. Plan:
 Task 1–3 in `src/tmux/cache.rs` (+ `cache_tests.rs`), Task 2 call sites in
 `src/daemon/prompt.rs` and `src/daemon/executor/mod.rs`, Task 4 in
 `src/daemon/server/catchup.rs`, then Task 5's verbatim end-to-end run.
+
+### Update — 2026-10-20 02:34 (end-to-end verification)
+
+Output of § End-to-end verification, run verbatim once (Task 5), redirecting
+to `/tmp/e2e-m29-06a.txt`:
+
+```
+the_focus_is_labelled_without_a_source_pane: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_focus_the_cache_has_not_seen_labels_nothing: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+catchup_brief_names_the_alert_under_a_bare_tag: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+no_active_label_when_the_focus_is_the_chat_pane: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_chat_pane_is_never_the_active_pane: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_users_real_focus_gets_the_one_active_label: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+an_unknown_focus_labels_nothing_active: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+catchup_brief_extracts_first_line_only: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+catchup_brief_detects_webhook_alert: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+catchup_brief_detects_watch_pane: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+source_pane_refs=0
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2430 failed=0
+```
+
+`PASTE MATCH` — the fenced block above is byte-identical to
+`/tmp/e2e-m29-06a.txt` (diff of the self-check exits 0).
+
+Notes for review:
+- Task 1: `get_labeled_context_scoped` now labels the cache's `active_pane`
+  (Some, ≠ `chat_pane`, present in `panes` under the home `session_name`);
+  no `source_pane` anywhere — `grep -c 'source_pane' src/tmux/cache.rs` ⇒ 0.
+  Task 3's doc comment sits above `get_labeled_context_scoped`;
+  `pane_map_summary` keeps only its own paragraph.
+- Task 2 call sites: `prompt.rs` (2), `executor/mod.rs` (1); `PromptCtx`
+  keeps `client_pane` (still read by `infer_session_tags`).
+- Task 4: `is_bare_tag` (starts `[`, ends `]`, no earlier `]`) extends the
+  summary to the next non-empty line; no following line leaves the tag as it
+  was; one line per summary. `catchup_brief_extracts_first_line_only`,
+  `…_detects_webhook_alert`, `…_detects_watch_pane` pass unchanged.
+- The suite counts `passed=2430` = 2425 at `79b23c11` + the spec's 3 new
+  tests + 2 extra (`catchup_brief_bare_tag_with_no_next_line_stays_as_is`,
+  `catchup_brief_tag_with_text_after_bracket_keeps_first_line`); the
+  renamed `get_labeled_context_single_pane_excluded_from_background`
+  (was `…_source_pane_excluded_from_background`) keeps its old assertions
+  plus the active-block ones, so the total is 2428 + 2 = 2430.
+- No new `#[allow]`; no `unsafe`; no TODO.
