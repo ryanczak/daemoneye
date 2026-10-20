@@ -231,6 +231,11 @@ mod bounded_output_tests {
             .unwrap_or_else(|_| panic!("pid file missing: {}", pid_file.display()))
             .trim()
             .to_string();
+        // SIGKILL is delivered at the next scheduler tick; under a loaded
+        // test run that can trail `bounded_output_with`'s return by more
+        // than one poll. Wait up to 1s for the grandchild to die, then
+        // assert — asserting inside the poll before the deadline check made
+        // the deadline dead code and the test load-flaky.
         let deadline = Instant::now() + Duration::from_secs(1);
         loop {
             let stat = std::fs::read_to_string(format!("/proc/{grandchild_pid}/stat")).ok();
@@ -241,14 +246,14 @@ mod bounded_output_tests {
                     Some("S") | Some("R") | Some("T")
                 )
             });
-            assert!(
-                !alive,
-                "grandchild {grandchild_pid} is still alive: {:?}",
-                std::fs::read_to_string(format!("/proc/{grandchild_pid}/stat"))
-            );
-            if Instant::now() >= deadline {
+            if !alive {
                 break;
             }
+            assert!(
+                Instant::now() < deadline,
+                "grandchild {grandchild_pid} is still alive after 1s: {:?}",
+                std::fs::read_to_string(format!("/proc/{grandchild_pid}/stat"))
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
     }
