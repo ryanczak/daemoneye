@@ -4,8 +4,9 @@
 2026-10-18 from `docs/design/daemoneye-post-2.0-todo.md` and the M28
 deferred list. See [`README.md`](milestones/M29-post-2.0-fixes/README.md).
 
-**Active phase:** [phase-06-live-close](milestones/M29-post-2.0-fixes/phase-06-live-close.md)
-— todo, architect-run. Rehearsal 1 ran 2026-10-20: L1–L3, L5, L7 pass; F1 (L4) and F2 (L6) need a fix phase 06a before rehearsal 2. Phases 01–05 are done.
+**Active phase:** [phase-06a-live-r1](milestones/M29-post-2.0-fixes/phase-06a-live-r1.md)
+— todo, executor: rehearsal 1's F1 and F2. Then rehearsal 2 of [phase-06-live-close](milestones/M29-post-2.0-fixes/phase-06-live-close.md)
+(architect-run; rehearsal 1 ran 2026-10-20: L1–L3, L5, L7 pass, F1 and F2 failed L4 and L6). Phases 01–05 are done.
 
 M28 closed 2026-10-18 (`v2.1.0`, pushed). The roadmap's Telemetry & dashboard,
 MCP surface and Knowledge milestones move to M30–M32

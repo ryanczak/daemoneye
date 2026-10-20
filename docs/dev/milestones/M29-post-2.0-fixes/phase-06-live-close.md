@@ -28,7 +28,11 @@ M27's F5, F8 and F11 hid.
      `tmux -S $EMU` and `TMUX` unset. The PE watches with
      `tmux -S $EMU attach -r`.
    - Clean-env daemon start, unsetting every `CLAUDE*` variable.
-   - The chat's first input is `/approvals off`.
+   - The chat's first input is `/approvals on` (auto-approve; `off` gates
+     every command behind a panel).
+   - Before starting chat, attach a client to the emulator (the PE's
+     `attach -r`, or a headless one via `script`): chat waits for an
+     attached client before its banner.
    - S-last kills only processes whose environment has `HOME=$R`.
 2. **Model.** The local GLM at `brain:8000`, so the chat's turns cost no
    API credit.
@@ -47,7 +51,7 @@ read from the session's history file, `$R/.daemoneye/var/log/sessions/<id>.jsonl
 |---|---|---|
 | L1 | **Masker (O3).** The model runs `hostname`, then `printf 'Host web\n  HostName 10.9.9.9\n'` | The first result shows `pinky`, not `<SSH_HOST>`. The second shows `<SSH_HOST>`, not `10.9.9.9` |
 | L2 | **Shell line (O4).** The same results, plus the model runs `sh -c 'exit 3'` | Each waited result ends `[ran in shell sN]`. The exit-3 result has `[command exited with status 3]` **before** that line |
-| L3 | **Log fields (todo 6).** The `command` records in `$R/.daemoneye/var/log/events/events-*.jsonl` and in daemon.log, after L1–L2 plus one `wait: false` command and one denied panel (`/approvals on`, answer `n`) | The waited runs carry `"wait":true,"shell":"sN"`; the `wait: false` run carries `"wait":false`; the denial carries `"shell":null`; `mode`/`pane` are still present. daemon.log has `command approved (waited):` and `command denied (waited):`, and no `foreground command approved` |
+| L3 | **Log fields (todo 6).** The `command` records in `$R/.daemoneye/var/log/events/events-*.jsonl` and in daemon.log, after L1–L2 plus one `wait: false` command and one denied panel (`/approvals off`, answer `n`, then `/approvals on`) | The waited runs carry `"wait":true,"shell":"sN"`; the `wait: false` run carries `"wait":false`; the denial carries `"shell":null`; `mode`/`pane` are still present. daemon.log has `command approved (waited):` and `command denied (waited):`, and no `foreground command approved` |
 | L4 | **Active pane (F9).** Split the emulator window: chat in one pane, a shell in the other. With the chat pane focused, the model calls `get_shell_context`. Then `select-pane` to the shell pane, wait 3 s for the poll, and ask again | First result: no `[ACTIVE PANE`, and the shell pane is listed. Second result: exactly one `[ACTIVE PANE`, on the shell pane, and never two |
 | L5 | **S1: restart → reconnect → alert → ask.** Chat once (one question), quit. `daemoneye stop` then start. `chat --resume <id>`. POST an alert naming `disk-full-L5`. Ask "what alerts arrived?" | The answer names `disk-full-L5`, and the history file holds the alert |
 | L6 | **S2: restart → reconnect → quit (no ask) → alert → resume.** Restart, `chat --resume <id>`, quit without asking. POST `cpu-hot-L6`. Wait 35 s. `chat --resume <id>` | The catch-up brief shows on reconnect, before any typing, and names `cpu-hot-L6` |
