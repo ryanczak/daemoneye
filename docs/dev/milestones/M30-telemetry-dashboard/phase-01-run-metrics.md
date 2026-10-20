@@ -175,3 +175,29 @@ and `tally_tool_outcome` in `executor/mod.rs` (task 2), hang the tally on
 4), feed both loops and the ghost's `do_ghost_turn` (task 5), then capture the
 end-to-end evidence with the spec's block, run verbatim once (task 6).
 
+### Update — 2026-10-20 16:10 (end-to-end verification)
+
+Ran `cargo fmt --all` first, then the spec's § End-to-end verification block
+verbatim, once. The pasted output is the first fenced block below.
+
+```
+empty_metrics_have_no_rates: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+tool_success_rate_is_successes_over_calls: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+parse_failure_rate_is_over_all_tool_calls: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+model_calls_sum_tokens_and_cost: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+tally_tool_outcome_classifies_each_outcome: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+guard_holds_the_metrics_recorded_through_it: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_cost_record_carries_its_run_id: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_cost_record_without_run_id_still_parses: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+stream_model_calls=2
+ghost_model_calls=1
+stream_tally=1
+ghost_tally=1
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2438 failed=0
+```
+
+PASTE MATCH
+
