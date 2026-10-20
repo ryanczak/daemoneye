@@ -263,6 +263,12 @@ impl Budget {
         self.usd_micros_spent = self.usd_micros_spent.saturating_add(micros);
     }
 
+    /// What was spent in a dimension: turns, tool calls, tokens, wall-clock
+    /// seconds or micro-USD, by [`BUDGET_DIMENSION_ORDER`]'s order.
+    pub fn spent(&self, dim: BudgetDimension) -> u64 {
+        self.limit_and_spent(dim).1
+    }
+
     /// What remains in a dimension: `None` when unlimited (`limit == 0`),
     /// otherwise the limit minus what was spent, saturating at zero.
     pub fn remaining(&self, dim: BudgetDimension) -> Option<u64> {
@@ -488,6 +494,7 @@ mod list;
 mod log_read;
 mod metrics;
 mod pause;
+mod record;
 mod result;
 mod resume;
 mod turn_log;
@@ -511,6 +518,7 @@ pub use pause::{
     is_paused, note_owner_typed, note_typed, pause_owner_run, pause_run, resume_owner_run,
     resume_run, take_pause_notice, take_typed_notice,
 };
+pub use record::{FAILURE_CLASSES, FailureClass, RunRecord, failure_class, is_model_attributable};
 pub use result::{CancelReason, Cancellation, RunResult, RunStatus};
 pub use resume::{
     ResumeError, ResumePlan, render_seed, resumable_runbook, resume_plan, terminal_outcome,

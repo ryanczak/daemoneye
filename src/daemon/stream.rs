@@ -163,6 +163,10 @@ where
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
         let active_entry = config.resolve_model(session_active_model.as_deref());
+        run_log
+            .metrics_mut()
+            .set_model(active_entry.provider.clone(), active_entry.model.clone());
+        run_log.metrics_mut().record_turn();
         let client_instance = make_client(
             &active_entry.provider,
             active_entry.resolve_api_key(),
@@ -278,6 +282,7 @@ where
                         let cause = chat_task.describe_end().await;
                         channel_closed_retries += 1;
                         if channel_closed_retries > MAX_CHANNEL_CLOSED_RETRIES {
+                            run_log.metrics_mut().record_backend_error();
                             log::error!(
                                 "AI event channel closed without Done/Error, giving up after \
                                  {MAX_CHANNEL_CLOSED_RETRIES} retries: {cause}"
@@ -978,6 +983,7 @@ where
                     });
                 }
                 AiEvent::Error(e) => {
+                    run_log.metrics_mut().record_backend_error();
                     send_response_split(tx, Response::Error(e.clone())).await?;
                     run_log.finish(crate::daemon::run::RunState::HardFail(
                         crate::daemon::run::Briefing::new(

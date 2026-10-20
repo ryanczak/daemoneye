@@ -8,8 +8,8 @@ use crate::config::{Config, PricingSource, load_named_prompt};
 use crate::cost::{CostRecord, compute_cost};
 use crate::daemon::GS_SCHED_WINDOW_PREFIX;
 use crate::daemon::run::{
-    Briefing, BudgetDimension, RunId, RunKind, RunLogGuard, RunMetrics, RunState, TurnLogEvent,
-    TurnLogRecord, append_turn_event,
+    Briefing, Budget, BudgetDimension, RunId, RunKind, RunLogGuard, RunMetrics, RunState,
+    TurnLogEvent, TurnLogRecord, append_turn_event,
 };
 use crate::daemon::session::{
     SessionEntry, SessionStore, append_session_message, with_sessions, write_session_file,
@@ -492,6 +492,16 @@ pub async fn trigger_ghost_turn(
     })
     .unwrap_or_else(|| ghost_run_kind(None, None, None, ""));
     let mut run_log = RunLogGuard::start(RunId::new(), kind.clone());
+    if let Some(ghost_gc) = with_sessions(sessions, |store| {
+        store.get(session_id).and_then(|e| e.ghost_config.clone())
+    }) {
+        if let Some(agent) = ghost_gc.agent.clone() {
+            run_log.tag("agent", agent);
+        }
+        if let Some(host) = ghost_gc.ssh_target.clone() {
+            run_log.tag("host", host);
+        }
+    }
     let (_cancel_guard, cancel_signal, _active_guard) =
         register_ghost_run(session_id, run_log.run_id());
     tokio::spawn(crate::daemon::run::watch_stop_sentinel(
@@ -559,6 +569,28 @@ pub async fn trigger_ghost_turn(
             .map(|m| m.content.clone())
             .unwrap_or_default()
     });
+    // The ghost's `Budget` says what the run actually spent: `max_turns` is
+    // the effective turn cap the loop enforced, the other four limits are 0
+    // (no other cap exists yet), and the tally folds its spend in. The wall
+    // clock is read off the guard's `Instant`, which covers the whole run.
+    let effective_cap = with_sessions(sessions, |store| {
+        let daemon_ceiling = config.ghost.max_ghost_turns as u64;
+        store
+            .get(session_id)
+            .and_then(|e| e.ghost_config.as_ref())
+            .map(|gc| {
+                if gc.max_ghost_turns > 0 {
+                    (gc.max_ghost_turns as u64).min(daemon_ceiling)
+                } else {
+                    daemon_ceiling
+                }
+            })
+            .unwrap_or(daemon_ceiling)
+    });
+    let mut budget = Budget::from_limits(effective_cap, 0, 0, 0, 0);
+    run_log
+        .metrics()
+        .fold_into_budget(&mut budget, run_log.elapsed_secs());
     write_mailbox_on_exit(
         session_id,
         sessions,
@@ -569,7 +601,7 @@ pub async fn trigger_ghost_turn(
             state,
             summary,
             outcome.turns,
-            crate::daemon::run::Budget::unlimited(),
+            budget,
         )
         .ok(),
     )
@@ -906,6 +938,7 @@ async fn do_ghost_turn(
     let mut rx = BufReader::new(tokio::io::empty());
 
     let model_entry = config.resolve_model(ghost_active_model.as_deref());
+    metrics.set_model(model_entry.provider.clone(), model_entry.model.clone());
     if let Some(ref name) = ghost_active_model {
         log::info!("Ghost Shell {}: using model '{}'", session_id, name);
     }
@@ -987,6 +1020,7 @@ async fn do_ghost_turn(
         }
         turn += 1;
         outcome.turns = turn as u32;
+        metrics.record_turn();
         emit_turn_started(run_id, turn);
 
         log::info!(
@@ -1409,6 +1443,7 @@ async fn do_ghost_turn(
                         break;
                     }
                     AiEvent::Error(e) => {
+                        metrics.record_backend_error();
                         crate::daemon::utils::log_event(
                             "ghost_error",
                             serde_json::json!({

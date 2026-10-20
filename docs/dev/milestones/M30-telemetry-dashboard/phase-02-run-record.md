@@ -1,7 +1,7 @@
 # Phase 02: run-record — one `run` event per finished run; `failure_class` from the tally
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress (started 2026-10-20, executor r1)
 **Depends on:** phase-01
 **Estimated diff:** ~350 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -176,3 +176,43 @@ None.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-20 21:20 (started)
+
+Executor r1 (Rexy executor, Claude Sonnet 4.6) beginning phase 02. Status
+flipped to `in-progress` here and in the milestone README's phase table. Plan:
+grow the tally with `turns` / `backend_errors` and the pre-call
+`set_model` (task 1), `failure_class` + `is_model_attributable` +
+`FAILURE_CLASSES` (task 2), `RunRecord` + the `TokenBreakdown` Deserialize
+gap (task 3), the guard's `Instant`, tags and drop emission (task 4), the
+ghost's real `Budget` (task 5), then the design-reference section (task 6)
+and the end-to-end capture.
+
+### Update — 2026-10-20 21:45 (end-to-end verification)
+
+Ran `cargo fmt --all` first, then the spec's § End-to-end verification block
+verbatim, once. The pasted output is the first fenced block below.
+
+```
+terminal_states_map_to_their_class: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+hard_fail_is_classified_by_the_tally: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+only_model_failures_are_attributable: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_run_record_round_trips_and_old_lines_parse: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_run_record_without_tool_calls_has_null_rates: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_tally_folds_into_a_budget: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+guard_drop_emits_one_run_event: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+guard_without_finish_records_class_other: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+stream_turns=1
+ghost_turns=1
+stream_backend=2
+ghost_backend=1
+ghost_unlimited_budget=0
+bg_shell_run_records=0
+design_ref_run_event=1
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2449 failed=0
+```
+
+PASTE MATCH

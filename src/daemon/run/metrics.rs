@@ -5,6 +5,8 @@
 
 use crate::ai::types::TokenBreakdown;
 
+use super::Budget;
+
 /// A per-run tally of what the run's loop did. Empty at `start`; the chat
 /// loop, the ghost loop and the cost sites on each fill it as they go.
 #[derive(Debug, Default, Clone)]
@@ -18,6 +20,12 @@ pub struct RunMetrics {
     pub parse_failures: u32,
     /// Model calls completed with usage.
     pub model_calls: u32,
+    /// Turns the loop ran — one per model request (chat) or per
+    /// `TurnStarted` (ghost).
+    pub turns: u32,
+    /// Backend errors the loop saw: an `AiEvent::Error`, or the chat loop's
+    /// give-up when the stream closed without completing after its retries.
+    pub backend_errors: u32,
     /// Sums of each token bucket, saturating.
     pub tokens: TokenBreakdown,
     /// Sums of each call's total cost.
@@ -29,6 +37,13 @@ pub struct RunMetrics {
 }
 
 impl RunMetrics {
+    /// Name the configured provider and model before the first model call,
+    /// so a run whose first call fails still names its model.
+    pub fn set_model(&mut self, provider: impl Into<String>, model: impl Into<String>) {
+        self.provider = Some(provider.into());
+        self.model = Some(model.into());
+    }
+
     /// Record one completed model call: the count, every token bucket and
     /// the cost accumulate; `provider` and `model` are kept — the most
     /// recent call wins.
@@ -58,6 +73,16 @@ impl RunMetrics {
         self.model = Some(model.into());
     }
 
+    /// Record one turn of the run.
+    pub fn record_turn(&mut self) {
+        self.turns = self.turns.saturating_add(1);
+    }
+
+    /// Record one backend error.
+    pub fn record_backend_error(&mut self) {
+        self.backend_errors = self.backend_errors.saturating_add(1);
+    }
+
     /// Successful tool calls over tool calls executed: `None` when no tool
     /// call was ever executed, so an empty run reads as "no rate" rather
     /// than a misleading 0.0 or NaN.
@@ -75,6 +100,22 @@ impl RunMetrics {
             return None;
         }
         Some(self.parse_failures as f64 / self.tool_calls as f64)
+    }
+
+    /// Fold the tally into `budget`, so a run's `Budget` says what it spent:
+    /// turns, tool calls, every token bucket, wall-clock seconds and USD as
+    /// micro-USD, rounded. The limits `budget` already carries are kept —
+    /// only the spent side is folded.
+    pub fn fold_into_budget(&self, budget: &mut Budget, wall_clock_secs: u64) {
+        for _ in 0..self.turns {
+            budget.record_turn();
+        }
+        for _ in 0..self.tool_calls {
+            budget.record_tool_call();
+        }
+        budget.record_tokens(self.tokens.total() as u64);
+        budget.record_wall_clock_secs(wall_clock_secs);
+        budget.record_usd_micros((self.cost_usd * 1_000_000.0).round() as u64);
     }
 }
 
@@ -166,5 +207,63 @@ mod tests {
             Some("gemini"),
             "the most recent call's provider is kept"
         );
+    }
+
+    #[test]
+    fn the_tally_folds_into_a_budget() {
+        let mut m = RunMetrics::default();
+        for _ in 0..3 {
+            m.record_turn();
+        }
+        for _ in 0..4 {
+            m.tool_calls += 1;
+        }
+        m.tokens = tokens(100, 50, 10, 5);
+        m.cost_usd = 0.0125;
+        let mut budget = Budget::from_limits(5, 10, 1_000_000, 600, 100_000);
+        m.fold_into_budget(&mut budget, 42);
+        assert_eq!(
+            budget.spent(crate::daemon::run::BudgetDimension::Turns),
+            3,
+            "turns fold"
+        );
+        assert_eq!(
+            budget.spent(crate::daemon::run::BudgetDimension::ToolCalls),
+            4,
+            "tool calls fold"
+        );
+        assert_eq!(
+            budget.spent(crate::daemon::run::BudgetDimension::Tokens),
+            165,
+            "every token bucket folds"
+        );
+        assert_eq!(
+            budget.spent(crate::daemon::run::BudgetDimension::WallClock),
+            42,
+            "wall-clock seconds fold"
+        );
+        assert_eq!(
+            budget.spent(crate::daemon::run::BudgetDimension::Usd),
+            12_500,
+            "$0.0125 is 12 500 micro-USD, rounded"
+        );
+        assert_eq!(
+            budget.remaining(crate::daemon::run::BudgetDimension::Usd),
+            Some(87_500),
+            "the limit side is kept, the spent side folded"
+        );
+    }
+
+    #[test]
+    fn a_tally_with_no_spend_folds_to_zeroes() {
+        let mut budget = Budget::from_limits(2, 2, 2, 2, 2);
+        RunMetrics::default().fold_into_budget(&mut budget, 0);
+        for dim in crate::daemon::run::BUDGET_DIMENSION_ORDER {
+            assert_eq!(
+                budget.remaining(dim),
+                Some(2),
+                "an empty tally spends nothing in {dim:?}"
+            );
+        }
     }
 }

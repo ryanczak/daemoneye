@@ -7,9 +7,17 @@
 //! last set via [`RunLogGuard::finish`] and, if none was ever set, records a
 //! `HardFail` naming the missed path — a forgotten exit becomes a visible
 //! wrong answer in the log instead of a run that appears to never end.
+//!
+//! Since M30 phase 02 the guard also emits the run's one `event: "run"`
+//! record (after the `RunFinished` append), built from the final state, the
+//! tally the loop fed, the wall clock it measured at `start` and the tags it
+//! carries. A serialization error is logged and skipped, never a panic.
+
+use std::collections::BTreeMap;
+use std::time::Instant;
 
 use super::metrics::RunMetrics;
-use super::{RunId, RunKind, RunState, TurnLogEvent, TurnLogRecord, append_turn_event};
+use super::{RunId, RunKind, RunRecord, RunState, TurnLogEvent, TurnLogRecord, append_turn_event};
 
 /// The blocker string a run's log carries when the loop exited without ever
 /// recording an outcome. Quoted verbatim in the tests.
@@ -24,12 +32,17 @@ pub struct RunLogGuard {
     /// calls, tokens, spend. Empty at `start`; fed by the loop's cost sites
     /// and tool dispatches.
     metrics: RunMetrics,
+    started: Instant,
+    tags: BTreeMap<String, String>,
 }
 
 impl RunLogGuard {
-    /// Write `RunStarted { kind }` and take ownership of the run's id.
+    /// Write `RunStarted { kind }` and take ownership of the run's id. The
+    /// tags are seeded here: `kind` always, plus `runbook` for `Ghost`,
+    /// `agent` for `Delegated` and `job` for `Scheduled`.
     pub fn start(run_id: RunId, kind: RunKind) -> Self {
         let kind_label = kind.label();
+        let tags = seed_tags(&kind);
         append_turn_event(&TurnLogRecord {
             timestamp: chrono::Utc::now().to_rfc3339(),
             run_id: run_id.clone(),
@@ -40,6 +53,8 @@ impl RunLogGuard {
             kind_label,
             state: None,
             metrics: RunMetrics::default(),
+            started: Instant::now(),
+            tags,
         }
     }
 
@@ -48,6 +63,11 @@ impl RunLogGuard {
     /// an inner path may set `Complete` and an outer one override it.
     pub fn finish(&mut self, state: RunState) {
         self.state = Some(state);
+    }
+
+    /// Add one tag to the record. Re-calling with the same key overwrites.
+    pub fn tag(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.tags.insert(key.into(), value.into());
     }
 
     /// The run id whose turn log this guard owns.
@@ -60,10 +80,35 @@ impl RunLogGuard {
         &self.metrics
     }
 
-    /// The tally to feed — model-call sites record through it.
+    /// What the tally to feed — model-call sites record through it.
     pub fn metrics_mut(&mut self) -> &mut RunMetrics {
         &mut self.metrics
     }
+
+    /// Seconds since the run started — the record's `wall_clock_s`.
+    pub fn elapsed_secs(&self) -> u64 {
+        self.started.elapsed().as_secs()
+    }
+}
+/// The tags a run's kind seeds: `kind` always, plus the kind's own identity
+/// field — `runbook` for a ghost, `agent` for a delegated run, `job` for a
+/// scheduled one. A chat run carries no other seed.
+fn seed_tags(kind: &RunKind) -> BTreeMap<String, String> {
+    let mut tags = BTreeMap::new();
+    tags.insert("kind".to_string(), kind.label().to_string());
+    match kind {
+        RunKind::Ghost { runbook, .. } => {
+            tags.insert("runbook".to_string(), runbook.clone());
+        }
+        RunKind::Delegated { agent, .. } => {
+            tags.insert("agent".to_string(), agent.clone());
+        }
+        RunKind::Scheduled { job } => {
+            tags.insert("job".to_string(), job.clone());
+        }
+        RunKind::Chat { .. } => {}
+    }
+    tags
 }
 
 impl Drop for RunLogGuard {
@@ -82,8 +127,29 @@ impl Drop for RunLogGuard {
         append_turn_event(&TurnLogRecord {
             timestamp: chrono::Utc::now().to_rfc3339(),
             run_id: self.run_id.clone(),
-            event: TurnLogEvent::RunFinished { state },
+            event: TurnLogEvent::RunFinished {
+                state: state.clone(),
+            },
         });
+        let wall_clock_s = self.started.elapsed().as_secs_f64();
+        let record = RunRecord::new(
+            self.run_id.to_string(),
+            self.kind_label.to_string(),
+            &state,
+            &self.metrics,
+            wall_clock_s,
+            self.tags.clone(),
+        );
+        match serde_json::to_value(&record) {
+            Ok(value) => crate::daemon::utils::log_event("run", value),
+            Err(e) => {
+                log::warn!(
+                    "run {}: failed to serialize the run record, skipping it: {}",
+                    self.run_id,
+                    e
+                );
+            }
+        }
     }
 }
 
@@ -122,6 +188,17 @@ mod tests {
         RunKind::Chat {
             session: "sess-1".into(),
         }
+    }
+
+    /// The `event == "run"` lines in today's events segment.
+    fn run_event_lines() -> Vec<serde_json::Value> {
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).unwrap_or_default();
+        content
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|v| v.get("event").and_then(|e| e.as_str()) == Some("run"))
+            .collect()
     }
 
     #[test]
@@ -266,7 +343,7 @@ mod tests {
                     assert_eq!(stage, "awaiting_model", "the stage name round-trips");
                     assert_eq!(*turns, 3, "the turn count round-trips");
                 }
-                other => panic!("expected Cancelled, got {other:?}"),
+                other => panic!("expected RunFinished, got {other:?}"),
             },
             other => panic!("expected RunFinished, got {other:?}"),
         }
@@ -375,5 +452,190 @@ mod tests {
         );
         assert_eq!(guard.metrics().provider.as_deref(), Some("anthropic"));
         assert_eq!(guard.metrics().model.as_deref(), Some("claude-sonnet-4-6"));
+    }
+
+    #[test]
+    fn guard_drop_emits_one_run_event() {
+        let _home = HomeGuard::new();
+        let id = RunId::parse("6ac1a6b2e5f60704").unwrap();
+        {
+            let mut guard = RunLogGuard::start(
+                id.clone(),
+                RunKind::Ghost {
+                    runbook: "investigate-disk".into(),
+                    trigger: "webhook".into(),
+                },
+            );
+            guard.tag("agent", "analyst");
+            guard.tag("host", "db01");
+            guard
+                .metrics_mut()
+                .set_model("anthropic", "claude-sonnet-4-6");
+            guard.metrics_mut().tool_calls = 2;
+            guard.metrics_mut().tool_successes = 1;
+            guard.finish(RunState::HardFail(crate::daemon::run::Briefing::new(
+                "one ghost run",
+                None,
+                Vec::new(),
+                Vec::new(),
+                Some("a tool failed".to_string()),
+                None,
+            )));
+        }
+        let lines = run_event_lines();
+        assert_eq!(
+            lines.len(),
+            1,
+            "exactly one run event must be emitted, got: {lines:?}"
+        );
+        let record = &lines[0];
+        assert_eq!(
+            record.get("run_id").and_then(|r| r.as_str()),
+            Some(id.as_str()),
+            "the run event names its run id"
+        );
+        assert_eq!(
+            record.get("kind").and_then(|k| k.as_str()),
+            Some("ghost"),
+            "the kind is the run kind's label"
+        );
+        assert_eq!(
+            record.get("status").and_then(|s| s.as_str()),
+            Some("hard_fail"),
+            "the status is the terminal state's wire name"
+        );
+        assert_eq!(
+            record.get("failure_class").and_then(|f| f.as_str()),
+            Some("tool_errors"),
+            "failed tools behind a hard fail classify as tool_errors"
+        );
+        assert_eq!(
+            record.get("agent").and_then(|a| a.as_str()),
+            Some("analyst"),
+            "the agent tag is the record's agent"
+        );
+        assert_eq!(
+            record.get("model").and_then(|m| m.as_str()),
+            Some("claude-sonnet-4-6"),
+            "the tally's model is the record's model"
+        );
+        assert_eq!(
+            record.get("provider").and_then(|m| m.as_str()),
+            Some("anthropic"),
+            "the tally's provider is the record's provider"
+        );
+        let wall = record
+            .get("wall_clock_s")
+            .and_then(|w| w.as_f64())
+            .expect("the wall clock is a number");
+        assert!(wall >= 0.0, "the wall clock must read as elapsed, {wall}");
+        let tags = record
+            .get("tags")
+            .and_then(|t| t.as_object())
+            .expect("tags");
+        assert_eq!(
+            tags.get("kind").and_then(|k| k.as_str()),
+            Some("ghost"),
+            "kind is seeded at start"
+        );
+        assert_eq!(
+            tags.get("runbook").and_then(|r| r.as_str()),
+            Some("investigate-disk"),
+            "runbook is seeded from the Ghost kind"
+        );
+        assert_eq!(tags.get("agent").and_then(|a| a.as_str()), Some("analyst"));
+        assert_eq!(tags.get("host").and_then(|h| h.as_str()), Some("db01"));
+    }
+
+    #[test]
+    fn guard_without_finish_records_class_other() {
+        let _home = HomeGuard::new();
+        let id = RunId::parse("6ac1a6b2e5f60705").unwrap();
+        {
+            let _guard = RunLogGuard::start(id.clone(), chat_kind());
+        }
+        let lines = run_event_lines();
+        assert_eq!(lines.len(), 1, "the missed-outcome guard still emits one");
+        let record = &lines[0];
+        assert_eq!(
+            record.get("run_id").and_then(|r| r.as_str()),
+            Some(id.as_str())
+        );
+        assert_eq!(
+            record.get("status").and_then(|s| s.as_str()),
+            Some("hard_fail"),
+            "a missed outcome is a hard fail"
+        );
+        assert_eq!(
+            record.get("failure_class").and_then(|f| f.as_str()),
+            Some("other"),
+            "a clean tally behind a hard fail is other"
+        );
+        assert_eq!(
+            record
+                .get("is_model_attributable")
+                .and_then(|a| a.as_bool()),
+            Some(false),
+            "other is not model-attributable"
+        );
+        assert_eq!(
+            record.get("kind").and_then(|k| k.as_str()),
+            Some("chat"),
+            "the kind label is still carried"
+        );
+    }
+
+    #[test]
+    fn guard_tags_seed_from_the_kind() {
+        let _home = HomeGuard::new();
+        for (kind, key, value) in [
+            (
+                RunKind::Ghost {
+                    runbook: "nightly".into(),
+                    trigger: "scheduled".into(),
+                },
+                "runbook",
+                "nightly",
+            ),
+            (
+                RunKind::Delegated {
+                    agent: "analyst".into(),
+                    parent: run_id(),
+                },
+                "agent",
+                "analyst",
+            ),
+            (
+                RunKind::Scheduled {
+                    job: "sweep".into(),
+                },
+                "job",
+                "sweep",
+            ),
+        ] {
+            let guard = RunLogGuard::start(RunId::parse("6ac1a6b2e5f60706").unwrap(), kind.clone());
+            assert_eq!(
+                guard.tags.get("kind").map(String::as_str),
+                Some(kind.label()),
+                "kind is always seeded"
+            );
+            assert_eq!(
+                guard.tags.get(key).map(String::as_str),
+                Some(value),
+                "{key} is seeded from {kind:?}"
+            );
+        }
+        let chat = RunLogGuard::start(RunId::parse("6ac1a6b2e5f60706").unwrap(), chat_kind());
+        assert_eq!(
+            chat.tags.get("kind").map(String::as_str),
+            Some("chat"),
+            "kind is seeded for a chat run"
+        );
+        assert_eq!(
+            chat.tags.len(),
+            1,
+            "a chat run carries no other seed tag: {:?}",
+            chat.tags
+        );
     }
 }

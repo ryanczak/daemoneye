@@ -466,6 +466,52 @@ DaemonEye tracks the dollar cost of every AI API call across all sessions, ghost
 }
 ```
 
+**`run` event** (`src/daemon/run/guard.rs`, M30 phase 02): when a run ends, its `RunLogGuard` — after the `RunFinished` turn-log append — builds a `RunRecord` and calls `log_event("run", ...)`. Exactly one per run, for every run kind (`chat`, `ghost`, `scheduled`, `delegated`); background command runs (`bg_shell`) use no guard and emit none. A serialization error is logged and skipped, never a panic. `ts`, `event` and `pid` are stamped by `log_event`; every other field has `#[serde(default)]`, so a later reader parses an older or partial line. The schema written to the dated events segment:
+
+```json
+{
+  "event": "run",
+  "ts": "<rfc3339>",
+  "pid": 1234,
+  "run_id": "2190b361c94e7a45",
+  "kind": "ghost",
+  "agent": "analyst",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "status": "hard_fail",
+  "failure_class": "tool_errors",
+  "is_model_attributable": true,
+  "turns": 7,
+  "tool_calls": 11,
+  "tool_success_rate": 0.9090909090909091,
+  "parse_failure_rate": 0.0,
+  "tokens": {
+    "input_tokens": 12000,
+    "output_tokens": 4000,
+    "cache_read_tokens": 8000,
+    "cache_write_tokens": 2000
+  },
+  "cost_usd": 0.1059,
+  "wall_clock_s": 184.2,
+  "tags": {
+    "kind": "ghost",
+    "runbook": "investigate-disk",
+    "agent": "analyst",
+    "host": "db01"
+  }
+}
+```
+
+`status` is the terminal state's wire name (`complete` | `hard_fail` | `budget_exceeded` | `cancelled`). `tool_success_rate` and `parse_failure_rate` are `null` when the run executed no tool call — never `0.0`. `agent` is the `agent` tag, `null` when the run had none.
+
+**`failure_class`** (`src/daemon/run/record.rs`) is computed at run end from the terminal state and the tally, in this order:
+
+- A terminal state that is not `HardFail` wins outright, its tally ignored: `Complete` ⇒ `none`; `Cancelled` ⇒ `cancelled`; `BudgetExceeded` ⇒ `budget_exceeded`. A complete run with failed tools is still `none`.
+- A `HardFail` is classified by what went wrong first: `backend_errors > 0` ⇒ `backend_error`; else `parse_failures > 0` ⇒ `parse_format`; else `tool_successes < tool_calls` ⇒ `tool_errors`; else `other` (a ghost internal error, a failed script job, a missed outcome).
+- `stall` is in the vocabulary but nothing produces it yet (the governor is a later milestone).
+
+**Model-attributable classes** — the failures the model could have avoided, and the only ones a model scorecard counts against the model: `tool_errors`, `parse_format`, `stall`. Not attributable: `none`, `cancelled`, `budget_exceeded`, `backend_error`, `other` (`is_model_attributable: false` on the record).
+
 **Session-level aggregation** (`src/daemon/session.rs`): `SessionEntry` carries `cost_usd: f64`, `cost_by_agent: HashMap<String, f64>`, and `has_untracked_cost: bool`. These are incremented after every `ai_cost` emission and sent to the client in `Response::SessionInfo` (`session_cost_usd`, `has_untracked_cost`) on every Ask response.
 
 **Daemon-wide aggregation** (`src/daemon/stats.rs`): `compute_cost_today() -> CostTodayResult` streams `events.jsonl` line-by-line via `BufReader`, filters `event == "ai_cost"` events with a UTC timestamp in today's window `[today_start, today_end)`, and accumulates `total_cost_usd`, `session_costs` (by session_id, sorted alphabetically), `cost_by_provider` (by provider, sorted by cost descending), and `cost_by_agent` (by agent_name, sorted by cost descending). Results are cached for 5 seconds via `COST_TODAY_CACHE: Mutex<Option<CostTodayCacheEntry>>` to avoid re-scanning on every `daemoneye status` call. The result is exposed via `Response::DaemonStatus` fields `daemon_total_cost_today_usd`, `daemon_session_costs`, `daemon_cost_by_provider`, `daemon_cost_by_agent` (all `#[serde(default)]` for backwards compatibility).
