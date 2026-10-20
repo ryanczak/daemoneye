@@ -1850,20 +1850,22 @@ where
 
 /// Extract a human-readable result summary from a tool outcome.
 fn tool_outcome_detail(outcome: &ToolCallOutcome) -> (bool, Option<String>) {
-    match outcome {
-        ToolCallOutcome::UserMessage(_) => (false, Some("redirected".into())),
-        ToolCallOutcome::SpawnGhostSession { .. } => (true, Some("ghost spawned".into())),
+    // `ok` comes from `succeeded()` so this feedback and the run tally
+    // agree by construction (bug-01-1: two copies of the rule drift).
+    let ok = outcome.succeeded().unwrap_or(false);
+    let detail = match outcome {
+        ToolCallOutcome::UserMessage(_) => Some("redirected".into()),
+        ToolCallOutcome::SpawnGhostSession { .. } => Some("ghost spawned".into()),
         ToolCallOutcome::Result(s) => {
-            let ok = !s.starts_with("Error:") && !s.starts_with("error:");
             let n = s.lines().count();
-            let detail = if n > 1 {
+            if n > 1 {
                 Some(format!("{n} lines"))
             } else {
                 None
-            };
-            (ok, detail)
+            }
         }
-    }
+    };
+    (ok, detail)
 }
 
 // ---------------------------------------------------------------------------

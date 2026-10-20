@@ -1,7 +1,7 @@
 # Phase 01: run-metrics — a per-run tally on the run guard; `run_id` on every `ai_cost`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (bounced 2026-10-20: bug-01-1)
+**Status:** in-progress (bounced 2026-10-20: bug-01-1; r2 fixing)
 **Depends on:** none
 **Estimated diff:** ~250 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=s
@@ -391,3 +391,44 @@ against the bounced tree.
 a `Result`) and keeps its line-count `detail`; the `UserMessage` and
 `SpawnGhostSession` arms keep their current tuples. Re-run § End-to-end
 verification once and paste the output as a new entry.
+
+### Update — 2026-10-20 20:40 (started, r2)
+
+Executor r2 (re-dispatch after the bug-01-1 bounce) resuming phase 01. Status
+left at `in-progress`; the README row and this doc's Status line now note r2.
+Tasks 1, 3, 4 and 5 are already on disk from r1 and stay as they are; this run
+picks up only task 2's second sentence: `tool_outcome_detail`'s `Result` arm
+must take its `ok` from `succeeded()` instead of holding a second
+`starts_with` copy of the rule. After the edit: the spec's § End-to-end
+verification block, run verbatim once, pasted as a fresh end-to-end entry.
+
+### Update — 2026-10-20 20:47 (end-to-end verification, r2)
+
+Ran `cargo fmt --all` first, then the spec's § End-to-end verification block
+verbatim, once, at the fixed tree. The pasted output is the first fenced block
+below. The two bug-01-1 report lines now read `detail_starts_with=0` and
+`detail_succeeded=2` (the bounced tree read `1` and `0`), and the paste was
+validated with the spec's self-check after the entry was written.
+
+```
+empty_metrics_have_no_rates: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+tool_success_rate_is_successes_over_calls: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+parse_failure_rate_is_over_all_tool_calls: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+model_calls_sum_tokens_and_cost: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+tally_tool_outcome_classifies_each_outcome: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+guard_holds_the_metrics_recorded_through_it: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_cost_record_carries_its_run_id: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_cost_record_without_run_id_still_parses: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+stream_model_calls=2
+ghost_model_calls=1
+stream_tally=1
+ghost_tally=1
+detail_starts_with=0
+detail_succeeded=2
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2438 failed=0
+```
+
+PASTE MATCH
