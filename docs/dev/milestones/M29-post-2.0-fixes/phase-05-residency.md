@@ -1,7 +1,7 @@
 # Phase 05: residency — a session is resident from the moment a chat attaches
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** in-progress (bounced: bug-05-2)
+**Status:** review
 **Depends on:** phase-04
 **Estimated diff:** ~350 lines, about half of it test rewrites
 **Tags:** language=rust, kind=fix, size=m
@@ -664,3 +664,259 @@ PASTE MATCH
   bug's definition of done requires.
 - Self-check `diff` of the pasted fence against `/tmp/e2e-m29-05.txt`
   printed `PASTE MATCH`.
+
+### Update — 2026-10-20 00:41 (complete, server-authored)
+
+**Summary:** **Summary:** The bug-05-2 fix is in. `handle_ask`'s production `expect("the probe or the insert above guarantees the entry exists")` is replaced with the bounce note's branch: when the probe finds the entry present nothing is built, and `cleanup_pass` may evict it in the gap between the two `with_sessions` calls, so `get_mut` returning `None` now returns `(0.0, false)` — no cost known for this turn — instead of panicking. The probe, the build outside the lock, the `or_insert`, and the absence of file I/O under the lock (bug-05-1) are unchanged; `chat_presence.rs` untouched, as instructed. § End-to-end verification ran verbatim and once after `cargo fmt --all`: all seven named tests `ok. 1 passed`, `registry_refs=0`, `ask_prod_expects=0`, `in_lock_builds=0`, `doc_truth` 16/0, clippy `-D warnings` clean, `fmt_exit=0`, full suite `passed=2425 failed=0` — the fix adds no test, so 2425, not 2426, as the bug's definition of done requires. A fresh end-to-end Update Log entry (output fence first, then `PASTE MATCH`, both verified by the doc self-check) is committed as `79b23c11`; tree clean.
+
+**Notes for review:** Mutation check performed as the bounce-2 entry required — restoring the `expect` via a temp-copy round trip (never an in-place shell edit; file restored from `/tmp/ask-fixed.rs` before any gate or commit) read `ask_prod_expects=1`, reverting restored 0. The eviction branch's comment states the why (race, not bug) per the bug's "handled without unwrap/expect" definition. Everything else from the prior runs stands as approved.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+ readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-d9203e33e9de0e0e)
+kill: (1441674): No such process
+kill: (-1442370): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-6a738a64918f799f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9feb568c477cffdf)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-05bab2f96380bc67)
+     Running tests/integration.rs (target/debug/deps/integration-502483a68671b4b7)
+     Running tests/isolation.rs (target/debug/deps/isolation-66ea1e45aff405d5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-0960811ac376916b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M29-post-2.0-fixes/phase-05-residency.md` — +46 -0
+- `src/daemon/server/ask.rs` — +6 -3
+
+**Commit:** 79b23c11e46b1e70cd025c0579c8483c4d9bcbc7
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.1.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.87s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ prompt_assets_name_no_retired_tools ... ok
+test readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-d9203e33e9de0e0e)
+kill: (1627748): No such process
+kill: (-1628461): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-6a738a64918f799f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9feb568c477cffdf)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-05bab2f96380bc67)
+     Running tests/integration.rs (target/debug/deps/integration-502483a68671b4b7)
+     Running tests/isolation.rs (target/debug/deps/isolation-66ea1e45aff405d5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-0960811ac376916b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/daemon/server/ask.rs` — +6 -3
+
+**Commit:** 79b23c11ea4338a82f51ddef8464addf5e2ce2f1
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
