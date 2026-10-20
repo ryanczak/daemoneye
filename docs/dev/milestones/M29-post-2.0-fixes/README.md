@@ -76,7 +76,7 @@ it is drafted.
 | 02 | small-fixes ([phase-02-small-fixes.md](phase-02-small-fixes.md)) — O3 masker `hostname`, O4 result names its shell, `sbx.rs` flake | done (approved_after_1, 2026-10-19) |
 | 03 | log-fields ([phase-03-log-fields.md](phase-03-log-fields.md)) — `wait`/`shell` on `command` events alongside `mode`/`pane`; 2.0 daemon.log wording (todo 6) | done (approved_first_try, 2026-10-19) |
 | 04 | active-pane ([phase-04-active-pane.md](phase-04-active-pane.md)) — at most one `[ACTIVE PANE]`, none on the chat's own pane (todo 2, F9) | done (approved_first_try, 2026-10-19) |
-| 05 | residency ([phase-05-residency.md](phase-05-residency.md)) — resident on presence attach; `NON_RESIDENT_DETACHES` gone; the three sequences as tests (todo 1, 5) | review                          |
+| 05 | residency ([phase-05-residency.md](phase-05-residency.md)) — resident on presence attach; `NON_RESIDENT_DETACHES` gone; the three sequences as tests (todo 1, 5) | in-progress (bounced: bug-05-2) |
 | 06 | live-close — architect-run, M14 convention | not drafted |
 
 ## Notes

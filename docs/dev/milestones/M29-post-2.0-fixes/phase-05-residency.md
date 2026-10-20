@@ -1,7 +1,7 @@
 # Phase 05: residency — a session is resident from the moment a chat attaches
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-05-2)
 **Depends on:** phase-04
 **Estimated diff:** ~350 lines, about half of it test rewrites
 **Tags:** language=rust, kind=fix, size=m
@@ -126,6 +126,8 @@ Plus the renamed `attach_makes_the_session_resident_with_its_disk_history`.
       and `cargo fmt --all --check` exit 0. No new `#[allow]`.
 - [ ] No file I/O under the store lock (bug-05-1): end-to-end line
       `in_lock_builds=0`.
+- [ ] No production `expect`/`unwrap` in `ask.rs` (bug-05-2): end-to-end
+      line `ask_prod_expects=0`.
 - [ ] The end-to-end Update Log entry holds the output fence **first**,
       then the `PASTE MATCH` line.
 
@@ -135,6 +137,7 @@ Plus the renamed `attach_makes_the_session_resident_with_its_disk_history`.
 A=/tmp/e2e-m29-05.txt; : > "$A"
 for t in restart_reconnect_alert_ask_sees_the_alert restart_reconnect_quit_alert_resume_briefs_the_alert fresh_resume_of_a_never_loaded_session_carries_history_and_meta attach_makes_the_session_resident_with_its_disk_history catchup_brief_reaches_a_session_that_is_not_resident catchup_brief_names_an_alert_posted_after_the_chat_left inject_reaches_a_presence_attached_session_that_is_not_resident; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 echo "registry_refs=$(grep -rc 'NON_RESIDENT_DETACHES\|non_resident_detach' src | grep -v ':0' | wc -l)" >> "$A"
+TA=$(grep -n '^mod tests\|^#\[cfg(test)\]' src/daemon/server/ask.rs | head -1 | cut -d: -f1); echo "ask_prod_expects=$(head -n ${TA:-99999} src/daemon/server/ask.rs | grep -cE '\.(expect|unwrap)\(')" >> "$A"
 T=$(grep -n '^mod tests\|^#\[cfg(test)\]' src/daemon/server/chat_presence.rs | head -1 | cut -d: -f1); echo "in_lock_builds=$(( $(grep -c 'or_insert_with(|| SessionEntry::from_disk' src/daemon/server/ask.rs) + $(head -n $((T-1)) src/daemon/server/chat_presence.rs | grep -c 'or_insert_with(|| SessionEntry::from_disk') ))" >> "$A"
 cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
@@ -171,6 +174,40 @@ diff /tmp/pasted-m29-05.txt /tmp/e2e-m29-05.txt && echo "PASTE MATCH" || echo "P
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-19 (bounce 2: bug-05-2)
+
+**Green gates and a clean tree are expected here, and they are NOT
+evidence that the phase is done.** Everything else is approved and stays
+as it is, including the bug-05-1 fix: the probe, the build outside the
+lock and the insert, at both sites.
+
+**There is exactly one edit left, in `ask.rs` only.** Read
+`bugs/bug-05-2.md`. The `.expect("the probe or the insert above
+guarantees the entry exists")` can fire, because `cleanup_pass` may evict
+the entry between the two `with_sessions` calls. The previous bounce
+note's example implied that the entry always exists there. That was my
+error.
+
+Replace the `expect` with a branch that handles the missing entry. For
+example:
+
+```rust
+let Some(entry) = store.get_mut(id.as_str()) else {
+    // Evicted between the probe and here: a rare race. Report no cost
+    // for this turn instead of panicking.
+    return (0.0, false);
+};
+```
+
+Use whatever the closure's real return type needs. Do not read files here
+(bug-05-1), and do not touch `chat_presence.rs`.
+
+**Finish condition:** the end-to-end lines read `ask_prod_expects=0` and
+`in_lock_builds=0`, and `cargo test` reports `passed=2425`, **not**
+2426. Mutation-check it: put the `expect` back, confirm
+`ask_prod_expects=1`, revert, and say so in the entry. Re-run § End-to-end
+verification once and paste a fresh output fence.
 
 ### Notes for executor — 2026-10-19 (bounce: bug-05-1)
 
