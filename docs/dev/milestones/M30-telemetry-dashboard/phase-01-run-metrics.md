@@ -1,7 +1,7 @@
 # Phase 01: run-metrics — a per-run tally on the run guard; `run_id` on every `ai_cost`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** in-progress (bounced 2026-10-20: bug-01-1)
 **Depends on:** none
 **Estimated diff:** ~250 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=s
@@ -111,6 +111,10 @@ emitted here except the `run_id` key.
       `stream_model_calls=` and `ghost_model_calls=`).
 - [ ] Both tool loops call `tally_tool_outcome` (report lines
       `stream_tally=` and `ghost_tally=`).
+- [ ] **bug-01-1:** inside `fn tool_outcome_detail`, `ok` comes from
+      `succeeded()` — report line `detail_starts_with=0` and
+      `detail_succeeded=` at least 1 (against the bounced tree they read
+      `1` and `0`).
 - [ ] `cargo test` ⇒ about `passed=2439 failed=0` (2430 at `9bc3ebe1`
       + 9). An extra test is fine: name it and report; do not re-run the
       suite to chase a number.
@@ -129,6 +133,8 @@ echo "stream_model_calls=$(grep -c 'record_model_call(' src/daemon/stream.rs)" >
 echo "ghost_model_calls=$(grep -c 'record_model_call(' src/daemon/ghost.rs)" >> "$A"
 echo "stream_tally=$(grep -c 'tally_tool_outcome(' src/daemon/stream.rs)" >> "$A"
 echo "ghost_tally=$(grep -c 'tally_tool_outcome(' src/daemon/ghost.rs)" >> "$A"
+echo "detail_starts_with=$(awk '/^fn tool_outcome_detail/,/^}/' src/daemon/executor/mod.rs | grep -c 'starts_with')" >> "$A"
+echo "detail_succeeded=$(awk '/^fn tool_outcome_detail/,/^}/' src/daemon/executor/mod.rs | grep -c 'succeeded()')" >> "$A"
 cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
 cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
@@ -365,3 +371,23 @@ kill: (-2459989): No such process
 **Commit:** 3e8fbba4863c8a6e781edbb1d62b121068e4cd80
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-20 (review: bounced, bug-01-1)
+
+Independent re-run at `f7cba789`: fmt, build and clippy exit 0; 2438
+passed, 0 failed; the end-to-end paste matches the artifact. Tasks 1, 3, 4
+and 5 are implemented as specified; the eight named tests are real (each
+asserts the computed value, and `tally_tool_outcome_classifies_each_outcome`
+pins the negative cases).
+
+**Not done — task 2's second sentence:** `tool_outcome_detail` still holds
+its own `starts_with` copy of the success rule instead of taking `ok` from
+`succeeded()`. Filed as [bug-01-1](bugs/bug-01-1.md) (minor). Two new
+acceptance criteria and two end-to-end report lines pin it; both fail
+against the bounced tree.
+
+**Notes for executor.** Only `fn tool_outcome_detail` changes: its
+`Result` arm reads `ok` from `self.succeeded()` (which is `Some(bool)` for
+a `Result`) and keeps its line-count `detail`; the `UserMessage` and
+`SpawnGhostSession` arms keep their current tuples. Re-run § End-to-end
+verification once and paste the output as a new entry.
