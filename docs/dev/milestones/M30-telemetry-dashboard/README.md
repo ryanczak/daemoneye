@@ -102,7 +102,7 @@ close. Each may split at drafting.
 | # | Phase | Status |
 |---|---|---|
 | 01 | run-metrics ([phase-01-run-metrics.md](phase-01-run-metrics.md)) — a `RunMetrics` tally (tool calls and successes, parse failures, tokens, wall clock, model / served model) kept on the run and fed by the chat turn, ghost, scheduled and delegated loops; `CostRecord.run_id` | done |
-| 02 | run-record — the `run` event: the record type, `failure_class` computed from the terminal state, `is_model_attributable`, emitted at every run end; the ghost `Budget` fed with real spend | todo |
+| 02 | run-record ([phase-02-run-record.md](phase-02-run-record.md)) — the `run` event: the record type, `failure_class` computed from the terminal state and the tally, `is_model_attributable`, emitted by the run guard at every run end; the ghost `Budget` fed with real spend | todo |
 | 03 | scorecard — pure aggregation over `run` events with `n_runs` and `min_runs`; `daemoneye scorecard` | todo |
 | 04 | profile — `daemoneye profile <model>`: strengths and ranked failure classes | todo |
 | 05 | daily-cap — `[budget] max_cost_per_day`, the breaker at turn top on all three paths, the `status` line | todo |
@@ -117,6 +117,17 @@ close. Each may split at drafting.
   `ai_cost`. `daemoneye costs` has never seen them, and a daily cap that
   read only `ai_cost` would not either. The daily-cap phase must cost and
   gate them, or the cap's "nothing is sent to a provider" is false.
+- **Scheduled records carry no model (found drafting 02).** A
+  `Scheduled` run is the job wrapper: a scheduled ghost job's model calls
+  land on its own `Ghost` run, and a script or alert job makes none that
+  are costed. So a `scheduled` record has `model: null` and zero calls.
+  The scorecard must bucket or skip model-less records rather than count
+  them against a model.
+- **`other` joins the failure vocabulary (02).** A `HardFail` with no
+  backend error, parse failure or failed tool (a ghost internal error, a
+  failed script job, a missed outcome) is `other`, not model-attributable.
+  The PE's vocabulary was declared open; `stall` stays reserved for the
+  governor.
 - **No served model.** No backend reports the model that actually served
   a call, so the record carries the configured `provider` and `model`.
   Truncation reaches the loop only as a `Notice` string, so there is no
