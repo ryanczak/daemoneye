@@ -303,8 +303,6 @@ mod tests {
 
     #[test]
     fn a_cost_record_carries_its_run_id() {
-        use crate::config::PricingSource;
-
         let record = CostRecord {
             timestamp: Utc::now(),
             session_id: "sess-1".to_string(),
@@ -327,8 +325,6 @@ mod tests {
 
     #[test]
     fn a_cost_record_without_run_id_still_parses() {
-        use crate::config::PricingSource;
-
         let older = r#"{
             "timestamp": "2026-05-16T12:00:00Z",
             "session_id": "sess-old",
