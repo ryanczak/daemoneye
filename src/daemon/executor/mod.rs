@@ -1393,7 +1393,7 @@ where
                 knowledge::ContextBreadth::All => crate::tmux::cache::ContextScope::All,
                 _ => crate::tmux::cache::ContextScope::Session,
             };
-            let ctx = cache.get_labeled_context_scoped(chat_pane, chat_pane, ctx_scope);
+            let ctx = cache.get_labeled_context_scoped(chat_pane, ctx_scope);
             let pane_map = cache.pane_map_summary(chat_pane);
             let shells_line = knowledge::shell_context_block(&Owner::Chat(
                 session_id.unwrap_or_default().to_string(),

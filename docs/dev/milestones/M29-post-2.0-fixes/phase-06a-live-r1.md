@@ -1,7 +1,7 @@
 # Phase 06a: live-r1 — rehearsal 1's findings F1 (active pane) and F2 (catch-up names no alert)
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05
 **Estimated diff:** ~150 lines (most of it mechanical call-site edits)
 **Tags:** language=rust, kind=bugfix, size=s
@@ -154,3 +154,12 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-20 01:38 (started)
+
+**Executor:** executor-6a-run1 (model: claude-opus-4-6).
+
+Status flipped `todo → in-progress`; milestone README row updated. Plan:
+Task 1–3 in `src/tmux/cache.rs` (+ `cache_tests.rs`), Task 2 call sites in
+`src/daemon/prompt.rs` and `src/daemon/executor/mod.rs`, Task 4 in
+`src/daemon/server/catchup.rs`, then Task 5's verbatim end-to-end run.

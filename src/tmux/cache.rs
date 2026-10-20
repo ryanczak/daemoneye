@@ -395,22 +395,6 @@ impl SessionCache {
         Ok(())
     }
 
-    /// Build a labeled terminal context block for the AI.
-    ///
-    /// The pane wearing `[ACTIVE PANE]` is the user's real tmux focus (the
-    /// cache's `active_pane`) captured at full depth, and never the chat pane
-    /// itself; the `source_pane` argument gets that block only when it *is* the
-    /// focus (M29 F9 — 1.x callers pass a 1.x "target pane" that may be a
-    /// sibling of the chat pane, and `get_shell_context` passes the chat pane).
-    /// All other cached panes — including a source pane that did not get the
-    /// active block — are included as brief summaries tagged `[VISIBLE PANE]`,
-    /// `[BACKGROUND PANE]` or `[SESSION PANE]` with CWD and terminal title.
-    /// A `[SESSION ENVIRONMENT]` block is prepended when any high-signal env vars are set.
-    ///
-    /// `chat_pane` is the pane running `daemoneye chat` — it is excluded from the
-    /// background pane listing so the AI cannot accidentally target it with foreground
-    /// commands.
-    ///
     /// Returns a compact `[PANE MAP]` line mapping window-relative pane indices to
     /// absolute pane IDs.  Excludes daemon-owned background windows and the chat
     /// pane itself; returns an empty string when no targetable panes are known.
@@ -447,17 +431,32 @@ impl SessionCache {
         format!("[PANE MAP] {}\n", parts.join(" | "))
     }
 
-    pub fn get_labeled_context(
-        &self,
-        source_pane: Option<&str>,
-        chat_pane: Option<&str>,
-    ) -> String {
-        self.get_labeled_context_scoped(source_pane, chat_pane, ContextScope::Session)
+    pub fn get_labeled_context(&self, chat_pane: Option<&str>) -> String {
+        self.get_labeled_context_scoped(chat_pane, ContextScope::Session)
     }
 
+    /// Build a labeled terminal context block for the AI.
+    ///
+    /// The pane wearing `[ACTIVE PANE]` is the user's real tmux focus — the
+    /// cache's `active_pane` — captured at full depth, whenever the cache has
+    /// seen that focus, it is not the chat pane itself, and it is a cached
+    /// pane of the home session. Otherwise no pane wears the label, so a
+    /// snapshot never holds more than one `[ACTIVE PANE` block. Callers pass
+    /// only the chat pane; whoever calls, the label follows the user's focus
+    /// (M29 06a F1 — `get_shell_context` passes the chat pane, and the turn
+    /// prompt passes the pane the chat chose at startup, so under the old
+    /// argument-based rule a focus on any other pane was never labelled).
+    ///
+    /// All other cached panes — including a focused pane that did not get the
+    /// active block — are included as brief summaries tagged `[VISIBLE PANE]`,
+    /// `[BACKGROUND PANE]` or `[SESSION PANE]` with CWD and terminal title.
+    /// A `[SESSION ENVIRONMENT]` block is prepended when any high-signal env vars are set.
+    ///
+    /// `chat_pane` is the pane running `daemoneye chat` — it is excluded from the
+    /// pane listing so the AI cannot accidentally target it with foreground
+    /// commands.
     pub fn get_labeled_context_scoped(
         &self,
-        source_pane: Option<&str>,
         chat_pane: Option<&str>,
         scope: ContextScope,
     ) -> String {
@@ -529,18 +528,19 @@ impl SessionCache {
         }
 
         // Active pane — full capture, explicitly labelled.
-        //
-        // Only the user's real tmux focus (`active_pane`) may wear the
-        // `[ACTIVE PANE]` label, and never the chat pane itself (M29 F9):
-        // 1.x callers pass a "target pane" that is a *sibling* of the chat
-        // pane, so the label would land on the next pane over, and
-        // `get_shell_context` passes the chat pane, which would label the
-        // chat's own output as what the user is looking at.
         let active_pane = self.active_pane.read().unwrap_or_log().clone();
-        let active_label_pane = match (source_pane, active_pane.as_deref()) {
-            (Some(src), Some(focus)) if Some(src) != chat_pane && src == focus => Some(src),
-            _ => None,
-        };
+        // Read session_name before the panes guard (M12 lock ordering).
+        let home = self.session_name.read().unwrap_or_log().clone();
+        let active_label_pane = active_pane
+            .as_deref()
+            .filter(|focus| Some(*focus) != chat_pane)
+            .filter(|focus| {
+                self.panes
+                    .read()
+                    .unwrap_or_log()
+                    .get(*focus)
+                    .is_some_and(|p| p.session_name == home)
+            });
 
         if let Some(pane_id) = active_label_pane {
             // Pull CWD, command, title, scroll position, mode flags, and pane index from cache in one lock.

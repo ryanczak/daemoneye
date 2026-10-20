@@ -9,9 +9,9 @@ fn cache() -> SessionCache {
 // ── get_labeled_context ───────────────────────────────────────────────────
 
 #[test]
-fn get_labeled_context_no_panes_no_source_returns_fallback() {
+fn get_labeled_context_no_panes_returns_fallback() {
     let c = cache();
-    let ctx = c.get_labeled_context(None, None);
+    let ctx = c.get_labeled_context(None);
     assert!(ctx.contains("no terminal context available"));
 }
 
@@ -47,7 +47,7 @@ fn get_labeled_context_client_viewport_shown_when_known() {
             },
         );
     }
-    let ctx = c.get_labeled_context(None, None);
+    let ctx = c.get_labeled_context(None);
     assert!(
         ctx.contains("[CLIENT VIEWPORT] 220x50"),
         "expected viewport block, got: {ctx}"
@@ -85,7 +85,7 @@ fn get_labeled_context_client_viewport_absent_when_zero() {
             },
         );
     }
-    let ctx = c.get_labeled_context(None, None);
+    let ctx = c.get_labeled_context(None);
     assert!(
         !ctx.contains("[CLIENT VIEWPORT]"),
         "viewport block should be absent when (0,0)"
@@ -146,7 +146,7 @@ fn get_labeled_context_background_panes_sorted() {
             },
         );
     }
-    let ctx = c.get_labeled_context(None, None);
+    let ctx = c.get_labeled_context(None);
     let pos1 = ctx.find("%1").unwrap();
     let pos3 = ctx.find("%3").unwrap();
     assert!(pos1 < pos3, "panes should be sorted by ID");
@@ -176,7 +176,7 @@ fn get_labeled_context_session_topology() {
             flags: String::new(),
         });
     }
-    let ctx = c.get_labeled_context(None, None);
+    let ctx = c.get_labeled_context(None);
     assert!(
         ctx.contains("[SESSION TOPOLOGY]"),
         "expected topology block, got: {ctx}"
@@ -208,7 +208,7 @@ fn get_labeled_context_single_window_no_topology() {
             flags: String::new(),
         });
     }
-    let ctx = c.get_labeled_context(None, None);
+    let ctx = c.get_labeled_context(None);
     assert!(
         !ctx.contains("[SESSION TOPOLOGY]"),
         "single-window session should not have topology block"
@@ -216,7 +216,7 @@ fn get_labeled_context_single_window_no_topology() {
 }
 
 #[test]
-fn get_labeled_context_source_pane_excluded_from_background() {
+fn get_labeled_context_single_pane_excluded_from_background() {
     let c = cache();
     {
         let mut panes = c.panes.write().unwrap();
@@ -245,11 +245,20 @@ fn get_labeled_context_source_pane_excluded_from_background() {
             },
         );
     }
-    // When %5 is the source pane it should NOT appear in BACKGROUND PANE list.
-    // (It will appear as ACTIVE PANE if capture-pane succeeds — but in tests
-    //  tmux isn't running so capture_pane returns an error, which is fine.)
-    let ctx = c.get_labeled_context(Some("%5"), None);
-    assert!(!ctx.contains("[BACKGROUND PANE %5]"));
+    // %5 is the focus — it gets the active block, never the pane listing.
+    // (In tests tmux isn't running so the active block's capture is an error
+    //  string; its `[ACTIVE PANE %5` header is still written.)
+    c.set_active_pane("%5");
+    let ctx = c.get_labeled_context(None);
+    assert_eq!(ctx.matches("[ACTIVE PANE").count(), 1, "got: {ctx}");
+    assert!(
+        ctx.contains("[ACTIVE PANE %5"),
+        "the focus wears the active block, got: {ctx}"
+    );
+    assert!(
+        !ctx.contains("[BACKGROUND PANE %5]"),
+        "the focused pane is not also listed, got: {ctx}"
+    );
 }
 
 #[test]
@@ -285,7 +294,7 @@ fn get_labeled_context_copy_mode_annotated() {
     // get_labeled_context reads from cache; capture_pane won't run (no tmux).
     // Assert that the BACKGROUND PANE line for %7 contains no copy-mode marker
     // (that's only on the ACTIVE PANE header) but that the pane is listed.
-    let ctx = c.get_labeled_context(None, None);
+    let ctx = c.get_labeled_context(None);
     assert!(ctx.contains("%7"), "pane %7 should appear in context");
     // Synchronized flag should NOT appear (synchronized=false).
     assert!(
@@ -324,7 +333,7 @@ fn get_labeled_context_synchronized_pane_noted() {
             },
         );
     }
-    let ctx = c.get_labeled_context(None, None);
+    let ctx = c.get_labeled_context(None);
     assert!(
         ctx.contains("[synchronized]"),
         "synchronized pane should have [synchronized] marker"
@@ -362,7 +371,7 @@ fn get_labeled_context_dead_pane_noted() {
             },
         );
     }
-    let ctx = c.get_labeled_context(None, None);
+    let ctx = c.get_labeled_context(None);
     assert!(
         ctx.contains("[dead: 1]"),
         "dead pane should have [dead: 1] marker, got: {ctx}"
@@ -426,16 +435,17 @@ fn get_labeled_context_chat_pane_excluded_from_background() {
             },
         );
     }
-    // %1 is source, %2 is chat — chat pane must not appear in background listing.
-    let ctx = c.get_labeled_context(Some("%1"), Some("%2"));
+    // %2 is chat — chat pane must not appear in the pane listing.
+    let ctx = c.get_labeled_context(Some("%2"));
     assert!(
         !ctx.contains("[BACKGROUND PANE %2"),
         "chat pane should be excluded"
     );
-    // Source pane also shouldn't be in background listing (existing behaviour).
+    // %1 is not the chat pane and not the focus, so it stays in the listing
+    // as a session pane (same session, no daemon windows).
     assert!(
-        !ctx.contains("[BACKGROUND PANE %1"),
-        "source pane should be excluded too"
+        ctx.contains("[SESSION PANE %1"),
+        "non-chat pane should still be listed, got: {ctx}"
     );
 }
 
@@ -545,8 +555,8 @@ fn get_labeled_context_pane_classification() {
             },
         );
     }
-    // No source pane; chat pane is %2.
-    let ctx = c.get_labeled_context(None, Some("%2"));
+    // Chat pane is %2.
+    let ctx = c.get_labeled_context(Some("%2"));
     assert!(!ctx.contains("%2"), "chat pane should be excluded entirely");
     assert!(
         ctx.contains("[VISIBLE PANE %3"),
@@ -623,7 +633,7 @@ fn labeled_context_excludes_foreign_session_panes() {
             p
         });
     }
-    let ctx = c.get_labeled_context(None, None);
+    let ctx = c.get_labeled_context(None);
     assert!(
         ctx.contains("%1"),
         "home pane should appear in context, got: {ctx}"
@@ -770,12 +780,12 @@ fn labeled_context_window_scope_excludes_other_windows() {
             },
         );
     }
-    let ctx_window = c.get_labeled_context_scoped(Some("%1"), Some("%1"), ContextScope::Window);
+    let ctx_window = c.get_labeled_context_scoped(Some("%1"), ContextScope::Window);
     assert!(
         !ctx_window.contains("%2"),
         "Window scope should exclude panes in other windows, got: {ctx_window}"
     );
-    let ctx_session = c.get_labeled_context_scoped(Some("%1"), Some("%1"), ContextScope::Session);
+    let ctx_session = c.get_labeled_context_scoped(Some("%1"), ContextScope::Session);
     assert!(
         ctx_session.contains("%2"),
         "Session scope should include panes in other windows, got: {ctx_session}"
@@ -836,7 +846,7 @@ fn labeled_context_all_scope_lists_foreign_panes() {
             },
         );
     }
-    let ctx_all = c.get_labeled_context_scoped(None, None, ContextScope::All);
+    let ctx_all = c.get_labeled_context_scoped(None, ContextScope::All);
     assert!(
         ctx_all.contains("FOREIGN SESSION PANE"),
         "All scope should list foreign panes, got: {ctx_all}"
@@ -845,7 +855,7 @@ fn labeled_context_all_scope_lists_foreign_panes() {
         ctx_all.contains("%9"),
         "All scope should include foreign pane id, got: {ctx_all}"
     );
-    let ctx_session = c.get_labeled_context_scoped(None, None, ContextScope::Session);
+    let ctx_session = c.get_labeled_context_scoped(None, ContextScope::Session);
     assert!(
         !ctx_session.contains("FOREIGN SESSION PANE"),
         "Session scope should not list foreign panes, got: {ctx_session}"
@@ -886,7 +896,7 @@ fn labeled_context_session_scope_omits_foreign_header_when_none() {
             },
         );
     }
-    let ctx_all = c.get_labeled_context_scoped(None, None, ContextScope::All);
+    let ctx_all = c.get_labeled_context_scoped(None, ContextScope::All);
     assert!(
         !ctx_all.contains("FOREIGN SESSION PANE"),
         "All scope with no foreign panes should not emit foreign header, got: {ctx_all}"
@@ -950,18 +960,18 @@ fn no_active_label_when_the_focus_is_the_chat_pane() {
         );
     }
     c.set_active_pane("%2");
-    let ctx = c.get_labeled_context(Some("%1"), Some("%2"));
+    let ctx = c.get_labeled_context(Some("%2"));
     assert!(
         !ctx.contains("[ACTIVE PANE"),
         "the chat pane's focus must label nothing active, got: {ctx}"
     );
     assert!(
         ctx.contains("[SESSION PANE %1"),
-        "the source pane must still be listed as an ordinary pane line, got: {ctx}"
+        "the pane must still be listed as an ordinary pane line, got: {ctx}"
     );
     assert!(
         ctx.contains("Idle shell at: $"),
-        "the listed source pane keeps its summary, got: {ctx}"
+        "the listed pane keeps its summary, got: {ctx}"
     );
     assert!(
         !ctx.contains("%2"),
@@ -1024,7 +1034,7 @@ fn the_chat_pane_is_never_the_active_pane() {
         );
     }
     c.set_active_pane("%2");
-    let ctx = c.get_labeled_context_scoped(Some("%2"), Some("%2"), ContextScope::Session);
+    let ctx = c.get_labeled_context_scoped(Some("%2"), ContextScope::Session);
     assert!(
         !ctx.contains("[ACTIVE PANE"),
         "the chat pane must never wear the active label, got: {ctx}"
@@ -1086,7 +1096,7 @@ fn the_users_real_focus_gets_the_one_active_label() {
         );
     }
     c.set_active_pane("%1");
-    let ctx = c.get_labeled_context(Some("%1"), Some("%2"));
+    let ctx = c.get_labeled_context(Some("%2"));
     assert_eq!(
         ctx.matches("[ACTIVE PANE").count(),
         1,
@@ -1161,17 +1171,17 @@ fn an_unknown_focus_labels_nothing_active() {
             },
         );
     }
-    let ctx = c.get_labeled_context(Some("%1"), Some("%2"));
+    let ctx = c.get_labeled_context(Some("%2"));
     assert!(
         !ctx.contains("[ACTIVE PANE"),
         "an unknown focus labels nothing active, got: {ctx}"
     );
     assert!(
         ctx.contains("[SESSION PANE %1"),
-        "the source pane is still listed, got: {ctx}"
+        "the pane is still listed, got: {ctx}"
     );
     assert!(
         ctx.contains("Idle shell at: $"),
-        "the listed source pane keeps its summary, got: {ctx}"
+        "the listed pane keeps its summary, got: {ctx}"
     );
 }

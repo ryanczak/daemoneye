@@ -13,6 +13,17 @@ pub(crate) fn is_valid_pane_id(id: &str) -> bool {
     id.starts_with('%') && id.len() > 1 && id[1..].bytes().all(|b| b.is_ascii_digit())
 }
 
+/// True when a trimmed line is nothing but one bracketed tag: starts with `[`,
+/// ends with `]`, and holds no earlier `]` (M29 06a F2). `[Webhook Alert]` is a
+/// bare tag; `[FIRING] cpu-hot-L6 — cpu at 99%` and `[Background Task
+/// Completed] job1 (exit 0)` are not — text follows their `]`.
+fn is_bare_tag(line: &str) -> bool {
+    line.len() > 1
+        && line.starts_with('[')
+        && line.ends_with(']')
+        && !line[1..line.len() - 1].contains(']')
+}
+
 /// Build the N15 catch-up brief from messages injected while the client was away.
 ///
 /// `new_msgs` is the slice of messages added after detach.
@@ -53,7 +64,18 @@ pub(crate) fn build_catchup_brief(
             {
                 // Extract just the first line as a terse summary.
                 let first_line = c.lines().next().unwrap_or(c.as_str()).trim();
-                Some(first_line.to_string())
+                // Webhook messages are built as `[Webhook Alert]\n[FIRING] <name>
+                // — <summary>\n{json…}` (M29 06a F2): a first line that is only
+                // a bracketed tag names nothing, so continue to the next
+                // non-empty line.
+                let summary = if is_bare_tag(first_line)
+                    && let Some(rest) = c.lines().skip(1).map(str::trim).find(|l| !l.is_empty())
+                {
+                    format!("{first_line} {rest}")
+                } else {
+                    first_line.to_string()
+                };
+                Some(summary)
             } else {
                 None
             }
@@ -231,6 +253,47 @@ mod tests {
         assert!(
             !brief.contains("Full output:"),
             "should not include subsequent lines: {brief}"
+        );
+    }
+
+    #[test]
+    fn catchup_brief_names_the_alert_under_a_bare_tag() {
+        let msgs = vec![msg(
+            "[Webhook Alert]\n[FIRING] cpu-hot-L6 — cpu at 99%\n{\n  \"alertname\": \"cpu-hot-L6\"\n}",
+        )];
+        let brief = build_catchup_brief(&msgs, 60, None).expect("should produce a brief");
+        assert!(
+            brief.contains("[Webhook Alert] [FIRING] cpu-hot-L6 — cpu at 99%"),
+            "the alert should be named under the bare tag: {brief}"
+        );
+        assert!(
+            !brief.contains("alertname"),
+            "the json body must not leak into the brief: {brief}"
+        );
+    }
+
+    #[test]
+    fn catchup_brief_bare_tag_with_no_next_line_stays_as_is() {
+        let msgs = vec![msg("[Webhook Alert]")];
+        let brief = build_catchup_brief(&msgs, 60, None).expect("should produce a brief");
+        assert!(
+            brief.contains("• [Webhook Alert]"),
+            "a tag with no following line is unchanged: {brief}"
+        );
+    }
+
+    #[test]
+    fn catchup_brief_tag_with_text_after_bracket_keeps_first_line() {
+        let watch = msg("[Watch Pane %3] pattern 'ready' matched after 45s");
+        let job = msg("[Background Task Completed] job1 (exit 0)");
+        let brief = build_catchup_brief(&[watch, job], 60, None).expect("should produce a brief");
+        assert!(
+            brief.contains("[Watch Pane %3] pattern 'ready' matched after 45s"),
+            "text after the ] keeps the first line: {brief}"
+        );
+        assert!(
+            brief.contains("[Background Task Completed] job1 (exit 0)"),
+            "text after the ] keeps the first line: {brief}"
         );
     }
 

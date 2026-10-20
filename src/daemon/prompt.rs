@@ -69,8 +69,7 @@ pub fn format_current_time_line() -> String {
 pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
     let in_tmux = ctx.chat_pane.is_some();
     let session_summary = if in_tmux {
-        ctx.cache
-            .get_labeled_context(ctx.client_pane, ctx.chat_pane)
+        ctx.cache.get_labeled_context(ctx.chat_pane)
     } else {
         crate::daemon::executor::knowledge::shells_only_context(&crate::shell::Owner::Chat(
             ctx.session_id.unwrap_or_default().to_string(),
@@ -230,8 +229,7 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
 
     if ctx.inject_snapshot {
         let session_summary = if ctx.chat_pane.is_some() {
-            ctx.cache
-                .get_labeled_context(ctx.client_pane, ctx.chat_pane)
+            ctx.cache.get_labeled_context(ctx.chat_pane)
         } else {
             crate::daemon::executor::knowledge::shells_only_context(&crate::shell::Owner::Chat(
                 ctx.session_id.unwrap_or_default().to_string(),
