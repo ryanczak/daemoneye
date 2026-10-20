@@ -1,7 +1,7 @@
 # Phase 06: live-close — the post-2.0 fixes, checked against a real daemon; 2.2.0 ships
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** todo
+**Status:** done
 **Depends on:** 01–05 (all `done`)
 **Estimated diff:** this doc's Update Log, the milestone README, then the
 release (`Cargo.toml` / `Cargo.lock`, `CHANGELOG.md`)
@@ -161,3 +161,41 @@ not block the close.
 
 **Next.** The PE run: L1–L7 once, watched with
 `tmux -S /tmp/de29-emu.sock attach -r`, then the Close steps.
+
+### Update — 2026-10-20 (PE run, architect-driven, PE watching)
+
+Release binary at `ff0b201e` (no source change since 06a's `dc30f475`).
+Runtime state reset to the config alone; the PE attached read-only before
+chat started. Raw notes: `/tmp/e2e-m29-06.txt` (section "PE run"). Every
+process with `HOME=$R` was killed at the end; the PE's own daemon was
+untouched.
+
+| Block | Result |
+|---|---|
+| L1 masker | **pass**: `pinky\n[ran in shell s0]`; `Host web\n<SSH_HOST>\n[ran in shell s0]` |
+| L2 shell line | **pass**: `\n[command exited with status 3]\n[ran in shell s0]` |
+| L3 log fields | **pass**: waited runs `"shell":"s0"…"wait":true`; `wait: false` `"shell":"s1"…"wait":false`; denial `"shell":null`, `mode`/`pane` present; daemon.log `command approved (waited):` ×3, `command approved (wait: false):`, `command denied (waited):`, 0 `foreground command approved` |
+| L4 active pane | **pass**: chat focused → no `[ACTIVE PANE`, `%1` listed; focus on `%1` → exactly one `[ACTIVE PANE %1 \| cwd: /tmp \| title: pinky]`, `%1` not listed twice |
+| L5 S1 | **pass**: the answer named `disk-full-L5`; history line 7 holds `[Webhook Alert]\n[FIRING] disk-full-L5 …` |
+| L6 S2 | **pass**: within 1 s of launch, before any typing: `• [Webhook Alert] [FIRING] cpu-hot-L6 — PE run alert L6: cpu at 99% (alertmanager)` |
+| L7 S3 | **pass**: the first resume after a restart quoted "What is 17 times 23? Answer in one line." |
+| L8 invalid args | not run (unit-covered); 0 invalid-argument lines in daemon.log |
+
+No new findings. O5 and O6 recur. One model observation, not a daemon
+defect: after L1, GLM narrated a "third run" of the printf with the
+unmasked `HostName` line; no third tool call exists in the history, and it
+retracted the fabrication unprompted on the next turn. The real results
+are the two tool records above.
+
+### Review verdict — 2026-10-20
+
+- **Verdict:** approved_first_try (architect-run; two rehearsals, then
+  the PE run)
+- **Bounces:** none. Rehearsal 1's F1 and F2 went to 06a, not to a bounce.
+- **Executor:** Claude Code (direct), PE watching the PE run.
+- **Scope deviations:** none. The README `exit` sentence is restored at
+  the close (Close step 1); the doc-comment nit went into 06a.
+- **Calibration:** S1 (the inverted `/approvals` words) is a doc bug the
+  rehearsal caught before the PE run. The harness helper must target the
+  chat pane by id once the window is split: `send-keys -t <session>` goes
+  to the *focused* pane, which L4 deliberately moves.

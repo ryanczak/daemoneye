@@ -1426,7 +1426,7 @@ Every command the AI proposes — whether approved, denied, or timed out — is 
 {"event":"ai_cost","ts":"2026-05-16T10:23:01Z","agent_name":"chat","provider":"anthropic","cost":{"total_cost_usd":0.0847},...}
 ```
 
-`wait` is `true` for a waited command and `false` for a `wait: false` one. `shell` is the PTY shell id for a run and `null` for an approval decision, which ran nothing. `mode` and `pane` are kept for existing readers; new readers should use `wait` and `shell`. `status` is `approved` / `denied` / `timeout` / `refused`, or a path-specific failure. `out` is the first 200 characters of output.
+`wait` is `true` for a waited command and `false` for a `wait: false` one. `shell` is the PTY shell id for a run and `null` for an approval decision, which ran nothing. `exit` is the command's real exit code, present only on a run. `mode` and `pane` are kept for existing readers; new readers should use `wait` and `shell`. `status` is `approved` / `denied` / `timeout` / `refused`, or a path-specific failure. `out` is the first 200 characters of output.
 
 Segments older than `[events] retention_days` (default 90) are swept automatically by the daemon. A pre-rotation `var/log/events.jsonl` is still read by every consumer (`daemoneye costs`, `daemoneye status`, `search_repository`, epoch tallies) and is never rotated or deleted — date-ranged reads span the legacy file and the segments transparently.
 

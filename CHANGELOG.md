@@ -8,6 +8,40 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-10-20 — M29 Post-2.0 fixes
+
+The defects that shipped in 2.0 and 2.1, found in the M27 and M28 live
+closes, are fixed and checked live. A session is one thing whether or not
+it is resident, the context never names two active panes, bad tool
+arguments cannot dodge the budget caps, and the logs stop speaking 1.x.
+The retrospective is in `docs/dev/milestones/M29-post-2.0-fixes/README.md`.
+
+- **One session store** — a presence attach (`chat --resume`) makes the
+  session resident by loading its history from disk, and the same store
+  serves event injection, catch-up briefs and the next turn. An alert that
+  arrives after a restart reaches the resumed session, and a resumed
+  session answers from its full history. The non-resident detach path is
+  gone.
+- **One active pane** — inside tmux the context carries at most one
+  `[ACTIVE PANE]` line, on the pane the user has focused, and none when
+  the focus is the chat's own pane. `get_shell_context` labels the focus
+  too, whoever calls it.
+- **Catch-up names the alert** — a brief line whose event is a bare tag
+  such as `[Webhook Alert]` now carries the alert's own line.
+- **Invalid arguments** — a type-mismatch error says whether the parameter
+  is `required` or `optional`, and an invalid-arguments call to an
+  approval-gated tool counts against the per-turn, per-session and
+  per-tool caps.
+- **Masker** — the output of the `hostname` command is no longer rewritten
+  to `<SSH_HOST>`; `HostName` and `IdentityFile` lines in ssh config still
+  are.
+- **Results name their shell** — a waited `run_terminal_command` result
+  ends `[ran in shell sN]`, after the exit-status line when there is one.
+- **Audit log fields** — `command` events carry `wait` and `shell` beside
+  the kept `mode` and `pane`; daemon.log says `command approved (waited)`
+  / `(wait: false)` / `command denied (waited)` instead of the 1.x
+  `foreground command approved`.
+
 ## [2.1.0] — 2026-10-18 — M28 Interactive shells
 
 An interactive TUI, with Claude Code as the reference case, now runs inside a

@@ -217,6 +217,16 @@ Before dispatch, with the finished Spec in front of you:
    run time, never at drafting. This is § "Spec facts must be executed"
    applied to the evidence block itself.
 
+5. **Every fact the Spec states about the tree was read at its consumer.**
+   A code site ("put the line in `finish_run`"), a caller set ("callers are
+   unchanged"), a symbol's lock or lifetime semantics ("build it inside the
+   closure"), a substring an assertion targets ("lacks the bare word for
+   that parameter") — open the thing that depends on the fact and read what
+   it does with it before dispatch. "Callers are unchanged" names each
+   caller and what it passes. A Spec fact that was not read is a guess the
+   executor cannot tell from a fact, and it will spend a stall looking for
+   a code bug that is in the Spec.
+
 *(Rules 1 and 2 folded 2026-09-18 at M22 close, on PE sign-off. Neither is new;
 this is a trigger for two that already existed. Rule 1 was folded 2026-07-27 and
 reinforced 2026-08-08 after M12 broke it twice; M22 phases 08b and 10b broke it
@@ -248,6 +258,18 @@ directions", five occurrences, never applied — is **retired as superseded**: t
 M20 fold of 2026-09-08 already requires running the whole criteria block and
 seeing every non-preservation line fail, and the M13 fold of 2026-08-10 already
 requires executing each criterion against the tree the phase will produce.)*
+
+*(Rule 5 added 2026-10-20 at M29 close, on PE sign-off — fold A of that
+retrospective. Six occurrences in one milestone, all one class: phase 01's
+negative assertion was ambiguous about its substring, 02 named the wrong
+code site, 05's two bounces each stated a lock or lifetime fact without
+reading `with_sessions` or `cleanup_pass`, 04's "callers are unchanged" made
+half its own criterion unreachable (the F1 of the live close), and 06
+carried a `/approvals` meaning over from M28 without reading
+`cmd_approvals`. The one clean first dispatch, 03, was the one whose Spec
+had read its two `log_shell_command` callers. The M13 fold already requires
+executing each criterion against the tree; this is the same requirement for
+every fact the Spec asserts on the way to a criterion.)*
 
 ## Test plan
 
