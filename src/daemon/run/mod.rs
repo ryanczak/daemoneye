@@ -486,6 +486,7 @@ pub(crate) mod cancel;
 mod guard;
 mod list;
 mod log_read;
+mod metrics;
 mod pause;
 mod result;
 mod resume;
@@ -505,6 +506,7 @@ pub use log_read::{
     DEFAULT_RUN_LOG_LIMIT, MAX_RUN_LOG_LIMIT, clamp_run_log_limit, get_turn,
     run_log_input_rejected, run_log_search, run_log_tail,
 };
+pub use metrics::RunMetrics;
 pub use pause::{
     is_paused, note_owner_typed, note_typed, pause_owner_run, pause_run, resume_owner_run,
     resume_run, take_pause_notice, take_typed_notice,

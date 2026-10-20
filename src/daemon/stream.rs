@@ -1048,14 +1048,21 @@ where
                             provider: active_entry.provider.clone(),
                             model: active_entry.model.clone(),
                             tokens: usage.clone(),
-                            cost,
+                            cost: cost.clone(),
                             pricing_source: pricing.source,
+                            run_id: run_log.run_id().to_string(),
                         };
                         log_event(
                             "ai_cost",
                             // INVARIANT: CostRecord derives Serialize; serde_json::to_value never fails for it
                             serde_json::to_value(&record)
                                 .expect("CostRecord serialization is infallible"),
+                        );
+                        run_log.metrics_mut().record_model_call(
+                            active_entry.provider.clone(),
+                            active_entry.model.clone(),
+                            &usage,
+                            cost.total_cost_usd,
                         );
 
                         // Accumulate cost on the session entry.
@@ -1225,14 +1232,21 @@ where
                         provider: active_entry.provider.clone(),
                         model: active_entry.model.clone(),
                         tokens: usage.clone(),
-                        cost,
+                        cost: cost.clone(),
                         pricing_source: pricing.source,
+                        run_id: run_log.run_id().to_string(),
                     };
                     log_event(
                         "ai_cost",
                         // INVARIANT: CostRecord derives Serialize; serde_json::to_value never fails for it
                         serde_json::to_value(&record)
                             .expect("CostRecord serialization is infallible"),
+                    );
+                    run_log.metrics_mut().record_model_call(
+                        active_entry.provider.clone(),
+                        active_entry.model.clone(),
+                        &usage,
+                        cost.total_cost_usd,
                     );
 
                     // Accumulate cost on the session entry.
@@ -1399,6 +1413,8 @@ where
                             Ok(res) => res,
                             Err(_) => return Ok(()),
                         };
+
+                        executor::tally_tool_outcome(run_log.metrics_mut(), call, &outcome);
 
                         match outcome {
                             executor::ToolCallOutcome::UserMessage(text) => {

@@ -104,6 +104,10 @@ pub struct CostRecord {
     pub cost: Cost,
     /// Where the pricing rates came from.
     pub pricing_source: crate::config::PricingSource,
+    /// The run id whose loop made this call — the join to the run log.
+    /// `""` on lines written before M30 phase 01.
+    #[serde(default)]
+    pub run_id: String,
 }
 
 #[cfg(test)]
@@ -278,9 +282,14 @@ mod tests {
                 total_cost_usd: 0.0105,
             },
             pricing_source: PricingSource::UserConfig,
+            run_id: "20261020153700-a1b2".to_string(),
         };
 
         let json = serde_json::to_string(&record).expect("serialize CostRecord");
+        assert!(
+            json.contains(r#""run_id":"20261020153700-a1b2""#),
+            "the serialized line carries the run id: {json}"
+        );
         let back: CostRecord = serde_json::from_str(&json).expect("deserialize CostRecord");
         assert_eq!(back.session_id, "sess-abc123");
         assert_eq!(back.agent_name, "chat");
@@ -289,5 +298,54 @@ mod tests {
         assert_eq!(back.tokens.input_tokens, 1000);
         assert!((back.cost.total_cost_usd - 0.0105).abs() < 1e-10);
         assert_eq!(back.pricing_source, PricingSource::UserConfig);
+        assert_eq!(back.run_id, "20261020153700-a1b2", "the run id round-trips");
+    }
+
+    #[test]
+    fn a_cost_record_carries_its_run_id() {
+        use crate::config::PricingSource;
+
+        let record = CostRecord {
+            timestamp: Utc::now(),
+            session_id: "sess-1".to_string(),
+            agent_name: "chat".to_string(),
+            is_ghost: false,
+            parent_job_id: None,
+            provider: "anthropic".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
+            tokens: TokenBreakdown::default(),
+            cost: Cost::default(),
+            pricing_source: PricingSource::UserConfig,
+            run_id: "20261020153700-ffee".to_string(),
+        };
+        let value = serde_json::to_value(&record).expect("serialize CostRecord");
+        assert_eq!(
+            value["run_id"], "20261020153700-ffee",
+            "the serialized JSON has run_id"
+        );
+    }
+
+    #[test]
+    fn a_cost_record_without_run_id_still_parses() {
+        use crate::config::PricingSource;
+
+        let older = r#"{
+            "timestamp": "2026-05-16T12:00:00Z",
+            "session_id": "sess-old",
+            "agent_name": "chat",
+            "is_ghost": false,
+            "parent_job_id": null,
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-6",
+            "tokens": {"input_tokens": 1000, "output_tokens": 500,
+                       "cache_read_tokens": 0, "cache_write_tokens": 0},
+            "cost": {"input_cost_usd": 0.003, "output_cost_usd": 0.0075,
+                     "cache_read_cost_usd": 0.0, "cache_write_cost_usd": 0.0,
+                     "total_cost_usd": 0.0105},
+            "pricing_source": "UserConfig"
+        }"#;
+        let record: CostRecord =
+            serde_json::from_str(older).expect("an older line without run_id parses");
+        assert_eq!(record.run_id, "", "an older line parses to an empty run_id");
     }
 }

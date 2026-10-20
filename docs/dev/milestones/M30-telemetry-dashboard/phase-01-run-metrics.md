@@ -1,7 +1,7 @@
 # Phase 01: run-metrics — a per-run tally on the run guard; `run_id` on every `ai_cost`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~250 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=s
@@ -164,3 +164,14 @@ None.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-20 15:37 (started)
+
+Executor r1 (Rexy executor, Claude Opus 4.6) beginning phase 01. Status flipped
+to `in-progress` here and in the milestone README's phase table. Plan: build
+`RunMetrics` in `run/metrics.rs` (task 1), the `succeeded()` one-success rule
+and `tally_tool_outcome` in `executor/mod.rs` (task 2), hang the tally on
+`RunLogGuard` (task 3), add `CostRecord.run_id` with `#[serde(default)]` (task
+4), feed both loops and the ghost's `do_ghost_turn` (task 5), then capture the
+end-to-end evidence with the spec's block, run verbatim once (task 6).
+

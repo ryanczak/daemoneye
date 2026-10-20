@@ -94,6 +94,52 @@ pub enum ToolCallOutcome {
     },
 }
 
+impl ToolCallOutcome {
+    /// Whether this outcome is a successful tool result — the one success
+    /// rule every tally feeds from. `None` when the outcome is not a tool
+    /// result at all: a `UserMessage` redirect aborts the chain and is not
+    /// a call the tool surface answered, so it counts nothing.
+    ///
+    /// The `Error:` test is a **prefix** test. A result that merely contains
+    /// the substring — `grep: found "Error: x"` — is a success; only a
+    /// result that *is* an error line is a failure.
+    pub fn succeeded(&self) -> Option<bool> {
+        match self {
+            ToolCallOutcome::Result(s) => {
+                Some(!s.starts_with("Error:") && !s.starts_with("error:"))
+            }
+            ToolCallOutcome::SpawnGhostSession { .. } => Some(true),
+            ToolCallOutcome::UserMessage(_) => None,
+        }
+    }
+}
+
+/// Feed one executed tool call's outcome into the run's tally: one tool
+/// call, one success when [`ToolCallOutcome::succeeded`] says it succeeded,
+/// and one parse failure when the call was refused for malformed arguments
+/// (`PendingCall::InvalidArgs`). A non-tool outcome — the `UserMessage`
+/// redirect — counts nothing at all.
+///
+/// Only an outcome that came back from `execute_tool_call` belongs here: a
+/// call the caps refused **before** dispatching never reaches the executor
+/// and must not be tallied.
+pub fn tally_tool_outcome(
+    m: &mut crate::daemon::run::RunMetrics,
+    call: &PendingCall,
+    outcome: &ToolCallOutcome,
+) {
+    let Some(ok) = outcome.succeeded() else {
+        return;
+    };
+    m.tool_calls = m.tool_calls.saturating_add(1);
+    if ok {
+        m.tool_successes = m.tool_successes.saturating_add(1);
+    }
+    if matches!(call, PendingCall::InvalidArgs { .. }) {
+        m.parse_failures = m.parse_failures.saturating_add(1);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Timing constants used by the approval gate (sub-modules have their own).
 // ---------------------------------------------------------------------------
@@ -2444,6 +2490,112 @@ mod ghost_host_gate_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::run::RunMetrics;
+
+    /// A plain result is a success; `Error:` and `error:` prefixes are
+    /// failures; the prefix rule does not catch a result that merely
+    /// *contains* the substring; a spawned ghost is a success; a
+    /// `UserMessage` redirect counts nothing; an `InvalidArgs` call counts
+    /// one call and one parse failure but no success.
+    #[test]
+    fn tally_tool_outcome_classifies_each_outcome() {
+        let invalid = PendingCall::InvalidArgs {
+            id: "t-1".to_string(),
+            name: "run_terminal_command",
+            arguments: "{\"cmd\":}".to_string(),
+            error: "missing value".to_string(),
+            thought_signature: None,
+        };
+        let valid = PendingCall::ListSchedules {
+            id: "t-2".to_string(),
+            thought_signature: None,
+        };
+
+        let mut m = RunMetrics::default();
+        tally_tool_outcome(&mut m, &valid, &ToolCallOutcome::Result("ls output".into()));
+        assert_eq!(m.tool_calls, 1, "a plain result counts one call");
+        assert_eq!(m.tool_successes, 1, "a plain result is a success");
+        assert_eq!(m.parse_failures, 0, "a plain result is not a parse failure");
+
+        let mut m = RunMetrics::default();
+        tally_tool_outcome(
+            &mut m,
+            &valid,
+            &ToolCallOutcome::Result("Error: no disk".into()),
+        );
+        assert_eq!(m.tool_calls, 1, "an Error: result still counts one call");
+        assert_eq!(m.tool_successes, 0, "an `Error:` result is a failure");
+        assert_eq!(
+            m.parse_failures, 0,
+            "an `Error:` result is not a parse failure"
+        );
+
+        let mut m = RunMetrics::default();
+        tally_tool_outcome(
+            &mut m,
+            &valid,
+            &ToolCallOutcome::Result("error: bad flag".into()),
+        );
+        assert_eq!(
+            m.tool_successes, 0,
+            "a lowercase `error:` result is a failure too"
+        );
+
+        let mut m = RunMetrics::default();
+        tally_tool_outcome(
+            &mut m,
+            &valid,
+            &ToolCallOutcome::Result("grep: found \"Error: x\"".into()),
+        );
+        assert_eq!(
+            m.tool_successes, 1,
+            "the prefix rule is a prefix — a result containing the substring succeeds"
+        );
+
+        let mut m = RunMetrics::default();
+        tally_tool_outcome(
+            &mut m,
+            &valid,
+            &ToolCallOutcome::SpawnGhostSession {
+                session_id: "gs-1".into(),
+                runbook_name: "investigate-disk".into(),
+                tool_result: "ghost started".into(),
+                job_id: "gs-1".into(),
+            },
+        );
+        assert_eq!(
+            m.tool_successes, 1,
+            "a spawned ghost counts one call and one success"
+        );
+
+        let mut m = RunMetrics::default();
+        tally_tool_outcome(
+            &mut m,
+            &valid,
+            &ToolCallOutcome::UserMessage("use the other shell".into()),
+        );
+        assert_eq!(
+            (m.tool_calls, m.tool_successes, m.parse_failures),
+            (0, 0, 0),
+            "a UserMessage redirect is not a tool result and counts nothing"
+        );
+
+        let mut m = RunMetrics::default();
+        tally_tool_outcome(
+            &mut m,
+            &invalid,
+            &ToolCallOutcome::Result("Error: {\"cmd\":}".into()),
+        );
+        assert_eq!(m.tool_calls, 1, "an InvalidArgs call counts one call");
+        assert_eq!(
+            m.tool_successes, 0,
+            "an InvalidArgs call with an Error: result counts no success"
+        );
+        assert_eq!(
+            m.parse_failures, 1,
+            "an InvalidArgs call counts one parse failure"
+        );
+    }
 
     /// PE decision 1, at the tool: a caller outside tmux gets the daemon's own
     /// shells only — no pane blocks, no pane map, no foreground-target line

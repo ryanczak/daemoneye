@@ -8,8 +8,8 @@ use crate::config::{Config, PricingSource, load_named_prompt};
 use crate::cost::{CostRecord, compute_cost};
 use crate::daemon::GS_SCHED_WINDOW_PREFIX;
 use crate::daemon::run::{
-    Briefing, BudgetDimension, RunId, RunKind, RunLogGuard, RunState, TurnLogEvent, TurnLogRecord,
-    append_turn_event,
+    Briefing, BudgetDimension, RunId, RunKind, RunLogGuard, RunMetrics, RunState, TurnLogEvent,
+    TurnLogRecord, append_turn_event,
 };
 use crate::daemon::session::{
     SessionEntry, SessionStore, append_session_message, with_sessions, write_session_file,
@@ -499,15 +499,17 @@ pub async fn trigger_ghost_turn(
         crate::daemon::run::STOP_POLL_INTERVAL,
     ));
     let mut outcome = GhostLoopOutcome::default();
+    let run_id = run_log.run_id().clone();
     let result = do_ghost_turn(
         session_id,
         sessions,
         config,
         cache,
         schedule_store,
-        run_log.run_id(),
+        &run_id,
         &cancel_signal,
         &mut outcome,
+        run_log.metrics_mut(),
     )
     .await;
     let state = ghost_terminal_state(
@@ -753,6 +755,7 @@ async fn do_ghost_turn(
     run_id: &RunId,
     cancel: &crate::daemon::run::RunCancelSignal,
     outcome: &mut GhostLoopOutcome,
+    metrics: &mut RunMetrics,
 ) -> Result<()> {
     let Some((_messages, ghost_config, tmux_session, _target_pane, ghost_active_model)) =
         with_sessions(sessions, |store| {
@@ -1372,15 +1375,22 @@ async fn do_ghost_turn(
                             parent_job_id: attribution.parent_job_id,
                             provider: model_entry.provider.clone(),
                             model: model_entry.model.clone(),
-                            tokens: usage,
-                            cost,
+                            tokens: usage.clone(),
+                            cost: cost.clone(),
                             pricing_source: pricing.source,
+                            run_id: run_id.to_string(),
                         };
                         crate::daemon::utils::log_event(
                             "ai_cost",
                             // INVARIANT: CostRecord derives Serialize; serde_json::to_value never fails for it
                             serde_json::to_value(&record)
                                 .expect("CostRecord serialization is infallible"),
+                        );
+                        metrics.record_model_call(
+                            model_entry.provider.clone(),
+                            model_entry.model.clone(),
+                            &usage,
+                            cost.total_cost_usd,
                         );
 
                         // Accumulate cost on the session entry.
@@ -1463,6 +1473,8 @@ async fn do_ghost_turn(
                 schedule_store,
             )
             .await?;
+
+            crate::daemon::executor::tally_tool_outcome(metrics, call, &outcome);
 
             match outcome {
                 crate::daemon::executor::ToolCallOutcome::Result(r) => {

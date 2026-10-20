@@ -418,6 +418,7 @@ fn cost_record_serializes_to_events_jsonl_round_trip() {
             total_cost_usd: 0.02325,
         },
         pricing_source: PricingSource::UserConfig,
+        run_id: "20261020153700-integ".to_string(),
     };
 
     log_event("ai_cost", serde_json::to_value(&record).unwrap());
@@ -440,6 +441,10 @@ fn cost_record_serializes_to_events_jsonl_round_trip() {
     assert_eq!(last["tokens"]["cache_read_tokens"], 5000);
     assert_eq!(last["tokens"]["cache_write_tokens"], 1000);
     assert_eq!(last["pricing_source"], "UserConfig");
+    assert_eq!(
+        last["run_id"], "20261020153700-integ",
+        "the events.jsonl line carries the run id"
+    );
 
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },

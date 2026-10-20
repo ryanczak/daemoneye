@@ -8,6 +8,7 @@
 //! `HardFail` naming the missed path — a forgotten exit becomes a visible
 //! wrong answer in the log instead of a run that appears to never end.
 
+use super::metrics::RunMetrics;
 use super::{RunId, RunKind, RunState, TurnLogEvent, TurnLogRecord, append_turn_event};
 
 /// The blocker string a run's log carries when the loop exited without ever
@@ -19,6 +20,10 @@ pub struct RunLogGuard {
     run_id: RunId,
     kind_label: &'static str,
     state: Option<RunState>,
+    /// What the run's loop tallied so far — tool calls and outcomes, model
+    /// calls, tokens, spend. Empty at `start`; fed by the loop's cost sites
+    /// and tool dispatches.
+    metrics: RunMetrics,
 }
 
 impl RunLogGuard {
@@ -34,6 +39,7 @@ impl RunLogGuard {
             run_id,
             kind_label,
             state: None,
+            metrics: RunMetrics::default(),
         }
     }
 
@@ -47,6 +53,16 @@ impl RunLogGuard {
     /// The run id whose turn log this guard owns.
     pub fn run_id(&self) -> &RunId {
         &self.run_id
+    }
+
+    /// What the run has tallied so far.
+    pub fn metrics(&self) -> &RunMetrics {
+        &self.metrics
+    }
+
+    /// The tally to feed — model-call sites record through it.
+    pub fn metrics_mut(&mut self) -> &mut RunMetrics {
+        &mut self.metrics
     }
 }
 
@@ -312,5 +328,52 @@ mod tests {
             },
             other => panic!("expected RunFinished, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn guard_holds_the_metrics_recorded_through_it() {
+        let _home = HomeGuard::new();
+        let id = run_id();
+        let mut guard = RunLogGuard::start(id.clone(), chat_kind());
+        assert_eq!(
+            guard.metrics().tool_calls,
+            0,
+            "a fresh guard's tally is empty"
+        );
+        assert_eq!(guard.metrics().model_calls, 0, "no model calls yet");
+        assert_eq!(guard.metrics().tool_success_rate(), None, "no rates yet");
+        guard.metrics_mut().tool_calls = 3;
+        guard.metrics_mut().tool_successes = 2;
+        guard.metrics_mut().parse_failures = 1;
+        guard.metrics_mut().record_model_call(
+            "anthropic",
+            "claude-sonnet-4-6",
+            &crate::ai::TokenBreakdown {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_read_tokens: 10,
+                cache_write_tokens: 5,
+            },
+            0.01,
+        );
+        assert_eq!(
+            guard.metrics().tool_calls,
+            3,
+            "the tally lands on the guard"
+        );
+        assert_eq!(
+            guard.metrics().tool_success_rate(),
+            Some(2.0 / 3.0),
+            "the rates read back off the guard"
+        );
+        assert_eq!(guard.metrics().parse_failure_rate(), Some(1.0 / 3.0));
+        assert_eq!(guard.metrics().model_calls, 1, "the model call is recorded");
+        assert_eq!(
+            guard.metrics().tokens.input_tokens,
+            100,
+            "the token buckets sum through the guard"
+        );
+        assert_eq!(guard.metrics().provider.as_deref(), Some("anthropic"));
+        assert_eq!(guard.metrics().model.as_deref(), Some("claude-sonnet-4-6"));
     }
 }
