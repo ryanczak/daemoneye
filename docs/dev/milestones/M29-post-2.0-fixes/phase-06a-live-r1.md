@@ -1,7 +1,7 @@
 # Phase 06a: live-r1 — rehearsal 1's findings F1 (active pane) and F2 (catch-up names no alert)
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** review
+**Status:** done
 **Depends on:** phase-05
 **Estimated diff:** ~150 lines (most of it mechanical call-site edits)
 **Tags:** language=rust, kind=bugfix, size=s
@@ -360,3 +360,23 @@ kill: (-2068932): No such process
 **Commit:** 5c72046888ce2a223a2d5985774ca7b8c08e7c5d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-20
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (the started
+  entry's self-reported `claude-opus-4-6` is wrong; `executor_health` names
+  the GLM endpoint)
+- **Scope deviations:** two extra catch-up tests
+  (`catchup_brief_bare_tag_with_no_next_line_stays_as_is`,
+  `catchup_brief_tag_with_text_after_bracket_keeps_first_line`), which pin the
+  spec's own negative cases; `get_labeled_context_source_pane_excluded_from_background`
+  renamed to `…_single_pane_excluded_from_background`, and the chat-pane
+  exclusion test's "source pane excluded too" assertion now says `%1` stays
+  listed. Both follow from removing `source_pane`. Suite 2430, not 2428.
+- **Calibration:** the Update Log had no red-run evidence. The reviewer ran
+  one mutation: an uncached focus treated as cached turns
+  `a_focus_the_cache_has_not_seen_labels_nothing` red. One occurrence of an
+  executor misreporting its own model in the Update Log; held as data.
+  F1 and F2 still need the live check, which is rehearsal 2's L4 and L6.
