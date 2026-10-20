@@ -1,7 +1,7 @@
 # Phase 01: run-metrics — a per-run tally on the run guard; `run_id` on every `ai_cost`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~250 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=s
@@ -692,3 +692,11 @@ kill: (-2674349): No such process
 **Commit:** 03dcb47507c92e574a7b302ce9767428f65db893
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-20
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-01-1, minor: `tool_outcome_detail` kept its own copy of the success rule; fixed in `03dcb475`)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none
+- **Calibration:** the r1 miss traced to a spec "must" with no acceptance criterion behind it; the bounce added `detail_starts_with=0` / `detail_succeeded>=1` and r2 fixed it in 39 turns. Independent re-run at `004ff592`: fmt/build/clippy exit 0, 2438 passed 0 failed, `detail_starts_with=0`, `detail_succeeded=2` (the function's `ok` line plus its comment — satisfies ≥1). Nit, not bounced: the new comment cites `bug-01-1` by id, which ages worse than stating the invariant alone.
