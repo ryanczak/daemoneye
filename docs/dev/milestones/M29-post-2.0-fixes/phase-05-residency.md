@@ -1,7 +1,7 @@
 # Phase 05: residency — a session is resident from the moment a chat attaches
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** review
+**Status:** done
 **Depends on:** phase-04
 **Estimated diff:** ~350 lines, about half of it test rewrites
 **Tags:** language=rust, kind=fix, size=m
@@ -920,3 +920,39 @@ kill: (-1628461): No such process
 **Commit:** 79b23c11ea4338a82f51ddef8464addf5e2ce2f1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-19
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2, both `spec_bug`:
+  - **bug-05-1:** my gotcha allowed building the entry "inside a single
+    `with_sessions` closure", so `from_disk` read files under the store
+    lock.
+  - **bug-05-2:** my worked example for that fix said the entry "now
+    exists" after the insert step, which invited a production `.expect()`
+    that fires if `cleanup_pass` evicts the entry between the probe and
+    the insert.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (run 1: 255
+  turns; bounce 1: 59 turns; bounce 2: 33 turns)
+- **Scope deviations:** none. Bounce 2 touched only `ask.rs`.
+- **Calibration:**
+  - **Both bounces were mine.** Each corrected one fact my spec stated
+    without checking it against its context: the lock semantics of
+    `with_sessions`, and concurrent eviction. Together with phase 01 (an
+    ambiguous negative assertion) and phase 02 (the wrong code site), that
+    is four spec bugs in one milestone, all from the same cause. This is a
+    fold candidate for the close.
+  - **The executor did well.** It got the design right on the first run
+    and recorded both mutation checks honestly. The green-bounce treatment
+    landed each fix in a small, focused run.
+  - Independent re-run: fmt, build and clippy exit 0; 2425 passed, 0
+    failed (unchanged across both bounces, as required); self-check MATCH;
+    my own counts `registry_refs=0`, `in_lock_builds=0`,
+    `ask_prod_expects=0`.
+  - My mutation check, on a scratch copy: restoring the `expect` gives
+    `ask_prod_expects=1`.
+  - The early return skips only writes to an entry that no longer exists,
+    and returns `(0.0, false)`, the same as the closure's no-session
+    branch.
+  - The seven `unsafe { set_var("HOME") }` test sites are the repo's
+    idiom, each under `test_home_guard()`, test-only.
