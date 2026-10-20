@@ -1,7 +1,7 @@
 # Phase 06a: live-r1 — rehearsal 1's findings F1 (active pane) and F2 (catch-up names no alert)
 
 **Milestone:** M29 — Post-2.0 fixes
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-05
 **Estimated diff:** ~150 lines (most of it mechanical call-site edits)
 **Tags:** language=rust, kind=bugfix, size=s
@@ -209,3 +209,154 @@ Notes for review:
   (was `…_source_pane_excluded_from_background`) keeps its old assertions
   plus the active-block ones, so the total is 2428 + 2 = 2430.
 - No new `#[allow]`; no `unsafe`; no TODO.
+
+### Update — 2026-10-20 09:37 (complete, server-authored)
+
+**Summary:** </think>All done. Let me confirm the completion checklist:
+
+- [x] Phase doc Status: in-progress (server flips to review)
+- [x] README row in-progress
+- [x] No hand-written (complete) entry
+- [x] cargo fmt run before staging
+- [x] All verification commands ran clean
+- [x] Final message will be substantive Summary + Notes for review
+- [x] git status clean
+- [x] git log shows all files touched
+
+Ready to give final summary.</think>
+**Summary.** Phase 06a is complete: F1 makes the `[ACTIVE PANE]` label follow the cache's real `active_pane` (Some, not the chat pane, cached in the home session — otherwise nothing is labelled, so a snapshot never holds more than one active block) and removes `source_pane` from `get_labeled_context`/`get_labeled_context_scoped` and all call sites (`prompt.rs` ×2, `executor/mod.rs` ×1); `PromptCtx::client_pane` stays for `infer_session_tags`. F2 adds `is_bare_tag` in `catchup.rs` so a summary whose first line is only a bracketed tag takes the next non-empty line (`[Webhook Alert] [FIRING] cpu-hot-L6 — cpu at 99%`), with a bare tag and no following line left as-is. The phase-04 doc-comment nit moved above `get_labeled_context_scoped`; `pane_map_summary` keeps only its own paragraph. E2E verification ran once, verbatim, captured to `/tmp/e2e-m29-06a.txt` and pasted into the end-to-end Update Log entry — self-check says `PASTE MATCH`.
+
+**Notes for review.**
+- Suite is `passed=2430 failed=0` (spec expected ≈2428): the spec's 3 new tests plus 2 extras I added — `catchup_brief_bare_tag_with_no_next_line_stays_as_is` (spec's "a tag with no following line stays as it is" rule) and `catchup_brief_tag_with_text_after_bracket_keeps_first_line` (spec's must-not-match cases `[Watch Pane %3] …` / `[Background Task Completed] job1 (exit 0)`). Also `get_labeled_context_source_pane_excluded_from_background` was renamed to `get_labeled_context_single_pane_excluded_from_background` since `source_pane` no longer exists — its assertions were updated per the new rule (focused pane wears the active block and is not also listed). All four phase-04 preservation tests and the three catch-up preservation tests pass.
+- One acceptance-criterion tension I resolved rather than blocked on: Task 1 says the focus is labelled when it is a cached pane "in the home session", and the spec's test asserts the focus is not also listed — but `get_labeled_context` passes `None` chat-pane callers previously listed every cached pane. I implemented the rule literally (focus excluded from listings, every other pane listed, scope filtering unchanged); the rewritten phase-04 tests still pass with only call-site changes.
+- `grep -c 'source_pane' src/tmux/cache.rs` ⇒ 0; no new `#[allow]`, no `unsafe`, no TODOs; clippy `-D warnings`, `cargo fmt --all --check`, and `doc_truth` (16/16) all clean. Two tiny `chore:` commits exist for a trailing-newline/format-only churn on `cache_tests.rs`.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+roval_markers_match_the_gated_tools ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-d9203e33e9de0e0e)
+kill: (2068186): No such process
+kill: (-2068932): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-6a738a64918f799f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9feb568c477cffdf)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-05bab2f96380bc67)
+     Running tests/integration.rs (target/debug/deps/integration-502483a68671b4b7)
+     Running tests/isolation.rs (target/debug/deps/isolation-66ea1e45aff405d5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-0960811ac376916b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M29-post-2.0-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M29-post-2.0-fixes/phase-06a-live-r1.md` — +56 -1
+- `src/daemon/executor/mod.rs` — +1 -1
+- `src/daemon/prompt.rs` — +2 -4
+- `src/daemon/server/catchup.rs` — +64 -1
+- `src/tmux/cache.rs` — +34 -34
+- `src/tmux/cache_tests.rs` — +189 -37
+
+**Commit:** 5c72046888ce2a223a2d5985774ca7b8c08e7c5d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).

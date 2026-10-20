@@ -78,6 +78,6 @@ it is drafted.
 | 04 | active-pane ([phase-04-active-pane.md](phase-04-active-pane.md)) — at most one `[ACTIVE PANE]`, none on the chat's own pane (todo 2, F9) | done (approved_first_try, 2026-10-19) |
 | 05 | residency ([phase-05-residency.md](phase-05-residency.md)) — resident on presence attach; `NON_RESIDENT_DETACHES` gone; the three sequences as tests (todo 1, 5) | done (approved_after_2, 2026-10-19) |
 | 06 | live-close ([phase-06-live-close.md](phase-06-live-close.md)) — architect-run, M14 convention | todo (rehearsal 1: F1, F2 → 06a) |
-| 06a | live-r1 ([phase-06a-live-r1.md](phase-06a-live-r1.md)) — F1 the focus gets `[ACTIVE PANE]` whoever calls (`source_pane` removed); F2 the catch-up names the alert under a bare tag; doc-comment nit | in-progress |
+| 06a | live-r1 ([phase-06a-live-r1.md](phase-06a-live-r1.md)) — F1 the focus gets `[ACTIVE PANE]` whoever calls (`source_pane` removed); F2 the catch-up names the alert under a bare tag; doc-comment nit | review      |
 
 ## Notes
