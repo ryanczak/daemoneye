@@ -1,7 +1,7 @@
 # Phase 05: cost-ledger — every model call costed, today's spend kept, `[budget] max_cost_per_day`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** in-progress (bounced 2026-10-21: bug-05-1)
 **Depends on:** phase-02
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -114,6 +114,9 @@ is refused yet; that is phase 06.
       tests. Report the number; do not re-run to chase it.
 - [ ] Clippy (`-D warnings`) and `cargo fmt --all --check` exit 0. No new
       `#[allow]`, no production `unwrap`/`expect`.
+- [ ] **bug-05-1:** `the_first_record_of_a_day_is_counted_once` exists and
+      passes (`first_once_defs=1`; `0` today): a record that triggers the
+      ledger's seed is not added on top of a seed that already holds it.
 - [ ] The end-to-end Update Log entry holds the output fence **first**,
       then the `PASTE MATCH` line.
 
@@ -125,6 +128,8 @@ for t in budget_defaults_to_no_cap budget_max_cost_per_day_parses ledger_seeds_o
 for f in src/daemon/stream.rs src/daemon/ghost.rs src/daemon/briefing.rs src/daemon/digest.rs src/daemon/auto_name.rs src/daemon/scheduled.rs src/webhook/process.rs; do echo "emit_cost $(basename $f)=$(grep -c 'emit_cost(' $f)" >> "$A"; done
 echo "raw_ai_cost_outside=$(grep -rlE '^\s*"ai_cost",\s*$' src --include=*.rs | grep -v '^src/cost.rs$' | xargs -r grep -cE '^\s*"ai_cost",\s*$' | awk -F: '{s+=$NF} END {print s+0}')" >> "$A"
 echo "template_budget=$(grep -c 'max_cost_per_day' assets/etc/config.toml)" >> "$A"
+echo "first_once_defs=$(grep -c 'fn the_first_record_of_a_day_is_counted_once' src/daemon/spend.rs src/cost.rs | awk -F: '{s+=$NF} END {print s+0}')" >> "$A"
+cargo test --lib the_first_record_of_a_day_is_counted_once 2>&1 | grep -E '^test result' | sed "s/^/first_once: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"
 cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
 cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
@@ -377,3 +382,24 @@ kill: (-3562688): No such process
 **Commit:** ba0f674030a778c52d35ef81dec4068bdf36494a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-21 (review, bounced)
+
+Gates re-run independently at `5c50ed01`: fmt/build/clippy exit 0, 2473
+passed 0 failed; every fixture line matches and the four side calls each
+gained a `Done` arm. One correctness defect: on a cold ledger (first call
+of the daemon's life, or first after local midnight) `emit_cost` writes
+the `ai_cost` line, then `spend::record` seeds from disk — a sum that
+already includes that line — and adds the cost again (bug-05-1, major).
+One criterion added above; `first_once_defs=0` against this tree.
+
+**Notes for executor:** the constraint is that a seed and an add of the
+same record never both land. Whether the fix seeds before the line is
+written, or skips the add when the seed ran, is yours; keep the `ai_cost`
+line written once and `spent_today()` equal to the day's lines on disk.
+The static `LEDGER` is shared across the test binary, so test the rule on
+the pure `Ledger` core with a seed closure rather than the global. Nit,
+decline if you like: the doc comment that describes `emit_cost` sits on
+`CostCall`; the function itself has none. Re-run § End-to-end once and
+paste it as a new entry, with the red run of the new test against the
+bounced tree before it.
