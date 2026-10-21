@@ -1,7 +1,7 @@
 # Phase 06: daily-cap — `[budget] max_cost_per_day` refuses model calls over the cap
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-05
 **Estimated diff:** ~350 lines, about a third of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -217,3 +217,145 @@ block above was re-pasted from that re-run and re-verified with
 `PASTE MATCH`. Committing the amended emitter formatting plus this phase
 doc.
 
+### Update — 2026-10-21 17:59 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Phase 06 (daily-cap) is implemented and committed in two commits (`f67818a9` feature, `628c4a62` emitter-line chore); the phase doc's status remains `in-progress` and the working tree is clean, ready for the server's completion tail. All three spec tasks are done: **task 1** is one gate, `spend::cost_gate(config, path) -> Result<(), String>`, which reads `spent_today()` against `config.budget.max_cost_per_day`, decides with `cap_status`, builds the refusal in the pure `refusal_message(spent, cap)` (both amounts in dollars, reset named as local midnight), and emits the single `budget_refused` event with `path`/`spent_usd`/`cap_usd` from that one site (`SpendPath` carries the seven labels); **task 2** gates all seven model-call sites before `make_client` — chat at the top of every `run_conversation_loop` batch iteration (tool-loop continuations included) with `SystemMsg` + `BudgetExceeded`/`Usd`, ghost per turn with the refusal on `GhostLoopOutcome.cost_refused` mapped by `ghost_terminal_state` (error first, cancellation over the cap, cap over the turn budget), scheduled watchdog returns the refusal while the job still runs and is marked done and the run ends `BudgetExceeded` in place of `scheduled_terminal_state`'s verdict, and webhook/briefing/digest/auto-naming each log a warning and return their existing no-result value; **task 3** closes the ledger race — the `ai_cost` write and the add now land under the ledger lock with any cold seed running before the write (`spend::record_under_lock` + `Ledger::record_with_write`; `log_event`'s call graph touches no ledger symbol, so the lock never re-takes itself), and a failed serialization still counts its cost. End-to-end verification ran the spec's script mechanically and is pasted in the phase doc's Update Log with `PASTE MATCH`: all six named tests pass individually, all seven files report `cost_gate` ≥ 1, `refused_emitters=1` under the spec's literal grep, clippy `-D warnings` clean, `fmt_exit=0`, and full `cargo test` ⇒ **passed=2482 failed=0** (up from 2473 by the six new tests).
+
+**Deviations / notes for review:** (1) `summarize_once` and `build_narrative_summary` gained a trailing `Option<&Config>` so the digest gate has a config to read — the two call-graph callers pass `Some(config)`, and `None` (no config in scope) leaves the gate off, matching cap 0. (2) `run_scheduled_job`/`run_scheduled_job_inner`/`run_script_job` now thread `Option<String>`/`Result<(), String>` so the watchdog refusal reaches the terminal-state choice; the tick-level caller in `mod.rs` discards it. (3) The scheduled-refusal test builds the refusal-carrying state through the same shape `run_scheduled_job` applies rather than calling the async wrapper, keeping it pure like the existing `scheduled_terminal_state` tests. (4) The chat gate's briefing blocker is the message itself and the goal is `"chat turn"`, mirroring the turn-timeout branch's briefing shape. (5) `GhostLoopOutcome` lost `Copy`/`PartialEq` (it now holds `Option<String>`); the default-flag test asserts on fields instead.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test g4_briefing_injects_on_next_run ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-a5bf14860b8766a6)
+kill: (3875271): No such process
+kill: (-3875996): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-fa3aae999c224501)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-af9329f81467cdee)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-a44fb637fa3308a3)
+     Running tests/integration.rs (target/debug/deps/integration-cf27c4f796c5d8c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-0a0c421b4b2b9fc2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-76069814ada3e33b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M30-telemetry-dashboard/README.md` — +1 -1
+- `docs/dev/milestones/M30-telemetry-dashboard/phase-06-daily-cap.md` — +83 -1
+- `src/cost.rs` — +15 -7
+- `src/daemon/auto_name.rs` — +11 -0
+- `src/daemon/briefing.rs` — +10 -0
+- `src/daemon/digest.rs` — +16 -1
+- `src/daemon/ghost.rs` — +134 -14
+- `src/daemon/mod.rs` — +6 -2
+- `src/daemon/scheduled.rs` — +92 -12
+- `src/daemon/spend.rs` — +202 -16
+- `src/daemon/stream.rs` — +28 -0
+- `src/webhook/process.rs` — +13 -0
+
+**Commit:** 628c4a62d5ba89b5e0762ef926afdab54d45d0bc
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
