@@ -1,7 +1,7 @@
 # Phase 03: scorecard — `daemoneye scorecard`, a pure aggregation over `run` events
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-02
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -368,3 +368,11 @@ kill: (-3223637): No such process
 **Commit:** ff0c91dba119762364830fc28bac2cf2be7b587e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-21
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** one, flagged by the executor: the end-to-end block's `rm -rf "$H"` was run as `find "$H" -type f -name '*.jsonl' -delete` because the executor's shell refuses `rm -rf`. Same effect on a throwaway dir; accepted.
+- **Calibration:** do not put `rm -rf` in an end-to-end block the executor runs; use `find … -delete` or leave the tempdir. One occurrence, held as data. Independent re-run at `e7f3a957`: fmt/build/clippy exit 0, 2457 passed 0 failed; the binary against the spec's fixture gives `rows=2 skipped=1`, chat `TOOL-OK` 75.0% (null skipped, not zeroed), `—` for the all-null parse mean, `no runs in this window` exit 0. Nit, not bounced: the human table's `MODEL` column is 6 wide, so a real model name such as `claude-sonnet-4-6` will push the row out of alignment — rendering, not behaviour.
