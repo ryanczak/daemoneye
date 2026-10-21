@@ -544,8 +544,19 @@ async fn run_watchdog(
         .is_err();
     let mut ai_response = String::new();
     while let Some(ev) = ai_rx.recv().await {
-        if let AiEvent::Token(t) = ev {
-            ai_response.push_str(&t);
+        match ev {
+            AiEvent::Token(t) => ai_response.push_str(&t),
+            AiEvent::Done(usage) => {
+                crate::cost::emit_cost(crate::cost::CostCall {
+                    model_entry,
+                    usage: &usage,
+                    attribution: &crate::cost::side_call_attribution("watchdog"),
+                    session_id: "-",
+                    run_id: "",
+                    now: chrono::Utc::now(),
+                });
+            }
+            _ => {}
         }
     }
     let (should_act, trigger_reason) =

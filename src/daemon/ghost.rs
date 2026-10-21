@@ -5,7 +5,6 @@ use tokio::io::BufReader;
 
 use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
 use crate::config::{Config, PricingSource, load_named_prompt};
-use crate::cost::{CostRecord, compute_cost};
 use crate::daemon::GS_SCHED_WINDOW_PREFIX;
 use crate::daemon::run::{
     Briefing, Budget, BudgetDimension, RunId, RunKind, RunLogGuard, RunMetrics, RunState,
@@ -1391,40 +1390,21 @@ async fn do_ghost_turn(
                         });
                     }
                     AiEvent::Done(usage) => {
-                        let pricing = model_entry.pricing().unwrap_or(crate::config::Pricing {
-                            input_per_mtok: 0.0,
-                            output_per_mtok: 0.0,
-                            cache_read_per_mtok: 0.0,
-                            cache_write_per_mtok: 0.0,
-                            source: PricingSource::Unknown,
-                        });
-                        let cost = compute_cost(&usage, &pricing);
                         let attribution =
                             crate::cost::CostAttribution::from_ghost_config(ghost_config.as_ref());
-                        let record = CostRecord {
-                            timestamp: chrono::Utc::now(),
-                            session_id: session_id.to_string(),
-                            agent_name: attribution.agent_name,
-                            is_ghost: attribution.is_ghost,
-                            parent_job_id: attribution.parent_job_id,
-                            provider: model_entry.provider.clone(),
-                            model: model_entry.model.clone(),
-                            tokens: usage.clone(),
-                            cost: cost.clone(),
-                            pricing_source: pricing.source,
-                            run_id: run_id.to_string(),
-                        };
-                        crate::daemon::utils::log_event(
-                            "ai_cost",
-                            // INVARIANT: CostRecord derives Serialize; serde_json::to_value never fails for it
-                            serde_json::to_value(&record)
-                                .expect("CostRecord serialization is infallible"),
-                        );
+                        let record = crate::cost::emit_cost(crate::cost::CostCall {
+                            model_entry,
+                            usage: &usage,
+                            attribution: &attribution,
+                            session_id,
+                            run_id: run_id.as_str(),
+                            now: chrono::Utc::now(),
+                        });
                         metrics.record_model_call(
                             model_entry.provider.clone(),
                             model_entry.model.clone(),
                             &usage,
-                            cost.total_cost_usd,
+                            record.cost.total_cost_usd,
                         );
 
                         // Accumulate cost on the session entry.

@@ -1,7 +1,7 @@
 # Phase 05: cost-ledger — every model call costed, today's spend kept, `[budget] max_cost_per_day`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -157,3 +157,66 @@ None.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-21 04:40 (started, executor claude-opus-4-6)
+
+Status flipped `todo` → `in-progress`; README phase-table row matches.
+Beginning task 1 (one cost helper).
+
+### Update — 2026-10-21 05:20 (progress, executor)
+
+All four spec tasks implemented. Notes:
+- `emit_cost` takes a `CostCall` struct instead of six positional
+  parameters — clippy's `too_many_arguments` fired at the 6-param
+  signature and the repo already carries 18 such allows, so a struct is
+  the clean shape. The spec's parameter list is unchanged in substance:
+  model entry, `TokenBreakdown`, attribution, session id, run id, time.
+- The five side-call sites pass `run_id: ""` directly (the field is a
+  raw `&str` in `CostCall`), so no `RunId` has to represent the empty id.
+- The three existing sites (both `run_conversation_loop` sites and the
+  ghost's) now call the helper; their `ai_cost` lines are unchanged field
+  for field.
+- All eight named tests pass individually; full `--lib` run 2402 passed
+  before the end-to-end run.
+
+Running the end-to-end verification next.
+
+### Update — 2026-10-21 05:25 (end-to-end verification)
+
+```sh
+A=/tmp/e2e-m30-05.txt; : > "$A"
+for t in budget_defaults_to_no_cap budget_max_cost_per_day_parses ledger_seeds_once_per_day_and_adds ledger_reseeds_on_a_new_day local_day_bounds_start_at_local_midnight cap_status_is_off_at_zero_and_over_at_the_cap emit_cost_logs_ai_cost_and_feeds_the_ledger cap_line_names_spend_and_cap; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+for f in src/daemon/stream.rs src/daemon/ghost.rs src/daemon/briefing.rs src/daemon/digest.rs src/daemon/auto_name.rs src/daemon/scheduled.rs src/webhook/process.rs; do echo "emit_cost $(basename $f)=$(grep -c 'emit_cost(' $f)" >> "$A"; done
+echo "raw_ai_cost_outside=$(grep -rlE '^\s*"ai_cost",\s*$' src --include=*.rs | grep -v '^src/cost.rs$' | xargs -r grep -cE '^\s*"ai_cost",\s*$' | awk -F: '{s+=$NF} END {print s+0}')" >> "$A"
+echo "template_budget=$(grep -c 'max_cost_per_day' assets/etc/config.toml)" >> "$A"
+cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
+cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
+cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}' >> "$A"
+cat "$A"
+```
+
+budget_defaults_to_no_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+budget_max_cost_per_day_parses: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ledger_seeds_once_per_day_and_adds: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ledger_reseeds_on_a_new_day: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+local_day_bounds_start_at_local_midnight: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+cap_status_is_off_at_zero_and_over_at_the_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+emit_cost_logs_ai_cost_and_feeds_the_ledger: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+cap_line_names_spend_and_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+emit_cost stream.rs=2
+emit_cost ghost.rs=1
+emit_cost briefing.rs=1
+emit_cost digest.rs=1
+emit_cost auto_name.rs=1
+emit_cost scheduled.rs=1
+emit_cost process.rs=1
+raw_ai_cost_outside=0
+template_budget=1
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2473 failed=0
+```
+
+PASTE MATCH — pasted block byte-identical to /tmp/e2e-m30-05.txt (verified by diff).

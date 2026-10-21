@@ -40,6 +40,7 @@ pub mod scheduled;
 pub mod server;
 pub mod session;
 pub mod situational;
+pub mod spend;
 pub mod stats;
 pub mod stream;
 pub mod utils;

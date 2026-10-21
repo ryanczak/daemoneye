@@ -119,7 +119,17 @@ async fn do_generate_briefing(
     while let Some(ev) = rx.recv().await {
         match ev {
             AiEvent::Token(t) => summary.push_str(&t),
-            AiEvent::Done(_) => break,
+            AiEvent::Done(usage) => {
+                crate::cost::emit_cost(crate::cost::CostCall {
+                    model_entry,
+                    usage: &usage,
+                    attribution: &crate::cost::side_call_attribution("briefing"),
+                    session_id: "-",
+                    run_id: "",
+                    now: chrono::Utc::now(),
+                });
+                break;
+            }
             AiEvent::Error(e) => anyhow::bail!("AI error during briefing generation: {}", e),
             _ => {}
         }

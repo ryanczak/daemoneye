@@ -770,6 +770,8 @@ fn response_daemon_status_roundtrip() {
             ("gemini".to_string(), 0.15),
         ],
         daemon_cost_by_agent: vec![("chat".to_string(), 0.35), ("architect".to_string(), 0.25)],
+        daemon_spend_today_usd: 0.60,
+        daemon_cost_cap_usd: 5.0,
     };
     match roundtrip_resp(&resp) {
         Response::DaemonStatus {

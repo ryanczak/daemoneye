@@ -464,6 +464,8 @@ where
             daemon_total_cost_today_usd: cost_today.total_cost_usd,
             daemon_cost_by_provider: cost_today.cost_by_provider,
             daemon_cost_by_agent: cost_today.cost_by_agent,
+            daemon_spend_today_usd: crate::daemon::spend::spent_today(),
+            daemon_cost_cap_usd: config.budget.max_cost_per_day,
         },
     )
     .await?;

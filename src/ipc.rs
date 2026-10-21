@@ -868,6 +868,15 @@ pub enum Response {
         /// Cost breakdown by agent for today: `(agent_name, cost_usd)`.
         #[serde(default)]
         daemon_cost_by_agent: Vec<(String, f64)>,
+        /// The spend ledger's total for the local calendar day (the day the
+        /// cap uses). Independent of `daemon_total_cost_today_usd`, whose
+        /// day is UTC.
+        #[serde(default)]
+        daemon_spend_today_usd: f64,
+        /// The configured daily cap: `config.budget.max_cost_per_day`. `0.0`
+        /// means no cap.
+        #[serde(default)]
+        daemon_cost_cap_usd: f64,
     },
     /// Confirmation that a session was saved (response to `SaveSession`).
     SessionSaved { name: String },

@@ -1,6 +1,6 @@
 use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
 use crate::config::{Config, PricingSource};
-use crate::cost::{CostAttribution, CostRecord, compute_cost};
+use crate::cost::CostAttribution;
 use crate::daemon::auto_name;
 use crate::daemon::executor::{self, SessionCtx};
 use crate::daemon::session::{
@@ -1036,39 +1036,19 @@ where
                         }
 
                         let active_entry = config.resolve_model(session_active_model.as_deref());
-                        let pricing = active_entry.pricing().unwrap_or(crate::config::Pricing {
-                            input_per_mtok: 0.0,
-                            output_per_mtok: 0.0,
-                            cache_read_per_mtok: 0.0,
-                            cache_write_per_mtok: 0.0,
-                            source: PricingSource::Unknown,
+                        let record = crate::cost::emit_cost(crate::cost::CostCall {
+                            model_entry: active_entry,
+                            usage: &usage,
+                            attribution: &cost_attribution,
+                            session_id: session_id.as_deref().unwrap_or("-"),
+                            run_id: run_log.run_id().as_str(),
+                            now: chrono::Utc::now(),
                         });
-                        let cost = compute_cost(&usage, &pricing);
-
-                        let record = CostRecord {
-                            timestamp: chrono::Utc::now(),
-                            session_id: session_id.clone().unwrap_or_else(|| "-".to_string()),
-                            agent_name: cost_attribution.agent_name.clone(),
-                            is_ghost: cost_attribution.is_ghost,
-                            parent_job_id: cost_attribution.parent_job_id.clone(),
-                            provider: active_entry.provider.clone(),
-                            model: active_entry.model.clone(),
-                            tokens: usage.clone(),
-                            cost: cost.clone(),
-                            pricing_source: pricing.source,
-                            run_id: run_log.run_id().to_string(),
-                        };
-                        log_event(
-                            "ai_cost",
-                            // INVARIANT: CostRecord derives Serialize; serde_json::to_value never fails for it
-                            serde_json::to_value(&record)
-                                .expect("CostRecord serialization is infallible"),
-                        );
                         run_log.metrics_mut().record_model_call(
                             active_entry.provider.clone(),
                             active_entry.model.clone(),
                             &usage,
-                            cost.total_cost_usd,
+                            record.cost.total_cost_usd,
                         );
 
                         // Accumulate cost on the session entry.
@@ -1220,39 +1200,19 @@ where
                     }
 
                     let active_entry = config.resolve_model(session_active_model.as_deref());
-                    let pricing = active_entry.pricing().unwrap_or(crate::config::Pricing {
-                        input_per_mtok: 0.0,
-                        output_per_mtok: 0.0,
-                        cache_read_per_mtok: 0.0,
-                        cache_write_per_mtok: 0.0,
-                        source: PricingSource::Unknown,
+                    let record = crate::cost::emit_cost(crate::cost::CostCall {
+                        model_entry: active_entry,
+                        usage: &usage,
+                        attribution: &cost_attribution,
+                        session_id: session_id.as_deref().unwrap_or("-"),
+                        run_id: run_log.run_id().as_str(),
+                        now: chrono::Utc::now(),
                     });
-                    let cost = compute_cost(&usage, &pricing);
-
-                    let record = CostRecord {
-                        timestamp: chrono::Utc::now(),
-                        session_id: session_id.clone().unwrap_or_else(|| "-".to_string()),
-                        agent_name: cost_attribution.agent_name.clone(),
-                        is_ghost: cost_attribution.is_ghost,
-                        parent_job_id: cost_attribution.parent_job_id.clone(),
-                        provider: active_entry.provider.clone(),
-                        model: active_entry.model.clone(),
-                        tokens: usage.clone(),
-                        cost: cost.clone(),
-                        pricing_source: pricing.source,
-                        run_id: run_log.run_id().to_string(),
-                    };
-                    log_event(
-                        "ai_cost",
-                        // INVARIANT: CostRecord derives Serialize; serde_json::to_value never fails for it
-                        serde_json::to_value(&record)
-                            .expect("CostRecord serialization is infallible"),
-                    );
                     run_log.metrics_mut().record_model_call(
                         active_entry.provider.clone(),
                         active_entry.model.clone(),
                         &usage,
-                        cost.total_cost_usd,
+                        record.cost.total_cost_usd,
                     );
 
                     // Accumulate cost on the session entry.

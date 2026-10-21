@@ -49,6 +49,9 @@ pub struct Config {
     pub execution: ExecutionConfig,
     #[serde(default)]
     pub shells: ShellsConfig,
+    /// Daily spend cap. Default: off (`0.0`).
+    #[serde(default)]
+    pub budget: BudgetConfig,
 }
 
 impl Default for Config {
@@ -74,7 +77,66 @@ impl Default for Config {
             sandbox: SandboxConfig::default(),
             execution: ExecutionConfig::default(),
             shells: ShellsConfig::default(),
+            budget: BudgetConfig::default(),
         }
+    }
+}
+
+/// Daily spend budget (`[budget]` in config.toml).
+///
+/// The cap is compared against the ledger's *local*-day total
+/// ([`crate::daemon::spend::spent_today`]), not the UTC day the
+/// `status` cost breakdowns use.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct BudgetConfig {
+    /// Maximum USD spend per local calendar day. `0` (the default) means
+    /// off — nothing is ever refused. A negative value is warned about at
+    /// load and treated as `0`.
+    #[serde(default)]
+    pub max_cost_per_day: f64,
+}
+
+impl Default for BudgetConfig {
+    fn default() -> Self {
+        BudgetConfig {
+            max_cost_per_day: 0.0,
+        }
+    }
+}
+
+/// Whether today's spend sits under a configured daily cap.
+///
+/// Phase 06 (daily-cap) consults this at every model call to decide
+/// whether to refuse; phase 05 only displays it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CapStatus {
+    /// No cap configured (`cap <= 0`) — nothing is ever refused.
+    Off,
+    /// Today's spend has reached the cap.
+    Over {
+        /// Total spend for the local day, USD.
+        spent: f64,
+        /// The configured cap, USD.
+        cap: f64,
+    },
+    /// Today's spend is below the cap.
+    Under {
+        /// Total spend for the local day, USD.
+        spent: f64,
+        /// The configured cap, USD.
+        cap: f64,
+    },
+}
+
+/// Pure cap decision: `Off` at `cap <= 0`, `Over` at `spent >= cap`,
+/// `Under` below it.
+pub fn cap_status(spent: f64, cap: f64) -> CapStatus {
+    if cap <= 0.0 {
+        CapStatus::Off
+    } else if spent >= cap {
+        CapStatus::Over { spent, cap }
+    } else {
+        CapStatus::Under { spent, cap }
     }
 }
 
@@ -1399,5 +1461,25 @@ impl PromptDef {
                      When suggesting commands put each on its own line."
                 .to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn budget_defaults_to_no_cap() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(
+            cfg.budget.max_cost_per_day, 0.0,
+            "a config with no [budget] section has no cap"
+        );
+    }
+
+    #[test]
+    fn budget_max_cost_per_day_parses() {
+        let cfg: Config = toml::from_str("[budget]\nmax_cost_per_day = 5.0\n").unwrap();
+        assert_eq!(cfg.budget.max_cost_per_day, 5.0);
     }
 }

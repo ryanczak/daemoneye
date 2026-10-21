@@ -312,6 +312,17 @@ prompt = "sre"
 #                              # turns to each digest.  Uses [models.digest]
 #                              # if defined, otherwise [models.default].
 
+# ── Budget ───────────────────────────────────────────────────────────────────
+
+# [budget]
+# Daily spend cap.  `0` (the default) means off — nothing is ever refused.
+# When set, `daemoneye status` shows today's spend against the cap; phase 06
+# (daily-cap) makes the daemon refuse work over it.  The day is the *local*
+# calendar day — local midnight to local midnight, not the UTC day the
+# `status` cost breakdowns use.  A negative value is warned about at load
+# and treated as `0`.
+# max_cost_per_day = 0.0       # USD per local day (default: 0 = no cap)
+
 # ── Sessions ─────────────────────────────────────────────────────────────────
 
 # [sessions]

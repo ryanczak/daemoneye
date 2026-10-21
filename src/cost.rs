@@ -110,6 +110,82 @@ pub struct CostRecord {
     pub run_id: String,
 }
 
+/// Emit the one `ai_cost` event a completed model call produces.
+///
+/// The single cost site for every model call: resolves pricing the way the
+/// ghost's cost site does (`model_entry.pricing()`, falling back to the
+/// `Unknown` source at zero rates), builds the [`CostRecord`], appends it
+/// with `log_event("ai_cost", ..)`, adds its total to the daily spend
+/// ledger, and returns the record so the caller can keep feeding
+/// `RunMetrics` and the session totals.
+///
+/// A serialization failure is logged and the `ai_cost` line skipped — never
+/// a panic — but the ledger still counts the cost, so the daily cap's
+/// picture of spend stays honest.
+/// One model call's cost context: everything `emit_cost` needs beyond the
+/// token breakdown. Built once per call by the caller.
+pub struct CostCall<'a> {
+    /// The resolved model entry whose rates price the call.
+    pub model_entry: &'a crate::config::ModelEntry,
+    /// The token buckets the call consumed.
+    pub usage: &'a TokenBreakdown,
+    /// Who made the call.
+    pub attribution: &'a CostAttribution,
+    /// The session id the call belongs to; `"-"` when there is none.
+    pub session_id: &'a str,
+    /// The run id of the loop that made the call; a side call passes
+    /// `""` — but `RunId` cannot be empty, so the field is the raw string.
+    pub run_id: &'a str,
+    /// When the call completed.
+    pub now: DateTime<Utc>,
+}
+
+pub fn emit_cost(call: CostCall<'_>) -> CostRecord {
+    let pricing = call.model_entry.pricing().unwrap_or(Pricing {
+        input_per_mtok: 0.0,
+        output_per_mtok: 0.0,
+        cache_read_per_mtok: 0.0,
+        cache_write_per_mtok: 0.0,
+        source: crate::config::PricingSource::Unknown,
+    });
+    let cost = compute_cost(call.usage, &pricing);
+    let record = CostRecord {
+        timestamp: call.now,
+        session_id: call.session_id.to_string(),
+        agent_name: call.attribution.agent_name.clone(),
+        is_ghost: call.attribution.is_ghost,
+        parent_job_id: call.attribution.parent_job_id.clone(),
+        provider: call.model_entry.provider.clone(),
+        model: call.model_entry.model.clone(),
+        tokens: call.usage.clone(),
+        cost: cost.clone(),
+        pricing_source: pricing.source,
+        run_id: call.run_id.to_string(),
+    };
+    match serde_json::to_value(&record) {
+        Ok(value) => crate::daemon::utils::log_event("ai_cost", value),
+        Err(e) => log::warn!(
+            "ai_cost serialization failed for agent '{}' ({}): {} — the line is skipped, the cost still counts",
+            call.attribution.agent_name,
+            call.model_entry.model,
+            e
+        ),
+    }
+    crate::daemon::spend::record(record.cost.total_cost_usd);
+    record
+}
+
+/// Attribution for one of the five side model calls (briefing, digest,
+/// auto-name, the two watchdogs): they belong to no chat session and no run
+/// loop, so the record carries `session_id = "-"` and `run_id = ""`.
+pub fn side_call_attribution(agent_name: &str) -> CostAttribution {
+    CostAttribution {
+        agent_name: agent_name.to_string(),
+        is_ghost: false,
+        parent_job_id: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,5 +419,85 @@ mod tests {
         let record: CostRecord =
             serde_json::from_str(older).expect("an older line without run_id parses");
         assert_eq!(record.run_id, "", "an older line parses to an empty run_id");
+    }
+}
+
+#[cfg(test)]
+mod emit_tests {
+    use super::*;
+    use crate::daemon::spend;
+
+    fn model_entry() -> crate::config::ModelEntry {
+        crate::config::ModelEntry {
+            provider: "anthropic".to_string(),
+            api_key: String::new(),
+            model: "claude-sonnet-4-6".to_string(),
+            input_cost_per_mtok: Some(3.0),
+            output_cost_per_mtok: Some(15.0),
+            cache_read_cost_per_mtok: Some(0.3),
+            cache_write_cost_per_mtok: Some(3.75),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn emit_cost_logs_ai_cost_and_feeds_the_ledger() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        crate::ai::filter::init_masking(&[]);
+
+        let before = spend::spent_today();
+        let entry = model_entry();
+        let usage = TokenBreakdown {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        };
+        // 1000 × 3.00 / 1M + 500 × 15.00 / 1M = 0.003 + 0.0075 = 0.0105
+        let record = emit_cost(CostCall {
+            model_entry: &entry,
+            usage: &usage,
+            attribution: &side_call_attribution("digest"),
+            session_id: "-",
+            run_id: "",
+            now: Utc::now(),
+        });
+        let after = spend::spent_today();
+        assert_eq!(record.agent_name, "digest", "the record names the agent");
+        assert_eq!(record.session_id, "-", "a side call carries no session");
+        assert_eq!(record.run_id, "", "a side call carries no run id");
+        assert!(
+            (record.cost.total_cost_usd - 0.0105).abs() < 1e-9,
+            "the cost is computed from the model entry's pricing: {:?}",
+            record.cost
+        );
+        assert!(
+            (after - before - 0.0105).abs() < 1e-9,
+            "the ledger grows by the call's cost: before={before} after={after}"
+        );
+
+        let path = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("the events segment at {} was written: {e}", path.display())
+        });
+        let lines: Vec<&str> = content
+            .lines()
+            .filter(|l| l.contains(r#""event":"ai_cost""#))
+            .collect();
+        assert_eq!(lines.len(), 1, "exactly one ai_cost line was appended");
+        assert!(
+            lines[0].contains(r#""agent_name":"digest""#),
+            "the line names digest: {}",
+            lines[0]
+        );
+        let logged: serde_json::Value =
+            serde_json::from_str(lines[0]).expect("the logged line is valid JSON");
+        assert!(
+            (logged["cost"]["total_cost_usd"].as_f64().unwrap_or(0.0) - 0.0105).abs() < 1e-9,
+            "the line carries the cost: {}",
+            lines[0]
+        );
     }
 }

@@ -165,7 +165,20 @@ impl Config {
         cfg.validate_pricing();
         cfg.validate_compaction();
         cfg.validate_hosts();
+        cfg.validate_budget();
         Ok(cfg)
+    }
+
+    /// A negative `budget.max_cost_per_day` is warned about and treated as
+    /// `0` (off). Called from `Config::load()`.
+    pub fn validate_budget(&mut self) {
+        if self.budget.max_cost_per_day < 0.0 {
+            log::warn!(
+                "[budget] max_cost_per_day ({}) is negative — treated as 0 (no cap).",
+                self.budget.max_cost_per_day
+            );
+            self.budget.max_cost_per_day = 0.0;
+        }
     }
 
     /// Walk `[models.*]` at startup and log `warn!` for any model where

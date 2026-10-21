@@ -201,8 +201,19 @@ pub async fn summarize_once(
 
     let mut text = String::new();
     while let Some(ev) = rx.recv().await {
-        if let crate::ai::AiEvent::Token(t) = ev {
-            text.push_str(&t);
+        match ev {
+            crate::ai::AiEvent::Token(t) => text.push_str(&t),
+            crate::ai::AiEvent::Done(usage) => {
+                crate::cost::emit_cost(crate::cost::CostCall {
+                    model_entry,
+                    usage: &usage,
+                    attribution: &crate::cost::side_call_attribution("digest"),
+                    session_id: "-",
+                    run_id: "",
+                    now: chrono::Utc::now(),
+                });
+            }
+            _ => {}
         }
     }
 

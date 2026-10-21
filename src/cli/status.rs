@@ -69,6 +69,23 @@ fn dsep() -> String {
     c_dim("  ·  ")
 }
 
+/// The COST TODAY `cap` line: today's spend against the cap, with the
+/// percentage used. Empty at `cap <= 0` — no cap, no line. Pure so it can
+/// be tested.
+fn cap_line(spent: f64, cap: f64) -> String {
+    if cap <= 0.0 {
+        return String::new();
+    }
+    let pct = (spent / cap * 100.0) as usize;
+    format!(
+        "{}{}{}{}",
+        c_warn(&format!("${:.4}", spent)),
+        c_dim(" of "),
+        c_val(&format!("${:.2}", cap)),
+        c_dim(&format!(" ({pct}%)"))
+    )
+}
+
 // ── Section builder ───────────────────────────────────────────────────────────
 
 const KEY_W: usize = 14;
@@ -296,6 +313,8 @@ pub async fn run_status() -> Result<()> {
                     daemon_total_cost_today_usd,
                     daemon_cost_by_provider,
                     daemon_cost_by_agent,
+                    daemon_spend_today_usd,
+                    daemon_cost_cap_usd,
                 }) => {
                     let tw = terminal_width();
 
@@ -610,13 +629,16 @@ pub async fn run_status() -> Result<()> {
                     }
                     lims.render(tw);
 
-                    // ── COST TODAY (only if non-zero) ─────────────────────────
-                    if daemon_total_cost_today_usd > 0.0 {
+                    // ── COST TODAY (only if non-zero, or a cap is set) ────────
+                    if daemon_total_cost_today_usd > 0.0 || daemon_cost_cap_usd > 0.0 {
                         let mut cost = Section::new("COST TODAY");
                         cost.kv(
                             "total",
                             c_warn(&format!("${:.4}", daemon_total_cost_today_usd)),
                         );
+                        if daemon_cost_cap_usd > 0.0 {
+                            cost.kv("cap", cap_line(daemon_spend_today_usd, daemon_cost_cap_usd));
+                        }
                         if !daemon_cost_by_provider.is_empty() {
                             let parts: Vec<String> = daemon_cost_by_provider
                                 .iter()
@@ -684,6 +706,18 @@ pub async fn run_sandbox_status() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cap_line_names_spend_and_cap() {
+        let line = cap_line(0.5, 2.0);
+        assert!(line.contains("$0.5000"), "the spend appears: {line}");
+        assert!(line.contains("$2.00"), "the cap appears: {line}");
+        assert!(line.contains("25%"), "the percentage used appears: {line}");
+        assert!(
+            !cap_line(0.0, 0.0).contains("$"),
+            "no line is rendered at cap 0 — the caller checks cap > 0"
+        );
+    }
 
     fn status_report(
         containers: Vec<crate::ipc::ContainerInfo>,
