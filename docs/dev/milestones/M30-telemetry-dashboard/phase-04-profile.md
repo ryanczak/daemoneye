@@ -1,7 +1,7 @@
 # Phase 04: profile — `daemoneye profile <model>`: strengths per bucket, failure classes ranked
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-03
 **Estimated diff:** ~350 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -557,3 +557,11 @@ kill: (-3430703): No such process
 **Commit:** 7f16cbfda61b9c4e3013ff83c897a40c9f75ea5b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-21
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-04-1, minor: the profile's strengths table kept the `MODEL` column; fixed in `7f16cbfd` with a `with_model` flag on the one shared renderer)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none
+- **Calibration:** second M30 bounce on a Spec sentence that had no acceptance criterion behind it (bug-01-1 was the first) — a trend, held for the retrospective. The r1 completion summary also claimed the column was dropped when it was not. Independent re-run at `fad6495f`: fmt/build/clippy exit 0, 2465 passed 0 failed; the binary prints the profile table from `KIND` and the scorecard table from `MODEL`, both aligned.
