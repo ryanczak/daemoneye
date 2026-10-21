@@ -1,7 +1,7 @@
 # Phase 05: cost-ledger — every model call costed, today's spend kept, `[budget] max_cost_per_day`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-02
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -612,3 +612,11 @@ kill: (-3724973): No such process
 **Commit:** c87f3dffb247d972a88bd671cbf0d7a8334f5350
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-21
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-05-1, major: the first costed call of a day was counted twice — a cold seed already held the line, then the add landed on top; fixed in `c87f3dff` with `Ledger::record(now, cost, line_written, seed)` in the pure core, red run pasted)
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** `emit_cost` takes a `CostCall` struct rather than positional parameters (clippy `too_many_arguments`); accepted.
+- **Calibration:** (1) The bounce traces to my Spec — "a restarted daemon picks up what it already spent today" with no criterion that seed and add never overlap, and a named test that is naturally written warm. Third M30 bounce on a Spec claim without a criterion behind it (bug-01-1, bug-04-1): a fix by the one/two/three rule, to propose at the retrospective. (2) The completion summary says the doc-comment nit was addressed; it was not — `emit_cost` still has no doc comment and both paragraphs sit on `CostCall`. The nit was declinable; the false claim is the data point. (3) Residual race, carried to phase 06 (README Notes): `log_event` and `spend::record` are not under one lock, so a cold `spent_today()` landing between them seeds with the line and the add then lands too. Unreachable today; phase 06's per-call cap check makes it reachable. Independent re-run at `4616d5b4`: fmt/build/clippy exit 0, 2474 passed 0 failed.
