@@ -167,9 +167,9 @@ pub fn emit_cost(call: CostCall<'_>) -> CostRecord {
     // any seed running *before* the write: the daily-cap gate reads
     // `spent_today()` between model calls, and a gate read landing between
     // a cold seed and the write would count the line, then the add would
-    // count it again. `line_written` carries the write's outcome into the
-    // ledger — a failed write still counts its cost, because the line the
-    // seed would sum is not on disk.
+    // count it again. A failed write still counts its cost, because the
+    // line the seed would sum is not on disk — and the seed runs before
+    // the write, so it never holds this call's line either (bug-06-1).
     let line = match serde_json::to_value(&record) {
         Ok(value) => Some(value),
         Err(e) => {
@@ -182,7 +182,7 @@ pub fn emit_cost(call: CostCall<'_>) -> CostRecord {
             None
         }
     };
-    crate::daemon::spend::record_under_lock(line.is_some(), record.cost.total_cost_usd, || {
+    crate::daemon::spend::record_under_lock(record.cost.total_cost_usd, || {
         if let Some(line) = &line {
             crate::daemon::utils::log_event("ai_cost", line.clone());
         }

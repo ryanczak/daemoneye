@@ -1,4 +1,15 @@
 //! The local-day spend ledger.
+//!
+//! One process-wide total of what every model call cost **today**, where
+//! "today" is the *local* calendar day — the same day the `[budget]
+//! max_cost_per_day` cap uses (M30 phase 06), not the UTC day
+//! `daemoneye status`'s breakdowns show.
+//!
+//! The ledger is seeded lazily: the first read (or first add) on a day
+//! that it does not yet hold sums the `ai_cost` events from local
+//! midnight to now via [`crate::daemon::utils::sum_cost_between`], so a
+//! daemon restarted mid-day inherits what its earlier life already spent.
+//! After the seed, every [`Ledger::add`] accumulates on top.
 
 use crate::util::UnpoisonExt;
 
@@ -44,49 +55,30 @@ impl Ledger {
         self.total
     }
 
-    /// Record one model call's cost against `now`'s local day.
+    /// Record one model call's cost against `now`'s local day, with the
+    /// `ai_cost` line's write inside the same critical section: the seed
+    /// runs first, then `write_line`, then the add — all under the caller's
+    /// ledger lock.
     ///
-    /// The seed sums the day's `ai_cost` lines from local midnight, so when
-    /// the call's line is on disk (`line_written`) a seed triggered by this
-    /// very record already holds it: a seed and an add of the same record
-    /// must never both land, or the first costed call of a day — of the
-    /// daemon's life, or after local midnight — counts twice (bug-05-1). A
-    /// line that failed to serialize never reached the log, so its cost
-    /// lands even across a seed. A ledger already holding the day takes
-    /// every add: its seed ran before this call existed.
-    pub fn record(
-        &mut self,
-        now: DateTime<Local>,
-        cost: f64,
-        line_written: bool,
-        seed: impl FnOnce() -> f64,
-    ) {
-        let seeded = self.day != now.date_naive();
-        self.reseed_if_needed(now, seed);
-        if !seeded || !line_written {
-            self.add(cost);
-        }
-    }
-
-    /// [`Ledger::record`] with the line's write inside the same critical
-    /// section: the seed runs first, then `write_line`, then the add (when
-    /// one is due) — all under the caller's ledger lock. This is the shape
-    /// the ledger race demands; [`Ledger::record`] is the no-write form the
-    /// tests drive.
+    /// The order is what makes the total right. A seed that runs *before*
+    /// the write reads the log before this call's line exists, so it can
+    /// never hold this call's cost; the add is therefore always due and the
+    /// seed's return value is ignored for accounting (bug-06-1: phase 05's
+    /// "skip the add when a seed ran" rule was derived for the old
+    /// write-then-seed order, where a seed did already hold the line, and
+    /// counting zero instead of once is the same failure the other way).
+    /// A line that failed to serialize never reached the log either, so its
+    /// cost lands the same way.
     pub fn record_with_write(
         &mut self,
         now: DateTime<Local>,
         cost: f64,
-        line_written: bool,
         write_line: impl FnOnce(),
         seed: impl FnOnce() -> f64,
     ) {
-        let seeded = self.day != now.date_naive();
         self.reseed_if_needed(now, seed);
         write_line();
-        if !seeded || !line_written {
-            self.add(cost);
-        }
+        self.add(cost);
     }
 }
 
@@ -145,27 +137,26 @@ pub fn spent_today() -> f64 {
 ///
 /// `write_line` runs after any seed this record triggers and before the
 /// add, all under [`LEDGER`]'s lock — so a `spent_today()` gate read can
-/// never land between a cold seed and the write and count the cost twice
-/// (bug-05-1). `line_written` is false when the line could not be
-/// serialized: the seed has nothing on disk to sum for this call, so its
-/// cost is added even across a seed.
+/// never land between the seed and the write and count the cost twice
+/// (bug-05-1). The seed reads the log before the write, so it cannot hold
+/// this call's line and the add is always due (bug-06-1); a line that
+/// failed to serialize is no different — it is not on disk either, so its
+/// cost lands the same way.
 ///
 /// Gotcha honoured by the callers: [`crate::daemon::utils::log_event`] must
 /// not take the ledger lock, and nothing it calls may — it runs here under
 /// the lock by design, and re-taking it would deadlock.
-pub fn record_under_lock(line_written: bool, cost: f64, write_line: impl FnOnce()) {
+pub fn record_under_lock(cost: f64, write_line: impl FnOnce()) {
     let now = Local::now();
     let mut guard = LEDGER.lock().unwrap_or_log();
     match guard.as_mut() {
-        Some(ledger) => ledger.record_with_write(now, cost, line_written, write_line, || {
-            seed_from_events(now).total
-        }),
+        Some(ledger) => {
+            ledger.record_with_write(now, cost, write_line, || seed_from_events(now).total)
+        }
         None => {
             let mut ledger = seed_from_events(now);
             write_line();
-            if !line_written {
-                ledger.add(cost);
-            }
+            ledger.add(cost);
             *guard = Some(ledger);
         }
     }
@@ -174,15 +165,11 @@ pub fn record_under_lock(line_written: bool, cost: f64, write_line: impl FnOnce(
 /// Record one model call's cost against the local-day ledger. Called by
 /// [`crate::cost::emit_cost`] once the call's outcome is known.
 ///
-/// The seed sums the day's `ai_cost` lines, so when the call's line is on
-/// disk (`line_written`) a seed this record triggers already holds it: a
-/// seed and an add of the same record must never both land, or the first
-/// costed call of a day — of the daemon's life, or after local midnight —
-/// counts twice (bug-05-1). A line that failed to serialize never reached
-/// the log, so its cost lands even across a seed. A ledger already seeded
-/// for the day takes every add: its seed ran before this call existed.
-pub fn record(cost: f64, line_written: bool) {
-    record_under_lock(line_written, cost, || {});
+/// The seed (when this record trips one) runs before the line's write and
+/// reads the log without it, so the cost is always added on top — a seed
+/// and an add of the same record land together, and exactly once.
+pub fn record(cost: f64) {
+    record_under_lock(cost, || {});
 }
 
 /// Where a refusal to spend came from. The `budget_refused` event's `path`
@@ -360,19 +347,21 @@ mod first_record_tests {
     use super::*;
 
     #[test]
-    fn the_first_record_of_a_day_is_counted_once() {
-        // The day's on-disk `ai_cost` lines already hold the record that
-        // triggers the seed, so the seed returns its cost (0.50).
+    fn the_first_record_after_a_seed_is_added() {
+        // A cold record with the line on disk: the seed runs before the
+        // write, so it reads the log without this call's line (0.00 here)
+        // and the add lands on top — seed plus cost, exactly once.
         let mut ledger = Ledger::new(at(2026, 10, 20, 9, 0).date_naive());
-        ledger.record(at(2026, 10, 21, 9, 0), 0.50, true, || 0.50);
+        ledger.record_with_write(at(2026, 10, 21, 9, 0), 0.50, || {}, || 0.00);
         assert_eq!(
             ledger.total_for(at(2026, 10, 21, 9, 30), || 999.0),
             0.50,
-            "a cold seed already holds the record that triggered it; its cost must not be added on top"
+            "the seed cannot hold a line written after it, so the record's cost \
+             must be added on top: a seed plus the add, not the seed alone"
         );
 
-        // A call landing on a ledger already seeded for the same day adds.
-        ledger.record(at(2026, 10, 21, 9, 30), 0.25, true, || 999.0);
+        // A warm record adds the same way.
+        ledger.record_with_write(at(2026, 10, 21, 9, 30), 0.25, || {}, || 999.0);
         assert_eq!(
             ledger.total_for(at(2026, 10, 21, 10, 0), || 999.0),
             0.75,
@@ -415,25 +404,27 @@ mod gate_tests {
             order.lock().expect("the order log locks").push("seed");
             0.25
         };
-        ledger.record(at(2026, 10, 21, 9, 0), 0.10, true, seed);
+        let write = || {
+            order.lock().expect("the order log locks").push("write");
+        };
+        ledger.record_with_write(at(2026, 10, 21, 9, 0), 0.10, write, seed);
         assert_eq!(
-            order.into_inner().expect("the order log locks").first(),
-            Some(&"seed"),
-            "the seed must run before the line is written, or a gate read in \
-             between counts the line and then the add"
+            order.into_inner().expect("the order log locks").as_slice(),
+            &["seed", "write"][..],
+            "the seed runs first and the write after it — a seed read before \
+             the write never holds this call's line, so the add is due"
         );
         assert_eq!(
             ledger.total_for(at(2026, 10, 21, 9, 30), || 999.0),
-            0.25,
-            "the total is the seed — which already holds the line — and the add \
-             is skipped, so the cost lands exactly once"
+            0.35,
+            "the total is the seed plus the cost, exactly once"
         );
     }
 
     #[test]
     fn a_failed_write_still_counts_its_cost() {
         let mut ledger = Ledger::new(at(2026, 10, 20, 9, 0).date_naive());
-        ledger.record(at(2026, 10, 21, 9, 0), 0.10, false, || 0.0);
+        ledger.record_with_write(at(2026, 10, 21, 9, 0), 0.10, || {}, || 0.0);
         assert_eq!(
             ledger.total_for(at(2026, 10, 21, 9, 30), || 999.0),
             0.10,

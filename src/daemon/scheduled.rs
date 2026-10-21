@@ -44,6 +44,29 @@ fn scheduled_terminal_state(status: Option<&JobStatus>, job_name: &str) -> RunSt
     }
 }
 
+/// The terminal [`RunState`] a scheduled job's run records: a watchdog
+/// refusal (`Some`) ends the run `BudgetExceeded` with the message as the
+/// blocker and the `Usd` dimension; without one (`None`) the job's status
+/// alone decides. Pure — the shape [`run_scheduled_job`] applies, so its
+/// test runs the same mapping the caller does.
+fn scheduled_run_state(
+    refusal: Option<String>,
+    status: Option<&JobStatus>,
+    job_name: &str,
+) -> RunState {
+    match refusal {
+        Some(message) => RunState::BudgetExceeded(Briefing::new(
+            format!("scheduled job {job_name}"),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some(message),
+            Some(crate::daemon::run::BudgetDimension::Usd),
+        )),
+        None => scheduled_terminal_state(status, job_name),
+    }
+}
+
 /// Why a `Command` job refuses to fire. One string, so the `log_event` field
 /// and the failure notification name the same migration sentence.
 const COMMAND_REFUSAL_REASON: &str =
@@ -144,23 +167,13 @@ pub async fn run_scheduled_job(
     // A refused watchdog analysis ends the scheduled run `BudgetExceeded` in
     // place of the state the job status alone would give — the job itself
     // still ran and is still marked done as now.
-    let state = match refusal {
-        Some(message) => {
-            crate::daemon::run::RunState::BudgetExceeded(crate::daemon::run::Briefing::new(
-                format!("scheduled job {job_name}"),
-                None,
-                Vec::new(),
-                Vec::new(),
-                Some(message),
-                Some(crate::daemon::run::BudgetDimension::Usd),
-            ))
-        }
-        None => scheduled_terminal_state(status.as_ref(), &job_name),
-    };
+    // A refused watchdog analysis ends the scheduled run `BudgetExceeded` in
+    // place of the state the job status alone would give — the job itself
+    // still ran and is still marked done as now.
+    let state = scheduled_run_state(refusal, status.as_ref(), &job_name);
     run_log.finish(state);
     Ok(())
 }
-
 async fn run_scheduled_job_inner(
     job: ScheduledJob,
     store: Arc<ScheduleStore>,
@@ -838,20 +851,16 @@ mod tests {
 
     #[test]
     fn a_refused_watchdog_ends_the_scheduled_run_budget_exceeded() {
-        // The refusal the watchdog's cost gate returns, carried through the
-        // same shape `run_scheduled_job` applies: it replaces whatever state
-        // the job status alone would give, with the message as the blocker
-        // and the `Usd` dimension on the briefing.
+        // The refusal the watchdog's cost gate returns, mapped by the same
+        // pure function `run_scheduled_job` calls: it replaces whatever
+        // state the job status alone would give, with the message as the
+        // blocker and the `Usd` dimension on the briefing.
         let message = crate::daemon::spend::refusal_message(3.0, 2.0);
-        let state =
-            crate::daemon::run::RunState::BudgetExceeded(crate::daemon::run::Briefing::new(
-                "scheduled job nightly-backup".to_string(),
-                None,
-                Vec::new(),
-                Vec::new(),
-                Some(message.clone()),
-                Some(crate::daemon::run::BudgetDimension::Usd),
-            ));
+        let state = scheduled_run_state(
+            Some(message.clone()),
+            Some(&JobStatus::Succeeded),
+            "nightly-backup",
+        );
         match state {
             crate::daemon::run::RunState::BudgetExceeded(briefing) => {
                 assert_eq!(
@@ -871,13 +880,14 @@ mod tests {
             }
             other => panic!("a refused watchdog must end BudgetExceeded, got {other:?}"),
         }
-        // The job itself still ran and is still marked done as now: the
-        // terminal state the refusal replaces is the one a succeeded job
-        // would have given.
+        // Without the refusal, the status alone decides: a succeeded job is
+        // Complete, so the refusal replaces this state rather than changing
+        // how the job was marked.
+        let unrefused = scheduled_run_state(None, Some(&JobStatus::Succeeded), "nightly-backup");
         assert_eq!(
+            unrefused,
             scheduled_terminal_state(Some(&JobStatus::Succeeded), "nightly-backup"),
-            RunState::Complete,
-            "the refusal replaces this state, it does not change how the job was marked"
+            "no refusal means the state `scheduled_terminal_state` would have given"
         );
     }
 
