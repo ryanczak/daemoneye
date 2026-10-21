@@ -5,12 +5,11 @@
 [`README.md`](milestones/M30-telemetry-dashboard/README.md) for the PE
 decisions and the planned phases.
 
-**Active phase:** [phase-06-daily-cap](milestones/M30-telemetry-dashboard/phase-06-daily-cap.md)
-— todo: one `spend::cost_gate` before every model call (chat refused with
-a `SystemMsg`, ghost and scheduled runs end `BudgetExceeded`/`Usd`,
-webhook and side calls skipped and logged, one `budget_refused` event);
-the ledger seeds before the `ai_cost` line is written, under one lock.
-Dispatch with `/rexymcp:dispatch phase-06`. Phases 01–05 done 2026-10-20/21.
+**Active phase:** [phase-07-top-data](milestones/M30-telemetry-dashboard/phase-07-top-data.md)
+— todo: the `daemoneye top` snapshot (Runs, Budget, Shells, Activity),
+the stats-only fingerprint, and `top --once` as plain text with the
+daemon down. The ratatui screen is phase 08. Dispatch with
+`/rexymcp:dispatch phase-07`. Phases 01–06 done 2026-10-20/21.
 
 M29 closed 2026-10-20 (`v2.2.0`, pushed). M31 (MCP surface) and M32
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
