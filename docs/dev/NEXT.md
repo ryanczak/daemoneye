@@ -5,12 +5,12 @@
 [`README.md`](milestones/M30-telemetry-dashboard/README.md) for the PE
 decisions and the planned phases.
 
-**Active phase:** [phase-05-cost-ledger](milestones/M30-telemetry-dashboard/phase-05-cost-ledger.md)
-— todo: every model call costed through one `emit_cost` helper (the five
-uncosted side calls included), the local-day spend ledger,
-`[budget] max_cost_per_day` + `cap_status`, the `status` cap line. The
-daily cap itself is phase 06. Dispatch with `/rexymcp:dispatch phase-05`.
-Phases 01–04 done 2026-10-20/21.
+**Active phase:** [phase-06-daily-cap](milestones/M30-telemetry-dashboard/phase-06-daily-cap.md)
+— todo: one `spend::cost_gate` before every model call (chat refused with
+a `SystemMsg`, ghost and scheduled runs end `BudgetExceeded`/`Usd`,
+webhook and side calls skipped and logged, one `budget_refused` event);
+the ledger seeds before the `ai_cost` line is written, under one lock.
+Dispatch with `/rexymcp:dispatch phase-06`. Phases 01–05 done 2026-10-20/21.
 
 M29 closed 2026-10-20 (`v2.2.0`, pushed). M31 (MCP surface) and M32
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
