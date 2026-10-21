@@ -1,7 +1,7 @@
 # Phase 04: profile — `daemoneye profile <model>`: strengths per bucket, failure classes ranked
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03
 **Estimated diff:** ~350 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -155,3 +155,42 @@ None.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-21 09:26 (started, local-inference-lab/GLM-5.3-Flash-NVFP4-Spark)
+
+Status flipped `todo → in-progress` here and in the milestone README's phase
+table. Plan: the pure `aggregate_profile` in `run/profile.rs` with its five
+named tests (task 1), the `daemoneye profile` CLI with the empty-profile
+branch (task 2), the shared table renderer in `cli/commands/scorecard.rs`
+with the alignment test (task 3), the README rows (task 4), then
+`cargo fmt --all` and the end-to-end capture.
+
+### Update — 2026-10-21 09:40 (end-to-end verification)
+
+Ran `cargo fmt --all`, then the spec's § End-to-end verification block
+verbatim, once. The pasted output is the first fenced block below.
+
+```
+profile_keeps_only_the_named_models_runs: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+failure_classes_rank_by_count_then_name: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+none_is_excluded_from_failure_classes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+non_attributable_classes_are_marked: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+an_unknown_model_has_an_empty_profile: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+long_model_names_keep_columns_aligned: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+prof_runs=4
+prof_top=tool_errors:2
+prof_backend_attr=false
+prof_has_none=0
+prof_human_marker=1
+unknown_exit=0
+unknown_says=1
+unknown_lists=1
+scorecard_aligned=1
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2465 failed=0
+```
+
+PASTE MATCH (verified by the spec's self-check after this entry was
+appended; the fence above is byte-identical to /tmp/e2e-m30-04.txt).

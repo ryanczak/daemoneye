@@ -168,6 +168,23 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Profile one model: its scorecard rows and its failure classes, ranked
+    Profile {
+        /// The model to profile, exactly as the scorecard's MODEL column spells it
+        model: String,
+        /// Start date (YYYY-MM-DD, inclusive); omitted = every retained segment
+        #[arg(long, value_name = "DATE")]
+        since: Option<String>,
+        /// End date (YYYY-MM-DD, inclusive); omitted = now
+        #[arg(long, value_name = "DATE")]
+        until: Option<String>,
+        /// Bucket the strengths by this dimension
+        #[arg(long, value_enum, default_value_t)]
+        by: daemon::run::ScorecardBy,
+        /// Output machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Audit installed prompt and knowledge memory files for stale path references.
     ///
     /// Reads the files directly from ~/.daemoneye/ and checks every path literal
@@ -501,6 +518,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             json,
         } => {
             cli::run_scorecard(since, until, by, min_runs, json)?;
+        }
+        Commands::Profile {
+            model,
+            since,
+            until,
+            by,
+            json,
+        } => {
+            cli::run_profile(&model, since, until, by, json)?;
         }
         Commands::AuditPrompts => {
             cli::run_audit_prompts();

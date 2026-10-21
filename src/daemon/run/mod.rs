@@ -494,6 +494,7 @@ mod list;
 mod log_read;
 mod metrics;
 mod pause;
+mod profile;
 mod record;
 mod result;
 mod resume;
@@ -519,6 +520,7 @@ pub use pause::{
     is_paused, note_owner_typed, note_typed, pause_owner_run, pause_run, resume_owner_run,
     resume_run, take_pause_notice, take_typed_notice,
 };
+pub use profile::{FailureClassCount, ModelProfile, aggregate_profile};
 pub use record::{FAILURE_CLASSES, FailureClass, RunRecord, failure_class, is_model_attributable};
 pub use result::{CancelReason, Cancellation, RunResult, RunStatus};
 pub use resume::{

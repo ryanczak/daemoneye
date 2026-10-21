@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 
-use crate::daemon::run::{RunRecord, Scorecard, ScorecardBy, aggregate_scorecard};
+use crate::daemon::run::{RunRecord, Scorecard, ScorecardBy, ScorecardRow, aggregate_scorecard};
 
 use super::costs::parse_date_bound;
 
@@ -38,47 +38,138 @@ fn pct(rate: Option<f64>) -> String {
     }
 }
 
-const MODEL_W: usize = 6;
-const KEY_W: usize = 10;
-const RUNS_W: usize = 4;
-const PASS_W: usize = 5;
-const TOOL_W: usize = 7;
-const PARSE_W: usize = 10;
-const TURNS_W: usize = 5;
-const WALL_W: usize = 6;
-const COST_W: usize = 6;
-const ATTR_W: usize = 9;
+/// One cell of a rendered table column: the header and each row's value,
+/// already formatted.
+struct Column {
+    header: String,
+    cells: Vec<String>,
+    right: bool,
+}
+
+impl Column {
+    /// The column's width: its widest cell, header included, so the table
+    /// stays aligned however long a model or key is.
+    fn width(&self) -> usize {
+        std::iter::once(&self.header)
+            .chain(self.cells.iter())
+            .map(|c| c.chars().count())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// One line of the column at `width`, left- or right-padded. Widths are
+    /// computed from `.chars().count()` — the header contains `—`, which is
+    /// one character but two bytes, so a byte-based pad would skew the table.
+    fn render(&self, width: usize) -> Vec<String> {
+        let pad = |c: &str| {
+            let fill = width - c.chars().count();
+            if self.right {
+                format!("{}{c}", " ".repeat(fill))
+            } else {
+                format!("{c}{}", " ".repeat(fill))
+            }
+        };
+        std::iter::once(pad(&self.header))
+            .chain(self.cells.iter().map(|c| pad(c)))
+            .collect()
+    }
+}
+
+/// The scorecard's table — the header row and one line per row — sized to
+/// its content: every column is as wide as its widest cell, header included,
+/// so the columns line up however long a model or key is. Shared with the
+/// profile's strengths table.
+pub fn render_scorecard_table(rows: &[ScorecardRow], by: ScorecardBy) -> String {
+    let columns = [
+        Column {
+            header: "MODEL".to_string(),
+            cells: rows.iter().map(|r| r.model.clone()).collect(),
+            right: false,
+        },
+        Column {
+            header: by.label().to_uppercase(),
+            cells: rows.iter().map(|r| r.key.clone()).collect(),
+            right: false,
+        },
+        Column {
+            header: "RUNS".to_string(),
+            cells: rows.iter().map(|r| r.n_runs.to_string()).collect(),
+            right: true,
+        },
+        Column {
+            header: "PASS".to_string(),
+            cells: rows.iter().map(|r| pct(Some(r.pass_rate))).collect(),
+            right: true,
+        },
+        Column {
+            header: "TOOL-OK".to_string(),
+            cells: rows.iter().map(|r| pct(r.tool_success_rate_mean)).collect(),
+            right: true,
+        },
+        Column {
+            header: "PARSE-FAIL".to_string(),
+            cells: rows
+                .iter()
+                .map(|r| pct(r.parse_failure_rate_mean))
+                .collect(),
+            right: true,
+        },
+        Column {
+            header: "TURNS".to_string(),
+            cells: rows
+                .iter()
+                .map(|r| format!("{:.1}", r.turns_mean))
+                .collect(),
+            right: true,
+        },
+        Column {
+            header: "WALL".to_string(),
+            cells: rows
+                .iter()
+                .map(|r| format!("{:.1}s", r.wall_clock_s_mean))
+                .collect(),
+            right: true,
+        },
+        Column {
+            header: "COST".to_string(),
+            cells: rows
+                .iter()
+                .map(|r| format!("${:.4}", r.cost_usd_mean))
+                .collect(),
+            right: true,
+        },
+        Column {
+            header: "ATTR-FAIL".to_string(),
+            cells: rows
+                .iter()
+                .map(|r| pct(Some(r.attributable_failure_rate)))
+                .collect(),
+            right: true,
+        },
+    ];
+
+    let widths: Vec<usize> = columns.iter().map(Column::width).collect();
+    let lines: Vec<Vec<String>> = columns
+        .iter()
+        .zip(&widths)
+        .map(|(col, w)| col.render(*w))
+        .collect();
+
+    (0..rows.len() + 1)
+        .map(|i| {
+            lines
+                .iter()
+                .map(|col| col[i].as_str())
+                .collect::<Vec<&str>>()
+                .join("  ")
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+}
 
 fn print_human(scorecard: &Scorecard, by: ScorecardBy, since: &str, until: &str) {
     println!("Run scorecard {since} – {until} (by {})", by.label());
-    println!(
-        "{:<MODEL_W$}  {:<KEY_W$}  {:>RUNS_W$}  {:>PASS_W$}  {:>TOOL_W$}  {:>PARSE_W$}  {:>TURNS_W$}  {:>WALL_W$}  {:>COST_W$}  {:>ATTR_W$}",
-        "MODEL",
-        by.label().to_uppercase(),
-        "RUNS",
-        "PASS",
-        "TOOL-OK",
-        "PARSE-FAIL",
-        "TURNS",
-        "WALL",
-        "COST",
-        "ATTR-FAIL",
-    );
-    for row in &scorecard.rows {
-        println!(
-            "{:<MODEL_W$}  {:<KEY_W$}  {:>RUNS_W$}  {:>PASS_W$}  {:>TOOL_W$}  {:>PARSE_W$}  {:>TURNS_W$}  {:>WALL_W$}  {:>COST_W$}  {:>ATTR_W$}",
-            row.model,
-            row.key,
-            row.n_runs,
-            pct(Some(row.pass_rate)),
-            pct(row.tool_success_rate_mean),
-            pct(row.parse_failure_rate_mean),
-            format!("{:.1}", row.turns_mean),
-            format!("{:.1}s", row.wall_clock_s_mean),
-            format!("${:.4}", row.cost_usd_mean),
-            pct(Some(row.attributable_failure_rate)),
-        );
-    }
+    println!("{}", render_scorecard_table(&scorecard.rows, by));
     if scorecard.rows_dropped > 0 || scorecard.skipped_no_model > 0 {
         println!(
             "\n{} row(s) below --min-runs; {} run(s) with no model skipped",
@@ -87,6 +178,8 @@ fn print_human(scorecard: &Scorecard, by: ScorecardBy, since: &str, until: &str)
     }
 }
 
+/// `daemoneye scorecard`: read the records and render either the JSON or the
+/// human table.
 pub fn run_scorecard(
     since: Option<String>,
     until: Option<String>,
@@ -135,6 +228,111 @@ pub fn run_scorecard(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_model_names_keep_columns_aligned() {
+        let row = |model: &str, n: usize| ScorecardRow {
+            model: model.to_string(),
+            key: "chat".to_string(),
+            n_runs: n,
+            pass_rate: 1.0,
+            tool_success_rate_mean: None,
+            parse_failure_rate_mean: None,
+            turns_mean: 3.0,
+            wall_clock_s_mean: 12.5,
+            cost_usd_mean: 0.08,
+            attributable_failure_rate: 0.0,
+        };
+        let rows = vec![row("claude-sonnet-4-6", 4), row("m2", 1)];
+        let by = ScorecardBy::Kind;
+
+        let table = render_scorecard_table(&rows, by);
+        let lines: Vec<&str> = table.lines().collect();
+        assert_eq!(lines.len(), 3, "header plus two rows");
+
+        // The columns the renderer must produce, in order: header and the
+        // cells of each row. The test recomputes the widths from the same
+        // inputs so an off-by-one in the renderer cannot hide behind them.
+        let headers = [
+            "MODEL",
+            "KIND",
+            "RUNS",
+            "PASS",
+            "TOOL-OK",
+            "PARSE-FAIL",
+            "TURNS",
+            "WALL",
+            "COST",
+            "ATTR-FAIL",
+        ];
+        let cell_lists: Vec<Vec<String>> = vec![
+            rows.iter().map(|r| r.model.clone()).collect(),
+            rows.iter().map(|r| r.key.clone()).collect(),
+            rows.iter().map(|r| r.n_runs.to_string()).collect(),
+            rows.iter().map(|r| pct(Some(r.pass_rate))).collect(),
+            rows.iter().map(|r| pct(r.tool_success_rate_mean)).collect(),
+            rows.iter()
+                .map(|r| pct(r.parse_failure_rate_mean))
+                .collect(),
+            rows.iter()
+                .map(|r| format!("{:.1}", r.turns_mean))
+                .collect(),
+            rows.iter()
+                .map(|r| format!("{:.1}s", r.wall_clock_s_mean))
+                .collect(),
+            rows.iter()
+                .map(|r| format!("${:.4}", r.cost_usd_mean))
+                .collect(),
+            rows.iter()
+                .map(|r| pct(Some(r.attributable_failure_rate)))
+                .collect(),
+        ];
+        let widths: Vec<usize> = headers
+            .iter()
+            .zip(&cell_lists)
+            .map(|(h, cells)| {
+                cells
+                    .iter()
+                    .map(|c| c.chars().count())
+                    .chain([h.chars().count()])
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect();
+
+        let starts: Vec<usize> = widths
+            .iter()
+            .enumerate()
+            .scan(0usize, |acc, (i, w)| {
+                let start = *acc;
+                *acc += w + 2;
+                Some((i, start))
+            })
+            .map(|(_, start)| start)
+            .collect();
+
+        let rights = [false, false, true, true, true, true, true, true, true, true];
+        for (i, (header, cells)) in headers.iter().zip(&cell_lists).enumerate() {
+            let (start, width, right) = (starts[i], widths[i], rights[i]);
+            for (line_no, line) in lines.iter().enumerate() {
+                let at = match line_no {
+                    0 => header.to_string(),
+                    n => cells[n - 1].clone(),
+                };
+                let fill = width - at.chars().count();
+                let expected = if right {
+                    format!("{}{at}", " ".repeat(fill))
+                } else {
+                    format!("{at}{}", " ".repeat(fill))
+                };
+                let slice: String = line.chars().skip(start).take(width).collect();
+                assert_eq!(
+                    slice, expected,
+                    "column {header} of line {line_no} must sit at offset {start}: `{line}`"
+                );
+            }
+        }
+    }
 
     #[test]
     fn run_records_are_read_from_the_segments_only() {
