@@ -5,11 +5,11 @@
 [`README.md`](milestones/M30-telemetry-dashboard/README.md) for the PE
 decisions and the planned phases.
 
-**Active phase:** [phase-03-scorecard](milestones/M30-telemetry-dashboard/phase-03-scorecard.md)
-— todo: `daemoneye scorecard`, a pure aggregation over `run` events by
-model and `--by kind|agent|tag`, with `n_runs`, `--min-runs`, `--json`.
-Dispatch with `/rexymcp:dispatch phase-03`. Phases 01 (run-metrics) and
-02 (run-record) done 2026-10-20.
+**Active phase:** [phase-04-profile](milestones/M30-telemetry-dashboard/phase-04-profile.md)
+— todo: `daemoneye profile <model>` (strengths per bucket, failure classes
+ranked, non-attributable marked) and content-sized scorecard columns.
+Dispatch with `/rexymcp:dispatch phase-04`. Phases 01–03 done
+2026-10-20/21.
 
 M29 closed 2026-10-20 (`v2.2.0`, pushed). M31 (MCP surface) and M32
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
