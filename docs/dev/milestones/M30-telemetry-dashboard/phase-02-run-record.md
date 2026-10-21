@@ -1,7 +1,7 @@
 # Phase 02: run-record — one `run` event per finished run; `failure_class` from the tally
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-01
 **Estimated diff:** ~350 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -486,3 +486,11 @@ kill: (-2810680): No such process
 **Commit:** f3f728d1960f10d174ad6c096ce535b6ec94dff0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-20
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** one, flagged by the executor: `f3f728d1` restructures the pre-existing `bounded_output_timeout_kills_a_forked_grandchild` test in `src/process.rs` (outside the phase's file list) so its 1 s deadline is no longer dead code. Test-only, correct, and it unblocked the gate; accepted.
+- **Calibration:** the Spec said `TokenBreakdown` "derives only `Serialize` today; add `Deserialize`" — it already had a hand-written `Deserialize` impl, which my pre-dispatch read missed (I checked the derive line, not the file). The executor noticed and did not add a duplicate. Independent re-run at `b49cab92`: fmt/build/clippy exit 0, 2449 passed 0 failed; all seven e2e count lines verified against the tree.
