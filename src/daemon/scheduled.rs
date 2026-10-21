@@ -167,13 +167,11 @@ pub async fn run_scheduled_job(
     // A refused watchdog analysis ends the scheduled run `BudgetExceeded` in
     // place of the state the job status alone would give — the job itself
     // still ran and is still marked done as now.
-    // A refused watchdog analysis ends the scheduled run `BudgetExceeded` in
-    // place of the state the job status alone would give — the job itself
-    // still ran and is still marked done as now.
     let state = scheduled_run_state(refusal, status.as_ref(), &job_name);
     run_log.finish(state);
     Ok(())
 }
+
 async fn run_scheduled_job_inner(
     job: ScheduledJob,
     store: Arc<ScheduleStore>,
