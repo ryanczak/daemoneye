@@ -1,7 +1,7 @@
 # Phase 04: profile — `daemoneye profile <model>`: strengths per bucket, failure classes ranked
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-03
 **Estimated diff:** ~350 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -194,3 +194,177 @@ passed=2465 failed=0
 
 PASTE MATCH (verified by the spec's self-check after this entry was
 appended; the fence above is byte-identical to /tmp/e2e-m30-04.txt).
+
+### Update — 2026-10-21 09:56 (complete, server-authored)
+
+**Summary:** </think>Working tree clean, commit made. Let me double-check the completion checklist:
+
+- [x] Phase doc Status: in-progress (I never flipped to review)
+- [x] Milestone README row: in-progress
+- [x] No hand-written (complete) entry
+- [x] cargo fmt --all run before git add
+- [x] All verification commands ran clean: build, clippy -D warnings, fmt --check, cargo test (2465 passed, 0 failed), doc_truth 16 passed
+- [x] E2E evidence in its own Update Log entry with output fence first, then PASTE MATCH line — and the self-check verified PASTE MATCH
+- [x] Final message: Summary + Notes for review
+- [x] git status clean
+
+All acceptance criteria met:
+- Each new test ⇒ ok. 1 passed — verified (6 tests: 5 in profile.rs, 1 alignment, plus 2 CLI profile tests which are extra)
+- Fixture values: prof_runs=4, prof_top=tool_errors:2, prof_backend_attr=false, prof_has_none=0, prof_human_marker=1, unknown_says=1, unknown_lists=1, unknown_exit=0, scorecard_aligned=1 ✓
+- cargo test ⇒ failed=0, passed=2465 (above 2457 by 8: 5 profile + 1 alignment + 2 CLI-profile) ✓
+- doc_truth failed=0 ✓, clippy exit 0 ✓, fmt --check exit 0 ✓, no new #[allow], no production unwrap/expect ✓
+- E2E entry holds output fence first, then PASTE MATCH line ✓
+
+Grep check for spec-pinned literals: "(not the model)" marker — verified in the e2e run itself (prof_human_marker=1). Also the wire class names — verified via jq (prof_backend_attr=false matched backend_error in the JSON). Good.
+
+Now write the final summary message.</think>
+**Summary.** Phase 04 of M30 is implemented and committed (`f7502d7664`): `run/profile.rs` ships the pure, `Serialize`-able `aggregate_profile(records, model, by) -> ModelProfile` (re-exported from `run/mod.rs`) — it keeps only the exact-match model's runs (`m1` is not `m10`), reports `n_runs`, reuses `aggregate_scorecard` with the caller's `by` and no minimum for `strengths`, ranks `failure_classes` by count descending then class name ascending with `attributable` from `FailureClass::is_model_attributable` and `none` excluded, and lists `other_models` sorted and unique. `cli/commands/profile.rs` adds `daemoneye profile <MODEL> [--since] [--until] [--by] [--json]` reading the same segments via `run_records_between` and `parse_date_bound` with the scorecard's window defaults; human output is a model/n_runs/window/`--by` header, the strengths table, and the `Failure classes` list with `(not the model)` markers (`no failures` when classless); an unknown model prints `no runs for <model> in this window`, the other models with runs (or `no runs at all`), and exits 0. The scorecard's table moved into `pub fn render_scorecard_table`, every column sized to its widest cell (header included, char-counted so the `—` em-dash doesn't skew padding), and the profile's strengths table reuses it without the `MODEL` column — `claude-sonnet-4-6` rows now stay aligned. README gains the two command-table rows beside `scorecard`, one sentence in the scorecard paragraph, and the alignment note. End-to-end block ran verbatim once at the final tree: all six named tests `ok. 1 passed`, then `prof_runs=4`, `prof_top=tool_errors:2`, `prof_backend_attr=false`, `prof_has_none=0`, `prof_human_marker=1`, `unknown_says=1`, `unknown_lists=1`, `unknown_exit=0`, `scorecard_aligned=1`, doc_truth 16/0, clippy `-D warnings` clean, `fmt_exit=0`, full suite `passed=2465 failed=0` (2457 + 8 new), and the self-check reports **PASTE MATCH**.
+
+**Notes for review.** (1) The failing-format false alarm mid-phase: the first `long_model_names_keep_columns_aligned` draft located columns by `line.find(header)` and failed only because a right-aligned cell's text legitimately doesn't start at the header offset — the rewrite pins each column to its recomputed start offset and asserts the padded cell exactly; the renderer was never wrong. (2) Same class of thing in `failure_class_lines_rank_and_mark`: the width is the widest class (`backend_error`, 13), so the first expectation needed the extra pad — arithmetic on my side, not the renderer's. (3) I added two CLI-side profile tests beyond the spec's list (`failure_class_lines_rank_and_mark`, `a_classless_profile_says_no_failures`) to cover the marker/`no failures` rendering the five spec tests don't reach; the eight new tests are what lift the suite to 2465. (4) No dependencies added, no config files touched; phase doc and milestone README row left at `in-progress` for the server to finalize.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.03s
+TEST
+ passed=2465 failed=0
+```
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-a5bf14860b8766a6)
+kill: (3355854): No such process
+kill: (-3356586): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-fa3aae999c224501)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-af9329f81467cdee)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-a44fb637fa3308a3)
+     Running tests/integration.rs (target/debug/deps/integration-cf27c4f796c5d8c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-0a0c421b4b2b9fc2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-76069814ada3e33b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +5 -1
+- `docs/dev/milestones/M30-telemetry-dashboard/README.md` — +1 -1
+- `docs/dev/milestones/M30-telemetry-dashboard/phase-04-profile.md` — +40 -1
+- `src/cli/commands/mod.rs` — +2 -0
+- `src/cli/commands/profile.rs` — +153 -0
+- `src/cli/commands/scorecard.rs` — +117 -2
+- `src/daemon/run/mod.rs` — +2 -0
+- `src/daemon/run/profile.rs` — +218 -0
+- `src/main.rs` — +26 -0
+
+**Commit:** f7502d7664b7482733e02d4074673c0db546b5d0
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
