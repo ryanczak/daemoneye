@@ -263,7 +263,7 @@ pub async fn maybe_rollup(id: &str, config: &crate::config::Config) -> Option<Ep
         let model_entry =
             config.resolve_model(config.models.contains_key("digest").then_some("digest"));
         let system = "You are compacting an SRE assistant's session history. You will be shown 5 epoch summaries, each covering a span of conversation turns. Write ONE combined summary of at most 3 lines preserving: what was worked on, key outcomes/decisions, and anything still unresolved. Past tense, terse, no preamble.";
-        crate::daemon::digest::summarize_once(system, &user_text, model_entry, Some(config))
+        crate::daemon::digest::summarize_once(system, &user_text, model_entry, config)
             .await
             .or(Some(build_chapter_fallback(&folded)))
     } else {
@@ -767,7 +767,7 @@ pub async fn extract_memories_from_epoch(
         speculation, or anything already obvious from the runbooks.";
 
     let summary =
-        crate::daemon::digest::summarize_once(system, &user_text, model_entry, Some(config)).await;
+        crate::daemon::digest::summarize_once(system, &user_text, model_entry, config).await;
     let Some(summary) = summary else {
         return 0;
     };

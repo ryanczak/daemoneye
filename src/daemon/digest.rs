@@ -156,21 +156,17 @@ pub(crate) fn format_messages_for_narrative(messages: &[Message]) -> String {
 
 /// One-shot small-model call: system prompt + user text → trimmed response.
 /// 20 s timeout; None on any failure. This is the reusable core extracted
-/// from [`build_narrative_summary`].
+/// from [`build_narrative_summary`]. Gated on the daily cost cap: over
+/// `[budget] max_cost_per_day` the call is skipped and logged, and the
+/// caller keeps its structured-only fallback.
 pub async fn summarize_once(
     system: &str,
     user_text: &str,
     model_entry: &crate::config::ModelEntry,
-    config: Option<&crate::config::Config>,
+    config: &crate::config::Config,
 ) -> Option<String> {
-    // The daily cap gates the digest call before the model call: over
-    // `[budget] max_cost_per_day` the narrative is skipped and logged, and
-    // the caller keeps its structured-only fallback. `config` is absent on
-    // the paths that carry no `Config` — the gate is off for them, as it is
-    // for a cap of `0`.
-    if let Some(config) = config
-        && let Err(message) =
-            crate::daemon::spend::cost_gate(config, crate::daemon::spend::SpendPath::Digest)
+    if let Err(message) =
+        crate::daemon::spend::cost_gate(config, crate::daemon::spend::SpendPath::Digest)
     {
         log::warn!("Digest: narrative summary skipped — daily cost cap: {message}");
         return None;
@@ -248,7 +244,7 @@ pub async fn summarize_once(
 pub async fn build_narrative_summary(
     messages: &[Message],
     model_entry: &crate::config::ModelEntry,
-    config: Option<&crate::config::Config>,
+    config: &crate::config::Config,
 ) -> Option<String> {
     if messages.is_empty() {
         return None;
