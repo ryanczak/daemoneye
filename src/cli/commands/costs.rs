@@ -316,7 +316,10 @@ pub fn run_costs(
 /// * `start` — if `true`, returns 00:00:00 of the given date (inclusive start).
 ///   if `false`, returns 00:00:00 of the *next* day (exclusive end bound),
 ///   matching the `today_end` pattern in `stats.rs:compute_cost_today`.
-fn parse_date_bound(s: &str, start: bool) -> Result<chrono::DateTime<Utc>> {
+///
+/// `pub(crate)`: `daemoneye scorecard` parses its `--since`/`--until` with
+/// the same function rather than a copy.
+pub(crate) fn parse_date_bound(s: &str, start: bool) -> Result<chrono::DateTime<Utc>> {
     let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .with_context(|| format!("Invalid date format: {s}"))?;
     if start {

@@ -150,6 +150,24 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Aggregate finished-run records from the events log (no daemon required)
+    Scorecard {
+        /// Start date (YYYY-MM-DD, inclusive); omitted = every retained segment
+        #[arg(long, value_name = "DATE")]
+        since: Option<String>,
+        /// End date (YYYY-MM-DD, inclusive); omitted = now
+        #[arg(long, value_name = "DATE")]
+        until: Option<String>,
+        /// Bucket runs by this dimension
+        #[arg(long, value_enum, default_value_t)]
+        by: daemon::run::ScorecardBy,
+        /// Drop rows with fewer than N runs (0 = no minimum)
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        min_runs: usize,
+        /// Output machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Audit installed prompt and knowledge memory files for stale path references.
     ///
     /// Reads the files directly from ~/.daemoneye/ and checks every path literal
@@ -474,6 +492,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             json,
         } => {
             cli::run_costs(since, until, by, agent, json)?;
+        }
+        Commands::Scorecard {
+            since,
+            until,
+            by,
+            min_runs,
+            json,
+        } => {
+            cli::run_scorecard(since, until, by, min_runs, json)?;
         }
         Commands::AuditPrompts => {
             cli::run_audit_prompts();

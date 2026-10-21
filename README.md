@@ -396,6 +396,8 @@ DaemonEye tracks the dollar cost of every AI call — interactive sessions, ghos
 
 Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-mini), and Gemini (2.5 Pro, 2.5 Flash). Override or extend with per-model cost fields in `[models.<name>]` config blocks.
 
+**`daemoneye scorecard`** aggregates every finished run's `event: "run"` record in the same segments — no daemon required, it works when the daemon is down. One row per model bucketed by `--by kind` (default), `agent` or `tag`, with columns `MODEL`, the `--by` key, `RUNS`, `PASS` (status `complete` over runs), `TOOL-OK` and `PARSE-FAIL` (mean rates; runs with no tool call are excluded from the mean, not zeroed), `TURNS`, `WALL`, `COST` (means), and `ATTR-FAIL` (model-attributable failures over runs). Runs whose record carries no `model` — the scheduled job wrappers, which make no costed model call — are skipped and counted in a footer line, alongside any rows dropped by `--min-runs N`. `--since`/`--until` take `YYYY-MM-DD` dates and are inclusive; with no `--since` the scorecard reads every retained segment rather than just the last seven days, and with no `--until` it reads to now. `--json` emits the rows and the skip/drop counts for external tooling.
+
 ---
 
 ## Command reference
@@ -433,6 +435,8 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye session import <id> --name <name>` | Import an orphaned ephemeral session log into the named session store (no daemon required) |
 | `daemoneye costs` | Show AI spend from the event log (no daemon required) |
 | `daemoneye costs --since DATE --until DATE --by agent` | Filter and group the cost report; `--agent NAME`, `--json` also available |
+| `daemoneye scorecard` | Aggregate finished-run records (`event: "run"`) by model and one secondary dimension: runs, pass rate, tool success, parse failures, turns, wall clock, cost, attributable failures (no daemon required) |
+| `daemoneye scorecard --since DATE --until DATE --by tag --min-runs 3` | Filter and bucket the scorecard; `--by kind|agent|tag`, `--json` also available |
 | `daemoneye install-sudoers <script>` | Write a NOPASSWD sudoers drop-in for `~/.daemoneye/scripts/<script>` |
 | `daemoneye reindex` | Rebuild the memory search index from the memory files on disk; reports rows before and after |
 | `daemoneye audit-prompts` | Audit installed prompt and knowledge memory files for stale path references; exits non-zero on findings, never writes |

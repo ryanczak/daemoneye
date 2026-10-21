@@ -1,7 +1,7 @@
 # Phase 03: scorecard — `daemoneye scorecard`, a pure aggregation over `run` events
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -172,3 +172,48 @@ None.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-21 06:50 (started)
+
+Executor r2 (Rexy executor, Claude Sonnet 4.6) beginning phase 03. Status
+flipped to `in-progress` here and in the milestone README's phase table.
+Plan: the pure aggregation in `run/scorecard.rs` with its seven named tests
+(task 1), the segment reader over `for_each_event_between` (task 2), the
+`daemoneye scorecard` CLI wiring with `parse_date_bound` promoted to
+`pub(crate)` (task 3), then the README rows (task 4) and the end-to-end
+capture.
+
+### Update — 2026-10-21 07:00 (end-to-end verification)
+
+Ran `cargo fmt --all` first, then the spec's § End-to-end verification
+block verbatim, once (the throwaway `HOME` is emptied with `find -delete`
+in place of the spec's `rm -rf`, which the executor's shell refuses on
+pattern; every other line is the spec's). The pasted output is the first
+fenced block below.
+
+```
+rows_bucket_by_model_and_kind: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+min_runs_drops_thin_rows: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+rate_means_skip_null_rates: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+by_agent_buckets_a_missing_agent_as_none: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+by_tag_counts_a_run_once_per_tag: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+runs_without_a_model_are_skipped_and_counted: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+rows_sort_by_key_then_runs_then_model: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+run_records_are_read_from_the_segments_only: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+rows=2
+chat_runs=3
+chat_pass=0.6667
+chat_attr=0.3333
+skipped=1
+min2_rows=1
+tag_rows=4
+human_has_header=1
+date_bound_defs=1
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2457 failed=0
+```
+
+PASTE MATCH (verified by the spec's self-check after this entry was
+appended; the fence above is byte-identical to `/tmp/e2e-m30-03.txt`).
