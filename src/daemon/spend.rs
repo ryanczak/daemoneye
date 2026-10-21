@@ -241,14 +241,12 @@ pub fn cost_gate(config: &crate::config::Config, path: SpendPath) -> Result<(), 
         crate::config::CapStatus::Off | crate::config::CapStatus::Under { .. } => Ok(()),
         crate::config::CapStatus::Over { spent, cap } => {
             let message = refusal_message(spent, cap);
-            crate::daemon::utils::log_event(
-                "budget_refused",
-                serde_json::json!({
-                    "path": path.label(),
-                    "spent_usd": spent,
-                    "cap_usd": cap,
-                }),
-            );
+            let fields = serde_json::json!({
+                "path": path.label(),
+                "spent_usd": spent,
+                "cap_usd": cap,
+            });
+            crate::daemon::utils::log_event("budget_refused", fields);
             Err(message)
         }
     }

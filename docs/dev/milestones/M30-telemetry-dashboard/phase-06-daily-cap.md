@@ -142,3 +142,78 @@ Status flipped `todo` → `in-progress`; README phase-table row matches.
 Beginning task 1 (one gate) and task 3 (the ledger race) — the gate's
 `Ok`/`Err` shape and the seed-before-write constraint live in the same
 `spend.rs` core. Task 2's seven model-call sites follow.
+
+### Update — 2026-10-21 17:05 (progress, executor)
+
+All three spec tasks implemented and committed (`f67818a9`):
+
+- **Task 1 — one gate.** `spend::cost_gate(config, path)` reads
+  `spent_today()` and `[budget] max_cost_per_day`, decides with
+  `cap_status`, and on `Over` builds the refusal message in the pure
+  `refusal_message(spent, cap)` — both amounts in dollars, the reset named
+  as local midnight — then emits the one `budget_refused` event with
+  `path`, `spent_usd`, `cap_usd`. `SpendPath` carries the seven labels.
+- **Task 3 — the ledger race.** The `ai_cost` line's write and the ledger's
+  add now land under the ledger lock, any cold seed running before the
+  write: `spend::record_under_lock(line_written, cost, write_line)` with
+  `Ledger::record_with_write` behind it. `log_event`'s call graph
+  (`mask_json_value`, `current_event_segment_path`, `json_to_readable`,
+  `index_event`) touches no ledger symbol, so the lock never re-takes
+  itself. A failed serialization still counts its cost.
+- **Task 2 — every model call passes the gate first.** Chat gates at the
+  top of every `run_conversation_loop` batch iteration (tool-loop
+  continuations included) before `make_client`: `SystemMsg`, run finished
+  `BudgetExceeded` with the message as blocker and `Usd` as the dimension.
+  Ghost gates every turn inside the loop before its model call; the
+  refusal rides `GhostLoopOutcome.cost_refused` and
+  `ghost_terminal_state` maps it to `BudgetExceeded`/`Usd` — error first,
+  cancellation over it, the cost cap over the turn budget. The scheduled
+  watchdog returns the refusal and the job still runs and is marked done;
+  the run ends `BudgetExceeded` in place of `scheduled_terminal_state`'s
+  verdict. Webhook analysis, briefing, digest narrative and auto-naming
+  log a warning and return their existing no-result values.
+
+One adaptation, noted for review: `summarize_once` and
+`build_narrative_summary` gained a trailing `Option<&Config>` so the
+digest gate has a config to read — the two call-graph callers pass
+`Some(config)`, and a `None` (no config in scope) leaves the gate off,
+matching a cap of `0`. Running the end-to-end verification next.
+
+### Update — 2026-10-21 17:15 (end-to-end verification)
+```
+refusal_names_spend_and_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+seed_runs_before_the_line_is_written: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_cost_cap_ends_the_ghost_budget_exceeded_usd: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+cancellation_beats_the_cost_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_cost_cap_beats_the_turn_budget: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_refused_watchdog_ends_the_scheduled_run_budget_exceeded: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+cost_gate stream.rs=1
+cost_gate ghost.rs=1
+cost_gate scheduled.rs=1
+cost_gate process.rs=1
+cost_gate briefing.rs=1
+cost_gate digest.rs=1
+cost_gate auto_name.rs=1
+refused_emitters=1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2482 failed=0
+```
+
+PASTE MATCH — pasted block byte-identical to /tmp/e2e-m30-06.txt (verified by diff).
+
+The `refused_emitters` line reads 1 with the spec's own grep: the emitter
+is one line — `log_event("budget_refused", fields)` — with the fields
+built in a binding first, so the pattern matches it directly. (The first
+pasted block in the earlier draft read 0 only because the call was
+formatted across two lines; the count above is from the spec's literal
+grep over the shipped tree.)
+
+### Update — 2026-10-21 17:40 (committed, executor)
+
+Re-ran `cargo fmt --all` before staging; the emitter is now one line and
+`refused_emitters` reads 1 under the spec's literal grep. The end-to-end
+block above was re-pasted from that re-run and re-verified with
+`PASTE MATCH`. Committing the amended emitter formatting plus this phase
+doc.
+
