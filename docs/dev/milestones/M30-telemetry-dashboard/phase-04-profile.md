@@ -1,7 +1,7 @@
 # Phase 04: profile — `daemoneye profile <model>`: strengths per bucket, failure classes ranked
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** in-progress (bounced 2026-10-21: bug-04-1)
 **Depends on:** phase-03
 **Estimated diff:** ~350 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -84,6 +84,9 @@ its `MODEL` column is 6 characters wide, so a real model name such as
       `prof_backend_attr=false`, `prof_has_none=0`,
       `prof_human_marker=1`, `unknown_says=1`, `unknown_lists=1`,
       `unknown_exit=0`, `scorecard_aligned=1` (it is `0` today).
+- [ ] **bug-04-1:** the profile's strengths table has no `MODEL` column:
+      `prof_model_col=0` and `prof_kind_first=1` (against the bounced tree
+      they read `1` and `0`). The scorecard keeps `MODEL`.
 - [ ] `cargo test` ⇒ `failed=0`, with `passed` above 2457 by the new
       tests. Report the number; do not re-run to chase it.
 - [ ] `cargo test --test doc_truth` ⇒ `failed=0`. Clippy (`-D warnings`)
@@ -123,6 +126,8 @@ U=$(DE profile nope --since 2020-01-01); echo "unknown_exit=$?" >> "$A"
 echo "unknown_says=$(echo "$U" | grep -c 'no runs for nope')" >> "$A"
 echo "unknown_lists=$(echo "$U" | grep -c 'claude-sonnet-4-6')" >> "$A"
 echo "scorecard_aligned=$(DE scorecard --since 2020-01-01 | awk '/^MODEL/{h=index($0,"RUNS"); next} h && /claude-sonnet-4-6/{print (substr($0,h+3,1) ~ /[0-9]/); exit}')" >> "$A"
+echo "prof_model_col=$(DE profile claude-sonnet-4-6 --since 2020-01-01 | grep -c '^MODEL')" >> "$A"
+echo "prof_kind_first=$(DE profile claude-sonnet-4-6 --since 2020-01-01 | grep -c '^KIND ')" >> "$A"
 find "$H" -type f -delete
 cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
@@ -368,3 +373,18 @@ kill: (-3356586): No such process
 **Commit:** f7502d7664b7482733e02d4074673c0db546b5d0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-21 (review, bounced)
+
+Gates re-run independently at `96aead57`: fmt/build/clippy exit 0, 2465
+passed 0 failed; every fixture line matches. One Spec sentence is not
+implemented: the profile's strengths table still prints `MODEL`
+(bug-04-1, minor). Two criteria added above; against this tree they read
+`prof_model_col=1`, `prof_kind_first=0`.
+
+**Notes for executor:** only the profile's table changes — it must start
+at the `--by` column. Keep one renderer (give `render_scorecard_table` a
+way to leave the `MODEL` column out, or split the column list from the
+rendering); the scorecard's output and `long_model_names_keep_columns_aligned`
+are unchanged. Re-run § End-to-end verification once and paste it as a new
+entry.
