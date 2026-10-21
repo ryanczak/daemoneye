@@ -5,11 +5,12 @@
 [`README.md`](milestones/M30-telemetry-dashboard/README.md) for the PE
 decisions and the planned phases.
 
-**Active phase:** [phase-04-profile](milestones/M30-telemetry-dashboard/phase-04-profile.md)
-— todo: `daemoneye profile <model>` (strengths per bucket, failure classes
-ranked, non-attributable marked) and content-sized scorecard columns.
-Dispatch with `/rexymcp:dispatch phase-04`. Phases 01–03 done
-2026-10-20/21.
+**Active phase:** [phase-05-cost-ledger](milestones/M30-telemetry-dashboard/phase-05-cost-ledger.md)
+— todo: every model call costed through one `emit_cost` helper (the five
+uncosted side calls included), the local-day spend ledger,
+`[budget] max_cost_per_day` + `cap_status`, the `status` cap line. The
+daily cap itself is phase 06. Dispatch with `/rexymcp:dispatch phase-05`.
+Phases 01–04 done 2026-10-20/21.
 
 M29 closed 2026-10-20 (`v2.2.0`, pushed). M31 (MCP surface) and M32
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost

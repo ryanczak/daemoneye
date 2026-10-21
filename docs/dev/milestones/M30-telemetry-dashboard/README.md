@@ -105,12 +105,16 @@ close. Each may split at drafting.
 | 02 | run-record ([phase-02-run-record.md](phase-02-run-record.md)) — the `run` event: the record type, `failure_class` computed from the terminal state and the tally, `is_model_attributable`, emitted by the run guard at every run end; the ghost `Budget` fed with real spend | done |
 | 03 | scorecard ([phase-03-scorecard.md](phase-03-scorecard.md)) — pure aggregation over `run` events with `n_runs` and `min_runs`; model-less records skipped and counted; `daemoneye scorecard` | done |
 | 04 | profile ([phase-04-profile.md](phase-04-profile.md)) — `daemoneye profile <model>`: strengths (scorecard rows) and failure classes ranked, non-attributable marked; scorecard table columns sized to content | done |
-| 05 | daily-cap — `[budget] max_cost_per_day`, the breaker at turn top on all three paths, the `status` line | todo |
-| 06 | top — `daemoneye top`: Runs, Budget, Shells, Activity; 500 ms poll, fingerprint, follow | todo |
-| 07 | live-close — architect rehearsals, the PE run, 2.3.0 | todo |
+| 05 | cost-ledger ([phase-05-cost-ledger.md](phase-05-cost-ledger.md)) — every model call costed through one helper (the five uncosted side calls included), the local-day spend ledger, `[budget] max_cost_per_day` and `cap_status`, the `status` cap line | todo |
+| 06 | daily-cap — the breaker at every model call: a chat turn refused with a `SystemMsg`, a ghost or scheduled run ended `BudgetExceeded`, webhook watchdog analysis skipped and logged, side calls skipped | todo |
+| 07 | top — `daemoneye top`: Runs, Budget, Shells, Activity; 500 ms poll, fingerprint, follow | todo |
+| 08 | live-close — architect rehearsals, the PE run, 2.3.0 | todo |
 
 ## Notes
 
+- **Daily cap split in two (drafting 05, 2026-10-21).** Phase 05 makes
+  every model call costed and keeps the local-day total; phase 06 refuses
+  over the cap. `top` and the live close move to 07 and 08.
 - **Five model calls are invisible to cost today (found drafting 01).**
   Briefing generation, the session digest, auto-naming and the webhook
   and scheduled watchdogs call `make_client(..).chat(..)` and emit no
