@@ -122,7 +122,8 @@ pub struct CostRecord {
 /// A serialization failure is logged and the `ai_cost` line skipped — never
 /// a panic — but the ledger still counts the cost, so the daily cap's
 /// picture of spend stays honest.
-/// One model call's cost context: everything `emit_cost` needs beyond the
+///
+/// One model call's cost context: everything [`emit_cost`] needs beyond the
 /// token breakdown. Built once per call by the caller.
 pub struct CostCall<'a> {
     /// The resolved model entry whose rates price the call.
@@ -162,16 +163,22 @@ pub fn emit_cost(call: CostCall<'_>) -> CostRecord {
         pricing_source: pricing.source,
         run_id: call.run_id.to_string(),
     };
-    match serde_json::to_value(&record) {
-        Ok(value) => crate::daemon::utils::log_event("ai_cost", value),
-        Err(e) => log::warn!(
-            "ai_cost serialization failed for agent '{}' ({}): {} — the line is skipped, the cost still counts",
-            call.attribution.agent_name,
-            call.model_entry.model,
-            e
-        ),
-    }
-    crate::daemon::spend::record(record.cost.total_cost_usd);
+    let line_written = match serde_json::to_value(&record) {
+        Ok(value) => {
+            crate::daemon::utils::log_event("ai_cost", value);
+            true
+        }
+        Err(e) => {
+            log::warn!(
+                "ai_cost serialization failed for agent '{}' ({}): {} — the line is skipped, the cost still counts",
+                call.attribution.agent_name,
+                call.model_entry.model,
+                e
+            );
+            false
+        }
+    };
+    crate::daemon::spend::record(record.cost.total_cost_usd, line_written);
     record
 }
 

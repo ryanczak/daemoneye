@@ -1,7 +1,7 @@
 # Phase 05: cost-ledger — every model call costed, today's spend kept, `[budget] max_cost_per_day`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (bounced 2026-10-21: bug-05-1)
+**Status:** in-progress (bounced 2026-10-21: bug-05-1; resumed same day)
 **Depends on:** phase-02
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -403,3 +403,77 @@ decline if you like: the doc comment that describes `emit_cost` sits on
 `CostCall`; the function itself has none. Re-run § End-to-end once and
 paste it as a new entry, with the red run of the new test against the
 bounced tree before it.
+
+### Update — 2026-10-21 15:45 (resumed, executor local-inference-lab/GLM-5.3-Flash-NVFP4-Spark)
+
+Resuming at `e02cf593` to fix bug-05-1. Status already `in-progress`; the
+README row already matches. Red run first: against the bounced tree
+(`5c50ed01` + bounce commit) the new test fails — on the pure `Ledger` core,
+`record` seeded with the day's existing lines (0.50, already holding the
+triggering record) and still added the triggering cost on top, giving 1.00:
+
+```
+---- daemon::spend::first_record_tests::the_first_record_of_a_day_is_counted_once stdout ----
+
+thread 'daemon::spend::first_record_tests::the_first_record_of_a_day_is_counted_once' (3685298) panicked at src/daemon/spend.rs:244:9:
+assertion `left == right` failed: a cold seed already holds the record that triggered it; its cost must not be added on top
+  left: 1.0
+ right: 0.5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+```
+
+The fix lives in the pure core: [`Ledger::record`] now takes the record's
+`line_written` flag and skips its add exactly when a seed ran and the line is
+on disk — a seed and an add of the same record never both land. A line that
+failed to serialize never reached the log, so its cost lands even across a
+seed. `cost::emit_cost` passes the flag through; `spend::record` is
+`record(cost, line_written)`.
+
+### Update — 2026-10-21 15:45 (end-to-end verification)
+
+```
+budget_defaults_to_no_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+budget_max_cost_per_day_parses: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ledger_seeds_once_per_day_and_adds: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+ledger_reseeds_on_a_new_day: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+local_day_bounds_start_at_local_midnight: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+cap_status_is_off_at_zero_and_over_at_the_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+emit_cost_logs_ai_cost_and_feeds_the_ledger: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+cap_line_names_spend_and_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_first_record_of_a_day_is_counted_once: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+emit_cost stream.rs=2
+emit_cost ghost.rs=1
+emit_cost briefing.rs=1
+emit_cost digest.rs=1
+emit_cost auto_name.rs=1
+emit_cost scheduled.rs=1
+emit_cost process.rs=1
+raw_ai_cost_outside=0
+template_budget=1
+first_once_defs=1
+first_once: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2474 failed=0
+```
+
+Reproduced command block (§ End-to-end verification):
+
+```sh
+A=/tmp/e2e-m30-05.txt; : > "$A"
+for t in budget_defaults_to_no_cap budget_max_cost_per_day_parses ledger_seeds_once_per_day_and_adds ledger_reseeds_on_a_new_day local_day_bounds_start_at_local_midnight cap_status_is_off_at_zero_and_over_at_the_cap emit_cost_logs_ai_cost_and_feeds_the_ledger cap_line_names_spend_and_cap the_first_record_of_a_day_is_counted_once; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+for f in src/daemon/stream.rs src/daemon/ghost.rs src/daemon/briefing.rs src/daemon/digest.rs src/daemon/auto_name.rs src/daemon/scheduled.rs src/webhook/process.rs; do echo "emit_cost $(basename $f)=$(grep -c 'emit_cost(' $f)" >> "$A"; done
+echo "raw_ai_cost_outside=$(grep -rlE '^\s*"ai_cost",\s*$' src --include=*.rs | grep -v '^src/cost.rs$' | xargs -r grep -cE '^\s*"ai_cost",\s*$' | awk -F: '{s+=$NF} END {print s+0}')" >> "$A"
+echo "template_budget=$(grep -c 'max_cost_per_day' assets/etc/config.toml)" >> "$A"
+echo "first_once_defs=$(grep -c 'fn the_first_record_of_a_day_is_counted_once' src/daemon/spend.rs src/cost.rs | awk -F: '{s+=$NF} END {print s+0}')" >> "$A"
+cargo test --lib the_first_record_of_a_day_is_counted_once 2>&1 | grep -E '^test result' | sed "s/^/first_once: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"
+cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
+cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
+cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}' >> "$A"
+cat "$A"
+```
+
+PASTE MATCH — pasted block byte-identical to /tmp/e2e-m30-05.txt (verified by diff).

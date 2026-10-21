@@ -54,6 +54,30 @@ impl Ledger {
         self.reseed_if_needed(now, seed);
         self.total
     }
+
+    /// Record one model call's cost against `now`'s local day.
+    ///
+    /// The seed sums the day's `ai_cost` lines from local midnight, so when
+    /// the call's line is on disk (`line_written`) a seed triggered by this
+    /// very record already holds it: a seed and an add of the same record
+    /// must never both land, or the first costed call of a day — of the
+    /// daemon's life, or after local midnight — counts twice (bug-05-1). A
+    /// line that failed to serialize never reached the log, so its cost
+    /// lands even across a seed. A ledger already holding the day takes
+    /// every add: its seed ran before this call existed.
+    pub fn record(
+        &mut self,
+        now: DateTime<Local>,
+        cost: f64,
+        line_written: bool,
+        seed: impl FnOnce() -> f64,
+    ) {
+        let seeded = self.day != now.date_naive();
+        self.reseed_if_needed(now, seed);
+        if !seeded || !line_written {
+            self.add(cost);
+        }
+    }
 }
 
 /// Local-midnight-to-now window for `now_local`, in UTC — the interval
@@ -106,21 +130,30 @@ pub fn spent_today() -> f64 {
     ledger.total_for(now, || seed_from_events(now).total)
 }
 
-/// Add one model call's cost to the ledger. Called by
-/// [`crate::cost::emit_cost`] for every costed call.
-pub fn record(cost: f64) {
+/// Record one model call's cost against the local-day ledger. Called by
+/// [`crate::cost::emit_cost`] once the call's outcome is known.
+///
+/// The seed sums the day's `ai_cost` lines, so when the call's line is on
+/// disk (`line_written`) a seed this record triggers already holds it: a
+/// seed and an add of the same record must never both land, or the first
+/// costed call of a day — of the daemon's life, or after local midnight —
+/// counts twice (bug-05-1). A line that failed to serialize never reached
+/// the log, so its cost lands even across a seed. A ledger already seeded
+/// for the day takes every add: its seed ran before this call existed.
+pub fn record(cost: f64, line_written: bool) {
     let now = Local::now();
     let mut guard = LEDGER.lock().unwrap_or_log();
-    let ledger = guard.get_or_insert_with(|| seed_from_events(now));
-    ledger.reseed_if_needed(now, || seed_from_events(now).total);
-    ledger.add(cost);
+    match guard.as_mut() {
+        Some(ledger) => ledger.record(now, cost, line_written, || seed_from_events(now).total),
+        None => *guard = Some(seed_from_events(now)),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn at(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Local> {
+    pub(super) fn at(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Local> {
         Local.with_ymd_and_hms(y, m, d, h, min, 0).unwrap()
     }
 
@@ -214,6 +247,33 @@ mod cap_tests {
                 cap: 2.0
             },
             "just below the cap is Under"
+        );
+    }
+}
+
+#[cfg(test)]
+mod first_record_tests {
+    use super::tests::at;
+    use super::*;
+
+    #[test]
+    fn the_first_record_of_a_day_is_counted_once() {
+        // The day's on-disk `ai_cost` lines already hold the record that
+        // triggers the seed, so the seed returns its cost (0.50).
+        let mut ledger = Ledger::new(at(2026, 10, 20, 9, 0).date_naive());
+        ledger.record(at(2026, 10, 21, 9, 0), 0.50, true, || 0.50);
+        assert_eq!(
+            ledger.total_for(at(2026, 10, 21, 9, 30), || 999.0),
+            0.50,
+            "a cold seed already holds the record that triggered it; its cost must not be added on top"
+        );
+
+        // A call landing on a ledger already seeded for the same day adds.
+        ledger.record(at(2026, 10, 21, 9, 30), 0.25, true, || 999.0);
+        assert_eq!(
+            ledger.total_for(at(2026, 10, 21, 10, 0), || 999.0),
+            0.75,
+            "a same-day record adds its cost on top of the seed"
         );
     }
 }
