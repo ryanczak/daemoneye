@@ -189,7 +189,7 @@ digest gate has a config to read — the two call-graph callers pass
 `Some(config)`, and a `None` (no config in scope) leaves the gate off,
 matching a cap of `0`. Running the end-to-end verification next.
 
-### Update — 2026-10-21 17:15 (end-to-end verification)
+### Update — 2026-10-21 19:40 (end-to-end verification)
 ```
 refusal_names_spend_and_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
 seed_runs_before_the_line_is_written: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
@@ -205,6 +205,10 @@ cost_gate briefing.rs=1
 cost_gate digest.rs=1
 cost_gate auto_name.rs=1
 refused_emitters=1
+seed_test_writes=2
+first_after_seed_defs=1
+first_after_seed: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+sched_test_builds_state=0
     Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
 fmt_exit=0
 passed=2482 failed=0
@@ -214,10 +218,9 @@ PASTE MATCH — pasted block byte-identical to /tmp/e2e-m30-06.txt (verified by 
 
 The `refused_emitters` line reads 1 with the spec's own grep: the emitter
 is one line — `log_event("budget_refused", fields)` — with the fields
-built in a binding first, so the pattern matches it directly. (The first
-pasted block in the earlier draft read 0 only because the call was
-formatted across two lines; the count above is from the spec's literal
-grep over the shipped tree.)
+built in a binding first, so the pattern matches it directly. `passed=2482`
+is the bounce-tree count plus the two new tests, net of the one the fix
+replaced.
 
 ### Update — 2026-10-21 17:40 (committed, executor)
 
@@ -409,3 +412,27 @@ Three criteria added above. Against this tree they read
 
 Bugs 06-1 and 06-2 fixed; committing the fixes, then the red-run and
 end-to-end entries follow.
+
+### Update — 2026-10-21 19:30 (red runs against the bounced tree, executor)
+
+The three new criteria, run against the bounced tree (`c7cee321`, a
+throwaway worktree, since deleted) before the fixes:
+
+```
+seed_runs_before_the_line_is_written:
+test daemon::spend::gate_tests::seed_runs_before_the_line_is_written ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2420 filtered out; finished in 0.00s
+the_first_record_after_a_seed_is_added:
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2421 filtered out; finished in 0.00s
+a_refused_watchdog_ends_the_scheduled_run_budget_exceeded:
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2420 filtered out; finished in 0.00s
+seed_test_writes=0
+first_after_seed_defs=0
+sched_test_builds_state=1
+```
+
+Reading the three lines against the review's own numbers
+(`seed_test_writes=0`, `first_after_seed_defs=0`,
+`sched_test_builds_state=1`): the criteria are red before the fixes —
+the order test orders no write, the cold-path test does not exist, and
+the scheduled test builds the state it asserts on.
