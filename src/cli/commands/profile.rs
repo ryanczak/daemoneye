@@ -74,7 +74,10 @@ fn print_profile(profile: &ModelProfile, by: ScorecardBy, since: &str, until: &s
         profile.n_runs,
         by.label()
     );
-    println!("{}", render_scorecard_table(&profile.strengths.rows, by));
+    println!(
+        "{}",
+        render_scorecard_table(&profile.strengths.rows, by, false)
+    );
     println!();
     println!("Failure classes");
     for line in failure_class_lines(&profile.failure_classes) {

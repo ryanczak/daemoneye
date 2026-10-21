@@ -78,14 +78,15 @@ impl Column {
 /// The scorecard's table — the header row and one line per row — sized to
 /// its content: every column is as wide as its widest cell, header included,
 /// so the columns line up however long a model or key is. Shared with the
-/// profile's strengths table.
-pub fn render_scorecard_table(rows: &[ScorecardRow], by: ScorecardBy) -> String {
-    let columns = [
-        Column {
-            header: "MODEL".to_string(),
-            cells: rows.iter().map(|r| r.model.clone()).collect(),
-            right: false,
-        },
+/// profile's strengths table, which passes `with_model: false` to drop the
+/// `MODEL` column: its header already names the model.
+pub fn render_scorecard_table(rows: &[ScorecardRow], by: ScorecardBy, with_model: bool) -> String {
+    let model = with_model.then(|| Column {
+        header: "MODEL".to_string(),
+        cells: rows.iter().map(|r| r.model.clone()).collect(),
+        right: false,
+    });
+    let rest = [
         Column {
             header: by.label().to_uppercase(),
             cells: rows.iter().map(|r| r.key.clone()).collect(),
@@ -147,6 +148,7 @@ pub fn render_scorecard_table(rows: &[ScorecardRow], by: ScorecardBy) -> String 
             right: true,
         },
     ];
+    let columns: Vec<Column> = model.into_iter().chain(rest).collect();
 
     let widths: Vec<usize> = columns.iter().map(Column::width).collect();
     let lines: Vec<Vec<String>> = columns
@@ -169,7 +171,7 @@ pub fn render_scorecard_table(rows: &[ScorecardRow], by: ScorecardBy) -> String 
 
 fn print_human(scorecard: &Scorecard, by: ScorecardBy, since: &str, until: &str) {
     println!("Run scorecard {since} – {until} (by {})", by.label());
-    println!("{}", render_scorecard_table(&scorecard.rows, by));
+    println!("{}", render_scorecard_table(&scorecard.rows, by, true));
     if scorecard.rows_dropped > 0 || scorecard.skipped_no_model > 0 {
         println!(
             "\n{} row(s) below --min-runs; {} run(s) with no model skipped",
@@ -246,7 +248,7 @@ mod tests {
         let rows = vec![row("claude-sonnet-4-6", 4), row("m2", 1)];
         let by = ScorecardBy::Kind;
 
-        let table = render_scorecard_table(&rows, by);
+        let table = render_scorecard_table(&rows, by, true);
         let lines: Vec<&str> = table.lines().collect();
         assert_eq!(lines.len(), 3, "header plus two rows");
 
