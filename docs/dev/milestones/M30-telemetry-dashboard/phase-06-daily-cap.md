@@ -1,7 +1,7 @@
 # Phase 06: daily-cap — `[budget] max_cost_per_day` refuses model calls over the cap
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** in-progress (bounced 2026-10-21: bug-06-1, bug-06-2)
 **Depends on:** phase-05
 **Estimated diff:** ~350 lines, about a third of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -93,6 +93,12 @@ ledger race carried from phase 05.
       Report the number; do not re-run to chase it.
 - [ ] Clippy (`-D warnings`) and `cargo fmt --all --check` exit 0. No new
       `#[allow]`, no production `unwrap`/`expect`.
+- [ ] **bug-06-1:** `seed_runs_before_the_line_is_written` orders a real
+      write (`seed_test_writes` ≥ 1; `0` today), and
+      `the_first_record_after_a_seed_is_added` passes
+      (`first_after_seed_defs=1`; `0` today).
+- [ ] **bug-06-2:** the scheduled-refusal test builds no state itself
+      (`sched_test_builds_state=0`; `1` today).
 - [ ] The end-to-end Update Log entry holds the output fence **first**,
       then the `PASTE MATCH` line.
 
@@ -103,6 +109,10 @@ A=/tmp/e2e-m30-06.txt; : > "$A"
 for t in refusal_names_spend_and_cap seed_runs_before_the_line_is_written a_cost_cap_ends_the_ghost_budget_exceeded_usd cancellation_beats_the_cost_cap the_cost_cap_beats_the_turn_budget a_refused_watchdog_ends_the_scheduled_run_budget_exceeded; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 for f in src/daemon/stream.rs src/daemon/ghost.rs src/daemon/scheduled.rs src/webhook/process.rs src/daemon/briefing.rs src/daemon/digest.rs src/daemon/auto_name.rs; do echo "cost_gate $(basename $f)=$(grep -c 'cost_gate(' $f)" >> "$A"; done
 echo "refused_emitters=$(grep -rE 'log_event\(\s*"budget_refused"' src --include=*.rs | wc -l)" >> "$A"
+echo "seed_test_writes=$(awk '/fn seed_runs_before_the_line_is_written/,/^    }$/' src/daemon/spend.rs | grep -c '"write"')" >> "$A"
+echo "first_after_seed_defs=$(grep -c 'fn the_first_record_after_a_seed_is_added' src/daemon/spend.rs)" >> "$A"
+cargo test --lib the_first_record_after_a_seed_is_added 2>&1 | grep -E '^test result' | sed "s/^/first_after_seed: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"
+echo "sched_test_builds_state=$(awk '/fn a_refused_watchdog_ends_the_scheduled_run_budget_exceeded/,/^    }$/' src/daemon/scheduled.rs | grep -c 'Briefing::new')" >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
 cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}' >> "$A"
@@ -359,3 +369,38 @@ kill: (-3875996): No such process
 **Commit:** 628c4a62d5ba89b5e0762ef926afdab54d45d0bc
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-21 (review, bounced)
+
+Gates re-run independently at `1ae6e24d`: fmt/build/clippy exit 0, 2482
+passed 0 failed. All seven sites gate before `make_client`, the one
+emitter is in `cost_gate`, and the chat, ghost, scheduled, webhook and
+side-call refusals do what the Spec says. Two defects:
+
+- **bug-06-1 (major).** `record_with_write` now seeds before the write.
+  It kept the old "skip the add when a seed ran" rule, so the call that
+  seeds the ledger is never counted. The order test calls the no-write
+  `Ledger::record`, so it has no write to order, and it asserts the
+  undercount (`0.25`). It passes against the phase-05 tree unchanged.
+- **bug-06-2 (minor).** The scheduled-refusal test builds the
+  `BudgetExceeded` state itself and asserts its own fields.
+  `run_scheduled_job`'s mapping is never run.
+
+Three criteria added above. Against this tree they read
+`seed_test_writes=0`, `first_after_seed_defs=0` and
+`sched_test_builds_state=1`.
+
+**Notes for executor:**
+- With the seed before the write, a seed can never hold this call's line,
+  so the add is always due. Re-derive the condition for that order rather
+  than reusing phase 05's. Whether `line_written` still matters is yours
+  to decide.
+- Fix both `record_with_write` and the cold `None` branch of
+  `record_under_lock`.
+- For bug-06-2, move the refusal-or-status choice into one pure function
+  that `run_scheduled_job` calls.
+- Three nits, each declinable with a reason:
+  - The phase deleted `spend.rs`'s module doc; restore it.
+  - `run_scheduled_job` now returns a `Result` that is always `Ok`.
+  - `summarize_once`'s `Option<&Config>` is never `None` at any caller.
+- Paste the red runs, then § End-to-end once as a new entry.
