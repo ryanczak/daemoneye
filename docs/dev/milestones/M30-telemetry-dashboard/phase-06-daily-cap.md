@@ -1,7 +1,7 @@
 # Phase 06: daily-cap — `[budget] max_cost_per_day` refuses model calls over the cap
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-05
 **Estimated diff:** ~350 lines, about a third of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -573,3 +573,14 @@ kill: (-4035923): No such process
 **Commit:** 5be3f6b47e026049cfc07035dad0b72acaa81856
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-21
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1. The bounce filed bug-06-1 (major): the call that seeded the ledger was never counted, and the order test ordered no write and asserted the undercount. It also filed bug-06-2 (minor): the scheduled-refusal test built its own state. Both were fixed in `a7728e41`. With the seed now before the write, the add is always due, and `line_written` is gone. The scheduled choice lives in the one pure `scheduled_run_state`.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** phase 05's `the_first_record_of_a_day_is_counted_once` is replaced by `the_first_record_after_a_seed_is_added`. It encoded the write-then-seed rule this phase retired, so it is superseded, not lost. The always-`Ok` `Result` on `run_scheduled_job` was kept, declined with a reason. Accepted.
+- **Calibration:**
+  1. The criteria added at the bounce checked what each test exercises, not only that it exists: `"write"` in the order test's body, no `Briefing::new` in the scheduled test. Both landed on the first re-dispatch. Fold this into the retrospective proposal alongside "every Spec claim gets a criterion".
+  2. The new test's red run is "not present" from a pre-fix worktree, which proves nothing. By inspection, its `0.50` assertion fails against the bounced rule, which gave `0.00`. Accepted on that reading.
+  3. Independent re-run at `e5613a59`: fmt, build and clippy exit 0; 2482 passed, 0 failed. Every criterion was re-read: `seed_test_writes=2`, `first_after_seed_defs=1`, `sched_test_builds_state=0`, `cost_gate` = 1 in all seven files, `refused_emitters=1`.
