@@ -104,7 +104,7 @@ close. Each may split at drafting.
 | 01 | run-metrics ([phase-01-run-metrics.md](phase-01-run-metrics.md)) — a `RunMetrics` tally (tool calls and successes, parse failures, tokens, wall clock, model / served model) kept on the run and fed by the chat turn, ghost, scheduled and delegated loops; `CostRecord.run_id` | done |
 | 02 | run-record ([phase-02-run-record.md](phase-02-run-record.md)) — the `run` event: the record type, `failure_class` computed from the terminal state and the tally, `is_model_attributable`, emitted by the run guard at every run end; the ghost `Budget` fed with real spend | done |
 | 03 | scorecard ([phase-03-scorecard.md](phase-03-scorecard.md)) — pure aggregation over `run` events with `n_runs` and `min_runs`; model-less records skipped and counted; `daemoneye scorecard` | done |
-| 04 | profile ([phase-04-profile.md](phase-04-profile.md)) — `daemoneye profile <model>`: strengths (scorecard rows) and failure classes ranked, non-attributable marked; scorecard table columns sized to content | in-progress (bounced 2026-10-21: bug-04-1) |
+| 04 | profile ([phase-04-profile.md](phase-04-profile.md)) — `daemoneye profile <model>`: strengths (scorecard rows) and failure classes ranked, non-attributable marked; scorecard table columns sized to content | review                                     |
 | 05 | daily-cap — `[budget] max_cost_per_day`, the breaker at turn top on all three paths, the `status` line | todo |
 | 06 | top — `daemoneye top`: Runs, Budget, Shells, Activity; 500 ms poll, fingerprint, follow | todo |
 | 07 | live-close — architect rehearsals, the PE run, 2.3.0 | todo |
