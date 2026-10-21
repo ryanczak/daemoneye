@@ -404,3 +404,8 @@ Three criteria added above. Against this tree they read
   - `run_scheduled_job` now returns a `Result` that is always `Ok`.
   - `summarize_once`'s `Option<&Config>` is never `None` at any caller.
 - Paste the red runs, then § End-to-end once as a new entry.
+
+### Update — 2026-10-21 19:20 (re-dispatch, executor)
+
+Bugs 06-1 and 06-2 fixed; committing the fixes, then the red-run and
+end-to-end entries follow.
