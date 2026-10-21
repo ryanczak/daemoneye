@@ -117,7 +117,7 @@ pub async fn run_scheduled_job(
     config: Config,
     cache: Arc<crate::tmux::cache::SessionCache>,
     notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
-) {
+) -> Result<(), String> {
     let job_id = job.id.clone();
     let job_name = job.name.clone();
     let mut run_log = RunLogGuard::start(
@@ -126,7 +126,7 @@ pub async fn run_scheduled_job(
             job: job_name.clone(),
         },
     );
-    run_scheduled_job_inner(
+    let refusal = run_scheduled_job_inner(
         job,
         store.clone(),
         session,
@@ -141,7 +141,24 @@ pub async fn run_scheduled_job(
         .into_iter()
         .find(|j| j.id == job_id)
         .map(|j| j.status);
-    run_log.finish(scheduled_terminal_state(status.as_ref(), &job_name));
+    // A refused watchdog analysis ends the scheduled run `BudgetExceeded` in
+    // place of the state the job status alone would give — the job itself
+    // still ran and is still marked done as now.
+    let state = match refusal {
+        Some(message) => {
+            crate::daemon::run::RunState::BudgetExceeded(crate::daemon::run::Briefing::new(
+                format!("scheduled job {job_name}"),
+                None,
+                Vec::new(),
+                Vec::new(),
+                Some(message),
+                Some(crate::daemon::run::BudgetDimension::Usd),
+            ))
+        }
+        None => scheduled_terminal_state(status.as_ref(), &job_name),
+    };
+    run_log.finish(state);
+    Ok(())
 }
 
 async fn run_scheduled_job_inner(
@@ -152,7 +169,7 @@ async fn run_scheduled_job_inner(
     config: Config,
     cache: Arc<crate::tmux::cache::SessionCache>,
     notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
-) {
+) -> Option<String> {
     crate::daemon::stats::inc_schedules_executed();
 
     // Ghost-mode: hand off entirely to the ghost shell infrastructure.
@@ -176,7 +193,7 @@ async fn run_scheduled_job_inner(
                 false,
                 Some("ghost concurrency limit reached".to_string()),
             );
-            return;
+            return None;
         }
 
         let alert_msg = format!(
@@ -274,7 +291,7 @@ async fn run_scheduled_job_inner(
                 }
             }
         }
-        return;
+        return None;
     }
 
     if matches!(job.action, ActionOn::Script(_)) {
@@ -321,7 +338,7 @@ async fn run_scheduled_job_inner(
                     let msg = resolve_failure(&job.name, &format!("{e:#}"));
                     log::error!("{}", msg);
                     fail_job(&job, &store, &config, &notify_tx, msg).await;
-                    return;
+                    return None;
                 }
             };
             run_script_job(
@@ -335,6 +352,7 @@ async fn run_scheduled_job_inner(
         }
         ActionOn::Ghost { .. } => {}
     }
+    None
 }
 
 /// Run an `ActionOn::Script` job: resolve, then run the script in a
@@ -347,7 +365,7 @@ async fn run_script_job(
     store: &Arc<ScheduleStore>,
     config: &Config,
     notify_tx: &Option<tokio::sync::mpsc::UnboundedSender<Response>>,
-) {
+) -> Option<String> {
     let owner = Owner::Scheduler(job.id.clone());
     let reg = crate::shell::registry();
     let script_name = std::path::Path::new(host_path)
@@ -399,7 +417,7 @@ async fn run_script_job(
 
     let normalized = normalize_output(&output);
     let success = exit_code == 0;
-    run_watchdog(job, &normalized, config, notify_tx).await;
+    let watchdog_refusal = run_watchdog(job, &normalized, config, notify_tx).await;
     store.mark_done(
         &job.id,
         success,
@@ -415,6 +433,7 @@ async fn run_script_job(
         script_name, status_word, exit_code, normalized
     );
     notify_job_result(&job.name, msg, config, notify_tx).await;
+    watchdog_refusal.err()
 }
 
 /// The PTY run: the resolved script in the job's own shell on the daemon
@@ -509,18 +528,33 @@ async fn run_script_in_sandbox(
 
 /// The job's runbook watchdog analysis, on the PTY output instead of a
 /// captured pane. Unchanged from the window path except for its input.
+///
+/// The daily-cap gate runs before the model call: over
+/// `[budget] max_cost_per_day` the analysis is skipped and logged, the job
+/// itself still runs and is still marked done, and the caller ends the
+/// scheduled run `BudgetExceeded` in place of the state
+/// [`scheduled_terminal_state`] would give.
 async fn run_watchdog(
     job: &ScheduledJob,
     output: &str,
     config: &Config,
     notify_tx: &Option<tokio::sync::mpsc::UnboundedSender<Response>>,
-) {
+) -> Result<(), String> {
     let Some(rb_name) = job.runbook.as_ref() else {
-        return;
+        return Ok(());
     };
     let Ok(rb) = crate::runbook::load_runbook(rb_name) else {
-        return;
+        return Ok(());
     };
+    if let Err(message) =
+        crate::daemon::spend::cost_gate(config, crate::daemon::spend::SpendPath::Scheduled)
+    {
+        log::warn!(
+            "Scheduled job '{}': watchdog analysis skipped — daily cost cap: {message}",
+            job.name
+        );
+        return Err(message);
+    }
     let model_entry = config.resolve_model(None);
     let client = crate::ai::make_client(
         &model_entry.provider,
@@ -571,6 +605,7 @@ async fn run_watchdog(
         let msg = format!("[Watchdog] {}: {}", job.name, ai_response.trim());
         notify_job_result(&job.name, msg, config, notify_tx).await;
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -798,6 +833,51 @@ mod tests {
             hard_fail_blocker(&failed),
             hard_fail_blocker(&missing),
             "the two HardFail paths name different causes and must stay distinguishable"
+        );
+    }
+
+    #[test]
+    fn a_refused_watchdog_ends_the_scheduled_run_budget_exceeded() {
+        // The refusal the watchdog's cost gate returns, carried through the
+        // same shape `run_scheduled_job` applies: it replaces whatever state
+        // the job status alone would give, with the message as the blocker
+        // and the `Usd` dimension on the briefing.
+        let message = crate::daemon::spend::refusal_message(3.0, 2.0);
+        let state =
+            crate::daemon::run::RunState::BudgetExceeded(crate::daemon::run::Briefing::new(
+                "scheduled job nightly-backup".to_string(),
+                None,
+                Vec::new(),
+                Vec::new(),
+                Some(message.clone()),
+                Some(crate::daemon::run::BudgetDimension::Usd),
+            ));
+        match state {
+            crate::daemon::run::RunState::BudgetExceeded(briefing) => {
+                assert_eq!(
+                    briefing.budget_left,
+                    Some(crate::daemon::run::BudgetDimension::Usd),
+                    "the cost cap ends the scheduled run on the Usd dimension"
+                );
+                assert_eq!(
+                    briefing.blocker.as_deref(),
+                    Some(message.as_str()),
+                    "the blocker must be the gate's refusal message verbatim"
+                );
+                assert_eq!(
+                    briefing.goal, "scheduled job nightly-backup",
+                    "the briefing's goal must name the job"
+                );
+            }
+            other => panic!("a refused watchdog must end BudgetExceeded, got {other:?}"),
+        }
+        // The job itself still ran and is still marked done as now: the
+        // terminal state the refusal replaces is the one a succeeded job
+        // would have given.
+        assert_eq!(
+            scheduled_terminal_state(Some(&JobStatus::Succeeded), "nightly-backup"),
+            RunState::Complete,
+            "the refusal replaces this state, it does not change how the job was marked"
         );
     }
 

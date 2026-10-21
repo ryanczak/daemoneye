@@ -163,11 +163,15 @@ pub fn emit_cost(call: CostCall<'_>) -> CostRecord {
         pricing_source: pricing.source,
         run_id: call.run_id.to_string(),
     };
-    let line_written = match serde_json::to_value(&record) {
-        Ok(value) => {
-            crate::daemon::utils::log_event("ai_cost", value);
-            true
-        }
+    // The write and the ledger add must land under the ledger's lock, with
+    // any seed running *before* the write: the daily-cap gate reads
+    // `spent_today()` between model calls, and a gate read landing between
+    // a cold seed and the write would count the line, then the add would
+    // count it again. `line_written` carries the write's outcome into the
+    // ledger — a failed write still counts its cost, because the line the
+    // seed would sum is not on disk.
+    let line = match serde_json::to_value(&record) {
+        Ok(value) => Some(value),
         Err(e) => {
             log::warn!(
                 "ai_cost serialization failed for agent '{}' ({}): {} — the line is skipped, the cost still counts",
@@ -175,10 +179,14 @@ pub fn emit_cost(call: CostCall<'_>) -> CostRecord {
                 call.model_entry.model,
                 e
             );
-            false
+            None
         }
     };
-    crate::daemon::spend::record(record.cost.total_cost_usd, line_written);
+    crate::daemon::spend::record_under_lock(line.is_some(), record.cost.total_cost_usd, || {
+        if let Some(line) = &line {
+            crate::daemon::utils::log_event("ai_cost", line.clone());
+        }
+    });
     record
 }
 

@@ -154,6 +154,7 @@ async fn run_compaction(
         crate::daemon::digest::build_narrative_summary(
             &snapshot.messages[..tail_start],
             config.resolve_model(Some("digest")),
+            Some(config),
         )
         .await
     } else {

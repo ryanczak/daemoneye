@@ -10,10 +10,21 @@ pub const AUTONAME_TIMEOUT_SECS: u64 = 20;
 
 /// Call the digest model to suggest a `(name, description)` pair for an unnamed session.
 /// Returns `None` on timeout, API error, or if the response cannot be parsed into a valid name.
+///
+/// The daily cap gates the call before it is made: over
+/// `[budget] max_cost_per_day` the suggestion is skipped and logged, and
+/// the session simply stays unnamed. Nothing is retried.
 pub async fn suggest_session_name(
     messages: &[crate::ai::Message],
     config: &crate::config::Config,
 ) -> Option<(String, String)> {
+    if let Err(message) =
+        crate::daemon::spend::cost_gate(config, crate::daemon::spend::SpendPath::AutoName)
+    {
+        log::warn!("Auto-name: suggestion skipped — daily cost cap: {message}");
+        return None;
+    }
+
     // Build a compact transcript: at most the last 20 user/assistant exchanges.
     let transcript: String = messages
         .iter()

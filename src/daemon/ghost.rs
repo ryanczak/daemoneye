@@ -389,17 +389,21 @@ fn emit_turn_started(run_id: &RunId, turn: usize) {
 /// What the ghost turn loop reports back about how it ended. `turns` is the
 /// count the loop actually ran, which `RunState::Cancelled` and the
 /// `RunResult` both need.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone)]
 pub struct GhostLoopOutcome {
     pub turns: u32,
     pub budget_exhausted: bool,
     pub cancelled: bool,
+    /// The daily-cap gate's refusal message, set when the cap stopped a
+    /// turn from being made at all (no wrap-up turn).
+    pub cost_refused: Option<String>,
 }
 
 /// The terminal [`RunState`] a ghost run records, from the loop's outcome and
 /// its [`Result`]. The order is the contract: an error is the most specific
 /// outcome even when the run was also cancelled or out of budget;
-/// cancellation beats an exhausted budget.
+/// cancellation beats an exhausted budget, and the cost cap beats the turn
+/// budget.
 fn ghost_terminal_state(
     result: &Result<()>,
     outcome: &GhostLoopOutcome,
@@ -419,6 +423,14 @@ fn ghost_terminal_state(
             stage,
             turns: outcome.turns,
         },
+        _ if outcome.cost_refused.is_some() => RunState::BudgetExceeded(Briefing::new(
+            format!("ghost shell {session_id}"),
+            None,
+            Vec::new(),
+            Vec::new(),
+            outcome.cost_refused.clone(),
+            Some(BudgetDimension::Usd),
+        )),
         _ if outcome.budget_exhausted => RunState::BudgetExceeded(Briefing::new(
             format!("ghost shell {session_id}"),
             None,
@@ -1021,6 +1033,24 @@ async fn do_ghost_turn(
         outcome.turns = turn as u32;
         metrics.record_turn();
         emit_turn_started(run_id, turn);
+
+        // The daily cap gates every ghost turn, before the model call: the
+        // refusal ends the loop without a wrap-up turn, and
+        // `ghost_terminal_state` turns it into `BudgetExceeded` — an error
+        // and a cancellation still beat it. The check sits after the turn
+        // counter so the recorded `turns` includes the refused one, and
+        // before `make_client` so nothing reaches a provider.
+        if let Err(message) =
+            crate::daemon::spend::cost_gate(config, crate::daemon::spend::SpendPath::Ghost)
+        {
+            log::warn!(
+                "Ghost Shell {}: daily cost cap refuses turn {}: {message}",
+                session_id,
+                turn
+            );
+            outcome.cost_refused = Some(message);
+            break;
+        }
 
         log::info!(
             "Ghost Shell {}: starting turn {}/{}{}",
@@ -2030,18 +2060,16 @@ mod tests {
     fn ghost_loop_outcome_defaults_to_zero_turns_and_no_flags() {
         let outcome = GhostLoopOutcome::default();
         assert_eq!(
-            outcome,
-            GhostLoopOutcome {
-                turns: 0,
-                budget_exhausted: false,
-                cancelled: false,
-            },
-            "Default must give zero turns and no flags — the wrapper relies on \
-             starting from a clean outcome"
+            (
+                outcome.turns,
+                outcome.budget_exhausted,
+                outcome.cancelled,
+                outcome.cost_refused.is_none()
+            ),
+            (0u32, false, false, true),
+            "Default must give zero turns, no flags and no refusal — the wrapper \
+             relies on starting from a clean outcome"
         );
-        assert_eq!(outcome.turns, 0, "Default turns must be 0");
-        assert!(!outcome.budget_exhausted, "Default budget flag must be off");
-        assert!(!outcome.cancelled, "Default cancel flag must be off");
     }
 
     #[test]
@@ -2050,6 +2078,7 @@ mod tests {
             turns: 3,
             budget_exhausted: true,
             cancelled: true,
+            cost_refused: None,
         };
         let state = ghost_terminal_state(
             &Err(anyhow::anyhow!("model exploded")),
@@ -2078,6 +2107,7 @@ mod tests {
             turns: 5,
             budget_exhausted: true,
             cancelled: true,
+            cost_refused: None,
         };
         let state = ghost_terminal_state(&Ok(()), &outcome, "chat_cancel".to_string(), "gs-2");
         match state {
@@ -2089,6 +2119,96 @@ mod tests {
                 assert_eq!(turns, 5, "Cancelled.turns must be the loop's actual count");
             }
             other => panic!("Ok with both flags must read Cancelled, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_cost_cap_ends_the_ghost_budget_exceeded_usd() {
+        let outcome = GhostLoopOutcome {
+            turns: 2,
+            budget_exhausted: false,
+            cancelled: false,
+            cost_refused: Some(crate::daemon::spend::refusal_message(5.0, 5.0)),
+        };
+        let state =
+            ghost_terminal_state(&Ok(()), &outcome, "unmarked_cancel".to_string(), "gs-cap");
+        match state {
+            RunState::BudgetExceeded(briefing) => {
+                assert_eq!(
+                    briefing.budget_left,
+                    Some(BudgetDimension::Usd),
+                    "the cost cap ends the run on the Usd dimension"
+                );
+                assert!(
+                    briefing
+                        .blocker
+                        .as_deref()
+                        .is_some_and(|b| b.contains("$5.00") && b.contains("midnight")),
+                    "the blocker must be the gate's refusal message, got {:?}",
+                    briefing.blocker
+                );
+            }
+            other => panic!("a cost refusal must read BudgetExceeded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cancellation_beats_the_cost_cap() {
+        let outcome = GhostLoopOutcome {
+            turns: 3,
+            budget_exhausted: false,
+            cancelled: true,
+            cost_refused: Some(crate::daemon::spend::refusal_message(5.0, 5.0)),
+        };
+        let state = ghost_terminal_state(
+            &Ok(()),
+            &outcome,
+            "stop_sentinel".to_string(),
+            "gs-cap-cancel",
+        );
+        match state {
+            RunState::Cancelled { stage, turns } => {
+                assert_eq!(
+                    stage, "stop_sentinel",
+                    "a cancellation and a cost refusal must still read Cancelled"
+                );
+                assert_eq!(turns, 3);
+            }
+            other => panic!("cancelled beats the cost cap, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_cost_cap_beats_the_turn_budget() {
+        let outcome = GhostLoopOutcome {
+            turns: 9,
+            budget_exhausted: true,
+            cancelled: false,
+            cost_refused: Some(crate::daemon::spend::refusal_message(5.0, 5.0)),
+        };
+        let state = ghost_terminal_state(
+            &Ok(()),
+            &outcome,
+            "unmarked_cancel".to_string(),
+            "gs-cap-turns",
+        );
+        match state {
+            RunState::BudgetExceeded(briefing) => {
+                assert_eq!(
+                    briefing.budget_left,
+                    Some(BudgetDimension::Usd),
+                    "the cost cap must beat the turn budget: both flags set, the \
+                     briefing names the cost cap's dimension"
+                );
+                assert!(
+                    briefing
+                        .blocker
+                        .as_deref()
+                        .is_some_and(|b| b.contains("midnight")),
+                    "the blocker must be the cost refusal, not the turn-budget one"
+                );
+            }
+            other => panic!("the cost cap beats the turn budget, got {other:?}"),
         }
     }
 

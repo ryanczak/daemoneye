@@ -1,7 +1,7 @@
 # Phase 06: daily-cap — `[budget] max_cost_per_day` refuses model calls over the cap
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05
 **Estimated diff:** ~350 lines, about a third of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -135,3 +135,10 @@ None.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-21 16:20 (started, executor)
+
+Status flipped `todo` → `in-progress`; README phase-table row matches.
+Beginning task 1 (one gate) and task 3 (the ledger race) — the gate's
+`Ok`/`Err` shape and the seed-before-write constraint live in the same
+`spend.rs` core. Task 2's seven model-call sites follow.

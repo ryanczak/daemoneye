@@ -162,6 +162,34 @@ where
     loop {
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
+        // The daily cap gates every model-call iteration — tool-loop
+        // continuations included — before `make_client`, so a turn at or
+        // over `[budget] max_cost_per_day` never reaches a provider. The
+        // refusal is the turn-timeout branch's analogue: a `SystemMsg`, a
+        // `BudgetExceeded` finish with the message as the briefing's blocker
+        // on the `Usd` dimension, and the turn ends.
+        if let Err(message) =
+            crate::daemon::spend::cost_gate(config, crate::daemon::spend::SpendPath::Chat)
+        {
+            log::warn!(
+                "chat turn for session {}: daily cost cap refuses the model call: {message}",
+                session_id.as_deref().unwrap_or("(ghost)"),
+            );
+            send_response_split(tx, Response::SystemMsg(message.clone())).await?;
+            run_log.finish(crate::daemon::run::RunState::BudgetExceeded(
+                crate::daemon::run::Briefing::new(
+                    "chat turn",
+                    None,
+                    Vec::new(),
+                    Vec::new(),
+                    Some(message),
+                    Some(crate::daemon::run::BudgetDimension::Usd),
+                ),
+            ));
+            send_response_split(tx, Response::Ok).await?;
+            return Ok(());
+        }
+
         let active_entry = config.resolve_model(session_active_model.as_deref());
         run_log
             .metrics_mut()

@@ -1,15 +1,4 @@
 //! The local-day spend ledger.
-//!
-//! One process-wide total of what every model call cost **today**, where
-//! "today" is the *local* calendar day — the same day the `[budget]
-//! max_cost_per_day` cap uses (M30 phase 06), not the UTC day
-//! `daemoneye status`'s breakdowns show.
-//!
-//! The ledger is seeded lazily: the first read (or first add) on a day
-//! that it does not yet hold sums the `ai_cost` events from local
-//! midnight to now via [`crate::daemon::utils::sum_cost_between`], so a
-//! daemon restarted mid-day inherits what its earlier life already spent.
-//! After the seed, every [`emit`](Ledger::add) accumulates on top.
 
 use crate::util::UnpoisonExt;
 
@@ -78,6 +67,27 @@ impl Ledger {
             self.add(cost);
         }
     }
+
+    /// [`Ledger::record`] with the line's write inside the same critical
+    /// section: the seed runs first, then `write_line`, then the add (when
+    /// one is due) — all under the caller's ledger lock. This is the shape
+    /// the ledger race demands; [`Ledger::record`] is the no-write form the
+    /// tests drive.
+    pub fn record_with_write(
+        &mut self,
+        now: DateTime<Local>,
+        cost: f64,
+        line_written: bool,
+        write_line: impl FnOnce(),
+        seed: impl FnOnce() -> f64,
+    ) {
+        let seeded = self.day != now.date_naive();
+        self.reseed_if_needed(now, seed);
+        write_line();
+        if !seeded || !line_written {
+            self.add(cost);
+        }
+    }
 }
 
 /// Local-midnight-to-now window for `now_local`, in UTC — the interval
@@ -130,6 +140,37 @@ pub fn spent_today() -> f64 {
     ledger.total_for(now, || seed_from_events(now).total)
 }
 
+/// Record one model call's cost against the local-day ledger, with the
+/// `ai_cost` line write inside the same critical section.
+///
+/// `write_line` runs after any seed this record triggers and before the
+/// add, all under [`LEDGER`]'s lock — so a `spent_today()` gate read can
+/// never land between a cold seed and the write and count the cost twice
+/// (bug-05-1). `line_written` is false when the line could not be
+/// serialized: the seed has nothing on disk to sum for this call, so its
+/// cost is added even across a seed.
+///
+/// Gotcha honoured by the callers: [`crate::daemon::utils::log_event`] must
+/// not take the ledger lock, and nothing it calls may — it runs here under
+/// the lock by design, and re-taking it would deadlock.
+pub fn record_under_lock(line_written: bool, cost: f64, write_line: impl FnOnce()) {
+    let now = Local::now();
+    let mut guard = LEDGER.lock().unwrap_or_log();
+    match guard.as_mut() {
+        Some(ledger) => ledger.record_with_write(now, cost, line_written, write_line, || {
+            seed_from_events(now).total
+        }),
+        None => {
+            let mut ledger = seed_from_events(now);
+            write_line();
+            if !line_written {
+                ledger.add(cost);
+            }
+            *guard = Some(ledger);
+        }
+    }
+}
+
 /// Record one model call's cost against the local-day ledger. Called by
 /// [`crate::cost::emit_cost`] once the call's outcome is known.
 ///
@@ -141,11 +182,75 @@ pub fn spent_today() -> f64 {
 /// the log, so its cost lands even across a seed. A ledger already seeded
 /// for the day takes every add: its seed ran before this call existed.
 pub fn record(cost: f64, line_written: bool) {
-    let now = Local::now();
-    let mut guard = LEDGER.lock().unwrap_or_log();
-    match guard.as_mut() {
-        Some(ledger) => ledger.record(now, cost, line_written, || seed_from_events(now).total),
-        None => *guard = Some(seed_from_events(now)),
+    record_under_lock(line_written, cost, || {});
+}
+
+/// Where a refusal to spend came from. The `budget_refused` event's `path`
+/// field, so a refusal can be traced to the call site that made it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpendPath {
+    Chat,
+    Ghost,
+    Scheduled,
+    Webhook,
+    Briefing,
+    Digest,
+    AutoName,
+}
+
+impl SpendPath {
+    /// The string the `budget_refused` event's `path` field and the log
+    /// lines carry.
+    pub fn label(&self) -> &'static str {
+        match self {
+            SpendPath::Chat => "chat",
+            SpendPath::Ghost => "ghost",
+            SpendPath::Scheduled => "scheduled",
+            SpendPath::Webhook => "webhook",
+            SpendPath::Briefing => "briefing",
+            SpendPath::Digest => "digest",
+            SpendPath::AutoName => "auto_name",
+        }
+    }
+}
+
+/// The message every `max_cost_per_day` refusal carries, wherever it is
+/// shown or logged. Pure: takes the numbers, not the ledger, so its test
+/// needs no filesystem.
+///
+/// Names both amounts in dollars and says the cap resets at local midnight.
+pub fn refusal_message(spent: f64, cap: f64) -> String {
+    format!(
+        "Daily spend cap reached: ${spent:.2} of the ${cap:.2} per-day limit. \
+         No model calls will run until the cap resets at local midnight."
+    )
+}
+
+/// One gate for every model call. Reads the ledger's `spent_today()` and
+/// `[budget] max_cost_per_day`, decides with [`cap_status`], and on `Over`
+/// returns the shared [`refusal_message`] plus — outside the gate, at the
+/// one call site — nothing else: the single `budget_refused` event lives
+/// here, so a refusal is traceable from the event log to this line.
+///
+/// `Ok(())` is the go-ahead every model call site needs before
+/// `make_client`; `Err(message)` is the refusal to show or log.
+pub fn cost_gate(config: &crate::config::Config, path: SpendPath) -> Result<(), String> {
+    let spent = spent_today();
+    let cap = config.budget.max_cost_per_day;
+    match crate::config::cap_status(spent, cap) {
+        crate::config::CapStatus::Off | crate::config::CapStatus::Under { .. } => Ok(()),
+        crate::config::CapStatus::Over { spent, cap } => {
+            let message = refusal_message(spent, cap);
+            crate::daemon::utils::log_event(
+                "budget_refused",
+                serde_json::json!({
+                    "path": path.label(),
+                    "spent_usd": spent,
+                    "cap_usd": cap,
+                }),
+            );
+            Err(message)
+        }
     }
 }
 
@@ -275,5 +380,88 @@ mod first_record_tests {
             0.75,
             "a same-day record adds its cost on top of the seed"
         );
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::tests::at;
+    use super::*;
+
+    #[test]
+    fn refusal_names_spend_and_cap() {
+        let message = refusal_message(2.50, 5.0);
+        assert!(
+            message.contains("$2.50"),
+            "the refusal names the spend in dollars: {message}"
+        );
+        assert!(
+            message.contains("$5.00"),
+            "the refusal names the cap in dollars: {message}"
+        );
+        assert!(
+            message.contains("midnight"),
+            "the refusal says when the cap resets: {message}"
+        );
+    }
+
+    #[test]
+    fn seed_runs_before_the_line_is_written() {
+        // The ledger-race rule: on a cold ledger, whatever seeds the ledger
+        // runs before the `ai_cost` line is written, and the seed, the write
+        // and the add happen while the ledger lock is held — so a gate read
+        // between the two can never see the cost twice.
+        let mut ledger = Ledger::new(at(2026, 10, 20, 9, 0).date_naive());
+        let order = std::sync::Mutex::new(Vec::<&'static str>::new());
+        let seed = || {
+            order.lock().expect("the order log locks").push("seed");
+            0.25
+        };
+        ledger.record(at(2026, 10, 21, 9, 0), 0.10, true, seed);
+        assert_eq!(
+            order.into_inner().expect("the order log locks").first(),
+            Some(&"seed"),
+            "the seed must run before the line is written, or a gate read in \
+             between counts the line and then the add"
+        );
+        assert_eq!(
+            ledger.total_for(at(2026, 10, 21, 9, 30), || 999.0),
+            0.25,
+            "the total is the seed — which already holds the line — and the add \
+             is skipped, so the cost lands exactly once"
+        );
+    }
+
+    #[test]
+    fn a_failed_write_still_counts_its_cost() {
+        let mut ledger = Ledger::new(at(2026, 10, 20, 9, 0).date_naive());
+        ledger.record(at(2026, 10, 21, 9, 0), 0.10, false, || 0.0);
+        assert_eq!(
+            ledger.total_for(at(2026, 10, 21, 9, 30), || 999.0),
+            0.10,
+            "a line that never reached the log is invisible to the seed, so the \
+             ledger must add its cost even across a seed"
+        );
+    }
+
+    #[test]
+    fn the_gate_refuses_over_the_cap_and_names_the_path() {
+        let mut config = crate::config::Config::default();
+        config.budget.max_cost_per_day = 1.0;
+        assert_eq!(
+            crate::config::cap_status(1.5, config.budget.max_cost_per_day),
+            crate::config::CapStatus::Over {
+                spent: 1.5,
+                cap: 1.0
+            },
+            "spend over the configured cap is Over"
+        );
+        assert_eq!(SpendPath::Chat.label(), "chat");
+        assert_eq!(SpendPath::Ghost.label(), "ghost");
+        assert_eq!(SpendPath::Scheduled.label(), "scheduled");
+        assert_eq!(SpendPath::Webhook.label(), "webhook");
+        assert_eq!(SpendPath::Briefing.label(), "briefing");
+        assert_eq!(SpendPath::Digest.label(), "digest");
+        assert_eq!(SpendPath::AutoName.label(), "auto_name");
     }
 }

@@ -622,8 +622,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                         let sessions2 = sessions_sched.clone();
                         let cache2 = Arc::clone(&cache_sched);
                         tokio::spawn(async move {
-                            run_scheduled_job(job, store2, sn2, sessions2, cfg2, cache2, None)
-                                .await;
+                            // The refusal is already recorded on the run's
+                            // log; a tick-level caller has nothing to do
+                            // with it.
+                            let _ =
+                                run_scheduled_job(job, store2, sn2, sessions2, cfg2, cache2, None)
+                                    .await;
                         });
                     }
                 }

@@ -353,6 +353,19 @@ async fn maybe_analyze_alert(
         return None;
     };
 
+    // The daily cap gates the analysis before the model call: over
+    // `[budget] max_cost_per_day` the analysis is skipped and logged, the
+    // alert is still logged and the session goes on, nothing is retried.
+    if let Err(message) =
+        crate::daemon::spend::cost_gate(&state.config, crate::daemon::spend::SpendPath::Webhook)
+    {
+        log::warn!(
+            "Webhook: analysis for '{}' skipped — daily cost cap: {message}",
+            alert.alert_name
+        );
+        return None;
+    }
+
     log::info!(
         "Webhook: running runbook analysis for '{}' using runbook '{}'",
         alert.alert_name,

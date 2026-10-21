@@ -82,6 +82,16 @@ async fn do_generate_briefing(
     config: &Config,
     model_key: Option<&str>,
 ) -> Result<String> {
+    // The daily cap gates the briefing call before the model call: over
+    // `[budget] max_cost_per_day` the briefing is skipped and logged, and
+    // the caller keeps its existing no-briefing behavior.
+    if let Err(message) =
+        crate::daemon::spend::cost_gate(config, crate::daemon::spend::SpendPath::Briefing)
+    {
+        log::warn!("Briefing: skipped — daily cost cap: {message}");
+        anyhow::bail!(message);
+    }
+
     let model_entry = config.resolve_model(model_key);
     let client = make_client(
         &model_entry.provider,
