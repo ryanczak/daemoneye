@@ -1,7 +1,7 @@
 # Phase 07: top-data — the `daemoneye top` snapshot and `top --once`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-06
 **Estimated diff:** ~300 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -591,3 +591,14 @@ kill: (-357952): No such process
 **Commit:** aaf3be7d46717ebff412d13d76efbd281443651d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-22
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-07-1, major: Activity dropped every event kind without a summary arm; fixed in `aaf3be7d` with a bounded `key=value` generic summary). The first dispatch before it ended `hard_fail` on a no-progress stall (120 read-only turns, no edits) and was escalated by refined re-dispatch: re-scoped to the disk panels, one file, every symbol named.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none. Both declinable nits were taken.
+- **Calibration:**
+  1. The escalation's re-scope worked. The refined dispatch wrote the pure pieces first, as the work order asked, and finished in 157 turns. The fix took 73. One stall so far: a Spec that sends the executor to discover its data sources, rather than naming them, is the risk.
+  2. The bounce was mine. The fixture held only the event kinds I named, so a panel that showed only those kinds passed. Fixtures need inputs the code was not written for. This goes into the retrospective's criteria proposal.
+  3. Independent re-run at `851695e4`: fmt, build and clippy exit 0; 2492 passed, 0 failed. My `ghost_started` / `webhook_alert` repro now shows both lines, and a 200-character field is cut at the 80-character bound.
