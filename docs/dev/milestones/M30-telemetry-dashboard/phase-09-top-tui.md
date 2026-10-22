@@ -1,7 +1,7 @@
 # Phase 09: top-tui — the live ratatui screen of `daemoneye top`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** in-progress (bounced 2026-10-22: bug-09-1, bug-09-2)
 **Depends on:** phase-08
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -115,6 +115,11 @@ All in `top_tui.rs`:
   editing.
 - `screen_draws_the_four_panels`: at 80×24 with a down daemon, the buffer
   holds the four titles, `daemon not running` and `following`.
+- `activity_panel_shows_the_newest_rows` (bug-09-1): at 80×24 with 40
+  activity rows, the buffer holds the last row's text and not the first's.
+- `selected_run_stays_on_screen` (bug-09-1): with 20 runs and the selection
+  moved to the last row, that row's id and the `ID` header are both in the
+  buffer.
 
 ## Acceptance criteria
 
@@ -128,8 +133,14 @@ All values below were measured against the tree before this phase.
     later release.
   - `pipe_exit=2` and `once_order=Runs,Budget,Shells,Activity` are
     unchanged (preservation, both measured).
-- [ ] `cargo test` ⇒ `failed=0`, with `passed` above 2497 by the new
-      tests. Report the number; do not re-run to chase it.
+- [ ] **bug-09-1:** `tui_newest=1` on the harness (it reads `0` today),
+      and `activity_panel_shows_the_newest_rows` and
+      `selected_run_stays_on_screen` each ⇒ `test result: ok. 1 passed`.
+- [ ] **bug-09-2:** `shells_reuse=0` on the harness (it reads `2` today):
+      the Shells block calls `shells_text`, made `pub(crate)`.
+- [ ] `cargo test` ⇒ `failed=0`, `passed=2506` (2504 at the bounce, plus
+      the two bug-09-1 tests). Report the number; do not re-run to chase
+      it.
 - [ ] Clippy (`-D warnings`) and `cargo fmt --all --check` exit 0. No new
       `#[allow]`, no production `unwrap`/`expect`, no new Cargo feature.
 - [ ] The end-to-end Update Log entry holds the output fence **first**,
@@ -138,11 +149,13 @@ All values below were measured against the tree before this phase.
 ## End-to-end verification
 
 The harness uses its own tmux socket (`-S`) and a throwaway `HOME`, so it
-touches no running tmux server and no real daemon.
+touches no running tmux server and no real daemon. **Run it with `bash`**
+(write it to a file and `bash` that file). It uses `PIPESTATUS`, which
+`/bin/sh` does not have.
 
 ```sh
 A=/tmp/e2e-m30-09.txt; : > "$A"
-for t in plan_refresh_rereads_disk_only_on_change_or_age plan_refresh_asks_for_shells_every_two_seconds follow_selects_the_newest_live_run scrolling_stops_follow_and_f_resumes_it filter_keys_edit_the_activity_filter q_and_ctrl_c_quit screen_draws_the_four_panels; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | head -1 | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+for t in plan_refresh_rereads_disk_only_on_change_or_age plan_refresh_asks_for_shells_every_two_seconds follow_selects_the_newest_live_run scrolling_stops_follow_and_f_resumes_it filter_keys_edit_the_activity_filter q_and_ctrl_c_quit screen_draws_the_four_panels activity_panel_shows_the_newest_rows selected_run_stays_on_screen; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | head -1 | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 cargo build -q 2>/dev/null
 H=$(mktemp -d); mkdir -p "$H/.daemoneye/var/log/events"
 S="$H/.daemoneye/var/log/events/events-$(date +%Y%m%d).jsonl"
@@ -161,7 +174,13 @@ echo "tui_updated=$(echo "$P" | grep -c 'spend: \$0\.75')" >> "$A"
 tmux -S "$K" send-keys -t top q; sleep 1
 echo "tui_$(cat "$H/exit" 2>/dev/null || echo exit=none)" >> "$A"
 tmux -S "$K" kill-server 2>/dev/null
+for i in $(seq -w 1 30); do echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event\":\"ai_cost\",\"pid\":1,\"agent_name\":\"chat\",\"model\":\"model$i\",\"cost\":{\"total_cost_usd\":0.01}}" >> "$S"; done
+tmux -S "$K" new-session -d -s top2 -x 120 -y 40 "HOME=$H $B top; sleep 5"
+sleep 2; P=$(tmux -S "$K" capture-pane -p -t top2 2>/dev/null)
+echo "tui_newest=$(echo "$P" | grep -c 'model30')" >> "$A"
+tmux -S "$K" send-keys -t top2 q; sleep 1; tmux -S "$K" kill-server 2>/dev/null
 find "$H" -type f -delete; find "$H" -depth -type d -empty -delete
+echo "shells_reuse=$(grep -c 'unwrap_or("-")' src/cli/commands/top_tui.rs)" >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
 cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}' >> "$A"
@@ -199,6 +218,34 @@ Do not keep investigating.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-22 (bounce 1)
+
+**Green gates and a clean tree are expected here, and they are NOT
+evidence the phase is done.** Everything else in the phase is approved
+and must not be redone: the model, `plan_refresh`, `follow_target`,
+`handle_key`, the loop, `run_top`, the snapshot split, and the seven
+existing tests. Exactly two things are left, both in `draw` and
+`draw_panel` in `src/cli/commands/top_tui.rs` and `shells_text` in
+`src/cli/commands/top.rs`:
+
+1. **bug-09-1.** An overflowing body must show the rows that matter.
+   Activity shows its *newest* (last) rows that fit. Runs keeps the
+   `selected` row visible by scrolling its window, and the `ID` header
+   line stays on top. Fix the `filtered_activity` doc comment, which says
+   "newest first" but returns oldest first. Add
+   `activity_panel_shows_the_newest_rows` and
+   `selected_run_stays_on_screen`.
+2. **bug-09-2.** Make `shells_text` `pub(crate)` and call it for the
+   Shells block. Delete the copied `match` and `format!`.
+
+Finish condition: `cargo test` reports `passed=2506 failed=0`, and the
+harness (run with `bash`) reads `tui_newest=1` and `shells_reuse=0`. Before
+reporting, mutation-check bug-09-1: make Activity render from the top
+again, confirm `activity_panel_shows_the_newest_rows` fails, revert, and
+paste both runs in the Update Log. Then re-run the whole § End-to-end
+harness and paste a fresh output fence, followed by its `PASTE MATCH`
+line.
 
 ### Update — 2026-10-22 04:01 (started)
 
