@@ -23,7 +23,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::cli::commands::top::{
     ActivityRow, Liveness, TopFingerprint, TopRunRow, activity_text, budget_text, filter_activity,
-    fingerprint, runs_text,
+    fingerprint, runs_text, shells_text,
 };
 use crate::cli::viewer::AltScreenGuard;
 
@@ -143,14 +143,19 @@ impl TopModel {
         }
     }
 
-    /// The Activity rows the filter admits, newest first.
+    /// The Activity rows the filter admits, in `filter_activity`'s order:
+    /// log order, oldest first. The Activity panel draws them tail-first,
+    /// so the newest row that fits is the one on screen.
     pub fn filtered_activity(&self) -> Vec<ActivityRow> {
         filter_activity(self.snapshot.activity.clone(), &self.filter)
     }
 }
 
 /// Draw one frame: four bordered blocks over the panel texts, the selected
-/// run's line reversed, and a footer naming the keys and the mode.
+/// run's line reversed, and a footer naming the keys and the mode. An
+/// overflowing body shows the lines that matter: Activity its newest rows,
+/// Runs a window that keeps the selected row (and the column header) on
+/// screen.
 pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
     let area = frame.area();
     let chunks = Layout::default()
@@ -164,13 +169,9 @@ pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
         ])
         .split(area);
 
-    draw_panel(
-        frame,
-        chunks[0],
-        "Runs",
-        &runs_text(&model.snapshot.runs),
-        Some(model.selected),
-    );
+    let runs_body = runs_text(&model.snapshot.runs);
+    let (runs_display, runs_sel) = runs_window(&runs_body, model.selected, inner_height(chunks[0]));
+    draw_panel(frame, chunks[0], "Runs", &runs_display, runs_sel);
     draw_panel(
         frame,
         chunks[1],
@@ -178,32 +179,24 @@ pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
         &budget_text(&model.snapshot.budget),
         None,
     );
-    let shells = match &model.snapshot.shells {
-        crate::cli::commands::top::ShellsPanel::DaemonDown => "daemon not running".to_string(),
-        crate::cli::commands::top::ShellsPanel::Rows(rows) if rows.is_empty() => "none".to_string(),
-        crate::cli::commands::top::ShellsPanel::Rows(rows) => rows
-            .iter()
-            .map(|s| {
-                format!(
-                    "{} {} {} {}",
-                    s.id,
-                    s.owner,
-                    s.foreground.as_deref().unwrap_or("-"),
-                    s.last_line.as_deref().unwrap_or("-")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-    };
-    draw_panel(frame, chunks[2], "Shells", &shells, None);
-    let activity = model.filtered_activity();
     draw_panel(
         frame,
-        chunks[3],
-        "Activity",
-        &activity_text(&activity),
+        chunks[2],
+        "Shells",
+        &shells_text(&model.snapshot.shells),
         None,
     );
+    let activity = model.filtered_activity();
+    let activity_body = activity_text(&activity);
+    let activity_lines = activity_body.lines().count();
+    // The new Activity rows land at the bottom of the body, so a body taller
+    // than its panel shows its tail, not its head.
+    let activity_body = activity_body
+        .lines()
+        .skip(activity_lines.saturating_sub(inner_height(chunks[3])))
+        .collect::<Vec<_>>()
+        .join("\n");
+    draw_panel(frame, chunks[3], "Activity", &activity_body, None);
 
     let mode = if model.follow {
         "following"
@@ -217,8 +210,42 @@ pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
     Paragraph::new(Line::raw(footer)).render(chunks[4], frame.buffer_mut());
 }
 
+/// A bordered panel's inner height: the borders take one line at each edge.
+fn inner_height(area: ratatui::layout::Rect) -> usize {
+    area.height.saturating_sub(2) as usize
+}
+
+/// The Runs panel's body as drawn: when the rows overflow the panel, the
+/// window keeps the column header on top and the selected run on screen.
+/// The returned index is the selected line's position in the returned body,
+/// `None` when the panel has no runs.
+fn runs_window(body: &str, selected: usize, inner_h: usize) -> (String, Option<usize>) {
+    let line_count = body.lines().count();
+    if line_count == 0 {
+        return (body.to_string(), None);
+    }
+    if line_count <= inner_h {
+        let sel = (line_count > 1).then(|| selected + 1);
+        return (body.to_string(), sel);
+    }
+    let rows_visible = inner_h.saturating_sub(1).max(1);
+    let row = (selected + 1).min(line_count - 1);
+    let mut start = 1;
+    if row >= start + rows_visible {
+        start = row + 1 - rows_visible;
+    }
+    let display = body
+        .lines()
+        .next()
+        .into_iter()
+        .chain(body.lines().skip(start).take(rows_visible))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (display, Some(1 + row - start))
+}
+
 /// One bordered panel with its title and a plain-text body. `selected`, when
-/// given, is the row index whose line is drawn reversed.
+/// given, is the line index inside `body` drawn reversed.
 fn draw_panel(
     frame: &mut ratatui::Frame<'_>,
     area: ratatui::layout::Rect,
@@ -251,6 +278,7 @@ fn draw_panel(
     Paragraph::new(lines).render(inner, frame.buffer_mut());
 }
 
+/// The live loop. Enters raw mode, the alternate screen and a hidden cursor;
 /// The live loop. Enters raw mode, the alternate screen and a hidden cursor;
 /// the `AltScreenGuard` teardown leaves all three, so `?` cannot strand the
 /// terminal. A thread reads keys into a channel; the tokio loop waits on it
@@ -494,6 +522,13 @@ mod tests {
     // ── the screen ──────────────────────────────────────────────────────────
 
     fn snapshot(runs: Vec<TopRunRow>) -> crate::cli::commands::top::TopSnapshot {
+        snapshot_with(runs, vec![])
+    }
+
+    fn snapshot_with(
+        runs: Vec<TopRunRow>,
+        activity: Vec<crate::cli::commands::top::ActivityRow>,
+    ) -> crate::cli::commands::top::TopSnapshot {
         let taken_at: DateTime<Utc> = "2026-10-22T00:00:00Z".parse().expect("a fixed time");
         crate::cli::commands::top::TopSnapshot {
             taken_at,
@@ -505,8 +540,20 @@ mod tests {
                 refused: 0,
                 tok_per_s: 0.0,
             },
-            activity: vec![],
+            activity,
             shells: crate::cli::commands::top::ShellsPanel::DaemonDown,
+        }
+    }
+
+    fn activity_row(
+        time: &str,
+        name: &str,
+        summary: &str,
+    ) -> crate::cli::commands::top::ActivityRow {
+        crate::cli::commands::top::ActivityRow {
+            time: time.to_string(),
+            name: name.to_string(),
+            summary: summary.to_string(),
         }
     }
 
@@ -535,6 +582,63 @@ mod tests {
         assert!(
             text.contains("following"),
             "the footer names the mode: {text:?}"
+        );
+    }
+
+    #[test]
+    fn activity_panel_shows_the_newest_rows() {
+        let activity: Vec<_> = (1..=40)
+            .map(|i| activity_row("12:00:00", "ai_cost", &format!("model{i:02}")))
+            .collect();
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let model = TopModel::new(snapshot_with(vec![], activity));
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(
+            text.contains("model40"),
+            "the newest row is on screen: {text:?}"
+        );
+        assert!(
+            !text.contains("model01"),
+            "the oldest row scrolled off: {text:?}"
+        );
+    }
+
+    #[test]
+    fn selected_run_stays_on_screen() {
+        let runs: Vec<_> = (1..=20)
+            .rev()
+            .map(|i| row(&format!("r{i:02}"), Liveness::Done))
+            .collect();
+        let mut model = TopModel::new(snapshot(runs));
+        model.follow = false;
+        model.selected = 19;
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(
+            text.contains("r01"),
+            "the selected id is on screen: {text:?}"
+        );
+        assert!(
+            !text.contains("r20"),
+            "the window scrolled past the newest row: {text:?}"
+        );
+        assert!(
+            text.contains("ID"),
+            "the header line stays visible: {text:?}"
         );
     }
 }

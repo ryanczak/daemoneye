@@ -609,8 +609,9 @@ pub fn render_once(snapshot: &TopSnapshot, filter: &str) -> String {
 
 /// The Shells section as text: one row per live shell — id, owner,
 /// foreground and last line — `daemon not running` when the daemon did not
-/// answer, `none` when it is up with no shells. Pure.
-fn shells_text(panel: &ShellsPanel) -> String {
+/// answer, `none` when it is up with no shells. Pure. The live screen in
+/// `top_tui.rs` draws the same body.
+pub(crate) fn shells_text(panel: &ShellsPanel) -> String {
     let rows = match panel {
         ShellsPanel::DaemonDown => return "daemon not running".to_string(),
         ShellsPanel::Rows(rows) => rows,
