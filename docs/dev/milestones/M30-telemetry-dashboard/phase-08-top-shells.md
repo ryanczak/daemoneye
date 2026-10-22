@@ -1,7 +1,7 @@
 # Phase 08: top-shells — the Shells panel of `daemoneye top`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-07
 **Estimated diff:** ~250 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=s
@@ -295,3 +295,44 @@ since the function reads the last line only) is already logged at 09:50.
 Per the escalation-2 resume guidance the close-out bookkeeping is done
 here: Status flipped to `review` in this doc and in the milestone
 README's phase-08 row, and the docs committed separately.
+
+### Review verdict — 2026-10-22
+
+- **Verdict:** approved_after_2
+- **Bounces:** none at review. Two failed dispatches before the complete
+  one, both from spec gaps. Dispatch 1 was a NoProgressStall: the one
+  authorized visibility change could not reach `visible_text` behind the
+  private `knowledge::shell` module, and the five `ShellInfo` literal
+  sites were unnamed. Dispatch 2 finished the work, then stalled on the
+  architect's wrong `budget_usd=1` preservation criterion; it read `2`
+  on every tree. A resume closed it out in 37 turns.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** the executor flipped Status to `review` and wrote
+  the completion entry itself. The resume guidance told it to, so this is
+  the architect's deviation from the lifecycle split, not the executor's.
+- **Gates (reviewer re-run):** fmt 0; build 0, zero warnings after a
+  forced rebuild of `shells.rs`; clippy `-D warnings` 0; `cargo test`
+  `passed=2497 failed=0`. Fixture: `once_exit=0`, sections in order Runs,
+  Budget, Shells, Activity, `daemon not running`, spend `$0.50` counted
+  once. `visible_text(` appears in 2 files.
+- **Tests:** all five named tests exist and assert exact values
+  (`"shell prompt"`, `"running cargo test"`, `"100% done"`,
+  `"daemon not running"`, `"s2 chat:deadbeef - -"`). Breaking the
+  function under test fails each one. `foreground_prefers_the_newer_observation`
+  also covers the tie and the one-sided cases, and the last-line test
+  covers the 120-*char* cut with multi-byte input.
+- **Nits (not bounced):** in `shells_text_lists_each_shell`, the
+  `row_with_facts.id = "s1"` reassignment and its `mut` do nothing.
+  `last_visible_line` checks `is_empty` after `rfind` already excluded
+  blank lines.
+- **Calibration:** (1) A preservation criterion must be *run* against the
+  tree before it is labelled. `budget_usd=1` was assumed from phase 07's
+  fixture, which had different amounts. This is the second occurrence,
+  after phase 07's `live_exit=2`. (2) An authorized visibility change
+  must be checked for reachability through its module path. `pub(crate)`
+  on an item inside a private `mod` reaches nothing. (3) The
+  executor proved the criterion wrong (it built `aaf3be7d^` in a scratch
+  clone) and then kept investigating instead of reporting the deviation.
+  The stall detector counts that as no progress. (4) Phase 07 recorded
+  its stall as a failure class, not a bounce, while this verdict counts
+  failed dispatches. Reconcile the convention at the retrospective.
