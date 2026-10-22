@@ -109,11 +109,15 @@ close. Each may split at drafting.
 | 06 | daily-cap ([phase-06-daily-cap.md](phase-06-daily-cap.md)) — the breaker at every model call: a chat turn refused with a `SystemMsg`, a ghost or scheduled run ended `BudgetExceeded`, webhook watchdog analysis skipped and logged, side calls skipped | done |
 | 07 | top-data ([phase-07-top-data.md](phase-07-top-data.md)) — Runs, Budget and Activity from disk, the stats-only fingerprint, `daemoneye top --once`; no IPC | done |
 | 08 | top-shells ([phase-08-top-shells.md](phase-08-top-shells.md)) — the Shells panel: `ShellInfo` gains `foreground` and `last_line`, `top --once` adds the section (daemon down ⇒ `daemon not running`) | done |
-| 09 | top-tui — the ratatui screen over the snapshot: 500 ms poll, re-read on fingerprint change, follow the newest live run until the user scrolls, activity filter, `q` quits | todo |
+| 09 | top-tui ([phase-09-top-tui.md](phase-09-top-tui.md)) — the ratatui screen over the snapshot: 500 ms poll, re-read on fingerprint change, follow the newest live run until the user scrolls, activity filter, `q` quits | todo |
 | 10 | live-close — architect rehearsals, the PE run, 2.3.0 | todo |
 
 ## Notes
 
+- **`top` refreshes on change and on age (drafting 09, 2026-10-22).** The
+  live loop re-reads the disk panels when the fingerprint changes, and
+  also every 5 s, because run ages and the 30 s liveness window move
+  with the clock even when no file does. Shells are asked for every 2 s.
 - **Phase 07 stalled, so `top` is split again (escalation 07, 2026-10-21).**
   The first dispatch spent 120 turns reading and wrote nothing, mostly on
   the Shells panel. The Shells panel becomes phase 08, the TUI 09 and the

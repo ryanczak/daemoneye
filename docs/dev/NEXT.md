@@ -5,12 +5,13 @@
 [`README.md`](milestones/M30-telemetry-dashboard/README.md) for the PE
 decisions and the planned phases.
 
-**Active phase:** [phase-08-top-shells](milestones/M30-telemetry-dashboard/phase-08-top-shells.md)
-— done (2026-10-22): the Shells panel of `daemoneye top`. `ShellInfo` gains
-`foreground` and `last_line`, filled in `handle_shell_list`, and `top
---once` gains a Shells section (`daemon not running` when down). The TUI
-is phase 09 and the live close is 10. Dispatch with
-`/rexymcp:dispatch phase-08`. Phases 01–07 are done (2026-10-20 to 22).
+**Active phase:** [phase-09-top-tui](milestones/M30-telemetry-dashboard/phase-09-top-tui.md)
+— todo: the live ratatui screen of `daemoneye top`. It polls at 500 ms,
+re-reads on a fingerprint change or every 5 s, the selection follows the
+newest live run until the user scrolls, `/` filters Activity and `q`
+quits. It is verified end to end in a private tmux. The live close is
+phase 10. Dispatch with `/rexymcp:dispatch phase-09`. Phases 01–08 are
+done (2026-10-20 to 22).
 
 M29 closed 2026-10-20 (`v2.2.0`, pushed). M31 (MCP surface) and M32
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
