@@ -543,7 +543,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             cli::run_audit_prompts();
         }
         Commands::Top { once, filter } => {
-            cli::run_top(once, filter)?;
+            cli::run_top(once, filter).await?;
         }
         Commands::Reindex => {
             cli::run_reindex();

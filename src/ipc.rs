@@ -99,6 +99,15 @@ pub struct ShellInfo {
     pub exited_unix: Option<u64>,
     /// The most recent command recorded in the shell's index, if any.
     pub last_command: Option<String>,
+    /// What holds the shell's foreground, as the daemon last observed it —
+    /// the `Display` of its `last_foreground`, or `running <cmd>` when an
+    /// in-flight command started later. `None` when nothing was observed.
+    #[serde(default)]
+    pub foreground: Option<String>,
+    /// The last readable line of the shell's latest recorded command output,
+    /// masked and cut to 120 characters. `None` when there is none.
+    #[serde(default)]
+    pub last_line: Option<String>,
 }
 
 /// One shell recording on disk, as `/logs` lists it (M23).

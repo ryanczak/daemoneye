@@ -119,6 +119,19 @@ pub struct TopSnapshot {
     pub budget: BudgetPanel,
     /// The Activity panel: today's last events, oldest first.
     pub activity: Vec<ActivityRow>,
+    /// The Shells panel: the daemon's live shells, or the daemon-down mark.
+    pub shells: ShellsPanel,
+}
+
+/// The Shells panel: one row per live PTY shell, or the mark that the daemon
+/// did not answer.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum ShellsPanel {
+    /// The daemon answered: its shell rows.
+    Rows(Vec<crate::ipc::ShellInfo>),
+    /// No daemon answered — the socket is closed or the reply was not a
+    /// `ShellList`.
+    DaemonDown,
 }
 
 /// Sum the four token buckets of one `ai_cost` event value. Pure.
@@ -381,16 +394,23 @@ fn read_today_events() -> Vec<serde_json::Value> {
 }
 
 /// Take one frame: the Runs panel, the Budget panel and the Activity rows
-/// from disk, plus the config's cap. No IPC, no writes.
-pub fn take_snapshot(config_cap: f64) -> TopSnapshot {
+/// from disk, plus the config's cap — and the Shells panel from the daemon.
+/// One `Request::ShellList`, nothing written.
+pub async fn take_snapshot(config_cap: f64) -> TopSnapshot {
     let now = Utc::now();
     let events = read_today_events();
     let budget = fold_today(&events, now, config_cap);
+    let shells = match super::ipc_client::request_once(crate::ipc::Request::ShellList).await {
+        Ok(crate::ipc::Response::ShellList { shells }) => ShellsPanel::Rows(shells),
+        // Any other reply is as good as no daemon: the panel says so either way.
+        _ => ShellsPanel::DaemonDown,
+    };
     TopSnapshot {
         taken_at: now,
         runs: load_runs(now),
         budget,
         activity: last_activity(&events),
+        shells,
     }
 }
 
@@ -541,24 +561,50 @@ pub fn activity_text(rows: &[ActivityRow]) -> String {
         .join("\n")
 }
 
-/// One `--once` frame as plain text: the three sections, each headed by its
+/// One `--once` frame as plain text: the four sections, each headed by its
 /// name on its own line. Pure.
 pub fn render_once(snapshot: &TopSnapshot, filter: &str) -> String {
     let activity = filter_activity(snapshot.activity.clone(), filter);
     format!(
-        "Runs\n{}\n\nBudget\n{}\n\nActivity\n{}",
+        "Runs\n{}\n\nBudget\n{}\n\nShells\n{}\n\nActivity\n{}",
         runs_text(&snapshot.runs),
         budget_text(&snapshot.budget),
+        shells_text(&snapshot.shells),
         activity_text(&activity),
     )
 }
 
+/// The Shells section as text: one row per live shell — id, owner,
+/// foreground and last line — `daemon not running` when the daemon did not
+/// answer, `none` when it is up with no shells. Pure.
+fn shells_text(panel: &ShellsPanel) -> String {
+    let rows = match panel {
+        ShellsPanel::DaemonDown => return "daemon not running".to_string(),
+        ShellsPanel::Rows(rows) => rows,
+    };
+    if rows.is_empty() {
+        return "none".to_string();
+    }
+    rows.iter()
+        .map(|s| {
+            format!(
+                "{} {} {} {}",
+                s.id,
+                s.owner,
+                s.foreground.as_deref().unwrap_or("-"),
+                s.last_line.as_deref().unwrap_or("-")
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
 /// `daemoneye top [--once] [--filter <name>]`.
 ///
-/// Read-only: no IPC and no file writes. `--once` prints one frame and
-/// exits 0; without it the live view is a later release and the command
-/// exits 2 naming `--once`.
-pub fn run_top(once: bool, filter: Option<String>) -> Result<()> {
+/// Read-only: nothing is written, the daemon is asked only to list its
+/// shells. `--once` prints one frame and exits 0; without it the live view
+/// is a later release and the command exits 2 naming `--once`.
+pub async fn run_top(once: bool, filter: Option<String>) -> Result<()> {
     if !once {
         eprintln!("daemoneye top: the live view arrives in a later release; use --once");
         std::process::exit(2);
@@ -567,7 +613,7 @@ pub fn run_top(once: bool, filter: Option<String>) -> Result<()> {
     let cap = crate::config::Config::load()
         .map(|c| c.budget.max_cost_per_day)
         .unwrap_or(0.0);
-    let snapshot = take_snapshot(cap);
+    let snapshot = take_snapshot(cap).await;
     println!("{}", render_once(&snapshot, &needle));
     Ok(())
 }
@@ -873,5 +919,50 @@ mod tests {
     fn empty_sections_say_none() {
         assert_eq!(runs_text(&[]), "none");
         assert_eq!(activity_text(&[]), "none");
+        assert_eq!(
+            shells_text(&ShellsPanel::Rows(Vec::new())),
+            "none",
+            "an up daemon with no shells says none"
+        );
+    }
+
+    #[test]
+    fn shells_text_says_daemon_not_running() {
+        assert_eq!(
+            shells_text(&ShellsPanel::DaemonDown),
+            "daemon not running",
+            "the down mark is the whole section"
+        );
+    }
+
+    #[test]
+    fn shells_text_lists_each_shell() {
+        let mut row_with_facts = crate::ipc::ShellInfo {
+            id: "s1".to_string(),
+            host: "local".to_string(),
+            owner: "chat:deadbeef".to_string(),
+            started_unix: 1_788_470_000,
+            dedicated: false,
+            exited_unix: None,
+            last_command: Some("echo hi".to_string()),
+            foreground: Some("running cargo test".to_string()),
+            last_line: Some("100% done".to_string()),
+        };
+        let row_without = crate::ipc::ShellInfo {
+            id: "s2".to_string(),
+            foreground: None,
+            last_line: None,
+            ..row_with_facts.clone()
+        };
+        row_with_facts.id = "s1".to_string();
+        let text = shells_text(&ShellsPanel::Rows(vec![row_with_facts, row_without]));
+        assert!(
+            text.contains("s1 chat:deadbeef running cargo test 100% done"),
+            "the shell's facts on its row: {text}"
+        );
+        assert!(
+            text.contains("s2 chat:deadbeef - -"),
+            "missing facts print as -: {text}"
+        );
     }
 }

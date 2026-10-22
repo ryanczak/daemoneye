@@ -1016,6 +1016,8 @@ fn shell_ipc_messages_round_trip() {
         dedicated: false,
         exited_unix: Some(1_788_470_050),
         last_command: Some("echo hi".to_string()),
+        foreground: None,
+        last_line: None,
     }];
     let resp = Response::ShellList {
         shells: shells.clone(),
@@ -1026,6 +1028,16 @@ fn shell_ipc_messages_round_trip() {
         }
         other => panic!("wrong variant: {other:?}"),
     }
+}
+
+/// A reply from a daemon older than the two new fields still parses: the
+/// fields default to `None` when their keys are absent.
+#[test]
+fn shell_info_without_the_new_fields_still_parses() {
+    let json = r#"{"id":"s3","host":"web01","owner":"chat:deadbeef","started_unix":1788470000,"dedicated":false,"exited_unix":null,"last_command":"echo hi"}"#;
+    let info: ShellInfo = serde_json::from_str(json).expect("an older daemon's row still parses");
+    assert_eq!(info.foreground, None, "no foreground key defaults to None");
+    assert_eq!(info.last_line, None, "no last_line key defaults to None");
 }
 
 #[test]

@@ -162,6 +162,8 @@ mod tests {
             dedicated: false,
             exited_unix: exited.then_some(NOW - 10),
             last_command: None,
+            foreground: None,
+            last_line: None,
         }
     }
 

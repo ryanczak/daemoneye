@@ -969,6 +969,8 @@ mod tests {
             dedicated: false,
             exited_unix: None,
             last_command: None,
+            foreground: None,
+            last_line: None,
         }
     }
 

@@ -1520,7 +1520,7 @@ fn strip_ansi(text: &str, re: &regex::Regex) -> String {
 
 /// Raw PTY output → what a human reads: escape sequences gone, and each line
 /// reduced to what follows its **last** carriage return, because a progress
-fn visible_text(raw: &str) -> String {
+pub(crate) fn visible_text(raw: &str) -> String {
     static ANSI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let ansi = ANSI.get_or_init(|| {
         // INVARIANT: literal is a valid regex

@@ -31,6 +31,11 @@ where
                 dedicated: record.dedicated,
                 exited_unix: record.exited_unix,
                 last_command: None,
+                foreground: shell_foreground(
+                    record.last_foreground.as_ref(),
+                    record.in_flight.as_ref(),
+                ),
+                last_line: None,
             })
             .collect()
     });
@@ -39,6 +44,7 @@ where
         .into_iter()
         .map(|info| ShellInfo {
             last_command: last_command(&info.id, info.started_unix),
+            last_line: last_line(&info.id, info.started_unix),
             ..info
         })
         .collect();
@@ -296,6 +302,57 @@ fn last_command(id: &str, started_unix: u64) -> Option<String> {
         .ok()
         .and_then(|meta| meta.commands.last().map(|c| c.command.clone()))
 }
+
+/// What holds `id`'s shell's foreground, as the daemon last observed it: the
+/// `Display` of the record's `last_foreground`, or `running <cmd>` when an
+/// in-flight command started later than that observation — the in-flight
+/// command is newer news. `None` when the record holds neither. Pure.
+fn shell_foreground(
+    last_foreground: Option<&(crate::shell::Foreground, u64)>,
+    in_flight: Option<&crate::shell::InFlight>,
+) -> Option<String> {
+    match (last_foreground, in_flight) {
+        (Some((fg, at)), Some(in_flight)) if in_flight.started_unix > *at => {
+            Some(format!("running {}", in_flight.cmd))
+        }
+        (Some((fg, _)), _) => Some(fg.to_string()),
+        (None, Some(in_flight)) => Some(format!("running {}", in_flight.cmd)),
+        (None, None) => None,
+    }
+}
+
+/// The last readable line of `id`'s latest recorded command output, or `None`
+/// when the record is absent, unreadable or has no commands yet. Best-effort
+/// by design: the listing still answers when one shell's log is unreadable.
+fn last_line(id: &str, started_unix: u64) -> Option<String> {
+    let cast = crate::shell::cast_path(id, started_unix);
+    let path = meta_path_for(&cast);
+    crate::shell::MetaIndex::load(&path).ok().and_then(|meta| {
+        let record = meta.commands.last()?;
+        crate::shell::read_command_output(&cast, &meta, record.index)
+            .ok()
+            .and_then(|bytes| last_visible_line(&bytes))
+    })
+}
+
+/// The last non-empty line of raw PTY output, made readable: escape sequences
+/// gone, carriage-return overwrites resolved, secrets masked, cut to 120
+/// characters. Empty or all-blank input gives `None`. Pure.
+fn last_visible_line(raw: &[u8]) -> Option<String> {
+    let text = crate::daemon::executor::knowledge::visible_text(&String::from_utf8_lossy(raw));
+    let line = text
+        .lines()
+        .rfind(|l| !l.trim().is_empty())
+        .map(str::trim)?;
+    if line.is_empty() {
+        return None;
+    }
+    let masked = crate::ai::filter::mask_sensitive(line);
+    Some(masked.chars().take(LAST_LINE_CAP).collect())
+}
+
+/// The most characters a `last_line` row shows.
+const LAST_LINE_CAP: usize = 120;
 
 /// How many recordings `/logs` shows when it names no limit.
 const LOG_LIST_DEFAULT_LIMIT: usize = 50;
@@ -677,6 +734,7 @@ async fn shell_has_exited(sock: &std::path::Path) -> bool {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::shell::InFlight;
     use crate::shell::Owner;
     use crate::test_home_guard;
     use std::sync::Arc;
@@ -1897,6 +1955,106 @@ mod tests {
         assert!(
             matches!(parse_response(&tx), Response::Error(ref msg) if msg.contains("s99")),
             "an unknown id is refused with the id named: {tx:?}"
+        );
+    }
+
+    // ── shell_foreground / last_visible_line ──────────────────────────────
+
+    #[test]
+    fn foreground_prefers_the_newer_observation() {
+        let fg = crate::shell::Foreground::Prompt;
+        // An observation newer than the in-flight command: the observation
+        // wins, worded by its `Display`.
+        assert_eq!(
+            shell_foreground(
+                Some(&(fg.clone(), 200)),
+                Some(&InFlight {
+                    cmd: "cargo test".into(),
+                    started_unix: 100,
+                })
+            ),
+            Some("shell prompt".to_string()),
+            "the newer observation wins"
+        );
+        // An in-flight command started after the observation: it wins, because
+        // it is newer news about the same terminal.
+        assert_eq!(
+            shell_foreground(
+                Some(&(fg.clone(), 100)),
+                Some(&InFlight {
+                    cmd: "cargo test".into(),
+                    started_unix: 200,
+                })
+            ),
+            Some("running cargo test".to_string()),
+            "a newer in-flight command wins"
+        );
+        // A tie: the observation wins.
+        assert_eq!(
+            shell_foreground(
+                Some(&(fg.clone(), 100)),
+                Some(&InFlight {
+                    cmd: "cargo test".into(),
+                    started_unix: 100,
+                })
+            ),
+            Some("shell prompt".to_string()),
+            "on a tie the observation wins"
+        );
+        // Neither: no foreground word.
+        assert_eq!(shell_foreground(None, None), None, "neither gives None");
+        // Only the in-flight command: it is the only news there is.
+        assert_eq!(
+            shell_foreground(
+                None,
+                Some(&InFlight {
+                    cmd: "cargo test".into(),
+                    started_unix: 100,
+                })
+            ),
+            Some("running cargo test".to_string()),
+            "an in-flight command with no observation still names it"
+        );
+        // Only the observation.
+        assert_eq!(
+            shell_foreground(Some(&(fg, 100)), None),
+            Some("shell prompt".to_string()),
+            "an observation with no in-flight command still names it"
+        );
+    }
+
+    #[test]
+    fn last_line_is_the_last_visible_non_empty_line() {
+        crate::ai::filter::init_masking(&[]);
+        // ANSI colour, a carriage-return overwrite and trailing blank lines.
+        let raw = b"\x1b[01;32m$ \x1b[00mecho hi\r\n10%\r50%\r100% done\r\n\r\n\r\n";
+        let out = last_visible_line(raw).expect("a readable line comes back");
+        assert_eq!(
+            out, "100% done",
+            "escapes gone, the last write of a rewritten line wins: {out:?}"
+        );
+
+        // A secret on the last line is masked before it reaches the frame.
+        let secret = b"key set\nmore\napi_key=sk-abcdefghijklmnopqrstuvwxyz0123\n";
+        let masked = last_visible_line(secret).expect("the secret's line comes back");
+        assert!(
+            !masked.contains("sk-abcdefghijklmnopqrstuvwxyz0123"),
+            "the key never reaches the frame: {masked:?}"
+        );
+        assert!(masked.contains("<REDACTED>"), "masked: {masked:?}");
+
+        // A long line is cut to 120 characters, not bytes — the cut counts
+        // characters so a multi-byte line keeps whole characters.
+        let long = "é".repeat(200);
+        let cut = last_visible_line(long.as_bytes()).expect("the long line comes back");
+        assert_eq!(cut.chars().count(), 120, "cut to 120 characters: {cut:?}");
+
+        // An empty recording gives no line.
+        assert_eq!(last_visible_line(b""), None, "empty input gives None");
+        assert_eq!(
+            last_visible_line(b"\r\n\r\n"),
+            None,
+            "all-blank input gives None"
         );
     }
 }
