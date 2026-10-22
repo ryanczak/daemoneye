@@ -6,9 +6,9 @@
 decisions and the planned phases.
 
 **Active phase:** [phase-07-top-data](milestones/M30-telemetry-dashboard/phase-07-top-data.md)
-— todo: the `daemoneye top` snapshot (Runs, Budget, Shells, Activity),
-the stats-only fingerprint, and `top --once` as plain text with the
-daemon down. The ratatui screen is phase 08. Dispatch with
+— in-progress (refined after a no-progress stall): Runs, Budget and
+Activity from disk, the fingerprint, `top --once`. Shells is now phase
+08, the TUI 09, the live close 10. Re-dispatch with
 `/rexymcp:dispatch phase-07`. Phases 01–06 done 2026-10-20/21.
 
 M29 closed 2026-10-20 (`v2.2.0`, pushed). M31 (MCP surface) and M32

@@ -1,96 +1,99 @@
 # Phase 07: top-data — the `daemoneye top` snapshot and `top --once`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress (refined after a no-progress stall, 2026-10-21)
 **Depends on:** phase-06
-**Estimated diff:** ~400 lines, about half of it tests
+**Estimated diff:** ~300 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
 
 ## Goal
 
 `daemoneye top` is a read-only dashboard with four panels: Runs, Budget,
-Shells and Activity. This phase builds what the panels show, not the live
-screen. It adds a pure `TopSnapshot` model, the loaders that fill it from
-disk and from one read-only IPC request, a stats-only fingerprint that the
-live loop (phase 08) re-reads on, and `daemoneye top --once`, which prints
-one frame as plain text and exits. It works with the daemon down.
+Shells and Activity. This phase builds three of them, Runs, Budget and
+Activity, all read from disk. It adds a stats-only fingerprint that the live
+loop will re-read on, and `daemoneye top --once`, which prints one frame as
+plain text and exits. It needs no daemon and sends no IPC. The Shells panel
+is phase 08.
 
 ## Spec
 
-**Files:** `src/cli/top/` (new: `mod.rs`, `snapshot.rs`, `text.rs`),
-`src/cli/mod.rs`, `src/main.rs`, `src/ipc.rs`,
-`src/daemon/server/shells.rs`, `README.md`.
+**Files:** `src/cli/commands/top.rs` (new, one file), `src/cli/commands/mod.rs`,
+`src/main.rs`, `README.md`.
 
-1. **`TopSnapshot`**: one struct per panel, plus `taken_at`.
-   - **Runs:** one row per run from `run::list_runs()`, capped at 20.
-     Running runs come first, then the rest newest first.
-     - Each row carries `id`, `kind`, `state`, `turns` and `age_s`, the
-       time since the run's `RunStarted`.
-     - Each row also carries `liveness`. For a running run whose turn log
-       was written in the last 30 s it is `live`. For an older running run
-       it is `stale`. For a finished run it is `done`.
-   - **Budget:** read from today's events, local day (`local_day_bounds`
-     in `daemon::spend`). It holds `ai_cost` USD and tokens (all four
-     buckets), the cap from `[budget] max_cost_per_day` (`0` means none),
-     the count of today's `budget_refused` events, and `tok_per_s`.
-     `tok_per_s` is the tokens of `ai_cost` lines in the last 60 s,
-     divided by 60. Top runs as its own process, so it reads the events,
-     not the daemon's in-memory ledger.
-   - **Shells:** the daemon's `Request::ShellList`, one row per shell. A
-     row adds `foreground` (the record's `last_foreground`, or `in_flight`
-     when that is newer) and `last_line` (the last non-empty line of the
-     shell's latest recorded command output, masked). Both are new
-     `#[serde(default)]` fields on `ShellInfo`, filled in
-     `handle_shell_list`. When the daemon is down the panel holds
-     `daemon_down = true` and no rows.
-   - **Activity:** the last 50 events of today's segments, oldest first.
-     Each one is a time, the event name and a one-line summary. A pure
-     `filter_activity(events, needle)` keeps those whose name contains
-     the needle. An empty needle keeps everything.
-2. **Fingerprint.** `fingerprint() -> TopFingerprint` reads stats only,
-   never file contents. It covers the runs directory (entry count, newest
-   mtime) and today's events segment (length, mtime). Phase 08 re-reads
-   the disk panels only when this changes. Shells are polled over IPC
-   regardless.
+**Where things are.** You do not need to search for these. Read the named
+symbol, then write.
+
+| Need | Symbol |
+|---|---|
+| CLI wiring to copy | `Commands::Scorecard` in `src/main.rs` → `run_scorecard` in `src/cli/commands/scorecard.rs` |
+| Runs | `daemon::run::list_runs()` (`RunSummary`: id, kind, state, turns); start time = the `RunStarted` record's `TurnLogRecord.timestamp` via `daemon::run::turn_log::read_turn_log`; run-log files under `config::runs_dir()` |
+| Today, local | `daemon::spend::local_day_bounds(Local::now())` |
+| Events in a window | `daemon::utils::for_each_event_between(from, to, &mut \|value\| ..)` |
+| Today's segment file | `config::current_event_segment_path()` |
+| The cap | `Config::load()` → `config.budget.max_cost_per_day` |
+
+1. **`TopSnapshot`** has three panels and `taken_at`.
+   - **Runs:** up to 20 rows. Running runs come first, then the rest
+     newest first.
+     - Each row carries `id`, `kind`, `state`, `turns` and `age_s`.
+     - Each row also carries `liveness`. A running run whose run-log file
+       was modified in the last 30 s is `live`. An older running run is
+       `stale`. A finished run is `done`.
+   - **Budget:** read from today's events, local day.
+     - It holds `ai_cost` USD (`cost.total_cost_usd`), tokens (the four
+       `tokens` buckets summed), the cap (`0` = none), the count of
+       `budget_refused` events, and `tok_per_s`.
+     - `tok_per_s` is the tokens of `ai_cost` lines whose `ts` falls in
+       the last 60 s, divided by 60.
+   - **Activity:** the last 50 events of today, oldest first. Each one is
+     a time, the event name and a one-line summary. A pure
+     `filter_activity(events, needle)` keeps those whose name contains the
+     needle. An empty needle keeps everything.
+2. **Fingerprint.** `fingerprint() -> TopFingerprint` reads stats only, never
+   file contents. It covers the runs directory (entry count, newest mtime)
+   and today's segment (length, mtime).
 3. **`daemoneye top [--once] [--filter <name>]`.**
-   - `--once` prints the snapshot as text, one section per panel in the
-     order Runs, Budget, Shells, Activity, and exits 0.
+   - `--once` prints the sections Runs, Budget and Activity, each headed
+     by its name on its own line, and exits 0.
    - The Budget section names spend, cap and percentage when a cap is
-     set. Without one it names the spend and `no cap`. It prints the
-     refusal count as `refused today: N`.
-   - The Shells section prints `daemon not running` when the daemon is
-     down. Runs and Activity print `none` when empty.
+     set, or the spend and `no cap` when not. It prints the refusal count
+     as `refused today: N`.
+   - Runs and Activity print `none` when empty.
    - `--filter` applies `filter_activity`.
    - Without `--once`, print `daemoneye top: the live view arrives in a
-     later release; use --once` and exit 2 (phase 08 replaces this).
-   - Build each section in a pure function in `text.rs`.
-   - Add the command rows to the README, next to `scorecard`.
-4. **Read-only.** Top sends no `Request` other than `ShellList`, and
-   writes no file. Gotcha: the CLI seeds `~/.daemoneye` on first run;
-   that is existing behaviour, not a top write.
+     later release; use --once` and exit 2.
+   - Build each section in a pure function.
+   - Add the command rows to the README next to `scorecard`.
+4. **Read-only.** No IPC and no file writes. The CLI seeding
+   `~/.daemoneye` on first run is existing behaviour.
+
+**Work order.** Write the pure pieces first: the snapshot types, the
+three section builders, `filter_activity`, the liveness rule and their
+tests. Run `cargo test` on them. Only then write the loaders and the CLI
+wiring. Your first file write should come before you read anything not
+named in the table above.
 
 ## Tests
 
-- In `snapshot.rs`:
-  - `runs_put_running_first_then_newest`.
-  - `liveness_is_live_stale_or_done` (pure, given the now and an mtime).
-  - `budget_sums_todays_ai_cost_and_counts_refusals`, over parsed event
-    values; no filesystem.
-  - `tok_per_s_counts_only_the_last_minute`.
-  - `filter_activity_matches_on_the_event_name`. `ai_cost` keeps
-    `ai_cost` lines and drops `budget_refused`. An empty needle keeps all.
-  - `fingerprint_changes_when_the_segment_grows`, on a temp dir.
-- In `text.rs`:
-  - `budget_text_names_spend_cap_and_percent`, with spend 0.5 and cap 2.0
-    giving `25%`. Cap 0 gives `no cap`.
-  - `shells_text_says_daemon_not_running`.
+All tests go in `top.rs`:
+
+- `runs_put_running_first_then_newest`.
+- `liveness_is_live_stale_or_done`: pure, given the now and an mtime.
+- `budget_sums_todays_ai_cost_and_counts_refusals`, over parsed event values,
+  no filesystem.
+- `tok_per_s_counts_only_the_last_minute`.
+- `filter_activity_matches_on_the_event_name`. `ai_cost` keeps `ai_cost`
+  lines and drops `budget_refused`. An empty needle keeps everything.
+- `fingerprint_changes_when_the_segment_grows`, on a temp dir.
+- `budget_text_names_spend_cap_and_percent`: spend 0.5 and cap 2.0 give
+  `25%`, and cap 0 gives `no cap`.
 
 ## Acceptance criteria
 
 - [ ] Each new test ⇒ `test result: ok. 1 passed`.
-- [ ] On the § End-to-end fixture, with the daemon down: `once_exit=0`,
+- [ ] On the § End-to-end fixture, with no daemon: `once_exit=0`,
       `budget_usd=1`, `budget_cap=1`, `refused_count=1`,
-      `shells_down=1`, `activity_lines=3`, and with `--filter ai_cost`
+      `activity_lines=3`, and with `--filter ai_cost`
       `filtered_refusals=0` and `filtered_costs=2`. All of these read `0`
       or fail today, since the command does not exist.
 - [ ] `live_exit=2 live_msg=1`. Today the exit is a clap error, also 2,
@@ -107,7 +110,7 @@ one frame as plain text and exits. It works with the daemon down.
 
 ```sh
 A=/tmp/e2e-m30-07.txt; : > "$A"
-for t in runs_put_running_first_then_newest liveness_is_live_stale_or_done budget_sums_todays_ai_cost_and_counts_refusals tok_per_s_counts_only_the_last_minute filter_activity_matches_on_the_event_name fingerprint_changes_when_the_segment_grows budget_text_names_spend_cap_and_percent shells_text_says_daemon_not_running; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+for t in runs_put_running_first_then_newest liveness_is_live_stale_or_done budget_sums_todays_ai_cost_and_counts_refusals tok_per_s_counts_only_the_last_minute filter_activity_matches_on_the_event_name fingerprint_changes_when_the_segment_grows budget_text_names_spend_cap_and_percent; do cargo test --lib "$t" 2>&1 | grep -E '^test result' | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 cargo build -q 2>/dev/null
 H=$(mktemp -d); mkdir -p "$H/.daemoneye/etc" "$H/.daemoneye/var/log/events"
 printf '[budget]\nmax_cost_per_day = 2.0\n' > "$H/.daemoneye/etc/config.toml"
@@ -120,7 +123,6 @@ O=$(DE top --once); echo "once_exit=$?" >> "$A"
 echo "budget_usd=$(echo "$O" | grep -c '\$0\.50')" >> "$A"
 echo "budget_cap=$(echo "$O" | grep -c '\$2\.00')" >> "$A"
 echo "refused_count=$(echo "$O" | grep -c 'refused today: 1')" >> "$A"
-echo "shells_down=$(echo "$O" | grep -c 'daemon not running')" >> "$A"
 echo "activity_lines=$(echo "$O" | grep -cE '(ai_cost|budget_refused)')" >> "$A"
 F=$(DE top --once --filter ai_cost | sed -n '/^Activity/,$p')
 echo "filtered_refusals=$(echo "$F" | grep -c 'budget_refused')" >> "$A"
@@ -154,11 +156,36 @@ None.
 
 ## Out of scope
 
-- The ratatui screen, the 500 ms poll, follow and scroll (phase 08).
-- Any IPC request other than `ShellList`, and any action on a run or a
-  shell.
+- The Shells panel and the `ShellInfo` fields it needs (phase 08).
+- The ratatui screen, the 500 ms poll, follow and scroll (phase 09).
+- Any IPC, and any action on a run.
 - Changing `daemoneye status` or `run list`.
 
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-21
+
+The first dispatch stalled with no edits: 120 consecutive read-only turns,
+122 turns in all. It read more than 100 files across the run, event,
+config, IPC, shell-foreground, masking, slash-command and status code. The
+last third of those reads chased the Shells panel. This refinement makes
+three changes:
+
+- The Shells panel and its `ShellInfo` fields move to phase 08.
+- The module is one file, `src/cli/commands/top.rs`.
+- The Spec now names every symbol you need, in the "Where things are"
+  table, and sets a work order: pure pieces and tests first.
+
+Start writing from the table. Do not survey the codebase. A symbol the
+table does not name is not needed for this phase.
+
+### Update — 2026-10-21 (escalation)
+
+**Chosen lever:** refined re-dispatch, re-scoped.
+**Rationale:** The stall wrote nothing. The briefing shows breadth, not a
+wall: every read succeeded and none of them led to an edit. So narrowing
+the scope and naming the symbols changes the next attempt. A resume would
+carry the same breadth forward, and nothing was tried that a takeover
+would need to rescue.
