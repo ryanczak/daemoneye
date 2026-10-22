@@ -1,7 +1,7 @@
 # Phase 07: top-data — the `daemoneye top` snapshot and `top --once`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** in-progress (bounced 2026-10-22: bug-07-1)
 **Depends on:** phase-06
 **Estimated diff:** ~300 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -96,6 +96,10 @@ All tests go in `top.rs`:
       `activity_lines=3`, and with `--filter ai_cost`
       `filtered_refusals=0` and `filtered_costs=2`. All of these read `0`
       or fail today, since the command does not exist.
+- [ ] **bug-07-1:** `activity_keeps_every_event_kind` passes
+      (`every_kind_defs=1`; `0` today), and a separate fixture of two
+      events with no summary arm shows both under Activity
+      (`activity_other=2`; `0` today).
 - [ ] `live_exit=2 live_msg=1`. Today the exit is a clap error, also 2,
       so `live_msg` is the check: `0` today.
 - [ ] `cargo test --test doc_truth` ⇒ `failed=0`.
@@ -127,6 +131,13 @@ echo "activity_lines=$(echo "$O" | grep -cE '(ai_cost|budget_refused)')" >> "$A"
 F=$(DE top --once --filter ai_cost | sed -n '/^Activity/,$p')
 echo "filtered_refusals=$(echo "$F" | grep -c 'budget_refused')" >> "$A"
 echo "filtered_costs=$(echo "$F" | grep -c 'ai_cost')" >> "$A"
+S2="$H/.daemoneye/var/log/events/events-$(date +%Y%m%d).jsonl.other"; mv "$S" "$S2"
+echo "{\"ts\":\"$T\",\"event\":\"ghost_started\",\"pid\":1,\"job_id\":\"j1\"}" >> "$S"
+echo "{\"ts\":\"$T\",\"event\":\"webhook_alert\",\"pid\":1,\"alert_name\":\"disk\"}" >> "$S"
+echo "activity_other=$(DE top --once | sed -n '/^Activity/,$p' | grep -cE 'ghost_started|webhook_alert')" >> "$A"
+mv "$S2" "$S"
+echo "every_kind_defs=$(grep -c 'fn activity_keeps_every_event_kind' src/cli/commands/top.rs)" >> "$A"
+cargo test --lib activity_keeps_every_event_kind 2>&1 | grep -E '^test result' | sed "s/^/every_kind: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"
 L2=$(DE top 2>&1); echo "live_exit=$? live_msg=$(echo "$L2" | grep -c 'use --once')" >> "$A"
 find "$H" -type f -delete
 cargo test --test doc_truth 2>&1 | grep -E '^test result' | sed 's/^/doc_truth: /; s/finished in [0-9.]*s/finished in <t>s/' >> "$A"
@@ -374,3 +385,27 @@ kill: (-316666): No such process
 **Commit:** 65166f2ef96e5cba1c711faeaca472f6791bcc00
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-22 (review, bounced)
+
+Gates re-run independently at `9374ae69`: fmt, build and clippy exit 0;
+2491 passed, 0 failed. Runs, Budget, the fingerprint and `--once` meet the
+Spec, and every fixture value matches. One defect remains, bug-07-1 (major).
+`activity_row` returns `None` for any event other than `ai_cost`,
+`budget_refused` and `run`, so the Activity panel drops the rest of the
+events tail. Reproduced with a `ghost_started` / `webhook_alert` fixture:
+only the `ai_cost` line printed. One criterion is added above; against this
+tree it reads `every_kind_defs=0` and `activity_other=0`.
+
+**Notes for executor:**
+- Only the Activity fallthrough changes. Runs, Budget, the fingerprint and
+  the three existing summaries stay as they are.
+- The generic summary is yours to shape. It must be bounded in length and
+  never empty, and it must not print a `$` amount: that would break
+  `budget_cap=1`.
+- Two nits, each declinable:
+  - `take_snapshot` computes the activity rows in `fold_today` and then
+    discards them, rebuilding them in `last_activity`.
+  - `budget_text` re-checks `cap > 0.0` inside the branch that already
+    checked it.
+- Re-run § End-to-end once and paste it as a new entry.
