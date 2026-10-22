@@ -418,3 +418,48 @@ kill: (-658053): No such process
 **Commit:** cea5c4e1f0aeef9ea948b075b4b34b9df893edc4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-22 07:12 (end-to-end verification, bounce 1)
+
+bug-09-1 fixed (Activity renders its tail, Runs scrolls its window under
+the header to keep the selected row on screen; `filtered_activity`'s doc
+comment now states the real order) and bug-09-2 fixed (`shells_text` is
+`pub(crate)` and the Shells block calls it; the copied match and
+`format!` are deleted). Mutation check on bug-09-1: rendering Activity
+from the top again (`.take(0)` window) makes
+`activity_panel_shows_the_newest_rows` fail; reverted and re-run ⇒ ok.
+
+Fresh harness run (bash), output first:
+
+```
+plan_refresh_rereads_disk_only_on_change_or_age: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+plan_refresh_asks_for_shells_every_two_seconds: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+follow_selects_the_newest_live_run: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+scrolling_stops_follow_and_f_resumes_it: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+filter_keys_edit_the_activity_filter: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+q_and_ctrl_c_quit: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_draws_the_four_panels: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+activity_panel_shows_the_newest_rows: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+selected_run_stays_on_screen: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+once_order=Runs,Budget,Shells,Activity
+pipe_exit=2
+pipe_msg=1
+tui_panels=4
+tui_down=1
+tui_updated=1
+tui_exit=0
+tui_newest=1
+shells_reuse=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2506 failed=0
+```
+
+bug-09-1 mutation check (Activity window `.take(0)`):
+
+```
+thread 'cli::commands::top_tui::tests::activity_panel_shows_the_newest_rows' panicked: the newest row is on screen
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2444 filtered out
+```
+
+Self-check: `diff /tmp/pasted-m30-09.txt /tmp/e2e-m30-09.txt` ⇒ `PASTE MATCH`.
