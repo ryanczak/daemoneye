@@ -108,7 +108,7 @@ close. Each may split at drafting.
 | 05 | cost-ledger ([phase-05-cost-ledger.md](phase-05-cost-ledger.md)) — every model call costed through one helper (the five uncosted side calls included), the local-day spend ledger, `[budget] max_cost_per_day` and `cap_status`, the `status` cap line | done |
 | 06 | daily-cap ([phase-06-daily-cap.md](phase-06-daily-cap.md)) — the breaker at every model call: a chat turn refused with a `SystemMsg`, a ghost or scheduled run ended `BudgetExceeded`, webhook watchdog analysis skipped and logged, side calls skipped | done |
 | 07 | top-data ([phase-07-top-data.md](phase-07-top-data.md)) — Runs, Budget and Activity from disk, the stats-only fingerprint, `daemoneye top --once`; no IPC | done |
-| 08 | top-shells — the Shells panel: `ShellInfo` gains `foreground` and `last_line`, `top --once` adds the section (daemon down ⇒ `daemon not running`) | todo |
+| 08 | top-shells ([phase-08-top-shells.md](phase-08-top-shells.md)) — the Shells panel: `ShellInfo` gains `foreground` and `last_line`, `top --once` adds the section (daemon down ⇒ `daemon not running`) | todo |
 | 09 | top-tui — the ratatui screen over the snapshot: 500 ms poll, re-read on fingerprint change, follow the newest live run until the user scrolls, activity filter, `q` quits | todo |
 | 10 | live-close — architect rehearsals, the PE run, 2.3.0 | todo |
 

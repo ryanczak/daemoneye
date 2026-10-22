@@ -5,11 +5,12 @@
 [`README.md`](milestones/M30-telemetry-dashboard/README.md) for the PE
 decisions and the planned phases.
 
-**Active phase:** [phase-07-top-data](milestones/M30-telemetry-dashboard/phase-07-top-data.md)
-— in-progress (refined after a no-progress stall): Runs, Budget and
-Activity from disk, the fingerprint, `top --once`. Shells is now phase
-08, the TUI 09, the live close 10. Re-dispatch with
-`/rexymcp:dispatch phase-07`. Phases 01–06 done 2026-10-20/21.
+**Active phase:** [phase-08-top-shells](milestones/M30-telemetry-dashboard/phase-08-top-shells.md)
+— todo: the Shells panel of `daemoneye top`. `ShellInfo` gains
+`foreground` and `last_line`, filled in `handle_shell_list`, and `top
+--once` gains a Shells section (`daemon not running` when down). The TUI
+is phase 09 and the live close is 10. Dispatch with
+`/rexymcp:dispatch phase-08`. Phases 01–07 are done (2026-10-20 to 22).
 
 M29 closed 2026-10-20 (`v2.2.0`, pushed). M31 (MCP surface) and M32
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
