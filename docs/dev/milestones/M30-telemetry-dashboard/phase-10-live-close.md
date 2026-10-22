@@ -1,7 +1,7 @@
 # Phase 10: live-close — telemetry, the daily cap and `top`, checked against a real daemon; 2.3.0 ships
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress (rehearsal 1 done 2026-10-22; F1, F2 for the PE's decision)
 **Depends on:** 01–09 (all `done`)
 **Estimated diff:** this doc's Update Log, the milestone README, then the
 release (`Cargo.toml` / `Cargo.lock`, `CHANGELOG.md`)
@@ -35,7 +35,10 @@ those are what this phase checks:
      PE watches with `tmux -S $EMU attach -r`. Attach a client before
      starting chat (the PE's own, or a headless `script -q -c "tmux -S
      $EMU attach -r -t m30" /dev/null` under `setsid`), because chat
-     waits for one before its banner.
+     waits for one before its banner. A headless client has no tty size,
+     so tmux shrinks the window to 80×24: after it attaches, run
+     `tmux -S $EMU set -g window-size manual` and
+     `resize-window -t m30 -x 160 -y 48`.
    - Once a window is split, `send-keys` targets panes by id.
    - The chat's first input is `/approvals on` (auto-approve).
    - S-last kills only processes whose `/proc/<pid>/environ` has
@@ -47,8 +50,10 @@ those are what this phase checks:
    - the webhook on `127.0.0.1:19418` with `severity_threshold = "info"`
      and `dedup_window_secs = 0`;
    - no `[budget]` until L7;
-   - one runbook, `disk-full-l4`, whose frontmatter allows a ghost run, so
-     a matching alert gets watchdog analysis and then a ghost.
+   - one runbook, `disk-full-l4`, with `enabled: true`, `max_ghost_turns:
+     4`, and Alert Criteria that say a firing `disk-full-l4` always
+     warrants a ghost (`GHOST_TRIGGER: YES`). Rehearsal 1's first wording
+     ("synthetic, action: none") made GLM decline, correctly.
 4. **Side effects.** Local only: a throwaway daemon, restarts inside `$R`,
    and webhook POSTs to `127.0.0.1`. No ssh, nothing pushed.
 
@@ -61,12 +66,12 @@ from the session's history file, never from GLM's prose.
 | # | Block | Pass when |
 |---|---|---|
 | L1 | **Run record: chat.** Ask "Run `hostname` and tell me the result." | One `run` event for the turn with `kind: chat`, the GLM `provider`/`model`, `status` complete, `failure_class: none`, `tool_calls ≥ 1`, `tool_success_rate: 1.0`, and `tokens > 0`. Every `ai_cost` line the turn wrote carries that `run_id` |
-| L2 | **Shells panel, live (deferred from 08).** With the L1 chat still attached, run `HOME=$R $BIN top --once` | Shells lists `s0` with the chat's owner, foreground `shell prompt` and a last line containing `pinky`. Nothing in the panel reads `daemon not running` |
+| L2 | **Shells panel, live (deferred from 08).** With the L1 chat still attached, run `HOME=$R $BIN top --once` | Shells lists `s0` with the chat's owner and a last line containing `pinky`. Foreground reads `-` today (F2); `shell prompt` once F2 lands. Nothing in the panel reads `daemon not running` |
 | L3 | **`top`, live.** In a second emulator window, run `HOME=$R $BIN top`. Ask the chat to run `sleep 8; echo done-L3` | While the command runs, Runs shows the chat run `live` with the selection on it, and Activity gains rows without a key press. After `q` the pane is back at a shell prompt, and `stty -a` there shows `icanon` and `echo`. A second `top` quits on Ctrl-C the same way |
-| L4 | **Webhook → watchdog → ghost.** POST an alert named `disk-full-l4` | The watchdog's `ai_cost` is recorded. A `run` event with `kind: ghost` has tags naming `disk-full-l4`, and its `ai_cost` lines carry its `run_id`. The ghost's briefing exists, and its budget shows tokens used, not an unlimited budget |
-| L5 | **Scheduled.** Ask the chat to schedule an interval ghost job on `disk-full-l4` every 2 minutes. Wait for one firing | A `run` event with `kind: scheduled` and `model: null`, plus the ghost run it started, as in L4 |
+| L4 | **Webhook → watchdog → ghost.** POST an alert named `disk-full-l4` (severity `critical`, a summary saying investigation is required) | The watchdog's `ai_cost` is recorded with `run_id: ""` (a side call belongs to no run). A `run` event with `kind: ghost` has tags naming `disk-full-l4`, `turns`, `tool_calls` and `tokens` above zero, and its `ai_cost` lines carry its `run_id`. Its turn log holds one `turn_started` per turn. (A completed ghost has no briefing; `budget_left` is checked on L7's refused ghost) |
+| L5 | **Scheduled.** Ask the chat to schedule an interval ghost job on `disk-full-l4` every 2 minutes, and answer `y` to the panel (`schedule_command` is gated even under `/approvals on`). Wait for one firing (about 2 min) | A `run` event with `kind: scheduled` and `model: null`, plus the ghost run it started, as in L4 |
 | L6 | **Scorecard and profile, daemon down.** `daemoneye stop`, then `scorecard`, `scorecard --by kind --json \| jq`, `scorecard --min-runs 100`, `profile <GLM model>` and `profile no-such-model` | The scorecard has a GLM row with `n_runs` counting L1–L5, and no `scheduled` record is counted against the model. `--by kind` separates `chat` from `ghost`. The JSON parses. `--min-runs 100` drops every row. The profile shows the strengths rows and the ranked classes without `none`. `no-such-model` names GLM and exits 0 |
-| L7 | **The daily cap, all three paths.** With the daemon down, add `[budget] max_cost_per_day = 1.0`, append one local-today `ai_cost` line of `$5.00` to the segment, and start the daemon. Then run `status`, ask the chat anything, POST `disk-full-l4`, and wait for the L5 job's next firing | `status` shows the spend against the cap. The chat gets the `SystemMsg` naming `$5.00` and `$1.00`, and the turn writes no new `ai_cost`. daemon.log has the webhook's `skipped — daily cost cap` line. The scheduled ghost ends `BudgetExceeded` with a briefing. Each path leaves one `budget_refused` event naming it. Finally, cancel the L5 job |
+| L7 | **The daily cap, all three paths.** With the daemon down, add `[budget] max_cost_per_day = 1.0`, append one local-today `ai_cost` line of `$5.00` to the segment, and start the daemon. Then run `status`, ask the chat anything, POST `disk-full-l4`, and wait for the L5 job's next firing | `status` shows the spend against the cap. The chat shows the `SystemMsg` naming `$5.00` and `$1.00` at `--resume`, before any typing (the greeting turn is a model call), and again after the ask; no new `ai_cost` is written. daemon.log has the webhook's `skipped — daily cost cap` line. The L5 job fires within seconds of the restart (missed-run catch-up); its ghost run ends `budget_exceeded` with a briefing whose `budget_left` is `Usd`, while the `scheduled` wrapper completes (O3). `budget_refused` events name `chat`, `webhook` and `ghost`. Finally, cancel the L5 job |
 
 ## Close (after the PE run passes)
 
@@ -95,3 +100,56 @@ from the session's history file, never from GLM's prose.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-22 (rehearsal 1, architect)
+
+Harness as in Pre-flight at `95906f07` (release binary at HEAD), root
+`/tmp/de30-live`, emulator `/tmp/de30-emu.sock`, GLM at `brain:8000`. The
+raw notes are in `/tmp/e2e-m30-10.txt`. Every process with `HOME=$R` was
+killed at the end; the PE's daemon was untouched.
+
+| Block | Result |
+|---|---|
+| L1 run record: chat | **pass**: `76d9e1b9c5f141de` kind `chat`, `ollama`/GLM, `complete`/`none`, turns 2, tool_calls 1, success 1.0, 32 415 in / 38 out; both of its `ai_cost` lines carry the id |
+| L2 Shells live | **last line pass, foreground → F2**: `s0 chat:8e5ac79118a08c41 - pinky`; no `daemon not running` |
+| L3 `top` live | **pass** at 160×48: the chat run `running`/`live`, its row reversed (`ESC[7m`); Activity 20 → 24 → 25 rows with no key; after `q` and after Ctrl-C the pane shows `echo icanon`. TURNS reads 0 for every chat run → F1 |
+| L4 webhook → ghost | **pass on the second alert**: the first runbook wording made GLM answer `GHOST_TRIGGER: NO` (H2). Then ghost `dd01e5bc2d7a4552` `complete`/`none`, turns 3, tool_calls 2, 48 971 in / 1 667 out, tags `runbook: disk-full-l4`; three `ai_cost` lines carry the id; the turn log has `turn_started` 1–3; the watchdog's `ai_cost` has `run_id: ""` (O1) |
+| L5 scheduled | **pass**: `93a22aad0d9840ec` kind `scheduled`, `model: null`, tags `job: l5-ghost`; it started ghost `ff661dde338e4a39`, `complete`, tagged with the runbook |
+| L6 scorecard, profile | **pass** with the daemon down: GLM rows `chat 5` / `ghost 2`, "1 run(s) with no model skipped"; `--json` is `{rows, rows_dropped, skipped_no_model}` and parses; `--min-runs 100` ⇒ `no runs in this window`; the profile shows both rows and `no failures`; `no-such-model` names GLM, exit 0 |
+| L7 daily cap | **pass**: `status` ⇒ `cap $5.0000 of $1.00 (500%)`; the chat's refusal at resume and after the ask, `ai_cost` 17 → 17; `Webhook: analysis … skipped — daily cost cap`; the job fired 3 s after the restart, ghost `b474cf306c374a19` `budget_exceeded` with blocker = the refusal and `budget_left: "Usd"`; `budget_refused` ×4: chat ×2, webhook, ghost |
+
+**Findings.**
+- **F1 (minor), `top` shows `TURNS 0` for every chat run.** The chat
+  loop writes only `run_started` and `run_finished` to the turn log, while
+  the ghost loop writes `turn_started` per turn (`ghost.rs`
+  `emit_turn_started`). `top` counts turns from the turn log, so a chat
+  run whose `run` record says `turns: 2` shows 0. Fix constraint: the chat
+  loop logs `turn_started` as the ghost loop does, or `top` reads the
+  count from the record.
+- **F2 (minor), the Shells foreground is `-` for an idle shell.**
+  `last_foreground` is written only by `probe_foreground` (a caller-named
+  shell, `ShellTarget::Existing`) and `read_shell_screen`. The default
+  path records nothing, and a waited command's completion — where the
+  daemon knows the shell is back at its prompt — records nothing either.
+  So the panel reads `-` for the common case. Fix constraint: a
+  marker-terminated completion stores `(Foreground::Prompt, now)`.
+- **Observations.** O1: a side call's `ai_cost` has `run_id: ""` by
+  design (`cost.rs`); the exit criterion's "every `ai_cost` carries its
+  run" holds for calls made by a run. O2: a chat's startup greeting is
+  itself a `chat` run (`0bd9f2c757be4012`, 295 output tokens). O3: when a
+  scheduled ghost job's ghost is refused by the cap, the `scheduled`
+  wrapper record is `complete`/`none` and only the ghost record is
+  `budget_exceeded`; a scorecard counts the job as a pass. O4: `--min-runs`
+  that drops every row prints `no runs in this window`, not that rows
+  were dropped. O5: `daemoneye stop` leaves the pid file in place (flock
+  payload, by design).
+- **Harness.** H1: the headless client is 80×24, so Activity was one row
+  tall until `window-size manual` + `resize-window`. H2: the watchdog
+  decides; the runbook must say the alert warrants a ghost. H3:
+  `schedule_command` prompts even under `/approvals on`. H4: a job that
+  missed a firing while the daemon was down fires seconds after the
+  restart. H5: `stty -a` separates flags with spaces, not `;`.
+
+**Next.** The PE decides F1 and F2: a tiny `10a` (both are small, and the
+`run_tui` doc-comment nit joins them) or deferral. Then rehearsal 2 if
+10a lands, else the PE run.
