@@ -150,6 +150,6 @@ killed at the end; the PE's daemon was untouched.
   missed a firing while the daemon was down fires seconds after the
   restart. H5: `stty -a` separates flags with spaces, not `;`.
 
-**Next.** The PE decides F1 and F2: a tiny `10a` (both are small, and the
-`run_tui` doc-comment nit joins them) or deferral. Then rehearsal 2 if
-10a lands, else the PE run.
+**Next.** The PE chose to fix F1 and F2 now (2026-10-22): phase 10a carries
+both and the `run_tui` doc-comment nit. Rehearsal 2 follows its approval,
+then the PE run.
