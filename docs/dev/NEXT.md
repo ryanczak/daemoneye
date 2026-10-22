@@ -6,11 +6,11 @@
 decisions and the planned phases.
 
 **Active phase:** [phase-09-top-tui](milestones/M30-telemetry-dashboard/phase-09-top-tui.md)
-— todo: the live ratatui screen of `daemoneye top`. It polls at 500 ms,
+— done (2026-10-22, approved_after_1): the live ratatui screen of `daemoneye top`. It polls at 500 ms,
 re-reads on a fingerprint change or every 5 s, the selection follows the
 newest live run until the user scrolls, `/` filters Activity and `q`
 quits. It is verified end to end in a private tmux. The live close is
-phase 10. Dispatch with `/rexymcp:dispatch phase-09`. Phases 01–08 are
+phase 10, drafted next with `/rexymcp:architect next`. Phases 01–09 are
 done (2026-10-20 to 22).
 
 M29 closed 2026-10-20 (`v2.2.0`, pushed). M31 (MCP surface) and M32

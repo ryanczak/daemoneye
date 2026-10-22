@@ -1,7 +1,7 @@
 # Phase 09: top-tui — the live ratatui screen of `daemoneye top`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-08
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -596,3 +596,37 @@ kill: (-810391): No such process
 **Commit:** dc473607716cc3aff4a9f7faa6e51ed6deda7251
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-22
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-09-1 major: overflowing Activity and Runs panels
+  drew from their first line, so new events never appeared and a selection
+  past row 7 went off-screen; bug-09-2 minor: the Shells body copied
+  `shells_text`). Both fixed in `38e4dc76`.
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+- **Scope deviations:** none.
+- **Gates (reviewer re-run):** fmt 0; build 0, zero warnings after a
+  forced rebuild of `top_tui.rs`; clippy `-D warnings` 0; `cargo test`
+  `passed=2506 failed=0`. The full § End-to-end harness, re-run under
+  `bash` in a private tmux, reads every criterion's value: all 9 tests ok,
+  `tui_panels=4 tui_down=1 tui_updated=1 tui_exit=0 tui_newest=1
+  shells_reuse=0`, preservation `pipe_exit=2 pipe_msg=1
+  once_order=Runs,Budget,Shells,Activity`.
+- **Tests:** `activity_panel_shows_the_newest_rows` asserts both
+  directions (`model40` present, `model01` absent).
+  `selected_run_stays_on_screen` asserts the selected id, the scrolled-off
+  id and the header. The executor's mutation (`.take(0)`) is weaker than
+  the requested head-first render, but a head-first render shows
+  `model01…` without `model40` and fails the first assertion, so the test
+  bites.
+- **Nits (not bounced):** the first line of `run_tui`'s doc comment
+  appears twice (`top_tui.rs:281-282`). Fold it into phase 10 or the next
+  touch of the file.
+- **Calibration:** (1) The first-pass fixture had one or two events, so
+  the "newest rows that fit" behaviour had no criterion. Fixtures need
+  inputs the code was not shaped for: more rows than the panel holds.
+  This is the second occurrence, after bug-07-1. (2) The executor's shell
+  is `/bin/sh`. A harness that uses bash features must say "run with
+  bash"; the first pass patched its own transcript to work around
+  `PIPESTATUS`.
