@@ -6,7 +6,7 @@
 decisions and the planned phases.
 
 **Active phase:** [phase-08-top-shells](milestones/M30-telemetry-dashboard/phase-08-top-shells.md)
-— todo: the Shells panel of `daemoneye top`. `ShellInfo` gains
+— in-progress (refined after a stall): the Shells panel of `daemoneye top`. `ShellInfo` gains
 `foreground` and `last_line`, filled in `handle_shell_list`, and `top
 --once` gains a Shells section (`daemon not running` when down). The TUI
 is phase 09 and the live close is 10. Dispatch with

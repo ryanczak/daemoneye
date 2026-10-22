@@ -1,7 +1,7 @@
 # Phase 08: top-shells — the Shells panel of `daemoneye top`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress (escalation 1, 2026-10-22: refined re-dispatch after a NoProgressStall)
 **Depends on:** phase-07
 **Estimated diff:** ~250 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=s
@@ -19,7 +19,12 @@ frame prints as before.
 
 **Files:** `src/ipc.rs`, `src/daemon/server/shells.rs`,
 `src/daemon/executor/knowledge/shell.rs` (one visibility change),
-`src/cli/commands/top.rs`, `src/main.rs`, `README.md`.
+`src/daemon/executor/knowledge/mod.rs` (one re-export),
+`src/cli/commands/top.rs`, `src/main.rs`, `README.md`, and the three
+test helpers that build a `ShellInfo` literal: `src/ipc_tests.rs`,
+`src/cli/commands/slash.rs` (`fn shell`) and `src/cli/commands/agents.rs`
+(`fn shell`). Each of those gains `foreground: None, last_line: None` and
+nothing else.
 
 **Where things are.** You do not need to search for these. Read the named
 symbol, then write.
@@ -31,8 +36,9 @@ symbol, then write.
 | Foreground facts on a record | `ShellRecord.last_foreground: Option<(Foreground, u64)>` and `ShellRecord.in_flight: Option<InFlight { cmd, started_unix }>` in `src/shell/registry.rs` |
 | Foreground wording | `impl Display for Foreground` in `src/shell/foreground.rs` (`shell prompt`, `running <cmd>`, …) |
 | A shell's recording | `crate::shell::cast_path(id, started_unix)`, `meta_path_for(&cast)`, `MetaIndex::load`, `meta.commands` (`CommandRecord.index`), `crate::shell::read_command_output(&cast, &meta, index)` |
-| Raw PTY bytes → readable text | the private `visible_text` in `src/daemon/executor/knowledge/shell.rs`; make it `pub(crate)` and reuse it |
-| Masking | `crate::ai::filter::mask_sensitive` (tests call `init_masking(&[])` first) |
+| Raw PTY bytes → readable text | `fn visible_text(raw: &str) -> String` in `src/daemon/executor/knowledge/shell.rs`. Its module is private (`knowledge/mod.rs` says `mod shell;`), so `pub(crate)` alone does not reach it. Make the fn `pub(crate)` **and** add `pub(crate) use shell::visible_text;` to `knowledge/mod.rs`. Call it as `crate::daemon::executor::knowledge::visible_text`. `read_command_output` returns `Vec<u8>`: pass `&String::from_utf8_lossy(&bytes)` |
+| Masking | `crate::ai::filter::mask_sensitive(&str) -> String`. The daemon already calls `init_masking` at startup in `src/daemon/mod.rs`, so the handler does nothing extra. A test calls `crate::ai::filter::init_masking(&[])` once before asserting. The generic `api_key=` rule masks the test's key |
+| Every `ShellInfo` literal | `src/daemon/server/shells.rs` (two, in `handle_shell_list`), `src/ipc_tests.rs`, `src/cli/commands/slash.rs`, `src/cli/commands/agents.rs`. Grep `ShellInfo {` and stop there |
 | The IPC call | `ipc_client::request_once(Request::ShellList)` (async; `Err` when no daemon answers) |
 | The snapshot and text | `TopSnapshot`, `take_snapshot`, `render_once` in `src/cli/commands/top.rs` |
 
@@ -50,7 +56,22 @@ symbol, then write.
    - Both are filled in `handle_shell_list`. The record fields are copied
      under the lock and the file reads happen outside it, as
      `last_command` does today.
-   - Build each value in a pure function and test it.
+   - The pure functions, both in `src/daemon/server/shells.rs` beside
+     `last_command`, tested in that file's test module:
+     - `fn shell_foreground(last_foreground: Option<&(Foreground, u64)>, in_flight: Option<&InFlight>) -> Option<String>`.
+       `in_flight` wins only when its `started_unix` is strictly greater
+       than the observation's timestamp; on a tie the observation wins.
+       Called inside the `with_shells` closure, which is allowed: it is a
+       field read and a `Display`, no I/O.
+     - `fn last_visible_line(raw: &[u8]) -> Option<String>`: lossy UTF-8,
+       `visible_text`, last line whose trim is non-empty, `mask_sensitive`,
+       first 120 `char`s (not bytes). Empty or all-blank input gives `None`.
+   - The impure reader `fn last_line(id: &str, started_unix: u64) -> Option<String>`
+     mirrors `last_command`: load the meta, take `meta.commands.last()`,
+     `read_command_output(&cast, &meta, record.index).ok()`, then
+     `last_visible_line`. Fill it in the second `.map` of
+     `handle_shell_list`, next to `last_command`. It needs no test of its
+     own.
 2. **The Shells panel.** `TopSnapshot` gains `shells`, which holds either
    the rows or `daemon_down`.
    - `take_snapshot` becomes async and sends one
@@ -64,7 +85,9 @@ symbol, then write.
      (`-` when `None`), and last line (`-` when `None`).
    - It prints `daemon not running` when the daemon is down, and `none`
      when it is up with no shells.
-   - Build the section in a pure function.
+   - Build the section in a pure function `fn shells_text(panel: &ShellsPanel) -> String`
+     in `top.rs`, where `ShellsPanel` is `DaemonDown` or `Rows(Vec<ShellInfo>)`.
+     The two `shells_text_*` tests call it directly with no daemon.
    - Update the README's `top --once` paragraph to name the Shells
      section.
 4. **Still read-only.** `ShellList` is the only request top sends.
@@ -146,6 +169,12 @@ diff /tmp/pasted-m30-08.txt /tmp/e2e-m30-08.txt && echo "PASTE MATCH" || echo "P
 
 - Changing `visible_text` in `src/daemon/executor/knowledge/shell.rs` from
   private to `pub(crate)`. That is the only edit to that file.
+- Adding `pub(crate) use shell::visible_text;` to
+  `src/daemon/executor/knowledge/mod.rs`. That is the only edit to that
+  file.
+- Adding `foreground: None, last_line: None` to the `ShellInfo` literals
+  in `src/ipc_tests.rs`, `src/cli/commands/slash.rs` and
+  `src/cli/commands/agents.rs`. No other edit to those files.
 
 ## Out of scope
 
@@ -158,3 +187,27 @@ diff /tmp/pasted-m30-08.txt /tmp/e2e-m30-08.txt && echo "PASTE MATCH" || echo "P
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-22
+
+The first dispatch read for 120 turns and wrote nothing. Its last forty
+reads chased four questions the Spec now answers. (1) `visible_text`
+cannot be reached through `pub(crate)` alone, because `knowledge/mod.rs`
+declares `mod shell;` privately. The re-export is now named and
+authorized. (2) Where masking is initialized: the daemon already does it
+at startup, and tests call `init_masking(&[])`. (3) Which `ShellInfo`
+literals break when the fields are added: five sites, all named, three
+of them test helpers now authorized. (4) The shape of the pure functions:
+their names, signatures and home are pinned in Spec item 1 and 3. **Do
+not re-survey.** Every symbol you need is in the "Where things are"
+table. Start writing at turn 1: `shell_foreground` and
+`last_visible_line` with their tests in `src/daemon/server/shells.rs`,
+then run `cargo test shell_foreground` before anything else.
+
+### Update — 2026-10-22 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the stall traced to a real spec gap (an unreachable
+private module behind the one authorized visibility change, plus unnamed
+literal sites), which a tighter spec fixes; this is phase 08's first
+failure, so takeover is not yet warranted.
