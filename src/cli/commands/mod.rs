@@ -19,6 +19,7 @@ mod setup;
 mod slash;
 mod stream;
 mod top;
+mod top_tui;
 
 pub use ask::run_ask;
 pub use audit_prompts::run_audit_prompts;
@@ -32,6 +33,7 @@ pub use run_resume::run_resume;
 pub use scorecard::{run_records_between, run_scorecard};
 pub use setup::run_setup;
 pub use top::{TopFingerprint, fingerprint, run_top};
+pub use top_tui::run_tui;
 
 use chat::run_chat_inner;
 

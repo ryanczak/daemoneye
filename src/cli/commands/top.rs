@@ -1,13 +1,16 @@
 //! `daemoneye top` — a read-only dashboard over what is on disk (M30
 //! phase 07). Three of the four panels, Runs, Budget and Activity, are read
 //! straight from the run logs and the event segments; no daemon and no IPC.
-//! `top --once` prints one frame as plain text and exits; the live ratatui
-//! loop over [`TopFingerprint`] is a later phase.
+//! `top --once` prints one frame as plain text; the live ratatui loop over
+//! [`TopFingerprint`] is in `top_tui.rs`.
+
+use std::io::IsTerminal;
 
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
 use serde::Serialize;
 
+use crate::cli::commands::top_tui::run_tui;
 use crate::daemon::run::{list_runs, read_turn_log};
 use crate::daemon::spend::local_day_bounds;
 use crate::daemon::utils::for_each_event_between;
@@ -121,6 +124,17 @@ pub struct TopSnapshot {
     pub activity: Vec<ActivityRow>,
     /// The Shells panel: the daemon's live shells, or the daemon-down mark.
     pub shells: ShellsPanel,
+}
+
+/// The disk-read panels this phase builds: Runs, Budget and Activity.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DiskPanels {
+    /// The Runs panel: running runs first, then the rest newest first.
+    pub runs: Vec<TopRunRow>,
+    /// The Budget panel, from today's events.
+    pub budget: BudgetPanel,
+    /// The Activity panel: today's last events, oldest first.
+    pub activity: Vec<ActivityRow>,
 }
 
 /// The Shells panel: one row per live PTY shell, or the mark that the daemon
@@ -393,23 +407,42 @@ fn read_today_events() -> Vec<serde_json::Value> {
     events
 }
 
-/// Take one frame: the Runs panel, the Budget panel and the Activity rows
-/// from disk, plus the config's cap — and the Shells panel from the daemon.
-/// One `Request::ShellList`, nothing written.
-pub async fn take_snapshot(config_cap: f64) -> TopSnapshot {
+/// Read the disk panels: the Runs panel, the Budget panel and the Activity
+/// rows. No daemon involved.
+pub fn disk_panels(config_cap: f64) -> DiskPanels {
     let now = Utc::now();
     let events = read_today_events();
-    let budget = fold_today(&events, now, config_cap);
-    let shells = match super::ipc_client::request_once(crate::ipc::Request::ShellList).await {
+    DiskPanels {
+        runs: load_runs(now),
+        budget: fold_today(&events, now, config_cap),
+        activity: last_activity(&events),
+    }
+}
+
+/// Ask the daemon for its live PTY shells. One read-only `Request::ShellList`,
+/// nothing written. A daemon that answers anything other than a shell list is
+/// as good as a daemon that is not running: the panel says so either way.
+pub async fn shells_panel() -> ShellsPanel {
+    match super::ipc_client::request_once(crate::ipc::Request::ShellList).await {
         Ok(crate::ipc::Response::ShellList { shells }) => ShellsPanel::Rows(shells),
-        // Any other reply is as good as no daemon: the panel says so either way.
         _ => ShellsPanel::DaemonDown,
-    };
+    }
+}
+
+/// Take one frame: the disk panels plus the Shells panel from the daemon.
+pub async fn take_snapshot(config_cap: f64) -> TopSnapshot {
+    let now = Utc::now();
+    let shells = shells_panel().await;
+    let DiskPanels {
+        runs,
+        budget,
+        activity,
+    } = disk_panels(config_cap);
     TopSnapshot {
         taken_at: now,
-        runs: load_runs(now),
+        runs,
         budget,
-        activity: last_activity(&events),
+        activity,
         shells,
     }
 }
@@ -602,20 +635,27 @@ fn shells_text(panel: &ShellsPanel) -> String {
 /// `daemoneye top [--once] [--filter <name>]`.
 ///
 /// Read-only: nothing is written, the daemon is asked only to list its
-/// shells. `--once` prints one frame and exits 0; without it the live view
-/// is a later release and the command exits 2 naming `--once`.
+/// shells. `--once` prints one frame and exits 0. Without it, a stdout that
+/// is not a terminal is refused with exit 2; otherwise the live ratatui
+/// screen runs until `q`.
 pub async fn run_top(once: bool, filter: Option<String>) -> Result<()> {
-    if !once {
-        eprintln!("daemoneye top: the live view arrives in a later release; use --once");
+    if once {
+        let needle = filter.unwrap_or_default();
+        let cap = crate::config::Config::load()
+            .map(|c| c.budget.max_cost_per_day)
+            .unwrap_or(0.0);
+        let snapshot = take_snapshot(cap).await;
+        println!("{}", render_once(&snapshot, &needle));
+        return Ok(());
+    }
+    if !std::io::stdout().is_terminal() {
+        eprintln!("daemoneye top: not a terminal; use --once");
         std::process::exit(2);
     }
-    let needle = filter.unwrap_or_default();
     let cap = crate::config::Config::load()
         .map(|c| c.budget.max_cost_per_day)
         .unwrap_or(0.0);
-    let snapshot = take_snapshot(cap).await;
-    println!("{}", render_once(&snapshot, &needle));
-    Ok(())
+    run_tui(cap, filter.unwrap_or_default()).await
 }
 
 #[cfg(test)]

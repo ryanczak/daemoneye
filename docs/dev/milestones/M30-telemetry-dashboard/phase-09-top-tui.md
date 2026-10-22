@@ -1,7 +1,7 @@
 # Phase 09: top-tui — the live ratatui screen of `daemoneye top`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-08
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -199,3 +199,35 @@ Do not keep investigating.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-22 04:01 (started)
+
+Picked up phase 09 (top-tui). Flipped the status to `in-progress`. Working through
+the work order: `plan_refresh` / `follow_target` / `handle_key` with tests, then
+`draw` with its `TestBackend` test, then the snapshot split in `top.rs`, then
+`run_tui` and `run_top`.
+
+— executor (claude)
+
+### Update — 2026-10-22 05:00 (end-to-end verification)
+
+```
+plan_refresh_rereads_disk_only_on_change_or_age: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+plan_refresh_asks_for_shells_every_two_seconds: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+follow_selects_the_newest_live_run: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+scrolling_stops_follow_and_f_resumes_it: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+filter_keys_edit_the_activity_filter: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+q_and_ctrl_c_quit: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_draws_the_four_panels: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+once_order=Runs,Budget,Shells,Activity
+pipe_exit=2
+pipe_msg=1
+tui_panels=4
+tui_down=1
+tui_updated=1
+tui_exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2504 failed=0
+```
+

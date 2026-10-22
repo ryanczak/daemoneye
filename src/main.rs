@@ -188,8 +188,8 @@ enum Commands {
     /// One dashboard frame over what is on disk: runs, today's budget and
     /// today's activity. No daemon required.
     Top {
-        /// Print one text frame and exit; without it the live view is a later
-        /// release
+        /// Print one text frame and exit. Without it, run the live full-screen
+        /// view on a terminal (polls every 500 ms; `q` quits)
         #[arg(long)]
         once: bool,
         /// Keep only the activity events whose name contains this
