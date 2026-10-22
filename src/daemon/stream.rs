@@ -195,6 +195,7 @@ where
             .metrics_mut()
             .set_model(active_entry.provider.clone(), active_entry.model.clone());
         run_log.metrics_mut().record_turn();
+        crate::daemon::run::emit_turn_started(run_log.run_id(), run_log.metrics().turns as usize);
         let client_instance = make_client(
             &active_entry.provider,
             active_entry.resolve_api_key(),

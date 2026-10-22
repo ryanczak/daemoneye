@@ -602,6 +602,12 @@ async fn launch_interactive(
 
 /// The non-sudo epilogue: index, format, annotate. Shared by the plain and the
 /// sudo-aware path so the two can never diverge on what the model sees.
+///
+/// Reached only with a marker-terminated `CommandOutcome` — the plain path
+/// and the sudo path both end here — so the shell is back at its prompt, and
+/// the record says so: `last_foreground` is stamped `Prompt` exactly as
+/// `probe_foreground` would have. Nothing is stored when the id is not in
+/// the registry (it exited under the command and was swept).
 async fn finish_run(
     reg: &ShellRegistry,
     cmd: &str,
@@ -609,6 +615,11 @@ async fn finish_run(
     outcome: &CommandOutcome,
     before: Option<u64>,
 ) -> anyhow::Result<(ShellId, ShellRunResult)> {
+    with_shells(reg, |store| {
+        if let Some(record) = store.get_mut(id.as_str()) {
+            record.last_foreground = Some((Foreground::Prompt, now_unix()));
+        }
+    });
     index_command_output(reg, cmd, id, outcome, before).await;
     let raw = String::from_utf8_lossy(&outcome.output);
     let mut text = format_for_model(&raw);
@@ -1735,6 +1746,118 @@ mod tests {
         );
     }
 
+    /// F2: `finish_run` is reached only with a marker-terminated outcome, so
+    /// the shell is back at its prompt — and the record must say so, exactly
+    /// as `probe_foreground` would have stamped it.
+    #[tokio::test]
+    async fn a_finished_command_leaves_the_shell_at_its_prompt() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let started = now_unix();
+        let (id, result) = run_in_shell_for_test(
+            &reg,
+            Owner::Chat("prompt-stamp".into()),
+            "echo hi",
+            5,
+            None,
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the command resolves");
+        assert_eq!(result.exit_code, 0, "echo hi is clean");
+        let finished = now_unix();
+        let stored = with_shells(&reg, |store| {
+            store
+                .get(id.as_str())
+                .and_then(|r| r.last_foreground.clone())
+        });
+        let (fg, at) = stored.expect("the record holds the stamp");
+        assert_eq!(
+            fg,
+            Foreground::Prompt,
+            "a finished waited command leaves the shell at its prompt"
+        );
+        assert!(
+            (started..=finished).contains(&at),
+            "the stamp's second {at} sits inside the test's own wall-clock window \
+             [{started}, {finished}]"
+        );
+    }
+
+    /// The refusal path never reaches `finish_run`, so a refused command
+    /// must not overwrite what the last real probe observed: a shell the
+    /// busy probe read `Program` stays `Program`.
+    #[tokio::test]
+    async fn a_busy_shell_is_not_marked_at_its_prompt() {
+        let (_home, _dir) = test_home();
+        let reg = ShellRegistry::default();
+        let owner = Owner::Chat("busy-named-stamp".into());
+        let (id, _) = shell_for_owner(
+            &reg,
+            owner.clone(),
+            crate::host::HostId::Local,
+            5,
+            SHELL_READY_TIMEOUT,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the shell comes up");
+        let busy_socket = socket_path(id.as_str());
+        send_input(&busy_socket, b"sleep 30\n", Duration::from_secs(5))
+            .await
+            .expect("the shell accepts the input");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let fg = probe_foreground(&reg, &id, PROBE_TIMEOUT).await;
+            if matches!(fg, Foreground::Program { .. }) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the shell never read busy: {fg:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let before = with_shells(&reg, |store| {
+            store
+                .get(id.as_str())
+                .and_then(|r| r.last_foreground.clone())
+        })
+        .expect("the probe stamped the record");
+        assert_ne!(before.1, 0, "the probe stamped a real unix second");
+
+        let err = run_in_shell_for_test(
+            &reg,
+            owner,
+            "echo BUSY_REFUSAL_MUST_NOT_RUN",
+            5,
+            Some(id.as_str()),
+            None,
+            spawn_in_process_host,
+        )
+        .await
+        .expect_err("the busy shell refuses the command");
+        assert!(
+            format!("{err:#}").contains("is running sleep"),
+            "the refusal is the busy answer: {err:#}"
+        );
+        let after = with_shells(&reg, |store| {
+            store
+                .get(id.as_str())
+                .and_then(|r| r.last_foreground.clone())
+        });
+        assert_eq!(
+            after.as_ref().map(|(fg, _)| fg),
+            Some(&Foreground::Program {
+                cmd: "sleep".to_string(),
+                tui: false
+            }),
+            "a refused command must not stamp the record at its prompt: the \
+             foreground is still the program the probe saw"
+        );
+    }
+
     #[tokio::test]
     async fn shell_exec_masks_a_secret_that_stays_raw_in_the_cast() {
         let (_home, _dir) = test_home();
@@ -1978,8 +2101,14 @@ mod tests {
             store
                 .get(id.as_str())
                 .and_then(|r| r.last_foreground.clone())
+                .map(|(fg, _)| fg)
         });
-        assert_eq!(before, None, "nothing is observed before the launch");
+        assert_eq!(
+            before,
+            Some(Foreground::Prompt),
+            "the setup command finished, so the record reads its prompt — the \
+             launch is what must replace it with the program"
+        );
 
         let result = launch_interactive(&reg, &id, &socket_path(id.as_str()), "sleep 30")
             .await

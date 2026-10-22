@@ -8,7 +8,7 @@ use crate::config::{Config, PricingSource, load_named_prompt};
 use crate::daemon::GS_SCHED_WINDOW_PREFIX;
 use crate::daemon::run::{
     Briefing, Budget, BudgetDimension, RunId, RunKind, RunLogGuard, RunMetrics, RunState,
-    TurnLogEvent, TurnLogRecord, append_turn_event,
+    TurnLogEvent, TurnLogRecord, append_turn_event, emit_turn_started,
 };
 use crate::daemon::session::{
     SessionEntry, SessionStore, append_session_message, with_sessions, write_session_file,
@@ -373,17 +373,6 @@ pub fn ghost_run_kind(
         runbook: runbook.unwrap_or("unknown").to_string(),
         trigger: trigger.to_string(),
     }
-}
-
-/// Append one `TurnStarted { turn }` record to the run's turn log. The turn
-/// log is diagnostic: a write problem is logged inside `append_turn_event`,
-/// never a failure of the ghost turn itself.
-fn emit_turn_started(run_id: &RunId, turn: usize) {
-    append_turn_event(&TurnLogRecord {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        run_id: run_id.clone(),
-        event: TurnLogEvent::TurnStarted { turn: turn as u32 },
-    });
 }
 
 /// What the ghost turn loop reports back about how it ended. `turns` is the

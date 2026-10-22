@@ -107,6 +107,18 @@ pub fn read_turn_log(id: &RunId) -> Vec<TurnLogRecord> {
         .collect()
 }
 
+/// Append one `TurnStarted { turn }` record to the run's turn log. The turn
+/// log is diagnostic: a write problem is logged inside `append_turn_event`,
+/// never a failure of the turn itself. The one writer, shared by the ghost
+/// and chat loops so their logs cannot drift apart.
+pub fn emit_turn_started(run_id: &RunId, turn: usize) {
+    append_turn_event(&TurnLogRecord {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        run_id: run_id.clone(),
+        event: TurnLogEvent::TurnStarted { turn: turn as u32 },
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,6 +152,28 @@ mod tests {
         for event in events {
             append_turn_event(&record(run_id, event));
         }
+    }
+
+    #[test]
+    fn emit_turn_started_appends_the_turn() {
+        let _guard = HomeGuard::new();
+        let id = RunId::parse("a1b2c3d4e5f6071f").unwrap();
+        emit_turn_started(&id, 1);
+        emit_turn_started(&id, 2);
+        let records = read_turn_log(&id);
+        let turns: Vec<u32> = records
+            .iter()
+            .filter_map(|r| match &r.event {
+                TurnLogEvent::TurnStarted { turn } => Some(*turn),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            turns,
+            vec![1, 2],
+            "two emits must land two TurnStarted records, in order"
+        );
+        assert!(records.iter().all(|r| r.run_id == id));
     }
 
     #[test]

@@ -279,7 +279,6 @@ fn draw_panel(
 }
 
 /// The live loop. Enters raw mode, the alternate screen and a hidden cursor;
-/// The live loop. Enters raw mode, the alternate screen and a hidden cursor;
 /// the `AltScreenGuard` teardown leaves all three, so `?` cannot strand the
 /// terminal. A thread reads keys into a channel; the tokio loop waits on it
 /// and a 500 ms tick, re-reading only what [`plan_refresh`] asked for, and

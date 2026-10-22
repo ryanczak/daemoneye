@@ -1,6 +1,6 @@
 # Phase 10a — Rehearsal fixes: chat turns in the turn log, idle-shell foreground
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M30 — Telemetry & dashboard
 **Drafted:** 2026-10-22 (from phase 10 rehearsal 1, F1 and F2)
 
@@ -143,3 +143,11 @@ Expected: three `ok. 1 passed` lines, `stream_emits` ≥ 1, `ghost_defines=0`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-22 10:21 (progress)
+
+Started phase 10a (executor, headless run). Flipped the phase and the M30
+README's 10a row to `in-progress`. Working through the Spec in order: 1 the
+one `turn_started` writer, 2 the prompt record in `finish_run`, 3 the doc
+nit; then the test plan (including the stated mutation check) and the
+end-to-end capture.

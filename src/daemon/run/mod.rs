@@ -527,4 +527,6 @@ pub use resume::{
     ResumeError, ResumePlan, render_seed, resumable_runbook, resume_plan, terminal_outcome,
 };
 pub use scorecard::{Scorecard, ScorecardBy, ScorecardRow, aggregate_scorecard};
-pub use turn_log::{TurnLogEvent, TurnLogRecord, append_turn_event, read_turn_log, turn_log_file};
+pub use turn_log::{
+    TurnLogEvent, TurnLogRecord, append_turn_event, emit_turn_started, read_turn_log, turn_log_file,
+};
