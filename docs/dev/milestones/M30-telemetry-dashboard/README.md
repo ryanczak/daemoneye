@@ -111,7 +111,7 @@ close. Each may split at drafting.
 | 08 | top-shells ([phase-08-top-shells.md](phase-08-top-shells.md)) — the Shells panel: `ShellInfo` gains `foreground` and `last_line`, `top --once` adds the section (daemon down ⇒ `daemon not running`) | done |
 | 09 | top-tui ([phase-09-top-tui.md](phase-09-top-tui.md)) — the ratatui screen over the snapshot: 500 ms poll, re-read on fingerprint change, follow the newest live run until the user scrolls, activity filter, `q` quits | done |
 | 10 | live-close ([phase-10-live-close.md](phase-10-live-close.md)) — architect rehearsals, the PE run, 2.3.0 | in-progress |
-| 10a | rehearsal-fixes ([phase-10a-rehearsal-fixes.md](phase-10a-rehearsal-fixes.md)) — rehearsal 1's F1 (chat runs write `turn_started`, so `top`/`run list` show their turns) and F2 (a finished waited command records `Foreground::Prompt`), plus the `run_tui` doc nit | in-progress |
+| 10a | rehearsal-fixes ([phase-10a-rehearsal-fixes.md](phase-10a-rehearsal-fixes.md)) — rehearsal 1's F1 (chat runs write `turn_started`, so `top`/`run list` show their turns) and F2 (a finished waited command records `Foreground::Prompt`), plus the `run_tui` doc nit | review      |
 
 ## Notes
 

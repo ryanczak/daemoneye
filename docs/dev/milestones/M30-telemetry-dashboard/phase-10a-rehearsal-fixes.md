@@ -1,6 +1,6 @@
 # Phase 10a — Rehearsal fixes: chat turns in the turn log, idle-shell foreground
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M30 — Telemetry & dashboard
 **Drafted:** 2026-10-22 (from phase 10 rehearsal 1, F1 and F2)
 
@@ -195,3 +195,169 @@ Expected vs actual: three `ok. 1 passed` lines — present;
 — got 1; `nit_lines=1` — got 1; clippy finished with no warnings — the
 tail line is a bare `Finished`, no warnings; `fmt_exit=0` — got 0;
 `failed=0` — got 0. Every line of the expected shape is present.
+
+### Update — 2026-10-22 17:47 (complete, server-authored)
+
+**Summary:** </think>The tree is clean. Let me verify against the completion checklist:
+
+- [x] Phase doc Status: `in-progress` (never flipped to review by me)
+- [x] Milestone README row: `in-progress`
+- [x] No hand-written `(complete)` entry
+- [x] `cargo fmt --all` run before staging (yes, ran it before the first commit)
+- [x] All verification commands ran clean (fmt=0, build ok, clippy no warnings, test 2509 passed 0 failed)
+- [x] Final message will be substantive Summary + Notes for review
+- [x] `git status --short` empty
+- [x] `git log -1 --stat` includes all touched files
+
+Wait — one thing: I committed the progress + e2e docs entries in a separate `docs:` commit, which is fine ("One conventional commit per logical change"). The contract says step 7 commits code plus start-of-phase flip; step 4-5 Update Log entries are also mine to write. The final docs commit carries the started/progress/e2e entries. Good.
+
+Let me double-check the acceptance criteria one final time:
+
+1. ✅ `cargo test emit_turn_started_appends_the_turn` passes — E2E line confirms.
+2. ✅ `grep -c 'emit_turn_started' src/daemon/stream.rs` ≥ 1 (1); `grep -c 'fn emit_turn_started' src/daemon/ghost.rs` = 0.
+3. ✅ `cargo test a_finished_command_leaves_the_shell_at_its_prompt` passes.
+4. ✅ `cargo test a_busy_shell_is_not_marked_at_its_prompt` passes — leaves `last_foreground` reading `Program`.
+5. ✅ `grep -c 'The live loop. Enters raw mode' src/cli/commands/top_tui.rs` = 1.
+6. ✅ `cargo test guard_` (29 passed) and `cargo test shells_text_` (2 passed) green; full `cargo test` no failures.
+
+Hmm, one criterion said "run `echo hi` through `run_in_shell_for_test`" — I used `echo hi` ✓.
+
+Now the final message: Summary + Notes for review, 2-6 sentences. Concise but substantive.</think>
+Summary + Notes for review:
+
+**Summary:** Phase 10a is implemented and committed on top of `710c28d7`. For F1, `emit_turn_started` moved from `src/daemon/ghost.rs` (private `usize` signature, deleted) to `src/daemon/run/turn_log.rs` as `pub fn emit_turn_started(run_id: &RunId, turn: usize)`, re-exported from `run/mod.rs` beside its neighbours; the ghost call site is behaviour-unchanged, and the chat loop in `src/daemon/stream.rs` now calls it immediately after `record_turn()` with the tally's new `turns` value, so a chat run whose record says `turns: 2` carries `turn_started` 1 and 2. For F2, `finish_run` in `src/daemon/executor/shell_exec.rs` stamps `last_foreground = Some((Foreground::Prompt, now_unix()))` through `with_shells` (a no-op when the id is not in the registry) — reached only on the marker-terminated plain/sudo paths, so the timeout, shell-exited, prompt-given-up and refused-before-write paths never store it. The nit (duplicated first line of `run_tui`'s doc comment) is deleted. Three new tests per the test plan (`emit_turn_started_appends_the_turn`, `a_finished_command_leaves_the_shell_at_its_prompt`, `a_busy_shell_is_not_marked_at_its_prompt`), the stated mutation check was run (stamp replaced with `None` → prompt test failed → restored → passes), and the E2E block ran verbatim with its output pasted byte-exact into the Update Log entry `### Update — 2026-10-22 10:45 (end-to-end verification)`: all expected shapes present (`stream_emits=1`, `ghost_defines=0`, `turn_log_defines=1`, `nit_lines=1`, `fmt_exit=0`, `failed=0`, clippy clean). `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test` are all green (2509 passed, 0 failed). Commits: `fa12c94c` (feat) and `0d927603` (docs entries); working tree clean; phase status left at `in-progress` for the server's flip.
+
+**Notes for review:** Two adaptations to flag. (1) A pre-existing test, `launch_interactive_returns_the_settled_screen`, asserted the record's `last_foreground` was `None` before an interactive launch — the F2 change makes its own setup command leave `Prompt` there, so I updated that assertion to read `Some(Prompt)` (launch still replaces it with `Program`; the post-launch assertion is untouched and passes). This is a necessary consequence of the spec'd behaviour, not a widening. (2) The busy-shell test's final "stamp untouched" assertion compared full tuples and proved flaky when the probe's `now_unix()` second rolled over between the two reads, so the test asserts the refused path leaves `Foreground::Program { cmd: "sleep" }` (the probe's classification) rather than the wall-clock second; the refusal test still proves the refused command never reaches `finish_run`. The live effects (`top` TURNS for a chat run, Shells `shell prompt`) are deferred to phase 10's rehearsal 2 per the spec.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.2.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.26s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+
+test e2e_prompt_asset_tool_hygiene ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_depth_limit_enforced ... ok
+test config_pricing_round_trip ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_ask_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 4 tests
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-a5bf14860b8766a6)
+kill: (1025669): No such process
+kill: (-1026352): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-fa3aae999c224501)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-af9329f81467cdee)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-a44fb637fa3308a3)
+     Running tests/integration.rs (target/debug/deps/integration-cf27c4f796c5d8c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-0a0c421b4b2b9fc2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-76069814ada3e33b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M30-telemetry-dashboard/README.md` — +1 -1
+- `docs/dev/milestones/M30-telemetry-dashboard/phase-10a-rehearsal-fixes.md` — +53 -1
+- `src/cli/commands/top_tui.rs` — +0 -1
+- `src/daemon/executor/shell_exec.rs` — +130 -1
+- `src/daemon/ghost.rs` — +1 -12
+- `src/daemon/run/mod.rs` — +3 -1
+- `src/daemon/run/turn_log.rs` — +34 -0
+- `src/daemon/stream.rs` — +1 -0
+
+**Commit:** 0d927603efea12eb55f96993bd896f2c4822d96a
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
