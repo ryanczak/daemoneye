@@ -189,3 +189,37 @@ wall: every read succeeded and none of them led to an edit. So narrowing
 the scope and naming the symbols changes the next attempt. A resume would
 carry the same breadth forward, and nothing was tried that a takeover
 would need to rescue.
+
+### Update — 2026-10-22 05:36 (started) — executor
+
+Executing the refined phase 07 spec. Wrote the pure pieces first
+(`TopSnapshot` panels, `liveness`, `filter_activity`, the budget fold, the
+three section builders) and their tests, then the loaders and the CLI
+wiring. `cargo test --lib top::` passes (9 tests) before any wiring landed.
+
+### Update — 2026-10-22 05:36 (end-to-end verification)
+
+```text
+runs_put_running_first_then_newest: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+liveness_is_live_stale_or_done: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+budget_sums_todays_ai_cost_and_counts_refusals: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+tok_per_s_counts_only_the_last_minute: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+filter_activity_matches_on_the_event_name: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+fingerprint_changes_when_the_segment_grows: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+budget_text_names_spend_cap_and_percent: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+once_exit=0
+budget_usd=1
+budget_cap=1
+refused_count=1
+activity_lines=3
+filtered_refusals=0
+filtered_costs=2
+live_exit=2 live_msg=1
+doc_truth: test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2491 failed=0
+```
+
+Self-check: the phase doc's verification section was re-extracted and
+diffed against the captured output — `PASTE MATCH`.

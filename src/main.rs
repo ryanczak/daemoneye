@@ -185,6 +185,17 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// One dashboard frame over what is on disk: runs, today's budget and
+    /// today's activity. No daemon required.
+    Top {
+        /// Print one text frame and exit; without it the live view is a later
+        /// release
+        #[arg(long)]
+        once: bool,
+        /// Keep only the activity events whose name contains this
+        #[arg(long, value_name = "NAME")]
+        filter: Option<String>,
+    },
     /// Audit installed prompt and knowledge memory files for stale path references.
     ///
     /// Reads the files directly from ~/.daemoneye/ and checks every path literal
@@ -530,6 +541,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::AuditPrompts => {
             cli::run_audit_prompts();
+        }
+        Commands::Top { once, filter } => {
+            cli::run_top(once, filter)?;
         }
         Commands::Reindex => {
             cli::run_reindex();

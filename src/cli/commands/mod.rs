@@ -18,6 +18,7 @@ mod scorecard;
 mod setup;
 mod slash;
 mod stream;
+mod top;
 
 pub use ask::run_ask;
 pub use audit_prompts::run_audit_prompts;
@@ -30,6 +31,7 @@ pub use reindex::run_reindex;
 pub use run_resume::run_resume;
 pub use scorecard::{run_records_between, run_scorecard};
 pub use setup::run_setup;
+pub use top::{TopFingerprint, fingerprint, run_top};
 
 use chat::run_chat_inner;
 
