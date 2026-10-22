@@ -231,3 +231,5 @@ fmt_exit=0
 passed=2504 failed=0
 ```
 
+Self-check: `diff /tmp/pasted-m30-09.txt /tmp/e2e-m30-09.txt` ⇒ `PASTE MATCH`.
+
