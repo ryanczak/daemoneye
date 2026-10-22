@@ -151,3 +151,47 @@ README's 10a row to `in-progress`. Working through the Spec in order: 1 the
 one `turn_started` writer, 2 the prompt record in `finish_run`, 3 the doc
 nit; then the test plan (including the stated mutation check) and the
 end-to-end capture.
+
+### Update — 2026-10-22 10:45 (progress)
+
+All three Spec tasks implemented and committed (`fa12c94c`): `emit_turn_started`
+moved to `turn_log.rs` (re-exported from `run/mod.rs`, ghost call site
+behaviour unchanged), the chat loop calls it after `record_turn()` with the
+new tally, `finish_run` stamps `Prompt` through `with_shells`, and the
+`run_tui` doc-comment duplicate line is gone. Three new tests written
+(`emit_turn_started_appends_the_turn`,
+`a_finished_command_leaves_the_shell_at_its_prompt`,
+`a_busy_shell_is_not_marked_at_its_prompt`); one pre-existing test's
+assumption (`launch_interactive_returns_the_settled_screen`) updated: its
+setup command now leaves `Prompt` on the record, so the pre-launch
+assertion reads `Prompt` instead of `None`. Mutation check done: replaced
+the `finish_run` stamp with `None` — the prompt test failed with
+`the record holds the stamp`, restored, it passes again. Full `cargo test`
+green (2509 passed, 0 failed). Next: the end-to-end capture entry.
+
+### Update — 2026-10-22 10:45 (end-to-end verification)
+
+Ran the block in § End-to-end verification verbatim, unmodified; the
+artifact `/tmp/e2e-m30-10a.txt` was generated mechanically by the block
+(`A=/tmp/e2e-m30-10a.txt; : > "$A"`, the three `cargo test <name>` lines,
+the four greps, the clippy tail, the `cargo fmt --all --check` exit and
+the full-suite awk) and its contents are pasted byte-exact below.
+
+```
+emit_turn_started_appends_the_turn: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_finished_command_leaves_the_shell_at_its_prompt: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+a_busy_shell_is_not_marked_at_its_prompt: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+stream_emits=1
+ghost_defines=0
+turn_log_defines=1
+nit_lines=1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2509 failed=0
+```
+
+Expected vs actual: three `ok. 1 passed` lines — present;
+`stream_emits` ≥ 1 — got 1; `ghost_defines=0` — got 0; `turn_log_defines=1`
+— got 1; `nit_lines=1` — got 1; clippy finished with no warnings — the
+tail line is a bare `Finished`, no warnings; `fmt_exit=0` — got 0;
+`failed=0` — got 0. Every line of the expected shape is present.
