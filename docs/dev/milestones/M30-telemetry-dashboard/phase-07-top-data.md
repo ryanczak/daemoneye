@@ -1,7 +1,7 @@
 # Phase 07: top-data — the `daemoneye top` snapshot and `top --once`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (refined after a no-progress stall, 2026-10-21)
+**Status:** review
 **Depends on:** phase-06
 **Estimated diff:** ~300 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -223,3 +223,154 @@ passed=2491 failed=0
 
 Self-check: the phase doc's verification section was re-extracted and
 diffed against the captured output — `PASTE MATCH`.
+
+### Update — 2026-10-22 07:14 (complete, server-authored)
+
+**Summary:** </think>Working tree is clean, commit contains all files. Let me verify the acceptance criteria once more:
+
+- Each new test ⇒ `test result: ok. 1 passed` ✓ (captured in e2e)
+- E2E fixture: once_exit=0, budget_usd=1, budget_cap=1, refused_count=1, activity_lines=3, filtered_refusals=0, filtered_costs=2 ✓
+- live_exit=2 live_msg=1 ✓
+- doc_truth failed=0 ✓
+- cargo test passed=2491 failed=0 ✓ (above 2482)
+- Clippy and fmt exit 0 ✓
+- E2E update log entry holds output fence first, then PASTE MATCH line ✓
+
+All done. Final summary.</think>
+All acceptance criteria are met and the working tree is clean. Final report:
+
+**Summary:** Implemented M30 phase 07 in one new file, `src/cli/commands/top.rs` (~800 lines, half tests): the `TopSnapshot` with its three disk panels (Runs — up to 20 rows, running first then newest, with a pure `liveness` rule at the 30 s window; Budget — today's local-day `ai_cost`, tokens, cap, refusals and a 60 s `tok_per_s`; Activity — today's last 50 events, oldest first, with the pure `filter_activity`), the stats-only `TopFingerprint` (runs-dir entry count + newest mtime, segment length + mtime), and `daemoneye top [--once] [--filter <name>]` wired through `Commands::Top` in `main.rs`, plus the README command-reference rows and prose next to `profile`. Work followed the spec's work order: pure pieces and tests first (9 tests green on `cargo test --lib top::` before any wiring), then loaders, then the CLI. End-to-end verification against the spec's fixture with no daemon gave `once_exit=0 budget_usd=1 budget_cap=1 refused_count=1 activity_lines=3 filtered_refusals=0 filtered_costs=2 live_exit=2 live_msg=1`; `doc_truth` 16/0; full suite `passed=2491 failed=0` (2491 > 2482 + 9 new); clippy `-D warnings` and `fmt --check` exit 0. The verification transcript lives in its own Update Log entry with the output fence first and the script-diffed self-check returned `PASTE MATCH`.
+
+**Notes for review:**
+- One deliberate text adaptation: the `budget_refused` Activity summary reads `chat refused: 2.00 of cap 2.00` (no `$` on the amounts) — the spec's own caveat said the grep counts `activity_lines=3` and a second `$2.00` line in Activity would double-count the Budget cap; with this wording `budget_cap=1` holds exactly.
+- `state_word` duplicates the words in `daemon::run::list::state_word` (that one is private and prints `Briefing`-carrying states the same way); I kept the duplicate rather than widening phase scope by making it public — worth a unifying pass if a phase ever needs both.
+- Runs rows carry no `run_id`-to-segment join beyond the turn log's `RunStarted` timestamp for `age_s`; a log whose `RunStarted` timestamp is unparseable is skipped from the Runs panel entirely (it cannot be aged), which matches `list_runs`'s skip-not-report contract.
+- Status remains `in-progress` per the lifecycle split; no `(complete)` entry was written — the server authors it.
+
+**Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s
+
+
+TEST
+pproval_markers_match_the_gated_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test readme_documents_every_chat_slash_command ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_boots_in_throwaway_root ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-a5bf14860b8766a6)
+kill: (315917): No such process
+kill: (-316666): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-fa3aae999c224501)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-af9329f81467cdee)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-a44fb637fa3308a3)
+     Running tests/integration.rs (target/debug/deps/integration-cf27c4f796c5d8c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-0a0c421b4b2b9fc2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-76069814ada3e33b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +4 -0
+- `docs/dev/milestones/M30-telemetry-dashboard/phase-07-top-data.md` — +34 -0
+- `src/cli/commands/mod.rs` — +2 -0
+- `src/cli/commands/top.rs` — +799 -0
+- `src/main.rs` — +14 -0
+
+**Commit:** 65166f2ef96e5cba1c711faeaca472f6791bcc00
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
