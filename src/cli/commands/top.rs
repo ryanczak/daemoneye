@@ -141,15 +141,11 @@ fn event_tokens(value: &serde_json::Value) -> u64 {
         .sum()
 }
 
-/// The Budget panel and the Activity rows, folded from today's event values.
-/// Pure: takes the values, no filesystem, so the fold is unit-testable
-/// without a segment on disk. `now` decides the rate window; `cap` is the
-/// config's `max_cost_per_day` verbatim.
-fn fold_today(
-    events: &[serde_json::Value],
-    now: DateTime<Utc>,
-    cap: f64,
-) -> (BudgetPanel, Vec<ActivityRow>) {
+/// The Budget panel, folded from today's event values. Pure: takes the
+/// values, no filesystem, so the fold is unit-testable without a segment on
+/// disk. `now` decides the rate window; `cap` is the config's
+/// `max_cost_per_day` verbatim.
+fn fold_today(events: &[serde_json::Value], now: DateTime<Utc>, cap: f64) -> BudgetPanel {
     let rate_cutoff = now - chrono::Duration::seconds(RATE_WINDOW);
     let mut budget = BudgetPanel {
         ai_cost: 0.0,
@@ -159,7 +155,6 @@ fn fold_today(
         tok_per_s: 0.0,
     };
     let mut rate_tokens: u64 = 0;
-    let mut activity: Vec<ActivityRow> = Vec::new();
     for value in events {
         let name = value.get("event").and_then(|v| v.as_str()).unwrap_or("");
         match name {
@@ -181,12 +176,9 @@ fn fold_today(
             "budget_refused" => budget.refused += 1,
             _ => {}
         }
-        if let Some(row) = activity_row(value) {
-            activity.push(row);
-        }
     }
     budget.tok_per_s = rate_tokens as f64 / RATE_WINDOW as f64;
-    (budget, activity)
+    budget
 }
 
 /// Parse an event's `ts`, if it carries one and it parses.
@@ -242,13 +234,47 @@ fn activity_row(value: &serde_json::Value) -> Option<ActivityRow> {
             let status = value.get("status").and_then(|v| v.as_str()).unwrap_or("-");
             format!("{run_id} {status}")
         }
-        _ => return None,
+        _ => generic_summary(value),
     };
     Some(ActivityRow {
         time,
         name: name.to_string(),
         summary,
     })
+}
+
+/// Bounded generic summary for events with no dedicated arm: the remaining
+/// fields as `key=value` pairs, truncated to MAX chars. Never empty.
+fn generic_summary(value: &serde_json::Value) -> String {
+    const MAX: usize = 80;
+    let mut summary = String::new();
+    if let Some(obj) = value.as_object() {
+        for (k, v) in obj {
+            if matches!(k.as_str(), "ts" | "event" | "pid") {
+                continue;
+            }
+            let rendered = match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            if !summary.is_empty() {
+                summary.push(' ');
+            }
+            summary.push_str(k);
+            summary.push('=');
+            summary.push_str(&rendered);
+            if summary.chars().count() >= MAX {
+                break;
+            }
+        }
+    }
+    if summary.is_empty() {
+        summary.push_str("(no fields)");
+    }
+    if summary.chars().count() > MAX {
+        summary = summary.chars().take(MAX).collect();
+    }
+    summary
 }
 
 /// Keep the activity rows whose event name contains `needle`. An empty
@@ -359,7 +385,7 @@ fn read_today_events() -> Vec<serde_json::Value> {
 pub fn take_snapshot(config_cap: f64) -> TopSnapshot {
     let now = Utc::now();
     let events = read_today_events();
-    let (budget, _) = fold_today(&events, now, config_cap);
+    let budget = fold_today(&events, now, config_cap);
     TopSnapshot {
         taken_at: now,
         runs: load_runs(now),
@@ -440,11 +466,7 @@ pub fn budget_text(budget: &BudgetPanel) -> String {
     let mut lines = Vec::new();
     let mut first = format!("spend: ${:.2}", budget.ai_cost);
     if budget.cap > 0.0 {
-        let pct = if budget.cap > 0.0 {
-            budget.ai_cost / budget.cap * 100.0
-        } else {
-            0.0
-        };
+        let pct = budget.ai_cost / budget.cap * 100.0;
         first.push_str(&format!(" of ${:.2} cap ({:.0}%)", budget.cap, pct));
     } else {
         first.push_str(" (no cap)");
@@ -669,7 +691,7 @@ mod tests {
             refused("2026-10-21T09:06:00Z"),
             ai_cost("2026-10-21T09:07:00Z", 0.5, 200),
         ];
-        let (budget, activity) = fold_today(&events, now, 2.0);
+        let budget = fold_today(&events, now, 2.0);
         assert!(
             (budget.ai_cost - 1.0).abs() < 1e-9,
             "spend sums: {budget:?}"
@@ -680,11 +702,6 @@ mod tests {
         );
         assert_eq!(budget.cap, 2.0);
         assert_eq!(budget.refused, 1, "exactly one refusal counted: {budget:?}");
-        assert_eq!(
-            activity.len(),
-            4,
-            "every event lands in the activity panel: {activity:?}"
-        );
     }
 
     #[test]
@@ -696,7 +713,7 @@ mod tests {
             ai_cost(&in_window.to_rfc3339(), 0.1, 600),
             ai_cost(&out_of_window.to_rfc3339(), 0.1, 600),
         ];
-        let (budget, _) = fold_today(&events, now, 0.0);
+        let budget = fold_today(&events, now, 0.0);
         assert!(
             (budget.tok_per_s - 10.0).abs() < 1e-6,
             "600 tokens in the window over 60 s is 10 tok/s: {budget:?}"
@@ -728,6 +745,67 @@ mod tests {
         assert_eq!(filtered[0].name, "ai_cost");
         let kept = filter_activity(rows, "");
         assert_eq!(kept.len(), 2, "an empty needle keeps everything: {kept:?}");
+    }
+
+    #[test]
+    fn activity_keeps_every_event_kind() {
+        let base = "2026-10-22T09:00:00Z";
+        let mk = |event: &str, extra: serde_json::Value| {
+            let mut obj = serde_json::Map::new();
+            obj.insert("ts".to_string(), base.into());
+            obj.insert("event".to_string(), event.into());
+            obj.insert("pid".to_string(), 1.into());
+            if let Some(extra) = extra.as_object() {
+                for (k, v) in extra {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+            serde_json::Value::Object(obj)
+        };
+        let events = [
+            mk(
+                "ai_cost",
+                serde_json::json!({ "agent_name": "chat", "cost": { "total_cost_usd": 0.25 } }),
+            ),
+            mk(
+                "budget_refused",
+                serde_json::json!({ "path": "chat", "spent_usd": 2.0, "cap_usd": 2.0 }),
+            ),
+            mk("ghost_started", serde_json::json!({ "job_id": "j1" })),
+            mk("webhook_alert", serde_json::json!({ "alert_name": "disk" })),
+            mk("bare", serde_json::json!({})),
+        ];
+        let rows: Vec<ActivityRow> = events.iter().filter_map(activity_row).collect();
+        assert_eq!(
+            rows.len(),
+            5,
+            "every named event lands in the panel: {rows:?}"
+        );
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert!(
+            names.contains(&"ghost_started") && names.contains(&"webhook_alert"),
+            "kinds with no summary arm are kept: {names:?}"
+        );
+        assert!(
+            rows.iter().all(|r| !r.summary.trim().is_empty()),
+            "no summary is empty: {rows:?}"
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|r| r.name != "ai_cost" && r.summary.contains('$')),
+            "generic summaries name no dollar amount: {rows:?}"
+        );
+        let ghost = &rows[names.iter().position(|n| *n == "ghost_started").unwrap()];
+        assert_eq!(
+            ghost.summary, "job_id=j1",
+            "generic summary is key=value: {rows:?}"
+        );
+        assert_eq!(
+            rows[names.iter().position(|n| *n == "bare").unwrap()].summary,
+            "(no fields)",
+            "an event with no fields gets a placeholder: {rows:?}"
+        );
     }
 
     // ── fingerprint ─────────────────────────────────────────────────────────
