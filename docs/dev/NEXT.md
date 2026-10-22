@@ -5,13 +5,13 @@
 [`README.md`](milestones/M30-telemetry-dashboard/README.md) for the PE
 decisions and the planned phases.
 
-**Active phase:** [phase-09-top-tui](milestones/M30-telemetry-dashboard/phase-09-top-tui.md)
-— done (2026-10-22, approved_after_1): the live ratatui screen of `daemoneye top`. It polls at 500 ms,
-re-reads on a fingerprint change or every 5 s, the selection follows the
-newest live run until the user scrolls, `/` filters Activity and `q`
-quits. It is verified end to end in a private tmux. The live close is
-phase 10, drafted next with `/rexymcp:architect next`. Phases 01–09 are
-done (2026-10-20 to 22).
+**Active phase:** [phase-10-live-close](milestones/M30-telemetry-dashboard/phase-10-live-close.md)
+— todo, architect-run: M30's exit criteria against a real daemon on pinky
+(L1–L7: run records for chat, ghost and scheduled; the Shells panel live;
+`top` live; scorecard and profile with the daemon down; the daily cap on
+all three paths). The architect rehearses, the PE runs it once, and then
+the retrospective and the `2.3.0` release follow. Phases 01–09 are done
+(2026-10-20 to 22).
 
 M29 closed 2026-10-20 (`v2.2.0`, pushed). M31 (MCP surface) and M32
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
