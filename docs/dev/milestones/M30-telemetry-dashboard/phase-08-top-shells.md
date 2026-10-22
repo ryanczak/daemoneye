@@ -1,7 +1,7 @@
 # Phase 08: top-shells — the Shells panel of `daemoneye top`
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (escalation 1, 2026-10-22: refined re-dispatch after a NoProgressStall)
+**Status:** review
 **Depends on:** phase-07
 **Estimated diff:** ~250 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=s
@@ -123,7 +123,10 @@ wiring.
   - `shells_header=1` and `shells_down=1`. Both read `0` today.
   - `section_order=Runs,Budget,Shells,Activity`. Today it reads
     `Runs,Budget,Activity`.
-  - `once_exit=0` and `budget_usd=1` are unchanged (preservation).
+  - `once_exit=0` and `budget_usd=2` are unchanged (preservation). The
+    `2` is the Budget spend line plus the Activity `ai_cost` row, which
+    prints `$0.5000`; it read `2` before this phase too. (Corrected at
+    escalation 2: the draft said `1`, which no tree ever produced.)
 - [ ] `visible_text` is `pub(crate)` and reused: `visible_text_callers` ≥ 2
       across `src/` (it is `1` file today).
 - [ ] `cargo test` ⇒ `failed=0`, with `passed` above 2492 by the new
@@ -211,3 +214,84 @@ then run `cargo test shell_foreground` before anything else.
 private module behind the one authorized visibility change, plus unnamed
 literal sites), which a tighter spec fixes; this is phase 08's first
 failure, so takeover is not yet warranted.
+
+### Update — 2026-10-22 09:50 (progress)
+
+Started per the Notes-for-executor order: `shell_foreground`,
+`last_visible_line` and their tests in `src/daemon/server/shells.rs` first
+(`foreground_prefers_the_newer_observation` green by turn ~15), then the
+two `ShellInfo` fields and the five literal sites, then `shells_text` and
+the async snapshot. One deviation from the first attempt at the masking
+test: the secret line had to **be** the last line — the function reads the
+last line only, so a secret above `more` is not the thing it should mask.
+All five new tests green; `cargo test` full suite passed=2497 failed=0.
+
+### Update — 2026-10-22 10:10 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification script verbatim against the
+built binary. `budget_usd` reads `2`, not the `1 (preservation)` the
+criteria wrote: the fixture's Activity line prints the cost to four places
+(`chat m $0.5000`, the `ai_cost` arm since phase 07), and `grep -c '$0\.50'`
+matches that line as well as the Budget spend line. I confirmed this is the
+fixture's value, not a regression, by building `aaf3be7d^` — the tree the
+`budget_usd=1` preservation note was written against — in a scratch clone
+and running the same fixture: `budget_usd=2` there too. On phase-07's own
+fixture (two `0.25` events, Activity lines `$0.2500`) the grep matches the
+spend line only, which is where the `1` came from. Spend is still counted
+once (`spend: $0.50`); no code change made or needed.
+
+```
+shell_info_without_the_new_fields_still_parses: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+foreground_prefers_the_newer_observation: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+last_line_is_the_last_visible_non_empty_line: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+shells_text_says_daemon_not_running: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+shells_text_lists_each_shell: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+once_exit=0
+budget_usd=2
+shells_header=1
+shells_down=1
+section_order=Runs,Budget,Shells,Activity
+visible_text_callers=2
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2497 failed=0
+```
+
+PASTE MATCH
+
+### Update — 2026-10-22 (escalation 2)
+
+**Chosen lever:** resume
+**Rationale:** the second run finished the phase (all four gates green on
+the partial tree: fmt, build, clippy 0; `passed=2497 failed=0`) and then
+stalled on the architect's wrong `budget_usd=1` preservation criterion,
+which the executor correctly showed reads `2` on the pre-phase tree; the
+criterion is corrected above, so only the close-out remains.
+
+### Update — 2026-10-22 03:32 (completion, executor resume)
+
+Resumed per the escalation-2 architect guidance and closed the phase out.
+Confirmation run of the full suite: `passed=2497 failed=0` (the five new
+tests included; above the 2492 baseline as required). Gates on this tree:
+`cargo fmt --all --check` exit 0, `cargo build` clean, `cargo clippy
+--all-targets --all-features -- -D warnings` exit 0 (the only `#[allow]`
+in a touched file, `ipc.rs:560`, is pre-existing from ba0f6740 — no new
+directive). The `visible_text` reuse criterion holds mechanically:
+`grep -rl 'visible_text(' src --include=*.rs | wc -l` = 2 (the knowledge
+definition file and `src/daemon/server/shells.rs`); the fn is
+`pub(crate)` in `src/daemon/executor/knowledge/shell.rs:1523` with the
+authorized `pub(crate) use shell::visible_text;` re-export in
+`knowledge/mod.rs`. End-to-end evidence stands as captured in the
+2026-10-22 10:10 entry above (`PASTE MATCH`): all five named tests ok. 1
+passed, `once_exit=0`, `budget_usd=2`, `shells_header=1`,
+`shells_down=1`, `section_order=Runs,Budget,Shells,Activity`,
+`visible_text_callers=2`, `fmt_exit=0`, `passed=2497 failed=0`. Code
+committed as one conventional commit `cb1c8d96` (`feat: add the Shells
+panel to top --once …`) covering the ten source/README files; the
+start-of-phase status flip was already in this working tree from the
+prior run. No deviations from the Spec this round; the one earlier
+deviation on record (the masking test's secret must be the last line,
+since the function reads the last line only) is already logged at 09:50.
+Per the escalation-2 resume guidance the close-out bookkeeping is done
+here: Status flipped to `review` in this doc and in the milestone
+README's phase-08 row, and the docs committed separately.
