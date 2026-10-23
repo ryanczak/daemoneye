@@ -1,7 +1,7 @@
 # Phase 10: live-close — telemetry, the daily cap and `top`, checked against a real daemon; 2.3.0 ships
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (rehearsal 1 done 2026-10-22; F1, F2 for the PE's decision)
+**Status:** in-progress (rehearsal 1 done 2026-10-22; F1, F2 fixed in phase 10a; rehearsal 2 next)
 **Depends on:** 01–09 (all `done`)
 **Estimated diff:** this doc's Update Log, the milestone README, then the
 release (`Cargo.toml` / `Cargo.lock`, `CHANGELOG.md`)
@@ -66,8 +66,8 @@ from the session's history file, never from GLM's prose.
 | # | Block | Pass when |
 |---|---|---|
 | L1 | **Run record: chat.** Ask "Run `hostname` and tell me the result." | One `run` event for the turn with `kind: chat`, the GLM `provider`/`model`, `status` complete, `failure_class: none`, `tool_calls ≥ 1`, `tool_success_rate: 1.0`, and `tokens > 0`. Every `ai_cost` line the turn wrote carries that `run_id` |
-| L2 | **Shells panel, live (deferred from 08).** With the L1 chat still attached, run `HOME=$R $BIN top --once` | Shells lists `s0` with the chat's owner and a last line containing `pinky`. Foreground reads `-` today (F2); `shell prompt` once F2 lands. Nothing in the panel reads `daemon not running` |
-| L3 | **`top`, live.** In a second emulator window, run `HOME=$R $BIN top`. Ask the chat to run `sleep 8; echo done-L3` | While the command runs, Runs shows the chat run `live` with the selection on it, and Activity gains rows without a key press. After `q` the pane is back at a shell prompt, and `stty -a` there shows `icanon` and `echo`. A second `top` quits on Ctrl-C the same way |
+| L2 | **Shells panel, live (deferred from 08).** With the L1 chat still attached, run `HOME=$R $BIN top --once` | Shells lists `s0` with the chat's owner, foreground `shell prompt` and a last line containing `pinky` (F2, phase 10a). Nothing in the panel reads `daemon not running` |
+| L3 | **`top`, live.** In a second emulator window, run `HOME=$R $BIN top`. Ask the chat to run `sleep 8; echo done-L3` | While the command runs, Runs shows the chat run `live` with the selection on it, and Activity gains rows without a key press. Once it finishes, that run's TURNS is at least 2 and equals its `run` record's `turns` (F1, phase 10a). After `q` the pane is back at a shell prompt, and `stty -a` there shows `icanon` and `echo`. A second `top` quits on Ctrl-C the same way |
 | L4 | **Webhook → watchdog → ghost.** POST an alert named `disk-full-l4` (severity `critical`, a summary saying investigation is required) | The watchdog's `ai_cost` is recorded with `run_id: ""` (a side call belongs to no run). A `run` event with `kind: ghost` has tags naming `disk-full-l4`, `turns`, `tool_calls` and `tokens` above zero, and its `ai_cost` lines carry its `run_id`. Its turn log holds one `turn_started` per turn. (A completed ghost has no briefing; `budget_left` is checked on L7's refused ghost) |
 | L5 | **Scheduled.** Ask the chat to schedule an interval ghost job on `disk-full-l4` every 2 minutes, and answer `y` to the panel (`schedule_command` is gated even under `/approvals on`). Wait for one firing (about 2 min) | A `run` event with `kind: scheduled` and `model: null`, plus the ghost run it started, as in L4 |
 | L6 | **Scorecard and profile, daemon down.** `daemoneye stop`, then `scorecard`, `scorecard --by kind --json \| jq`, `scorecard --min-runs 100`, `profile <GLM model>` and `profile no-such-model` | The scorecard has a GLM row with `n_runs` counting L1–L5, and no `scheduled` record is counted against the model. `--by kind` separates `chat` from `ghost`. The JSON parses. `--min-runs 100` drops every row. The profile shows the strengths rows and the ranked classes without `none`. `no-such-model` names GLM and exits 0 |
@@ -153,3 +153,11 @@ killed at the end; the PE's daemon was untouched.
 **Next.** The PE chose to fix F1 and F2 now (2026-10-22): phase 10a carries
 both and the `run_tui` doc-comment nit. Rehearsal 2 follows its approval,
 then the PE run.
+
+### Update — 2026-10-22 (phase 10a approved)
+
+Phase 10a fixed F1 and F2 and the `run_tui` nit. It was approved first
+try (`af0301ef`). L2 now expects foreground `shell prompt`. L3 now expects
+a finished chat run's TURNS to match its `run` record. Rehearsal 2 runs
+L1–L7 again against a release build at HEAD. The PE run follows it.
+
