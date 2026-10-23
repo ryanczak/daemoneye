@@ -1,7 +1,7 @@
 # Phase 10: live-close — telemetry, the daily cap and `top`, checked against a real daemon; 2.3.0 ships
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (rehearsal 1 done 2026-10-22; F1, F2 fixed in phase 10a; rehearsal 2 next)
+**Status:** in-progress (rehearsals 1 and 2 done; ready for the PE run)
 **Depends on:** 01–09 (all `done`)
 **Estimated diff:** this doc's Update Log, the milestone README, then the
 release (`Cargo.toml` / `Cargo.lock`, `CHANGELOG.md`)
@@ -36,9 +36,12 @@ those are what this phase checks:
      starting chat (the PE's own, or a headless `script -q -c "tmux -S
      $EMU attach -r -t m30" /dev/null` under `setsid`), because chat
      waits for one before its banner. A headless client has no tty size,
-     so tmux shrinks the window to 80×24: after it attaches, run
-     `tmux -S $EMU set -g window-size manual` and
-     `resize-window -t m30 -x 160 -y 48`.
+     so tmux shrinks the window to 80×24. Give the client a size instead
+     of forcing the window: `script -q -c "stty cols 160 rows 48; tmux -S
+     $EMU attach -r -t m30" /dev/null`. Do **not** use `window-size
+     manual` with a headless client: on tmux 3.6, `new-window` and
+     `split-window` then crash the server (rehearsal 2, three times).
+     Start the server and the client with `setsid -f`.
    - Once a window is split, `send-keys` targets panes by id.
    - The chat's first input is `/approvals on` (auto-approve).
    - S-last kills only processes whose `/proc/<pid>/environ` has
@@ -160,4 +163,34 @@ Phase 10a fixed F1 and F2 and the `run_tui` nit. It was approved first
 try (`af0301ef`). L2 now expects foreground `shell prompt`. L3 now expects
 a finished chat run's TURNS to match its `run` record. Rehearsal 2 runs
 L1–L7 again against a release build at HEAD. The PE run follows it.
+
+### Update — 2026-10-23 (rehearsal 2, architect)
+
+Release build at `2ae5ea25` (phase 10a in), fresh root, same harness. The
+raw notes are in `/tmp/e2e-m30-10.txt`. Teardown killed only `HOME=$R`
+processes; the PE's daemon was untouched.
+
+| Block | Result |
+|---|---|
+| L1 | **pass**: `9513f4c6b0724ebf` chat, complete/none, turns 2, tool_calls 1, success 1.0; its turn log now has `turn_started` 1 and 2 (F1); both `ai_cost` lines carry the id |
+| L2 | **pass**: `s0 chat:9b6618c05ce3961b shell prompt pinky` (F2); Runs TURNS 2 and 1 |
+| L3 | **pass** at 160×47: the run `running`/`live` and reversed; TURNS 1 mid-run, 2 after, equal to the record; `q` and Ctrl-C leave `icanon,echo` and a prompt. The Activity panel was already full (24 rows), so growth was measured in L4 by the newest row's timestamp, which moved |
+| L4 | **pass on the first alert**: ghost `37a3e65e540b44bb` complete/none, turns 2, tool_calls 1, tagged with the runbook; its `ai_cost` lines carry the id, the watchdog's has `run_id: ""` (O1); `top` shows the ghost's TURNS 2 |
+| L5 | **pass**: `3fa8789776574fdc` scheduled, `model: null`, `job: l5-ghost`; ghost `8875793ced1b4464` complete |
+| L6 | **pass**: chat 6 / ghost 2, one model-less run skipped and counted, `--json` parses with `skipped_no_model: 1`, `--min-runs 100` empties, profile and `no-such-model` as specified |
+| L7 | **pass**: `cap $5.0000 of $1.00 (500%)`; refusal at resume and after the ask, `ai_cost` 15 → 15; webhook `skipped — daily cost cap`; the job fired 6 s after the restart, ghost `12e692d737734749` `budget_exceeded` with `budget_left: "Usd"`, wrapper `complete` (O3); `budget_refused` chat ×2, webhook, ghost; job cancelled |
+
+**Findings.** None new. F1 and F2 are confirmed fixed live.
+
+**Observations.** O6: while the emulator's tmux server was down, the
+daemon wrote a `cache_refresh_error` event every 2 s for the chat's
+session, and they filled the Activity panel. M29 behaviour, not M30's;
+noted for the retrospective.
+
+**Harness.** H6: tmux 3.6 crashes on `new-window` / `split-window` when
+a headless client is attached under `window-size manual`. Pre-flight now
+sizes the client instead. The daemon, its shell and the chat session all
+survived the three crashes; `chat --resume` picked the session back up.
+
+**Next.** The PE run. Then the Close steps.
 
