@@ -1,6 +1,6 @@
 # Phase 10a — Rehearsal fixes: chat turns in the turn log, idle-shell foreground
 
-**Status:** review
+**Status:** done
 **Milestone:** M30 — Telemetry & dashboard
 **Drafted:** 2026-10-22 (from phase 10 rehearsal 1, F1 and F2)
 
@@ -73,23 +73,23 @@ waited command has finished.
 
 ## Acceptance criteria
 
-- [ ] `cargo test emit_turn_started_appends_the_turn` passes: after
+- [x] `cargo test emit_turn_started_appends_the_turn` passes: after
       `emit_turn_started(&id, 1)` and `(&id, 2)` under a temp `HOME`, the
       run's turn log holds two `TurnStarted` records and
       `read_turn_log` reports them in order.
-- [ ] `grep -c 'emit_turn_started' src/daemon/stream.rs` is at least 1,
+- [x] `grep -c 'emit_turn_started' src/daemon/stream.rs` is at least 1,
       and `grep -c 'fn emit_turn_started' src/daemon/ghost.rs` is 0.
-- [ ] `cargo test a_finished_command_leaves_the_shell_at_its_prompt`
+- [x] `cargo test a_finished_command_leaves_the_shell_at_its_prompt`
       passes: run `echo hi` through `run_in_shell_for_test`; the shell's
       record then has `last_foreground` of `Some((Foreground::Prompt, t))`
       with `t` within the test's own wall-clock window.
-- [ ] `cargo test a_busy_shell_is_not_marked_at_its_prompt` passes: a
+- [x] `cargo test a_busy_shell_is_not_marked_at_its_prompt` passes: a
       command refused by the busy-shell probe (the shape of
       `run_terminal_command_refuses_a_busy_named_shell`) leaves
       `last_foreground` reading `Program`, not `Prompt`.
-- [ ] `grep -c 'The live loop. Enters raw mode' src/cli/commands/top_tui.rs`
+- [x] `grep -c 'The live loop. Enters raw mode' src/cli/commands/top_tui.rs`
       is 1.
-- [ ] Preservation: `cargo test guard_` and `cargo test shells_text_` are
+- [x] Preservation: `cargo test guard_` and `cargo test shells_text_` are
       all green; `cargo test` has no failures.
 
 ## Test plan
@@ -361,3 +361,33 @@ kill: (-1026352): No such process
 **Commit:** 0d927603efea12eb55f96993bd896f2c4822d96a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-22
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** local-inference-lab/GLM-5.3-Flash-NVFP4-Spark (163 turns)
+- **Scope deviations:** two, both accepted. `emit_turn_started` keeps the
+  ghost's `usize` turn parameter instead of the Spec's `u32`, so the chat
+  call site casts `turns as usize`. The cast is harmless, but the Spec asked
+  for `u32`. The executor also updated one pre-existing assertion in
+  `launch_interactive_returns_the_settled_screen` (the record's pre-launch
+  foreground now reads `Prompt`, not `None`). That follows directly from F2.
+- **Gates (architect re-run):** `cargo fmt --check` exit 0; build and
+  clippy `-D warnings` clean; `cargo test` 2509 passed, 0 failed (2506 at
+  phase 09, plus the three new tests). The grep criteria read
+  `stream_emits=1 ghost_defines=0 turn_log_defines=1 nit_lines=1`.
+  Preservation: `guard_` 29 passed, `shells_text_` 2 passed.
+- **Test reality:** `a_finished_command_leaves_the_shell_at_its_prompt`
+  runs on the default path, where nothing probes, so without the
+  `finish_run` stamp its `expect("the record holds the stamp")` fails. That
+  matches the executor's stated mutation check.
+  `a_busy_shell_is_not_marked_at_its_prompt` proves the refused command
+  never stamps `Prompt`.
+- **Calibration:** the busy-shell test cannot catch the mutation the Spec
+  warned against, a stamp in the `InFlightGuard` drop. The busy refusal
+  happens before that guard is built. The timeout and shell-exited paths
+  are the ones it would have caught, and no criterion asked for them.
+  Next time, put the negative criterion on a path that runs through the
+  wrong place.
+
