@@ -111,9 +111,27 @@ close. Each may split at drafting.
 | 08 | top-shells ([phase-08-top-shells.md](phase-08-top-shells.md)) — the Shells panel: `ShellInfo` gains `foreground` and `last_line`, `top --once` adds the section (daemon down ⇒ `daemon not running`) | done |
 | 09 | top-tui ([phase-09-top-tui.md](phase-09-top-tui.md)) — the ratatui screen over the snapshot: 500 ms poll, re-read on fingerprint change, follow the newest live run until the user scrolls, activity filter, `q` quits | done |
 | 10 | live-close ([phase-10-live-close.md](phase-10-live-close.md)) — architect rehearsals, the PE run, 2.3.0 | in-progress |
+| 11 | top-rows ([phase-11-top-rows.md](phase-11-top-rows.md)) — what the rows say: a SUBJECT column in Runs (runbook ← trigger, job, session), local-time Activity, shaped summaries for the daemon's everyday events, consecutive repeats collapsed to one row `×N`, short shell owners, the rate labelled with its 60 s window | todo |
+| 12 | top-layout — the screen: a one-line header (daemon pid and uptime, model, host, local time; the down state named there), Runs and Budget side by side when the terminal is wide enough, Runs and Shells sized to content up to a cap with Activity taking the rest, a Budget bar coloured at 80 % and 100 % of the cap, finished runs dimmed after a few minutes | todo |
+| 13 | top-focus — one focused panel (Tab / Shift-Tab / `1`–`4`, named in the title and footer), per-panel scrolling for Runs, Shells and Activity, Activity tailing until scrolled with `f` resuming it | todo |
+| 14 | top-detail — Enter on a run opens its detail: the `run` record's fields when finished (failure class, tool calls and success rate, tokens, cost, wall clock) or the turn log's state so far, plus the turn log tail; scrollable; Esc returns; still read-only | todo |
 | 10a | rehearsal-fixes ([phase-10a-rehearsal-fixes.md](phase-10a-rehearsal-fixes.md)) — rehearsal 1's F1 (chat runs write `turn_started`, so `top`/`run list` show their turns) and F2 (a finished waited command records `Foreground::Prompt`), plus the `run_tui` doc nit | done |
 
 ## Notes
+
+- **`top` gets four UI phases before the close (PE decision 2026-10-23).**
+  The PE run passed L1–L7 with no findings, and watching it showed `top`
+  hard to read: a run row does not say what the run is, Activity is in UTC
+  and mostly raw `key=value` dumps that one repeating event can fill, the
+  panels have fixed heights that waste a tall terminal, nothing shows the
+  cap as a bar, and there is no header, no panel focus, no scrolling of
+  Shells or Activity and no way to open a run. Phases 11–14 fix that in
+  order: the row text (pure, `--once` testable), the layout, focus and
+  scrolling, then the detail view. Phase 10 then re-checks `top` live as
+  L8 before the retrospective and 2.3.0. One idea was dropped: indenting
+  a ghost under the scheduled run that started it needs a parent link the
+  ghost's `trigger` word does not carry, so the SUBJECT column shows
+  `<runbook> ← scheduled` instead.
 
 - **`top` refreshes on change and on age (drafting 09, 2026-10-22).** The
   live loop re-reads the disk panels when the fingerprint changes, and

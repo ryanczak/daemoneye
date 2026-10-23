@@ -1,7 +1,7 @@
 # Phase 10: live-close — telemetry, the daily cap and `top`, checked against a real daemon; 2.3.0 ships
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (PE run passed 2026-10-23; Close steps pending)
+**Status:** in-progress (PE run passed 2026-10-23; L8 after phases 11–14, then the Close steps)
 **Depends on:** 01–09 (all `done`)
 **Estimated diff:** this doc's Update Log, the milestone README, then the
 release (`Cargo.toml` / `Cargo.lock`, `CHANGELOG.md`)
@@ -75,9 +75,11 @@ from the session's history file, never from GLM's prose.
 | L5 | **Scheduled.** Ask the chat to schedule an interval ghost job on `disk-full-l4` every 2 minutes, and answer `y` to the panel (`schedule_command` is gated even under `/approvals on`). Wait for one firing (about 2 min) | A `run` event with `kind: scheduled` and `model: null`, plus the ghost run it started, as in L4 |
 | L6 | **Scorecard and profile, daemon down.** `daemoneye stop`, then `scorecard`, `scorecard --by kind --json \| jq`, `scorecard --min-runs 100`, `profile <GLM model>` and `profile no-such-model` | The scorecard has a GLM row with `n_runs` counting L1–L5, and no `scheduled` record is counted against the model. `--by kind` separates `chat` from `ghost`. The JSON parses. `--min-runs 100` drops every row. The profile shows the strengths rows and the ranked classes without `none`. `no-such-model` names GLM and exits 0 |
 | L7 | **The daily cap, all three paths.** With the daemon down, add `[budget] max_cost_per_day = 1.0`, append one local-today `ai_cost` line of `$5.00` to the segment, and start the daemon. Then run `status`, ask the chat anything, POST `disk-full-l4`, and wait for the L5 job's next firing | `status` shows the spend against the cap. The chat shows the `SystemMsg` naming `$5.00` and `$1.00` at `--resume`, before any typing (the greeting turn is a model call), and again after the ask; no new `ai_cost` is written. daemon.log has the webhook's `skipped — daily cost cap` line. The L5 job fires within seconds of the restart (missed-run catch-up); its ghost run ends `budget_exceeded` with a briefing whose `budget_left` is `Usd`, while the `scheduled` wrapper completes (O3). `budget_refused` events name `chat`, `webhook` and `ghost`. Finally, cancel the L5 job |
+| L8 | **`top` after phases 11–14** (added 2026-10-23). With the daemon up, the L1 chat attached and one ghost run finished, run `HOME=$R $BIN top` at the PE's terminal size, then at 100 columns | The header names the daemon pid, model and local time; Runs and Budget sit side by side at the wide size and stack at 100 columns; a ghost row's SUBJECT reads `disk-full-l4 ← webhook`; Activity times match the PE's clock; a burst of identical events shows as one row `×N`; Tab moves the focus through the four panels and ↑↓ scrolls the focused one, Activity stopping its tail until `f`; Enter on the ghost row opens its detail with the record's fields and turn log tail, Esc returns; the Budget bar changes colour once L7's seed is in; `q` quits cleanly |
 
 ## Close (after the PE run passes)
 
+0. **L8** passes at the PE run of `top` after phases 11–14.
 1. **The nit recorded in review 09.** The first line of `run_tui`'s doc
    comment appears twice (`src/cli/commands/top_tui.rs`). It is source,
    so it goes in a tiny `10a` or is deferred, as the PE decides.

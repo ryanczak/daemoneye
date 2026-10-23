@@ -5,11 +5,11 @@
 [`README.md`](milestones/M30-telemetry-dashboard/README.md) for the PE
 decisions and the planned phases.
 
-**Active phase:** [phase-10-live-close](milestones/M30-telemetry-dashboard/phase-10-live-close.md)
-— in-progress, architect-run. Rehearsal 1 (2026-10-22) passed L1–L7 and
-filed F1 (chat runs showed 0 turns in `top`) and F2 (an idle shell's
-foreground showed `-`). Phase 10a fixed both and was approved first try.
-Next: rehearsal 2 against a release build at HEAD, then the PE run, the
+**Active phase:** [phase-11-top-rows](milestones/M30-telemetry-dashboard/phase-11-top-rows.md)
+— todo. The PE run of phase 10 passed L1–L7 on 2026-10-23 with no
+findings; the PE then added four `top` UI phases (11 rows, 12 layout, 13
+focus and scrolling, 14 run detail) before the close. Phase 10 stays
+in-progress: after 14 it re-checks `top` live (L8), then the
 retrospective and the `2.3.0` release. Phases 01–09 and 10a are done
 (2026-10-20 to 22).
 

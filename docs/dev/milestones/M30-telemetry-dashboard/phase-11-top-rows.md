@@ -1,0 +1,211 @@
+# Phase 11: top-rows — what `top`'s rows say
+
+**Milestone:** M30 — Telemetry & dashboard
+**Status:** todo
+**Depends on:** phase-10a
+**Estimated diff:** ~350 lines, about half of it tests
+**Tags:** language=rust, kind=feature, size=m
+
+## Goal
+
+The PE run of phase 10 showed `top` working and hard to read. A Runs row
+does not say *what* a run is (which runbook, which job, which session).
+Activity times are UTC while every other clock in the CLI is local. Most
+Activity rows are a raw `key=value` dump that overflows the panel, and one
+repeating event (`cache_refresh_error` every 2 s) can own the whole panel.
+Shell owners print 32-hex ghost session ids. This phase fixes the *text* of
+the rows, all pure functions in `top.rs`, visible in `--once` and in the
+live screen alike. Phases 12–14 then change the screen itself.
+
+## Spec
+
+**Files:** `src/cli/commands/top.rs`, `src/cli/commands/top_tui.rs`
+(`filtered_activity` only), `README.md` (the `top` paragraph and table
+rows).
+
+**Where things are.** You do not need to search for these.
+
+| Need | Symbol |
+|---|---|
+| The Runs row and its builder | `TopRunRow`, `load_runs`, `sort_rows`, `runs_text` in `top.rs` |
+| The run's kind at start | the `run_started` record's `kind`, a `RunKind` (`src/daemon/run/mod.rs`): `Chat { session }`, `Ghost { runbook, trigger }`, `Scheduled { job }`, `Delegated { agent, parent }`. `run_started_at` already reads that record |
+| Activity rows | `ActivityRow`, `activity_row`, `generic_summary`, `last_activity`, `filter_activity`, `activity_text` in `top.rs`; `TopModel::filtered_activity` in `top_tui.rs` |
+| Shell rows | `shells_text` in `top.rs`; the owner string is `Owner::key()` (`src/shell/registry.rs`): `chat:<16 hex>`, `ghost:<session id>` where a ghost session id is `ghost-<runbook>-<32 hex>` |
+| The budget lines | `budget_text` in `top.rs` |
+| A local-zone time | `chrono::Local`, and `DateTime::with_timezone(&FixedOffset)` for tests |
+
+1. **A SUBJECT column in Runs.** `TopRunRow` gains `subject: String`,
+   built from the `run_started` kind: Chat ⇒ `chat:<first 8 of session>`;
+   Ghost ⇒ `<runbook> ← <trigger>` (the trigger is the word the daemon
+   recorded: `webhook`, `scheduled`, …); Scheduled ⇒ `job:<job>`;
+   Delegated ⇒ `<agent> ← <first 8 of parent>`. A log whose first record
+   cannot be read gives `-`. `runs_text` prints it as `SUBJECT`, left
+   aligned, between KIND and STATE, sized to content and cut to 32
+   characters with a trailing `…`. The `run` Activity arm also names the
+   kind: `<run_id> <kind> <status>`.
+2. **Local time in Activity.** `ActivityRow.time` is the event's `ts` in
+   the local zone. Put the zone behind a parameter so it can be tested:
+   `activity_row_in(value, offset: FixedOffset)` is the pure core and
+   `activity_row(value)` passes `Local::now().offset()`. Fix the
+   `ActivityRow.time` doc comment, which currently says UTC.
+3. **Shaped summaries.** Replace the generic dump for the events the daemon
+   writes every day. Session ids are shortened with one helper,
+   `short_session`: a 16-hex chat id to its first 8, `ghost-<runbook>-<32
+   hex>` to `ghost-<runbook>`, anything else unchanged. Commands are cut
+   to 40 characters with `…`.
+
+   | event | summary |
+   |---|---|
+   | `daemon_start` | `v<version> socket <file name only>` |
+   | `daemon_stop` | `<reason>` |
+   | `ai_turn` | `<session> <prompt_tokens>+<completion_tokens> tok` |
+   | `command_approval` | `<session> <decision> <cmd>` |
+   | `command` | `<session> <shell> <cmd> exit <exit>`, `exit -` when the field is absent |
+   | `webhook_alert` | `<alert_name> <severity> <status>` |
+   | `webhook_analysis` | `<alert_name> ghost=<yes\|no> <runbook>` |
+   | `ghost_start` | `<alert_name> <session> depth <spawn_depth>` |
+   | `ghost_turn` | `<session> turn <turn>: <tool names joined by ", ">`, `no tools` when empty |
+   | `ghost_complete` | `<session> <turns_used> turns` |
+   | `ghost_shells_closed` | `<session> <shells joined by ", ">` |
+   | `ghost_lifecycle` | `content` up to the first ` — ` (the session log path is dropped) |
+   | `job_scheduled` | `<job_name> <kind>` |
+   | `memory_retrieved` | `<session> <n> keys` |
+   | `cache_refresh_error` | `<error>` |
+
+   `ai_cost`, `budget_refused` and `run` keep their arms. Any other event
+   still goes through `generic_summary`. The 80-character cap stays.
+4. **Collapse repeats.** `pub fn collapse_activity(rows: Vec<ActivityRow>)
+   -> Vec<ActivityRow>` merges each run of *consecutive* rows with the
+   same `name` and `summary` into one row that keeps the **last** time
+   and appends ` ×N` to the summary. Non-adjacent duplicates are not
+   merged. It runs after the filter, in `render_once` and in
+   `TopModel::filtered_activity`, so the filter still sees every row.
+5. **Short shell owners.** `shells_text` prints the owner through
+   `short_owner`: `chat:<16 hex>` ⇒ `chat:<8>`, `ghost:ghost-<runbook>-<32
+   hex>` ⇒ `ghost:<runbook>`; any other owner unchanged. Reuse
+   `short_session` for the id part.
+6. **The rate names its window.** `budget_text`'s third line becomes
+   `rate (60 s): <n> tok/s`.
+7. **README.** The `top` paragraph and the two `top` table rows describe
+   the SUBJECT column, local times, shaped and collapsed Activity rows and
+   the short owners.
+
+**Work order.** `short_session` and `short_owner` with tests, the SUBJECT
+column, local time, the shaped arms, `collapse_activity`, the rate label,
+then the README. Run `cargo test top` after each step.
+
+## Tests
+
+All in `top.rs` unless named otherwise:
+
+- `subject_names_each_run_kind`: one row per `RunKind` variant ⇒ the four
+  subject forms above; a 40-character runbook name is cut to 32 with `…`.
+- `runs_text_has_a_subject_column`: the header holds `SUBJECT` between
+  `KIND` and `STATE`, and a ghost row's line holds its subject.
+- `activity_time_is_rendered_in_the_given_zone`: `ts` `14:36:20Z` with
+  `FixedOffset::west_opt(5 * 3600)` ⇒ `09:36:20`; with
+  `FixedOffset::east_opt(0)` ⇒ `14:36:20`.
+- `short_session_trims_chat_and_ghost_ids`: a 16-hex id ⇒ 8 chars;
+  `ghost-disk-full-l4-<32 hex>` ⇒ `ghost-disk-full-l4`; `matt` and a
+  7-hex string unchanged (negative).
+- `shaped_summaries_for_daemon_events`: a table over `daemon_start`,
+  `command`, `webhook_alert`, `ghost_turn`, `ghost_lifecycle`,
+  `cache_refresh_error` and the `run` arm, each against its exact
+  summary; an event with no arm still gets `key=value` pairs.
+- `collapse_merges_only_consecutive_identical_rows`: five identical rows,
+  one different, two identical ⇒ three rows, summaries ending `×5`,
+  nothing, `×2`, the first row carrying the *fifth* row's time; two
+  identical rows separated by a different one stay three rows (negative).
+- `short_owner_trims_ghost_and_chat_owners`: the two forms above plus
+  `user:matt` unchanged (negative).
+- `budget_text_names_the_rate_window` (update the existing budget text
+  tests as needed).
+- In `top_tui.rs`: `filtered_activity_collapses_repeats`: a model with
+  five identical rows ⇒ one row ending `×5`.
+
+## Acceptance criteria
+
+All values below were measured against the tree before this phase.
+
+- [ ] Each new test ⇒ `test result: ok. 1 passed`.
+- [ ] On the § End-to-end harness (no daemon, a scratch `HOME`):
+  - `subject_hdr=1` and `subject_ghost=1` (today `0`, `0`).
+  - `local_time=1` (today `0`: the frame prints `14:36:20`, the UTC hour).
+  - `collapsed=1` (today `0`).
+  - `shaped_start=1` and `shaped_cmd=1` (today `0`, `0`).
+  - `owner_short=1` (today `0`: the frame prints the 32-hex ghost session).
+  - `rate_label=1` (today `0`).
+  - `once_order=Runs,Budget,Shells,Activity` unchanged (preservation,
+    measured).
+- [ ] `cargo test` ⇒ `failed=0`. Report the passed count; do not pin it.
+- [ ] Clippy (`-D warnings`) and `cargo fmt --all --check` exit 0. No new
+      `#[allow]`, no production `unwrap`/`expect`.
+- [ ] The end-to-end Update Log entry holds the output fence **first**,
+      then the `PASTE MATCH` line.
+
+## End-to-end verification
+
+The harness uses a scratch `HOME` and no daemon, so it touches nothing
+real. **Run it with `bash`** (write it to a file and `bash` that file).
+The Shells section cannot be exercised without a daemon, so `owner_short`
+is read from the unit test's output instead.
+
+```sh
+A=/tmp/e2e-m30-11.txt; : > "$A"
+for t in subject_names_each_run_kind runs_text_has_a_subject_column activity_time_is_rendered_in_the_given_zone short_session_trims_chat_and_ghost_ids shaped_summaries_for_daemon_events collapse_merges_only_consecutive_identical_rows short_owner_trims_ghost_and_chat_owners budget_text_names_the_rate_window filtered_activity_collapses_repeats; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | head -1 | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+cargo build -q 2>/dev/null
+H=$(mktemp -d); mkdir -p "$H/.daemoneye/var/log/events" "$H/.daemoneye/var/log/runs"
+D=$(date +%Y%m%d); T=$(date -u +%Y-%m-%dT14:36:20Z)
+S="$H/.daemoneye/var/log/events/events-$D.jsonl"
+cat > "$H/.daemoneye/var/log/runs/7eb9151d45fa49f1.jsonl" <<EOF
+{"timestamp":"$T","run_id":"7eb9151d45fa49f1","event_type":"run_started","kind":{"Ghost":{"runbook":"disk-full-l4","trigger":"webhook"}}}
+{"timestamp":"$T","run_id":"7eb9151d45fa49f1","event_type":"run_finished","state":"Complete"}
+EOF
+echo "{\"ts\":\"$T\",\"event\":\"daemon_start\",\"pid\":1,\"session\":\"\",\"socket\":\"$H/.daemoneye/var/run/daemoneye.sock\",\"version\":\"2.2.0\"}" >> "$S"
+echo "{\"ts\":\"$T\",\"event\":\"webhook_alert\",\"pid\":1,\"alert_name\":\"disk-full-l4\",\"severity\":\"critical\",\"status\":\"firing\",\"summary\":\"x\"}" >> "$S"
+echo "{\"ts\":\"$T\",\"event\":\"command\",\"pid\":1,\"cmd\":\"hostname\",\"exit\":0,\"shell\":\"s0\",\"session\":\"5175faf67d501ce8\",\"status\":\"approved\"}" >> "$S"
+for i in 1 2 3 4 5; do echo "{\"ts\":\"$T\",\"event\":\"cache_refresh_error\",\"pid\":1,\"error\":\"Failed to get active pane for session 'm30'\"}" >> "$S"; done
+F=$(TZ=America/New_York HOME="$H" ./target/debug/daemoneye top --once)
+echo "once_order=$(echo "$F" | grep -xE 'Runs|Budget|Shells|Activity' | paste -sd, -)" >> "$A"
+echo "subject_hdr=$(echo "$F" | grep -cE 'KIND +SUBJECT +STATE')" >> "$A"
+echo "subject_ghost=$(echo "$F" | grep -c 'disk-full-l4 ← webhook')" >> "$A"
+echo "local_time=$(echo "$F" | grep -c '^09:36:20 webhook_alert disk-full-l4 critical firing')" >> "$A"
+echo "collapsed=$(echo "$F" | grep -c "cache_refresh_error Failed to get active pane for session 'm30' ×5")" >> "$A"
+echo "shaped_start=$(echo "$F" | grep -c 'daemon_start v2.2.0 socket daemoneye.sock$')" >> "$A"
+echo "shaped_cmd=$(echo "$F" | grep -c 'command 5175faf6 s0 hostname exit 0$')" >> "$A"
+echo "rate_label=$(echo "$F" | grep -c '^rate (60 s): ')" >> "$A"
+echo "owner_short=$(cargo test short_owner_trims_ghost_and_chat_owners 2>&1 | grep -c '^test result: ok. 1 passed')" >> "$A"
+find "$H" -type f -delete; find "$H" -depth -type d -empty -delete
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
+cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
+cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}' >> "$A"
+cat "$A"
+```
+
+Then run the self-check, and put its line in the entry after the output
+fence:
+
+```sh
+D=docs/dev/milestones/M30-telemetry-dashboard/phase-11-top-rows.md
+diff <(sed -n '/^```text$/,/^```$/p' "$D" | tail -n +2 | head -n -1) /tmp/e2e-m30-11.txt >/dev/null && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+## Authorizations
+
+- Add `subject` to `TopRunRow` and update every constructor in `top.rs`
+  and `top_tui.rs` tests.
+- Make `activity_row`'s zone a parameter as described; no other signature
+  in `top.rs` changes.
+
+## Out of scope
+
+- The screen layout, the header, panel focus, scrolling and the detail
+  view (phases 12–14).
+- A parent link from a ghost run to the scheduled run that started it:
+  the ghost's `trigger` is the word `scheduled`, not a job or run id, and
+  adding one is a run-model change.
+- Any write to the daemon; `top` stays read-only.
+
+## Update Log
+
+<!-- entries appended below this line -->
