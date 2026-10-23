@@ -1,7 +1,7 @@
 # Phase 10: live-close — telemetry, the daily cap and `top`, checked against a real daemon; 2.3.0 ships
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (rehearsals 1 and 2 done; ready for the PE run)
+**Status:** in-progress (PE run passed 2026-10-23; Close steps pending)
 **Depends on:** 01–09 (all `done`)
 **Estimated diff:** this doc's Update Log, the milestone README, then the
 release (`Cargo.toml` / `Cargo.lock`, `CHANGELOG.md`)
@@ -194,3 +194,31 @@ survived the three crashes; `chat --resume` picked the session back up.
 
 **Next.** The PE run. Then the Close steps.
 
+
+### Update — 2026-10-23 (PE run)
+
+Release build at `0eb0d399`, fresh root (rehearsal 2's state moved aside
+to `/tmp/de30-live-rehearsal2.daemoneye`), the PE attached read-only at
+188×52 for the whole run while the architect drove the blocks. The raw
+notes are in `/tmp/e2e-m30-10.txt`. The PE's daemon was untouched.
+
+| Block | Result |
+|---|---|
+| L1 | **pass**: `a2da08d9d36a4bd3` chat, complete/none, turns 2, tool_calls 1, success 1.0, tokens 32459 in / 75 out; both `ai_cost` lines carry the id; turn log `turn_started` 1 and 2 |
+| L2 | **pass**: `s0 chat:5175faf67d501ce8 shell prompt pinky`; nothing reads `daemon not running` |
+| L3 | **pass**: `new-window` under the PE's attach did not crash the server (H6 fix); the run `running`/`live` and reversed while `sleep 8` ran, Activity's newest row moved 14:34:11 → 14:35:04 with no key press; TURNS 2 after, equal to the record; `q` and Ctrl-C each leave a prompt with `icanon` and `echo` |
+| L4 | **pass on the first alert**: watchdog `ai_cost` with `run_id: ""`; ghost `7eb9151d45fa49f1` complete/none, turns 2, tool_calls 1, tokens 32528 / 3883, tagged `runbook: disk-full-l4`; both `ai_cost` lines carry the id; turn log `turn_started` 1 and 2 |
+| L5 | **pass**: job `b4fc4dd0` every 2 m; wrapper `b4c9f1a594774d50` scheduled, complete/none, `model: null`, 0 calls, `job: disk-full-l4-ghost-watch`; ghost `3cd36f03eb72446d` complete, turns 2, tool_calls 1 |
+| L6 | **pass**: GLM chat 4 / ghost 2, one model-less run skipped and counted, `--by kind --json` parses with `skipped_no_model: 1`, `--min-runs 100` prints `no runs in this window`, profile shows the two rows and `no failures`, `no-such-model` names GLM and exits 0 |
+| L7 | **pass**: `cap $5.0000 of $1.00 (500%)`; the refusal at `--resume` before any typing and again after the ask; no `ai_cost` written after the restart; daemon.log `Webhook: analysis for 'disk-full-l4' skipped — daily cost cap`; the job fired 4 s after the restart, ghost `3149822d8fe44be2` `budget_exceeded`, not attributable, briefing `budget_left: "Usd"`, wrapper `061fd0d5044d4228` complete (O3); `budget_refused` chat ×2, webhook, ghost; job cancelled |
+
+**Findings.** None. M30's exit criteria hold live.
+
+**Harness.** H7: the driver must not `pgrep -f` for the chat client,
+because the pattern matches the driving shell's own command line; the
+`/proc` `HOME=$R` scan is the only process check. A Ctrl-D sent to a
+pane whose chat has already quit closes the window (window 0 was
+recreated; nothing else was affected).
+
+**Next.** The Close steps, on the PE's sign-off: retrospective, `NEXT.md`
+to none, 2.3.0.
