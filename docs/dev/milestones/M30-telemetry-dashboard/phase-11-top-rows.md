@@ -1,7 +1,7 @@
 # Phase 11: top-rows — what `top`'s rows say
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-10a
 **Estimated diff:** ~350 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -402,3 +402,34 @@ kill: (-68288): No such process
 **Commit:** 6cb058df04899ca551820ef80b4ca2b295c6d1ee
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-24
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (188 turns, cancelled by the
+  architect on PE instruction, then 23 turns on `continue_phase`)
+- **Scope deviations:** three, all accepted, none worth a bounce.
+  - `e2e-m30-11.sh` was committed at the repo root as the harness source.
+    No earlier phase kept one. Remove it in phase 12's diff.
+  - `short_owner` was inserted between `shells_text` and its doc comment,
+    so `short_owner` carries both comments and `shells_text` has none.
+  - Three new doc comments say what the code does not: `short_cmd` calls
+    itself a session id cut, and `str_field` / `num_field` claim to read
+    one level of nesting, which they do not. Fix both with the first.
+  - The spec's "`-` when the first record cannot be read" is unreachable:
+    `load_runs` already skips a run with no `run_started` record. The doc
+    comment on `run_subject` says so. Not a defect.
+- **Gates (reviewer re-run):** fmt clean, build clean, clippy `-D warnings`
+  clean, `cargo test` passed=2518 failed=0. The only new `unwrap()` calls
+  are the two `FixedOffset` constructors in tests.
+- **Coverage:** all 15 shaped events are asserted, with the `exit -` and
+  `no tools` edges; collapse is tested at the pure function and through
+  `TopModel::filtered_activity`.
+- **Calibration:** spec_bug, architect-attributable. The first run's harness
+  pinned the event to a future UTC hour and expected UTC-5 under
+  `America/New_York` during EDT, so `local_time` could not pass and the
+  executor slept 22 minutes waiting for the hour. Harnesses that fabricate
+  events date them in the past and run under a fixed-offset zone. Separately,
+  159 of 188 first-run completions were empty: reasoning ran into the output
+  cap before a tool call. The resume, told to keep reasoning short, had none.
