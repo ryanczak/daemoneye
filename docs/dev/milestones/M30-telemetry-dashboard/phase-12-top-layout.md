@@ -1,7 +1,7 @@
 # Phase 12: top-layout — the live screen's shape
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** in-progress
 **Depends on:** phase-11
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -121,6 +121,10 @@ where they pinned the old fixed heights.
   and `screen_shows_the_budget_percentage` each ⇒ `test result: ok. 1
   passed` (today none exists), and the harness prints `doc_fixes=4`
   (today `0`).
+- [ ] Bounce 2 (bugs 12-5 to 12-7): `screen_fades_with_more_runs_than_fit`
+  and `screen_shows_the_percentage_over_the_cap` each ⇒ `test result: ok.
+  1 passed` (today neither exists); the harness prints `window_math=1`
+  (today `2`) and `clock_test_wall=0` (today `1`).
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean,
   `cargo fmt --all --check` exit 0, `cargo test` ⇒ `failed=0`. Report the
   passed count; do not pin it.
@@ -133,7 +137,7 @@ entry. It fabricates no events, so it does not depend on the clock.
 
 ```sh
 A=/tmp/e2e-m30-12.txt; : > "$A"
-for t in header_names_pid_uptime_model_host_and_time header_names_the_daemon_down layout_puts_runs_and_budget_side_by_side_when_wide layout_stacks_panels_when_narrow layout_sizes_runs_and_shells_to_content_up_to_a_cap layout_gives_activity_the_rest layout_survives_a_tiny_terminal budget_bar_levels_at_80_and_100_percent finished_runs_fade_after_five_minutes screen_draws_the_header_line screen_colours_the_budget_bar shells_refresh_replaces_the_daemon_header screen_header_clock_is_the_draw_time screen_dims_only_finished_runs screen_shows_the_budget_percentage; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | head -1 | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+for t in header_names_pid_uptime_model_host_and_time header_names_the_daemon_down layout_puts_runs_and_budget_side_by_side_when_wide layout_stacks_panels_when_narrow layout_sizes_runs_and_shells_to_content_up_to_a_cap layout_gives_activity_the_rest layout_survives_a_tiny_terminal budget_bar_levels_at_80_and_100_percent finished_runs_fade_after_five_minutes screen_draws_the_header_line screen_colours_the_budget_bar shells_refresh_replaces_the_daemon_header screen_header_clock_is_the_draw_time screen_dims_only_finished_runs screen_shows_the_budget_percentage screen_fades_with_more_runs_than_fit screen_shows_the_percentage_over_the_cap; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | head -1 | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 cargo build -q 2>/dev/null
 H=$(mktemp -d); mkdir -p "$H/.daemoneye/var/log/events" "$H/.daemoneye/var/log/runs"
 F=$(TZ=Etc/GMT+5 HOME="$H" ./target/debug/daemoneye top --once)
@@ -148,6 +152,8 @@ d2=$(test "$(grep -c "The returned index is the selected line's position" src/cl
 d3=$(test "$(grep -c 'and a 500 ms tick, re-reading only' src/cli/commands/top_tui.rs)" = 1 && echo 1 || echo 0)
 d4=$(grep -B1 '^pub struct PanelRects' src/cli/commands/top.rs | head -1 | grep -c '^///')
 echo "doc_fixes=$((d1 + d2 + d3 + d4))" >> "$A"
+echo "window_math=$(grep -c 'let rows_visible' src/cli/commands/top_tui.rs)" >> "$A"
+echo "clock_test_wall=$(sed -n '/fn screen_header_clock_is_the_draw_time/,/^    }$/p' src/cli/commands/top_tui.rs | grep -c 'Local::now')" >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
 cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}' >> "$A"
@@ -544,3 +550,19 @@ kill: (-176361): No such process
 **Commit:** d80530e8da6978d6471c3d63efaa04328f55ec89
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-24 (architect: bounce 2)
+
+**Architect:** Claude
+
+Bugs 12-1 to 12-4 are fixed. Bounced again on three new bugs: the fade
+mapping's copy of the window arithmetic underflows when Runs overflows
+(12-5, major; it panics a debug build with 12 or more runs, and this
+machine has 34), the bar's percentage clips again from 100 % (12-6), and
+the header clock test races the wall clock (12-7).
+
+**Notes for executor:** read bugs 12-5 to 12-7. Keep the rest of the diff.
+The window arithmetic must live in one place. Add the two named tests and
+make the clock test deterministic, then rerun the harness as now written
+from a scratch file outside the repo and paste its output. Keep reasoning
+short: emit a tool call early in each turn, and do not sleep.
