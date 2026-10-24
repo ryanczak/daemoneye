@@ -30,6 +30,41 @@ use crate::cli::viewer::AltScreenGuard;
 /// Poll the disk fingerprint every this long.
 const TICK: Duration = Duration::from_millis(500);
 
+/// A budget bar's chrome: the two brackets and the ` NN%` tail the panel
+/// draws beside the cells.
+const BAR_CHROME: usize = 6;
+
+/// Replace the model's Shells panel and daemon header with fresh answers
+/// from the daemon: one read-only `Request::ShellList` and one
+/// `Request::Status`, the header's facts on the same 2 s cadence as the
+/// shells. A test drives it without a daemon behind the [`ShellFetcher`]
+/// seam.
+pub(crate) async fn shells_refresh(model: &mut TopModel, fetch: &impl ShellFetcher) {
+    model.snapshot.shells = fetch.shells().await;
+    model.snapshot.daemon = fetch.daemon().await;
+}
+
+/// The daemon answers the live loop asks for: its shells and the header's
+/// facts. The production impl calls the real IPC client; tests install a
+/// fake, so the loop's tests stay hermetic.
+pub(crate) trait ShellFetcher {
+    fn shells(&self) -> impl Future<Output = crate::cli::commands::top::ShellsPanel>;
+    fn daemon(&self) -> impl Future<Output = Option<crate::cli::commands::top::DaemonHeader>>;
+}
+
+/// The production fetcher: real read-only IPC, one round-trip per call.
+struct IpcFetcher;
+
+impl ShellFetcher for IpcFetcher {
+    async fn shells(&self) -> crate::cli::commands::top::ShellsPanel {
+        crate::cli::commands::top::shells_panel().await
+    }
+
+    async fn daemon(&self) -> Option<crate::cli::commands::top::DaemonHeader> {
+        crate::cli::commands::top::daemon_header().await
+    }
+}
+
 /// Re-read the disk panels when the fingerprint has sat unchanged this long —
 /// ages and the 30 s liveness window move with the clock even when nothing
 /// new landed.
@@ -175,28 +210,45 @@ pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
     let header = header_text(
         model.snapshot.daemon.as_ref(),
         &host,
-        model.snapshot.taken_at.with_timezone(Local::now().offset()),
+        Local::now().fixed_offset(),
     );
     Paragraph::new(Line::raw(header)).render(rects.header, frame.buffer_mut());
 
-    let faded_runs = model
+    let faded_runs: Vec<usize> = model
         .snapshot
         .runs
         .iter()
         .enumerate()
         .filter(|(_, r)| run_fades(r))
         .map(|(i, _)| i)
-        .collect::<Vec<usize>>();
+        .collect();
     let (runs_display, runs_sel) =
         runs_window(&runs_body, model.selected, inner_height(rects.runs));
-    let display_fades = faded_runs
-        .iter()
-        .filter_map(|i| {
-            runs_display
-                .lines()
-                .position(|l| l == runs_body.lines().nth(*i).unwrap_or(""))
-        })
-        .collect::<Vec<usize>>();
+    // Run row i is body line i + 1: the body's line 0 is the column header.
+    // Map each faded row to its display line by replaying runs_window's
+    // windowing over the kept body-line indices — text matching would dim
+    // two identical rows together.
+    let display_fades: Vec<usize> = {
+        let line_count = runs_body.lines().count();
+        let inner_h = inner_height(rects.runs);
+        let kept: Vec<usize> = if line_count == 0 {
+            Vec::new()
+        } else if line_count <= inner_h {
+            (0..line_count).collect()
+        } else {
+            let rows_visible = inner_h.saturating_sub(1).max(1);
+            let row = (model.selected + 1).min(line_count - 1);
+            let start = 1.max(row + 1 - rows_visible);
+            let mut kept = vec![0usize];
+            kept.extend(start..(start + rows_visible).min(line_count));
+            kept
+        };
+        faded_runs
+            .iter()
+            .map(|i| i + 1)
+            .filter_map(|body_line| kept.iter().position(|l| l == &body_line))
+            .collect()
+    };
     draw_panel(
         frame,
         rects.runs,
@@ -209,7 +261,9 @@ pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
     let bar = budget_bar(
         model.snapshot.budget.ai_cost,
         model.snapshot.budget.cap,
-        inner_width(rects.budget),
+        // The panel shows `[` + cells + `] NN%`; the cells leave room for the
+        // brackets and the percentage tail.
+        inner_width(rects.budget).saturating_sub(BAR_CHROME),
     );
     let mut budget_lines: Vec<Line<'_>> = budget_body
         .lines()
@@ -279,7 +333,6 @@ fn inner_width(area: ratatui::layout::Rect) -> usize {
 /// The Runs panel's body as drawn: when the rows overflow the panel, the
 /// window keeps the column header on top and the selected run on screen.
 /// The returned index is the selected line's position in the returned body,
-/// The returned index is the selected line's position in the returned body,
 /// `None` when the panel has no runs.
 fn runs_window(body: &str, selected: usize, inner_h: usize) -> (String, Option<usize>) {
     let line_count = body.lines().count();
@@ -346,8 +399,6 @@ fn draw_panel(
 /// The live loop. Enters raw mode, the alternate screen and a hidden cursor;
 /// the `AltScreenGuard` teardown leaves all three, so `?` cannot strand the
 /// terminal. A thread reads keys into a channel; the tokio loop waits on it
-/// and a 500 ms tick, re-reading only what [`plan_refresh`] asked for, and
-/// redraws after every key and every tick.
 /// and a 500 ms tick, re-reading only what [`plan_refresh`] asked for, and
 /// redraws after every key and every tick.
 pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
@@ -426,7 +477,7 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
                     last_fp = Some(now_fp);
                 }
                 if plan.shells {
-                    model.snapshot.shells = crate::cli::commands::top::shells_panel().await;
+                    shells_refresh(&mut model, &IpcFetcher).await;
                     since_shells = Duration::ZERO;
                 }
                 terminal.draw(|f| draw(f, &model))?;
@@ -442,7 +493,7 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::commands::top::TopRunRow;
+    use crate::cli::commands::top::{DaemonHeader, ShellsPanel, TopRunRow};
     use chrono::{DateTime, Utc};
 
     fn row(id: &str, l: Liveness) -> TopRunRow {
@@ -749,6 +800,126 @@ mod tests {
             .iter()
             .any(|c| c.fg == ratatui::style::Color::Yellow);
         assert!(yellow, "the bar draws yellow: {text:?}");
+    }
+
+    #[test]
+    fn screen_shows_the_budget_percentage() {
+        for (w, h) in [(80u16, 24u16), (120u16, 40u16)] {
+            let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            let mut snap = snapshot(vec![]);
+            snap.budget.ai_cost = 8.5;
+            snap.budget.cap = 10.0;
+            let model = TopModel::new(snap);
+            terminal.draw(|f| draw(f, &model)).unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .flat_map(|c| c.symbol().chars())
+                .collect();
+            assert!(
+                text.contains("85%"),
+                "the drawn buffer holds 85% at {w}x{h}: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn screen_dims_only_finished_runs() {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let live = row("aaaa", Liveness::Live);
+        let mut done = row("dddd", Liveness::Done);
+        done.age_s = 600;
+        let model = TopModel::new(snapshot(vec![live, done]));
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let rows: Vec<Vec<(char, ratatui::style::Modifier)>> = (0..24)
+            .map(|y| {
+                (0..80)
+                    .map(|x| {
+                        let c = &terminal.backend().buffer().content[y * 80 + x];
+                        (c.symbol().chars().next().unwrap_or(' '), c.modifier)
+                    })
+                    .collect()
+            })
+            .collect();
+        let dimmed: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                r.iter()
+                    .any(|(_, m)| m.contains(ratatui::style::Modifier::DIM))
+            })
+            .map(|(y, _)| y)
+            .collect();
+        assert!(!dimmed.is_empty(), "a finished run draws dim: {rows:?}");
+        for y in &dimmed {
+            let line: String = rows[*y].iter().map(|(c, _)| c).collect();
+            assert!(
+                line.contains("dddd") && !line.contains("ID KIND") && !line.contains("aaaa"),
+                "only the finished run's line dims: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn screen_header_clock_is_the_draw_time() {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let mut snap = snapshot(vec![]);
+        snap.taken_at = "2026-10-22T00:00:00Z".parse().expect("a fixed time");
+        let model = TopModel::new(snap);
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        let hour_ago = "00:00:00";
+        assert!(
+            !text.contains(hour_ago),
+            "the header names the draw time, not taken_at's: {text:?}"
+        );
+        let now_hhmmss = Local::now().format("%H:%M:%S").to_string();
+        assert!(
+            text.contains(&now_hhmmss),
+            "the header names the current clock: {text:?}"
+        );
+    }
+
+    #[test]
+    fn shells_refresh_replaces_the_daemon_header() {
+        let mut model = TopModel::new(snapshot(vec![]));
+        assert!(model.snapshot.daemon.is_none(), "no daemon at first");
+        let fetch = FakeFetcher {
+            daemon: Some(DaemonHeader {
+                pid: 4242,
+                uptime_secs: 90,
+                provider: "openai".to_string(),
+                model: "gpt-5".to_string(),
+            }),
+        };
+        tokio::runtime::Runtime::new()
+            .expect("a runtime")
+            .block_on(shells_refresh(&mut model, &fetch));
+        let daemon = model.snapshot.daemon.expect("the header was replaced");
+        assert_eq!(daemon.pid, 4242, "the refresh replaced the header");
+        assert_eq!(daemon.model, "gpt-5", "the refresh replaced the header");
+    }
+
+    struct FakeFetcher {
+        daemon: Option<DaemonHeader>,
+    }
+
+    impl ShellFetcher for FakeFetcher {
+        async fn shells(&self) -> ShellsPanel {
+            ShellsPanel::DaemonDown
+        }
+
+        async fn daemon(&self) -> Option<DaemonHeader> {
+            self.daemon.clone()
+        }
     }
 
     #[test]

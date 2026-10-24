@@ -942,6 +942,8 @@ pub fn header_text(
     }
 }
 
+/// The live screen's rects, one per region: the unbordered header and
+/// footer lines plus the four bordered panels.
 pub struct PanelRects {
     /// The unbordered header line.
     pub header: Rect,
@@ -1061,7 +1063,8 @@ pub fn render_once(snapshot: &TopSnapshot, filter: &str) -> String {
 }
 
 /// A shell owner key worth printing: `chat:<16 hex>` to `chat:<8>`,
-/// unchanged. Reuses [`short_session`] for the id part. Pure.
+/// `ghost:<runbook>-<32 hex>` to `ghost:<runbook>`, anything else unchanged.
+/// Reuses [`short_session`] for the id part. Pure.
 pub fn short_owner(owner: &str) -> String {
     if let Some(id) = owner.strip_prefix("chat:") {
         return format!("chat:{}", short_session(id));
