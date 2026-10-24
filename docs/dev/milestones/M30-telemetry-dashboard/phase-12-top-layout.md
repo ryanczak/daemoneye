@@ -1,7 +1,7 @@
 # Phase 12: top-layout — the live screen's shape
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-11
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -737,3 +737,30 @@ kill: (-210218): No such process
 **Commit:** def7352aa14fe96d8a9817b9ff04c7b6210edc62
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-24
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2. Bounce 1 filed bugs 12-1 to 12-4: the header never
+  refreshed, the fade dimmed the line above each finished run, the bar's
+  percentage clipped, and four doc comments were broken. Bounce 2 filed
+  bugs 12-5 to 12-7: the bounce-1 fade fix copied the window arithmetic
+  without its guard and underflowed (a debug-build panic with 12 or more
+  runs), the percentage clipped again from 100 %, and the clock test raced
+  the wall clock. All seven are fixed.
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (534, 140 and 70 turns)
+- **Scope deviations:** accepted. `draw_at` takes the clock as a parameter,
+  `runs_window` also returns the body-line index of each displayed line,
+  and a `ShellFetcher` seam lets a test drive the 2 s refresh. Each
+  serves a bug's test. Nit, not filed: with no cap set, Budget keeps a
+  blank row for the bar it does not draw.
+- **Gates (reviewer re-run):** fmt clean, build clean, clippy `-D warnings`
+  clean, `cargo test` passed=2535 failed=0. Harness checks all match.
+  New `unwrap()` / `expect()` calls are in tests only.
+- **Live smoke (reviewer):** the debug binary ran `top` for 3 s at 100×30
+  against this machine's 34 run logs: no panic, the header named the live
+  daemon and the local time, and Runs capped at 12 body lines.
+- **Calibration:** missing_spec_test, both bounces. Every bug was in screen
+  code no named test drew: an overflowing panel, a value at or over a
+  threshold, a live-loop refresh, a clock. Phases 13 and 14 name those
+  edge cases as tests in the spec.
