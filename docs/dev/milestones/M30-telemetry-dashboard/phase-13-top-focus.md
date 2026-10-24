@@ -1,7 +1,7 @@
 # Phase 13: top-focus — one focused panel, every panel scrolls
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-12
 **Estimated diff:** ~450 lines, more than half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -217,3 +217,140 @@ passed=2549 failed=0
 heads in order and exactly one `rate (60 s):` line. Clippy is clean with
 `-D warnings`, `cargo fmt --all --check` exits 0, and the whole suite is
 `passed=2549 failed=0`.
+
+### Update — 2026-10-24 23:30 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Built phase 13's top-focus: `Panel { Runs, Budget, Shells, Activity }` on `TopModel` with `focus` starting at Runs, `Tab`/`BackTab` cycling with wrap in both directions, `1`–`4` jumping (digits still type into the filter while editing), and per-panel scroll keys — Runs moves the selection and stops follow, Shells scrolls past its 6-line cap with `Home`/`End`/`PageDown` stopping at the last full window, Budget ignores everything, and Activity tails until `↑`/`PageUp`/`Home` pins the window, with scrolling to the bottom (or `End`) resuming the tail; `f` resumes follow and tailing together and leaves the Shells scroll. Every panel title is ` <n> <Name> `, the focused panel's border and title are cyan, and the footer names `focus: <Panel>`, adds `tab focus`, and says `tailing`/`activity scrolled`. Clamping uses real panel inner heights stored on the model (`PanelHeights`), measured from `plan_layout` before key handling and after each resize (and once before the loop starts), refreshed against content after snapshot refreshes and filter changes; one pure `visible_range(total, inner_h, top)` clamps every window so no range leaves `0..total` and nothing underflows. All 14 spec tests are in `top_tui.rs` and pass, the pre-existing `screen_*`/key tests still pass (footer/title expectations updated where they pinned the old text), README's `top` paragraph and command table name focus, per-panel scrolling, tailing and what `f` resumes.
+
+**End-to-end verification:** the harness from the phase doc ran clean — all 14 tests each `ok. 1 passed`, `once_order=Runs,Budget,Shells,Activity`, `once_rate=1` (`--once` unchanged), clippy `-D warnings` clean, `fmt_exit=0`, full suite `passed=2549 failed=0` — and the verbatim transcript is in the phase doc's Update Log.
+
+**Notes for review:** two test-design adaptations worth knowing — `arrows_move_only_the_focused_panel` and `offsets_clamp_when_content_or_size_shrinks` needed their models clamped/extended beyond the spec's literal sketch (a `DaemonDown` Shells panel is 1 body line, so it can never scroll; the spec's "filter leaves 5 rows" case is asserted as clamp-to-0 since 5 < the 10-row height). Activity tailing keeps the *tail window* semantics: while tailing the draw starts at `total - inner_h`, and `clamp_offsets` treats "top == bottom" as resuming, so a filter or resize that shrinks content onto the bottom resumes tailing — matching "scrolling down until the newest row is visible resumes tailing". Status left `in-progress`, no `(complete)` entry written; commit `61b4d34b` contains all four touched files and the tree is clean.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+st readme_tools_tables_match_the_code ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test docs_document_the_reindex_command ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test readme_documents_every_chat_slash_command ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-a5bf14860b8766a6)
+kill: (295920): No such process
+kill: (-296630): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-fa3aae999c224501)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-af9329f81467cdee)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-a44fb637fa3308a3)
+     Running tests/integration.rs (target/debug/deps/integration-cf27c4f796c5d8c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-0a0c421b4b2b9fc2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-76069814ada3e33b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +2 -2
+- `docs/dev/milestones/M30-telemetry-dashboard/README.md` — +1 -1
+- `docs/dev/milestones/M30-telemetry-dashboard/phase-13-top-focus.md` — +43 -1
+- `src/cli/commands/top_tui.rs` — +904 -30
+
+**Commit:** 61b4d34bb9c50e26cf7bc52513bcb779f1c980d9
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
