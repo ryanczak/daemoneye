@@ -22,8 +22,8 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::cli::commands::top::{
-    ActivityRow, Liveness, TopFingerprint, TopRunRow, activity_text, budget_text, filter_activity,
-    fingerprint, runs_text, shells_text,
+    ActivityRow, Liveness, TopFingerprint, TopRunRow, activity_text, budget_text,
+    collapse_activity, filter_activity, fingerprint, runs_text, shells_text,
 };
 use crate::cli::viewer::AltScreenGuard;
 
@@ -147,7 +147,10 @@ impl TopModel {
     /// log order, oldest first. The Activity panel draws them tail-first,
     /// so the newest row that fits is the one on screen.
     pub fn filtered_activity(&self) -> Vec<ActivityRow> {
-        filter_activity(self.snapshot.activity.clone(), &self.filter)
+        collapse_activity(filter_activity(
+            self.snapshot.activity.clone(),
+            &self.filter,
+        ))
     }
 }
 
@@ -382,6 +385,7 @@ mod tests {
         TopRunRow {
             id: id.to_string(),
             kind: "ghost".to_string(),
+            subject: "disk-full-l4 ← webhook".to_string(),
             state: if l == Liveness::Done {
                 "complete"
             } else {
@@ -554,6 +558,30 @@ mod tests {
             name: name.to_string(),
             summary: summary.to_string(),
         }
+    }
+
+    #[test]
+    fn filtered_activity_collapses_repeats() {
+        let activity: Vec<crate::cli::commands::top::ActivityRow> = (0..5)
+            .map(|i| activity_row(&format!("09:00:0{i}"), "cache_refresh_error", "pane gone"))
+            .collect();
+        let model = TopModel::new(snapshot_with(vec![], activity));
+        let out = model.filtered_activity();
+        assert_eq!(
+            out.len(),
+            1,
+            "five identical consecutive rows collapse to one: {out:?}"
+        );
+        assert_eq!(
+            out.first().map(|r| r.summary.as_str()),
+            Some("pane gone ×5"),
+            "the single row is marked ×5 and keeps the last time: {out:?}"
+        );
+        assert_eq!(
+            out.first().map(|r| r.time.as_str()),
+            Some("09:00:04"),
+            "the merged row keeps the last time of its run"
+        );
     }
 
     #[test]

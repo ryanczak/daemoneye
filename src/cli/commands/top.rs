@@ -73,6 +73,10 @@ pub struct TopRunRow {
     pub id: String,
     /// The kind the log's `RunStarted` recorded.
     pub kind: String,
+    /// What the run is: the kind's subject — `chat:<8>`, `<runbook> ←
+    /// <trigger>`, `job:<job>` or `<agent> ← <8>`; `-` when the log names
+    /// no kind.
+    pub subject: String,
     /// The state word the run's last record gives.
     pub state: String,
     /// The furthest turn the log reached.
@@ -86,8 +90,8 @@ pub struct TopRunRow {
 /// One Activity row: a time, the event name and a one-line summary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ActivityRow {
-    /// The event's `ts`, rendered `HH:MM:SS` in UTC — the same clock the
-    /// event log writes.
+    /// The event's `ts`, rendered `HH:MM:SS` in the viewer's local zone —
+    /// the same clock every other panel prints.
     pub time: String,
     /// The event name, e.g. `ai_cost` or `budget_refused`.
     pub name: String,
@@ -217,23 +221,69 @@ fn event_ts(value: &serde_json::Value) -> Option<DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
+/// The number of hex characters a chat session id carries — 8 random bytes,
+/// the same span `RunId` and the ghost ids cut to.
+const CHAT_SESSION_ID_LEN: usize = 16;
+
+/// The number of hex characters a ghost session id carries after its
+/// `ghost-<runbook>-` prefix.
+const GHOST_SESSION_HEX_LEN: usize = 32;
+
+/// A session id worth printing: a 16-hex chat id to its first 8, a
+/// `ghost-<runbook>-<32 hex>` id to `ghost-<runbook>`, anything else (a
+/// name, a `-`, a shorter id) unchanged. Pure.
+pub fn short_session(id: &str) -> String {
+    let hex = |n: usize, s: &str| s.len() == n && s.bytes().all(|b| b.is_ascii_hexdigit());
+    if hex(CHAT_SESSION_ID_LEN, id) {
+        return id.chars().take(8).collect();
+    }
+    if let Some(rest) = id.strip_prefix("ghost-")
+        && let Some((runbook, tail)) = rest.rsplit_once('-')
+        && hex(GHOST_SESSION_HEX_LEN, tail)
+    {
+        return format!("ghost-{runbook}");
+    }
+    id.to_string()
+}
+
+/// A session id cut to at most this many characters, `…` when cut.
+fn short_cmd(cmd: &str) -> String {
+    const MAX: usize = 40;
+    if cmd.chars().count() > MAX {
+        format!("{}…", cmd.chars().take(MAX).collect::<String>())
+    } else {
+        cmd.to_string()
+    }
+}
+
+/// The first field named `key` as a string, `fallback` when absent or not a
+/// string. Reads through one level of nesting (`tokens.input_tokens`).
+fn str_field(value: &serde_json::Value, key: &str, fallback: &str) -> String {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or(fallback)
+        .to_string()
+}
+
+/// The first field named `key` as a number, `fallback` when absent. Reads
+/// through one level of nesting (`tokens.input_tokens`).
+fn num_field(value: &serde_json::Value, key: &str, fallback: i64) -> i64 {
+    value.get(key).and_then(|v| v.as_i64()).unwrap_or(fallback)
+}
+
 /// One Activity row from an event value, or `None` when the event names no
-/// subject worth a line. Pure.
-fn activity_row(value: &serde_json::Value) -> Option<ActivityRow> {
+/// subject worth a line. Pure. [`activity_row`] is the same row with the
+/// process's local zone.
+fn activity_row_in(value: &serde_json::Value, offset: chrono::FixedOffset) -> Option<ActivityRow> {
     let name = value.get("event").and_then(|v| v.as_str())?;
     let time = event_ts(value)
-        .map(|ts| ts.format("%H:%M:%S").to_string())
+        .map(|ts| ts.with_timezone(&offset).format("%H:%M:%S").to_string())
         .unwrap_or_else(|| "--:--:--".to_string());
     let summary = match name {
         "ai_cost" => {
-            let agent = value
-                .get("agent_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let model = value
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
+            let agent = str_field(value, "agent_name", "unknown");
+            let model = str_field(value, "model", "unknown");
             let cost = value
                 .get("cost")
                 .and_then(|c| c.get("total_cost_usd"))
@@ -242,10 +292,7 @@ fn activity_row(value: &serde_json::Value) -> Option<ActivityRow> {
             format!("{agent} {model} ${cost:.4}")
         }
         "budget_refused" => {
-            let path = value
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
+            let path = str_field(value, "path", "unknown");
             let spent = value
                 .get("spent_usd")
                 .and_then(|v| v.as_f64())
@@ -257,10 +304,132 @@ fn activity_row(value: &serde_json::Value) -> Option<ActivityRow> {
             format!("{path} refused: {spent:.2} of cap {cap:.2}")
         }
         "run" => {
-            let run_id = value.get("run_id").and_then(|v| v.as_str()).unwrap_or("-");
-            let status = value.get("status").and_then(|v| v.as_str()).unwrap_or("-");
-            format!("{run_id} {status}")
+            let run_id = str_field(value, "run_id", "-");
+            let kind = str_field(value, "kind", "-");
+            let status = str_field(value, "status", "-");
+            format!("{run_id} {kind} {status}")
         }
+        "daemon_start" => {
+            let version = str_field(value, "version", "-");
+            let socket = str_field(value, "socket", "-");
+            let file = std::path::Path::new(&socket)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&socket);
+            format!("v{version} socket {file}")
+        }
+        "daemon_stop" => str_field(value, "reason", "-"),
+        "ai_turn" => {
+            let session = short_session(&str_field(value, "session", "-"));
+            let prompt = num_field(value, "prompt_tokens", 0);
+            let completion = num_field(value, "completion_tokens", 0);
+            format!("{session} {prompt}+{completion} tok")
+        }
+        "command_approval" => {
+            let session = short_session(&str_field(value, "session", "-"));
+            let decision = str_field(value, "decision", "-");
+            let cmd = short_cmd(&str_field(value, "cmd", "-"));
+            format!("{session} {decision} {cmd}")
+        }
+        "command" => {
+            let session = short_session(&str_field(value, "session", "-"));
+            let shell = str_field(value, "shell", "-");
+            let cmd = short_cmd(&str_field(value, "cmd", "-"));
+            // `exit -` when the field is absent: a tmux-era line carried no
+            // exit code.
+            let exit = match value.get("exit") {
+                Some(v) => v.to_string(),
+                None => "-".to_string(),
+            };
+            format!("{session} {shell} {cmd} exit {exit}")
+        }
+        "webhook_alert" => {
+            let alert = str_field(value, "alert_name", "-");
+            let severity = str_field(value, "severity", "-");
+            let status = str_field(value, "status", "-");
+            format!("{alert} {severity} {status}")
+        }
+        "webhook_analysis" => {
+            let alert = str_field(value, "alert_name", "-");
+            let ghost = value
+                .get("ghost_trigger")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let runbook = str_field(value, "runbook", "-");
+            format!(
+                "{alert} ghost={} {runbook}",
+                if ghost { "yes" } else { "no" }
+            )
+        }
+        "ghost_start" => {
+            let alert = str_field(value, "alert_name", "-");
+            let session = short_session(&str_field(value, "session_id", "-"));
+            let depth = num_field(value, "spawn_depth", 0);
+            format!("{alert} {session} depth {depth}")
+        }
+        "ghost_turn" => {
+            let session = short_session(&str_field(value, "session_id", "-"));
+            let turn = num_field(value, "turn", 0);
+            let tools: Vec<String> = value
+                .get("tools")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+                        .map(|n| n.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let joined = if tools.is_empty() {
+                "no tools".to_string()
+            } else {
+                tools.join(", ")
+            };
+            format!("{session} turn {turn}: {joined}")
+        }
+        "ghost_complete" => {
+            let session = short_session(&str_field(value, "session_id", "-"));
+            let turns = num_field(value, "turns_used", 0);
+            format!("{session} {turns} turns")
+        }
+        "ghost_shells_closed" => {
+            let session = short_session(&str_field(value, "session", "-"));
+            let shells: Vec<String> = value
+                .get("shells")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            format!("{session} {}", shells.join(", "))
+        }
+        "ghost_lifecycle" => {
+            let content = str_field(value, "content", "");
+            // The session log path rides after an em-dash separator; the
+            // panel wants the words, not where they are filed.
+            content
+                .split_once(" — ")
+                .map(|(head, _)| head.trim().to_string())
+                .unwrap_or_else(|| content.trim().to_string())
+        }
+        "job_scheduled" => {
+            let job_name = str_field(value, "job_name", "-");
+            let kind = str_field(value, "kind", "-");
+            format!("{job_name} {kind}")
+        }
+        "memory_retrieved" => {
+            let session = short_session(&str_field(value, "session_id", "-"));
+            let n = value
+                .get("keys")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("{session} {n} keys")
+        }
+        "cache_refresh_error" => str_field(value, "error", "-"),
         _ => generic_summary(value),
     };
     Some(ActivityRow {
@@ -268,6 +437,11 @@ fn activity_row(value: &serde_json::Value) -> Option<ActivityRow> {
         name: name.to_string(),
         summary,
     })
+}
+
+/// One Activity row from an event value, in the process's local zone.
+fn activity_row(value: &serde_json::Value) -> Option<ActivityRow> {
+    activity_row_in(value, *Local::now().offset())
 }
 
 /// Bounded generic summary for events with no dedicated arm: the remaining
@@ -324,6 +498,42 @@ fn last_activity(events: &[serde_json::Value]) -> Vec<ActivityRow> {
     rows.split_off(start)
 }
 
+/// Merge each run of *consecutive* rows with the same event name and
+/// summary into one row that keeps the last time and appends ` ×N` (N > 1;
+/// a single row keeps its summary unchanged). Non-adjacent duplicates are
+/// not merged. Pure. Runs after the filter, so the filter still sees every
+/// row.
+pub fn collapse_activity(rows: Vec<ActivityRow>) -> Vec<ActivityRow> {
+    let mut out: Vec<ActivityRow> = Vec::new();
+    let mut run_len: usize = 0;
+    for row in rows {
+        let same = run_len > 0
+            && out
+                .last()
+                .is_some_and(|last| last.name == row.name && last.summary == row.summary);
+        if same {
+            if let Some(last) = out.last_mut() {
+                last.time = row.time;
+            }
+            run_len += 1;
+        } else {
+            if run_len > 1
+                && let Some(last) = out.last_mut()
+            {
+                last.summary.push_str(&format!(" ×{run_len}"));
+            }
+            out.push(row);
+            run_len = 1;
+        }
+    }
+    if run_len > 1
+        && let Some(last) = out.last_mut()
+    {
+        last.summary.push_str(&format!(" ×{run_len}"));
+    }
+    out
+}
+
 // ── Loaders ──────────────────────────────────────────────────────────────────
 
 /// Build the Runs panel from [`list_runs`]: up to 20 rows, running first,
@@ -346,6 +556,7 @@ fn load_runs(now: DateTime<Utc>) -> Vec<TopRunRow> {
         let row = TopRunRow {
             id: summary.id.as_str().to_string(),
             kind: summary.kind.label().to_string(),
+            subject: run_subject(&summary.kind),
             state: state_word(&summary.state),
             turns: summary.turns,
             age_s: (now - started).num_seconds(),
@@ -354,6 +565,28 @@ fn load_runs(now: DateTime<Utc>) -> Vec<TopRunRow> {
         rows.push((row, started, running));
     }
     sort_rows(rows).into_iter().take(MAX_RUN_ROWS).collect()
+}
+
+/// What the run is, from the `RunStarted` kind: `chat:<8>`,
+/// `<runbook> ← <trigger>`, `job:<job>` or `<agent> ← <8>`; a `40`-character
+/// subject is cut to `32` with `…`; `-` is never a kind, so this is only
+/// reached with a real one.
+fn run_subject(kind: &crate::daemon::run::RunKind) -> String {
+    use crate::daemon::run::RunKind;
+    const MAX_SUBJECT: usize = 32;
+    let raw = match kind {
+        RunKind::Chat { session } => format!("chat:{}", short_session(session)),
+        RunKind::Ghost { runbook, trigger } => format!("{runbook} ← {trigger}"),
+        RunKind::Scheduled { job } => format!("job:{job}"),
+        RunKind::Delegated { agent, parent } => {
+            format!("{agent} ← {}", short_session(parent.as_str()))
+        }
+    };
+    if raw.chars().count() > MAX_SUBJECT {
+        format!("{}…", raw.chars().take(MAX_SUBJECT).collect::<String>())
+    } else {
+        raw
+    }
 }
 
 /// The state word the Runs panel prints for a summary, matching `run list`'s
@@ -526,7 +759,7 @@ pub fn budget_text(budget: &BudgetPanel) -> String {
     }
     lines.push(first);
     lines.push(format!("tokens today: {}", budget.tokens));
-    lines.push(format!("rate: {:.1} tok/s", budget.tok_per_s));
+    lines.push(format!("rate (60 s): {:.1} tok/s", budget.tok_per_s));
     lines.push(format!("refused today: {}", budget.refused));
     lines.join("\n")
 }
@@ -538,6 +771,12 @@ pub fn runs_text(runs: &[TopRunRow]) -> String {
     }
     let id_w = runs.iter().map(|r| r.id.len()).max().unwrap_or(0).max(2);
     let kind_w = runs.iter().map(|r| r.kind.len()).max().unwrap_or(0).max(4);
+    let subject_w = runs
+        .iter()
+        .map(|r| r.subject.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(7);
     let state_w = runs.iter().map(|r| r.state.len()).max().unwrap_or(0).max(5);
     let live_w = runs
         .iter()
@@ -546,14 +785,15 @@ pub fn runs_text(runs: &[TopRunRow]) -> String {
         .unwrap_or(0)
         .max(8);
     let mut out = format!(
-        "{:>id_w$}  {:<kind_w$}  {:<state_w$}  {:>5}  {:>8}  {:<live_w$}\n",
-        "ID", "KIND", "STATE", "TURNS", "AGE", "LIVENESS"
+        "{:>id_w$}  {:<kind_w$}  {:<subject_w$}  {:<state_w$}  {:>5}  {:>8}  {:<live_w$}\n",
+        "ID", "KIND", "SUBJECT", "STATE", "TURNS", "AGE", "LIVENESS"
     );
     for run in runs {
         out.push_str(&format!(
-            "{:>id_w$}  {:<kind_w$}  {:<state_w$}  {:>5}  {:>8}  {:<live_w$}\n",
+            "{:>id_w$}  {:<kind_w$}  {:<subject_w$}  {:<state_w$}  {:>5}  {:>8}  {:<live_w$}\n",
             run.id,
             run.kind,
+            run.subject,
             run.state,
             run.turns,
             format_age(run.age_s),
@@ -597,7 +837,7 @@ pub fn activity_text(rows: &[ActivityRow]) -> String {
 /// One `--once` frame as plain text: the four sections, each headed by its
 /// name on its own line. Pure.
 pub fn render_once(snapshot: &TopSnapshot, filter: &str) -> String {
-    let activity = filter_activity(snapshot.activity.clone(), filter);
+    let activity = collapse_activity(filter_activity(snapshot.activity.clone(), filter));
     format!(
         "Runs\n{}\n\nBudget\n{}\n\nShells\n{}\n\nActivity\n{}",
         runs_text(&snapshot.runs),
@@ -611,6 +851,23 @@ pub fn render_once(snapshot: &TopSnapshot, filter: &str) -> String {
 /// foreground and last line — `daemon not running` when the daemon did not
 /// answer, `none` when it is up with no shells. Pure. The live screen in
 /// `top_tui.rs` draws the same body.
+/// A shell owner key worth printing: `chat:<16 hex>` to `chat:<8>`,
+/// `ghost:ghost-<runbook>-<32 hex>` to `ghost:<runbook>`, any other owner
+/// unchanged. Reuses [`short_session`] for the id part. Pure.
+pub fn short_owner(owner: &str) -> String {
+    if let Some(id) = owner.strip_prefix("chat:") {
+        return format!("chat:{}", short_session(id));
+    }
+    if let Some(id) = owner.strip_prefix("ghost:") {
+        // The owner key already says `ghost:`, so the session id's own
+        // `ghost-` marker is redundant and is dropped with its hex tail.
+        let short = short_session(id);
+        let inner = short.strip_prefix("ghost-").unwrap_or(&short);
+        return format!("ghost:{inner}");
+    }
+    owner.to_string()
+}
+
 pub(crate) fn shells_text(panel: &ShellsPanel) -> String {
     let rows = match panel {
         ShellsPanel::DaemonDown => return "daemon not running".to_string(),
@@ -624,7 +881,7 @@ pub(crate) fn shells_text(panel: &ShellsPanel) -> String {
             format!(
                 "{} {} {} {}",
                 s.id,
-                s.owner,
+                short_owner(&s.owner),
                 s.foreground.as_deref().unwrap_or("-"),
                 s.last_line.as_deref().unwrap_or("-")
             )
@@ -670,6 +927,7 @@ mod tests {
             TopRunRow {
                 id: id.to_string(),
                 kind: "ghost".to_string(),
+                subject: "disk-full-l4 ← webhook".to_string(),
                 state: if running { "running" } else { "complete" }.to_string(),
                 turns: 2,
                 age_s: 10,
@@ -892,6 +1150,421 @@ mod tests {
             rows[names.iter().position(|n| *n == "bare").unwrap()].summary,
             "(no fields)",
             "an event with no fields gets a placeholder: {rows:?}"
+        );
+    }
+
+    // ── subject ─────────────────────────────────────────────────────────────
+
+    fn kind_of(variant: &str) -> crate::daemon::run::RunKind {
+        use crate::daemon::run::RunKind;
+        match variant {
+            "chat" => RunKind::Chat {
+                session: "5175faf67d501ce8".into(),
+            },
+            "ghost" => RunKind::Ghost {
+                runbook: "disk-full-l4".into(),
+                trigger: "webhook".into(),
+            },
+            "scheduled" => RunKind::Scheduled {
+                job: "nightly".into(),
+            },
+            "delegated" => RunKind::Delegated {
+                agent: "triage".into(),
+                parent: crate::daemon::run::RunId::parse("7eb9151d45fa49f1")
+                    .unwrap_or_else(|_| unreachable!()),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn subject_names_each_run_kind() {
+        let chat = run_subject(&kind_of("chat"));
+        assert_eq!(
+            chat, "chat:5175faf6",
+            "chat subject is chat:<first 8>: {chat}"
+        );
+        let ghost = run_subject(&kind_of("ghost"));
+        assert_eq!(
+            ghost, "disk-full-l4 ← webhook",
+            "ghost subject is runbook ← trigger: {ghost}"
+        );
+        let scheduled = run_subject(&kind_of("scheduled"));
+        assert_eq!(
+            scheduled, "job:nightly",
+            "scheduled subject is job:<job>: {scheduled}"
+        );
+        let delegated = run_subject(&kind_of("delegated"));
+        assert_eq!(
+            delegated, "triage ← 7eb9151d",
+            "delegated subject is agent ← <first 8 of parent>: {delegated}"
+        );
+        let long = run_subject(&crate::daemon::run::RunKind::Ghost {
+            runbook: "a".repeat(40),
+            trigger: "webhook".into(),
+        });
+        assert_eq!(
+            long.chars().count(),
+            32 + 1,
+            "a 40-character runbook is cut to 32 with a trailing …: {long}"
+        );
+        assert!(long.ends_with('…'), "the cut subject ends with …: {long}");
+    }
+
+    #[test]
+    fn runs_text_has_a_subject_column() {
+        let rows = vec![TopRunRow {
+            id: "7eb9151d45fa49f1".to_string(),
+            kind: "ghost".to_string(),
+            subject: "disk-full-l4 ← webhook".to_string(),
+            state: "running".to_string(),
+            turns: 2,
+            age_s: 10,
+            liveness: Liveness::Live,
+        }];
+        let text = runs_text(&rows);
+        let header = text.lines().next().unwrap_or_default().to_string();
+        assert!(
+            header.contains("KIND") && header.contains("SUBJECT") && header.contains("STATE"),
+            "the header holds SUBJECT between KIND and STATE: {header}"
+        );
+        let kind_pos = header.find("KIND").unwrap_or_default();
+        let subject_pos = header.find("SUBJECT").unwrap_or_default();
+        let state_pos = header.find("STATE").unwrap_or_default();
+        assert!(
+            kind_pos < subject_pos && subject_pos < state_pos,
+            "SUBJECT sits between KIND and STATE: {header}"
+        );
+        let ghost = text.lines().nth(1).unwrap_or_default().to_string();
+        assert!(
+            ghost.contains("disk-full-l4 ← webhook"),
+            "a ghost row's line holds its subject: {ghost}"
+        );
+    }
+
+    // ── local time ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn activity_time_is_rendered_in_the_given_zone() {
+        let value = serde_json::json!({
+            "ts": "2026-10-22T14:36:20Z",
+            "event": "daemon_stop",
+            "reason": "SIGTERM",
+        });
+        let west = activity_row_in(&value, chrono::FixedOffset::west_opt(5 * 3600).unwrap())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(
+            west.time, "09:36:20",
+            "west offset 5 h turns 14:36:20Z into 09:36:20: {west:?}"
+        );
+        let utc = activity_row_in(&value, chrono::FixedOffset::east_opt(0).unwrap())
+            .unwrap_or_else(|| unreachable!());
+        assert_eq!(
+            utc.time, "14:36:20",
+            "offset 0 keeps the UTC wall time: {utc:?}"
+        );
+    }
+
+    // ── short_session ───────────────────────────────────────────────────────
+
+    #[test]
+    fn short_session_trims_chat_and_ghost_ids() {
+        let hex16 = "5175faf67d501ce8";
+        assert_eq!(
+            short_session(hex16),
+            "5175faf6",
+            "a 16-hex chat id is cut to its first 8"
+        );
+        let hex32 = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
+        assert_eq!(
+            short_session(&format!("ghost-disk-full-l4-{hex32}")),
+            "ghost-disk-full-l4",
+            "a ghost session id keeps its runbook and drops the hex tail"
+        );
+        assert_eq!(short_session("matt"), "matt", "a name is unchanged");
+        assert_eq!(
+            short_session("5175faf"),
+            "5175faf",
+            "a 7-hex string is not a chat id and is unchanged"
+        );
+    }
+
+    // ── shaped summaries ────────────────────────────────────────────────────
+
+    #[test]
+    fn shaped_summaries_for_daemon_events() {
+        let base = "2026-10-22T09:00:00Z";
+        let mk = |event: &str, extra: serde_json::Value| {
+            let mut obj = serde_json::Map::new();
+            obj.insert("ts".to_string(), base.into());
+            obj.insert("event".to_string(), event.into());
+            obj.insert("pid".to_string(), 1.into());
+            if let Some(extra) = extra.as_object() {
+                for (k, v) in extra {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+            serde_json::Value::Object(obj)
+        };
+        let events = [
+            (
+                "daemon_start",
+                mk(
+                    "daemon_start",
+                    serde_json::json!({ "version": "2.2.0", "socket": "/home/m/.daemoneye/var/run/daemoneye.sock" }),
+                ),
+                "v2.2.0 socket daemoneye.sock",
+            ),
+            (
+                "daemon_stop",
+                mk("daemon_stop", serde_json::json!({ "reason": "SIGTERM" })),
+                "SIGTERM",
+            ),
+            (
+                "ai_turn",
+                mk(
+                    "ai_turn",
+                    serde_json::json!({ "session": "5175faf67d501ce8", "prompt_tokens": 120, "completion_tokens": 34 }),
+                ),
+                "5175faf6 120+34 tok",
+            ),
+            (
+                "command_approval",
+                mk(
+                    "command_approval",
+                    serde_json::json!({ "session": "5175faf67d501ce8", "decision": "approved", "cmd": "hostname" }),
+                ),
+                "5175faf6 approved hostname",
+            ),
+            (
+                "command",
+                mk(
+                    "command",
+                    serde_json::json!({ "session": "5175faf67d501ce8", "shell": "s0", "cmd": "hostname", "exit": 0 }),
+                ),
+                "5175faf6 s0 hostname exit 0",
+            ),
+            (
+                "command",
+                mk(
+                    "command",
+                    serde_json::json!({ "session": "5175faf67d501ce8", "shell": "s0", "cmd": "hostname" }),
+                ),
+                "5175faf6 s0 hostname exit -",
+            ),
+            (
+                "webhook_alert",
+                mk(
+                    "webhook_alert",
+                    serde_json::json!({ "alert_name": "disk-full-l4", "severity": "critical", "status": "firing" }),
+                ),
+                "disk-full-l4 critical firing",
+            ),
+            (
+                "webhook_analysis",
+                mk(
+                    "webhook_analysis",
+                    serde_json::json!({ "alert_name": "disk-full-l4", "ghost_trigger": true, "runbook": "disk-full-l4" }),
+                ),
+                "disk-full-l4 ghost=yes disk-full-l4",
+            ),
+            (
+                "ghost_start",
+                mk(
+                    "ghost_start",
+                    serde_json::json!({ "alert_name": "disk-full-l4", "session_id": "ghost-disk-full-l4-a1b2c3d4e5f60718293a4b5c6d7e8f90", "spawn_depth": 2 }),
+                ),
+                "disk-full-l4 ghost-disk-full-l4 depth 2",
+            ),
+            (
+                "ghost_turn",
+                mk(
+                    "ghost_turn",
+                    serde_json::json!({ "session_id": "ghost-disk-full-l4-a1b2c3d4e5f60718293a4b5c6d7e8f90", "turn": 3, "tools": [ { "name": "run_terminal_command" }, { "name": "read_shell" } ] }),
+                ),
+                "ghost-disk-full-l4 turn 3: run_terminal_command, read_shell",
+            ),
+            (
+                "ghost_turn",
+                mk(
+                    "ghost_turn",
+                    serde_json::json!({ "session_id": "ghost-disk-full-l4-a1b2c3d4e5f60718293a4b5c6d7e8f90", "turn": 3, "tools": [] }),
+                ),
+                "ghost-disk-full-l4 turn 3: no tools",
+            ),
+            (
+                "ghost_complete",
+                mk(
+                    "ghost_complete",
+                    serde_json::json!({ "session_id": "ghost-disk-full-l4-a1b2c3d4e5f60718293a4b5c6d7e8f90", "turns_used": 7 }),
+                ),
+                "ghost-disk-full-l4 7 turns",
+            ),
+            (
+                "ghost_shells_closed",
+                mk(
+                    "ghost_shells_closed",
+                    serde_json::json!({ "session": "ghost-disk-full-l4-a1b2c3d4e5f60718293a4b5c6d7e8f90", "shells": ["s0", "s1"] }),
+                ),
+                "ghost-disk-full-l4 s0, s1",
+            ),
+            (
+                "ghost_lifecycle",
+                mk(
+                    "ghost_lifecycle",
+                    serde_json::json!({ "content": "Ghost completed: disk below 90% — /home/m/.daemoneye/var/log/sessions/x.jsonl" }),
+                ),
+                "Ghost completed: disk below 90%",
+            ),
+            (
+                "job_scheduled",
+                mk(
+                    "job_scheduled",
+                    serde_json::json!({ "job_name": "nightly", "kind": "cron: 0 3 * * *" }),
+                ),
+                "nightly cron: 0 3 * * *",
+            ),
+            (
+                "memory_retrieved",
+                mk(
+                    "memory_retrieved",
+                    serde_json::json!({ "session_id": "5175faf67d501ce8", "keys": ["a", "b", "c"] }),
+                ),
+                "5175faf6 3 keys",
+            ),
+            (
+                "cache_refresh_error",
+                mk(
+                    "cache_refresh_error",
+                    serde_json::json!({ "error": "Failed to get active pane for session 'm30'" }),
+                ),
+                "Failed to get active pane for session 'm30'",
+            ),
+            (
+                "run",
+                mk(
+                    "run",
+                    serde_json::json!({ "run_id": "7eb9151d45fa49f1", "kind": "ghost", "status": "complete" }),
+                ),
+                "7eb9151d45fa49f1 ghost complete",
+            ),
+            (
+                "ghost_started",
+                mk("ghost_started", serde_json::json!({ "job_id": "j1" })),
+                "job_id=j1",
+            ),
+        ];
+        for (name, value, want) in events {
+            let row = activity_row(&value).unwrap_or_else(|| unreachable!());
+            assert_eq!(
+                row.summary, want,
+                "the {name} arm must produce its exact summary: {row:?}"
+            );
+        }
+    }
+
+    // ── collapse ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn collapse_merges_only_consecutive_identical_rows() {
+        let mk = |time: &str| ActivityRow {
+            time: time.to_string(),
+            name: "cache_refresh_error".to_string(),
+            summary: "Failed to get active pane for session 'm30'".to_string(),
+        };
+        let other = ActivityRow {
+            time: "09:00:03".to_string(),
+            name: "ai_cost".to_string(),
+            summary: "chat m $0.2500".to_string(),
+        };
+        // five identical, one different, two identical
+        let rows = vec![
+            mk("09:00:00"),
+            mk("09:00:01"),
+            mk("09:00:02"),
+            mk("09:00:03"),
+            mk("09:00:04"),
+            other.clone(),
+            mk("09:00:05"),
+            mk("09:00:06"),
+        ];
+        let out = collapse_activity(rows);
+        assert_eq!(
+            out.len(),
+            3,
+            "two runs of identical rows collapse to one row each: {out:?}"
+        );
+        assert_eq!(
+            out[0].summary, "Failed to get active pane for session 'm30' ×5",
+            "the first run of five is marked ×5: {out:?}"
+        );
+        assert_eq!(
+            out[0].time, "09:00:04",
+            "the merged row keeps the last time of its run: {out:?}"
+        );
+        assert_eq!(
+            out[1].summary, "chat m $0.2500",
+            "a row with no run partner keeps its summary unchanged: {out:?}"
+        );
+        assert_eq!(
+            out[2].summary, "Failed to get active pane for session 'm30' ×2",
+            "the second run of two is marked ×2: {out:?}"
+        );
+        // two identical separated by a different row stay three rows
+        let separated = vec![mk("09:00:00"), other.clone(), mk("09:00:02")];
+        let out = collapse_activity(separated);
+        assert_eq!(
+            out.len(),
+            3,
+            "non-adjacent duplicates are not merged: {out:?}"
+        );
+        assert!(
+            out.iter().all(|r| !r.summary.contains('×')),
+            "no merged marker on a run of one: {out:?}"
+        );
+    }
+
+    // ── short_owner ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn short_owner_trims_ghost_and_chat_owners() {
+        assert_eq!(
+            short_owner("chat:5175faf67d501ce8"),
+            "chat:5175faf6",
+            "a chat owner key is cut to 8 hex"
+        );
+        assert_eq!(
+            short_owner("ghost:ghost-disk-full-l4-a1b2c3d4e5f60718293a4b5c6d7e8f90"),
+            "ghost:disk-full-l4",
+            "a ghost owner key drops the hex tail of its session id"
+        );
+        assert_eq!(
+            short_owner("user:matt"),
+            "user:matt",
+            "any other owner key is unchanged"
+        );
+    }
+
+    // ── budget rate label ───────────────────────────────────────────────────
+
+    #[test]
+    fn budget_text_names_the_rate_window() {
+        let budget = BudgetPanel {
+            ai_cost: 0.25,
+            cap: 2.0,
+            tokens: 600,
+            tok_per_s: 10.0,
+            refused: 1,
+        };
+        let text = budget_text(&budget);
+        let rate = text
+            .lines()
+            .find(|l| l.starts_with("rate"))
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(
+            rate, "rate (60 s): 10.0 tok/s",
+            "the rate line names its 60-second window: {text}"
         );
     }
 

@@ -1,7 +1,7 @@
 # Phase 11: top-rows — what `top`'s rows say
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-10a
 **Estimated diff:** ~350 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -130,7 +130,7 @@ All values below were measured against the tree before this phase.
 - [ ] Each new test ⇒ `test result: ok. 1 passed`.
 - [ ] On the § End-to-end harness (no daemon, a scratch `HOME`):
   - `subject_hdr=1` and `subject_ghost=1` (today `0`, `0`).
-  - `local_time=1` (today `0`: the frame prints `14:36:20`, the UTC hour).
+  - `local_time=1` (today `0`: the frame prints the UTC hour, not the UTC-5 one).
   - `collapsed=1` (today `0`).
   - `shaped_start=1` and `shaped_cmd=1` (today `0`, `0`).
   - `owner_short=1` (today `0`: the frame prints the 32-hex ghost session).
@@ -155,7 +155,7 @@ A=/tmp/e2e-m30-11.txt; : > "$A"
 for t in subject_names_each_run_kind runs_text_has_a_subject_column activity_time_is_rendered_in_the_given_zone short_session_trims_chat_and_ghost_ids shaped_summaries_for_daemon_events collapse_merges_only_consecutive_identical_rows short_owner_trims_ghost_and_chat_owners budget_text_names_the_rate_window filtered_activity_collapses_repeats; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | head -1 | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 cargo build -q 2>/dev/null
 H=$(mktemp -d); mkdir -p "$H/.daemoneye/var/log/events" "$H/.daemoneye/var/log/runs"
-D=$(date +%Y%m%d); T=$(date -u +%Y-%m-%dT14:36:20Z)
+T=$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%SZ); D=$(TZ=Etc/GMT+5 date -d "$T" +%Y%m%d); L=$(TZ=Etc/GMT+5 date -d "$T" +%H:%M:%S)
 S="$H/.daemoneye/var/log/events/events-$D.jsonl"
 cat > "$H/.daemoneye/var/log/runs/7eb9151d45fa49f1.jsonl" <<EOF
 {"timestamp":"$T","run_id":"7eb9151d45fa49f1","event_type":"run_started","kind":{"Ghost":{"runbook":"disk-full-l4","trigger":"webhook"}}}
@@ -165,11 +165,11 @@ echo "{\"ts\":\"$T\",\"event\":\"daemon_start\",\"pid\":1,\"session\":\"\",\"soc
 echo "{\"ts\":\"$T\",\"event\":\"webhook_alert\",\"pid\":1,\"alert_name\":\"disk-full-l4\",\"severity\":\"critical\",\"status\":\"firing\",\"summary\":\"x\"}" >> "$S"
 echo "{\"ts\":\"$T\",\"event\":\"command\",\"pid\":1,\"cmd\":\"hostname\",\"exit\":0,\"shell\":\"s0\",\"session\":\"5175faf67d501ce8\",\"status\":\"approved\"}" >> "$S"
 for i in 1 2 3 4 5; do echo "{\"ts\":\"$T\",\"event\":\"cache_refresh_error\",\"pid\":1,\"error\":\"Failed to get active pane for session 'm30'\"}" >> "$S"; done
-F=$(TZ=America/New_York HOME="$H" ./target/debug/daemoneye top --once)
+F=$(TZ=Etc/GMT+5 HOME="$H" ./target/debug/daemoneye top --once)
 echo "once_order=$(echo "$F" | grep -xE 'Runs|Budget|Shells|Activity' | paste -sd, -)" >> "$A"
 echo "subject_hdr=$(echo "$F" | grep -cE 'KIND +SUBJECT +STATE')" >> "$A"
 echo "subject_ghost=$(echo "$F" | grep -c 'disk-full-l4 ← webhook')" >> "$A"
-echo "local_time=$(echo "$F" | grep -c '^09:36:20 webhook_alert disk-full-l4 critical firing')" >> "$A"
+echo "local_time=$(echo "$F" | grep -c "^$L webhook_alert disk-full-l4 critical firing")" >> "$A"
 echo "collapsed=$(echo "$F" | grep -c "cache_refresh_error Failed to get active pane for session 'm30' ×5")" >> "$A"
 echo "shaped_start=$(echo "$F" | grep -c 'daemon_start v2.2.0 socket daemoneye.sock$')" >> "$A"
 echo "shaped_cmd=$(echo "$F" | grep -c 'command 5175faf6 s0 hostname exit 0$')" >> "$A"
@@ -209,3 +209,66 @@ diff <(sed -n '/^```text$/,/^```$/p' "$D" | tail -n +2 | head -n -1) /tmp/e2e-m3
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-24 13:16 (started)
+
+**Executor:** Claude (executor run, phase 11 top-rows)
+
+Status flipped `todo → in-progress`. Working through the spec in order:
+`short_session`/`short_owner`, the SUBJECT column, local-time Activity,
+the shaped summary arms, `collapse_activity`, the rate label, then the
+README.
+
+### Update — 2026-10-24 14:45 (architect: harness fixed, resume)
+
+**Architect:** Claude
+
+The first run was cancelled at turn 188 after it slept 22 minutes to work
+around two harness bugs, both now fixed in § End-to-end harness:
+
+- the event time was pinned to today `14:36:20Z`, which is in the future
+  for any run before that hour, so the Activity window dropped it. It is
+  now one minute in the past, and `D`/`L` are derived from it.
+- `local_time` expected `09:36:20` under `America/New_York`, which is
+  UTC-4 until November 1. The frame now runs under `Etc/GMT+5` (UTC-5
+  year-round) and the check compares against the computed `L`.
+
+**Notes for executor:** the implementation is in the working tree and
+passed every other harness check, clippy, fmt and `cargo test` on the
+first run. Do not re-implement and do not sleep. Rerun the harness as
+now written, paste its output in your Update Log entry, and finish.
+
+### Update — 2026-10-24 14:58 (resumed run: harness rerun)
+
+**Executor:** Claude (executor run, phase 11 top-rows, resume)
+
+Resumed per the architect's note: no re-implementation, no sleeping. The
+implementation from the first run was already in the working tree; this
+run only rebuilt, reran the § End-to-end harness as now written, and
+pasted its output below. Every check the harness prints is 1/1 and
+`local_time=1` now that the frame runs under `Etc/GMT+5` against an event
+one minute in the past.
+
+```text
+subject_names_each_run_kind: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+runs_text_has_a_subject_column: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+activity_time_is_rendered_in_the_given_zone: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+short_session_trims_chat_and_ghost_ids: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+shaped_summaries_for_daemon_events: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+collapse_merges_only_consecutive_identical_rows: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+short_owner_trims_ghost_and_chat_owners: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+budget_text_names_the_rate_window: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+filtered_activity_collapses_repeats: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+once_order=Runs,Budget,Shells,Activity
+subject_hdr=1
+subject_ghost=1
+local_time=1
+collapsed=1
+shaped_start=1
+shaped_cmd=1
+rate_label=1
+owner_short=1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2518 failed=0
+```
