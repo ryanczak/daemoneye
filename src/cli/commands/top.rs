@@ -7,7 +7,8 @@
 use std::io::IsTerminal;
 
 use anyhow::Result;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, FixedOffset, Local, Utc};
+use ratatui::layout::Rect;
 use serde::Serialize;
 
 use crate::cli::commands::top_tui::run_tui;
@@ -115,6 +116,20 @@ pub struct BudgetPanel {
     pub tok_per_s: f64,
 }
 
+/// The daemon facts the header names, from a read-only `Request::Status`.
+/// `None` when no daemon answered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DaemonHeader {
+    /// The daemon's process id.
+    pub pid: u32,
+    /// Seconds the daemon has been up.
+    pub uptime_secs: u64,
+    /// The provider the daemon's active model runs on.
+    pub provider: String,
+    /// The daemon's active model.
+    pub model: String,
+}
+
 /// The three panels this phase builds, plus when the frame was taken.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TopSnapshot {
@@ -128,6 +143,8 @@ pub struct TopSnapshot {
     pub activity: Vec<ActivityRow>,
     /// The Shells panel: the daemon's live shells, or the daemon-down mark.
     pub shells: ShellsPanel,
+    /// The daemon facts the header names; `None` when the daemon is down.
+    pub daemon: Option<DaemonHeader>,
 }
 
 /// The disk-read panels this phase builds: Runs, Budget and Activity.
@@ -246,7 +263,7 @@ pub fn short_session(id: &str) -> String {
     id.to_string()
 }
 
-/// A session id cut to at most this many characters, `…` when cut.
+/// A command cut to at most this many characters, `…` when cut.
 fn short_cmd(cmd: &str) -> String {
     const MAX: usize = 40;
     if cmd.chars().count() > MAX {
@@ -257,7 +274,7 @@ fn short_cmd(cmd: &str) -> String {
 }
 
 /// The first field named `key` as a string, `fallback` when absent or not a
-/// string. Reads through one level of nesting (`tokens.input_tokens`).
+/// string. Reads a top-level field.
 fn str_field(value: &serde_json::Value, key: &str, fallback: &str) -> String {
     value
         .get(key)
@@ -266,8 +283,8 @@ fn str_field(value: &serde_json::Value, key: &str, fallback: &str) -> String {
         .to_string()
 }
 
-/// The first field named `key` as a number, `fallback` when absent. Reads
-/// through one level of nesting (`tokens.input_tokens`).
+/// The first field named `key` as a number, `fallback` when absent. Reads a
+/// top-level field.
 fn num_field(value: &serde_json::Value, key: &str, fallback: i64) -> i64 {
     value.get(key).and_then(|v| v.as_i64()).unwrap_or(fallback)
 }
@@ -662,10 +679,30 @@ pub async fn shells_panel() -> ShellsPanel {
     }
 }
 
+/// Ask the daemon for the header facts: pid, uptime, provider and model. One
+/// read-only `Request::Status`, nothing written. `None` when no daemon answers.
+pub async fn daemon_header() -> Option<DaemonHeader> {
+    match super::ipc_client::request_once(crate::ipc::Request::Status).await {
+        Ok(crate::ipc::Response::DaemonStatus {
+            pid,
+            uptime_secs,
+            provider,
+            model,
+            ..
+        }) => Some(DaemonHeader {
+            pid,
+            uptime_secs,
+            provider,
+            model,
+        }),
+        _ => None,
+    }
+}
+
 /// Take one frame: the disk panels plus the Shells panel from the daemon.
 pub async fn take_snapshot(config_cap: f64) -> TopSnapshot {
     let now = Utc::now();
-    let shells = shells_panel().await;
+    let (shells, daemon) = tokio::join!(shells_panel(), daemon_header());
     let DiskPanels {
         runs,
         budget,
@@ -677,6 +714,7 @@ pub async fn take_snapshot(config_cap: f64) -> TopSnapshot {
         budget,
         activity,
         shells,
+        daemon,
     }
 }
 
@@ -764,6 +802,55 @@ pub fn budget_text(budget: &BudgetPanel) -> String {
     lines.join("\n")
 }
 
+/// How far today's spend is into the cap, so the bar is drawn a colour per
+/// level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BarLevel {
+    /// Under 80 % of the cap.
+    Ok,
+    /// From 80 % of the cap.
+    Warn,
+    /// From 100 % of the cap.
+    Over,
+}
+
+/// The Budget panel's spend bar: `[` + `width` cells of `█` filled and `░`
+/// empty + `] NN%`, or `None` when there is no cap. The fill clamps to
+/// `width` when spend is over the cap; the percentage is printed as it is.
+/// Pure.
+pub fn budget_bar(spent: f64, cap: f64, width: usize) -> Option<(String, BarLevel)> {
+    if cap <= 0.0 {
+        return None;
+    }
+    let pct = spent / cap * 100.0;
+    let filled = if spent >= cap {
+        width
+    } else {
+        ((spent / cap) * width as f64).round() as usize
+    }
+    .min(width);
+    let bar = format!(
+        "[{}{}] {}%",
+        "█".repeat(filled),
+        "░".repeat(width - filled),
+        pct.round() as i64
+    );
+    let level = if pct >= 100.0 {
+        BarLevel::Over
+    } else if pct >= 80.0 {
+        BarLevel::Warn
+    } else {
+        BarLevel::Ok
+    };
+    Some((bar, level))
+}
+
+/// Whether a run's line is drawn dimmed: a finished run past five minutes of
+/// age stops shouting at the screen. Pure.
+pub fn run_fades(row: &TopRunRow) -> bool {
+    row.liveness == Liveness::Done && row.age_s >= 300
+}
+
 /// The Runs section's text. Pure.
 pub fn runs_text(runs: &[TopRunRow]) -> String {
     if runs.is_empty() {
@@ -834,6 +921,132 @@ pub fn activity_text(rows: &[ActivityRow]) -> String {
         .join("\n")
 }
 
+/// The header line: the daemon's pid, uptime, provider and model, the host
+/// and the local time — `daemon not running` where the daemon facts would
+/// go when no daemon answered. Pure.
+pub fn header_text(
+    daemon: Option<&DaemonHeader>,
+    host: &str,
+    now: DateTime<FixedOffset>,
+) -> String {
+    let clock = now.format("%H:%M:%S");
+    match daemon {
+        Some(d) => format!(
+            "daemoneye · pid {} · up {} · {}/{} · {host} · {clock}",
+            d.pid,
+            crate::cli::status::fmt_uptime(d.uptime_secs),
+            d.provider,
+            d.model
+        ),
+        None => format!("daemoneye · daemon not running · {host} · {clock}"),
+    }
+}
+
+pub struct PanelRects {
+    /// The unbordered header line.
+    pub header: Rect,
+    /// The Runs panel.
+    pub runs: Rect,
+    /// The Budget panel.
+    pub budget: Rect,
+    /// The Shells panel.
+    pub shells: Rect,
+    /// The Activity panel.
+    pub activity: Rect,
+    /// The unbordered footer line.
+    pub footer: Rect,
+}
+
+/// The widest a Runs panel's body gets, in lines.
+const RUNS_MAX_LINES: usize = 12;
+/// The widest a Shells panel's body gets, in lines.
+const SHELLS_MAX_LINES: usize = 6;
+/// A bordered panel's border rows, top and bottom.
+const BORDER_ROWS: usize = 2;
+/// The width Budget takes when it shares a row with Runs.
+const BUDGET_COLS: usize = 40;
+/// The terminal width from which Runs and Budget share one row.
+const WIDE_MIN: usize = 120;
+/// The rows the header and footer take.
+const CHROME_ROWS: usize = 2;
+
+/// A rect inside `area` at `x`,`y` sized `w`×`h`, clamped to lie inside
+/// `area` when the numbers would not fit — a too-small terminal clamps
+/// instead of panicking.
+fn rect_or_area(area: Rect, x: u16, y: u16, w: usize, h: usize) -> Rect {
+    let w = (w as u16).min(area.width);
+    let h = (h as u16).min(area.height);
+    let rx = x.min(area.right().saturating_sub(w));
+    let ry = y.min(area.bottom().saturating_sub(h));
+    Rect {
+        x: rx,
+        y: ry,
+        width: w,
+        height: h,
+    }
+}
+
+/// Lay the live screen out: one `Rect` each for header, runs, budget, shells,
+/// activity and footer. Pure, so layout is tested without a terminal.
+///
+/// `*_lines` are body line counts; a bordered panel is its lines plus 2 for
+/// the borders. Runs is capped at 12 body lines, Shells at 6; Activity takes
+/// every remaining row and shrinks first. At `area.width >= 120` Runs and
+/// Budget share one row, Budget on the right 40 columns wide; below that they
+/// stack Runs, Budget, Shells, Activity.
+pub fn plan_layout(
+    area: Rect,
+    runs_lines: usize,
+    budget_lines: usize,
+    shells_lines: usize,
+) -> PanelRects {
+    let h = area.height as usize;
+    let w = area.width as usize;
+    let wide = w >= WIDE_MIN;
+    let runs_h = (runs_lines.min(RUNS_MAX_LINES) + BORDER_ROWS).min(h);
+    let shells_h = (shells_lines.min(SHELLS_MAX_LINES) + BORDER_ROWS).min(h);
+    let budget_h = (budget_lines + BORDER_ROWS).min(h);
+    let row_h = if wide { runs_h.max(budget_h) } else { 0 };
+
+    // Chrome first (header, footer), then the fixed panels, then whatever
+    // rows are left go to Activity — it shrinks first.
+    let inner = h.saturating_sub(CHROME_ROWS);
+    let mut y = area.y as usize + 1;
+    let header = rect_or_area(area, area.x, area.y, w, 1);
+
+    let (runs, budget) = if wide {
+        let run_w = w.saturating_sub(BUDGET_COLS);
+        let r = rect_or_area(area, area.x, y as u16, run_w, row_h.min(inner));
+        let bx = area.x + run_w as u16;
+        let b = rect_or_area(area, bx, y as u16, BUDGET_COLS, row_h.min(inner));
+        y += row_h.min(inner);
+        (r, b)
+    } else {
+        let r = rect_or_area(area, area.x, y as u16, w, runs_h.min(inner));
+        y += runs_h.min(inner);
+        let b = rect_or_area(area, area.x, y as u16, w, budget_h.min(inner));
+        y += budget_h.min(inner);
+        (r, b)
+    };
+
+    let shells = rect_or_area(area, area.x, y as u16, w, shells_h.min(inner));
+    y += shells_h.min(inner);
+
+    let bottom = area.y as usize + h;
+    let activity_h = bottom.saturating_sub(y).saturating_sub(1).min(inner);
+    let activity = rect_or_area(area, area.x, y as u16, w, activity_h);
+
+    let footer = rect_or_area(area, area.x, (bottom - 1) as u16, w, 1);
+    PanelRects {
+        header,
+        runs,
+        budget,
+        shells,
+        activity,
+        footer,
+    }
+}
+
 /// One `--once` frame as plain text: the four sections, each headed by its
 /// name on its own line. Pure.
 pub fn render_once(snapshot: &TopSnapshot, filter: &str) -> String {
@@ -847,12 +1060,7 @@ pub fn render_once(snapshot: &TopSnapshot, filter: &str) -> String {
     )
 }
 
-/// The Shells section as text: one row per live shell — id, owner,
-/// foreground and last line — `daemon not running` when the daemon did not
-/// answer, `none` when it is up with no shells. Pure. The live screen in
-/// `top_tui.rs` draws the same body.
 /// A shell owner key worth printing: `chat:<16 hex>` to `chat:<8>`,
-/// `ghost:ghost-<runbook>-<32 hex>` to `ghost:<runbook>`, any other owner
 /// unchanged. Reuses [`short_session`] for the id part. Pure.
 pub fn short_owner(owner: &str) -> String {
     if let Some(id) = owner.strip_prefix("chat:") {
@@ -868,6 +1076,10 @@ pub fn short_owner(owner: &str) -> String {
     owner.to_string()
 }
 
+/// The Shells section as text: one row per live shell — id, owner,
+/// foreground and last line — `daemon not running` when the daemon did not
+/// answer, `none` when it is up with no shells. Pure. The live screen in
+/// `top_tui.rs` draws the same body.
 pub(crate) fn shells_text(panel: &ShellsPanel) -> String {
     let rows = match panel {
         ShellsPanel::DaemonDown => return "daemon not running".to_string(),
@@ -919,6 +1131,181 @@ pub async fn run_top(once: bool, filter: Option<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── header_text ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn header_names_pid_uptime_model_host_and_time() {
+        let daemon = DaemonHeader {
+            pid: 4242,
+            uptime_secs: 3725,
+            provider: "anthropic".to_string(),
+            model: "claude-opus-4-6".to_string(),
+        };
+        let now = "2026-10-22T09:00:00+05:00"
+            .parse::<DateTime<FixedOffset>>()
+            .expect("a fixed time");
+        let text = header_text(Some(&daemon), "pinky", now);
+        assert!(
+            text.contains("daemoneye · pid 4242"),
+            "the pid is named: {text}"
+        );
+        assert!(text.contains("up 1h 2m 5s"), "the uptime is named: {text}");
+        assert!(
+            text.contains("anthropic/claude-opus-4-6"),
+            "provider and model are named: {text}"
+        );
+        assert!(text.contains("pinky"), "the host is named: {text}");
+        assert!(text.contains("09:00:00"), "the local time is named: {text}");
+    }
+
+    #[test]
+    fn header_names_the_daemon_down() {
+        let now = "2026-10-22T09:00:00+00:00"
+            .parse::<DateTime<FixedOffset>>()
+            .expect("a fixed time");
+        let text = header_text(None, "pinky", now);
+        assert_eq!(
+            text, "daemoneye · daemon not running · pinky · 09:00:00",
+            "a down daemon names itself: {text}"
+        );
+    }
+
+    // ── plan_layout ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn layout_puts_runs_and_budget_side_by_side_when_wide() {
+        let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+        let r = plan_layout(area, 20, 6, 8);
+        assert_eq!(r.runs.y, r.budget.y, "the panels share a row");
+        assert_eq!(
+            r.runs.x + r.runs.width,
+            r.budget.x,
+            "Runs is left of Budget with no gap"
+        );
+        assert_eq!(r.budget.width, 40, "Budget takes 40 columns on the right");
+        assert_eq!(r.runs.width, 80, "Runs takes the rest of the row");
+        assert!(r.runs.right() <= area.width, "Runs stays inside the area");
+        assert!(
+            r.budget.right() <= area.width,
+            "Budget stays inside the area"
+        );
+    }
+
+    #[test]
+    fn layout_stacks_panels_when_narrow() {
+        let area = ratatui::layout::Rect::new(0, 0, 119, 40);
+        let r = plan_layout(area, 20, 6, 8);
+        assert_eq!(
+            r.budget.y,
+            r.runs.y + r.runs.height,
+            "Budget sits directly below Runs"
+        );
+        assert_eq!(
+            r.shells.y,
+            r.budget.y + r.budget.height,
+            "Shells sits directly below Budget"
+        );
+        assert_eq!(
+            r.activity.y,
+            r.shells.y + r.shells.height,
+            "Activity sits directly below Shells"
+        );
+        assert_eq!(r.runs.width, 119, "each panel takes the full width");
+    }
+
+    #[test]
+    fn layout_sizes_runs_and_shells_to_content_up_to_a_cap() {
+        let area = ratatui::layout::Rect::new(0, 0, 100, 60);
+        let small = plan_layout(area, 3, 4, 3);
+        assert_eq!(small.runs.height, 5, "3 body lines plus 2 borders");
+        assert_eq!(small.shells.height, 5, "3 body lines plus 2 borders");
+        let big = plan_layout(area, 40, 4, 40);
+        assert_eq!(big.runs.height, 14, "12 body lines plus 2 borders");
+        assert_eq!(big.shells.height, 8, "6 body lines plus 2 borders");
+    }
+
+    #[test]
+    fn layout_gives_activity_the_rest() {
+        let area = ratatui::layout::Rect::new(0, 0, 80, 40);
+        let r = plan_layout(area, 10, 4, 4);
+        let used =
+            1 + r.runs.height as usize + r.budget.height as usize + r.shells.height as usize + 1;
+        assert_eq!(
+            r.activity.height as usize,
+            area.height as usize - used,
+            "Activity takes every row the other rects leave"
+        );
+        assert_eq!(
+            r.activity.bottom(),
+            r.footer.y,
+            "Activity ends at the footer"
+        );
+        assert_eq!(r.footer.y, 39, "the footer is the last row");
+    }
+
+    #[test]
+    fn layout_survives_a_tiny_terminal() {
+        for (w, h) in [(40u16, 10u16), (1u16, 1u16)] {
+            let area = ratatui::layout::Rect::new(0, 0, w, h);
+            let r = plan_layout(area, 20, 6, 8);
+            for (name, rect) in [
+                ("header", r.header),
+                ("runs", r.runs),
+                ("budget", r.budget),
+                ("shells", r.shells),
+                ("activity", r.activity),
+                ("footer", r.footer),
+            ] {
+                assert!(
+                    rect.x >= area.x
+                        && rect.y >= area.y
+                        && rect.right() <= area.right()
+                        && rect.bottom() <= area.bottom(),
+                    "{name} lies inside {w}x{h}: {rect:?}"
+                );
+            }
+        }
+    }
+
+    // ── budget_bar ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn budget_bar_levels_at_80_and_100_percent() {
+        let (_, level) = budget_bar(79.9, 100.0, 20).expect("a bar");
+        assert_eq!(level, BarLevel::Ok, "79.9% is under the warn mark");
+        let (_, level) = budget_bar(80.0, 100.0, 20).expect("a bar");
+        assert_eq!(level, BarLevel::Warn, "80% is the warn mark");
+        let (_, level) = budget_bar(100.0, 100.0, 20).expect("a bar");
+        assert_eq!(level, BarLevel::Over, "100% is over");
+        let (text, _) = budget_bar(150.0, 100.0, 20).expect("a bar");
+        assert!(
+            text.contains("150%"),
+            "the percentage is printed as it is: {text}"
+        );
+        assert_eq!(
+            text.matches('█').count(),
+            20,
+            "an over-cap spend fills the bar: {text}"
+        );
+        assert!(budget_bar(50.0, 0.0, 20).is_none(), "no cap, no bar");
+    }
+
+    // ── run_fades ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn finished_runs_fade_after_five_minutes() {
+        let mut r = row("dddd", false).0;
+        r.age_s = 299;
+        assert!(!run_fades(&r), "a fresh finished run is not dimmed");
+        r.age_s = 300;
+        assert!(run_fades(&r), "a finished run dims at five minutes");
+        r.liveness = Liveness::Live;
+        r.age_s = 3600;
+        assert!(!run_fades(&r), "a live run never dims");
+        r.liveness = Liveness::Stale;
+        assert!(!run_fades(&r), "a stale run never dims");
+    }
 
     // ── runs ordering ────────────────────────────────────────────────────────
 

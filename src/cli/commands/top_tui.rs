@@ -10,23 +10,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
+use chrono::Local;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::cli::commands::top::{
-    ActivityRow, Liveness, TopFingerprint, TopRunRow, activity_text, budget_text,
-    collapse_activity, filter_activity, fingerprint, runs_text, shells_text,
+    ActivityRow, BarLevel, Liveness, TopFingerprint, TopRunRow, activity_text, budget_bar,
+    budget_text, collapse_activity, filter_activity, fingerprint, header_text, plan_layout,
+    run_fades, runs_text, shells_text,
 };
 use crate::cli::viewer::AltScreenGuard;
-
 /// Poll the disk fingerprint every this long.
 const TICK: Duration = Duration::from_millis(500);
 
@@ -153,64 +153,117 @@ impl TopModel {
         ))
     }
 }
-
-/// Draw one frame: four bordered blocks over the panel texts, the selected
-/// run's line reversed, and a footer naming the keys and the mode. An
-/// overflowing body shows the lines that matter: Activity its newest rows,
-/// Runs a window that keeps the selected row (and the column header) on
-/// screen.
+/// Draw one frame: the header line, four bordered blocks over the panel
+/// texts laid out by [`plan_layout`], the selected run's line reversed, and
+/// a footer naming the keys and the mode on the last row. An overflowing
+/// body shows the lines that matter: Activity its newest rows, Runs a window
+/// that keeps the selected row (and the column header) on screen.
 pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
     let area = frame.area();
-    let chunks = Layout::default()
-        .direction(ratatui::layout::Direction::Vertical)
-        .constraints([
-            Constraint::Length(10),
-            Constraint::Length(6),
-            Constraint::Length(4),
-            Constraint::Min(3),
-            Constraint::Length(1),
-        ])
-        .split(area);
-
     let runs_body = runs_text(&model.snapshot.runs);
-    let (runs_display, runs_sel) = runs_window(&runs_body, model.selected, inner_height(chunks[0]));
-    draw_panel(frame, chunks[0], "Runs", &runs_display, runs_sel);
+    let budget_body = budget_text(&model.snapshot.budget);
+    let shells_body = shells_text(&model.snapshot.shells);
+    let activity_body = activity_text(&model.filtered_activity());
+    let rects = plan_layout(
+        area,
+        runs_body.lines().count(),
+        budget_body.lines().count() + 1,
+        shells_body.lines().count(),
+    );
+
+    let host = crate::daemon::utils::daemon_hostname();
+    let header = header_text(
+        model.snapshot.daemon.as_ref(),
+        &host,
+        model.snapshot.taken_at.with_timezone(Local::now().offset()),
+    );
+    Paragraph::new(Line::raw(header)).render(rects.header, frame.buffer_mut());
+
+    let faded_runs = model
+        .snapshot
+        .runs
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| run_fades(r))
+        .map(|(i, _)| i)
+        .collect::<Vec<usize>>();
+    let (runs_display, runs_sel) =
+        runs_window(&runs_body, model.selected, inner_height(rects.runs));
+    let display_fades = faded_runs
+        .iter()
+        .filter_map(|i| {
+            runs_display
+                .lines()
+                .position(|l| l == runs_body.lines().nth(*i).unwrap_or(""))
+        })
+        .collect::<Vec<usize>>();
     draw_panel(
         frame,
-        chunks[1],
-        "Budget",
-        &budget_text(&model.snapshot.budget),
-        None,
+        rects.runs,
+        "Runs",
+        &runs_display,
+        runs_sel,
+        &display_fades,
     );
-    draw_panel(
-        frame,
-        chunks[2],
-        "Shells",
-        &shells_text(&model.snapshot.shells),
-        None,
+
+    let bar = budget_bar(
+        model.snapshot.budget.ai_cost,
+        model.snapshot.budget.cap,
+        inner_width(rects.budget),
     );
-    let activity = model.filtered_activity();
-    let activity_body = activity_text(&activity);
+    let mut budget_lines: Vec<Line<'_>> = budget_body
+        .lines()
+        .map(|l| Line::raw(l.to_string()))
+        .collect();
+    if let Some((bar_text, level)) = bar {
+        let colour = match level {
+            BarLevel::Ok => Color::Reset,
+            BarLevel::Warn => Color::Yellow,
+            BarLevel::Over => Color::Red,
+        };
+        budget_lines.push(Line::styled(bar_text, Style::default().fg(colour)));
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(Line::styled(
+            " Budget ".to_string(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(rects.budget);
+    block.render(rects.budget, frame.buffer_mut());
+    Paragraph::new(budget_lines).render(inner, frame.buffer_mut());
+
+    draw_panel(frame, rects.shells, "Shells", &shells_body, None, &[]);
+
     let activity_lines = activity_body.lines().count();
     // The new Activity rows land at the bottom of the body, so a body taller
     // than its panel shows its tail, not its head.
-    let activity_body = activity_body
+    let activity_shown = activity_body
         .lines()
-        .skip(activity_lines.saturating_sub(inner_height(chunks[3])))
+        .skip(activity_lines.saturating_sub(inner_height(rects.activity)))
         .collect::<Vec<_>>()
         .join("\n");
-    draw_panel(frame, chunks[3], "Activity", &activity_body, None);
-
+    draw_panel(
+        frame,
+        rects.activity,
+        "Activity",
+        &activity_shown,
+        None,
+        &[],
+    );
     let mode = if model.follow {
         "following"
     } else {
         "scrolled"
     };
-    let mut footer = format!("q quit · ↑↓ scroll · f follow · / filter · {mode}");
+    let mut footer = format!(
+        "q quit \u{b7} \u{2191}\u{2193} scroll \u{b7} f follow \u{b7} / filter \u{b7} {mode}"
+    );
     if !model.filter.is_empty() {
-        footer.push_str(&format!(" · filter: {}", model.filter));
+        footer.push_str(&format!(" \u{b7} filter: {}", model.filter));
     }
-    Paragraph::new(Line::raw(footer)).render(chunks[4], frame.buffer_mut());
+    Paragraph::new(Line::raw(footer)).render(rects.footer, frame.buffer_mut());
 }
 
 /// A bordered panel's inner height: the borders take one line at each edge.
@@ -218,8 +271,14 @@ fn inner_height(area: ratatui::layout::Rect) -> usize {
     area.height.saturating_sub(2) as usize
 }
 
+/// A bordered panel's inner width: the borders take one column at each edge.
+fn inner_width(area: ratatui::layout::Rect) -> usize {
+    area.width.saturating_sub(2) as usize
+}
+
 /// The Runs panel's body as drawn: when the rows overflow the panel, the
 /// window keeps the column header on top and the selected run on screen.
+/// The returned index is the selected line's position in the returned body,
 /// The returned index is the selected line's position in the returned body,
 /// `None` when the panel has no runs.
 fn runs_window(body: &str, selected: usize, inner_h: usize) -> (String, Option<usize>) {
@@ -248,13 +307,15 @@ fn runs_window(body: &str, selected: usize, inner_h: usize) -> (String, Option<u
 }
 
 /// One bordered panel with its title and a plain-text body. `selected`, when
-/// given, is the line index inside `body` drawn reversed.
+/// given, is the line index inside `body` drawn reversed. `fades` is the set
+/// of line indices drawn dimmed.
 fn draw_panel(
     frame: &mut ratatui::Frame<'_>,
     area: ratatui::layout::Rect,
     title: &str,
     body: &str,
     selected: Option<usize>,
+    fades: &[usize],
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -265,13 +326,14 @@ fn draw_panel(
         ));
     let inner = block.inner(area);
     block.render(area, frame.buffer_mut());
-
     let lines: Vec<Line<'_>> = body
         .lines()
         .enumerate()
         .map(|(i, l)| {
             let style = if selected == Some(i) {
                 Style::default().add_modifier(Modifier::REVERSED)
+            } else if fades.contains(&i) {
+                Style::default().add_modifier(Modifier::DIM)
             } else {
                 Style::default()
             };
@@ -284,6 +346,8 @@ fn draw_panel(
 /// The live loop. Enters raw mode, the alternate screen and a hidden cursor;
 /// the `AltScreenGuard` teardown leaves all three, so `?` cannot strand the
 /// terminal. A thread reads keys into a channel; the tokio loop waits on it
+/// and a 500 ms tick, re-reading only what [`plan_refresh`] asked for, and
+/// redraws after every key and every tick.
 /// and a 500 ms tick, re-reading only what [`plan_refresh`] asked for, and
 /// redraws after every key and every tick.
 pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
@@ -545,6 +609,7 @@ mod tests {
             },
             activity,
             shells: crate::cli::commands::top::ShellsPanel::DaemonDown,
+            daemon: None,
         }
     }
 
@@ -610,6 +675,80 @@ mod tests {
             text.contains("following"),
             "the footer names the mode: {text:?}"
         );
+    }
+
+    #[test]
+    fn screen_draws_the_header_line() {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let mut snap = snapshot(vec![]);
+        snap.daemon = Some(crate::cli::commands::top::DaemonHeader {
+            pid: 4242,
+            uptime_secs: 95,
+            provider: "anthropic".to_string(),
+            model: "claude-opus-4-6".to_string(),
+        });
+        let model = TopModel::new(snap);
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(text.contains("pid 4242"), "row 0 names the pid: {text:?}");
+        assert!(
+            text.contains("up 1m 35s"),
+            "row 0 names the uptime: {text:?}"
+        );
+        let mut snap = snapshot(vec![]);
+        snap.daemon = None;
+        let model = TopModel::new(snap);
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(
+            text.contains("daemon not running"),
+            "a down daemon names itself in the header: {text:?}"
+        );
+    }
+
+    #[test]
+    fn screen_colours_the_budget_bar() {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let mut snap = snapshot(vec![]);
+        snap.budget.ai_cost = 8.5;
+        snap.budget.cap = 10.0;
+        let model = TopModel::new(snap);
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        let (_, level) = budget_bar(8.5, 10.0, 20).expect("a bar at 85%");
+        assert_eq!(level, BarLevel::Warn, "85% is a warn");
+        let filled = text.matches('\u{2588}').count();
+        let empty = text.matches('\u{2591}').count();
+        assert!(
+            filled > 0 && empty > 0,
+            "the bar is on screen with both cells: filled {filled} empty {empty}"
+        );
+        let yellow = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .any(|c| c.fg == ratatui::style::Color::Yellow);
+        assert!(yellow, "the bar draws yellow: {text:?}");
     }
 
     #[test]

@@ -181,7 +181,7 @@ fn sandbox_section(report: &crate::ipc::ContainerStatusReport) -> Section {
     sbx
 }
 
-fn fmt_uptime(secs: u64) -> String {
+pub(crate) fn fmt_uptime(secs: u64) -> String {
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
     let s = secs % 60;

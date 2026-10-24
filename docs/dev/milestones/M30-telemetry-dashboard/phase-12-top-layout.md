@@ -1,7 +1,7 @@
 # Phase 12: top-layout — the live screen's shape
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-11
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -171,3 +171,31 @@ the wall clock or sleep; nothing in this phase needs it.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-24 15:19 (started, executor)
+
+Executor at work: header line, layout planner, budget bar, run fades, footer, phase-11 cleanups, README.
+
+### Update — 2026-10-24 15:55 (end-to-end verification)
+
+```text
+header_names_pid_uptime_model_host_and_time: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+header_names_the_daemon_down: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+layout_puts_runs_and_budget_side_by_side_when_wide: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+layout_stacks_panels_when_narrow: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+layout_sizes_runs_and_shells_to_content_up_to_a_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+layout_gives_activity_the_rest: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+layout_survives_a_tiny_terminal: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+budget_bar_levels_at_80_and_100_percent: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+finished_runs_fade_after_five_minutes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_draws_the_header_line: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_colours_the_budget_bar: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+once_order=Runs,Budget,Shells,Activity
+once_rate=1
+script_gone=1
+bad_docs=0
+shells_doc=1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2529 failed=0
+```
