@@ -1,7 +1,7 @@
 # Phase 12: top-layout — the live screen's shape
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-11
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -604,3 +604,136 @@ clock_test_wall=0
 fmt_exit=0
 passed=2535 failed=0
 ```
+
+### Update — 2026-10-24 21:06 (complete, server-authored)
+
+**Summary:** </think>All tasks are done. The work was completed across the original phase and two bounces; the final harness run confirms everything. Git status is clean (verified in the commit step). Now signal completion with a Summary + Notes for review.</think>
+All seven spec tasks are complete and tracked. Final state: working tree clean, commit `def7352a` in place, harness output pasted verbatim in the phase doc's Update Log.
+
+**Summary:** Bounce 2 fixed. Bug 12-5: `runs_window` now returns the kept body-line indices alongside the display text and selection, and `draw` maps each faded run row (`row + 1`, since body line 0 is the column header) through those indices — the second copy of the window arithmetic is gone (`window_math=1`), so the `usize` underflow with an overflowing Runs panel cannot recur and 20 runs at either selection draw without panicking, dimming exactly the visible `Done` rows. Bug 12-6: `BAR_CHROME` reserves 7 cells for the brackets and a three-digit ` NNN%` tail, so `150%` fits inside the Budget panel at both 80×24 and 120×40. Bug 12-7: `draw_at` takes the clock as a `DateTime<FixedOffset>` parameter (`draw` supplies `Local::now().fixed_offset()`), and `screen_header_clock_is_the_draw_time` draws at a fixed `09:00:00` timestamp, asserting it appears and `taken_at`'s `00:00:00` does not — no `Local::now` in the test (`clock_test_wall=0`).
+
+**Notes for review:** The two named tests were added (`screen_fades_with_more_runs_than_fit` selecting run 0 and run 19; `screen_shows_the_percentage_over_the_cap` at both sizes) and the clock test rewritten; all 17 harness-listed tests pass individually. Full harness: `once_order=Runs,Budget,Shells,Activity`, `once_rate=1`, `script_gone=1`, `bad_docs=0`, `shells_doc=1`, `doc_fixes=4`, `window_math=1`, `clock_test_wall=0`, `fmt_exit=0`, `passed=2535 failed=0`, clippy clean. `--once` output is unchanged; `top` remains read-only; no dependencies added.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+st readme_tools_tables_match_the_code ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test readme_documents_every_chat_slash_command ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test webhook_ports_differ_between_environments ... ok
+test held_port_cannot_be_rebound ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-a5bf14860b8766a6)
+kill: (209507): No such process
+kill: (-210218): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-fa3aae999c224501)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-af9329f81467cdee)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-a44fb637fa3308a3)
+     Running tests/integration.rs (target/debug/deps/integration-cf27c4f796c5d8c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-0a0c421b4b2b9fc2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-76069814ada3e33b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/cli/commands/top_tui.rs` — +133 -52
+
+**Commit:** def7352aa14fe96d8a9817b9ff04c7b6210edc62
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
