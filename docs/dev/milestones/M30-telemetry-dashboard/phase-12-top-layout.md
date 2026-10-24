@@ -1,7 +1,7 @@
 # Phase 12: top-layout — the live screen's shape
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** in-progress
 **Depends on:** phase-11
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -116,6 +116,11 @@ where they pinned the old fixed heights.
   - `script_gone=1` (today `0`).
   - `bad_docs=0` (today `3`).
   - `shells_doc=1` (today `0`).
+- [ ] Bounce 1 (bugs 12-1 to 12-4): `shells_refresh_replaces_the_daemon_header`,
+  `screen_header_clock_is_the_draw_time`, `screen_dims_only_finished_runs`
+  and `screen_shows_the_budget_percentage` each ⇒ `test result: ok. 1
+  passed` (today none exists), and the harness prints `doc_fixes=4`
+  (today `0`).
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean,
   `cargo fmt --all --check` exit 0, `cargo test` ⇒ `failed=0`. Report the
   passed count; do not pin it.
@@ -128,7 +133,7 @@ entry. It fabricates no events, so it does not depend on the clock.
 
 ```sh
 A=/tmp/e2e-m30-12.txt; : > "$A"
-for t in header_names_pid_uptime_model_host_and_time header_names_the_daemon_down layout_puts_runs_and_budget_side_by_side_when_wide layout_stacks_panels_when_narrow layout_sizes_runs_and_shells_to_content_up_to_a_cap layout_gives_activity_the_rest layout_survives_a_tiny_terminal budget_bar_levels_at_80_and_100_percent finished_runs_fade_after_five_minutes screen_draws_the_header_line screen_colours_the_budget_bar; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | head -1 | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+for t in header_names_pid_uptime_model_host_and_time header_names_the_daemon_down layout_puts_runs_and_budget_side_by_side_when_wide layout_stacks_panels_when_narrow layout_sizes_runs_and_shells_to_content_up_to_a_cap layout_gives_activity_the_rest layout_survives_a_tiny_terminal budget_bar_levels_at_80_and_100_percent finished_runs_fade_after_five_minutes screen_draws_the_header_line screen_colours_the_budget_bar shells_refresh_replaces_the_daemon_header screen_header_clock_is_the_draw_time screen_dims_only_finished_runs screen_shows_the_budget_percentage; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | head -1 | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 cargo build -q 2>/dev/null
 H=$(mktemp -d); mkdir -p "$H/.daemoneye/var/log/events" "$H/.daemoneye/var/log/runs"
 F=$(TZ=Etc/GMT+5 HOME="$H" ./target/debug/daemoneye top --once)
@@ -138,6 +143,11 @@ find "$H" -type f -delete; find "$H" -depth -type d -empty -delete
 echo "script_gone=$(test -e e2e-m30-11.sh && echo 0 || echo 1)" >> "$A"
 echo "bad_docs=$(grep -cE 'A session id cut to|through one level of nesting' src/cli/commands/top.rs)" >> "$A"
 echo "shells_doc=$(grep -B1 '^pub(crate) fn shells_text' src/cli/commands/top.rs | head -1 | grep -c '^///.*draws the same body')" >> "$A"
+d1=$(grep -B3 '^pub fn short_owner' src/cli/commands/top.rs | grep -c 'ghost:<runbook>')
+d2=$(test "$(grep -c "The returned index is the selected line's position" src/cli/commands/top_tui.rs)" = 1 && echo 1 || echo 0)
+d3=$(test "$(grep -c 'and a 500 ms tick, re-reading only' src/cli/commands/top_tui.rs)" = 1 && echo 1 || echo 0)
+d4=$(grep -B1 '^pub struct PanelRects' src/cli/commands/top.rs | head -1 | grep -c '^///')
+echo "doc_fixes=$((d1 + d2 + d3 + d4))" >> "$A"
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
 cargo fmt --all --check; echo "fmt_exit=$?" >> "$A"
 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}' >> "$A"
@@ -352,3 +362,18 @@ kill: (-131763): No such process
 **Commit:** 7397970db38a256d24669549b687032b1b6a5fea
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-24 (architect: bounce 1)
+
+**Architect:** Claude
+
+Bounced on review with four bugs in `bugs/`: the live header never
+refreshes (12-1), the fade dims the line above each finished run (12-2),
+the budget bar's percentage is clipped (12-3), and four doc comments are
+broken (12-4). Gates were clean, and everything else in the phase stands.
+
+**Notes for executor:** read the four bug docs, fix them, add the four
+tests they name, rerun the harness as now written from a scratch file
+outside the repo, and paste its output. Keep the rest of the diff as it is.
+Keep reasoning short: emit a tool call early in each turn, and do not
+sleep.
