@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
-use chrono::Local;
+use chrono::{DateTime, FixedOffset, Local};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -30,9 +30,10 @@ use crate::cli::viewer::AltScreenGuard;
 /// Poll the disk fingerprint every this long.
 const TICK: Duration = Duration::from_millis(500);
 
-/// A budget bar's chrome: the two brackets and the ` NN%` tail the panel
-/// draws beside the cells.
-const BAR_CHROME: usize = 6;
+/// A budget bar's chrome: the two brackets and the ` NNN%` tail the panel
+/// draws beside the cells — three digits, because the percentage is printed
+/// as it is and runs over the cap.
+const BAR_CHROME: usize = 7;
 
 /// Replace the model's Shells panel and daemon header with fresh answers
 /// from the daemon: one read-only `Request::ShellList` and one
@@ -188,12 +189,19 @@ impl TopModel {
         ))
     }
 }
-/// Draw one frame: the header line, four bordered blocks over the panel
-/// texts laid out by [`plan_layout`], the selected run's line reversed, and
-/// a footer naming the keys and the mode on the last row. An overflowing
-/// body shows the lines that matter: Activity its newest rows, Runs a window
-/// that keeps the selected row (and the column header) on screen.
+/// Draw one frame at the wall clock: [`draw_at`] with the local zone now.
 pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
+    draw_at(frame, model, Local::now().fixed_offset());
+}
+
+/// Draw one frame at `now`: the header line, four bordered blocks over the
+/// panel texts laid out by [`plan_layout`], the selected run's line
+/// reversed, finished runs dimmed, and a footer naming the keys and the
+/// mode on the last row. An overflowing body shows the lines that matter:
+/// Activity its newest rows, Runs a window that keeps the selected row (and
+/// the column header) on screen. The clock is a parameter, so the drawn
+/// header time is testable without racing the wall clock.
+pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<FixedOffset>) {
     let area = frame.area();
     let runs_body = runs_text(&model.snapshot.runs);
     let budget_body = budget_text(&model.snapshot.budget);
@@ -207,11 +215,7 @@ pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
     );
 
     let host = crate::daemon::utils::daemon_hostname();
-    let header = header_text(
-        model.snapshot.daemon.as_ref(),
-        &host,
-        Local::now().fixed_offset(),
-    );
+    let header = header_text(model.snapshot.daemon.as_ref(), &host, now);
     Paragraph::new(Line::raw(header)).render(rects.header, frame.buffer_mut());
 
     let faded_runs: Vec<usize> = model
@@ -222,33 +226,16 @@ pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
         .filter(|(_, r)| run_fades(r))
         .map(|(i, _)| i)
         .collect();
-    let (runs_display, runs_sel) =
+    let (runs_display, runs_sel, kept_lines) =
         runs_window(&runs_body, model.selected, inner_height(rects.runs));
     // Run row i is body line i + 1: the body's line 0 is the column header.
-    // Map each faded row to its display line by replaying runs_window's
-    // windowing over the kept body-line indices — text matching would dim
-    // two identical rows together.
-    let display_fades: Vec<usize> = {
-        let line_count = runs_body.lines().count();
-        let inner_h = inner_height(rects.runs);
-        let kept: Vec<usize> = if line_count == 0 {
-            Vec::new()
-        } else if line_count <= inner_h {
-            (0..line_count).collect()
-        } else {
-            let rows_visible = inner_h.saturating_sub(1).max(1);
-            let row = (model.selected + 1).min(line_count - 1);
-            let start = 1.max(row + 1 - rows_visible);
-            let mut kept = vec![0usize];
-            kept.extend(start..(start + rows_visible).min(line_count));
-            kept
-        };
-        faded_runs
-            .iter()
-            .map(|i| i + 1)
-            .filter_map(|body_line| kept.iter().position(|l| l == &body_line))
-            .collect()
-    };
+    // Map each faded row through runs_window's kept indices, so the
+    // window arithmetic exists in one place.
+    let display_fades: Vec<usize> = faded_runs
+        .iter()
+        .map(|i| i + 1)
+        .filter_map(|body_line| kept_lines.iter().position(|l| l == &body_line))
+        .collect();
     draw_panel(
         frame,
         rects.runs,
@@ -333,15 +320,19 @@ fn inner_width(area: ratatui::layout::Rect) -> usize {
 /// The Runs panel's body as drawn: when the rows overflow the panel, the
 /// window keeps the column header on top and the selected run on screen.
 /// The returned index is the selected line's position in the returned body,
-/// `None` when the panel has no runs.
-fn runs_window(body: &str, selected: usize, inner_h: usize) -> (String, Option<usize>) {
+/// `None` when the panel has no runs. `kept_lines` names, for every line of
+/// the returned body, its index in `body` — so callers that need to style
+/// one body line (a faded run) map through it instead of redoing the
+/// window arithmetic.
+fn runs_window(body: &str, selected: usize, inner_h: usize) -> (String, Option<usize>, Vec<usize>) {
     let line_count = body.lines().count();
     if line_count == 0 {
-        return (body.to_string(), None);
+        return (body.to_string(), None, Vec::new());
     }
     if line_count <= inner_h {
         let sel = (line_count > 1).then(|| selected + 1);
-        return (body.to_string(), sel);
+        let kept = (0..line_count).collect();
+        return (body.to_string(), sel, kept);
     }
     let rows_visible = inner_h.saturating_sub(1).max(1);
     let row = (selected + 1).min(line_count - 1);
@@ -356,7 +347,9 @@ fn runs_window(body: &str, selected: usize, inner_h: usize) -> (String, Option<u
         .chain(body.lines().skip(start).take(rows_visible))
         .collect::<Vec<_>>()
         .join("\n");
-    (display, Some(1 + row - start))
+    let mut kept = vec![0usize];
+    kept.extend(start..(start + rows_visible).min(line_count));
+    (display, Some(1 + row - start), kept)
 }
 
 /// One bordered panel with its title and a plain-text body. `selected`, when
@@ -826,6 +819,90 @@ mod tests {
     }
 
     #[test]
+    fn screen_shows_the_percentage_over_the_cap() {
+        for (w, h) in [(80u16, 24u16), (120u16, 40u16)] {
+            let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            let mut snap = snapshot(vec![]);
+            snap.budget.ai_cost = 15.0;
+            snap.budget.cap = 10.0;
+            let model = TopModel::new(snap);
+            terminal.draw(|f| draw(f, &model)).unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .flat_map(|c| c.symbol().chars())
+                .collect();
+            assert!(
+                text.contains("150%"),
+                "the drawn buffer holds 150% at {w}x{h}: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn screen_fades_with_more_runs_than_fit() {
+        let runs: Vec<TopRunRow> = (0..20)
+            .map(|i| {
+                let mut r = row(&format!("r{i:02}"), Liveness::Done);
+                if i % 2 == 1 {
+                    r = row(&format!("r{i:02}"), Liveness::Live);
+                    r.age_s = 10;
+                } else {
+                    r.age_s = 600;
+                }
+                r
+            })
+            .collect();
+        let done_ids: Vec<String> = (0..20).step_by(2).map(|i| format!("r{i:02}")).collect();
+        let live_ids: Vec<String> = (1..20).step_by(2).map(|i| format!("r{i:02}")).collect();
+        for selected in [0usize, 19] {
+            let mut model = TopModel::new(snapshot(runs.clone()));
+            model.follow = false;
+            model.selected = selected;
+            let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+            terminal.draw(|f| draw(f, &model)).expect("a draw");
+            let rows: Vec<Vec<(char, ratatui::style::Modifier)>> = (0..24)
+                .map(|y| {
+                    (0..80)
+                        .map(|x| {
+                            let c = &terminal.backend().buffer().content[y * 80 + x];
+                            (c.symbol().chars().next().unwrap_or(' '), c.modifier)
+                        })
+                        .collect()
+                })
+                .collect();
+            let dimmed: Vec<String> = rows
+                .iter()
+                .filter(|r| {
+                    r.iter()
+                        .any(|(_, m)| m.contains(ratatui::style::Modifier::DIM))
+                })
+                .map(|r| r.iter().map(|(c, _)| c).collect())
+                .collect();
+            assert!(
+                !dimmed.is_empty(),
+                "a visible finished run dims, selection {selected}"
+            );
+            for line in &dimmed {
+                assert!(
+                    done_ids.iter().any(|id| line.contains(id)),
+                    "a dimmed line is a finished run's: {line:?}"
+                );
+                assert!(
+                    !line.contains("ID KIND"),
+                    "the column header never dims: {line:?}"
+                );
+                assert!(
+                    !live_ids.iter().any(|id| line.contains(id)),
+                    "a live run never dims: {line:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn screen_dims_only_finished_runs() {
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         let live = row("aaaa", Liveness::Live);
@@ -868,23 +945,27 @@ mod tests {
         let mut snap = snapshot(vec![]);
         snap.taken_at = "2026-10-22T00:00:00Z".parse().expect("a fixed time");
         let model = TopModel::new(snap);
-        terminal.draw(|f| draw(f, &model)).unwrap();
-        let text: String = terminal
+        let draw_time = "2026-10-22T09:00:00+00:00"
+            .parse::<DateTime<FixedOffset>>()
+            .expect("a fixed time");
+        terminal
+            .draw(|f| draw_at(f, &model, draw_time))
+            .expect("a draw");
+        let header: String = terminal
             .backend()
             .buffer()
             .content
             .iter()
+            .take(80)
             .flat_map(|c| c.symbol().chars())
             .collect();
-        let hour_ago = "00:00:00";
         assert!(
-            !text.contains(hour_ago),
-            "the header names the draw time, not taken_at's: {text:?}"
+            header.contains("09:00:00"),
+            "the header names the draw time: {header:?}"
         );
-        let now_hhmmss = Local::now().format("%H:%M:%S").to_string();
         assert!(
-            text.contains(&now_hhmmss),
-            "the header names the current clock: {text:?}"
+            !header.contains("00:00:00"),
+            "the header does not name taken_at's clock: {header:?}"
         );
     }
 
