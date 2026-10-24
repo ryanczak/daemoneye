@@ -377,3 +377,34 @@ tests they name, rerun the harness as now written from a scratch file
 outside the repo, and paste its output. Keep the rest of the diff as it is.
 Keep reasoning short: emit a tool call early in each turn, and do not
 sleep.
+
+### Update — 2026-10-24 19:05 (end-to-end verification)
+
+Bounce 1 fixed. Harness from `/tmp/e2e-m30-12.sh`, output verbatim:
+
+```text
+header_names_pid_uptime_model_host_and_time: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+header_names_the_daemon_down: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+layout_puts_runs_and_budget_side_by_side_when_wide: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+layout_stacks_panels_when_narrow: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+layout_sizes_runs_and_shells_to_content_up_to_a_cap: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+layout_gives_activity_the_rest: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+layout_survives_a_tiny_terminal: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+budget_bar_levels_at_80_and_100_percent: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+finished_runs_fade_after_five_minutes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_draws_the_header_line: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_colours_the_budget_bar: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+shells_refresh_replaces_the_daemon_header: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_header_clock_is_the_draw_time: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_dims_only_finished_runs: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_shows_the_budget_percentage: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+once_order=Runs,Budget,Shells,Activity
+once_rate=1
+script_gone=1
+bad_docs=0
+shells_doc=1
+doc_fixes=4
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2533 failed=0
+```
