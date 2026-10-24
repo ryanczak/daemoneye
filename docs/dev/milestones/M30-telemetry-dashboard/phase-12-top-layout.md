@@ -1,7 +1,7 @@
 # Phase 12: top-layout — the live screen's shape
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-11
 **Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -199,3 +199,156 @@ shells_doc=1
 fmt_exit=0
 passed=2529 failed=0
 ```
+
+### Update — 2026-10-24 16:12 (complete, server-authored)
+
+**Summary:** </think>Those `println!`s are the legitimate `--once` output path, not debug calls. Good.
+
+Completion checklist:
+- [x] Phase doc Status: in-progress ✓
+- [x] Milestone README row in-progress ✓
+- [x] No hand-written (complete) entry ✓ (I wrote started + end-to-end verification entries only)
+- [x] cargo fmt --all run before git add ✓
+- [x] All verification commands ran clean ✓
+- [x] Final message will be Summary + Notes for review
+- [x] git status clean ✓
+- [x] git log -1 --stat shows all files ✓
+
+One more check — the header tests use `Local::now().offset()` in draw, which is wall-clock dependent but not testable since header_text takes the time as a parameter. Fine.
+
+Everything is committed. Final summary now.</think>
+All work is committed and the tree is clean. Final verification: `fmt_exit=0`, clippy clean, `passed=2529 failed=0`, and all eleven new tests pass individually; the harness output (pasted verbatim in the phase doc's Update Log) confirms `once_order=Runs,Budget,Shells,Activity`, `once_rate=1`, `script_gone=1`, `bad_docs=0`, `shells_doc=1`.
+
+**Summary:** Built phase 12's live-screen shape: `TopSnapshot` gained `daemon: Option<DaemonHeader>` fetched on the 2 s cadence via a new `daemon_header()` (read-only `Request::Status`), with pure `header_text` rendering `daemoneye · pid N · up <uptime> · <provider>/<model> · <host> · HH:MM:SS` or the `daemon not running` form; pure `plan_layout` (with `PanelRects` and a clamping `rect_or_area` helper) sizes Runs (cap 12) and Shells (cap 6) to content, gives Activity the rest, and puts Runs/Budget side-by-side at ≥120 columns (Budget 40 on the right), returning rects that stay inside the area on a 1×1 terminal; pure `budget_bar` renders `[█░ NN%]` with `BarLevel` Ok/Warn/Over at 80/100 %, drawn yellow/red as the Budget panel's last line (its body line counted in the layout); pure `run_fades` dims `Done` runs at ≥300 s via a `fades: &[usize]` parameter on `draw_panel` (selected line stays reversed); the footer moved to `plan_layout`'s last row. Phase-11 cleanups done (`e2e-m30-11.sh` deleted, `shells_text` doc restored above it, `short_owner`/`short_cmd`/`str_field`/`num_field` doc comments fixed), `fmt_uptime` made `pub(crate)`, and the README `top` paragraph's live-view sentences name the header, the 120-column layout, the bar's two colours and the fades.
+
+**Notes for review:** One adaptation from the spec's sketch — `budget_bar` rounds the fill (`(spent/cap)*width` rounded) rather than flooring, so a 79.9 % spend on a 20-wide bar shows 16 filled cells; the spec's wording ("filled and empty cells") doesn't pin the rounding mode. The screen's fade mapping translates body-line indices through `runs_window`'s displayed window by text match. The header renders with `Local::now().offset()` at draw time while the testable `header_text` takes the timestamp as a parameter, so no test touches the wall clock. `top` remains read-only; no dependencies added.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+st readme_tools_tables_match_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test prompt_assets_name_no_retired_tools ... ok
+test e2e_seeded_asset_tool_hygiene ... ok
+test seeded_assets_name_no_retired_tools ... ok
+test seeded_config_template_has_no_phantom_keys ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test readme_documents_every_chat_slash_command ... ok
+test seeded_config_template_documents_every_config_field ... ok
+test runtime_docs_describe_no_tmux_execution ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 4 tests
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-a5bf14860b8766a6)
+kill: (131073): No such process
+kill: (-131763): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-fa3aae999c224501)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-af9329f81467cdee)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-a44fb637fa3308a3)
+     Running tests/integration.rs (target/debug/deps/integration-cf27c4f796c5d8c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-0a0c421b4b2b9fc2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-76069814ada3e33b)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +1 -1
+- `docs/dev/milestones/M30-telemetry-dashboard/README.md` — +1 -1
+- `docs/dev/milestones/M30-telemetry-dashboard/phase-12-top-layout.md` — +29 -1
+- `src/cli/commands/mod.rs` — +3 -1
+- `src/cli/commands/top.rs` — +398 -11
+- `src/cli/commands/top_tui.rs` — +184 -45
+- `src/cli/status.rs` — +1 -1
+
+**Commit:** 7397970db38a256d24669549b687032b1b6a5fea
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
